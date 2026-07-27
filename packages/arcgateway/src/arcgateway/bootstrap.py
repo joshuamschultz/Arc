@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
 
@@ -106,13 +107,22 @@ def _resolve_agent_dir(
     return did_index.get(agent_did)
 
 
-def _make_agent_factory(team_root: Path) -> Any:
+def _make_agent_factory(
+    team_root: Path,
+    deliver_provider: Callable[[], Any] | None = None,
+) -> Any:
     """Build an async agent_factory bound to ``team_root``.
 
     The factory mirrors ``arccli.commands.agent._load_arcagent`` so the
     same agent definitions work in both daemon and embedded modes.
     Imports are lazy so arcgateway can be installed without arcagent
     in test environments.
+
+    ``deliver_provider`` is a zero-arg callable returning the current channel
+    deliver fn (or None). It is late-bound because the SessionRouter it closes
+    over is built after this factory (two-step wiring in build_for_embedded);
+    the factory reads it per agent-construction and injects it before startup()
+    so a newly-started agent's scheduler can deliver to channels.
 
     The DID-to-directory index is computed lazily on first call and
     refreshed on cache miss — so newly-added agents become reachable
@@ -153,6 +163,12 @@ def _make_agent_factory(team_root: Path) -> Any:
 
         config = load_config(config_path)
         arc_agent = ArcAgent(config, config_path=config_path)
+        # Inject channel delivery BEFORE startup so agent:ready carries it and
+        # the scheduler can bind it (fleet-started agents get it in ui.py).
+        if deliver_provider is not None:
+            deliver_fn = deliver_provider()
+            if deliver_fn is not None:
+                arc_agent.set_channel_deliver_fn(deliver_fn)
         await arc_agent.startup()
         return arc_agent
 
@@ -221,7 +237,11 @@ async def build_for_embedded(
             team_root,
         )
 
-    agent_factory = _make_agent_factory(team_root)
+    # Late-bound holder: the factory needs a deliver fn that closes over the
+    # SessionRouter built below (two-step wiring breaks the inbound/outbound
+    # cycle). The factory reads holder["fn"] per agent construction.
+    deliver_holder: dict[str, Any] = {"fn": None}
+    agent_factory = _make_agent_factory(team_root, lambda: deliver_holder["fn"])
     executor = _build_executor(gateway_config.gateway.tier, agent_factory, team_root)
 
     # [security].require_pairing activates DM pairing enforcement. This is
@@ -261,6 +281,10 @@ async def build_for_embedded(
         command_registry=command_registry,
         session_epoch_db_path=gateway_config.pairing.db_path.parent / "session_epochs.db",
     )
+    # Now that the router exists, satisfy the factory's late-bound delivery hook.
+    from arcgateway.channel_delivery import make_channel_deliver_fn
+
+    deliver_holder["fn"] = make_channel_deliver_fn(session_router)
     stream_bridge = StreamBridge()
 
     from arcgateway.adapters.registry import AdapterUnavailableError, build_adapters

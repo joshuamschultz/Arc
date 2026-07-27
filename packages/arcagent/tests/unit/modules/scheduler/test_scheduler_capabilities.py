@@ -191,6 +191,28 @@ class TestAgentReadyHook:
         st = _runtime.state()
         assert st.agent_run_fn is None
 
+    async def test_binds_channel_deliver_fn_to_engine(self, configured: Path) -> None:
+        from arcagent.modules.scheduler.capabilities import (
+            Scheduler,
+            bind_agent_run_fn,
+        )
+
+        cap = Scheduler()
+        await cap.setup(None)
+        try:
+            deliver_fn = AsyncMock()
+            ctx = SimpleNamespace(
+                data={"run_fn": AsyncMock(), "channel_deliver_fn": deliver_fn},
+            )
+            await bind_agent_run_fn(ctx)
+
+            st = _runtime.state()
+            assert st.channel_deliver_fn is deliver_fn
+            assert st.engine is not None
+            assert st.engine._channel_deliver_fn is deliver_fn
+        finally:
+            await cap.teardown()
+
 
 @pytest.mark.asyncio
 class TestRuntimeContract:

@@ -146,6 +146,7 @@ async def serve_fleet_agents(
     fleet: Any,
     *,
     warm: Callable[[str, Any], Awaitable[Any]] | None = None,
+    deliver_fn: Callable[[str, str], Awaitable[None]] | None = None,
 ) -> int:
     """Start every discovered team agent so its messaging inbox loop runs (MSG4).
 
@@ -174,6 +175,10 @@ async def serve_fleet_agents(
     for agent_dir in agent_dirs:
         try:
             agent, _config, _config_path = _load_arcagent(agent_dir)
+            # Wire channel delivery BEFORE startup so agent:ready carries it and
+            # the scheduler can deliver a fired schedule's output to a channel.
+            if deliver_fn is not None:
+                agent.set_channel_deliver_fn(deliver_fn)
             await agent.startup()
             fleet.add(agent.did, agent)
             started += 1

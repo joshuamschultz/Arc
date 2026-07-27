@@ -28,6 +28,17 @@ _logger = logging.getLogger("arcagent.scheduler")
 
 AgentRunFn = Callable[..., Awaitable[Any]]
 
+# Sends a schedule's final output to a channel target string ("telegram:123").
+# Injected by the embedded gateway (which owns channels); None standalone.
+ChannelDeliverFn = Callable[[str, str], Awaitable[None]]
+
+
+def _result_text(result: Any) -> str:
+    """Extract deliverable text from a run result (``.content`` or ``str``)."""
+    if not result:
+        return ""
+    return str(getattr(result, "content", None) or result)
+
 
 class SchedulerEngine:
     """Core scheduling engine with timer loop and sequential execution queue."""
@@ -39,12 +50,14 @@ class SchedulerEngine:
         telemetry: AgentTelemetry,
         agent_run_fn: AgentRunFn,
         bus: ModuleBus | None = None,
+        channel_deliver_fn: ChannelDeliverFn | None = None,
     ) -> None:
         self._store = store
         self._config = config
         self._telemetry = telemetry
         self._agent_run_fn = agent_run_fn
         self._bus = bus
+        self._channel_deliver_fn = channel_deliver_fn
 
         self._queue: asyncio.Queue[ScheduleEntry] = asyncio.Queue(maxsize=100)
         self._in_flight: set[str] = set()
@@ -63,6 +76,10 @@ class SchedulerEngine:
         """Bind or rebind the agent.run() callback."""
         self._agent_run_fn = fn
         self._ready.set()
+
+    def set_channel_deliver_fn(self, fn: ChannelDeliverFn | None) -> None:
+        """Bind the channel-delivery callback (embedded gateway supplies it)."""
+        self._channel_deliver_fn = fn
 
     # --- Public API ---
 
@@ -128,6 +145,7 @@ class SchedulerEngine:
             )
             elapsed = time.monotonic() - start_time
             self._on_execution_complete(entry, result, elapsed)
+            await self._deliver_to_channel(entry, result)
             return result
         except TimeoutError:
             elapsed = time.monotonic() - start_time
@@ -248,6 +266,27 @@ class SchedulerEngine:
 
     # --- Private ---
 
+    async def _deliver_to_channel(self, entry: ScheduleEntry, result: Any) -> None:
+        """Send the run's output to ``entry.deliver_to`` if delivery is wired.
+
+        Fail-open: a channel send error is logged but never propagates — a
+        delivery failure must not fail the schedule execution or trip the
+        circuit breaker (the run itself already succeeded).
+        """
+        if not entry.deliver_to or self._channel_deliver_fn is None:
+            return
+        text = _result_text(result)
+        if not text:
+            return
+        try:
+            await self._channel_deliver_fn(entry.deliver_to, text)
+        except Exception:  # reason: fail-open — delivery must not fail the run
+            _logger.exception(
+                "Schedule %s: channel delivery to %s failed",
+                entry.id,
+                entry.deliver_to,
+            )
+
     def _emit_bus_event(self, event: str, data: dict[str, Any]) -> None:
         """Fire-and-forget bus event emission with proper task reference tracking.
 
@@ -343,7 +382,7 @@ class SchedulerEngine:
 
         # Emit bus event so other modules (e.g. Telegram) can deliver results.
         if self._bus is not None:
-            content = (getattr(result, "content", None) or str(result)) if result else ""
+            content = _result_text(result)
             self._emit_bus_event(
                 "schedule:completed",
                 {

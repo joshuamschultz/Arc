@@ -36,6 +36,55 @@ class TestActiveHours:
             ActiveHours(start="08:00", end="18:00", timezone="Fake/Zone")
 
 
+# --- deliver_to ---
+
+
+class TestDeliverTo:
+    def test_deliver_to_defaults_none(self) -> None:
+        entry = ScheduleEntry(id="s1", type="interval", prompt="hi", every_seconds=300)
+        assert entry.deliver_to is None
+
+    def test_deliver_to_valid_target(self) -> None:
+        entry = ScheduleEntry(
+            id="s1",
+            type="interval",
+            prompt="hi",
+            every_seconds=300,
+            deliver_to="telegram:12345",
+        )
+        assert entry.deliver_to == "telegram:12345"
+
+    def test_deliver_to_valid_with_thread(self) -> None:
+        entry = ScheduleEntry(
+            id="s1",
+            type="interval",
+            prompt="hi",
+            every_seconds=300,
+            deliver_to="telegram:12345:678",
+        )
+        assert entry.deliver_to == "telegram:12345:678"
+
+    def test_deliver_to_rejects_no_colon(self) -> None:
+        with pytest.raises(ValueError):
+            ScheduleEntry(
+                id="s1",
+                type="interval",
+                prompt="hi",
+                every_seconds=300,
+                deliver_to="notarget",
+            )
+
+    def test_deliver_to_rejects_empty_chat(self) -> None:
+        with pytest.raises(ValueError):
+            ScheduleEntry(
+                id="s1",
+                type="interval",
+                prompt="hi",
+                every_seconds=300,
+                deliver_to="telegram:",
+            )
+
+
 # --- ScheduleMetadata ---
 
 

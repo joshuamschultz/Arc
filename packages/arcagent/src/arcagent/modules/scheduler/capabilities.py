@@ -65,6 +65,7 @@ class Scheduler:
             telemetry=st.telemetry,
             agent_run_fn=run_fn,
             bus=st.bus,
+            channel_deliver_fn=st.channel_deliver_fn,
         )
         # If a real run_fn was provided at configure time, mark the
         # engine ready so the timer loop doesn't block waiting for one.
@@ -100,8 +101,10 @@ async def bind_agent_run_fn(ctx: Any) -> None:
 
     st = _runtime.state()
     st.agent_run_fn = run_fn
+    st.channel_deliver_fn = data.get("channel_deliver_fn")
     if st.engine is not None:
         st.engine.set_agent_run_fn(run_fn)
+        st.engine.set_channel_deliver_fn(st.channel_deliver_fn)
         _logger.info("Bound agent_run_fn via agent:ready hook")
 
 
@@ -121,8 +124,14 @@ async def schedule_create(
     every_seconds: int | None = None,
     active_hours: dict[str, Any] | None = None,
     timeout_seconds: int | None = None,
+    deliver_to: str | None = None,
 ) -> str:
-    """Create a new schedule. Enforces quota and prompt validation."""
+    """Create a new schedule. Enforces quota and prompt validation.
+
+    ``deliver_to`` ("platform:chat_id") routes the run's output back to a
+    channel; leave unset to keep the result internal. Defaults to the current
+    conversation's channel when created during a chat turn (see _runtime).
+    """
     st = _runtime.state()
     try:
         existing = st.store.load()
@@ -146,6 +155,7 @@ async def schedule_create(
                 "every_seconds": every_seconds,
                 "active_hours": active_hours,
                 "timeout_seconds": resolved_timeout,
+                "deliver_to": deliver_to or _runtime.current_channel(),
             },
             context=st.config.validation_context(),
         )
@@ -183,6 +193,7 @@ async def schedule_update(
     every_seconds: int | None = None,
     timeout_seconds: int | None = None,
     active_hours: dict[str, Any] | None = None,
+    deliver_to: str | None = None,
 ) -> str:
     """Update an existing schedule with allowlisted fields only."""
     st = _runtime.state()
@@ -193,6 +204,7 @@ async def schedule_update(
         "every_seconds": every_seconds,
         "timeout_seconds": timeout_seconds,
         "active_hours": active_hours,
+        "deliver_to": deliver_to,
     }
     updates = {k: v for k, v in candidates.items() if v is not None}
     if not updates:

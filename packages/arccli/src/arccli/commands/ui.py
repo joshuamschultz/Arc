@@ -418,7 +418,17 @@ def _register_fleet_startup(app: Any, team_root: Path) -> Any:
 
             adopt_agent(app, agent_did, agent)
 
-        count = await serve_fleet_agents(team_root, fleet, warm=_warm)
+        # Channel delivery for fired schedules: the session_router (built by the
+        # embedded gateway earlier in this lifespan) routes a "platform:chat"
+        # target to the right adapter. None if no gateway is running.
+        deliver_fn = None
+        session_router = getattr(app.state, "session_router", None)
+        if session_router is not None:
+            from arcgateway.channel_delivery import make_channel_deliver_fn
+
+            deliver_fn = make_channel_deliver_fn(session_router)
+
+        count = await serve_fleet_agents(team_root, fleet, warm=_warm, deliver_fn=deliver_fn)
         _write(f"  Fleet: {count} always-on agent(s) started (messaging inbox active).")
 
     app.state._extra_startup_hooks.append(_serve_fleet)

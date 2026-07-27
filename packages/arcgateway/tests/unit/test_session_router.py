@@ -358,3 +358,45 @@ class TestSessionRouterHandle:
         slow_exec.open_gate(alice)
         slow_exec.open_gate(bob)
         await asyncio.sleep(0.05)
+
+
+class _RecordingAdapter:
+    """Minimal outbound adapter that records send() calls."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.sent: list[tuple[str, str]] = []
+
+    async def connect(self) -> None:  # pragma: no cover - unused
+        ...
+
+    async def disconnect(self) -> None:  # pragma: no cover - unused
+        ...
+
+    async def send(self, target: object, message: str) -> None:
+        self.sent.append((str(target), message))
+
+
+class TestOutboundSend:
+    @pytest.mark.asyncio
+    async def test_send_routes_to_matching_platform_adapter(self) -> None:
+        from arcgateway.delivery import DeliveryTarget
+
+        router = SessionRouter(executor=_ImmediateExecutor())
+        tg = _RecordingAdapter("telegram")
+        web = _RecordingAdapter("web")
+        router.register_adapter(tg)  # type: ignore[arg-type]
+        router.register_adapter(web)  # type: ignore[arg-type]
+
+        await router.send(DeliveryTarget.parse("telegram:999"), "hi there")
+
+        assert tg.sent == [("telegram:999", "hi there")]
+        assert web.sent == []
+
+    @pytest.mark.asyncio
+    async def test_send_unknown_platform_is_noop(self) -> None:
+        from arcgateway.delivery import DeliveryTarget
+
+        router = SessionRouter(executor=_ImmediateExecutor())
+        # No adapter registered — must not raise.
+        await router.send(DeliveryTarget.parse("telegram:999"), "hi")

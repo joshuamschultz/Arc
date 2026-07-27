@@ -264,6 +264,25 @@ class SessionRouter:
         """Backwards-compatible alias for :meth:`register_adapter`."""
         self.register_adapter(adapter)
 
+    async def send(self, target: DeliveryTarget, message: str) -> None:
+        """Deliver an unsolicited outbound message to ``target``'s platform.
+
+        Routes by ``target.platform`` to the adapter registered for it — the
+        outbound path for agent-initiated delivery (fired schedules, proactive
+        notifications) that does not originate from an inbound turn. No-op with
+        a structured warning when no adapter serves that platform, so a stale
+        ``deliver_to`` never raises into the caller (delivery is fail-open).
+        """
+        adapter = self._adapters.get(target.platform)
+        if adapter is None:
+            _logger.warning(
+                "Outbound send dropped: no adapter for platform %r (known: %s)",
+                target.platform,
+                ", ".join(sorted(self._adapters)) or "none",
+            )
+            return
+        await adapter.send(target, message)
+
     def add_approved_user(self, user_did: str) -> None:
         """Add a user DID to the allowlist (called after pairing approval).
 

@@ -38,6 +38,11 @@ _INJECTION_PATTERNS: list[re.Pattern[str]] = [
 
 _TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
+# Delivery target: ``platform:chat_id`` or ``platform:chat_id:thread_id``.
+# Kept string-only here — arcagent must not import arcgateway's DeliveryTarget
+# (layering). The gateway parses and validates the full target at send time.
+_DELIVER_TO_RE = re.compile(r"^[a-z][a-z0-9_]*:[^:]+(:[^:]+)?$")
+
 # Default floor constraints, used only when no SchedulerConfig context is
 # supplied to validation (e.g. reconstructing persisted entries). The live
 # create/update path passes config-derived limits via validation context.
@@ -125,6 +130,11 @@ class ScheduleEntry(BaseModel):
     at: str | None = None  # once (ISO 8601 with timezone)
     every_seconds: int | None = None  # interval
 
+    # Delivery: where the run's final output is sent when the schedule fires.
+    # ``platform:chat_id[:thread_id]`` (e.g. "telegram:12345"). None keeps the
+    # result internal to the ``scheduler:<id>`` session (no channel delivery).
+    deliver_to: str | None = None
+
     # Constraints.
     active_hours: ActiveHours | None = None
     timeout_seconds: int = 300
@@ -136,6 +146,14 @@ class ScheduleEntry(BaseModel):
     @classmethod
     def _validate_prompt(cls, v: str) -> str:
         validate_prompt(v)
+        return v
+
+    @field_validator("deliver_to")
+    @classmethod
+    def _validate_deliver_to(cls, v: str | None) -> str | None:
+        if v is not None and not _DELIVER_TO_RE.match(v):
+            msg = f"Invalid deliver_to {v!r}, expected 'platform:chat_id[:thread_id]'"
+            raise ValueError(msg)
         return v
 
     @field_validator("expression")

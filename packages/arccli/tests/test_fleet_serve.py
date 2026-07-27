@@ -169,9 +169,12 @@ class TestRegisterFleetStartup:
 
         seen: dict[str, Any] = {}
 
-        async def fake_serve(team_root: Path, fleet: Any, *, warm: Any = None) -> int:
+        async def fake_serve(
+            team_root: Path, fleet: Any, *, warm: Any = None, deliver_fn: Any = None
+        ) -> int:
             seen["team_root"] = team_root
             seen["fleet"] = fleet
+            seen["deliver_fn"] = deliver_fn
             # warm adopts the already-started instance into the executor cache
             await warm("did:arc:local:agent/x", fake_agent)
             return 3
@@ -187,4 +190,6 @@ class TestRegisterFleetStartup:
         await app.state._extra_startup_hooks[0]()  # run the lifespan hook
         assert seen["team_root"] == team_root
         assert seen["fleet"] is fleet
+        # No session_router on app.state in this test → delivery stays disabled.
+        assert seen["deliver_fn"] is None
         assert adopted == {"did:arc:local:agent/x": fake_agent}

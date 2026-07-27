@@ -459,6 +459,85 @@ class TestExecution:
         assert "enabled" not in updates
 
 
+class TestChannelDelivery:
+    @pytest.mark.asyncio
+    async def test_delivers_result_to_channel_when_deliver_to_set(self) -> None:
+        agent_run_fn = AsyncMock(return_value=MagicMock(content="the answer"))
+        deliver_fn = AsyncMock()
+        store = MagicMock(spec=ScheduleStore)
+        engine = SchedulerEngine(
+            store=store,
+            config=make_config(),
+            telemetry=MagicMock(),
+            agent_run_fn=agent_run_fn,
+        )
+        engine.set_channel_deliver_fn(deliver_fn)
+        entry = make_entry(id="s1", deliver_to="telegram:999")
+        await engine.execute(entry)
+        deliver_fn.assert_awaited_once_with("telegram:999", "the answer")
+
+    @pytest.mark.asyncio
+    async def test_no_delivery_when_deliver_to_unset(self) -> None:
+        agent_run_fn = AsyncMock(return_value=MagicMock(content="the answer"))
+        deliver_fn = AsyncMock()
+        engine = SchedulerEngine(
+            store=MagicMock(spec=ScheduleStore),
+            config=make_config(),
+            telemetry=MagicMock(),
+            agent_run_fn=agent_run_fn,
+        )
+        engine.set_channel_deliver_fn(deliver_fn)
+        entry = make_entry(id="s1")  # no deliver_to
+        await engine.execute(entry)
+        deliver_fn.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_no_crash_when_deliver_to_set_but_no_fn_bound(self) -> None:
+        agent_run_fn = AsyncMock(return_value=MagicMock(content="x"))
+        engine = SchedulerEngine(
+            store=MagicMock(spec=ScheduleStore),
+            config=make_config(),
+            telemetry=MagicMock(),
+            agent_run_fn=agent_run_fn,
+        )
+        entry = make_entry(id="s1", deliver_to="telegram:999")
+        # No channel_deliver_fn bound — must not raise.
+        await engine.execute(entry)
+
+    @pytest.mark.asyncio
+    async def test_delivery_failure_does_not_break_execution(self) -> None:
+        agent_run_fn = AsyncMock(return_value=MagicMock(content="x"))
+        deliver_fn = AsyncMock(side_effect=RuntimeError("send failed"))
+        store = MagicMock(spec=ScheduleStore)
+        engine = SchedulerEngine(
+            store=store,
+            config=make_config(),
+            telemetry=MagicMock(),
+            agent_run_fn=agent_run_fn,
+        )
+        engine.set_channel_deliver_fn(deliver_fn)
+        entry = make_entry(id="s1", deliver_to="telegram:999")
+        # Delivery raises, but execute() must still complete and record success.
+        result = await engine.execute(entry)
+        assert result is not None
+        store.update.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_no_delivery_on_failed_run(self) -> None:
+        agent_run_fn = AsyncMock(side_effect=RuntimeError("run failed"))
+        deliver_fn = AsyncMock()
+        engine = SchedulerEngine(
+            store=MagicMock(spec=ScheduleStore),
+            config=make_config(),
+            telemetry=MagicMock(),
+            agent_run_fn=agent_run_fn,
+        )
+        engine.set_channel_deliver_fn(deliver_fn)
+        entry = make_entry(id="s1", deliver_to="telegram:999")
+        await engine.execute(entry)
+        deliver_fn.assert_not_awaited()
+
+
 # --- Start/Stop lifecycle ---
 
 

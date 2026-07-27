@@ -27,7 +27,7 @@ import contextlib
 import logging
 import re
 import uuid
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -152,6 +152,12 @@ class ArcAgent:
         # injected into it (steer/follow_up) instead of starting a new one.
         self._active_runs: dict[str, RunHandle] = {}
         self._run_finalizers: set[asyncio.Task[None]] = set()
+        # Channel-delivery callback ("platform:chat_id", text) -> None. Injected
+        # by the embedded gateway (which owns channels) before startup(); None
+        # standalone. Surfaced to modules (scheduler) in the agent:ready payload
+        # so a fired schedule's output can reach a channel. arcagent stays
+        # string-only — the gateway parses the target (ADR: no arcgateway import).
+        self._channel_deliver_fn: Callable[[str, str], Awaitable[Any]] | None = None
         # The arctrust policy pipeline (built in startup) — reused to authorize
         # mid-turn steering (REQ-041), the only steering caller in the system.
         self._policy_pipeline: PolicyPipeline | None = None
@@ -508,6 +514,7 @@ class ArcAgent:
             {
                 "run_fn": self.run_collected,
                 "deliver_fn": self.deliver_message,
+                "channel_deliver_fn": self._channel_deliver_fn,
                 "skill_registry": self._capability_registry,
             },
         )
@@ -693,6 +700,18 @@ class ArcAgent:
         from arcagent.core.agent_dispatch import start_tracked_run
 
         return await start_tracked_run(self, input_text, session_key=session_key)
+
+    def set_channel_deliver_fn(
+        self,
+        fn: Callable[[str, str], Awaitable[Any]] | None,
+    ) -> None:
+        """Inject the channel-delivery callback (embedded gateway wiring).
+
+        Must be called BEFORE :meth:`startup` so the callback is present when
+        ``agent:ready`` fires and modules (scheduler) bind it. Standalone
+        deployments never call this — delivery stays disabled (None).
+        """
+        self._channel_deliver_fn = fn
 
     async def deliver_message(
         self,
