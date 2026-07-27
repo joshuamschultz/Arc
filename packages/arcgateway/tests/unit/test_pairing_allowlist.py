@@ -112,3 +112,21 @@ enabled = true
 """
         )
         assert build_user_allowlist(platforms) is None
+
+
+def test_allowlist_resolves_base_platform_for_per_agent_blocks() -> None:
+    """A `[platforms.sales_telegram]` block (platform=telegram) seeds telegram DIDs."""
+    from types import SimpleNamespace
+
+    from arcgateway.pairing_allowlist import build_user_allowlist
+
+    platforms = SimpleNamespace(
+        remote_blocks=lambda: {
+            "sales_telegram": {
+                "enabled": True,
+                "platform": "telegram",
+                "allowed_user_ids": [8293394811],
+            }
+        }
+    )
+    assert build_user_allowlist(platforms) == {"did:arc:telegram:8293394811"}

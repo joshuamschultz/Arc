@@ -438,6 +438,13 @@ def _gateway_adapter_install_handler(args: list[str]) -> None:
         sys.exit(code)
 
 
+def _gateway_connect_telegram_handler(args: list[str]) -> None:
+    """Guided Telegram connect — delegates to the gateway_connect module."""
+    from arccli.commands.gateway_connect import gateway_connect_telegram_handler
+
+    gateway_connect_telegram_handler(args)
+
+
 COMMAND_REGISTRY: list[CommandDef] = [
     # --- Info ---
     CommandDef(
@@ -635,6 +642,14 @@ COMMAND_REGISTRY: list[CommandDef] = [
         cli_only=True,
         gateway_only=True,
         handler=_gateway_adapter_install_handler,
+    ),
+    CommandDef(
+        name="gateway connect-telegram",
+        description="Connect an agent to a Telegram bot (guided: paste token + your user ID)",
+        category="Configuration",
+        args_hint="--agent <dir> [--user-id <id>]",
+        cli_only=True,
+        handler=_gateway_connect_telegram_handler,
     ),
     # --- Exit ---
     CommandDef(

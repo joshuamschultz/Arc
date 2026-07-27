@@ -53,7 +53,12 @@ def build_user_allowlist(platforms: PlatformsSection) -> set[str] | None:
     for name, block in platforms.remote_blocks().items():
         if not block.get("enabled"):
             continue
-        formatter = _USER_DID_SCHEMES.get(name)
+        # A per-agent bot block (e.g. ``[platforms.sales_telegram]``) reuses a base
+        # plugin via ``platform = "telegram"``; resolve the DID scheme by that base
+        # so every bot's allowed_user_ids seeds the allowlist, not just a block
+        # literally named "telegram".
+        plugin_name = str(block.get("platform") or name)
+        formatter = _USER_DID_SCHEMES.get(plugin_name)
         if formatter is None:
             continue
         raw_ids = block.get("allowed_user_ids") or []

@@ -344,3 +344,58 @@ def test_multiple_platforms_build_in_order() -> None:
         },
     )
     assert [a.name for a in adapters] == ["telegram", "mattermost"]
+
+
+# ── multi-bot: one plugin, many blocks (1 bot per agent) ─────────────────────
+
+
+def test_multiple_blocks_reuse_one_plugin_via_platform_key() -> None:
+    """Two `platform = "telegram"` blocks each build a telegram adapter for their agent."""
+    plugins = {"telegram": _plugin("telegram")}
+    adapters = build_adapters(
+        platforms={
+            "sales_telegram": {
+                "enabled": True,
+                "platform": "telegram",
+                "agent_did": "did:arc:local:executor/sales",
+            },
+            "josh_telegram": {
+                "enabled": True,
+                "platform": "telegram",
+                "agent_did": "did:arc:local:executor/josh",
+            },
+        },
+        on_message=_noop_on_message,
+        default_agent_did="did:arc:agent:default",
+        tier="personal",
+        plugins=plugins,
+    )
+    assert len(adapters) == 2
+    assert {a.agent_did for a in adapters} == {
+        "did:arc:local:executor/sales",
+        "did:arc:local:executor/josh",
+    }
+
+
+def test_plain_block_name_still_resolves_without_platform_key() -> None:
+    """Backward compatible: a block literally named `telegram` still works."""
+    adapters = build_adapters(
+        platforms={"telegram": {"enabled": True, "agent_did": "did:x"}},
+        on_message=_noop_on_message,
+        default_agent_did="did:default",
+        tier="personal",
+        plugins={"telegram": _plugin("telegram")},
+    )
+    assert len(adapters) == 1
+
+
+def test_unofficial_platform_key_blocked_at_federal() -> None:
+    """The federal allowlist check applies to the RESOLVED plugin, not the block name."""
+    with pytest.raises(AdapterUnavailableError):
+        build_adapters(
+            platforms={"sales_bot": {"enabled": True, "platform": "rogue"}},
+            on_message=_noop_on_message,
+            default_agent_did="did:x",
+            tier="federal",
+            plugins={"rogue": _plugin("rogue")},
+        )

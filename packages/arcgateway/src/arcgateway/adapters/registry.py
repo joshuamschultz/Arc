@@ -220,8 +220,16 @@ def build_adapters(
         if not isinstance(block, dict) or not block.get("enabled"):
             continue
 
+        # A block may set ``platform = "telegram"`` to reuse the telegram plugin
+        # under a distinct block name — this is how a fleet runs one bot PER agent
+        # (``[platforms.sales_telegram]``, ``[platforms.josh_telegram]``, each with
+        # its own token_env + agent_did). Absent the key, the block name IS the
+        # platform (unchanged single-bot behavior). Both the block name and the
+        # resolved plugin name are path-validated.
+        plugin_name = str(block.get("platform") or name)
         try:
             validate_adapter_name(name)
+            validate_adapter_name(plugin_name)
         except ValueError:
             _audit("gateway.adapter.blocked", name, "deny", reason="invalid_name")
             _logger.warning("registry: skipping platform with invalid name %r", name)
@@ -229,7 +237,7 @@ def build_adapters(
                 raise AdapterUnavailableError(f"invalid adapter name {name!r}") from None
             continue
 
-        if name not in OFFICIAL_ADAPTERS:
+        if plugin_name not in OFFICIAL_ADAPTERS:
             # Unofficial plugin: blocked at federal, allowed-with-warning otherwise.
             if is_federal:
                 _audit("gateway.adapter.blocked", name, "deny", reason="not_official")
@@ -239,12 +247,13 @@ def build_adapters(
                 "registry: loading unofficial adapter %r (personal/enterprise only)", name
             )
 
-        plugin = plugins.get(name)
+        plugin = plugins.get(plugin_name)
         if plugin is None:
             _audit("gateway.adapter.skipped", name, "deny", reason="not_installed")
+            expected = OFFICIAL_ADAPTERS.get(plugin_name, "an arcgateway adapter package")
             msg = (
                 f"adapter {name!r} enabled but its plugin package is not installed "
-                f"(expected: {OFFICIAL_ADAPTERS.get(name, 'an arcgateway adapter package')})"
+                f"(expected: {expected})"
             )
             if is_federal:
                 raise AdapterUnavailableError(msg)
@@ -272,7 +281,7 @@ def build_adapters(
             "gateway.adapter.loaded",
             name,
             "allow",
-            reason="official" if name in OFFICIAL_ADAPTERS else "unofficial",
+            reason="official" if plugin_name in OFFICIAL_ADAPTERS else "unofficial",
         )
         if not isinstance(block.get("agent_did"), str) or not block.get("agent_did"):
             # No per-platform override: this adapter serves whatever
