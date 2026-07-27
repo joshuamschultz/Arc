@@ -21,6 +21,11 @@ from arctrust.audit import AuditSink
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
 TaskStatus = Literal["backlog", "todo", "in_progress", "review", "done", "failed"]
+# Columns an operator may move a task INTO from the board. `in_progress` is absent:
+# only the dispatch claim (start_task) enters it, so a board move can never fake a run.
+_OPERATOR_MOVE_STATUSES: frozenset[str] = frozenset(
+    {"backlog", "todo", "review", "done", "failed"}
+)
 Priority = Literal["low", "medium", "high", "critical"]
 
 # Claim ordering (SDD §2): highest priority first.
@@ -548,6 +553,32 @@ class TaskStore:
             task_id,
             {"cancel_requested": True},
             where={"status": "in_progress"},
+            actor_did=actor_did,
+            sink=self._sink,
+        )
+        return await self.get(task_id) if won else None
+
+    async def set_status(self, task_id: str, new_status: str, *, actor_did: str) -> Task | None:
+        """Operator board move: set an at-rest task's column. Atomic on current status.
+
+        The human-controllable board transition (drag ``backlog`` -> ``todo`` so the
+        dispatch loop will run it). ``in_progress`` is EXCLUDED as a target (only the
+        dispatch claim enters it), and a task that is CURRENTLY ``in_progress`` cannot be
+        board-moved, so an operator never yanks a live run out from under its owner
+        (ASI08/NFR-4). The write is conditional on the current status so it no-ops rather
+        than clobbering a concurrent transition. Returns the moved task, or None if the
+        target is disallowed, the task is gone/running, or it raced.
+        """
+        if new_status not in _OPERATOR_MOVE_STATUSES:
+            return None
+        current = await self.get(task_id)
+        if current is None or current.status == "in_progress":
+            return None
+        won = await self._backend.update_if(
+            self._COLLECTION,
+            task_id,
+            {"status": new_status},
+            where={"status": current.status},
             actor_did=actor_did,
             sink=self._sink,
         )

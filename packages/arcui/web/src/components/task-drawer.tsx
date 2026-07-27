@@ -159,6 +159,18 @@ export function TaskDrawer({
     }
   }
 
+  const move = async (status: string) => {
+    setError(null)
+    try {
+      await apiPost(`/api/tasks/${encodeURIComponent(task.id)}/move`, { status })
+      await queryClient.invalidateQueries({
+        predicate: (q) => q.queryKey.some((k) => k === 'tasks'),
+      })
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Failed to move task')
+    }
+  }
+
   const decide = async (approve: boolean) => {
     setDeciding(true)
     setError(null)
@@ -194,6 +206,20 @@ export function TaskDrawer({
             </span>
             <StatusText value={task.status} />
             <SeverityBadge value={task.priority} />
+            {operatorMode && atRest && (
+              <Select value={task.status} onValueChange={move}>
+                <SelectTrigger className="h-6 w-[120px] text-[11px]">
+                  <SelectValue placeholder="Move to…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {['backlog', 'todo', 'review', 'done', 'failed'].map((s) => (
+                    <SelectItem key={s} value={s}>
+                      Move to {s}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
             {!atRest && <span className="text-muted-foreground">edit-at-rest only — steer below</span>}
           </SheetDescription>
         </SheetHeader>

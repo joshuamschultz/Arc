@@ -279,6 +279,30 @@ def _edit(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _move(args: argparse.Namespace) -> None:
+    """Board-move a task to a new column (e.g. backlog -> todo so it dispatches)."""
+    data_dir = _resolve_dir(args)
+    task_id: str = args.id
+    status: str = args.status
+    actor: str = getattr(args, "actor", None) or "did:arc:cli:operator"
+
+    async def _run() -> Task | None:
+        store, store_backend = await _open_store(data_dir, mutable=True)
+        try:
+            return await store.set_status(task_id, status, actor_did=actor)
+        finally:
+            await store_backend.stop()
+
+    updated = asyncio.run(_run())
+    if updated is None:
+        _err(
+            f"arc task move: refused — task {task_id} not found, currently running, "
+            f"or {status!r} is not an allowed board column."
+        )
+        sys.exit(1)
+    _out(f"Moved {task_id} -> {updated.status}")
+
+
 def _assign(args: argparse.Namespace) -> None:
     root = _get_root(args)
     data_dir = _resolve_dir(args)
@@ -410,6 +434,7 @@ _SUBCOMMANDS = {
     "list": _list,
     "edit": _edit,
     "assign": _assign,
+    "move": _move,
     "complete": _complete,
     "talk": _talk,
 }
@@ -463,6 +488,14 @@ def _build_parser() -> argparse.ArgumentParser:
     assign_p.add_argument("id")
     assign_p.add_argument("owner_ref", help="New owner ref (e.g. @bob).")
     assign_p.add_argument("--actor", required=True, help="Operator ref (handle/DID/URI).")
+
+    move_p = subs.add_parser("move", help="Board-move a task to a column (e.g. todo).")
+    _common(move_p)
+    move_p.add_argument("id")
+    move_p.add_argument(
+        "status", choices=["backlog", "todo", "review", "done", "failed"], help="Target column."
+    )
+    move_p.add_argument("--actor", default=None, help="Operator ref recorded on the move.")
 
     complete_p = subs.add_parser("complete", help="Mark a task done.")
     _common(complete_p)

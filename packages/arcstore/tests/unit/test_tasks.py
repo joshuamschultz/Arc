@@ -1378,3 +1378,48 @@ class TestRoutingAndReview:
             assert back is not None and back.status == "todo"
         finally:
             await be.stop()
+
+
+class TestSetStatus:
+    """Operator board move (backlog <-> todo), guarded against faking in_progress."""
+
+    async def test_move_backlog_to_todo(self, tmp_path: Path) -> None:
+        from arcstore.tasks import Task, TaskStore
+
+        be = await _backend(tmp_path)
+        try:
+            store = TaskStore(be)
+            await store.create(
+                Task(id="m1", title="M", creator_did=_CREATOR, owner_did=_AGENT_A, status="backlog")
+            )
+            moved = await store.set_status("m1", "todo", actor_did=_OPERATOR)
+            assert moved is not None and moved.status == "todo"
+        finally:
+            await be.stop()
+
+    async def test_cannot_move_into_in_progress(self, tmp_path: Path) -> None:
+        from arcstore.tasks import Task, TaskStore
+
+        be = await _backend(tmp_path)
+        try:
+            store = TaskStore(be)
+            await store.create(Task(id="m2", title="M", creator_did=_CREATOR, status="todo"))
+            assert await store.set_status("m2", "in_progress", actor_did=_OPERATOR) is None
+            assert (await store.get("m2")).status == "todo"
+        finally:
+            await be.stop()
+
+    async def test_cannot_board_move_a_running_task(self, tmp_path: Path) -> None:
+        from arcstore.tasks import Task, TaskStore
+
+        be = await _backend(tmp_path)
+        try:
+            store = TaskStore(be)
+            await store.create(
+                Task(id="m3", title="M", creator_did=_CREATOR, status="in_progress")
+            )
+            # never yank a live run out from under its owner
+            assert await store.set_status("m3", "todo", actor_did=_OPERATOR) is None
+            assert (await store.get("m3")).status == "in_progress"
+        finally:
+            await be.stop()

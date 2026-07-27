@@ -235,6 +235,44 @@ async def cancel_task(request: Request) -> Response:
     return JSONResponse(updated.model_dump(mode="json"))
 
 
+async def move_task(request: Request) -> Response:
+    """POST /api/tasks/{id}/move — operator board move to a new column.
+
+    The human-controllable transition (e.g. ``backlog`` -> ``todo`` so the dispatch
+    loop will run it). Delegates to the store's guarded ``set_status``: ``in_progress``
+    is refused (only the dispatch claim enters it) and a currently-running task cannot be
+    moved (409). Missing task -> 404; disallowed/raced move -> 409.
+    """
+    task_id = request.path_params["id"]
+    target = f"task:{task_id}"
+
+    if not _is_operator(request):
+        emit_mutation_audit(
+            request, target=target, operation="task.move", outcome="denied", detail="viewer role"
+        )
+        return _error("operator_role_required", 403)
+
+    body = await _json_body(request)
+    status = str((body or {}).get("status") or "")
+    if not status:
+        return _error("expected {\"status\": <column>}", 400)
+
+    store = request.app.state.task_store
+    if await store.get(task_id) is None:
+        return _error("not found", 404)
+    updated = await store.set_status(task_id, status, actor_did=_CREATOR)
+    if updated is None:
+        emit_mutation_audit(
+            request, target=target, operation="task.move", outcome="denied", detail=status
+        )
+        return _error("invalid_move", 409)
+
+    emit_mutation_audit(
+        request, target=target, operation="task.move", outcome="applied", detail=status
+    )
+    return JSONResponse(updated.model_dump(mode="json"))
+
+
 async def _review_decision(request: Request, *, approve: bool) -> Response:
     """Shared body for the review gate's approve/reject routes (P3).
 
@@ -284,6 +322,7 @@ routes = [
     Route("/api/tasks/{id}", patch_task, methods=["PATCH"]),
     Route("/api/tasks/{id}", delete_task, methods=["DELETE"]),
     Route("/api/tasks/{id}/cancel", cancel_task, methods=["POST"]),
+    Route("/api/tasks/{id}/move", move_task, methods=["POST"]),
     Route("/api/tasks/{id}/approve", approve_task, methods=["POST"]),
     Route("/api/tasks/{id}/reject", reject_task, methods=["POST"]),
 ]

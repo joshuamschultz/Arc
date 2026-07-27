@@ -601,3 +601,41 @@ class TestPatchRaceGuard:
 
         mutations = _mutations(caplog)
         assert mutations and mutations[-1]["outcome"] == "denied"
+
+
+class TestMoveTask:
+    """POST /api/tasks/{id}/move — operator board move (backlog -> todo)."""
+
+    def test_operator_moves_backlog_to_todo(self, tmp_path: Path) -> None:
+        app, auth = _make_app(tmp_path)
+        client = TestClient(app)
+        tid = client.post(
+            "/api/team/tasks", headers=_operator(auth), json={"title": "X"}
+        ).json()["id"]
+        r = client.post(
+            f"/api/tasks/{tid}/move", headers=_operator(auth), json={"status": "todo"}
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "todo"
+
+    def test_viewer_is_forbidden(self, tmp_path: Path) -> None:
+        app, auth = _make_app(tmp_path)
+        client = TestClient(app)
+        tid = client.post(
+            "/api/team/tasks", headers=_operator(auth), json={"title": "X"}
+        ).json()["id"]
+        r = client.post(
+            f"/api/tasks/{tid}/move", headers=_viewer(auth), json={"status": "todo"}
+        )
+        assert r.status_code == 403
+
+    def test_cannot_move_to_in_progress(self, tmp_path: Path) -> None:
+        app, auth = _make_app(tmp_path)
+        client = TestClient(app)
+        tid = client.post(
+            "/api/team/tasks", headers=_operator(auth), json={"title": "X"}
+        ).json()["id"]
+        r = client.post(
+            f"/api/tasks/{tid}/move", headers=_operator(auth), json={"status": "in_progress"}
+        )
+        assert r.status_code == 409

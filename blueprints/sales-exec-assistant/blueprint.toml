@@ -34,9 +34,14 @@ brain = "arcmemory"
 distill_provider = "anthropic"
 distill_model = "claude-sonnet-5"
 
-# Commitments become durable, tracked tasks (SPEC-056).
+# Commitments become durable, tracked tasks (SPEC-056). dispatch=true runs the
+# auto-dispatch loop so an assigned `todo` task is claimed and worked without a
+# manual claim (off = the board tracks tasks but nothing runs them).
 [modules.tasks]
 enabled = true
+
+[modules.tasks.config]
+dispatch = true
 
 # The morning briefing fires from the schedule seeded below.
 [modules.scheduler]
