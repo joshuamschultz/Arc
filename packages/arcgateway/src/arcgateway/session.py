@@ -88,6 +88,13 @@ class _AdapterProtocol(Protocol):
     ``hasattr`` and falls back to ``send`` when absent.
     """
 
+    name: str
+    """Platform id (e.g. "telegram"). Shared across bots of the same platform."""
+
+    agent_did: str
+    """DID of the agent this adapter's bot serves — disambiguates multiple bots
+    on the same platform so a reply returns through the RIGHT bot."""
+
     async def send(self, target: DeliveryTarget, message: str) -> None:
         """Deliver a complete message to the target."""
         ...
@@ -100,6 +107,12 @@ class _AdapterProtocol(Protocol):
         need not implement it.
         """
         ...
+
+
+def _adapter_key(adapter: _AdapterProtocol) -> tuple[str, str]:
+    """Outbound-registry key: (platform, agent_did). ``agent_did`` defaults to
+    "" for single-bot adapters (web) that don't declare one."""
+    return (adapter.name, getattr(adapter, "agent_did", "") or "")
 
 
 def build_session_key(agent_did: str, user_did: str, *, generation: int = 0) -> str:
@@ -204,26 +217,32 @@ class SessionRouter:
         # Strong references to spawned tasks — prevents GC before completion.
         self._pending_tasks: set[asyncio.Task[None]] = set()
 
-        # Outbound channel registry — adapter.name → adapter. A reply is
-        # delivered through the adapter that owns the event's source channel,
-        # resolved generically by name (see _resolve_outbound). The router
-        # never references a specific platform; all send/edit/typing specifics
-        # live in the adapter packages. Seeded from the legacy single `adapter`
-        # arg and `adapter_map`; this same registry also serves pairing DMs.
-        self._adapters: dict[str, _AdapterProtocol] = {}
+        # Outbound channel registry — (platform, agent_did) → adapter. Keying by
+        # platform ALONE collides when several bots share a platform (one
+        # Telegram bot per agent): the last registered would capture every
+        # reply, so a message to Olivia's bot would answer through Sales'. The
+        # agent_did in the key routes each reply back through the bot it hit
+        # (see _resolve_outbound). All send/edit/typing specifics live in the
+        # adapter packages; this same registry also serves pairing DMs.
+        self._adapters: dict[tuple[str, str], _AdapterProtocol] = {}
         if adapter is not None:
-            self._adapters[adapter.name] = adapter
+            self._adapters[_adapter_key(adapter)] = adapter
         if adapter_map:
-            self._adapters.update(adapter_map)
+            for entry in adapter_map.values():
+                self._adapters[_adapter_key(entry)] = entry
         self._delivery_target_factory = delivery_target_factory
         self._stream_bridge = StreamBridge()
 
         # Composed pairing interceptor (T1.8) — shares the same channel registry.
+        # Pairing keeps its own platform-name→adapter map (name-keyed, seeded
+        # here and topped up by register_adapter). Pairing DM routing across
+        # multiple same-platform bots is a separate, lesser concern than reply
+        # routing and is intentionally last-wins for now.
         self._pairing = PairingInterceptor(
             user_allowlist=user_allowlist,
             pairing_store=pairing_store,
             pairing_db_path=pairing_db_path,
-            adapter_map=self._adapters,
+            adapter_map={name: a for (name, _did), a in self._adapters.items()},
         )
 
         # Composed queue manager with bounded depth + idle eviction.
@@ -255,30 +274,33 @@ class SessionRouter:
         cycle: build the router first, build adapters with a closure over
         ``router.handle``, then ``router.register_adapter(adapter)`` for each.
 
-        Idempotent: re-registering the same name replaces it (runtime swaps).
+        Idempotent: re-registering the same (platform, agent) replaces it.
         """
-        self._adapters[adapter.name] = adapter
+        self._adapters[_adapter_key(adapter)] = adapter
         self._pairing.register_adapter(adapter.name, adapter)
 
     def set_adapter(self, adapter: BasePlatformAdapter) -> None:
         """Backwards-compatible alias for :meth:`register_adapter`."""
         self.register_adapter(adapter)
 
-    async def send(self, target: DeliveryTarget, message: str) -> None:
+    async def send(self, target: DeliveryTarget, message: str, *, agent_did: str = "") -> None:
         """Deliver an unsolicited outbound message to ``target``'s platform.
 
-        Routes by ``target.platform`` to the adapter registered for it — the
-        outbound path for agent-initiated delivery (fired schedules, proactive
-        notifications) that does not originate from an inbound turn. No-op with
-        a structured warning when no adapter serves that platform, so a stale
-        ``deliver_to`` never raises into the caller (delivery is fail-open).
+        The outbound path for agent-initiated delivery (fired schedules,
+        proactive notifications) that does not originate from an inbound turn.
+        ``agent_did`` selects the sending bot when several serve the platform
+        (one Telegram bot per agent) — pass the delivering agent's DID so its
+        schedule/notification goes out through ITS bot, not another agent's.
+        No-op with a structured warning when no adapter serves the pair, so a
+        stale ``deliver_to`` never raises into the caller (delivery is fail-open).
         """
-        adapter = self._adapters.get(target.platform)
+        adapter = self._adapter_for(target.platform, agent_did)
         if adapter is None:
             _logger.warning(
-                "Outbound send dropped: no adapter for platform %r (known: %s)",
+                "Outbound send dropped: no adapter for platform %r agent %r (known: %s)",
                 target.platform,
-                ", ".join(sorted(self._adapters)) or "none",
+                agent_did,
+                ", ".join(sorted(f"{p}/{a}" for p, a in self._adapters)) or "none",
             )
             return
         await adapter.send(target, message)
@@ -566,15 +588,26 @@ class SessionRouter:
         Slack on Slack, web on web. The router holds NO platform-specific
         logic; every send/edit/typing detail lives in the adapter package.
 
-        When exactly one channel is registered, deliver through it regardless
-        of name (single-platform deployments and tests). When several are
-        registered and none matches, there is no safe channel — the caller
-        logs the turn instead of guessing.
+        With several bots on one platform (one per agent), the reply must go
+        through the bot the message HIT — resolved by (platform, agent_did).
+        Falls back to the platform's sole bot, then to the sole channel overall
+        (single-platform deployments and tests). When several match none, there
+        is no safe channel — the caller logs the turn instead of guessing.
         """
-        adapter = self._adapters.get(event.platform)
-        if adapter is None and len(self._adapters) == 1:
+        return self._adapter_for(event.platform, event.agent_did)
+
+    def _adapter_for(self, platform: str, agent_did: str) -> _AdapterProtocol | None:
+        """Resolve the outbound adapter for a (platform, agent) pair, with
+        fallbacks for single-bot and single-channel deployments."""
+        adapter = self._adapters.get((platform, agent_did or ""))
+        if adapter is not None:
+            return adapter
+        on_platform = [a for (p, _), a in self._adapters.items() if p == platform]
+        if len(on_platform) == 1:
+            return on_platform[0]
+        if len(self._adapters) == 1:
             return next(iter(self._adapters.values()))
-        return adapter
+        return None
 
     def _resolve_delivery_target(self, event: InboundEvent) -> DeliveryTarget:
         """Build a DeliveryTarget from an InboundEvent.

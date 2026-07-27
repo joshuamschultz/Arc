@@ -167,6 +167,7 @@ class MattermostAdapter:
         self._bot_token = bot_token  # private -- never in repr
         self._on_message = on_message
         self._agent_did = agent_did
+        self.agent_did = agent_did
         self._allowed_channel_ids: set[str] = (
             set(allowed_channel_ids) if allowed_channel_ids else set()
         )

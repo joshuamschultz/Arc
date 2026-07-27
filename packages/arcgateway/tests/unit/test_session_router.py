@@ -189,10 +189,17 @@ class TestCanonicalSessionKey:
 class _RecordingAdapter:
     """Outbound channel that records what it was asked to deliver."""
 
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, agent_did: str = "") -> None:
         self.name = name
+        self.agent_did = agent_did
         self.sent: list[tuple[object, str]] = []
         self.placeholders: list[str] = []
+
+    async def connect(self) -> None:  # pragma: no cover - unused
+        ...
+
+    async def disconnect(self) -> None:  # pragma: no cover - unused
+        ...
 
     async def send(self, target: object, message: str, *, reply_to: str | None = None) -> None:
         self.sent.append((target, message))
@@ -360,23 +367,6 @@ class TestSessionRouterHandle:
         await asyncio.sleep(0.05)
 
 
-class _RecordingAdapter:
-    """Minimal outbound adapter that records send() calls."""
-
-    def __init__(self, name: str) -> None:
-        self.name = name
-        self.sent: list[tuple[str, str]] = []
-
-    async def connect(self) -> None:  # pragma: no cover - unused
-        ...
-
-    async def disconnect(self) -> None:  # pragma: no cover - unused
-        ...
-
-    async def send(self, target: object, message: str) -> None:
-        self.sent.append((str(target), message))
-
-
 class TestOutboundSend:
     @pytest.mark.asyncio
     async def test_send_routes_to_matching_platform_adapter(self) -> None:
@@ -390,7 +380,7 @@ class TestOutboundSend:
 
         await router.send(DeliveryTarget.parse("telegram:999"), "hi there")
 
-        assert tg.sent == [("telegram:999", "hi there")]
+        assert [(str(t), m) for t, m in tg.sent] == [("telegram:999", "hi there")]
         assert web.sent == []
 
     @pytest.mark.asyncio
@@ -400,3 +390,45 @@ class TestOutboundSend:
         router = SessionRouter(executor=_ImmediateExecutor())
         # No adapter registered — must not raise.
         await router.send(DeliveryTarget.parse("telegram:999"), "hi")
+
+    @pytest.mark.asyncio
+    async def test_send_routes_by_agent_did_across_same_platform_bots(self) -> None:
+        from arcgateway.delivery import DeliveryTarget
+
+        router = SessionRouter(executor=_ImmediateExecutor())
+        olivia = _RecordingAdapter("telegram", agent_did="did:arc:local:executor/olivia")
+        sales = _RecordingAdapter("telegram", agent_did="did:arc:local:executor/sales")
+        router.register_adapter(olivia)  # type: ignore[arg-type]
+        router.register_adapter(sales)  # type: ignore[arg-type]
+
+        await router.send(
+            DeliveryTarget.parse("telegram:42"),
+            "for olivia",
+            agent_did="did:arc:local:executor/olivia",
+        )
+
+        assert [m for _, m in olivia.sent] == ["for olivia"]
+        assert sales.sent == []
+
+
+class TestMultiBotReplyRouting:
+    """Two bots on one platform must reply through the bot the message hit."""
+
+    @pytest.mark.asyncio
+    async def test_reply_routes_to_the_agents_own_bot(self) -> None:
+        olivia = _RecordingAdapter("telegram", agent_did="did:arc:agent:olivia")
+        sales = _RecordingAdapter("telegram", agent_did="did:arc:agent:sales")
+        router = SessionRouter(executor=_EchoExecutor())
+        router.register_adapter(olivia)  # type: ignore[arg-type]
+        router.register_adapter(sales)  # type: ignore[arg-type]
+
+        # A message that arrived on Olivia's bot (agent_did=olivia).
+        event = _make_event(
+            message="hi olivia", user_did="did:arc:user:josh", agent_did="did:arc:agent:olivia"
+        )
+        await router.handle(event)
+        await asyncio.sleep(0.05)
+
+        # Olivia's bot replied; the sales bot stayed silent.
+        assert [m for _, m in olivia.sent] == ["hi"]
+        assert sales.sent == []

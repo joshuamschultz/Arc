@@ -187,6 +187,10 @@ class TelegramAdapter:
         self._allowed_user_ids = list(allowed_user_ids)
         self._on_message = on_message
         self._agent_did = agent_did
+        # Public: the SessionRouter keys its outbound registry by (name,
+        # agent_did) so a reply returns through THIS bot, not another agent's
+        # bot on the same platform.
+        self.agent_did = agent_did
         self._poll_interval = poll_interval
         self._require_pairing = require_pairing
 

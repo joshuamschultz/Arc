@@ -123,6 +123,10 @@ class WebPlatformAdapter:
     ) -> None:
         self._on_message = on_message
         self._default_agent_did = agent_did
+        # One web adapter serves every agent (routing is per-socket by chat_id),
+        # so it registers under (web, "") and the single-platform fallback in
+        # SessionRouter._adapter_for delivers each agent's reply.
+        self.agent_did = ""
         self.max_connections = max_connections
         self.idle_timeout_seconds = idle_timeout_seconds
         self.max_frame_bytes = max_frame_bytes

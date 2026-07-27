@@ -24,8 +24,15 @@ _logger = logging.getLogger("arcgateway.channel_delivery")
 ChannelDeliverFn = Callable[[str, str], Awaitable[None]]
 
 
-def make_channel_deliver_fn(session_router: SessionRouter) -> ChannelDeliverFn:
+def make_channel_deliver_fn(
+    session_router: SessionRouter,
+    agent_did: str = "",
+) -> ChannelDeliverFn:
     """Return a ``(target_str, message) -> None`` closure over ``session_router``.
+
+    ``agent_did`` binds the closure to the delivering agent so a fired schedule
+    or ``notify_user`` goes out through THAT agent's bot when several bots serve
+    the platform (one Telegram bot per agent). Bind one closure per agent.
 
     A malformed target string is logged and dropped rather than raised — the
     caller (the scheduler) treats delivery as fail-open so a bad ``deliver_to``
@@ -38,7 +45,7 @@ def make_channel_deliver_fn(session_router: SessionRouter) -> ChannelDeliverFn:
         except ValueError:
             _logger.warning("channel delivery: bad target %r — dropping", target_str)
             return
-        await session_router.send(target, message)
+        await session_router.send(target, message, agent_did=agent_did)
 
     return _deliver
 

@@ -45,7 +45,14 @@ class BasePlatformAdapter(Protocol):
     """
 
     name: str
-    """Unique identifier for this adapter instance (e.g. "telegram", "slack")."""
+    """Platform identifier (e.g. "telegram", "slack"). Shared across bots of the
+    same platform — combine with ``agent_did`` for a unique outbound key."""
+
+    agent_did: str
+    """DID of the agent this adapter's bot serves. The SessionRouter keys its
+    outbound registry by (name, agent_did) so a reply returns through the RIGHT
+    bot when several bots run on one platform (one per agent). "" for a single
+    adapter that fronts every agent (e.g. web)."""
 
     async def connect(self) -> None:
         """Establish the platform connection.

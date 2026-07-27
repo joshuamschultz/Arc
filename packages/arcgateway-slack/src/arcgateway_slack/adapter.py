@@ -189,6 +189,7 @@ class SlackAdapter:
         self._allowed_user_ids = list(allowed_user_ids)
         self._on_message = on_message
         self._agent_did = agent_did
+        self.agent_did = agent_did
         self._require_pairing = require_pairing
 
         self._dedup = _DedupStore(db_path=dedup_db_path)
