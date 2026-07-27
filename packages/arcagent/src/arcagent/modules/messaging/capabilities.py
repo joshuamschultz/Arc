@@ -5,6 +5,7 @@ The live messaging surface. Capabilities register on load:
   * ``agent:assemble_prompt`` (priority 50)  — inject team context + roster.
   * ``agent:ready``           (priority 100) — bind agent.run_collected() callback.
   * ``agent:shutdown``        (priority 100) — cancel poll task, log stop.
+  * ``notify_user``           (@tool)        — proactive message to the human (gateway channel).
   * ``messaging_send``        (@tool)        — send a message to entity/channel/role.
   * ``messaging_check_inbox`` (@tool)        — poll all streams for unread messages.
   * ``messaging_read_thread`` (@tool)        — read full conversation thread.
@@ -30,6 +31,7 @@ from pathlib import Path
 from typing import Any
 from xml.sax.saxutils import escape as xml_escape
 
+from arcagent.core import known_channels, turn_context
 from arcagent.modules.messaging import _runtime
 from arcagent.modules.messaging.tools import _stream_end_byte_pos
 from arcagent.tools._decorator import background_task, hook, tool
@@ -324,6 +326,7 @@ async def messaging_bind_run_fn(ctx: Any) -> None:
     if deliver_fn is not None:
         st.deliver_fn = deliver_fn
     st.classify_fn = data.get("classify_fn")
+    st.channel_deliver_fn = data.get("channel_deliver_fn")
     _logger.info("Bound agent run/deliver callbacks for message processing")
 
 
@@ -337,6 +340,56 @@ async def messaging_shutdown(ctx: Any) -> None:
 # ---------------------------------------------------------------------------
 # Tools
 # ---------------------------------------------------------------------------
+
+
+def _notify_target(st: Any) -> str | None:
+    """Where a proactive user notification should go.
+
+    Prefers the channel the current turn arrived on (reply in place); else the
+    agent's most-recently-seen channel. None when the agent has never been
+    reached on any channel (nothing to notify on).
+    """
+    current = turn_context.inbound_channel()
+    if current:
+        return current
+    known = known_channels.list_channels(st.workspace)
+    return known[0]["target"] if known else None
+
+
+@tool(
+    name="notify_user",
+    description=(
+        "Send a proactive message to the human operator on their channel. Use "
+        "ONLY when you have a meaningful update, result, question, or need "
+        "direction — never for routine status. For agents/channels use "
+        "messaging_send instead."
+    ),
+    classification="state_modifying",
+    # SPEC-038 REQ-030 — notifying the human is an external_comms leg producer.
+    capability_tags=["network_egress"],
+)
+async def notify_user(message: str = "") -> str:
+    """Deliver a proactive notification to the human via the gateway channel.
+
+    Channel-agnostic: routes through the embedded gateway's channel delivery
+    (the same seam scheduled deliveries use), so it works on whatever platform
+    the operator reached the agent on — no per-platform bot in the agent.
+    """
+    if not message.strip():
+        return json.dumps({"error": "message is required"})
+    st = _runtime.state()
+    if st.channel_deliver_fn is None:
+        return json.dumps({"error": "no delivery channel is wired (standalone agent)"})
+    target = _notify_target(st)
+    if not target:
+        return json.dumps({"error": "no known channel to notify the user on"})
+    try:
+        await st.channel_deliver_fn(target, message)
+    except Exception as exc:  # reason: surface a tool error, don't crash the turn
+        _logger.warning("notify_user delivery to %s failed: %s", target, exc)
+        return json.dumps({"error": f"delivery failed: {exc}"})
+    _logger.info("Agent notified user on %s (%d chars)", target, len(message))
+    return json.dumps({"status": "sent", "target": target})
 
 
 @tool(
@@ -666,5 +719,6 @@ __all__ = [
     "messaging_read_thread",
     "messaging_send",
     "messaging_shutdown",
+    "notify_user",
     "store_team_file",
 ]

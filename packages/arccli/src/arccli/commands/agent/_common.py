@@ -426,29 +426,10 @@ priority = 100
 data_dir = ""                # empty defers to arcstore.resolve_data_dir (shared store)
 stale_ttl_seconds = 300      # age out a cancel request that never matches a live run
 
-[modules.slack]
-enabled = false
-priority = 100
-
-[modules.slack.config]
-allowed_user_ids = []        # empty = allow all
-max_message_length = 4000
-bot_token_env_var = "ARCAGENT_SLACK_BOT_TOKEN"
-app_token_env_var = "ARCAGENT_SLACK_APP_TOKEN"
-max_file_size_mb = 20
-allowed_extensions = []      # empty = allow all
-
-[modules.telegram]
-enabled = false
-priority = 100
-
-[modules.telegram.config]
-allowed_chat_ids = []
-poll_interval = 1.0
-max_message_length = 4096
-bot_token_env_var = "ARCAGENT_TELEGRAM_BOT_TOKEN"
-max_file_size_mb = 20
-allowed_extensions = []
+# Telegram/Slack are gateway ADAPTERS (packages/arcgateway-*), not in-agent
+# modules — configure them in the gateway's [platforms.*] blocks. The agent
+# reaches the human through the gateway channel (notify_user), never a bot it
+# owns. (Legacy [modules.telegram]/[modules.slack] were removed.)
 
 [modules.web]
 enabled = false

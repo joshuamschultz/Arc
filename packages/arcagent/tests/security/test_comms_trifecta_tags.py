@@ -52,8 +52,8 @@ class TestCommsTags:
         assert UNTRUSTED_INPUT in _legs(messaging_check_inbox)
         assert UNTRUSTED_INPUT in _legs(messaging_read_thread)
 
-    def test_telegram_notify_emits_external_comms(self) -> None:
-        from arcagent.modules.telegram.capabilities import notify_user
+    def test_notify_user_emits_external_comms(self) -> None:
+        from arcagent.modules.messaging.capabilities import notify_user
 
         assert EXTERNAL_COMMS in _legs(notify_user)
 
@@ -261,7 +261,7 @@ class TestOwnerChannelExemption:
         assert exc.value.decision.rule_id == "global.forbidden_composition"
 
     async def test_notify_user_after_private_and_untrusted_allowed(self) -> None:
-        from arcagent.modules.telegram.capabilities import notify_user
+        from arcagent.modules.messaging.capabilities import notify_user
 
         tel = _RecordingTelemetry()
         reg = await self._registry(tel)
@@ -307,16 +307,10 @@ class TestLegsForCall:
         legs = legs_for_call("messaging_send", ["network_egress"], {})
         assert EXTERNAL_COMMS in legs
 
-    def test_telegram_notify_user_is_owner_directed(self) -> None:
+    def test_notify_user_is_owner_directed(self) -> None:
         # notify_user takes only a message body and routes to the operator's own
-        # paired DM — unconditionally owner-directed, so no external_comms leg.
+        # channel — unconditionally owner-directed, so no external_comms leg.
         legs = legs_for_call("notify_user", ["network_egress"], {})
-        assert EXTERNAL_COMMS not in legs
-
-    def test_slack_notify_user_is_owner_directed(self) -> None:
-        # slack_notify_user declares BOTH slack_notify and network_egress (each
-        # maps to external_comms); the owner-directed drop clears the leg wholesale.
-        legs = legs_for_call("slack_notify_user", ["slack_notify", "network_egress"], {})
         assert EXTERNAL_COMMS not in legs
 
     def test_unknown_egress_tool_keeps_external_comms(self) -> None:

@@ -71,6 +71,9 @@ class _State:
     # Bounded single-shot LLM classifier (agent.quick_classify) — bound at
     # agent:ready. Powers the cheap channel-broadcast relevance gate (SPEC-055).
     classify_fn: Any = None
+    # Channel delivery ("platform:chat_id", text) -> None from the embedded
+    # gateway — bound at agent:ready. Powers ``notify_user`` (agent -> human).
+    channel_deliver_fn: Any = None
     # Serialises message processing so only one inbox batch is in-flight.
     processing_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     # TTL-cached team roster string; invalidated after roster_ttl_seconds.

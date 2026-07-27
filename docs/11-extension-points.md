@@ -257,11 +257,12 @@ raises `AdapterUnavailableError` and is skipped at personal/enterprise but a
 **hard startup failure** at federal (`registry.py:262-269`) — a federal
 deployment never silently serves a subset of its configured platforms.
 
-> ⚠️ Note: `arcagent/modules/telegram` and `arcagent/modules/slack` are a
-> *different*, in-process integration (agent-module hooks), not the
-> `arcgateway-telegram`/`arcgateway-slack` remote-platform packages. Both
-> exist; they solve different problems (agent-embedded bot vs. externally
-> routed gateway).
+> ⚠️ Note: remote chat platforms are gateway **adapter plugins**
+> (`arcgateway-telegram`, `arcgateway-slack`, `arcgateway-mattermost`) — the
+> single channel path. The agent owns no per-platform bot; it reaches the human
+> through the gateway channel (the `notify_user` tool). The former in-process
+> `arcagent/modules/telegram` and `.../slack` modules were removed in favor of
+> this one seam.
 
 See [ADR-020](architecture/decisions/ADR-020-arcgateway-as-data-plane.md)
 and [`docs/arcgateway/`](arcgateway/getting-started.md) for the full data-plane design.

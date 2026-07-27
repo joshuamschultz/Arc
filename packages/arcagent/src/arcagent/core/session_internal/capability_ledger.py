@@ -73,7 +73,6 @@ TAG_TO_LEGS: dict[str, frozenset[str]] = {
     "recall": frozenset({PRIVATE_DATA}),
     # external comms / egress
     "network_egress": frozenset({EXTERNAL_COMMS}),
-    "slack_notify": frozenset({EXTERNAL_COMMS}),
     "audio": frozenset({EXTERNAL_COMMS}),
     # web/browser reads INGEST untrusted content but are NOT an egress channel.
     # A search hits a fixed provider with a (federally PII-redacted) query; a
@@ -115,9 +114,9 @@ OWNER_CHANNEL = "user://operator"
 
 # Egress tools that ALWAYS deliver to the owner's own connected channel: the
 # whole tool is an owner sink — it takes only a message body and routes to the
-# operator's paired DM, with no reachable third-party destination. Their
-# external_comms leg is dropped unconditionally (Telegram + Slack notify).
-_OWNER_DIRECTED_EGRESS: frozenset[str] = frozenset({"notify_user", "slack_notify_user"})
+# operator's own channel, with no reachable third-party destination. Its
+# external_comms leg is dropped unconditionally.
+_OWNER_DIRECTED_EGRESS: frozenset[str] = frozenset({"notify_user"})
 
 # Egress tools whose external_comms leg is destination-scoped, mapped to the
 # argument that names the recipient(s). The leg drops only when EVERY recipient

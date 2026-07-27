@@ -62,8 +62,6 @@ def _configure_all_modules(workspace: Path, telemetry: AgentTelemetry) -> None:
     from arcagent.modules.memory import _runtime as memory_runtime
     from arcagent.modules.policy import _runtime as policy_runtime
     from arcagent.modules.scheduler import _runtime as scheduler_runtime
-    from arcagent.modules.slack import _runtime as slack_runtime
-    from arcagent.modules.telegram import _runtime as telegram_runtime
     from arcagent.modules.voice import _runtime as voice_runtime
 
     eval_config = EvalConfig()
@@ -82,8 +80,6 @@ def _configure_all_modules(workspace: Path, telemetry: AgentTelemetry) -> None:
     scheduler_runtime.configure(workspace=workspace, telemetry=telemetry)
     browser_runtime.configure(workspace=workspace, telemetry=telemetry)
     voice_runtime.configure(telemetry=telemetry)
-    telegram_runtime.configure(workspace=workspace, telemetry=telemetry)
-    slack_runtime.configure(workspace=workspace, telemetry=telemetry)
 
 
 def _reset_all_runtimes() -> None:
@@ -93,8 +89,6 @@ def _reset_all_runtimes() -> None:
     from arcagent.modules.memory import _runtime as memory_runtime
     from arcagent.modules.policy import _runtime as policy_runtime
     from arcagent.modules.scheduler import _runtime as scheduler_runtime
-    from arcagent.modules.slack import _runtime as slack_runtime
-    from arcagent.modules.telegram import _runtime as telegram_runtime
     from arcagent.modules.voice import _runtime as voice_runtime
 
     builtin_runtime.reset()
@@ -103,8 +97,6 @@ def _reset_all_runtimes() -> None:
     scheduler_runtime.reset()
     browser_runtime.reset()
     voice_runtime.reset()
-    telegram_runtime.reset()
-    slack_runtime.reset()
 
 
 @pytest.fixture(autouse=True)
@@ -141,8 +133,6 @@ async def test_full_loader_registers_builtins_and_modules(
         "scheduler",
         "browser",
         "voice",
-        "telegram",
-        "slack",
         "policy",
     ]:
         scan_roots.append((f"module:{name}", _module_root(name)))
@@ -183,8 +173,6 @@ async def test_full_loader_registers_builtins_and_modules(
     # Spot-check a representative subset.
     assert (await reg.get_tool("schedule_create")) is not None  # scheduler
     assert (await reg.get_tool("transcribe")) is not None  # voice
-    assert (await reg.get_tool("slack_notify_user")) is not None
-    assert (await reg.get_tool("notify_user")) is not None  # telegram
 
     policy_hooks = await reg.get_hooks("agent:assemble_prompt")
     assert any(h.meta.name == "inject_policy_md" for h in policy_hooks)
