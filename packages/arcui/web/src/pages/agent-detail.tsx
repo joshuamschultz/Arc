@@ -5,6 +5,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { apiPost } from '@/lib/api'
+import { RestartGatewayButton } from '@/components/restart-gateway-button'
 import { StatusDot } from '@/components/status-badge'
 import { StatCard } from '@/components/stat-card'
 import { DataTable } from '@/components/data-table'
@@ -821,6 +822,12 @@ function ConnectTab({ agentId }: { agentId: string }) {
             </p>
           )}
           {error && <p className="text-sm text-destructive">{error}</p>}
+        </div>
+        <div className="mt-4 flex items-center justify-between gap-3 border-t border-border pt-3">
+          <span className="text-xs text-muted-foreground">
+            New bots go live on the next gateway restart.
+          </span>
+          <RestartGatewayButton />
         </div>
       </InfoCard>
     </div>

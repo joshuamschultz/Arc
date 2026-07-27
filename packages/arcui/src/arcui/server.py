@@ -44,6 +44,7 @@ from arcui.routes import chat_ws as chat_ws_routes
 from arcui.routes import config as config_routes
 from arcui.routes import cost_efficiency as cost_efficiency_routes
 from arcui.routes import export as export_routes
+from arcui.routes import gateway as gateway_routes
 from arcui.routes import knowledge as knowledge_routes
 from arcui.routes import observe_run as observe_run_routes
 from arcui.routes import stats as stats_routes
@@ -199,6 +200,7 @@ def create_app(
         *agents_routes.routes,
         *agent_sessions_routes.routes,
         *agent_detail_routes.routes,
+        *gateway_routes.routes,
         *team_pages_routes.routes,
         *team_chat_routes.routes,
         *team_ws_routes.routes,

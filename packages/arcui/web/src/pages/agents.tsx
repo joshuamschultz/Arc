@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { Boxes, Cpu } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
+import { RestartGatewayButton } from '@/components/restart-gateway-button'
 import { StatCard } from '@/components/stat-card'
 import { StatusDot } from '@/components/status-badge'
 import { QueryState, EmptyState } from '@/components/states'
@@ -134,7 +135,11 @@ export function AgentsPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <PageHeader title="Agents" description="The agent fleet and status." />
+      <PageHeader
+        title="Agents"
+        description="The agent fleet and status."
+        actions={<RestartGatewayButton />}
+      />
       <div className="flex-1 space-y-5 overflow-auto p-6">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <StatCard label="Agents" value={agents.length} icon={<Boxes className="size-4" />} />
