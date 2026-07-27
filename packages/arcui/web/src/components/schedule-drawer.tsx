@@ -12,9 +12,183 @@ import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { JsonBlock } from '@/components/json-block'
 import { apiPatch, ApiError } from '@/lib/api'
-import { cronToProse, humanizeInterval, scheduleTiming, scheduleTitle } from '@/lib/schedule-format'
+import {
+  buildCron,
+  CRON_DAYS,
+  cronToProse,
+  humanizeInterval,
+  parseCron,
+  scheduleTiming,
+  scheduleTitle,
+  type CronFrequency,
+  type CronSpec,
+} from '@/lib/schedule-format'
+import { useAgentChannels } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 import type { Dict } from '@/lib/types'
+
+function pad2(n: number): string {
+  return String(n).padStart(2, '0')
+}
+
+/** Friendly cron editor: frequency dropdown + time/day boxes that serialize to a
+ *  cron string, with a raw-expression escape hatch for anything it can't model. */
+function CronBuilder({ value, onChange }: { value: string; onChange: (expr: string) => void }) {
+  const parsed = parseCron(value)
+  const [raw, setRaw] = useState(value.trim() !== '' && parsed == null)
+  const spec: CronSpec = parsed ?? { frequency: 'daily', minute: 0, hour: 9, dow: 1, dom: 1 }
+  const update = (patch: Partial<CronSpec>) => onChange(buildCron({ ...spec, ...patch }))
+  const timeValue = `${pad2(spec.hour)}:${pad2(spec.minute)}`
+  const onTime = (t: string) => {
+    const [h, m] = t.split(':')
+    update({ hour: Number(h), minute: Number(m) })
+  }
+
+  if (raw) {
+    return (
+      <div className="space-y-1.5">
+        <Input value={value} onChange={(e) => onChange(e.target.value)} placeholder="40 10 * * *" />
+        <button
+          type="button"
+          className="text-xs text-primary underline"
+          onClick={() => {
+            if (parseCron(value) == null) onChange(buildCron(spec))
+            setRaw(false)
+          }}
+        >
+          Use the simple builder
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <select
+          value={spec.frequency}
+          onChange={(e) => update({ frequency: e.target.value as CronFrequency })}
+          className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+        >
+          <option value="hourly">Every hour</option>
+          <option value="daily">Every day</option>
+          <option value="weekly">Every week</option>
+          <option value="monthly">Every month</option>
+        </select>
+
+        {spec.frequency === 'weekly' && (
+          <select
+            value={spec.dow}
+            onChange={(e) => update({ dow: Number(e.target.value) })}
+            className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+          >
+            {CRON_DAYS.map((d, i) => (
+              <option key={d} value={i}>
+                {d}
+              </option>
+            ))}
+          </select>
+        )}
+
+        {spec.frequency === 'monthly' && (
+          <label className="flex items-center gap-1 text-sm text-muted-foreground">
+            on day
+            <Input
+              type="number"
+              min={1}
+              max={31}
+              value={spec.dom}
+              onChange={(e) => update({ dom: Number(e.target.value) })}
+              className="h-9 w-16"
+            />
+          </label>
+        )}
+
+        {spec.frequency === 'hourly' ? (
+          <label className="flex items-center gap-1 text-sm text-muted-foreground">
+            at minute
+            <Input
+              type="number"
+              min={0}
+              max={59}
+              value={spec.minute}
+              onChange={(e) => update({ minute: Number(e.target.value) })}
+              className="h-9 w-16"
+            />
+          </label>
+        ) : (
+          <label className="flex items-center gap-1 text-sm text-muted-foreground">
+            at
+            <Input type="time" value={timeValue} onChange={(e) => onTime(e.target.value)} className="h-9 w-32" />
+          </label>
+        )}
+      </div>
+      <button type="button" className="text-xs text-muted-foreground underline" onClick={() => setRaw(true)}>
+        Advanced (raw cron)
+      </button>
+    </div>
+  )
+}
+
+/** Delivery-target picker: a dropdown of channels the agent has been reached on
+ *  (so a non-technical operator never types a raw platform:chat_id), with a
+ *  "None" option and a custom escape hatch. */
+function ChannelSelect({
+  agentId,
+  value,
+  onChange,
+}: {
+  agentId: string
+  value: string
+  onChange: (target: string) => void
+}) {
+  const { data } = useAgentChannels(agentId)
+  const channels = data?.channels ?? []
+  const known = channels.some((c) => c.target === value)
+  const [custom, setCustom] = useState(value.trim() !== '' && !known)
+
+  if (custom) {
+    return (
+      <div className="space-y-1.5">
+        <Input
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="telegram:12345"
+        />
+        <button
+          type="button"
+          className="text-xs text-primary underline"
+          onClick={() => {
+            onChange('')
+            setCustom(false)
+          }}
+        >
+          Choose from known channels
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <select
+      value={value}
+      onChange={(e) => {
+        if (e.target.value === '__custom__') setCustom(true)
+        else onChange(e.target.value)
+      }}
+      className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm"
+    >
+      <option value="">None — keep result internal</option>
+      {channels.map((c) => (
+        <option key={c.target} value={c.target}>
+          {c.label}
+        </option>
+      ))}
+      {value && !known && <option value={value}>{value}</option>}
+      <option value="__custom__">Custom…</option>
+    </select>
+  )
+}
 
 function Field({ label, value }: { label: string; value: string }) {
   return (
@@ -136,13 +310,7 @@ function ScheduleDetail({
                     ? 'Every (seconds)'
                     : 'Run at (ISO 8601)'}
               </label>
-              {type === 'cron' && (
-                <Input
-                  value={expression}
-                  onChange={(e) => setExpression(e.target.value)}
-                  placeholder="40 10 * * *"
-                />
-              )}
+              {type === 'cron' && <CronBuilder value={expression} onChange={setExpression} />}
               {type === 'interval' && (
                 <Input
                   type="number"
@@ -178,14 +346,10 @@ function ScheduleDetail({
             </div>
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-muted-foreground">Deliver to (channel)</label>
-              <Input
-                value={deliverTo}
-                onChange={(e) => setDeliverTo(e.target.value)}
-                placeholder="telegram:12345 — blank keeps the result internal"
-              />
+              <ChannelSelect agentId={agentId} value={deliverTo} onChange={setDeliverTo} />
               <p className="text-xs text-muted-foreground">
-                Where the run's output is sent when it fires. Format
-                <span className="font-mono"> platform:chat_id</span>. Leave blank for no delivery.
+                Where the run's output is sent when it fires. Pick a channel the agent has
+                talked on, or keep it internal.
               </p>
             </div>
             {error && <p className="text-xs text-destructive">{error}</p>}

@@ -186,6 +186,32 @@ class TestEdit:
         )
 
 
+class TestChannelsEndpoint:
+    def test_lists_known_channels(self, ctx: tuple[TestClient, Path]) -> None:
+        client, agent_dir = ctx
+        (agent_dir / "workspace" / "channels.json").write_text(
+            json.dumps(
+                [
+                    {"target": "telegram:123", "label": "Telegram — Josh", "last_seen": "x"},
+                    {"target": "web:abc", "label": "Web (chat abc)"},
+                ]
+            ),
+            encoding="utf-8",
+        )
+        resp = client.get("/api/agents/alpha/channels", headers=_viewer())
+        assert resp.status_code == 200
+        assert resp.json()["channels"] == [
+            {"target": "telegram:123", "label": "Telegram — Josh"},
+            {"target": "web:abc", "label": "Web (chat abc)"},
+        ]
+
+    def test_missing_file_is_empty(self, ctx: tuple[TestClient, Path]) -> None:
+        client, _ = ctx
+        resp = client.get("/api/agents/alpha/channels", headers=_viewer())
+        assert resp.status_code == 200
+        assert resp.json()["channels"] == []
+
+
 class TestGuards:
     def test_viewer_forbidden(self, ctx: tuple[TestClient, Path]) -> None:
         client, agent_dir = ctx

@@ -14,6 +14,7 @@ from starlette.responses import JSONResponse
 from arcui.query_validators import parse_pagination
 from arcui.routes.agent_detail._common import _CALLER_DID, _VALID_SID, _agent_did, _agent_root
 from arcui.schemas import (
+    ChannelsResponse,
     ErrorResponse,
     SchedulesResponse,
     SessionEntry,
@@ -161,6 +162,45 @@ async def get_schedules(request: Request) -> JSONResponse:
         key="schedules",
         model_cls=SchedulesResponse,
     )
+
+
+async def get_channels(request: Request) -> JSONResponse:
+    """GET /api/agents/{id}/channels — delivery targets this agent has seen.
+
+    Reads the agent's workspace ``channels.json`` (written by the turn path) and
+    returns ``{target, label}`` pairs so arcui can populate a delivery dropdown.
+    """
+    agent_id = request.path_params["id"]
+    agent_root = _agent_root(request, agent_id)
+    if agent_root is None:
+        return JSONResponse(
+            ErrorResponse(error="Agent not found").model_dump(mode="json"),
+            status_code=404,
+        )
+    try:
+        content = fs_reader.read_file(
+            scope="agent",
+            agent_id=agent_id,
+            agent_root=agent_root / "workspace",
+            rel_path="channels.json",
+            caller_did=_CALLER_DID,
+        )
+    except FileNotFoundError:
+        return JSONResponse(ChannelsResponse(channels=[]).model_dump(mode="json"))
+    except (PathTraversalError, FileTooLargeError) as exc:
+        return JSONResponse(
+            ErrorResponse(error=str(exc)).model_dump(mode="json"), status_code=400
+        )
+    try:
+        parsed = json.loads(content.content)
+    except json.JSONDecodeError:
+        parsed = []
+    channels = [
+        {"target": str(e["target"]), "label": str(e.get("label") or e["target"])}
+        for e in parsed
+        if isinstance(e, dict) and e.get("target")
+    ]
+    return JSONResponse(ChannelsResponse(channels=channels).model_dump(mode="json"))
 
 
 async def _read_json_array(

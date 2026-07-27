@@ -619,6 +619,7 @@ class ArcAgent:
         max_cost_usd: float | None = None,
         run_id: str | None = None,
         reply_target: str | None = None,
+        reply_label: str | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """Drive one agent turn. The only execution entry — always
         session-bound, always streaming.
@@ -646,8 +647,10 @@ class ArcAgent:
         ``reply_target`` is the channel this turn arrived on ("platform:chat_id"),
         supplied by the gateway executor for interactive channel turns. It is
         recorded in the per-turn context so a capability like the scheduler can
-        default a new schedule's delivery back to this channel. None for
-        non-channel runs (scheduler-driven, messaging inbox).
+        default a new schedule's delivery back to this channel, and remembered as
+        a known channel (with ``reply_label``, a human-friendly name) so arcui can
+        offer it in a delivery dropdown. None for non-channel runs
+        (scheduler-driven, messaging inbox).
         """
         self._ensure_started()
         async for event in dispatch_stream(
@@ -659,6 +662,7 @@ class ArcAgent:
             max_cost_usd=max_cost_usd,
             run_id=run_id,
             reply_target=reply_target,
+            reply_label=reply_label,
         ):
             yield event
 

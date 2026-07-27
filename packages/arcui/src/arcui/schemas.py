@@ -265,6 +265,19 @@ class SchedulesResponse(BaseModel):
     schedules: list[dict[str, Any]]
 
 
+class ChannelsResponse(BaseModel):
+    """Body of ``GET /api/agents/{id}/channels`` — delivery-target picker source.
+
+    Each item is ``{"target": "platform:chat_id", "label": "Telegram — Josh"}``,
+    newest first, so arcui can offer a schedule's delivery channel as a dropdown
+    instead of a raw ``platform:chat_id`` box.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    channels: list[dict[str, str]]
+
+
 # ---------------------------------------------------------------------------
 # Agent detail — telemetry / audit / traces
 # ---------------------------------------------------------------------------

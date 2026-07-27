@@ -62,6 +62,7 @@ from arcui.routes.agent_detail.prompts import (
 )
 from arcui.routes.agent_detail.schedules_write import patch_schedule
 from arcui.routes.agent_detail.sessions import (
+    get_channels,
     get_schedules,
     get_session_replay,
     get_sessions,
@@ -124,6 +125,7 @@ routes = [
     Route("/api/agents/{id}/tasks", get_tasks, methods=["GET"]),
     Route("/api/agents/{id}/schedules", get_schedules, methods=["GET"]),
     Route("/api/agents/{id}/schedules/{sid}", patch_schedule, methods=["PATCH"]),
+    Route("/api/agents/{id}/channels", get_channels, methods=["GET"]),
     Route("/api/agents/{id}/connect-telegram", connect_telegram_route, methods=["POST"]),
 ]
 

@@ -35,15 +35,22 @@ class _StreamingAgent:
         self._tokens = tokens
         self.session_keys: list[str] = []
         self.reply_targets: list[str | None] = []
+        self.reply_labels: list[str | None] = []
 
     async def session(self, key: str) -> str:
         self.session_keys.append(key)
         return key
 
     async def run(
-        self, input_text: str, *, session: Any, reply_target: str | None = None
+        self,
+        input_text: str,
+        *,
+        session: Any,
+        reply_target: str | None = None,
+        reply_label: str | None = None,
     ) -> AsyncIterator[StreamEvent]:
         self.reply_targets.append(reply_target)
+        self.reply_labels.append(reply_label)
         for tok in self._tokens:
             yield TokenEvent(text=tok)
         yield TurnEndEvent(final_text="".join(self._tokens))
@@ -71,6 +78,8 @@ async def test_streams_real_token_deltas() -> None:
     assert agent.session_keys == ["sess-1"]
     # The inbound channel is threaded so a mid-chat schedule can default delivery.
     assert agent.reply_targets == ["telegram:1"]
+    # A friendly label is threaded so the channel can appear in arcui's dropdown.
+    assert agent.reply_labels == ["Telegram (chat 1)"]
 
 
 @pytest.mark.asyncio

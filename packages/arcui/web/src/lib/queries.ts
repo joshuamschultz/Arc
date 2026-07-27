@@ -394,6 +394,16 @@ export const useAgentTasks = (agentId: string) =>
 export const useAgentSchedules = (agentId: string) =>
   useApiQuery<SchedulesResponse>(['agent', agentId, 'schedules'], `/api/agents/${agentId}/schedules`)
 
+export interface DeliveryChannel {
+  target: string
+  label: string
+}
+export interface AgentChannelsResponse {
+  channels: DeliveryChannel[]
+}
+export const useAgentChannels = (agentId: string) =>
+  useApiQuery<AgentChannelsResponse>(['agent', agentId, 'channels'], `/api/agents/${agentId}/channels`)
+
 export const useAgentSessionReplay = (agentId: string, sid: string, page = 1) =>
   useApiQuery<SessionReplayResponse>(
     ['agent', agentId, 'session', sid, page],

@@ -685,6 +685,10 @@ class TelegramAdapter:
                 "update_id": update.update_id,
                 "user_id": user_id,
                 "chat_id": chat_id,
+                # Friendly name for arcui's delivery-target dropdown (no PII is
+                # persisted elsewhere — pairings/sessions store only hashes).
+                "first_name": update.effective_user.first_name,
+                "username": update.effective_user.username,
             },
         )
 

@@ -147,6 +147,19 @@ def _reply_target(event: InboundEvent) -> str:
     return f"{base}:{event.thread_id}" if event.thread_id else base
 
 
+def _reply_label(event: InboundEvent) -> str:
+    """A human-friendly name for this channel, for arcui's delivery dropdown.
+
+    Prefers the sender's name from the platform payload (Telegram first_name /
+    username, a chat title) so a non-technical operator sees "Telegram — Josh"
+    instead of a raw chat id; falls back to the platform + chat id.
+    """
+    raw = event.raw_payload or {}
+    name = raw.get("first_name") or raw.get("username") or raw.get("title")
+    platform = event.platform.capitalize()
+    return f"{platform} — {name}" if name else f"{platform} (chat {event.chat_id})"
+
+
 # ---------------------------------------------------------------------------
 # AsyncioExecutor — personal / enterprise tier
 # ---------------------------------------------------------------------------
@@ -278,6 +291,7 @@ class AsyncioExecutor:
                     event.message,
                     session=session,
                     reply_target=_reply_target(event),
+                    reply_label=_reply_label(event),
                 ):
                     if isinstance(stream_event, TokenEvent):
                         yield Delta(
