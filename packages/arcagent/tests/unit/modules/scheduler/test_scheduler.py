@@ -459,6 +459,53 @@ class TestExecution:
         assert "enabled" not in updates
 
 
+class TestCronTimezone:
+    """Cron fires at the wall-clock time of the configured timezone, not UTC."""
+
+    def _engine(self, tz: str) -> SchedulerEngine:
+        cfg = make_config()
+        cfg.timezone = tz
+        return SchedulerEngine(
+            store=MagicMock(),
+            config=cfg,
+            telemetry=MagicMock(),
+            agent_run_fn=AsyncMock(),
+        )
+
+    @freeze_time("2026-07-15 13:30:00")  # 08:30 America/Chicago (CDT = UTC-5)
+    def test_cron_fires_after_local_time_reached(self) -> None:
+        engine = self._engine("America/Chicago")
+        entry = make_entry(
+            type="cron",
+            expression="0 8 * * *",  # 8am local
+            every_seconds=None,
+            metadata=ScheduleMetadata(last_run="2026-07-14T13:05:00+00:00"),
+        )
+        assert engine.should_fire(entry) is True
+
+    @freeze_time("2026-07-15 12:30:00")  # 07:30 America/Chicago — before 8am local
+    def test_cron_does_not_fire_before_local_time(self) -> None:
+        engine = self._engine("America/Chicago")
+        entry = make_entry(
+            type="cron",
+            expression="0 8 * * *",
+            every_seconds=None,
+            metadata=ScheduleMetadata(last_run="2026-07-15T05:05:00+00:00"),
+        )
+        assert engine.should_fire(entry) is False
+
+    @freeze_time("2026-07-15 08:30:00")  # 08:30 UTC
+    def test_empty_timezone_evaluates_in_utc(self) -> None:
+        engine = self._engine("")
+        entry = make_entry(
+            type="cron",
+            expression="0 8 * * *",
+            every_seconds=None,
+            metadata=ScheduleMetadata(last_run="2026-07-14T08:05:00+00:00"),
+        )
+        assert engine.should_fire(entry) is True
+
+
 class TestChannelDelivery:
     @pytest.mark.asyncio
     async def test_delivers_result_to_channel_when_deliver_to_set(self) -> None:

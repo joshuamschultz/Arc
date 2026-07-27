@@ -25,6 +25,11 @@ class SchedulerConfig(ModuleConfig):
     circuit_breaker_threshold: int = 3
     check_interval_seconds: int = 30
     store_path: str = "schedules.json"
+    # IANA timezone that cron ("0 8 * * *") and one-time ("at") schedules are
+    # evaluated in, so "8am" means 8am local, not 8am UTC. Empty = the server's
+    # local timezone (set the machine's tz to control it). Interval schedules are
+    # duration-based and timezone-independent.
+    timezone: str = ""
 
     def validation_context(self) -> dict[str, int]:
         """Limits threaded into ScheduleEntry validation so operator config

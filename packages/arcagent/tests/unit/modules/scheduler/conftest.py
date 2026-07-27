@@ -20,6 +20,7 @@ def make_config() -> MagicMock:
     cfg.check_interval_seconds = 30
     cfg.store_path = "schedules.json"
     cfg.enabled = True
+    cfg.timezone = ""
     return cfg
 
 

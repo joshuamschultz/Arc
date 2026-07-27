@@ -365,6 +365,7 @@ max_timeout_seconds = 3600    # timeout ceiling
 circuit_breaker_threshold = 3  # failures → trip
 check_interval_seconds = 30   # scheduler poll cadence
 store_path = "schedules.json"  # schedule store file
+timezone = ""                 # IANA tz for cron/once (e.g. "America/Chicago"); empty = UTC
 
 # =========================================================================
 # 7. COMMS & TASKS — inter-agent bus, task board, external gateways, I/O

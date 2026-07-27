@@ -10,7 +10,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, tzinfo
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
@@ -328,23 +328,36 @@ class SchedulerEngine:
         last = datetime.fromisoformat(entry.metadata.last_run)
         return last + timedelta(seconds=entry.every_seconds or 0) <= now
 
+    def _resolve_tz(self) -> tzinfo:
+        """The timezone cron/once schedules are evaluated in.
+
+        A configured IANA name ("America/Chicago") is DST-aware; empty keeps the
+        original UTC behaviour so "0 8 * * *" without a configured zone is
+        unchanged. Set the zone to fire "8am" at 8am local, not 8am UTC.
+        """
+        name = getattr(self._config, "timezone", "") or ""
+        return ZoneInfo(name) if name else UTC
+
     def _should_fire_cron(self, entry: ScheduleEntry, now: datetime) -> bool:
         if entry.expression is None:
             return False
 
+        tz = self._resolve_tz()
+        now_local = now.astimezone(tz)
         if entry.metadata.last_run:
-            base = datetime.fromisoformat(entry.metadata.last_run)
+            base = datetime.fromisoformat(entry.metadata.last_run).astimezone(tz)
         else:
-            base = now - timedelta(days=1)
+            base = now_local - timedelta(days=1)
 
         cron = croniter(entry.expression, base)
         next_fire = cron.get_next(datetime)
 
-        # Ensure next_fire is timezone-aware.
+        # croniter yields a naive datetime when the base is naive; anchor it to
+        # the evaluation zone so the comparison below is apples-to-apples.
         if next_fire.tzinfo is None:
-            next_fire = next_fire.replace(tzinfo=UTC)
+            next_fire = next_fire.replace(tzinfo=tz)
 
-        return bool(next_fire <= now)
+        return bool(next_fire <= now_local)
 
     def _should_fire_once(self, entry: ScheduleEntry, now: datetime) -> bool:
         if entry.metadata.run_count > 0:
@@ -352,8 +365,10 @@ class SchedulerEngine:
         if entry.at is None:
             return False
         target = datetime.fromisoformat(entry.at)
+        # A naive "at" is interpreted in the configured zone (a user typing
+        # "2026-07-15T08:00" means 8am local), then compared in UTC.
         if target.tzinfo is None:
-            target = target.replace(tzinfo=UTC)
+            target = target.replace(tzinfo=self._resolve_tz())
         return target <= now
 
     def _on_execution_complete(
