@@ -37,6 +37,7 @@ def make_config_dict(
     entity_id: str = "agent://test_agent",
     entity_name: str = "Test Agent",
     auto_ack: bool = True,
+    **extra: Any,
 ) -> dict[str, Any]:
     """Build a config dict for MessagingConfig."""
     return {
@@ -45,6 +46,7 @@ def make_config_dict(
         "entity_name": entity_name,
         "auto_ack": auto_ack,
         "max_messages_per_poll": 20,
+        **extra,
     }
 
 

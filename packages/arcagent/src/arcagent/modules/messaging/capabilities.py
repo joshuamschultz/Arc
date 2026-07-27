@@ -130,6 +130,47 @@ def _should_activate(msg: Any, identity: Any) -> bool:
     return identity is not None and identity.did in list(msg.mentions)
 
 
+def _is_channel_broadcast(msg: Any) -> bool:
+    """Whether ``msg`` is an un-addressed post to a shared channel (SPEC-055).
+
+    A channel target with no @mentions and non-critical priority: the case where
+    every member currently wakes a full run. @mentions and critical bypass the
+    relevance gate (they are explicitly for this agent / are kill-switch traffic).
+    """
+    if str(msg.priority) == "critical" or msg.mentions:
+        return False
+    return any(str(t).startswith("channel://") for t in (msg.to or []))
+
+
+async def _passes_channel_triage(msg: Any, st: Any) -> bool:
+    """Cheap per-agent relevance decision for a channel broadcast.
+
+    One bounded yes/no LLM call via the bound ``classify_fn``: should THIS agent,
+    given its role, answer this channel message? Returns True to wake the full
+    run. Fail-open — a missing classifier or any error wakes the run, so a
+    relevant message is never silently dropped (only the token-saving is lost).
+    """
+    if not st.config.channel_triage or st.classify_fn is None:
+        return True
+    entity_name = sanitize_text(st.config.entity_name or st.agent_name, max_length=200)
+    system = (
+        f"You are {entity_name}, one member of a team. A message was posted to a "
+        "shared team channel (not addressed to anyone specific). Decide whether "
+        "answering it falls within YOUR role and responsibilities. Reply with "
+        "exactly one word: YES or NO."
+    )
+    user = sanitize_text(str(msg.body), max_length=2000)
+    try:
+        verdict: str = await st.classify_fn(system=system, user=user)
+    except Exception:  # reason: fail-open — a triage failure must not drop a message
+        _logger.warning("channel triage failed; waking run (fail-open)", exc_info=True)
+        return True
+    cleaned = verdict.strip().upper()
+    # Skip only on an explicit NO; an empty/garbled verdict is not a decision, so
+    # fail-open and wake (a relevant message is never dropped over a bad reply).
+    return not cleaned.startswith("N")
+
+
 def _interrupt_for(msg: Any, identity: Any) -> bool:
     """Whether ``msg`` is interrupt-eligible for mid-turn steering (REQ-041).
 
@@ -170,10 +211,15 @@ async def _handle_incoming(message: Any) -> None:
     """
     st = _runtime.state()
     if not _should_activate(message, st.identity):
-        # Ack-and-ignore (SPEC-055): a channel message that doesn't name this
-        # agent skips the run entirely -- avoids the ~15x-token fan-out of
-        # waking every member for every message. The channel stream itself
-        # remains the record; nothing to retry or steer, so no follow_up.
+        # Ack-and-ignore (SPEC-055): a channel message that names OTHER agents
+        # skips the run entirely -- avoids the ~15x-token fan-out of waking every
+        # member. The channel stream itself remains the record; nothing to retry
+        # or steer, so no follow_up.
+        return
+    if _is_channel_broadcast(message) and not await _passes_channel_triage(message, st):
+        # An un-addressed channel post this agent's role does not concern: the
+        # cheap triage said no, so skip the full run (the expensive fan-out this
+        # gate exists to prevent). Still ack-and-ignore -- nothing to steer.
         return
     async with st.processing_lock:
         if st.deliver_fn is not None:
@@ -277,6 +323,7 @@ async def messaging_bind_run_fn(ctx: Any) -> None:
     deliver_fn = data.get("deliver_fn")
     if deliver_fn is not None:
         st.deliver_fn = deliver_fn
+    st.classify_fn = data.get("classify_fn")
     _logger.info("Bound agent run/deliver callbacks for message processing")
 
 

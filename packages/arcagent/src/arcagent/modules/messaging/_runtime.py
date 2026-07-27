@@ -68,6 +68,9 @@ class _State:
     last_unread: dict[str, int] = field(default_factory=dict)
     # agent.run_collected() callback — bound via agent:ready event.
     agent_run_fn: Any = None
+    # Bounded single-shot LLM classifier (agent.quick_classify) — bound at
+    # agent:ready. Powers the cheap channel-broadcast relevance gate (SPEC-055).
+    classify_fn: Any = None
     # Serialises message processing so only one inbox batch is in-flight.
     processing_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     # TTL-cached team roster string; invalidated after roster_ttl_seconds.

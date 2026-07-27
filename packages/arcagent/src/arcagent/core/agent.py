@@ -515,6 +515,7 @@ class ArcAgent:
                 "run_fn": self.run_collected,
                 "deliver_fn": self.deliver_message,
                 "channel_deliver_fn": self._channel_deliver_fn,
+                "classify_fn": self.quick_classify,
                 "skill_registry": self._capability_registry,
             },
         )
@@ -708,6 +709,24 @@ class ArcAgent:
         from arcagent.core.agent_dispatch import start_tracked_run
 
         return await start_tracked_run(self, input_text, session_key=session_key)
+
+    async def quick_classify(self, *, system: str, user: str, max_tokens: int = 8) -> str:
+        """Bounded single-shot classification for cheap gating decisions.
+
+        One ``arcllm`` call, no tools, tiny token budget — NOT the agentic loop.
+        A lightweight helper for module gates (e.g. the messaging channel-
+        relevance triage) that must decide yes/no without paying a full run.
+        Returns the model's stripped text. The caller interprets it.
+        """
+        from arcllm import Message
+
+        self._ensure_started()
+        model = self._ensure_model()
+        response = await model.invoke(
+            [Message(role="system", content=system), Message(role="user", content=user)],
+            max_tokens=max_tokens,
+        )
+        return (response.content or "").strip()
 
     def set_channel_deliver_fn(
         self,

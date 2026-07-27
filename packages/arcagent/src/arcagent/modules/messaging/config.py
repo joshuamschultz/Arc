@@ -37,3 +37,10 @@ class MessagingConfig(ModuleConfig):
 
     # Team roster cache TTL in seconds.
     roster_ttl_seconds: float = 60.0
+
+    # SPEC-055: gate a channel broadcast (no @mentions) behind a cheap per-agent
+    # relevance check before the full run, so only agents whose role the message
+    # concerns actually answer — instead of every member paying a full turn.
+    # @mentions and critical priority always bypass the gate. Fail-open: a triage
+    # error wakes the run so a relevant message is never silently dropped.
+    channel_triage: bool = True
