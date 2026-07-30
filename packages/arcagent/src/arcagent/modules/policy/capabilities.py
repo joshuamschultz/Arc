@@ -1,8 +1,10 @@
 """Decorator-form policy module — SPEC-021 task 3.7.
 
-Four ``@hook`` functions implementing the self-learning adaptation policy:
+Six ``@hook`` functions implementing the self-learning adaptation policy:
 
   * ``agent:assemble_prompt``  (priority 60) — inject ``policy.md``.
+  * ``agent:pre_tool``         (priority 110) — record tool name + arguments.
+  * ``agent:post_tool``        (priority 110) — record what came back.
   * ``agent:post_respond``     (priority 110) — periodic policy eval.
   * ``memory.consolidated``    (priority 60) — grounded reflection (REQ-072).
   * ``agent:shutdown``         (priority 60) — terminal eval + drain.
@@ -55,6 +57,39 @@ async def inject_policy_md(ctx: Any) -> None:
             sections["policy"] = content
 
 
+@hook(event="agent:pre_tool", priority=110)
+async def record_tool_call(ctx: Any) -> None:
+    """Record which tool is running with which arguments.
+
+    The Reflector is asked to improve tool selection and argument quality; this
+    is the only event carrying the arguments. Recorded into the policy module's
+    own buffer — never onto ``agent:post_respond``, which memory distills from.
+    """
+    tool_name = str(ctx.data.get("tool", ""))
+    if tool_name:
+        _runtime.state().tool_activity.record_call(tool_name, ctx.data.get("args"))
+
+
+@hook(event="agent:post_tool", priority=110)
+async def record_tool_result(ctx: Any) -> None:
+    """Record what the tool returned, closing the record opened on ``pre_tool``."""
+    tool_name = str(ctx.data.get("tool", ""))
+    if tool_name:
+        _runtime.state().tool_activity.record_result(tool_name, ctx.data.get("result"))
+
+
+def _eval_input(st: _runtime._State, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Conversation with the run's tool activity spliced in before the final reply.
+
+    The tools ran between the request and the answer, so that is where their
+    records belong — the Reflector reads the trajectory in the order it happened.
+    """
+    activity = st.tool_activity.as_messages()
+    if not activity:
+        return messages
+    return [*messages[:-1], *activity, messages[-1]]
+
+
 @hook(event="agent:post_respond", priority=110)
 async def periodic_policy_eval(ctx: Any) -> None:
     """Fire policy eval on the ``eval_interval_turns`` cadence, or after an idle gap.
@@ -82,6 +117,10 @@ async def periodic_policy_eval(ctx: Any) -> None:
         return
     st.last_eval_ts = time.time()
     st.turns_at_last_eval = st.turn_count
+    eval_messages = _eval_input(st, messages)
+    # The buffer's content is now in ``eval_messages``; keeping it would re-evaluate
+    # the same tool calls next cadence and grow unbounded across a long session.
+    st.tool_activity.clear()
     st.persist()
     if st.telemetry is not None:
         st.telemetry.audit_event(
@@ -91,7 +130,7 @@ async def periodic_policy_eval(ctx: Any) -> None:
     if st.semaphore is None:
         raise RuntimeError("policy runtime not configured: semaphore missing")
     spawn_background(
-        _safe_evaluate(messages, model, session_id=session_id),
+        _safe_evaluate(eval_messages, model, session_id=session_id),
         background_tasks=st.background_tasks,
         semaphore=st.semaphore,
         eval_config=st.eval_config,
@@ -156,7 +195,10 @@ async def terminal_policy_eval(ctx: Any) -> None:
         model = _eval_model()
         if model is not None:
             session_id = ctx.data.get("session_id", "")
-            await _safe_evaluate(st.session_messages, model, session_id=session_id)
+            eval_messages = _eval_input(st, st.session_messages)
+            st.tool_activity.clear()
+            st.persist()
+            await _safe_evaluate(eval_messages, model, session_id=session_id)
     if st.background_tasks:
         _logger.info(
             "Cancelling %d policy background task(s) for shutdown",

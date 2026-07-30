@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from arcagent.core.config import EvalConfig
+from arcagent.modules.policy._tool_activity import ToolActivity
 from arcagent.modules.policy.config import PolicyConfig
 from arcagent.modules.policy.policy_engine import PolicyEngine
 from arcagent.utils.io import atomic_write_text
@@ -48,6 +49,8 @@ class _State:
     eval_label: str
     eval_model: Any = None
     session_messages: list[dict[str, Any]] = field(default_factory=list)
+    # What the agent's tools actually did, so the Reflector isn't blind to them.
+    tool_activity: ToolActivity = field(default_factory=ToolActivity)
     turn_count: int = 0
     # Turn at which the consolidation-grounded reflection ("daily notes" eval)
     # last ran, so it fires on a turn cadence rather than every consolidation.
@@ -60,7 +63,13 @@ class _State:
     semaphore: asyncio.Semaphore | None = None
 
     def persist(self) -> None:
-        """Atomically write the cadence counters so a restart resumes mid-cadence."""
+        """Atomically write the cadence counters so a restart resumes mid-cadence.
+
+        The tool-activity buffer rides along for the same reason the counters do:
+        the box restarts every 1-5 minutes, and an in-memory-only buffer would be
+        empty by the time the persisted turn counter reached the eval cadence.
+        It is bounded, so the file stays small.
+        """
         atomic_write_text(
             self.workspace / _STATE_FILE,
             json.dumps(
@@ -69,6 +78,7 @@ class _State:
                     "last_reflect_turn": self.last_reflect_turn,
                     "last_eval_ts": self.last_eval_ts,
                     "turns_at_last_eval": self.turns_at_last_eval,
+                    "tool_activity": self.tool_activity.to_json(),
                 }
             ),
         )
@@ -120,6 +130,7 @@ def configure(
         last_reflect_turn=int(persisted.get("last_reflect_turn", 0)),
         last_eval_ts=float(persisted.get("last_eval_ts", time.time())),
         turns_at_last_eval=int(persisted.get("turns_at_last_eval", 0)),
+        tool_activity=ToolActivity.from_json(persisted.get("tool_activity")),
     )
     _state_var.set(new_state)
     if not persisted:

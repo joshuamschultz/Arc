@@ -13,9 +13,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
-from arctrust import AgentIdentity
 
 import pytest
+from arctrust import AgentIdentity
 
 from arcagent.modules.messaging import _runtime
 from arcagent.modules.messaging.capabilities import _handle_incoming, _is_channel_broadcast
