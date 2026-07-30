@@ -29,6 +29,11 @@ def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def utc_today() -> str:
+    """Today's UTC calendar date (``YYYY-MM-DD``) — the canonical card-date format."""
+    return datetime.now(UTC).strftime("%Y-%m-%d")
+
+
 class Confidence(StrEnum):
     """Whether a memory may be acted on directly or must be verified first.
 
@@ -89,7 +94,7 @@ class Fact(BaseModel):
     predicate: str
     value: str
     confidence: float = 0.5
-    date: str = Field(default_factory=lambda: datetime.now(UTC).strftime("%Y-%m-%d"))
+    date: str = Field(default_factory=utc_today)
     was_value: str | None = None
     was_confidence: float | None = None
 
@@ -162,6 +167,31 @@ class Procedure(BaseModel):
     when_to_use: str = ""
     steps: list[str] = Field(default_factory=list)
     use_count: int = 0
+    classification: str = "unclassified"
+
+
+class LifeEvent(BaseModel):
+    """A thing that HAPPENED in the user's life — a meeting, a sale, a call, a shipment.
+
+    Not to be confused with :class:`Event`, the raw episodic *stream row*. This is the
+    semantic card: WHAT occurred, WHEN it occurred (``date`` — deliberately distinct
+    from ``recorded``, the day memory wrote it down), WHO was in it (``participants``,
+    entity slugs rendered as ``[[wiki-links]]`` and wired into the shared graph), and
+    HOW it came out (``outcome``). It is the *user's* timeline; the agent's own day is
+    the daily notes (:class:`DaySummary`), and how the agent improves is policy.
+    """
+
+    slug: str
+    title: str
+    date: str = ""
+    """``YYYY-MM-DD`` the event happened (empty when the conversation never said)."""
+    recorded: str = Field(default_factory=utc_today)
+    """``YYYY-MM-DD`` memory first wrote the card — never the same field as ``date``."""
+    event_type: str = "unknown"
+    """meeting | sale | call | shipment | ... (open vocabulary, the user's domain)."""
+    participants: list[str] = Field(default_factory=list)
+    summary: str = ""
+    outcome: str = ""
     classification: str = "unclassified"
 
 
@@ -274,6 +304,7 @@ class ConsolidationResult(BaseModel):
     facts_updated: int = 0
     insights_minted: int = 0
     procedures_promoted: int = 0
+    events_recorded: int = 0
     days_summarized: int = 0
     edges_decayed: int = 0
     files_rewritten: int = 0
@@ -289,10 +320,12 @@ __all__ = [
     "Event",
     "Fact",
     "Insight",
+    "LifeEvent",
     "Procedure",
     "Recall",
     "RecallCard",
     "Scope",
     "Situation",
     "TimeWindow",
+    "utc_today",
 ]

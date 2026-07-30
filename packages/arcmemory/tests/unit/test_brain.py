@@ -10,6 +10,7 @@ from arcmemory.brain import ArcMemoryBrain
 from arcmemory.config import MemoryConfig
 from arcmemory.distill import (
     DaySummaryDraft,
+    EventExtraction,
     FactCandidate,
     FactExtraction,
     InsightCandidate,
@@ -44,6 +45,9 @@ class _FakeDistiller:
 
     async def extract_procedures(self, events: list[Event]) -> ProcedureExtraction:
         return ProcedureExtraction()
+
+    async def extract_events(self, episodes: list[Event]) -> EventExtraction:
+        return EventExtraction()
 
     async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
         return DaySummaryDraft(timeline=["09:00 Ada worked on retries"], people=["Ada"])

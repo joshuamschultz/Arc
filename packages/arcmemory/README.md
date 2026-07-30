@@ -99,13 +99,14 @@ per-call `session_id` narrows the shared-nothing scope. `recall(...) -> list[Rec
 returns the structured glass-box cards (provenance + `[[links]]`) behind the injectable
 `retrieve()` text — this is what a host exposes as a first-class recall **tool**.
 
-### The four stores (glass-box markdown)
+### The five stores (glass-box markdown)
 
 ```
 <workspace>/memory/
   entities/<slug>.md      # people/places/projects — fact triplets + wiki-links
   insights/<id>.md        # minted patterns/theses — the centerpiece
   procedures/<slug>.md    # how-to methods distilled from the conversation
+  events/<slug>.md        # what happened in the USER's life (meeting, sale, call)
   daily-log/YYYY-MM-DD.md # curated daily meeting-minutes (not a transcript)
   index.db                # disposable SQLite index (see below)
 ```
@@ -120,11 +121,15 @@ returns the structured glass-box cards (provenance + `[[links]]`) behind the inj
   the session revealed (how a thing is analyzed, decided, handled). Distilled by the LLM
   from the conversation and **evolved in place** as later sessions add / remove / modify
   steps. Never mined from tool/agentic activity.
+- **Events.** What HAPPENED in the *user's* life — a meeting held, a sale closed, a
+  call taken. Each card records when it occurred (distinct from when it was recorded),
+  its type, the `[[participants]]` that were in it (shared-graph edges, so a person is
+  one hop from their history), and how it came out. The user's timeline, not the agent's.
 - **Daily notes.** A curated per-day rollup (timeline, discussions, decisions, people,
   goals, tasks) written by the sleep pass. It is *not* a raw per-turn transcript — the
   raw stream stays in the episodic store and is never duplicated here.
 
-The **raw episodic stream** (a fifth, SQLite-only store) is the audit-grade transcript
+The **raw episodic stream** (a sixth, SQLite-only store) is the audit-grade transcript
 every derived artifact is built from.
 
 ### The index (disposable SQLite)

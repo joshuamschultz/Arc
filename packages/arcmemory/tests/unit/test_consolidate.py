@@ -18,6 +18,7 @@ from arcmemory.consolidate import Consolidator
 from arcmemory.db import MemoryDB
 from arcmemory.distill import (
     DaySummaryDraft,
+    EventExtraction,
     FactCandidate,
     FactExtraction,
     InsightCandidate,
@@ -57,6 +58,9 @@ class FakeDistiller:
             ]
         )
 
+    async def extract_events(self, episodes: list[Event]) -> EventExtraction:
+        return EventExtraction()
+
     async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
         return DaySummaryDraft(timeline=["09:00 the day happened"], people=["Alice"])
 
@@ -86,6 +90,9 @@ class RaisingDistiller:
                 )
             ]
         )
+
+    async def extract_events(self, episodes: list[Event]) -> EventExtraction:
+        return EventExtraction()
 
     async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
         return DaySummaryDraft()
@@ -266,6 +273,7 @@ class _RecordingDistiller:
             "facts": [],
             "insights": [],
             "procedures": [],
+            "events": [],
             "day": [],
         }
         self.calls = 0
@@ -284,6 +292,11 @@ class _RecordingDistiller:
         self.calls += 1
         self.seen["procedures"] += [e.event_id for e in events]
         return ProcedureExtraction()
+
+    async def extract_events(self, episodes: list[Event]) -> EventExtraction:
+        self.calls += 1
+        self.seen["events"] += [e.event_id for e in episodes]
+        return EventExtraction()
 
     async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
         self.calls += 1
@@ -319,7 +332,7 @@ async def test_curation_keeps_tool_plumbing_out_of_every_distiller_input(workspa
         assert "plumb" not in ids, f"tool plumbing leaked into {channel}"
         assert "said" in ids, f"real content missing from {channel}"
     # Curation is pure — it adds no LLM call (one per distiller entry point).
-    assert distiller.calls == 4
+    assert distiller.calls == 5
 
 
 # -- T-053: every mutation audited; the chain verifies ----------------------

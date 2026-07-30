@@ -35,6 +35,7 @@ from arcprompt import load_stock
 from arcmemory.distill import (
     DaySummaryDraft,
     EntityRef,
+    EventExtraction,
     FactExtraction,
     InsightMint,
     ProcedureExtraction,
@@ -86,10 +87,10 @@ class ArcLLMEmbedder:
 class ArcLLMDistiller:
     """arcmemory ``Distiller`` seam backed by an arcllm structured completion.
 
-    Three bounded, single-shot calls (no agentic loop — OQ-3): fact extraction,
-    insight minting, day summary. A fresh provider is loaded per call via
-    ``provider_factory`` and invoked directly (``await provider.invoke(...)``) —
-    the arcllm model is not an async context manager.
+    Bounded, single-shot calls (no agentic loop — OQ-3): fact extraction, insight
+    minting, procedure + life-event extraction, day summary. A fresh provider is
+    loaded per call via ``provider_factory`` and invoked directly
+    (``await provider.invoke(...)``) — the arcllm model is not an async context manager.
     """
 
     def __init__(self, provider_factory: ProviderFactory, *, model: str | None = None) -> None:
@@ -115,6 +116,13 @@ class ArcLLMDistiller:
             load_stock("arcmemory", "distill_procedure"), self._render_events(events)
         )
         return ProcedureExtraction.model_validate(data)
+
+    async def extract_events(self, episodes: list[Event]) -> EventExtraction:
+        """One structured completion → things that happened in the USER's life."""
+        data = await self._complete(
+            load_stock("arcmemory", "distill_event"), self._render_events(episodes)
+        )
+        return EventExtraction.model_validate(data)
 
     async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
         """One structured completion → meeting-minutes daily notes (chronological)."""

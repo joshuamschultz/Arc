@@ -98,7 +98,7 @@ resolving through the same stock/overlay rails at its own call site:
 
 | Context | Prompts | Consumer |
 |---|---|---|
-| **Memory consolidation** (sleep pass) | `arcmemory:consolidate_agent` (the consolidation agent's system prompt) + `distill_fact` / `distill_insight` / `distill_procedure` / `distill_day` / `distill_disambiguate` / `distill_merge_confirm` (per-extraction system prompts) | `arcmemory/agent_consolidate.py`, `arcmemory/arcllm_seam.py` |
+| **Memory consolidation** (sleep pass) | `arcmemory:consolidate_agent` (the consolidation agent's system prompt) + `distill_fact` / `distill_insight` / `distill_procedure` / `distill_event` / `distill_day` / `distill_disambiguate` / `distill_merge_confirm` (per-extraction system prompts) | `arcmemory/agent_consolidate.py`, `arcmemory/arcllm_seam.py` |
 | **Skill improver** | `arcskill:judge_prompt` + `judge_rubric` (structured YAML) · `reflection_prompt` · `code_repair_prompt` · `suitegen_prompt` · `nudge_template` | `arcskill/improver/{evaluator,mutate,suitegen}.py`, `.../nudge/nudge_emitter.py` |
 | **Planning / decomposition** | `arcagent:planner_system` (decompose + replan) | `arcagent/modules/planning/decomposer.py` |
 | **Policy reflection** | `arcagent:reflection_prompt` + `reflection_grounding_header` | `arcagent/modules/policy/{policy_engine,reflection}.py` |
@@ -138,7 +138,7 @@ resolving through the same stock/overlay rails at its own call site:
 | `authoring_guidance` | ❌ tool authoring | guidance for dynamically authored tools |
 
 ### arcmemory (7) — all in the consolidation/sleep pass
-`consolidate_agent`, `distill_fact`, `distill_insight`, `distill_procedure`, `distill_day`, `distill_disambiguate`, `distill_merge_confirm`.
+`consolidate_agent`, `distill_fact`, `distill_insight`, `distill_procedure`, `distill_event`, `distill_day`, `distill_disambiguate`, `distill_merge_confirm`.
 
 ### arcskill (6) — all in the improver
 `judge_prompt`, `judge_rubric` (structured YAML: per-dimension checklist + calibration), `reflection_prompt`, `code_repair_prompt`, `suitegen_prompt`, `nudge_template`.

@@ -84,6 +84,7 @@ the same path.
         ├── entities/*.md                # semantic store — one file per entity
         ├── procedures/*.md              # procedural store — one file per skill/routine
         ├── insights/*.md                # insight store — durable lessons
+        ├── events/*.md                  # event store — what happened in the user's life
         └── daily-log/*.md               # curated daily summaries (workpad-adjacent)
 ```
 

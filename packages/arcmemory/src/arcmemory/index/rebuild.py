@@ -29,6 +29,13 @@ from arcmemory.stores.semantic import extract_wiki_links
 from arcmemory.tagging import entity_vocabulary, tag_entities
 from arcmemory.types import Scope
 
+# Card stores that carry wiki-link edges: (subdir, frontmatter link key, date key).
+# The date key fixes the edge's ``last_hit`` so a replay is byte-identical.
+_LINK_SOURCES: tuple[tuple[str, str, str], ...] = (
+    ("entities", "links_to", "last_updated"),
+    ("events", "participants", "recorded"),
+)
+
 try:  # optional [vec] extra
     import sqlite_vec
 
@@ -166,19 +173,26 @@ class IndexRebuilder:
     # -- edges -------------------------------------------------------------
 
     def _rebuild_link_edges(self) -> None:
-        """Re-derive wiki-link edges from entity files (deterministic ts)."""
-        entities_dir = self._mem_dir / "entities"
-        if not entities_dir.exists():
-            return
-        for path in sorted(entities_dir.glob("*.md")):
-            fm, body = parse_document(path.read_text(encoding="utf-8"))
-            ts = f"{fm.get('last_updated', '1970-01-01')}T00:00:00+00:00"
-            targets: list[str] = []
-            for ref in fm.get("links_to", []):
-                targets.extend(extract_wiki_links(str(ref)) or [str(ref)])
-            targets.extend(extract_wiki_links(body))
-            for target in sorted(set(targets)):
-                self._graph.link(self._scope.key, path.stem, target, kind="link", ts=ts)
+        """Re-derive wiki-link edges from every card store that carries them.
+
+        Entity cards link through ``links_to``; event cards link to the people and
+        projects that were IN them through ``participants``. Both live in the one
+        shared ``edges`` namespace, so a store left out here silently loses its edges
+        on the next rebuild — the index is disposable, this walk is what re-derives it.
+        """
+        for subdir, link_key, date_key in _LINK_SOURCES:
+            directory = self._mem_dir / subdir
+            if not directory.exists():
+                continue
+            for path in sorted(directory.glob("*.md")):
+                fm, body = parse_document(path.read_text(encoding="utf-8"))
+                ts = f"{fm.get(date_key, '1970-01-01')}T00:00:00+00:00"
+                targets: list[str] = []
+                for ref in fm.get(link_key, []):
+                    targets.extend(extract_wiki_links(str(ref)) or [str(ref)])
+                targets.extend(extract_wiki_links(body))
+                for target in sorted(set(targets)):
+                    self._graph.link(self._scope.key, path.stem, target, kind="link", ts=ts)
 
     def _rebuild_assoc_edges(self) -> None:
         """Replay the raw stream to reproduce Hebbian co-activation edges."""

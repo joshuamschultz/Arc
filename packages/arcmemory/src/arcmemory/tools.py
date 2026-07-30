@@ -44,6 +44,7 @@ from arcmemory.index.rebuild import Embedder
 from arcmemory.retrieve import Retriever
 from arcmemory.slug import canonical_slug
 from arcmemory.stores.episodic import EpisodicStore
+from arcmemory.stores.events import EventStore
 from arcmemory.stores.insight import InsightStore
 from arcmemory.stores.procedural import ProceduralStore
 from arcmemory.stores.semantic import SemanticStore
@@ -108,6 +109,7 @@ class _MemoryToolFactory:
         self._semantic = SemanticStore(workspace, self._graph, scope=self._scope.key)
         self._insights = InsightStore(workspace)
         self._procedures = ProceduralStore(workspace)
+        self._events = EventStore(workspace)
         self._episodic = EpisodicStore(db, workspace)
 
     # -- the wrapper -------------------------------------------------------
@@ -168,9 +170,7 @@ class _MemoryToolFactory:
             return False, decision.reason or "denied"
         return True, "allow"
 
-    def _emit(
-        self, name: str, args: dict[str, Any], *, outcome: str, reason: str | None
-    ) -> None:
+    def _emit(self, name: str, args: dict[str, Any], *, outcome: str, reason: str | None) -> None:
         """One tamper-evident audit event per memory-tool call (AU-2, federal req)."""
         emit(
             AuditEvent(
@@ -342,6 +342,26 @@ class _MemoryToolFactory:
         )
         return f"recorded procedure {slug}"
 
+    async def _record_event(self, args: dict[str, Any]) -> str:
+        """Record a thing that happened in the USER's life; link its participants."""
+        slug = canonical_slug(str(args.get("slug", "")))
+        title = str(args.get("title", "")).strip()
+        if not slug or not title:
+            return "skipped (needs slug + title)"
+        event = self._events.upsert(
+            slug,
+            title,
+            date=str(args.get("date", "")),
+            event_type=str(args.get("event_type", "unknown")),
+            participants=[str(p) for p in args.get("participants", [])],
+            summary=str(args.get("summary", "")),
+            outcome=str(args.get("outcome", "")),
+            classification=str(args.get("classification", "unclassified")),
+        )
+        for participant in event.participants:
+            self._graph.link(self._scope.key, event.slug, participant, kind="link")
+        return f"recorded event {event.slug}"
+
     async def _set_alias(self, args: dict[str, Any]) -> str:
         slug = canonical_slug(str(args.get("entity", "")))
         alias = str(args.get("alias", "")).strip()
@@ -456,6 +476,25 @@ class _MemoryToolFactory:
                     required=["slug", "steps"],
                 ),
                 self._record_procedure,
+            ),
+            (
+                "record_event",
+                "Record something that HAPPENED in the user's life (meeting, sale, call, "
+                "shipment): when it happened, who was in it, how it came out.",
+                _obj(
+                    {
+                        "slug": _str(),
+                        "title": _str(),
+                        "date": _str(),
+                        "event_type": _str(),
+                        "participants": _arr(),
+                        "summary": _str(),
+                        "outcome": _str(),
+                        "classification": _str(),
+                    },
+                    required=["slug", "title"],
+                ),
+                self._record_event,
             ),
             (
                 "set_alias",

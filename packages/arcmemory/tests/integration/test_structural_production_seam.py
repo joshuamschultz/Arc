@@ -29,6 +29,7 @@ from arcmemory.brain import ArcMemoryBrain
 from arcmemory.db import DEFAULT_DIMS, MemoryDB
 from arcmemory.distill import (
     DaySummaryDraft,
+    EventExtraction,
     FactExtraction,
     InsightCandidate,
     InsightMint,
@@ -107,6 +108,9 @@ class PlantingDistiller:
 
     async def extract_procedures(self, events: list[Event]) -> ProcedureExtraction:
         return ProcedureExtraction()
+
+    async def extract_events(self, episodes: list[Event]) -> EventExtraction:
+        return EventExtraction()
 
     async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
         return DaySummaryDraft()

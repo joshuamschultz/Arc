@@ -16,6 +16,7 @@ from arcmemory.consolidate import Consolidator
 from arcmemory.db import MemoryDB
 from arcmemory.distill import (
     DaySummaryDraft,
+    EventExtraction,
     FactExtraction,
     InsightMint,
     ProcedureExtraction,
@@ -38,6 +39,9 @@ class _NullDistiller:
 
     async def extract_procedures(self, events: list[Event]) -> ProcedureExtraction:
         return ProcedureExtraction()
+
+    async def extract_events(self, episodes: list[Event]) -> EventExtraction:
+        return EventExtraction()
 
     async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
         return DaySummaryDraft()
