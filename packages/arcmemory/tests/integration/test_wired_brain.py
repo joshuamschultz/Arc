@@ -38,7 +38,7 @@ from arcmemory.distill import (
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.stores.episodic import EpisodicStore
 from arcmemory.stores.semantic import SemanticStore
-from arcmemory.types import Event, Scope
+from arcmemory.types import Event, Procedure, Scope
 
 # Real-vector semantic recall needs the sqlite-vec extension; skip where it can't
 # load (the interpreter degrades to BM25+graph, which this test asserts against).
@@ -97,7 +97,9 @@ class SpyDistiller:
         self.mint_calls += 1
         return InsightMint()
 
-    async def extract_procedures(self, events: list[Event]) -> ProcedureExtraction:
+    async def extract_procedures(
+        self, events: list[Event], existing: list[Procedure]
+    ) -> ProcedureExtraction:
         return ProcedureExtraction()
 
     async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
@@ -126,7 +128,9 @@ class ConsolidatingDistiller:
             ]
         )
 
-    async def extract_procedures(self, events: list[Event]) -> ProcedureExtraction:
+    async def extract_procedures(
+        self, events: list[Event], existing: list[Procedure]
+    ) -> ProcedureExtraction:
         return ProcedureExtraction(
             procedures=[
                 ProcedureCandidate(
@@ -147,7 +151,9 @@ class PlantingDistiller:
     async def extract_facts(self, events: list[Event]) -> FactExtraction:
         return FactExtraction()
 
-    async def extract_procedures(self, events: list[Event]) -> ProcedureExtraction:
+    async def extract_procedures(
+        self, events: list[Event], existing: list[Procedure]
+    ) -> ProcedureExtraction:
         return ProcedureExtraction()
 
     async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:

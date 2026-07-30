@@ -28,7 +28,7 @@ from arcmemory.distill import (
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.stores.insight import InsightStore
 from arcmemory.stores.semantic import SemanticStore
-from arcmemory.types import Event, Scope
+from arcmemory.types import Event, Procedure, Scope
 
 
 class FakeDistiller:
@@ -73,7 +73,9 @@ class _RecordingDistiller:
     async def mint_insights(self, events: list[Event], facts: list) -> InsightMint:
         return InsightMint()
 
-    async def extract_procedures(self, events: list[Event]) -> ProcedureExtraction:
+    async def extract_procedures(
+        self, events: list[Event], existing: list[Procedure]
+    ) -> ProcedureExtraction:
         return ProcedureExtraction()
 
 

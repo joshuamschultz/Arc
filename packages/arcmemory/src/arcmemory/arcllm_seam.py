@@ -40,7 +40,7 @@ from arcmemory.distill import (
     ProcedureExtraction,
 )
 from arcmemory.index.rebuild import EmbeddingUnavailableError
-from arcmemory.types import Event, Fact
+from arcmemory.types import Event, Fact, Procedure
 
 # A factory that yields a *fresh* arcllm provider for one call. An arcllm model
 # (``load_model``) is invoked directly — ``await provider.invoke(...)`` — exactly as
@@ -109,11 +109,20 @@ class ArcLLMDistiller:
         data = await self._complete(load_stock("arcmemory", "distill_insight"), user)
         return InsightMint.model_validate(data)
 
-    async def extract_procedures(self, events: list[Event]) -> ProcedureExtraction:
-        """One structured completion → reusable how-to procedures (findable processes)."""
-        data = await self._complete(
-            load_stock("arcmemory", "distill_procedure"), self._render_events(events)
+    async def extract_procedures(
+        self, events: list[Event], existing: list[Procedure]
+    ) -> ProcedureExtraction:
+        """One structured completion → the MERGED how-to cards (methods evolve).
+
+        The stored cards go into the prompt so the model edits a real playbook rather
+        than re-deriving one from this window alone — the difference between a method
+        that accumulates and one that is overwritten by whatever was mentioned today.
+        """
+        user = (
+            f"{self._render_events(events)}\n\n"
+            f"Existing procedure cards:\n{self._render_procedures(existing)}"
         )
+        data = await self._complete(load_stock("arcmemory", "distill_procedure"), user)
         return ProcedureExtraction.model_validate(data)
 
     async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
@@ -199,6 +208,19 @@ class ArcLLMDistiller:
     def _render_facts(facts: list[Fact]) -> str:
         """One line per known fact, for insight grounding."""
         return "\n".join(f"- {f.predicate}: {f.value}" for f in facts) or "(none)"
+
+    @staticmethod
+    def _render_procedures(procedures: list[Procedure]) -> str:
+        """Each stored card in full (trigger + numbered steps) — the merge base."""
+        if not procedures:
+            return "(none)"
+        lines: list[str] = []
+        for card in procedures:
+            lines.append(
+                f"- slug={card.slug} | title={card.title} | when_to_use={card.when_to_use}"
+            )
+            lines += [f"    {i}. {step}" for i, step in enumerate(card.steps, start=1)]
+        return "\n".join(lines)
 
     @staticmethod
     def _render_cards(cards: list[EntityRef]) -> str:

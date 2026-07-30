@@ -184,7 +184,12 @@ What comes out and where it lands:
 - **Procedures** — verified: these are LLM-derived reusable *methods*
   ("how a stock is analyzed," "how a customer is quoted"), not recorded tool
   sequences — `stores/procedural.py`'s own docstring states this explicitly.
-  A re-extracted procedure bumps `use_count` rather than duplicating.
+  A card is EDITED across sessions, not rewritten: the distiller is handed the
+  current cards and returns the merged method, and `merge_steps` folds it in so
+  a step re-enters at its original position. A step leaves a card only via an
+  explicit `dropped_steps` — omission never deletes, which is what stops a
+  passing mention from truncating an accumulated playbook. Every `[[slug]]` the
+  card names becomes a graph edge, so the method resurfaces with its entities.
 - **Day summaries** — meeting-minutes bullets (timeline, discussions,
   decisions, people, goals, tasks), merged additively into the existing day's
   file so a later run grows the notes instead of clobbering them. People

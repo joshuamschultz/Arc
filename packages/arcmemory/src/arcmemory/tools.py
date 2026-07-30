@@ -45,7 +45,7 @@ from arcmemory.retrieve import Retriever
 from arcmemory.slug import canonical_slug
 from arcmemory.stores.episodic import EpisodicStore
 from arcmemory.stores.insight import InsightStore
-from arcmemory.stores.procedural import ProceduralStore
+from arcmemory.stores.procedural import ProceduralStore, procedure_link_targets
 from arcmemory.stores.semantic import SemanticStore
 from arcmemory.types import Confidence, Insight, Scope, Situation
 
@@ -330,17 +330,23 @@ class _MemoryToolFactory:
         return f"recorded insight {insight_id}"
 
     async def _record_procedure(self, args: dict[str, Any]) -> str:
+        # Methods EVOLVE: the steps fold into the stored card (a step omitted here is
+        # kept, only ``dropped_steps`` removes one) and every [[slug]] the card names
+        # becomes a graph edge, so the method resurfaces when a like situation recurs.
         slug = canonical_slug(str(args.get("slug", "")))
         steps = [str(s) for s in args.get("steps", [])]
         if not slug or not steps:
             return "skipped (needs slug + steps)"
-        self._procedures.upsert(
+        procedure = self._procedures.upsert(
             slug,
             str(args.get("title", slug)),
             when_to_use=str(args.get("when_to_use", "")),
             steps=steps,
+            dropped=[str(s) for s in args.get("dropped_steps", [])],
         )
-        return f"recorded procedure {slug}"
+        for target in procedure_link_targets(procedure):
+            self._graph.link(self._scope.key, slug, target, kind="link")
+        return f"recorded procedure {slug} ({len(procedure.steps)} steps)"
 
     async def _set_alias(self, args: dict[str, Any]) -> str:
         slug = canonical_slug(str(args.get("entity", "")))
@@ -450,9 +456,17 @@ class _MemoryToolFactory:
             ),
             (
                 "record_procedure",
-                "Record a reusable how-to procedure (title + when_to_use + steps).",
+                "Record/refine a reusable how-to (title + when_to_use + steps). Steps merge "
+                "into the existing card: one you omit is kept, so list a step in "
+                "dropped_steps (verbatim) only when it was abandoned or reworded.",
                 _obj(
-                    {"slug": _str(), "title": _str(), "when_to_use": _str(), "steps": _arr()},
+                    {
+                        "slug": _str(),
+                        "title": _str(),
+                        "when_to_use": _str(),
+                        "steps": _arr(),
+                        "dropped_steps": _arr(),
+                    },
                     required=["slug", "steps"],
                 ),
                 self._record_procedure,

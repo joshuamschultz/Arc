@@ -17,7 +17,7 @@ import pytest
 from arcmemory.arcllm_seam import ArcLLMDistiller, ArcLLMEmbedder
 from arcmemory.distill import EntityRef
 from arcmemory.index.rebuild import EmbeddingUnavailableError
-from arcmemory.types import Event, Fact
+from arcmemory.types import Event, Fact, Procedure
 
 # -- ArcLLMEmbedder ---------------------------------------------------------
 
@@ -68,7 +68,7 @@ class _FakeProvider:
         self.invocations: list[dict[str, Any]] = []
 
     async def invoke(self, messages: list[Any], *, response_format: Any = None) -> Any:
-        self.invocations.append({"response_format": response_format})
+        self.invocations.append({"response_format": response_format, "messages": messages})
         return SimpleNamespace(parsed_content=self._parsed, content=self._content)
 
 
@@ -148,12 +148,34 @@ async def test_distiller_extracts_procedures_from_parsed_content() -> None:
     distiller = ArcLLMDistiller(_factory(provider), model="m")
 
     result = await distiller.extract_procedures(
-        [Event(event_id="e0", scope="s", kind="obs", text="t")]
+        [Event(event_id="e0", scope="s", kind="obs", text="t")], []
     )
 
     assert result.procedures[0].slug == "deploy"
     assert result.procedures[0].when_to_use == "shipping"
     assert result.procedures[0].steps == ["a", "b"]
+
+
+async def test_distiller_prompts_with_the_existing_procedure_card() -> None:
+    """The merge base must reach the model — steps included, not just the slug."""
+    provider = _FakeProvider(parsed={"procedures": []})
+    distiller = ArcLLMDistiller(_factory(provider), model="m")
+    existing = Procedure(
+        slug="seo-research",
+        title="SEO research",
+        when_to_use="asked to research SEO",
+        steps=["pull the seed keywords", "score by volume"],
+    )
+
+    await distiller.extract_procedures(
+        [Event(event_id="e0", scope="s", kind="obs", text="t")], [existing]
+    )
+
+    prompt = provider.invocations[0]["messages"][-1].content
+    assert "seo-research" in prompt
+    assert "asked to research SEO" in prompt
+    assert "1. pull the seed keywords" in prompt
+    assert "2. score by volume" in prompt
 
 
 async def test_distiller_invokes_provider_directly_not_as_context_manager() -> None:

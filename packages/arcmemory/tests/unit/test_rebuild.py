@@ -9,6 +9,7 @@ from arcmemory.db import MemoryDB
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import IndexRebuilder
 from arcmemory.stores.episodic import EpisodicStore
+from arcmemory.stores.procedural import ProceduralStore
 from arcmemory.stores.semantic import SemanticStore
 from arcmemory.tagging import tag_entities
 from arcmemory.types import Event, Scope
@@ -103,6 +104,20 @@ async def test_rebuild_produces_a_retrievable_set(
     assert hits, "FTS index must be queryable after rebuild"
     if db.vec_available:
         assert conn.execute("SELECT COUNT(*) FROM vec0").fetchone()[0] > 0
+
+
+async def test_rebuild_reproduces_procedure_link_edges(
+    workspace: Path, db: MemoryDB, scope: Scope
+) -> None:
+    """A procedure's graph node is truth-derived — a wipe+rebuild must restore it."""
+    _seed_agent(workspace, db, scope)
+    ProceduralStore(workspace).upsert(
+        "seo-research", "SEO research", when_to_use="seo work", steps=["ask [[bob]] for the brief"]
+    )
+
+    await IndexRebuilder(db, workspace, scope, embedder=None, seed_vocabulary=_VOCAB).rebuild()
+
+    assert "bob" in dict(WeightedGraph(db).neighbors(scope.key, "seo-research"))
 
 
 async def test_rebuild_without_embedder_degrades(
