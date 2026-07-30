@@ -19,6 +19,10 @@ from arcllm.types import (
 
 ANTHROPIC_API_VERSION = "2023-06-01"
 
+# Anthropic caps a request at 4 cache breakpoints. The last tool and the
+# conversation tail take one each; the rest is the system's budget.
+_MAX_SYSTEM_SEGMENTS = 2
+
 # Anthropic stop_reason -> ArcLLM StopReason
 _ANTHROPIC_STOP_REASON_MAP: dict[str, StopReason] = {
     "end_turn": "end_turn",
@@ -44,22 +48,25 @@ class AnthropicAdapter(BaseAdapter):
             "content-type": "application/json",
         }
 
-    def _extract_system(self, messages: list[Message]) -> tuple[str | None, list[Message]]:
+    def _extract_system(self, messages: list[Message]) -> tuple[list[str], list[Message]]:
         """Separate system messages from the rest.
 
-        Anthropic takes `system` as a top-level param, not in messages.
-        Multiple system messages are concatenated with newlines.
+        Anthropic takes `system` as a top-level param, not in messages. Each
+        system message is one *cache segment*: the caller orders them
+        most-stable first and every segment end gets its own breakpoint, so a
+        change confined to a later segment still reads the earlier segments'
+        cache. Empty segments are dropped — an empty text block is invalid on
+        the wire, and a blank segment would waste a breakpoint.
         """
         system_parts: list[str] = []
         remaining: list[Message] = []
         for msg in messages:
             if msg.role == "system":
-                content = msg.content if isinstance(msg.content, str) else ""
-                system_parts.append(content)
+                if isinstance(msg.content, str) and msg.content:
+                    system_parts.append(msg.content)
             else:
                 remaining.append(msg)
-        system_text = "\n".join(system_parts) if system_parts else None
-        return system_text, remaining
+        return system_parts, remaining
 
     def _format_content_block(
         self, block: TextBlock | ImageBlock | ToolUseBlock | ToolResultBlock
@@ -126,6 +133,24 @@ class AnthropicAdapter(BaseAdapter):
             marker["ttl"] = "1h"
         return marker
 
+    def _system_blocks(self, parts: list[str]) -> list[dict[str, Any]]:
+        """One cached text block per system segment, in caller order.
+
+        Anthropic allows 4 breakpoints per request; the last tool and the
+        conversation tail claim two, leaving ``_MAX_SYSTEM_SEGMENTS`` for the
+        system. Reject an over-long list here rather than let the provider
+        return an opaque 400.
+        """
+        if len(parts) > _MAX_SYSTEM_SEGMENTS:
+            raise ArcLLMConfigError(
+                f"Prompt caching allows at most {_MAX_SYSTEM_SEGMENTS} system segments, "
+                f"got {len(parts)}."
+            )
+        return [
+            {"type": "text", "text": text, "cache_control": self._cache_control()}
+            for text in parts
+        ]
+
     def _apply_last_message_breakpoint(self, formatted: list[dict[str, Any]]) -> None:
         """Mark the tail of the conversation as the rolling cache breakpoint.
 
@@ -146,7 +171,7 @@ class AnthropicAdapter(BaseAdapter):
         tools: list[Tool] | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        system_text, remaining = self._extract_system(messages)
+        system_parts, remaining = self._extract_system(messages)
         formatted = [self._format_message(m) for m in remaining]
         caching = self._config.provider.enable_prompt_caching
 
@@ -163,14 +188,12 @@ class AnthropicAdapter(BaseAdapter):
         # generically across models).
         if self._model_meta is None or self._model_meta.supports_temperature:
             body["temperature"] = temperature
-        if system_text is not None:
+        if system_parts:
             # A cache breakpoint can only attach to a content-block list, so
-            # promote the system string when caching is on; keep the plain
-            # string form otherwise.
+            # promote the system segments to blocks when caching is on; collapse
+            # to the plain string form otherwise.
             body["system"] = (
-                [{"type": "text", "text": system_text, "cache_control": self._cache_control()}]
-                if caching
-                else system_text
+                self._system_blocks(system_parts) if caching else "\n".join(system_parts)
             )
         if tools:
             formatted_tools = [self._format_tool(t) for t in tools]

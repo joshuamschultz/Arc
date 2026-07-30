@@ -6,20 +6,29 @@ Re-exports ``TextBlock`` and ``ToolUseBlock`` so callers in arcrun
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from arcllm.types import Message, TextBlock, ToolResultBlock, ToolUseBlock
 
 __all__ = [
     "Message",
+    "SystemPrompt",
     "TextBlock",
     "ToolResultBlock",
     "ToolUseBlock",
     "assistant_message",
     "system_message",
+    "system_messages",
     "tool_result",
     "user_message",
 ]
+
+# A system prompt is either one string or an ordered list of segments. A caller
+# that knows which parts of its prompt change at different rates passes the
+# segments most-stable-first; the provider adapter turns each into its own cache
+# breakpoint, so a change in a late segment still reads the earlier ones' cache.
+SystemPrompt = str | Sequence[str]
 
 
 def user_message(text: str) -> Message:
@@ -28,6 +37,12 @@ def user_message(text: str) -> Message:
 
 def system_message(text: str) -> Message:
     return Message(role="system", content=text)
+
+
+def system_messages(prompt: SystemPrompt) -> list[Message]:
+    """One system message per segment, dropping empties."""
+    parts = [prompt] if isinstance(prompt, str) else list(prompt)
+    return [system_message(p) for p in parts if p]
 
 
 def assistant_message(content: list[Any]) -> Message:

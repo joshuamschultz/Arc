@@ -55,7 +55,8 @@ flowchart TB
     subgraph RUNSTART["build_run_context (once per run)"]
       SNAP["PromptSnapshot: resolve ALL prompts overlay→stock, freeze,<br/>emit one prompt.snapshot audit event"]
     end
-    subgraph ASSEMBLE["assemble_system_prompt — ordered: identity FIRST · context LAST · rest ALPHABETICAL"]
+    subgraph ASSEMBLE["assemble_system_prompt — tiered by change rate: session segment · run segment · turn block"]
+      BASE["base  ← arcagent:base_system (the harness preamble, overlay-editable)"]
       ID["identity  ← workspace/identity.md (NOT arcprompt)"]
       BUS["bus-injected sections (agent:assemble_prompt):<br/>• capabilities manifest (tool/skill XML, wraps arcagent:tool_manifest_preamble)<br/>• skill_usage ← arcagent:skill_usage_instruction (only if skills present)<br/>• recall ← memory module (retrieved memory, not a prompt file)"]
       STRAT["strategy_* / strategy_selection / code_exec_guidance / contained_exec_guidance<br/>← arcrun get_strategy_prompts (snapshot-resolved)"]
@@ -64,25 +65,66 @@ flowchart TB
     end
     SNAP --> STRAT --> ASSEMBLE
     SNAP --> SPAWN --> ASSEMBLE
+    SNAP --> BASE --> ASSEMBLE
     ID --> ASSEMBLE
     BUS --> ASSEMBLE
     CTX --> ASSEMBLE
 ```
 
-**Ordering rule:** `identity` block first, `context` block last, every other section in
-between sorted alphabetically by its section key. So the model sees, top to bottom:
+**Ordering rule: tiered by change rate, most stable first.** A provider caches the
+longest stable prefix, and the conversation sits behind the whole system prompt — so
+one volatile byte in the system prompt re-bills the entire history every turn. The
+assembly therefore returns three parts:
+
+| Tier | Contents | Changes when | Cached as |
+|------|----------|--------------|-----------|
+| **session** | `base`, `identity`, capabilities manifest, `skill_usage`, `policy`, strategy + spawn guidance | a tool/skill is added, or identity.md is edited | segment 1 |
+| **run** | `context` (workspace/context.md), plus any section the assembler does not recognize | the workpad rewrites context.md | segment 2 |
+| **turn** | `recall`, `planning`, `teams` | every turn | not in the system prompt at all — see below |
+
+So the model sees, top to bottom:
 
 ```
+# cache segment 1 — session-stable
+--- base ---                (harness preamble)                        [arcagent:base_system]
 --- identity ---            (workspace/identity.md)
 --- capabilities ---        (tool/skill manifest; preamble = tool_manifest_preamble)
 --- code_exec_guidance ---  (if execute_python is available)          [arcrun]
---- recall ---              (memory retrieval, if the memory module is on)
+--- policy ---              (if the policy module is on)
 --- skill_usage ---         (if the agent has skills)                 [arcagent:skill_usage_instruction]
 --- spawn_guidance ---      (if spawn enabled)                        [arcagent:spawn_guidance]
 --- strategy_react ---      (per allowed strategy)                    [arcrun:strategy_react]
 --- strategy_selection ---  (only if >1 strategy; built from *_description) [arcrun]
+
+# cache segment 2 — run-stable
 --- context ---             (workspace/context.md)
 ```
+
+Within a tier: fixed head (`base`, then `identity`), then alphabetical, then fixed
+tail (`context`).
+
+**Per-turn material rides with the user's message, not the system prompt.** Memory
+recall, the plan frontier, and the team inbox are attached to the user turn inside an
+`<agent-context>` tag. `base_system` tells the model to read that block as reference
+material, never as instruction.
+
+It is stored, but **beside** the message rather than inside it. The session record is
+`{"role": "user", "content": <what the person typed>, "turn_context": <retrieved
+material>}`. So:
+
+- The session stays the conversation. A chat view, a session tool, and memory
+  capture read `content` and see only what was actually said — retrieved text never
+  contaminates what gets distilled back into memory.
+- The retrieved material is still durable, still auditable, and still on the record
+  for that exact turn.
+- `wire_messages()` re-attaches it verbatim when rebuilding history, so a replayed
+  turn is byte-identical to the turn as first sent. `AssembledPrompt.session_record()`
+  and `wire_messages()` are the two halves of one contract: if they ever disagreed by
+  a byte, the cached prefix would stop matching and every turn would re-bill the whole
+  conversation.
+
+An unrecognized section falls back to the **run** tier: a module the assembler cannot
+vouch for must never sit in front of the session-stable segment.
 
 Section keys are stable identifiers, not the prompt names 1:1 — e.g. the `capabilities`
 section is generated XML wrapping the `tool_manifest_preamble` prose; `strategy_selection`

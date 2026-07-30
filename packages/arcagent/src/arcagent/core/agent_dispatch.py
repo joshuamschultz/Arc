@@ -19,7 +19,6 @@ import logging
 from collections.abc import AsyncIterator, Callable
 from typing import TYPE_CHECKING, Any
 
-from arcllm import Message
 from arcrun import Event, RunHandle, StreamEvent, TurnEndEvent, get_strategy_prompts
 from arcrun import run_async as arcrun_run_async
 from arcrun import run_stream as arcrun_run_stream
@@ -28,7 +27,7 @@ from arcagent.capabilities.provider import WORKSPACE_ROOT, AgentCapabilityProvid
 from arcagent.core import known_channels, turn_context
 from arcagent.core.agent_lifecycle import activate_runtime_bindings
 from arcagent.core.module_bus import ModuleBus
-from arcagent.core.session_internal import SessionManager
+from arcagent.core.session_internal import AssembledPrompt, SessionManager, wire_messages
 from arcagent.core.session_internal.capability_ledger import bind_session_id, reset_session_id
 from arcagent.core.telemetry import AgentTelemetry
 from arcagent.tools._policy_fill import resolve_run_budget
@@ -47,15 +46,15 @@ async def build_run_context(
     ModuleBus,
     Any,  # model
     AgentCapabilityProvider,  # the unified capability surface for arcrun
-    str,  # system_prompt
+    AssembledPrompt,  # tiered system prompt + this turn's context
     Callable[[Event], None],  # bridge
 ]:
     """Prepare shared run context for the streaming run.
 
     Assembles the agent's capabilities into an ``AgentCapabilityProvider``
     (ADR-023): policy-wrapped registry tools (invocable) + the agent's skills
-    (lazily loaded) + spawn (dispatched with live context). Merges strategy and
-    orchestration prompt guidance into the system prompt. Emits
+    (lazily loaded) + spawn (dispatched with live context). Merges the harness
+    preamble, strategy, and orchestration guidance into the system prompt. Emits
     ``agent:pre_respond`` before returning.
     """
     from arcagent.core.model_manager import create_arcrun_bridge
@@ -71,9 +70,14 @@ async def build_run_context(
     # bytes. Absent a resolver (bare/test agent), fall back to stock-only loading.
     resolve = _run_prompt_resolve(agent, telemetry)
 
-    # Strategy prompt guidance — arcrun-owned strategies and tools.
+    # Strategy prompt guidance — arcrun-owned strategies and tools. ``base`` is
+    # the harness-level preamble that opens every agent's prompt, above its own
+    # identity; like every other prompt it is operator-overridable via arcprompt.
     tool_names = [t.name for t in invoke_tools]
-    strategy_sections = get_strategy_prompts(tool_names=tool_names, resolve=resolve)
+    strategy_sections = {
+        "base": resolve("arcagent", "base_system"),
+        **get_strategy_prompts(tool_names=tool_names, resolve=resolve),
+    }
 
     # Orchestration: spawn_task is context-dependent (reads depth/budget from the
     # loop's ToolContext), so it is dispatched directly, not routed through the
@@ -83,10 +87,11 @@ async def build_run_context(
         from arcagent.orchestration import RootTokenBudget, make_spawn_tool
 
         spawn_guidance = resolve("arcagent", "spawn_guidance")
-        child_system_prompt = await context.assemble_system_prompt(
+        child_prompt = await context.assemble_system_prompt(
             agent._workspace,
             extra_sections={**strategy_sections, "spawn_guidance": spawn_guidance},
         )
+        child_system_prompt = child_prompt.as_text()
         child_tools = list(invoke_tools)  # closure ref — append makes children see spawn
         # Shared cross-child token pool (LLM10) — one per run, capping the
         # aggregate spend of every child the model spawns this turn.
@@ -104,7 +109,7 @@ async def build_run_context(
         ctx_tools = [spawn_tool]
         strategy_sections = {**strategy_sections, "spawn_guidance": spawn_guidance}
 
-    system_prompt = await context.assemble_system_prompt(
+    prompt = await context.assemble_system_prompt(
         agent._workspace, extra_sections=strategy_sections, query=task
     )
     bridge = create_arcrun_bridge(
@@ -125,7 +130,7 @@ async def build_run_context(
     )
 
     await bus.emit("agent:pre_respond", {"task": task})
-    return telemetry, bus, model, provider, system_prompt, bridge
+    return telemetry, bus, model, provider, prompt, bridge
 
 
 def _run_prompt_resolve(agent: ArcAgent, telemetry: AgentTelemetry) -> Callable[[str, str], str]:
@@ -267,11 +272,9 @@ async def dispatch_stream(
         known_channels.record(
             agent._workspace, target=reply_target, label=reply_label or reply_target
         )
-    await session.append_message({"role": "user", "content": input_text})
-    telemetry, bus, model, provider, system_prompt, bridge = await build_run_context(
-        agent, input_text
-    )
-    history = [Message(**m) for m in session.get_messages()]
+    telemetry, bus, model, provider, prompt, bridge = await build_run_context(agent, input_text)
+    await session.append_message(prompt.session_record(input_text))
+    history = wire_messages(session.get_messages())
     transform = agent._context.transform_context if agent._context else None
     # SPEC-038 F1 — resolve the tier-resolved per-run budget so the arcrun
     # circuit-breaker (LLM10) is reachable through the real streaming path.
@@ -294,7 +297,7 @@ async def dispatch_stream(
             raw_stream = await arcrun_run_stream(
                 model=model,
                 capabilities=provider,
-                system_prompt=system_prompt,
+                system_prompt=prompt.segments,
                 task=input_text,
                 messages=history,
                 on_event=bridge,
@@ -355,11 +358,9 @@ async def start_tracked_run(
     """
     activate_runtime_bindings(agent)
     session = await agent.session(session_key)
-    await session.append_message({"role": "user", "content": input_text})
-    _telemetry, _bus, model, provider, system_prompt, bridge = await build_run_context(
-        agent, input_text
-    )
-    history = [Message(**m) for m in session.get_messages()]
+    _telemetry, _bus, model, provider, prompt, bridge = await build_run_context(agent, input_text)
+    await session.append_message(prompt.session_record(input_text))
+    history = wire_messages(session.get_messages())
     transform = agent._context.transform_context if agent._context else None
     max_tokens, max_cost_usd = resolve_run_budget(agent._config)
 
@@ -370,7 +371,7 @@ async def start_tracked_run(
         handle = await arcrun_run_async(
             model,
             provider,
-            system_prompt,
+            prompt.segments,
             input_text,
             messages=history,
             on_event=bridge,

@@ -57,7 +57,7 @@ class TestAssembleSystemPrompt:
         (tmp_path / "identity.md").write_text("# Agent Identity\nI am test-agent.")
         (tmp_path / "context.md").write_text("# Context\nWorking memory.")
 
-        prompt = await ctx_mgr.assemble_system_prompt(tmp_path)
+        prompt = (await ctx_mgr.assemble_system_prompt(tmp_path)).as_text()
         assert "Agent Identity" in prompt
         assert "Working memory" in prompt
 
@@ -65,24 +65,24 @@ class TestAssembleSystemPrompt:
         self, ctx_mgr: ContextManager, tmp_path: Path
     ) -> None:
         """Missing workspace files don't crash, just skip."""
-        prompt = await ctx_mgr.assemble_system_prompt(tmp_path)
+        prompt = (await ctx_mgr.assemble_system_prompt(tmp_path)).as_text()
         assert isinstance(prompt, str)
 
     async def test_partial_files(self, ctx_mgr: ContextManager, tmp_path: Path) -> None:
         """Only identity.md exists."""
         (tmp_path / "identity.md").write_text("# Identity\nTest agent.")
-        prompt = await ctx_mgr.assemble_system_prompt(tmp_path)
+        prompt = (await ctx_mgr.assemble_system_prompt(tmp_path)).as_text()
         assert "Identity" in prompt
 
     async def test_section_headers_included(self, ctx_mgr: ContextManager, tmp_path: Path) -> None:
         (tmp_path / "identity.md").write_text("content")
-        prompt = await ctx_mgr.assemble_system_prompt(tmp_path)
+        prompt = (await ctx_mgr.assemble_system_prompt(tmp_path)).as_text()
         assert "--- identity ---" in prompt.lower() or "identity" in prompt.lower()
 
     async def test_works_without_bus(self, ctx_mgr: ContextManager, tmp_path: Path) -> None:
         """No bus parameter = no event emitted, still works."""
         (tmp_path / "identity.md").write_text("I am agent")
-        prompt = await ctx_mgr.assemble_system_prompt(tmp_path)
+        prompt = (await ctx_mgr.assemble_system_prompt(tmp_path)).as_text()
         assert "I am agent" in prompt
 
     async def test_identity_md_hot_reload_between_turns(
@@ -97,12 +97,12 @@ class TestAssembleSystemPrompt:
         ``ContextManager.assemble_system_prompt``.
         """
         (tmp_path / "identity.md").write_text("Identity v1: I am the intake agent.")
-        first = await ctx_mgr.assemble_system_prompt(tmp_path)
+        first = (await ctx_mgr.assemble_system_prompt(tmp_path)).as_text()
         assert "v1" in first
 
         # Operator edits identity.md between turns.
         (tmp_path / "identity.md").write_text("Identity v2: I am the architect agent.")
-        second = await ctx_mgr.assemble_system_prompt(tmp_path)
+        second = (await ctx_mgr.assemble_system_prompt(tmp_path)).as_text()
         assert "v2" in second
         assert "v1" not in second
 
@@ -115,7 +115,7 @@ class TestExtraSections:
     ) -> None:
         (tmp_path / "identity.md").write_text("I am agent")
         extra = {"strategy_react": "## Loop\nYou operate in a loop."}
-        prompt = await ctx_mgr.assemble_system_prompt(tmp_path, extra_sections=extra)
+        prompt = (await ctx_mgr.assemble_system_prompt(tmp_path, extra_sections=extra)).as_text()
         assert "You operate in a loop" in prompt
 
     async def test_extra_sections_sorted_alphabetically(
@@ -128,7 +128,7 @@ class TestExtraSections:
             "spawn_guidance": "Spawn guidance content",
             "code_exec_guidance": "Code exec content",
         }
-        prompt = await ctx_mgr.assemble_system_prompt(tmp_path, extra_sections=extra)
+        prompt = (await ctx_mgr.assemble_system_prompt(tmp_path, extra_sections=extra)).as_text()
 
         identity_pos = prompt.find("Identity content")
         code_pos = prompt.find("Code exec content")
@@ -141,14 +141,14 @@ class TestExtraSections:
         self, ctx_mgr: ContextManager, tmp_path: Path
     ) -> None:
         (tmp_path / "identity.md").write_text("I am agent")
-        prompt = await ctx_mgr.assemble_system_prompt(tmp_path, extra_sections=None)
+        prompt = (await ctx_mgr.assemble_system_prompt(tmp_path, extra_sections=None)).as_text()
         assert "I am agent" in prompt
 
     async def test_extra_sections_empty_dict_is_safe(
         self, ctx_mgr: ContextManager, tmp_path: Path
     ) -> None:
         (tmp_path / "identity.md").write_text("I am agent")
-        prompt = await ctx_mgr.assemble_system_prompt(tmp_path, extra_sections={})
+        prompt = (await ctx_mgr.assemble_system_prompt(tmp_path, extra_sections={})).as_text()
         assert "I am agent" in prompt
 
     async def test_extra_sections_merged_after_bus_handlers(
@@ -163,7 +163,9 @@ class TestExtraSections:
         (tmp_path / "identity.md").write_text("I am agent")
         extra = {"strategies": "Strategy guidance"}
 
-        prompt = await ctx_mgr_with_bus.assemble_system_prompt(tmp_path, extra_sections=extra)
+        prompt = (
+            await ctx_mgr_with_bus.assemble_system_prompt(tmp_path, extra_sections=extra)
+        ).as_text()
         assert "Bus-injected tools" in prompt
         assert "Strategy guidance" in prompt
 
@@ -178,7 +180,9 @@ class TestExtraSections:
         mock_bus.subscribe("agent:assemble_prompt", inject_via_bus)
         extra = {"overlap": "caller version"}
 
-        prompt = await ctx_mgr_with_bus.assemble_system_prompt(tmp_path, extra_sections=extra)
+        prompt = (
+            await ctx_mgr_with_bus.assemble_system_prompt(tmp_path, extra_sections=extra)
+        ).as_text()
         assert "caller version" in prompt
         assert "bus version" not in prompt
 
@@ -229,7 +233,7 @@ class TestAssemblePromptEvent:
         mock_bus.subscribe("agent:assemble_prompt", inject_notes, priority=50)
         (tmp_path / "identity.md").write_text("I am agent")
 
-        prompt = await ctx_mgr_with_bus.assemble_system_prompt(tmp_path)
+        prompt = (await ctx_mgr_with_bus.assemble_system_prompt(tmp_path)).as_text()
         assert "Today I learned about testing" in prompt
 
     async def test_handler_failure_still_assembles_prompt(
@@ -244,7 +248,7 @@ class TestAssemblePromptEvent:
         (tmp_path / "identity.md").write_text("I am agent")
 
         # Should not raise, prompt still assembled
-        prompt = await ctx_mgr_with_bus.assemble_system_prompt(tmp_path)
+        prompt = (await ctx_mgr_with_bus.assemble_system_prompt(tmp_path)).as_text()
         assert "I am agent" in prompt
 
     async def test_section_ordering(
@@ -259,7 +263,7 @@ class TestAssemblePromptEvent:
         (tmp_path / "identity.md").write_text("Identity content")
         (tmp_path / "context.md").write_text("Context content")
 
-        prompt = await ctx_mgr_with_bus.assemble_system_prompt(tmp_path)
+        prompt = (await ctx_mgr_with_bus.assemble_system_prompt(tmp_path)).as_text()
         # Verify ordering: identity, notes, context
         identity_pos = prompt.find("Identity content")
         notes_pos = prompt.find("Daily notes content")
@@ -274,7 +278,7 @@ class TestAssemblePromptEvent:
         mgr = ContextManager(config=ctx_config, telemetry=mock_telemetry)
         (tmp_path / "identity.md").write_text("content")
         # Should work fine without bus
-        prompt = await mgr.assemble_system_prompt(tmp_path)
+        prompt = (await mgr.assemble_system_prompt(tmp_path)).as_text()
         assert "content" in prompt
 
 
@@ -426,7 +430,7 @@ class TestContextEdgeCases:
     ) -> None:
         """Line 40: All workspace files missing, returns empty or minimal prompt."""
         # No files created, all should be skipped
-        prompt = await ctx_mgr.assemble_system_prompt(tmp_path)
+        prompt = (await ctx_mgr.assemble_system_prompt(tmp_path)).as_text()
         # Should still return a string, not crash
         assert isinstance(prompt, str)
 

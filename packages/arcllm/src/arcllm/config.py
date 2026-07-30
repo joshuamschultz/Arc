@@ -80,9 +80,12 @@ class ProviderSettings(BaseModel):
     # breakpoints (Anthropic) read these; OpenAI-wire adapters ignore them.
     # Default on: caching is a pure cost/latency win on a stable prefix.
     enable_prompt_caching: bool = True
-    # "5m" (default, cheaper writes, smaller exfil window) or "1h" (opt-in for
-    # long-lived agents whose turn cadence exceeds the 5-minute TTL).
-    cache_ttl: str = "5m"
+    # "1h" (default) or "5m". A 1h write costs ~2x base vs ~1.25x for 5m, but an
+    # Arc agent's turn cadence — scheduled runs, chat replies minutes apart — is
+    # routinely longer than five minutes, so a 5m entry usually expires before it
+    # is ever read. One extra read inside the hour already pays the difference
+    # back. Set "5m" for a genuinely chatty deployment or a tighter exfil window.
+    cache_ttl: str = "1h"
 
     @field_validator("cache_ttl")
     @classmethod

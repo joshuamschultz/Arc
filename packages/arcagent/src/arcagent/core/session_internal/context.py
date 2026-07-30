@@ -10,16 +10,28 @@ Two responsibilities:
    ``prune_observations`` (observation masking) — are invoked by
    ``SessionManager.compact`` at a discrete, persisted compaction boundary,
    NOT per turn. Structured LLM summarization lives in the session manager.
+
+Assembly is tiered by *change rate*, because a provider caches the longest
+stable prefix and the conversation sits behind the whole system prompt. One
+volatile byte in front of the history re-bills the entire history every turn.
+So the prompt is split three ways: a session-stable segment (harness preamble,
+identity, capabilities), a run-stable segment (``context.md``, rewritten
+between runs), and per-turn material (recall, plan frontier, team inbox) that
+rides with the user's message instead of the system prompt.
 """
 
 from __future__ import annotations
 
 import logging
 import math
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 # TYPE_CHECKING-only import to avoid circular dependency
 from typing import TYPE_CHECKING, Any
+
+from arcllm import Message
 
 from arcagent.core.config import ContextConfig
 from arcagent.core.telemetry import AgentTelemetry
@@ -34,6 +46,119 @@ _CORE_PROMPT_FILES = ["identity.md", "context.md"]
 
 # Approximate characters per token for estimation
 _CHARS_PER_TOKEN = 4
+
+# Sections whose content is derived from the current turn. They move out of the
+# system prompt entirely so the cached prefix survives the turn.
+_TURN_SECTIONS = frozenset({"planning", "recall", "teams"})
+
+# Bus-injected sections known to hold still for the life of the process. A
+# section we cannot vouch for defaults to the run tier instead: an unknown
+# volatile section must never sit in front of the session-stable segment.
+_SESSION_SECTIONS = frozenset(
+    {"capabilities", "identity", "memory_status", "policy", "skill_usage"}
+)
+
+# Fixed positions inside their tier; everything else sorts alphabetically.
+_SESSION_HEAD = ("base", "identity")
+_RUN_TAIL = ("context",)
+
+# Where a turn's retrieved material is stored on a session record. It is a
+# sibling of ``content``, never part of it: the session is the human
+# conversation, and a chat view, a session tool, or memory capture must see
+# only what the person actually said.
+TURN_CONTEXT_KEY = "turn_context"
+
+
+def with_turn_context(user_text: str, turn: str) -> str:
+    """The exact bytes the model sees for one user turn.
+
+    The single definition of that composition, used both when a turn is first
+    sent and when it is replayed from storage — if the two ever disagreed by a
+    byte, the provider's cached prefix would stop matching and every turn would
+    re-bill the whole conversation.
+
+    Tagged rather than merged: retrieved material is reference data, and the
+    model is told (in ``base_system``) never to read it as instruction.
+    """
+    if not turn:
+        return user_text
+    return f"{user_text}\n\n<agent-context>\n{turn}\n</agent-context>"
+
+
+@dataclass(frozen=True)
+class AssembledPrompt:
+    """A system prompt split by how often each part changes.
+
+    ``session`` and ``run`` are the ordered provider cache segments (most
+    stable first). ``turn`` is this turn's retrieved material, which the caller
+    attaches to the user's message via :meth:`turn_text` — persisted with that
+    message, so the next turn's prefix is still byte-identical.
+    """
+
+    session: str
+    run: str
+    turn: str
+
+    @property
+    def segments(self) -> list[str]:
+        """The system prompt as ordered cache segments, most-stable first."""
+        return [s for s in (self.session, self.run) if s]
+
+    def session_record(self, user_text: str) -> dict[str, str]:
+        """The user turn as it is stored: what the person said, plus a sibling
+        field holding this turn's retrieved material.
+
+        Stored, not discarded, because the bytes sent on this turn must be
+        reproducible on the next one or the cached prefix stops matching. Kept
+        out of ``content`` so the session stays the conversation.
+        """
+        record = {"role": "user", "content": user_text}
+        if self.turn:
+            record[TURN_CONTEXT_KEY] = self.turn
+        return record
+
+    def as_text(self) -> str:
+        """The system prompt as one string, for callers that take a single prompt."""
+        return "\n\n".join(self.segments)
+
+
+def wire_messages(records: Sequence[dict[str, Any]]) -> list[Message]:
+    """Session records as the messages the model actually receives.
+
+    Each record's stored turn context is re-attached verbatim, so a replayed
+    turn is byte-identical to the turn as first sent. This is the counterpart
+    of :meth:`AssembledPrompt.session_record`; the two must stay paired.
+    """
+    out: list[Message] = []
+    for record in records:
+        turn = record.get(TURN_CONTEXT_KEY) or ""
+        content = record.get("content")
+        if turn and isinstance(content, str):
+            record = {**record, "content": with_turn_context(content, turn)}
+        out.append(Message(**record))
+    return out
+
+
+def _tier_of(key: str, caller_keys: frozenset[str]) -> str:
+    """Which cache tier a section belongs to. Unknown sections fail safe to ``run``."""
+    if key in _TURN_SECTIONS:
+        return "turn"
+    if key in _SESSION_SECTIONS or key in caller_keys:
+        return "session"
+    return "run"
+
+
+def _render(
+    sections: dict[str, str],
+    keys: list[str],
+    *,
+    head: tuple[str, ...] = (),
+    tail: tuple[str, ...] = (),
+) -> str:
+    """Render named sections in a stable order: ``head``, then sorted, then ``tail``."""
+    middle = sorted(k for k in keys if k not in head and k not in tail)
+    ordered = [k for k in head if k in keys] + middle + [k for k in tail if k in keys]
+    return "\n\n".join(f"--- {k} ---\n{sections[k]}" for k in ordered if sections[k])
 
 
 def _msg_attr(msg: Any, key: str, default: Any = "") -> Any:
@@ -78,15 +203,19 @@ class ContextManager:
         extra_sections: dict[str, str] | None = None,
         *,
         query: str = "",
-    ) -> str:
-        """Build system prompt from workspace files.
+    ) -> AssembledPrompt:
+        """Build the tiered system prompt from workspace files.
 
         Reads core files (identity.md, context.md), then emits
         agent:assemble_prompt so modules can inject their own sections.
         Caller-supplied extra_sections (e.g. ArcRun strategy guidance)
         are merged after bus handlers but before ordering.
 
-        Final ordering: identity first, context last, rest alphabetically.
+        Tiering: ``extra_sections`` and the named ``_SESSION_SECTIONS`` form the
+        session-stable segment (``base`` and ``identity`` lead it); ``context.md``
+        and any unrecognized section form the run-stable segment; the named
+        ``_TURN_SECTIONS`` are returned separately for the caller to attach to the
+        user's message. Within a tier: fixed head, then alphabetical, then fixed tail.
 
         ``workspace/identity.md`` re-read every call (hot-reload contract):
             The file content is read from disk on every invocation, so an
@@ -123,23 +252,19 @@ class ContextManager:
             )
 
         # Merge caller-supplied sections (strategy guidance, etc.)
+        caller_keys = frozenset(extra_sections or ())
         if extra_sections:
             sections.update(extra_sections)
 
-        # Dynamic ordering: identity first, context last, rest sorted
-        parts: list[str] = []
-        if sections.get("identity"):
-            parts.append(f"--- identity ---\n{sections['identity']}")
+        tiered: dict[str, list[str]] = {"session": [], "run": [], "turn": []}
+        for key in sections:
+            tiered[_tier_of(key, caller_keys)].append(key)
 
-        middle_keys = sorted(k for k in sections if k not in ("identity", "context"))
-        for key in middle_keys:
-            if sections[key]:
-                parts.append(f"--- {key} ---\n{sections[key]}")
-
-        if sections.get("context"):
-            parts.append(f"--- context ---\n{sections['context']}")
-
-        return "\n\n".join(parts)
+        return AssembledPrompt(
+            session=_render(sections, tiered["session"], head=_SESSION_HEAD),
+            run=_render(sections, tiered["run"], tail=_RUN_TAIL),
+            turn=_render(sections, tiered["turn"]),
+        )
 
     def estimate_tokens(self, text: str) -> int:
         """Estimate token count with conservative multiplier.

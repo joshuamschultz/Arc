@@ -9,6 +9,7 @@ import pytest
 from arcllm.adapters.anthropic import AnthropicAdapter
 from arcllm.adapters.openai import OpenaiAdapter, _parse_openai_sse_line
 from arcllm.config import ModelMetadata, ProviderConfig, ProviderSettings
+from arcllm.exceptions import ArcLLMConfigError
 from arcllm.types import Message, TextBlock, Tool
 
 FAKE_MODEL = "claude-test-1"
@@ -105,6 +106,45 @@ class TestAnthropicBreakpoints:
         assert "tools" not in body
         assert body["system"][-1]["cache_control"] == {"type": "ephemeral"}
         assert body["messages"][-1]["content"][-1]["cache_control"] == {"type": "ephemeral"}
+
+    def test_system_segments_each_get_a_breakpoint(self):
+        """Two system messages = two cache segments, most-stable first.
+
+        A change in the volatile second segment must still read the first
+        segment's cache, so each segment end carries its own breakpoint.
+        """
+        adapter = AnthropicAdapter(_config(enable_caching=True), FAKE_MODEL)
+        messages = [
+            Message(role="system", content="session-stable"),
+            Message(role="system", content="run-stable"),
+            Message(role="user", content="Hello"),
+        ]
+        body = adapter._build_request_body(messages)
+
+        assert [b["text"] for b in body["system"]] == ["session-stable", "run-stable"]
+        assert all(b["cache_control"] == {"type": "ephemeral"} for b in body["system"])
+
+    def test_system_segments_concatenate_when_caching_off(self):
+        adapter = AnthropicAdapter(_config(enable_caching=False), FAKE_MODEL)
+        messages = [
+            Message(role="system", content="session-stable"),
+            Message(role="system", content="run-stable"),
+            Message(role="user", content="Hello"),
+        ]
+        body = adapter._build_request_body(messages)
+        assert body["system"] == "session-stable\nrun-stable"
+
+    def test_too_many_system_segments_rejected_while_caching(self):
+        """Anthropic allows 4 breakpoints total; tools + 2 system + tail fills it."""
+        adapter = AnthropicAdapter(_config(enable_caching=True), FAKE_MODEL)
+        messages = [
+            Message(role="system", content="a"),
+            Message(role="system", content="b"),
+            Message(role="system", content="c"),
+            Message(role="user", content="Hello"),
+        ]
+        with pytest.raises(ArcLLMConfigError, match="system segments"):
+            adapter._build_request_body(messages)
 
     def test_usage_reads_cache_tokens(self):
         adapter = AnthropicAdapter(_config(), FAKE_MODEL)

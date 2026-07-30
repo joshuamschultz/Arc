@@ -28,6 +28,7 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from arcrun._messages import SystemPrompt
 from arcrun.capabilities import CapabilityProvider
 from arcrun.events import Event
 from arcrun.types import LoopResult, SandboxConfig, Tool
@@ -168,7 +169,7 @@ async def run_stream(
     *,
     model: Any,
     capabilities: CapabilityProvider,
-    system_prompt: str,
+    system_prompt: SystemPrompt,
     task: str,
     messages: list[Any] | None = None,
     max_turns: int = 25,
@@ -204,7 +205,8 @@ async def run_stream(
         model: LLM model for the run.
         capabilities: CapabilityProvider whose advertised specs become the
             model's tool list; calls route to ``provider.invoke``.
-        system_prompt: System prompt.
+        system_prompt: System prompt — one string, or ordered segments passed
+            most-stable-first so each becomes its own provider cache breakpoint.
         task: User task.
         messages: Prior session history to seed the loop (history parity with
             the blocking path). When None, a fresh single-turn run from ``task``.
