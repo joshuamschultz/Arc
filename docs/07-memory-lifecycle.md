@@ -220,9 +220,12 @@ one of two engines, controlled by `consolidate_engine` (default `"agentic"`):
 - **Agentic** (default, when a `model` is wired): a *bounded ReAct loop* runs
   over the memory tools (`agent_consolidate.py:49`) — it reads recent
   episodes, searches before writing, extracts durable facts/insights/
-  procedures, merges duplicates, links related memories, and stops. Every tool
-  call is individually signed, authorized, and audited (see Security, below),
-  so partial progress is always safe.
+  procedures, merges duplicates, links related memories, and stops. Reading
+  before writing is symmetric across card types: `search_similar_entity` /
+  `read_card` for entities, `list_procedures` / `read_procedure` for methods —
+  the agent cannot deliberately reorder, reword, or drop a step it has not
+  read. Every tool call is individually signed, authorized, and audited (see
+  Security, below), so partial progress is always safe.
 - **Pipeline** (fallback, or `consolidate_engine = "pipeline"`): the
   deterministic single-shot `Distiller` calls described above, run directly.
 

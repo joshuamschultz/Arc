@@ -226,6 +226,26 @@ class _MemoryToolFactory:
         links = ", ".join(entity.links_to)
         return f"{entity.name} ({entity.entity_type})\n{facts}\nlinks: {links}"
 
+    async def _list_procedures(self, args: dict[str, Any]) -> str:
+        """The method index: what playbooks exist, and the trigger each answers to."""
+        cards = [c for slug in self._procedures.slugs() if (c := self._procedures.read(slug))]
+        if not cards:
+            return "(no procedures)"
+        return "\n".join(f"- {c.slug} | {c.title} | when_to_use: {c.when_to_use}" for c in cards)
+
+    async def _read_procedure(self, args: dict[str, Any]) -> str:
+        # Read-before-rewrite: record_procedure REPLACES the wording and order of the
+        # steps it names, so dropping, rewording, or reordering one is only a deliberate
+        # act if the current card was seen first.
+        procedure = self._procedures.read(str(args.get("slug", "")))
+        if procedure is None:
+            return "(no such procedure)"
+        steps = "\n".join(f"{i}. {s}" for i, s in enumerate(procedure.steps, start=1))
+        return (
+            f"{procedure.title} (used {procedure.use_count}x)\n"
+            f"when_to_use: {procedure.when_to_use}\n{steps}"
+        )
+
     async def _search_similar_entity(self, args: dict[str, Any]) -> str:
         name = str(args.get("name", ""))
         entity_type = str(args.get("entity_type", "unknown"))
@@ -388,6 +408,19 @@ class _MemoryToolFactory:
                 "Read one entity card (facts + links) by slug.",
                 _obj({"slug": _str()}, required=["slug"]),
                 self._read_card,
+            ),
+            (
+                "list_procedures",
+                "List the how-to cards that already exist (slug + title + when_to_use).",
+                _obj({}),
+                self._list_procedures,
+            ),
+            (
+                "read_procedure",
+                "Read one how-to card (trigger + numbered steps) by slug. Read it BEFORE "
+                "record_procedure so a reorder, reword, or drop is deliberate.",
+                _obj({"slug": _str()}, required=["slug"]),
+                self._read_procedure,
             ),
             (
                 "search_similar_entity",

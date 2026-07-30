@@ -213,6 +213,72 @@ async def test_procedure_slug_becomes_a_reachable_graph_node(
 # -- the agentic engine writes through the same funnel ---------------------
 
 
+async def test_list_procedures_shows_the_agent_what_methods_exist(
+    workspace: Path, db: MemoryDB
+) -> None:
+    tools = build_memory_tools(
+        workspace=workspace, db=db, config=MemoryConfig(), caller_did=_CALLER
+    )
+    assert "no procedures" in await _tool(tools, "list_procedures").execute({})
+    ProceduralStore(workspace).upsert(
+        "seo-research", "SEO research", when_to_use="asked to research SEO", steps=_SEO_STEPS
+    )
+
+    listing = await _tool(tools, "list_procedures").execute({})
+
+    assert "seo-research" in listing
+    assert "SEO research" in listing
+    assert "asked to research SEO" in listing  # the trigger, so the agent can match on it
+
+
+async def test_read_procedure_shows_the_full_card_or_says_it_is_absent(
+    workspace: Path, db: MemoryDB
+) -> None:
+    tools = build_memory_tools(
+        workspace=workspace, db=db, config=MemoryConfig(), caller_did=_CALLER
+    )
+    assert "no such procedure" in await _tool(tools, "read_procedure").execute({"slug": "ghost"})
+    ProceduralStore(workspace).upsert(
+        "seo-research", "SEO research", when_to_use="asked to research SEO", steps=_SEO_STEPS
+    )
+
+    card = await _tool(tools, "read_procedure").execute({"slug": "seo-research"})
+
+    assert "asked to research SEO" in card
+    # Every step, numbered — the agent cannot reorder or reword what it cannot see.
+    for i, step in enumerate(_SEO_STEPS, start=1):
+        assert f"{i}. {step}" in card
+
+
+async def test_agentic_engine_can_read_then_deliberately_reorder_and_reword(
+    workspace: Path, db: MemoryDB
+) -> None:
+    """With sight of the card, drop/reword/reorder become the model's judgment, not luck."""
+    tools = build_memory_tools(
+        workspace=workspace, db=db, config=MemoryConfig(), caller_did=_CALLER
+    )
+    record = _tool(tools, "record_procedure")
+    await record.execute(
+        {"slug": "brief", "title": "Brief", "steps": ["draft outline", "review", "send"]}
+    )
+
+    card = await _tool(tools, "read_procedure").execute({"slug": "brief"})
+    assert "2. review" in card
+    # Reads the card, then rewrites it wholesale: reordered, one step reworded.
+    await record.execute(
+        {
+            "slug": "brief",
+            "title": "Brief",
+            "steps": ["draft outline", "send", "review with [[acme]]"],
+            "dropped_steps": ["review"],
+        }
+    )
+
+    loaded = ProceduralStore(workspace).read("brief")
+    assert loaded is not None
+    assert loaded.steps == ["draft outline", "send", "review with [[acme]]"]
+
+
 async def test_record_procedure_tool_merges_and_links(workspace: Path, db: MemoryDB) -> None:
     tools = build_memory_tools(
         workspace=workspace, db=db, config=MemoryConfig(), caller_did=_CALLER

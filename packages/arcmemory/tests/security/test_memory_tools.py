@@ -17,6 +17,7 @@ from arctrust.policy import PolicyContext, ToolCall, build_pipeline
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
 from arcmemory.index.graph import WeightedGraph
+from arcmemory.stores.procedural import ProceduralStore
 from arcmemory.stores.semantic import SemanticStore
 from arcmemory.tools import build_memory_tools
 
@@ -140,6 +141,34 @@ async def test_raising_pipeline_fails_closed(workspace: Path, db: MemoryDB) -> N
     assert result.startswith("denied")
     assert "policy-error" in result
     assert _semantic(workspace, db).read("sneaky") is None  # NO mutation
+
+
+async def test_policy_denied_procedure_read_leaks_nothing(workspace: Path, db: MemoryDB) -> None:
+    """The new read tools ride the SAME gate — a denied caller gets no card content."""
+    identity = AgentIdentity.generate(org="default", agent_type="memory")
+    sink = _RecordingSink()
+    ProceduralStore(workspace).upsert(
+        "quoting", "How we quote", when_to_use="pricing a customer", steps=["apply the discount"]
+    )
+    tools = build_memory_tools(
+        workspace=workspace,
+        db=db,
+        config=MemoryConfig(),
+        caller_did=identity.did,
+        identity=identity,
+        policy_pipeline=build_pipeline(
+            tier="personal", global_deny_rules={"read_procedure": "reads denied by policy"}
+        ),
+        audit_sink=sink,
+    )
+
+    result = await _tool(tools, "read_procedure").execute({"slug": "quoting"})
+
+    assert result.startswith("denied")
+    assert "apply the discount" not in result  # no card content on the denied path
+    assert any(
+        e.action == "memory.tool.read_procedure" and e.outcome == "deny" for e in sink.events
+    )
 
 
 async def test_read_tool_audits_even_without_authz(workspace: Path, db: MemoryDB) -> None:
