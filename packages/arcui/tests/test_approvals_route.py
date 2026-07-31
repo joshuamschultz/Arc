@@ -38,14 +38,15 @@ def _isolated_arc(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _call() -> ToolCall:
     return ToolCall(
-        tool_name="send_message", arguments={"to": "coder_agent"}, agent_did=_AGENT,
-        session_id="", classification="unclassified",
+        tool_name="send_message",
+        arguments={"to": "coder_agent"},
+        agent_did=_AGENT,
+        session_id="",
+        classification="unclassified",
     )
 
 
-async def _seed_store(
-    data_dir: Path, call_hash: str, *, enriched: bool = False
-) -> ApprovalStore:
+async def _seed_store(data_dir: Path, call_hash: str, *, enriched: bool = False) -> ApprovalStore:
     backend = SqliteBackend(data_dir / "store" / "arcui.db")
     await backend.start()
     store = ApprovalStore(backend)
@@ -54,12 +55,18 @@ async def _seed_store(
         extra = {
             "session_id": "sess-1",
             "arguments": {"to": "coder_agent", "body": "hi"},
-            "provenance": [{"legs": ["private_data"], "tool": "file_read", "args": "p", "at": "t"}],
+            "provenance": [
+                {"legs": ["private_data"], "tool": "file_read", "args": "p", "at": "t"}
+            ],
         }
     await store.create(
         PendingApproval(
-            id="req1", agent_did=_AGENT, agent_label="josh_agent",
-            tool="send_message", legs=["external_comms", "private_data"], call_hash=call_hash,
+            id="req1",
+            agent_did=_AGENT,
+            agent_label="josh_agent",
+            tool="send_message",
+            legs=["external_comms", "private_data"],
+            call_hash=call_hash,
             **extra,
         )
     )

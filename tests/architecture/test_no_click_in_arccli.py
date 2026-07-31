@@ -61,17 +61,11 @@ def _find_click_imports(path: Path) -> list[str]:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.name == "click" or alias.name.startswith("click."):
-                    violations.append(
-                        f"{path}:{node.lineno}: import {alias.name}"
-                    )
+                    violations.append(f"{path}:{node.lineno}: import {alias.name}")
         elif isinstance(node, ast.ImportFrom):
-            if node.module and (
-                node.module == "click" or node.module.startswith("click.")
-            ):
+            if node.module and (node.module == "click" or node.module.startswith("click.")):
                 names = ", ".join(a.name for a in node.names)
-                violations.append(
-                    f"{path}:{node.lineno}: from {node.module} import {names}"
-                )
+                violations.append(f"{path}:{node.lineno}: from {node.module} import {names}")
     return violations
 
 

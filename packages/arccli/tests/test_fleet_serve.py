@@ -197,13 +197,13 @@ class TestFleetEnabled:
     def test_personal_tier_runs_fleet(self) -> None:
         from arcgateway.config import GatewayConfig
 
-        cfg = GatewayConfig.from_toml_str("[gateway]\ntier = \"personal\"\n")
+        cfg = GatewayConfig.from_toml_str('[gateway]\ntier = "personal"\n')
         assert ui_cmd._fleet_enabled(cfg) is True
 
     def test_federal_tier_skips_fleet(self) -> None:
         from arcgateway.config import GatewayConfig
 
-        cfg = GatewayConfig.from_toml_str("[gateway]\ntier = \"federal\"\n")
+        cfg = GatewayConfig.from_toml_str('[gateway]\ntier = "federal"\n')
         assert ui_cmd._fleet_enabled(cfg) is False
 
 

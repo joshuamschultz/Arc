@@ -98,7 +98,9 @@ async def _approve(agent_root: Path, name: str, tmp_path: Path, **kw: str) -> Ga
     Reproduces exactly what ``arc trust approve`` and ``/api/trust/approve`` do,
     so this test covers the seam split (discovery in arcagent, mutation in arctrust).
     """
-    gated = await list_gated(agent_root, agent_id=kw.get("agent_id", ""), global_root=tmp_path / _NO_GLOBAL)
+    gated = await list_gated(
+        agent_root, agent_id=kw.get("agent_id", ""), global_root=tmp_path / _NO_GLOBAL
+    )
     target = next((item for item in gated if item.name == name), None)
     if target is None:
         raise ValueError(f"no gated capability named {name!r}")

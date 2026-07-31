@@ -130,9 +130,7 @@ def test_diff_stock_vs_effective(
     assert "+++" in diff and "---" in diff
 
 
-def test_edit_from_file(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
-) -> None:
+def test_edit_from_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any) -> None:
     _pin_operator(tmp_path, monkeypatch)
     root = _agent_root(tmp_path)
     src = tmp_path / "body.txt"

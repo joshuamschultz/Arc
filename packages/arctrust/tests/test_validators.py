@@ -76,9 +76,7 @@ class TestHashSourceAndApproveSource:
 
     def test_approve_source_pins_and_supersedes(self) -> None:
         v = ValidatorsConfig()
-        pinned = approve_source(
-            v, name="tool", source=_SOURCE, approver="op", timestamp="t1"
-        )
+        pinned = approve_source(v, name="tool", source=_SOURCE, approver="op", timestamp="t1")
         assert len(pinned.approved) == 1
         assert pinned.approved[0].hash == hash_source(_SOURCE)
 

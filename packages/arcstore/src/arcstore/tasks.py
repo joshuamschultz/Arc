@@ -272,9 +272,7 @@ class TaskStore:
         raw = await self._backend.mutable_read(self._COLLECTION, task_id)
         return self._load(raw) if raw is not None else None
 
-    async def list(
-        self, *, status: str | None = None, owner_did: str | None = None
-    ) -> list[Task]:
+    async def list(self, *, status: str | None = None, owner_did: str | None = None) -> list[Task]:
         where: dict[str, Any] = {}
         if status is not None:
             where["status"] = status
@@ -697,9 +695,7 @@ class TaskStore:
         ``TaskStore.list`` method shadows the builtin ``list`` in class-scope
         annotations under ``from __future__ import annotations``.)
         """
-        rows = await self._backend.mutable_query(
-            self._COLLECTION, where={"parent_id": parent_id}
-        )
+        rows = await self._backend.mutable_query(self._COLLECTION, where={"parent_id": parent_id})
         return [self._load(row) for row in rows]
 
     async def deps_would_cycle(self, task_id: str, blocked_by: Sequence[str]) -> bool:

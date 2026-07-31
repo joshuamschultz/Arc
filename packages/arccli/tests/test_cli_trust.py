@@ -34,9 +34,7 @@ _VALID_SKILL = (
 def _hermetic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "empty-arc"))
     # Stub the operator DID so the CLI never bootstraps the real ~/.arc key.
-    monkeypatch.setattr(
-        "arccli.commands.trust._operator_did", lambda: "did:arc:test:operator"
-    )
+    monkeypatch.setattr("arccli.commands.trust._operator_did", lambda: "did:arc:test:operator")
 
 
 def _build_agent(team_root: Path, name: str, *, tier: str, sign: bool) -> None:

@@ -139,7 +139,9 @@ async def test_secret_insight_dropped_for_unclassified(workspace: Path) -> None:
     )
 
     await brain.capture(
-        "the reactor override sequence is asserted nightly", kind="respond", classification="SECRET"
+        "the reactor override sequence is asserted nightly",
+        kind="respond",
+        classification="SECRET",
     )
     await brain.consolidate()  # mints an insight whose instances are the SECRET event
     text = await brain.retrieve(

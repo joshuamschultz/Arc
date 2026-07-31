@@ -67,7 +67,10 @@ def test_multiple_legs_are_sorted_in_entry() -> None:
 
 def test_as_dict_is_json_ready() -> None:
     entry = ProvenanceEntry(
-        legs=(PRIVATE_DATA, EXTERNAL_COMMS), tool_name="t", arg_summary="s", at="2026-01-01T00:00:00+00:00"
+        legs=(PRIVATE_DATA, EXTERNAL_COMMS),
+        tool_name="t",
+        arg_summary="s",
+        at="2026-01-01T00:00:00+00:00",
     )
     assert entry.as_dict() == {
         "legs": [PRIVATE_DATA, EXTERNAL_COMMS],

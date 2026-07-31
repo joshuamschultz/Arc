@@ -149,9 +149,7 @@ async def crm_log_meeting(
     capability_tags=["crm"],
     when_to_use="Whenever a promise is made either way: a follow-up, a send, a next step.",
 )
-async def crm_note_commitment(
-    what: str, who: str = "", due: str = "", deal: str = ""
-) -> str:
+async def crm_note_commitment(what: str, who: str = "", due: str = "", deal: str = "") -> str:
     """Append a commitment to the commitments log (and the deal card when named)."""
     fields = {"commitment": what, "owner": who, "due": due, "deal": _link(deal)}
     _append_card("commitments", "commitments", "Commitments", fields, "")

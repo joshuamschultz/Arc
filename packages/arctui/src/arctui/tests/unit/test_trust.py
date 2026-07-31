@@ -52,7 +52,7 @@ def test_grant_preserves_inline_comment_and_other_lines(tmp_path: Path) -> None:
     grant_folder(cfg, tmp_path / "proj")
     text = cfg.read_text(encoding="utf-8")
     assert "# filesystem paths tools may access" in text  # inline comment survived
-    assert 'protected_paths = []' in text  # neighbouring lines survived
+    assert "protected_paths = []" in text  # neighbouring lines survived
     assert 'name = "coder"' in text
 
 

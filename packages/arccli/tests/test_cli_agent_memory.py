@@ -41,9 +41,7 @@ def _agent_with_memory(tmp_path: Path) -> Path:
             entities=["brad-baker", "ctgfederal"],
         )
     )
-    store.append(
-        Event(event_id="e1", scope="did:arc:aria", kind="tool", text="tool:bash -> ok")
-    )
+    store.append(Event(event_id="e1", scope="did:arc:aria", kind="tool", text="tool:bash -> ok"))
     return tmp_path
 
 

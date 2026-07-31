@@ -67,10 +67,17 @@ class TestDepsGate:
 
         st, identity = state
         # Dep owned by another agent so this agent's dispatch only considers T.
-        await _seed(st, id="dep", title="Dependency", creator_did=_OTHER, owner_did=_OTHER, status="todo")
         await _seed(
-            st, id="T", title="Blocked", creator_did=identity.did,
-            owner_did=identity.did, status="todo", blocked_by=["dep"],
+            st, id="dep", title="Dependency", creator_did=_OTHER, owner_did=_OTHER, status="todo"
+        )
+        await _seed(
+            st,
+            id="T",
+            title="Blocked",
+            creator_did=identity.did,
+            owner_did=identity.did,
+            status="todo",
+            blocked_by=["dep"],
         )
 
         await _dispatch_tick()
@@ -112,9 +119,7 @@ class TestParentRollup:
 
         parent = json.loads(await create_task(title="Parent"))
         result = json.loads(
-            await decompose_task(
-                id=parent["id"], subtasks=[{"title": "A"}, {"title": "B"}]
-            )
+            await decompose_task(id=parent["id"], subtasks=[{"title": "A"}, {"title": "B"}])
         )
         return parent["id"], [c["id"] for c in result["subtasks"]]
 
@@ -142,8 +147,12 @@ class TestParentRollup:
         parent_id, child_ids = await self._decompose(st)  # inits the store
         # An extra non-child dependency that is NOT done: even with all children
         # done the parent must stay open until the full dep set is met.
-        await st.store.create(Task(id="ext", title="Ext dep", creator_did=identity.did, status="todo"))
-        await st.store.update(parent_id, {"blocked_by": [*child_ids, "ext"]}, actor_did=identity.did)
+        await st.store.create(
+            Task(id="ext", title="Ext dep", creator_did=identity.did, status="todo")
+        )
+        await st.store.update(
+            parent_id, {"blocked_by": [*child_ids, "ext"]}, actor_did=identity.did
+        )
         for cid in child_ids:
             await st.store.finish(cid, status="done", resolution="done", actor_did=identity.did)
 
@@ -160,7 +169,9 @@ class TestParentRollup:
         st, identity = state
         parent_id, child_ids = await self._decompose(st)
         await st.store.finish(child_ids[0], status="done", resolution="ok", actor_did=identity.did)
-        await st.store.finish(child_ids[1], status="failed", resolution="boom", actor_did=identity.did)
+        await st.store.finish(
+            child_ids[1], status="failed", resolution="boom", actor_did=identity.did
+        )
 
         await _reliability_tick()
 
@@ -183,7 +194,9 @@ class TestParentRollup:
 
         assert st.agent_run_fn.calls == []  # parent never dispatched
         parent = await st.store.get(parent_id)
-        assert parent is not None and parent.status == "todo"  # still open (reconcile completes it)
+        assert (
+            parent is not None and parent.status == "todo"
+        )  # still open (reconcile completes it)
 
 
 @pytest.mark.asyncio

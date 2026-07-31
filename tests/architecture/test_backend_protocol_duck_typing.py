@@ -65,6 +65,7 @@ class _MissingClose:
 
     async def cancel(self, h: ExecHandle, *, grace: float = 5.0) -> None:
         pass
+
     # close() missing
 
 
@@ -82,6 +83,7 @@ class _MissingCapabilities:
 
     async def close(self) -> None:
         pass
+
     # capabilities missing
 
 

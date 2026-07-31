@@ -155,9 +155,11 @@ def test_describe_federal_lists_permitted() -> None:
 
 
 def test_policy_carries_tier() -> None:
-    assert resolve_workspace_import_policy(
-        "federal", allow_all_imports=False, allow_imports=[]
-    ).tier == "federal"
-    assert resolve_workspace_import_policy(
-        "personal", allow_all_imports=False, allow_imports=[]
-    ).tier == "personal"
+    assert (
+        resolve_workspace_import_policy("federal", allow_all_imports=False, allow_imports=[]).tier
+        == "federal"
+    )
+    assert (
+        resolve_workspace_import_policy("personal", allow_all_imports=False, allow_imports=[]).tier
+        == "personal"
+    )

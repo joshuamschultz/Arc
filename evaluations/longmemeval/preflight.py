@@ -216,9 +216,7 @@ def check_environment(
         _fail("dataset_sha256", f"the dataset could not be read: {exc}")
 
     try:
-        RepoHygieneGuard(
-            run_dir=run_dir, results_path=results_path, repo_root=repo_root
-        ).check()
+        RepoHygieneGuard(run_dir=run_dir, results_path=results_path, repo_root=repo_root).check()
     except RepoHygieneError as exc:
         _fail("gitignored_artifacts", str(exc))
 

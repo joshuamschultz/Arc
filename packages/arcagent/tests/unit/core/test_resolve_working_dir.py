@@ -45,4 +45,6 @@ def test_env_outside_allowed_is_ignored(tmp_path: Path, monkeypatch: pytest.Monk
     untrusted.mkdir()
     monkeypatch.setenv("ARC_WORKING_DIR", str(untrusted))
     # Not in workspace or allowed_paths → refused (sandbox floor), tools stay in workspace.
-    assert _resolve_working_dir(_config(opt_in=True), tmp_path / "ws", [tmp_path / "other"]) is None
+    assert (
+        _resolve_working_dir(_config(opt_in=True), tmp_path / "ws", [tmp_path / "other"]) is None
+    )

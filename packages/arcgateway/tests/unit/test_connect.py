@@ -55,7 +55,8 @@ def test_per_agent_block_bound_to_did(tmp_path: Path) -> None:
 def test_second_agent_does_not_clobber_first(tmp_path: Path) -> None:
     gw = tmp_path / "gateway.toml"
     gw.write_text(
-        '[platforms.telegram]\nenabled = true\ntoken_env = "TELEGRAM_BOT_TOKEN"\n', encoding="utf-8"
+        '[platforms.telegram]\nenabled = true\ntoken_env = "TELEGRAM_BOT_TOKEN"\n',
+        encoding="utf-8",
     )
     connect_telegram(
         agent_slug="sales_agent",

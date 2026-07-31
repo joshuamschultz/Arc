@@ -50,7 +50,9 @@ class _SteerMidRunModel:
     message list as it would be sent to the provider on each turn.
     """
 
-    def __init__(self, responses: list[LLMResponse], steer_queue: Any, injection: Injection) -> None:
+    def __init__(
+        self, responses: list[LLMResponse], steer_queue: Any, injection: Injection
+    ) -> None:
         self._responses = list(responses)
         self._i = 0
         self._steer_queue = steer_queue
@@ -131,9 +133,9 @@ async def test_mid_run_steer_keeps_tool_use_and_result_adjacent() -> None:
     orphan = _adjacency_violation(model.snapshots[1])
     assert orphan is None, f"tool_use {orphan!r} sent without an adjacent tool_result"
     # And the steer WAS delivered — the fix relocates it, it does not drop it.
-    assert any(
-        m.role == "user" and m.content == "change direction" for m in state.messages
-    ), "steer message must still be injected, just after the tool_result"
+    assert any(m.role == "user" and m.content == "change direction" for m in state.messages), (
+        "steer message must still be injected, just after the tool_result"
+    )
 
 
 @pytest.mark.asyncio

@@ -173,7 +173,9 @@ class TestCheckInboxThreadContext:
         assert "agent://alice" in senders
 
     @pytest.mark.asyncio
-    async def test_no_thread_context_for_new_messages(self, messaging_state: _runtime._State) -> None:
+    async def test_no_thread_context_for_new_messages(
+        self, messaging_state: _runtime._State
+    ) -> None:
         """New messages (thread_id == id) don't include thread_context."""
         st = messaging_state
         from arcteam.types import Message
@@ -233,7 +235,9 @@ class TestListChannelsTool:
 
 class TestTeamFileTools:
     @pytest.mark.asyncio
-    async def test_store_then_list_team_file(self, messaging_state: _runtime._State, tmp_path: Path) -> None:
+    async def test_store_then_list_team_file(
+        self, messaging_state: _runtime._State, tmp_path: Path
+    ) -> None:
         """store_team_file shares a file that list_team_files then reports."""
         source = tmp_path / "artifact.txt"
         source.write_text("shared payload")
@@ -247,7 +251,9 @@ class TestTeamFileTools:
         assert "artifact.txt" in filenames
 
     @pytest.mark.asyncio
-    async def test_store_team_file_missing_source_errors(self, messaging_state: _runtime._State) -> None:
+    async def test_store_team_file_missing_source_errors(
+        self, messaging_state: _runtime._State
+    ) -> None:
         result = await store_team_file(file_path="/nonexistent/nope.txt")
         data = json.loads(result)
         assert "error" in data

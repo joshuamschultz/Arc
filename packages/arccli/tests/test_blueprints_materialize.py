@@ -27,7 +27,7 @@ def _write_v2_blueprint(root: Path) -> Path:
         "[blueprint]\n"
         'name = "sales-mat"\nversion = "1.0.0"\ntier = "personal"\n\n'
         "[modules.memory]\nenabled = true\n\n"
-        "[arcllm.llm]\nmodel = \"anthropic/claude-sonnet-5\"\n\n"
+        '[arcllm.llm]\nmodel = "anthropic/claude-sonnet-5"\n\n'
         "[arcrun]\nmax_turns = 40\n\n"
         "[[schedules]]\n"
         'type = "cron"\nexpression = "0 8 * * *"\n'

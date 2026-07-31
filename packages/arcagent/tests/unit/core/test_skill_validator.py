@@ -172,9 +172,7 @@ class TestShippedBuiltinsStillValidate:
         import arcagent
         from arcagent.capabilities.skill_validator import validate_skill_folder
 
-        skills_root = (
-            Path(arcagent.__file__).parent / "builtins" / "capabilities" / "skills"
-        )
+        skills_root = Path(arcagent.__file__).parent / "builtins" / "capabilities" / "skills"
         folders = [p for p in skills_root.iterdir() if (p / "SKILL.md").is_file()]
         assert folders, f"no builtin skills found under {skills_root}"
         for folder in folders:

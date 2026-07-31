@@ -116,7 +116,6 @@ class Retriever:
             text=render_recalls(bounded),
         )
 
-
     async def recall_cards(
         self,
         situation: Situation,

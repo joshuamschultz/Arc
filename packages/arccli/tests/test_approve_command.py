@@ -34,8 +34,11 @@ def _isolated_arc(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _call() -> ToolCall:
     return ToolCall(
-        tool_name="send_message", arguments={"to": "coder_agent"}, agent_did=_AGENT,
-        session_id="", classification="unclassified",
+        tool_name="send_message",
+        arguments={"to": "coder_agent"},
+        agent_did=_AGENT,
+        session_id="",
+        classification="unclassified",
     )
 
 
@@ -47,13 +50,19 @@ async def _seed_pending(call_hash: str, *, enriched: bool = False) -> None:
         extra = {
             "session_id": "sess-1",
             "arguments": {"to": "coder_agent", "body": "hello"},
-            "provenance": [{"legs": ["private_data"], "tool": "file_read", "args": "p", "at": "t"}],
+            "provenance": [
+                {"legs": ["private_data"], "tool": "file_read", "args": "p", "at": "t"}
+            ],
         }
     try:
         await ApprovalStore(backend).create(
             PendingApproval(
-                id="req1", agent_did=_AGENT, agent_label="josh_agent",
-                tool="send_message", legs=["external_comms", "private_data"], call_hash=call_hash,
+                id="req1",
+                agent_did=_AGENT,
+                agent_label="josh_agent",
+                tool="send_message",
+                legs=["external_comms", "private_data"],
+                call_hash=call_hash,
                 **extra,
             )
         )

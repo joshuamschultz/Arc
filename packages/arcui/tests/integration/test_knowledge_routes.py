@@ -75,7 +75,13 @@ def _seed_curated(workspace: Path) -> None:
         )
     )
     ProceduralStore(workspace).write(
-        Procedure(slug="deploy", title="Deploy", when_to_use="shipping a release", steps=["build", "ship"], use_count=3)
+        Procedure(
+            slug="deploy",
+            title="Deploy",
+            when_to_use="shipping a release",
+            steps=["build", "ship"],
+            use_count=3,
+        )
     )
     EventStore(workspace).write(
         LifeEvent(

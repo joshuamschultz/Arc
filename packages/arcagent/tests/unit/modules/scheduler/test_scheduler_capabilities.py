@@ -272,9 +272,7 @@ class TestCrudTools:
         turn_context.set_inbound_channel("telegram:777")
         try:
             created = json.loads(
-                await schedule_create(
-                    type="interval", prompt="Heartbeat", every_seconds=300
-                )
+                await schedule_create(type="interval", prompt="Heartbeat", every_seconds=300)
             )
             assert created["deliver_to"] == "telegram:777"
         finally:

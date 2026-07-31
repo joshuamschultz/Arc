@@ -85,13 +85,12 @@ def _seed_corpus(db: MemoryDB, workspace: Path, scope: Scope, *, assoc_edge: boo
         ("noise4", "2026-02-04T00:00:00+00:00", "floor tile regrouting"),
     ]
     for event_id, ts, text in stream:
-        episodic.append(
-            Event(event_id=event_id, ts=ts, scope=scope.key, kind="obs", text=text)
-        )
+        episodic.append(Event(event_id=event_id, ts=ts, scope=scope.key, kind="obs", text=text))
 
     InsightStore(workspace).write(
-        Insight(id="p1", statement="the guarantee is never invoked", trigger=_ABSTRACTION,
-                cues=["c-a"])
+        Insight(
+            id="p1", statement="the guarantee is never invoked", trigger=_ABSTRACTION, cues=["c-a"]
+        )
     )
     graph = WeightedGraph(db)
     graph.link(scope.key, "p1", "c-a", kind="cue")
@@ -108,9 +107,7 @@ async def _retriever(
     *,
     embedder: ConceptEmbedder | None,
 ) -> Retriever:
-    retriever = Retriever(
-        db, workspace, scope, embedder=embedder, seed_vocabulary=_SEED_VOCAB
-    )
+    retriever = Retriever(db, workspace, scope, embedder=embedder, seed_vocabulary=_SEED_VOCAB)
     await retriever.index()
     return retriever
 
@@ -191,9 +188,7 @@ async def test_lexical_channel_is_load_bearing(
     assert "event:lex" not in [r.source for r in bundle.recalls]
 
 
-async def test_graph_channel_is_load_bearing(
-    db: MemoryDB, workspace: Path, scope: Scope
-) -> None:
+async def test_graph_channel_is_load_bearing(db: MemoryDB, workspace: Path, scope: Scope) -> None:
     """``event:assoc`` is reachable only through the learned canine->zephyr edge."""
     _seed_corpus(db, workspace, scope, assoc_edge=True)
     with_edge = await _sources(db, workspace, scope, embedder=ConceptEmbedder(), top_k=3)

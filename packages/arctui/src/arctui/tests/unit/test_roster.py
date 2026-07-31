@@ -38,10 +38,20 @@ def test_list_agents_enumerates_roster(tmp_path: Path) -> None:
 
 def _refs() -> list[AgentRef]:
     return [
-        AgentRef(agent_id="coder", display_name="Coder", root=Path("/a"),
-                 config_path=Path("/a/arcagent.toml"), model="m"),
-        AgentRef(agent_id="researcher", display_name="Researcher", root=Path("/b"),
-                 config_path=Path("/b/arcagent.toml"), model="m"),
+        AgentRef(
+            agent_id="coder",
+            display_name="Coder",
+            root=Path("/a"),
+            config_path=Path("/a/arcagent.toml"),
+            model="m",
+        ),
+        AgentRef(
+            agent_id="researcher",
+            display_name="Researcher",
+            root=Path("/b"),
+            config_path=Path("/b/arcagent.toml"),
+            model="m",
+        ),
     ]
 
 

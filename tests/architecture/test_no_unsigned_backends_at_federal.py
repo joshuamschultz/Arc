@@ -56,15 +56,7 @@ _IMPORT_CALLS = {
 
 def _load_loader_module_source() -> ast.Module:
     repo_root = Path(__file__).parents[2]  # Arc/
-    loader_path = (
-        repo_root
-        / "packages"
-        / "arcrun"
-        / "src"
-        / "arcrun"
-        / "backends"
-        / "loader.py"
-    )
+    loader_path = repo_root / "packages" / "arcrun" / "src" / "arcrun" / "backends" / "loader.py"
     assert loader_path.exists(), f"Expected loader at {loader_path}"
     return ast.parse(loader_path.read_text(encoding="utf-8"), filename=str(loader_path))
 
@@ -167,8 +159,7 @@ def test_load_backend_requires_tier_param() -> None:
     load_backend = _find_function(tree, "load_backend")
     kwonly_names = {arg.arg for arg in load_backend.args.kwonlyargs}
     assert "tier" in kwonly_names, (
-        f"load_backend signature changed — tier is not kw-only.  "
-        f"kwonly args: {kwonly_names}"
+        f"load_backend signature changed — tier is not kw-only.  kwonly args: {kwonly_names}"
     )
 
 
@@ -191,9 +182,7 @@ def test_gate_function_resolvable_in_loader_scope() -> None:
     )
 
     load_backend = _find_function(tree, "load_backend")
-    called = {
-        _extract_call_name(n) for n in ast.walk(load_backend) if isinstance(n, ast.Call)
-    }
+    called = {_extract_call_name(n) for n in ast.walk(load_backend) if isinstance(n, ast.Call)}
     assert called & resolvable, (
         f"load_backend() does not call any of the resolvable gate names "
         f"{resolvable}.  Calls observed: {called}"

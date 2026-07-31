@@ -68,8 +68,13 @@ class MutableApprovalBackend(Protocol):
     """The mutable-plane primitives :class:`ApprovalStore` needs (see tasks.py)."""
 
     async def mutable_write(
-        self, collection: str, key: str, value: dict[str, Any], *,
-        actor_did: str, sink: Any | None = None,
+        self,
+        collection: str,
+        key: str,
+        value: dict[str, Any],
+        *,
+        actor_did: str,
+        sink: Any | None = None,
     ) -> None: ...
 
     async def mutable_read(self, collection: str, key: str) -> dict[str, Any] | None: ...
@@ -79,8 +84,15 @@ class MutableApprovalBackend(Protocol):
     ) -> list[dict[str, Any]]: ...
 
     async def update_if(
-        self, collection: str, key: str, patch: dict[str, Any], where: dict[str, Any], *,
-        actor_did: str, sink: Any | None = None, absent_where: dict[str, Any] | None = None,
+        self,
+        collection: str,
+        key: str,
+        patch: dict[str, Any],
+        where: dict[str, Any],
+        *,
+        actor_did: str,
+        sink: Any | None = None,
+        absent_where: dict[str, Any] | None = None,
     ) -> bool: ...
 
 

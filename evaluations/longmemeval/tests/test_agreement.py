@@ -233,10 +233,7 @@ async def test_agreement_rate_counts_labels_that_matched() -> None:
     ]
     flipped = sample_ids[0]
     judge = ScriptedJudge(
-        {
-            question_id: make_verdict(correct=question_id != flipped)
-            for question_id in sample_ids
-        }
+        {question_id: make_verdict(correct=question_id != flipped) for question_id in sample_ids}
     )
 
     report, _ = await JudgeAgreementSampler(judge, sample_size=4).run(rows)
@@ -300,9 +297,9 @@ async def test_successive_judge_changes_accumulate_prior_labels() -> None:
     _, after_prompt = await JudgeAgreementSampler(
         ScriptedJudge({"q1": second}), sample_size=1
     ).run([make_row("q1", verdict=first)])
-    _, after_model = await JudgeAgreementSampler(
-        ScriptedJudge({"q1": third}), sample_size=1
-    ).run(after_prompt)
+    _, after_model = await JudgeAgreementSampler(ScriptedJudge({"q1": third}), sample_size=1).run(
+        after_prompt
+    )
 
     assert after_model[0].prior_labels == [
         first.model_dump(mode="json"),

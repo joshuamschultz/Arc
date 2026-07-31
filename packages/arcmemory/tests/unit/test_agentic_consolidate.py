@@ -71,9 +71,7 @@ async def test_agentic_engine_invokes_tools_and_writes_cards(
     assert result.window_events == 1
 
 
-async def test_breach_falls_back_to_pipeline_no_data_loss(
-    workspace: Path, db: MemoryDB
-) -> None:
+async def test_breach_falls_back_to_pipeline_no_data_loss(workspace: Path, db: MemoryDB) -> None:
     """A breaching loop returns degraded; the pipeline distiller finishes the window."""
 
     async def breaching_loop(**_kw: Any) -> ReactOutcome:
@@ -83,7 +81,9 @@ async def test_breach_falls_back_to_pipeline_no_data_loss(
     _seed_episode(db, workspace, scope)
     distiller = FakeDistiller(
         FactExtraction(
-            facts=[FactCandidate(slug="brad-baker", predicate="role", value="cto", name="Brad Baker")]
+            facts=[
+                FactCandidate(slug="brad-baker", predicate="role", value="cto", name="Brad Baker")
+            ]
         ),
         InsightMint(),
     )
@@ -112,9 +112,7 @@ async def test_no_model_uses_pipeline(workspace: Path, db: MemoryDB) -> None:
     scope = Scope(agent_did="did:arc:default:memory/xyz")
     _seed_episode(db, workspace, scope)
     distiller = FakeDistiller(
-        FactExtraction(
-            facts=[FactCandidate(slug="brad-baker", predicate="role", value="cto")]
-        ),
+        FactExtraction(facts=[FactCandidate(slug="brad-baker", predicate="role", value="cto")]),
         InsightMint(),
     )
     consolidator = Consolidator(
@@ -134,9 +132,7 @@ async def test_arcrun_absent_falls_back_to_pipeline(
     scope = Scope(agent_did="did:arc:default:memory/noarcrun")
     _seed_episode(db, workspace, scope)
     distiller = FakeDistiller(
-        FactExtraction(
-            facts=[FactCandidate(slug="brad-baker", predicate="role", value="cto")]
-        ),
+        FactExtraction(facts=[FactCandidate(slug="brad-baker", predicate="role", value="cto")]),
         InsightMint(),
     )
     # No react_loop override -> the default run_react_loop adapter is used.

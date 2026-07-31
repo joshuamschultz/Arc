@@ -83,9 +83,7 @@ def selection_rank(question_id: str) -> str:
       results file grows — a seeded shuffle of the candidate list reshuffles
       every position the moment one row is appended.
     """
-    return hashlib.blake2b(
-        question_id.encode("utf-8"), digest_size=_RANK_DIGEST_SIZE
-    ).hexdigest()
+    return hashlib.blake2b(question_id.encode("utf-8"), digest_size=_RANK_DIGEST_SIZE).hexdigest()
 
 
 class JudgeAgreementSampler:
@@ -161,9 +159,7 @@ def _supersedes(first: Verdict, second: Verdict) -> bool:
     the same measurement, and overwriting the first with it would destroy the
     evidence the agreement rate is built from.
     """
-    return (
-        first.prompt_used != second.prompt_used or first.judge_model_id != second.judge_model_id
-    )
+    return first.prompt_used != second.prompt_used or first.judge_model_id != second.judge_model_id
 
 
 def _latest_labelled(rows: Sequence[ResultRow]) -> list[ResultRow]:

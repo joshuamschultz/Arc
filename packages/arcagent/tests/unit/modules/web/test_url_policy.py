@@ -73,9 +73,7 @@ class TestEnterpriseTier:
     """Enterprise tier: allow-by-default; a non-empty allowlist is enforced."""
 
     def test_empty_allowlist_allows_all(self) -> None:
-        assert (
-            is_url_allowed("https://anything.com/path", allowlist=[], tier="enterprise") is True
-        )
+        assert is_url_allowed("https://anything.com/path", allowlist=[], tier="enterprise") is True
 
     def test_non_empty_allowlist_enforced(self) -> None:
         allowlist = ["https://internal.corp/*"]

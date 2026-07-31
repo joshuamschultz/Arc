@@ -18,7 +18,9 @@ from arcagent.core.module_discovery import (
 )
 
 
-def _make_module(root: Path, name: str, *, capabilities: bool = True, runtime: bool = True) -> None:
+def _make_module(
+    root: Path, name: str, *, capabilities: bool = True, runtime: bool = True
+) -> None:
     mod = root / name
     mod.mkdir(parents=True)
     (mod / "__init__.py").write_text("")

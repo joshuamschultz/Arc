@@ -92,7 +92,7 @@ async def test_embed_or_none_warns_once_when_wired_embedder_is_unavailable(
 async def test_the_two_degrade_reasons_warn_independently(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """"Never wired" and "wired but dead" are different operator problems."""
+    """ "Never wired" and "wired but dead" are different operator problems."""
     with caplog.at_level(logging.WARNING, logger="arcmemory.degrade"):
         await embed_or_none(None, ["x"])
         await embed_or_none(UnavailableEmbedder(), ["x"])

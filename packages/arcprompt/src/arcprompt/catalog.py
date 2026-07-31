@@ -47,6 +47,7 @@ def _ensure_safe(package: str, name: str) -> None:
         if not value or value in (".", "..") or any(c in value for c in _PATH_UNSAFE_CHARS):
             raise PromptMissing(package, name)
 
+
 # Arc packages that ship harness prompts. A package absent from a deployment is
 # skipped; adding a new prompt-shipping package means adding it here.
 DEFAULT_PROMPT_PACKAGES: tuple[str, ...] = ("arcrun", "arcagent", "arcmemory", "arcskill")

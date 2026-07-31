@@ -97,7 +97,9 @@ class TestEvalInputBudget:
             telemetry=_make_telemetry(),
             max_input_tokens=500,
         )
-        model = _mock_model(return_value='{"additions": ["a lesson"], "updates": [], "rewrites": []}')
+        model = _mock_model(
+            return_value='{"additions": ["a lesson"], "updates": [], "rewrites": []}'
+        )
         big = [{"role": "user", "content": "y" * 20_000}]
         await engine.evaluate(big, model)  # must not raise
         assert (tmp_path / "policy.md").exists()

@@ -53,9 +53,7 @@ def _redact(obj: Any) -> Any:
     """Recursively mask scalar values under sensitive-looking keys."""
     if isinstance(obj, dict):
         return {
-            k: (
-                "***" if _is_sensitive(k) and not isinstance(v, (dict, list)) else _redact(v)
-            )
+            k: ("***" if _is_sensitive(k) and not isinstance(v, (dict, list)) else _redact(v))
             for k, v in obj.items()
         }
     if isinstance(obj, list):

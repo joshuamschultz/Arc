@@ -107,7 +107,6 @@ class _GlobalMutationVisitor(ast.NodeVisitor):
         self.generic_visit(node)
         self._depth -= 1
 
-
     # this camelCase alias is required by the visitor protocol, not our choice.
     visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]  # noqa: N815
 
@@ -229,16 +228,9 @@ def test_no_global_tool_name_mutation_in_arcrun() -> None:
     3. If intentional shared state, document WHY in SDD §5 and add an
        explicit exception here with a comment.
     """
-    arcrun_src = (
-        Path(__file__).parent.parent.parent
-        / "packages"
-        / "arcrun"
-        / "src"
-        / "arcrun"
-    )
+    arcrun_src = Path(__file__).parent.parent.parent / "packages" / "arcrun" / "src" / "arcrun"
     assert arcrun_src.exists(), (
-        f"arcrun source not found at {arcrun_src}. "
-        "Is the packages/arcrun directory present?"
+        f"arcrun source not found at {arcrun_src}. Is the packages/arcrun directory present?"
     )
 
     all_violations: list[str] = []
@@ -253,9 +245,7 @@ def test_no_global_tool_name_mutation_in_arcrun() -> None:
             "  A global tool-name accumulator shared across concurrent sessions causes\n"
             "  non-deterministic tool availability and race conditions. The fix is a\n"
             "  per-RunState ToolRegistry — each session gets its own instance.\n\n"
-            "Violations:\n"
-            + "\n".join(f"  {v}" for v in all_violations)
-            + "\n\n"
+            "Violations:\n" + "\n".join(f"  {v}" for v in all_violations) + "\n\n"
             "To fix:\n"
             "  1. Move the accumulator into the ToolRegistry class instance.\n"
             "  2. If it must be module-level, make it a frozen constant (tuple/frozenset).\n"

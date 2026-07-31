@@ -129,8 +129,11 @@ async def approve(request: Request) -> JSONResponse:
 
     if not _is_operator(request):
         emit_mutation_audit(
-            request, target=target, operation="trust.approve",
-            outcome="denied", detail="viewer role",
+            request,
+            target=target,
+            operation="trust.approve",
+            outcome="denied",
+            detail="viewer role",
         )
         return _error("operator_role_required", 403)
 
@@ -144,8 +147,11 @@ async def approve(request: Request) -> JSONResponse:
     except (FileNotFoundError, OSError) as exc:
         logger.exception("operator key unavailable for trust approval")
         emit_mutation_audit(
-            request, target=target, operation="trust.approve",
-            outcome="denied", detail="operator key unavailable",
+            request,
+            target=target,
+            operation="trust.approve",
+            outcome="denied",
+            detail="operator key unavailable",
         )
         return _error(f"operator_key_unavailable: {type(exc).__name__}", 500)
 
@@ -194,8 +200,11 @@ async def disapprove(request: Request) -> JSONResponse:
 
     if not _is_operator(request):
         emit_mutation_audit(
-            request, target=target, operation="trust.disapprove",
-            outcome="denied", detail="viewer role",
+            request,
+            target=target,
+            operation="trust.disapprove",
+            outcome="denied",
+            detail="viewer role",
         )
         return _error("operator_role_required", 403)
 

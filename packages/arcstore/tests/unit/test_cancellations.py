@@ -107,7 +107,9 @@ class TestCancelStore:
             async def resolve(status: str) -> CancelRequest | None:
                 await barrier.wait()
                 return await store.resolve(
-                    "c1", status=status, actor_did=_OPERATOR  # type: ignore[arg-type]
+                    "c1",
+                    status=status,
+                    actor_did=_OPERATOR,  # type: ignore[arg-type]
                 )
 
             results = await asyncio.gather(resolve("applied"), resolve("not_found"))
@@ -126,9 +128,7 @@ class TestExpireStale:
             # A wall-clock 301s past creation with a 300s TTL — the request never
             # matched a live run, so it is swept to ``expired``.
             future = datetime.fromisoformat(created.created_at or _now()) + timedelta(seconds=301)
-            expired = await store.expire_stale(
-                ttl_seconds=300, actor_did=_OPERATOR, now=future
-            )
+            expired = await store.expire_stale(ttl_seconds=300, actor_did=_OPERATOR, now=future)
             assert [r.id for r in expired] == ["c1"]
             assert expired[0].status == "expired"
             assert expired[0].resolved_at is not None
@@ -157,9 +157,7 @@ class TestExpireStale:
             created = await store.create(_request())
             await store.resolve("c1", status="applied", actor_did=_OPERATOR)
             future = datetime.fromisoformat(created.created_at or _now()) + timedelta(seconds=301)
-            expired = await store.expire_stale(
-                ttl_seconds=300, actor_did=_OPERATOR, now=future
-            )
+            expired = await store.expire_stale(ttl_seconds=300, actor_did=_OPERATOR, now=future)
             # Only pending rows are candidates — a terminal request is never touched.
             assert expired == []
             got = await store.get("c1")

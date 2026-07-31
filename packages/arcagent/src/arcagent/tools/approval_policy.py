@@ -95,9 +95,7 @@ def build_loop_controls(agent: ArcAgent, session: SessionManager) -> dict[str, A
     run_cfg = agent._config.arcrun
     registry = agent._tool_registry
     tools = list(registry.tools.values()) if registry is not None else []
-    approval_set = resolve_approval_set(
-        tools, sec.tier, opt_in=frozenset(run_cfg.approval_opt_in)
-    )
+    approval_set = resolve_approval_set(tools, sec.tier, opt_in=frozenset(run_cfg.approval_opt_in))
     provider = None
     if approval_set and agent._human_gate is not None:
         provider = build_approval_provider(

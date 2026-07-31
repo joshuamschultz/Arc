@@ -25,8 +25,12 @@ async def test_new_session_command_rotates_and_confirms() -> None:
     assert before == build_session_key(agent, user)  # generation 0 = plain key
 
     event = InboundEvent(
-        platform="web", chat_id="c1", user_did=user, agent_did=agent,
-        session_key=before, message="/new",
+        platform="web",
+        chat_id="c1",
+        user_did=user,
+        agent_did=agent,
+        session_key=before,
+        message="/new",
     )
     ctx = CommandContext(event=event, agent_did=agent, user_did=user, args="", router=router)
 

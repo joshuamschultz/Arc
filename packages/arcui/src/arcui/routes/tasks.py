@@ -255,7 +255,7 @@ async def move_task(request: Request) -> Response:
     body = await _json_body(request)
     status = str((body or {}).get("status") or "")
     if not status:
-        return _error("expected {\"status\": <column>}", 400)
+        return _error('expected {"status": <column>}', 400)
 
     store = request.app.state.task_store
     if await store.get(task_id) is None:

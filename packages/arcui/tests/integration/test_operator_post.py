@@ -122,7 +122,9 @@ class TestOperatorPost:
             entity = await registry.get(op.did)
             assert entity is not None
             assert entity.public_key == op.public_key_hex
-            channel = next(c for c in await app.state.messaging_service.list_channels() if c.name == "ops")
+            channel = next(
+                c for c in await app.state.messaging_service.list_channels() if c.name == "ops"
+            )
             assert op.did in channel.members
 
     async def test_post_to_new_channel_creates_it(

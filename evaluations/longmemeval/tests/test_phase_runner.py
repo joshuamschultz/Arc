@@ -99,10 +99,7 @@ def _question(
         ],
         "haystack_session_ids": session_ids,
         "haystack_sessions": [
-            [
-                {"role": "user", "content": text, "has_answer": gold}
-                for text, gold in turns
-            ]
+            [{"role": "user", "content": text, "has_answer": gold} for text, gold in turns]
             for turns in sessions
         ],
     }
@@ -668,9 +665,7 @@ async def test_teardown_runs_in_a_finally_when_the_question_raises(tmp_path: Pat
 
 async def test_a_retained_workspace_survives_under_keep_on_failure(tmp_path: Path) -> None:
     harness = Harness()
-    runner = _runner(
-        tmp_path, _dataset(_question("q1")), harness, keep_workspace_on_failure=True
-    )
+    runner = _runner(tmp_path, _dataset(_question("q1")), harness, keep_workspace_on_failure=True)
 
     async def exploding_judge(*, run_dir: Path) -> Any:
         raise RuntimeError("the provider rate-limited the judge")
@@ -747,9 +742,7 @@ async def test_a_question_already_complete_is_skipped(tmp_path: Path) -> None:
         )
     )
     harness = Harness()
-    runner = _runner(
-        tmp_path, _dataset(_question("q1"), _question("q2")), harness, ledger=ledger
-    )
+    runner = _runner(tmp_path, _dataset(_question("q1"), _question("q2")), harness, ledger=ledger)
 
     report = await runner.run("oracle")
 

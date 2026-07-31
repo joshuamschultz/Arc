@@ -157,9 +157,7 @@ def test_module_bus_priority_assignments() -> None:
         / "arcagent"
         / "modules"
     )
-    assert modules_root.exists(), (
-        f"arcagent modules directory not found at {modules_root}."
-    )
+    assert modules_root.exists(), f"arcagent modules directory not found at {modules_root}."
 
     # ------------------------------------------------------------------
     # Collect per-event subscribe priorities from source code.
@@ -218,8 +216,7 @@ def test_module_bus_priority_assignments() -> None:
         ]
         collisions.append(
             f"  Event '{event}' priority={priority} (VETO ZONE < {_VETO_ZONE_MAX_PRIORITY}) — "
-            f"modules: {sorted(modules_at_this_priority)}\n"
-            + "\n".join(detail_lines)
+            f"modules: {sorted(modules_at_this_priority)}\n" + "\n".join(detail_lines)
         )
 
     if collisions:

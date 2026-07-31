@@ -72,9 +72,7 @@ def _find_violations(path: Path) -> list[str]:
         # --- Import violations ---
         if isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name == "arcllm.registry" or alias.name.startswith(
-                    "arcllm.registry."
-                ):
+                if alias.name == "arcllm.registry" or alias.name.startswith("arcllm.registry."):
                     violations.append(
                         f"{path}:{node.lineno}: "
                         f"import {alias.name} — arcrun must not import arcllm.registry"
@@ -137,16 +135,9 @@ def test_no_arcrun_calls_load_model() -> None:
       - ``import arcllm.registry``
       - Any call to ``load_model(`` anywhere in arcrun source
     """
-    arcrun_src = (
-        Path(__file__).parent.parent.parent
-        / "packages"
-        / "arcrun"
-        / "src"
-        / "arcrun"
-    )
+    arcrun_src = Path(__file__).parent.parent.parent / "packages" / "arcrun" / "src" / "arcrun"
     assert arcrun_src.exists(), (
-        f"arcrun source not found at {arcrun_src}. "
-        "Is the packages/arcrun directory present?"
+        f"arcrun source not found at {arcrun_src}. Is the packages/arcrun directory present?"
     )
 
     all_violations: list[str] = []
@@ -162,9 +153,7 @@ def test_no_arcrun_calls_load_model() -> None:
             "  - arcrun: agentic loop (plan → dispatch → tool → respond)\n"
             "  arcrun must receive a pre-configured model via dependency injection,\n"
             "  NOT construct one by calling load_model() itself.\n\n"
-            "Violations:\n"
-            + "\n".join(f"  {v}" for v in all_violations)
-            + "\n\n"
+            "Violations:\n" + "\n".join(f"  {v}" for v in all_violations) + "\n\n"
             "To fix:\n"
             "  1. Remove the arcllm.registry import from the violating arcrun file.\n"
             "  2. Accept the model as a constructor parameter or function argument.\n"

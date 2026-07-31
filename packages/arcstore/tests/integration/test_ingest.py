@@ -284,7 +284,11 @@ class TestWormIngest:
         kp = generate_keypair()
         # Per-agent chain only — the bare audit-chain.jsonl is deliberately absent.
         sink = WormSink(worm_dir / "audit-chain-olivia.jsonl", InProcessSigner(kp.private_key))
-        sink.write(AuditEvent(actor_did="did:arc:t:x/0", action="tool.call", target="read_file", outcome="allow"))
+        sink.write(
+            AuditEvent(
+                actor_did="did:arc:t:x/0", action="tool.call", target="read_file", outcome="allow"
+            )
+        )
         sink.close()
         assert not (worm_dir / "audit-chain.jsonl").exists()
 

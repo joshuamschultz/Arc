@@ -119,12 +119,16 @@ class TestFromFrontmatter:
 
     def test_owner_did_extracted_from_frontmatter(self) -> None:
         owner = "did:arc:org:user/testowner"
-        acl = SessionACL.from_frontmatter(_frontmatter("private", owner_did=owner), _config("federal"))
+        acl = SessionACL.from_frontmatter(
+            _frontmatter("private", owner_did=owner), _config("federal")
+        )
         assert acl.owner_did == owner
 
     def test_owner_did_falls_back_to_kwarg(self) -> None:
         content = "---\nacl:\n  cross_session_visibility: private\n---\n"
-        acl = SessionACL.from_frontmatter(content, _config("federal"), owner_did="did:arc:fallback")
+        acl = SessionACL.from_frontmatter(
+            content, _config("federal"), owner_did="did:arc:fallback"
+        )
         assert acl.owner_did == "did:arc:fallback"
 
 

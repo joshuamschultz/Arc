@@ -47,17 +47,13 @@ def _find_upward_imports(path: Path) -> list[str]:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.name.split(".")[0] in _UPWARD_LAYERS:
-                    violations.append(
-                        f"{path}:{node.lineno}: import {alias.name}"
-                    )
+                    violations.append(f"{path}:{node.lineno}: import {alias.name}")
 
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
             if module.split(".")[0] in _UPWARD_LAYERS:
                 names = ", ".join(a.name for a in node.names)
-                violations.append(
-                    f"{path}:{node.lineno}: from {module} import {names}"
-                )
+                violations.append(f"{path}:{node.lineno}: from {module} import {names}")
 
     return violations
 
@@ -99,9 +95,7 @@ def test_no_arcstore_imports_upward() -> None:
             "ARCHITECTURE VIOLATION: arcstore imports a higher layer.\n\n"
             "arcagent/arcui/arccli/arcrun/arcgateway depend on arcstore — "
             "NOT the other way around (SDD §1).\n\n"
-            "Violations found:\n"
-            + "\n".join(f"  {v}" for v in violations)
-            + "\n\n"
+            "Violations found:\n" + "\n".join(f"  {v}" for v in violations) + "\n\n"
             "To fix:\n"
             "  1. Remove the upward import from arcstore.\n"
             "  2. Move shared code into arcstore or a neutral foundation package.\n"
@@ -129,9 +123,7 @@ def test_no_arcteam_imports_upward() -> None:
             "ARCHITECTURE VIOLATION: arcteam imports a higher layer.\n\n"
             "arcagent/arcui/arccli/arcrun/arcgateway depend on arcteam — "
             "NOT the other way around (SDD §1).\n\n"
-            "Violations found:\n"
-            + "\n".join(f"  {v}" for v in violations)
-            + "\n\n"
+            "Violations found:\n" + "\n".join(f"  {v}" for v in violations) + "\n\n"
             "To fix:\n"
             "  1. Remove the upward import from arcteam.\n"
             "  2. Move shared code into arcteam or a neutral foundation package.\n"

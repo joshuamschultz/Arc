@@ -65,8 +65,11 @@ async def approve_request(request: Request) -> JSONResponse:
     target = f"approval:{approval_id}"
     if not _is_operator(request):
         emit_mutation_audit(
-            request, target=target, operation="approval.approve",
-            outcome="denied", detail="viewer role",
+            request,
+            target=target,
+            operation="approval.approve",
+            outcome="denied",
+            detail="viewer role",
         )
         return _error("operator_role_required", 403)
 
@@ -82,15 +85,21 @@ async def approve_request(request: Request) -> JSONResponse:
     except (FileNotFoundError, OSError) as exc:
         logger.exception("operator key unavailable for approval")
         emit_mutation_audit(
-            request, target=target, operation="approval.approve",
-            outcome="denied", detail="operator key unavailable",
+            request,
+            target=target,
+            operation="approval.approve",
+            outcome="denied",
+            detail="operator key unavailable",
         )
         return _error(f"operator_key_unavailable: {type(exc).__name__}", 500)
 
     grant = sign_approval_for_hash(row.call_hash, operator)
     updated = await store.resolve(
-        approval_id, status="approved", actor_did=operator.did,
-        resolved_by=operator.did, grant=grant_to_wire(grant),
+        approval_id,
+        status="approved",
+        actor_did=operator.did,
+        resolved_by=operator.did,
+        grant=grant_to_wire(grant),
     )
     if updated is None:
         return _error("approval_not_pending", 409)
@@ -104,8 +113,11 @@ async def deny_request(request: Request) -> JSONResponse:
     target = f"approval:{approval_id}"
     if not _is_operator(request):
         emit_mutation_audit(
-            request, target=target, operation="approval.deny",
-            outcome="denied", detail="viewer role",
+            request,
+            target=target,
+            operation="approval.deny",
+            outcome="denied",
+            detail="viewer role",
         )
         return _error("operator_role_required", 403)
 

@@ -71,9 +71,7 @@ def dispatch_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[
 
 @pytest.mark.asyncio
 class TestDispatchTick:
-    async def test_starts_owned_todo_task_and_invokes_run(
-        self, dispatch_state: Any
-    ) -> None:
+    async def test_starts_owned_todo_task_and_invokes_run(self, dispatch_state: Any) -> None:
         from arcagent.modules.tasks.capabilities import _dispatch_tick, create_task
 
         st, identity, rec = dispatch_state

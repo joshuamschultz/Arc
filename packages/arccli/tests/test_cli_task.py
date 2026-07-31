@@ -96,9 +96,7 @@ async def _lookup_did(root: Path, ref: str) -> str:
         await _shutdown(backend)
 
 
-def _register_actor(
-    root: Path, handle: str, *, roles: str = "", entity_type: str = "user"
-) -> str:
+def _register_actor(root: Path, handle: str, *, roles: str = "", entity_type: str = "user") -> str:
     """Register a plain (non-workspace) entity; return its resolved DID."""
     from arccli.commands.team import _register
 
@@ -140,7 +138,9 @@ def _create_signing_agent(
     )
     if roles:
         _update_entity(
-            argparse.Namespace(root=str(root), entity_ref=f"agent://{name}", name=None, roles=roles)
+            argparse.Namespace(
+                root=str(root), entity_ref=f"agent://{name}", name=None, roles=roles
+            )
         )
     return asyncio.run(_lookup_did(root, f"agent://{name}"))
 
@@ -366,9 +366,7 @@ class TestList:
         creator = _register_actor(root, "alice", roles="operator")
         bob_did = _register_actor(root, "bob")
         asyncio.run(
-            _seed_task(
-                data_dir, id="t-1", title="Bob's", creator_did=creator, owner_did=bob_did
-            )
+            _seed_task(data_dir, id="t-1", title="Bob's", creator_did=creator, owner_did=bob_did)
         )
         asyncio.run(_seed_task(data_dir, id="t-2", title="Nobody's", creator_did=creator))
 
@@ -386,14 +384,10 @@ class TestList:
         alice_did = creator
         bob_did = _register_actor(root, "bob")
         asyncio.run(
-            _seed_task(
-                data_dir, id="t-1", title="Mine", creator_did=creator, owner_did=alice_did
-            )
+            _seed_task(data_dir, id="t-1", title="Mine", creator_did=creator, owner_did=alice_did)
         )
         asyncio.run(
-            _seed_task(
-                data_dir, id="t-2", title="Bob's", creator_did=creator, owner_did=bob_did
-            )
+            _seed_task(data_dir, id="t-2", title="Bob's", creator_did=creator, owner_did=bob_did)
         )
 
         capsys.readouterr()  # drain the setup/seed preamble
@@ -432,15 +426,11 @@ class TestList:
 
 
 class TestEdit:
-    def test_edit_updates_title_at_rest(
-        self, tmp_path: Path, team_backend: Any
-    ) -> None:
+    def test_edit_updates_title_at_rest(self, tmp_path: Path, team_backend: Any) -> None:
         root = _init_root(tmp_path / "team")
         data_dir = tmp_path / "store"
         creator = _register_actor(root, "alice", roles="operator")
-        task = asyncio.run(
-            _seed_task(data_dir, id="t-1", title="Old title", creator_did=creator)
-        )
+        task = asyncio.run(_seed_task(data_dir, id="t-1", title="Old title", creator_did=creator))
 
         _task(
             [
@@ -464,9 +454,7 @@ class TestEdit:
         data_dir = tmp_path / "store"
         creator = _register_actor(root, "alice", roles="operator")
         bob_did = _register_actor(root, "bob")
-        task = asyncio.run(
-            _seed_task(data_dir, id="t-1", title="In flight", creator_did=creator)
-        )
+        task = asyncio.run(_seed_task(data_dir, id="t-1", title="In flight", creator_did=creator))
         asyncio.run(_force_in_progress(data_dir, task.id, bob_did))
 
         with pytest.raises(SystemExit) as exc:
@@ -486,9 +474,7 @@ class TestEdit:
         assert reread is not None
         assert reread.title == "In flight"  # refused — nothing persisted
 
-    def test_edit_refuses_when_actor_not_operator(
-        self, tmp_path: Path, team_backend: Any
-    ) -> None:
+    def test_edit_refuses_when_actor_not_operator(self, tmp_path: Path, team_backend: Any) -> None:
         root = _init_root(tmp_path / "team")
         data_dir = tmp_path / "store"
         creator = _register_actor(root, "alice", roles="operator")
@@ -512,9 +498,7 @@ class TestEdit:
         assert reread is not None
         assert reread.title == "Untouched"
 
-    def test_edit_rejects_injection_in_title(
-        self, tmp_path: Path, team_backend: Any
-    ) -> None:
+    def test_edit_rejects_injection_in_title(self, tmp_path: Path, team_backend: Any) -> None:
         """SEC-F2: `edit` does a partial patch that never constructs a full Task,
         so the patched title must be validated through the model before the
         store write — an injection payload is refused with a nonzero exit."""
@@ -570,9 +554,7 @@ class TestAssign:
         assert reread is not None
         assert reread.owner_did == bob_did
 
-    def test_assign_refuses_when_task_in_progress(
-        self, tmp_path: Path, team_backend: Any
-    ) -> None:
+    def test_assign_refuses_when_task_in_progress(self, tmp_path: Path, team_backend: Any) -> None:
         root = _init_root(tmp_path / "team")
         data_dir = tmp_path / "store"
         creator = _register_actor(root, "alice", roles="operator")
@@ -630,13 +612,13 @@ class TestAssign:
 
 
 class TestComplete:
-    def test_complete_marks_done_with_resolution(
-        self, tmp_path: Path, team_backend: Any
-    ) -> None:
+    def test_complete_marks_done_with_resolution(self, tmp_path: Path, team_backend: Any) -> None:
         root = _init_root(tmp_path / "team")
         data_dir = tmp_path / "store"
         creator = _register_actor(root, "alice", roles="operator")
-        task = asyncio.run(_seed_task(data_dir, id="t-1", title="Almost done", creator_did=creator))
+        task = asyncio.run(
+            _seed_task(data_dir, id="t-1", title="Almost done", creator_did=creator)
+        )
 
         _task(
             [
@@ -726,16 +708,16 @@ class TestTalk:
         assert after.title == before.title
         assert after.owner_did == before.owner_did
 
-    def test_talk_refuses_when_actor_not_operator(
-        self, tmp_path: Path, team_backend: Any
-    ) -> None:
+    def test_talk_refuses_when_actor_not_operator(self, tmp_path: Path, team_backend: Any) -> None:
         root = _init_root(tmp_path / "team")
         data_dir = tmp_path / "store"
         creator = _register_actor(root, "alice", roles="operator")
         bob_did = _register_actor(root, "bob")
         _register_actor(root, "mallory", roles="executor")
         task = asyncio.run(
-            _seed_task(data_dir, id="t-1", title="In flight", creator_did=creator, owner_did=bob_did)
+            _seed_task(
+                data_dir, id="t-1", title="In flight", creator_did=creator, owner_did=bob_did
+            )
         )
 
         with pytest.raises(SystemExit) as exc:
@@ -760,9 +742,7 @@ class TestTalk:
         op_did = _create_signing_agent(
             root, tmp_path, "alice", roles="operator", monkeypatch=monkeypatch
         )
-        task = asyncio.run(
-            _seed_task(data_dir, id="t-1", title="Unowned", creator_did=op_did)
-        )
+        task = asyncio.run(_seed_task(data_dir, id="t-1", title="Unowned", creator_did=op_did))
 
         with pytest.raises(SystemExit) as exc:
             _task(

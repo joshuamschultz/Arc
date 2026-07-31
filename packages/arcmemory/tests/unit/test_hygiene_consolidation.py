@@ -100,8 +100,9 @@ async def test_hygiene_merges_aliased_entities_without_embedder(
 ) -> None:
     store = _store(workspace, db, scope)
     # Survivor card that recorded "josh-schultz" as an alias of a prior fold.
-    store.write_fact("joshua-schultz", "role", "founder", name="Joshua Schultz",
-                     entity_type="person")
+    store.write_fact(
+        "joshua-schultz", "role", "founder", name="Joshua Schultz", entity_type="person"
+    )
     survivor = store.read("joshua-schultz")
     assert survivor is not None
     survivor.aliases = ["josh-schultz"]

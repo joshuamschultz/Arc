@@ -111,9 +111,7 @@ def _status(args: argparse.Namespace) -> None:
         workspaces.extend(found)
 
     embedder = build_embedder("did:arc:operator", args.backend, args.model)
-    status = asyncio.run(
-        semantic_status(workspaces, embedder=embedder, backend=args.backend)
-    )
+    status = asyncio.run(semantic_status(workspaces, embedder=embedder, backend=args.backend))
     _render_status(status)
     if not status.live:
         sys.exit(1)

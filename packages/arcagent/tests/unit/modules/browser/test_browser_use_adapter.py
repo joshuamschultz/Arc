@@ -73,7 +73,10 @@ class TestContentConversion:
     def test_text_and_image_parts_map_to_blocks(self) -> None:
         parts = [
             _Part(type="text", text="look:"),
-            _Part(type="image_url", image_url=_Part(url="data:image/png;base64,AAA", media_type="image/png")),
+            _Part(
+                type="image_url",
+                image_url=_Part(url="data:image/png;base64,AAA", media_type="image/png"),
+            ),
         ]
         blocks = _arc_content(parts)
         assert isinstance(blocks, list)

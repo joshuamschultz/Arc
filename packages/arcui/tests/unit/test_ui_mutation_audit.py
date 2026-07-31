@@ -152,9 +152,7 @@ class TestBuildMutationWormWriter:
 
         writer = build_mutation_worm_writer(data_dir)
         assert writer is not None
-        req = _FakeRequest(
-            audit=None, audit_worm=writer, role="operator", session_id="sess-1"
-        )
+        req = _FakeRequest(audit=None, audit_worm=writer, role="operator", session_id="sess-1")
         emit_mutation_audit(
             req, target="approval:7", operation="approval.approve", outcome="applied"
         )

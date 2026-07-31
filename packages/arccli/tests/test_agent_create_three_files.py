@@ -21,13 +21,13 @@ def _isolated_user_config(
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path_factory.mktemp("empty-arc")))
 
 
-def _create(tmp_path: Path, name: str, model: str = "anthropic/claude-sonnet-4-5-20250929") -> Path:
+def _create(
+    tmp_path: Path, name: str, model: str = "anthropic/claude-sonnet-4-5-20250929"
+) -> Path:
     from arccli.commands.agent.create import _create as create_cmd
 
     create_cmd(
-        argparse.Namespace(
-            name=name, parent_dir=str(tmp_path), model=model, no_register=True
-        )
+        argparse.Namespace(name=name, parent_dir=str(tmp_path), model=model, no_register=True)
     )
     return tmp_path / name
 

@@ -46,9 +46,7 @@ async def test_fresh_insight_has_nonzero_confidence(workspace: Path, db: MemoryD
     assert loaded.confidence > 0.0  # no longer the 0.0% default
 
 
-async def test_re_recording_accumulates_hits_and_confidence(
-    workspace: Path, db: MemoryDB
-) -> None:
+async def test_re_recording_accumulates_hits_and_confidence(workspace: Path, db: MemoryDB) -> None:
     cfg = MemoryConfig()
     tool = _record_insight_tool(workspace, db)
     args = {"id": "deal-stalls-without-champion", "statement": "s", "trigger": "t", "cues": ["c1"]}

@@ -21,9 +21,7 @@ class _LiveEmbedder:
 
 
 def _patch_embedder(monkeypatch: pytest.MonkeyPatch, embedder: Any) -> None:
-    monkeypatch.setattr(
-        "arccli.commands.memory.build_embedder", lambda *_a, **_k: embedder
-    )
+    monkeypatch.setattr("arccli.commands.memory.build_embedder", lambda *_a, **_k: embedder)
 
 
 def test_status_reports_a_live_channel(

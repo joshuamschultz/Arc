@@ -92,9 +92,15 @@ async def test_dispatch_ignores_unknown_and_non_commands() -> None:
     sent: list[str] = []
 
     # Unknown /token falls through (not handled) — reaches the agent as text.
-    assert await reg.dispatch(_event("/unknown x"), "a", "u", cast(Any, object()), sent.append) is False
+    assert (
+        await reg.dispatch(_event("/unknown x"), "a", "u", cast(Any, object()), sent.append)
+        is False
+    )
     # Plain text is not a command.
-    assert await reg.dispatch(_event("just chatting"), "a", "u", cast(Any, object()), sent.append) is False
+    assert (
+        await reg.dispatch(_event("just chatting"), "a", "u", cast(Any, object()), sent.append)
+        is False
+    )
     assert sent == []
 
 

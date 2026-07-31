@@ -339,8 +339,7 @@ def _fit(shares: Mapping[str, int], capacity: Mapping[str, int], size: int) -> d
                 break
             fitted[min(takers, key=lambda name: fitted[name] / capacity[name])] += 1
     raise StratificationError(
-        f"could not fit a {size}-question sample covering all six types into "
-        f"{dict(capacity)}"
+        f"could not fit a {size}-question sample covering all six types into {dict(capacity)}"
     )
 
 

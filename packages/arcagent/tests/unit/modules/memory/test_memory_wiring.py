@@ -211,7 +211,9 @@ async def test_recall_is_once_per_turn_across_spawn_double_assembly() -> None:
 async def test_capture_hooks_call_brain_and_count_events() -> None:
     spy = _SpyBrain()
     _configure_with(spy)
-    await capture_tool(_ctx({"tool": "read", "result": "the quarterly revenue report shows growth"}))
+    await capture_tool(
+        _ctx({"tool": "read", "result": "the quarterly revenue report shows growth"})
+    )
     await capture_respond(_ctx({"messages": [{"role": "assistant", "content": "done"}]}))
     assert len(spy.captures) == 2
     assert _runtime.state().events_since_consolidate == 2
@@ -297,7 +299,9 @@ async def test_user_message_survives_curation_into_distillation(tmp_path: Path) 
     _configure_with(brain)
 
     await capture_user(_ctx({"task": "alice shipped the payments service"}))
-    await capture_tool(_ctx({"tool": "bash", "result": "exit status 0 with a long mechanical trace"}))
+    await capture_tool(
+        _ctx({"tool": "bash", "result": "exit status 0 with a long mechanical trace"})
+    )
     await brain.consolidate()
 
     joined = " ".join(distiller.texts)

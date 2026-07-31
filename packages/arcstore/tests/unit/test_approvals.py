@@ -132,7 +132,10 @@ class TestApprovalStore:
             async def resolve(status: str) -> PendingApproval | None:
                 await barrier.wait()
                 return await store.resolve(
-                    "req1", status=status, actor_did=_OPERATOR, resolved_by=_OPERATOR  # type: ignore[arg-type]
+                    "req1",
+                    status=status,
+                    actor_did=_OPERATOR,
+                    resolved_by=_OPERATOR,  # type: ignore[arg-type]
                 )
 
             results = await asyncio.gather(resolve("approved"), resolve("denied"))

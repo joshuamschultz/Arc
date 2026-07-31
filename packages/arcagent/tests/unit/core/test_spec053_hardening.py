@@ -187,9 +187,7 @@ def test_missing_key_with_prior_chain_fails_startup_closed(tmp_path: Path) -> No
 # ---------------------------------------------------------------------------
 
 
-def _fake_agent_for_modules(
-    tmp_path: Path, module_name: str, fake_mod: Any
-) -> Any:
+def _fake_agent_for_modules(tmp_path: Path, module_name: str, fake_mod: Any) -> Any:
     cfg = _config(tmp_path)
     agent = ArcAgent(config=cfg, config_path=tmp_path / "arcagent.toml")
     agent._operator_key = OperatorKey.generate()

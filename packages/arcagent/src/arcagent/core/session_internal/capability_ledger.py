@@ -53,6 +53,7 @@ class ProvenanceEntry:
             "at": self.at,
         }
 
+
 # The three legs of the lethal trifecta (REQ-011).
 PRIVATE_DATA = "private_data"
 EXTERNAL_COMMS = "external_comms"

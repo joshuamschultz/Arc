@@ -256,8 +256,18 @@ class TestFleetTasks:
             _seed_tasks(
                 _isolated_arc_data_dir,
                 [
-                    Task(id="alpha-t1", title="alpha task", creator_did="did:arc:alpha", owner_did="did:arc:alpha"),
-                    Task(id="beta-t1", title="beta task", creator_did="did:arc:beta", owner_did="did:arc:beta"),
+                    Task(
+                        id="alpha-t1",
+                        title="alpha task",
+                        creator_did="did:arc:alpha",
+                        owner_did="did:arc:alpha",
+                    ),
+                    Task(
+                        id="beta-t1",
+                        title="beta task",
+                        creator_did="did:arc:beta",
+                        owner_did="did:arc:beta",
+                    ),
                 ],
             )
         )

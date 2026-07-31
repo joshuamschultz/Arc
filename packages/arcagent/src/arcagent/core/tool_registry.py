@@ -515,8 +515,12 @@ class ToolRegistry:
                     denied = decision.is_deny()
                     if not denied:
                         self._record_admission(
-                            ledger, session_id, call_legs, clearance_ctx,
-                            tool_name=tool.name, arg_summary=arg_summary,
+                            ledger,
+                            session_id,
+                            call_legs,
+                            clearance_ctx,
+                            tool_name=tool.name,
+                            arg_summary=arg_summary,
                         )
                 if denied:
                     # Human approval awaits OUTSIDE the lock (REQ-032): a granted
@@ -526,8 +530,12 @@ class ToolRegistry:
                     )
                     async with lock:
                         self._record_admission(
-                            ledger, session_id, call_legs, clearance_ctx,
-                            tool_name=tool.name, arg_summary=arg_summary,
+                            ledger,
+                            session_id,
+                            call_legs,
+                            clearance_ctx,
+                            tool_name=tool.name,
+                            arg_summary=arg_summary,
                         )
 
             # 2. Pre-tool event (may veto)

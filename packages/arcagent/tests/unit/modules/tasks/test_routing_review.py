@@ -24,8 +24,13 @@ _B = "did:arc:test:agent/bbbbbbbb"
 
 def _agent(name: str, did: str, caps: tuple[str, ...] = ()) -> Entity:
     return Entity(
-        did=did, handle=name, id=did, name=name,
-        type=EntityType.AGENT, capabilities=list(caps), status=EntityStatus.active,
+        did=did,
+        handle=name,
+        id=did,
+        name=name,
+        type=EntityType.AGENT,
+        capabilities=list(caps),
+        status=EntityStatus.active,
     )
 
 
@@ -81,7 +86,9 @@ class TestAutoRouting:
         st, identity = state
         st.registry = _FakeRegistry([_agent("alice", _A), _agent("bob", _B)])
         # alice already has one in-flight task -> bob is least loaded.
-        await _seed(st, id="busy", title="Busy", creator_did=_A, owner_did=_A, status="in_progress")
+        await _seed(
+            st, id="busy", title="Busy", creator_did=_A, owner_did=_A, status="in_progress"
+        )
         await _seed(st, id="free", title="Route me", creator_did=identity.did, status="backlog")
 
         await _route_unassigned(st, identity.did)
@@ -95,8 +102,12 @@ class TestAutoRouting:
         st, identity = state
         # bob is busier but matches the task's capability tag; alice is idle.
         st.registry = _FakeRegistry([_agent("alice", _A), _agent("bob", _B, caps=("ml",))])
-        await _seed(st, id="busy", title="Busy", creator_did=_B, owner_did=_B, status="in_progress")
-        await _seed(st, id="t", title="ML task", creator_did=identity.did, status="backlog", tags=["ml"])
+        await _seed(
+            st, id="busy", title="Busy", creator_did=_B, owner_did=_B, status="in_progress"
+        )
+        await _seed(
+            st, id="t", title="ML task", creator_did=identity.did, status="backlog", tags=["ml"]
+        )
 
         await _route_unassigned(st, identity.did)
 
@@ -124,8 +135,13 @@ class TestReviewGate:
         st, identity = state
         st.messenger = _FakeMessenger()
         await _seed(
-            st, id="r", title="Gated", creator_did=identity.did, owner_did=identity.did,
-            status="in_progress", requires_review=True,
+            st,
+            id="r",
+            title="Gated",
+            creator_did=identity.did,
+            owner_did=identity.did,
+            status="in_progress",
+            requires_review=True,
         )
         result = json.loads(await complete_task(id="r", resolution="did the thing"))
         assert result["status"] == "review"  # NOT done
@@ -140,7 +156,11 @@ class TestReviewGate:
         st, identity = state
         st.messenger = _FakeMessenger()
         await _seed(
-            st, id="d", title="Plain", creator_did=identity.did, owner_did=identity.did,
+            st,
+            id="d",
+            title="Plain",
+            creator_did=identity.did,
+            owner_did=identity.did,
             status="in_progress",
         )
         result = json.loads(await complete_task(id="d", resolution="done"))
@@ -156,7 +176,11 @@ class TestOperatorNotify:
         st, identity = state
         st.messenger = _FakeMessenger()
         await _seed(
-            st, id="f", title="Doomed", creator_did=identity.did, owner_did=identity.did,
+            st,
+            id="f",
+            title="Doomed",
+            creator_did=identity.did,
+            owner_did=identity.did,
             status="in_progress",
         )
         await fail_task(id="f", resolution="nope")
@@ -172,7 +196,11 @@ class TestOperatorNotify:
         st.config = st.config.model_copy(update={"notify": False})
         st.messenger = _FakeMessenger()
         await _seed(
-            st, id="f", title="Quiet", creator_did=identity.did, owner_did=identity.did,
+            st,
+            id="f",
+            title="Quiet",
+            creator_did=identity.did,
+            owner_did=identity.did,
             status="in_progress",
         )
         await fail_task(id="f", resolution="nope")

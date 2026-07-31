@@ -188,9 +188,7 @@ async def get_channels(request: Request) -> JSONResponse:
     except FileNotFoundError:
         return JSONResponse(ChannelsResponse(channels=[]).model_dump(mode="json"))
     except (PathTraversalError, FileTooLargeError) as exc:
-        return JSONResponse(
-            ErrorResponse(error=str(exc)).model_dump(mode="json"), status_code=400
-        )
+        return JSONResponse(ErrorResponse(error=str(exc)).model_dump(mode="json"), status_code=400)
     try:
         parsed = json.loads(content.content)
     except json.JSONDecodeError:

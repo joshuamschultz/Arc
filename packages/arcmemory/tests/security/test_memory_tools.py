@@ -41,9 +41,7 @@ def _tool(tools: list[Any], name: str) -> Any:
     return next(t for t in tools if t.name == name)
 
 
-async def test_signed_authorized_write_succeeds_and_audits(
-    workspace: Path, db: MemoryDB
-) -> None:
+async def test_signed_authorized_write_succeeds_and_audits(workspace: Path, db: MemoryDB) -> None:
     identity = AgentIdentity.generate(org="default", agent_type="memory")
     caller = identity.did
     sink = _RecordingSink()
@@ -61,9 +59,9 @@ async def test_signed_authorized_write_succeeds_and_audits(
         {"slug": "brad-baker", "predicate": "role", "value": "cto"}
     )
     assert "wrote" in result
-    entity = SemanticStore(
-        workspace, WeightedGraph(db, MemoryConfig()), scope=caller
-    ).read("brad-baker")
+    entity = SemanticStore(workspace, WeightedGraph(db, MemoryConfig()), scope=caller).read(
+        "brad-baker"
+    )
     assert entity is not None and entity.facts  # the store WAS mutated
     assert any(e.action == "memory.tool.write_fact" and e.outcome == "allow" for e in sink.events)
 

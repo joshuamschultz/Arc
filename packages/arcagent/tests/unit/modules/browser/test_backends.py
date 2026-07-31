@@ -121,9 +121,7 @@ class TestBrowserbaseBackend:
                     return_value={"id": "sess-1", "connectUrl": "wss://connect.browserbase.com/x"}
                 ),
             ),
-            patch(
-                "arcagent.modules.browser.backends.browserbase.CDPClientManager"
-            ) as cdp_cls,
+            patch("arcagent.modules.browser.backends.browserbase.CDPClientManager") as cdp_cls,
         ):
             mock_client = AsyncMock()
             mock_client.connect = AsyncMock()

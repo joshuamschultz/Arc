@@ -146,9 +146,7 @@ async def eval_agent(tmp_path: Path, isolated_arc_home: Path) -> AsyncIterator[A
 
 
 @pytest.fixture
-async def degraded_agent(
-    tmp_path: Path, isolated_arc_home: Path
-) -> AsyncIterator[AgentFactory]:
+async def degraded_agent(tmp_path: Path, isolated_arc_home: Path) -> AsyncIterator[AgentFactory]:
     """Build one deliberately degraded agent per test; shut every one of them down."""
     built: list[ArcAgent] = []
 

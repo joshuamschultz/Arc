@@ -213,9 +213,7 @@ async def complete_task(
             return json.dumps({"error": f"Task '{id}' not found"})
         _require_owner(current, st)
         if not await st.store.deps_met(current):
-            return json.dumps(
-                {"error": f"Task '{id}' is blocked by unfinished dependencies"}
-            )
+            return json.dumps({"error": f"Task '{id}' is blocked by unfinished dependencies"})
         if current.requires_review:
             # Opt-in human gate (P3): land in ``review``, not ``done`` — an
             # operator approves/rejects before it is terminal (LLM06/ASI09).
@@ -624,9 +622,7 @@ async def _handle_attempt_failure(
         return
     backoff = st.config.retry_backoff_seconds * (2 ** (current.attempts - 1))
     next_at = (datetime.now(UTC) + timedelta(seconds=backoff)).isoformat()
-    await st.store.requeue(
-        task_id, actor_did=self_did, last_error=error, next_attempt_at=next_at
-    )
+    await st.store.requeue(task_id, actor_did=self_did, last_error=error, next_attempt_at=next_at)
 
 
 def _is_stale(task: Task, now: datetime, threshold: float) -> bool:
@@ -762,9 +758,7 @@ async def _route_unassigned(st: _runtime._State, self_did: str) -> None:
 async def _eligible_agents(st: _runtime._State) -> list[Entity]:
     """Active agent entities from the registry — the routing candidate set."""
     entities = await st.registry.list_entities()
-    return [
-        e for e in entities if e.type == EntityType.AGENT and e.status == EntityStatus.active
-    ]
+    return [e for e in entities if e.type == EntityType.AGENT and e.status == EntityStatus.active]
 
 
 async def _load_by_owner(st: _runtime._State) -> dict[str, int]:

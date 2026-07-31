@@ -45,17 +45,13 @@ def _find_arcgateway_imports(path: Path) -> list[str]:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.name == "arcgateway" or alias.name.startswith("arcgateway."):
-                    violations.append(
-                        f"{path}:{node.lineno}: import {alias.name}"
-                    )
+                    violations.append(f"{path}:{node.lineno}: import {alias.name}")
 
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
             if module == "arcgateway" or module.startswith("arcgateway."):
                 names = ", ".join(a.name for a in node.names)
-                violations.append(
-                    f"{path}:{node.lineno}: from {module} import {names}"
-                )
+                violations.append(f"{path}:{node.lineno}: from {module} import {names}")
 
     return violations
 
@@ -73,15 +69,10 @@ def test_no_arcagent_imports_arcgateway() -> None:
        concepts, revisit the boundary definition in SDD §5.
     """
     arcagent_src = (
-        Path(__file__).parent.parent.parent
-        / "packages"
-        / "arcagent"
-        / "src"
-        / "arcagent"
+        Path(__file__).parent.parent.parent / "packages" / "arcagent" / "src" / "arcagent"
     )
     assert arcagent_src.exists(), (
-        f"arcagent source not found at {arcagent_src}. "
-        "Is the packages/arcagent directory present?"
+        f"arcagent source not found at {arcagent_src}. Is the packages/arcagent directory present?"
     )
 
     all_violations: list[str] = []
@@ -95,9 +86,7 @@ def test_no_arcagent_imports_arcgateway() -> None:
             "ARCHITECTURE VIOLATION: arcagent imports arcgateway.\n\n"
             "arcgateway depends on arcagent — NOT the other way around.\n"
             "arcagent must have ZERO knowledge of arcgateway (SDD §5).\n\n"
-            "Violations found:\n"
-            + "\n".join(f"  {v}" for v in all_violations)
-            + "\n\n"
+            "Violations found:\n" + "\n".join(f"  {v}" for v in all_violations) + "\n\n"
             "To fix:\n"
             "  1. Remove the arcgateway import from arcagent.\n"
             "  2. Move shared code to a neutral location if needed.\n"

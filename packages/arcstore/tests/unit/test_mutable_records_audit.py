@@ -61,8 +61,12 @@ class TestMutableWriteAudit:
         try:
             await be.mutable_write("tasks", "t1", {"owner": None}, actor_did=_ACTOR)
             await be.update_if(
-                "tasks", "t1", {"owner": _ACTOR}, where={"owner": None},
-                actor_did=_ACTOR, sink=sink,
+                "tasks",
+                "t1",
+                {"owner": _ACTOR},
+                where={"owner": None},
+                actor_did=_ACTOR,
+                sink=sink,
             )
             assert len(sink.events) == 1
             assert sink.events[0].actor_did == _ACTOR
@@ -82,8 +86,12 @@ class TestMutableWriteAudit:
         try:
             await be.mutable_write("tasks", "t1", {"owner": _ACTOR}, actor_did=_ACTOR)
             won = await be.update_if(
-                "tasks", "t1", {"owner": "other"}, where={"owner": None},
-                actor_did=_ACTOR, sink=sink,
+                "tasks",
+                "t1",
+                {"owner": "other"},
+                where={"owner": None},
+                actor_did=_ACTOR,
+                sink=sink,
             )
             assert won is False
             assert len(sink.events) == 1
@@ -100,8 +108,12 @@ class TestMutableWriteAudit:
         try:
             await be.mutable_write("tasks", "t1", {"owner": None}, actor_did=_ACTOR)
             won = await be.update_if(
-                "tasks", "t1", {"owner": _ACTOR}, where={"owner": None},
-                actor_did=_ACTOR, sink=sink,
+                "tasks",
+                "t1",
+                {"owner": _ACTOR},
+                where={"owner": None},
+                actor_did=_ACTOR,
+                sink=sink,
             )
             assert won is True
             assert sink.events[0].outcome == "applied"

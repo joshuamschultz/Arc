@@ -50,9 +50,7 @@ async def test_status_line_shows_attach_context() -> None:
     """The header sub-title shows the attached agent, gateway, and turn count."""
     from arctui.app import ArcTUI
 
-    app = ArcTUI(
-        transport=None, agent_label="employee", gateway_label="http://127.0.0.1:8420"
-    )
+    app = ArcTUI(transport=None, agent_label="employee", gateway_label="http://127.0.0.1:8420")
     async with app.run_test() as pilot:
         sub = pilot.app.sub_title
         assert "employee" in sub

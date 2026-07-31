@@ -33,7 +33,9 @@ async def test_resolve_exact_file_hit(workspace: Path, db: MemoryDB, scope: Scop
     assert resolved == "josh-schultz"
 
 
-async def test_resolve_alias_hit_folds_variant(workspace: Path, db: MemoryDB, scope: Scope) -> None:
+async def test_resolve_alias_hit_folds_variant(
+    workspace: Path, db: MemoryDB, scope: Scope
+) -> None:
     store = _store(workspace, db, scope)
     # Existing card whose survivor recorded "Joshua Schultz" as an alias of a prior fold.
     store.write_fact("josh-schultz", "role", "founder", name="Josh Schultz", entity_type="person")
@@ -88,7 +90,9 @@ async def test_resolve_fuzzy_same_type(workspace: Path, db: MemoryDB, scope: Sco
     assert resolved == "acme-corp"  # embedding fuzz folds the variant
 
 
-async def test_resolve_fuzzy_never_crosses_type(workspace: Path, db: MemoryDB, scope: Scope) -> None:
+async def test_resolve_fuzzy_never_crosses_type(
+    workspace: Path, db: MemoryDB, scope: Scope
+) -> None:
     store = _store(workspace, db, scope)
     store.write_fact("acme-corp", "hq", "Austin", name="Acme", entity_type="company")
     resolved = await resolve_entity(
@@ -165,13 +169,18 @@ async def test_extract_facts_folds_aliased_slug_into_existing_card(
     store._persist(entity)
 
     distiller = _FactOnlyDistiller(
-        [FactCandidate(slug="joshua-schultz", predicate="city", value="Austin", name="Joshua Schultz",
-                       entity_type="person")]
+        [
+            FactCandidate(
+                slug="joshua-schultz",
+                predicate="city",
+                value="Austin",
+                name="Joshua Schultz",
+                entity_type="person",
+            )
+        ]
     )
     events = [Event(event_id="e0", scope=scope.key, kind="obs", text="joshua moved to austin")]
-    applied = await extract_facts(
-        events, distiller=distiller, store=store, config=MemoryConfig()
-    )
+    applied = await extract_facts(events, distiller=distiller, store=store, config=MemoryConfig())
 
     # The fact landed on the EXISTING card, and no duplicate was minted.
     assert store.slugs() == ["josh-schultz"]

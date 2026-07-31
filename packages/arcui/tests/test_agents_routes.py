@@ -479,8 +479,7 @@ class TestSessionsRoute:
         team = _build_team_dir(tmp_path)
         sessions = next(team.glob("*/workspace/sessions"))
         (sessions / "messaging:inbox.jsonl").write_text(
-            '{"role": "user", "content": "ping"}\n'
-            '{"role": "assistant", "content": "pong"}\n',
+            '{"role": "user", "content": "ping"}\n{"role": "assistant", "content": "pong"}\n',
             encoding="utf-8",
         )
         app, auth, _ = _make_detail_app(team_root=team)
@@ -573,7 +572,13 @@ class TestTasksAndSchedulesRoutes:
         asyncio.run(
             _seed_task(
                 _isolated_arc_data_dir,
-                Task(id="t1", title="Investigate", creator_did="did:arc:alpha", owner_did="did:arc:alpha", priority="high"),
+                Task(
+                    id="t1",
+                    title="Investigate",
+                    creator_did="did:arc:alpha",
+                    owner_did="did:arc:alpha",
+                    priority="high",
+                ),
             )
         )
         app, auth, _ = _make_detail_app(team_root=team)

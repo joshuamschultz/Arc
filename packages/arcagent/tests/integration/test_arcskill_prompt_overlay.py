@@ -45,9 +45,7 @@ def _operator(tmp_path: Path, monkeypatch: Any) -> tuple[OperatorKey, str]:
     return op, did
 
 
-def _sign_overlay(
-    agent_root: Path, name: str, body: str, op: OperatorKey, did: str
-) -> None:
+def _sign_overlay(agent_root: Path, name: str, body: str, op: OperatorKey, did: str) -> None:
     """Author + operator-sign an arcskill prompt overlay as the arcui SigningAuthority does."""
     overlay_dir = agent_root / "context" / "arcskill"
     overlay_dir.mkdir(parents=True, exist_ok=True)

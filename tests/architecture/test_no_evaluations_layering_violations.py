@@ -28,8 +28,15 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).parent.parent.parent
 
 
-def _is_under(module: str, forbidden: str) -> bool:
-    """True when ``module`` is ``forbidden`` itself or a submodule of it."""
+def _is_under(module: str, forbidden: str, *, exempt: str | None = None) -> bool:
+    """True when ``module`` is ``forbidden`` itself or a submodule of it.
+
+    ``exempt`` names one submodule of ``forbidden`` that does not count — used
+    where the scanned package lives *inside* the forbidden namespace and so
+    must still be allowed to import itself.
+    """
+    if exempt is not None and (module == exempt or module.startswith(f"{exempt}.")):
+        return False
     return module == forbidden or module.startswith(f"{forbidden}.")
 
 
@@ -48,7 +55,9 @@ def _absolute_module(node: ast.ImportFrom, package_parts: tuple[str, ...]) -> st
     return ".".join((*base, node.module)) if node.module else ".".join(base)
 
 
-def _find_forbidden_imports(path: Path, forbidden: str, tree_root: Path) -> list[str]:
+def _find_forbidden_imports(
+    path: Path, forbidden: str, tree_root: Path, exempt: str | None = None
+) -> list[str]:
     """Return violation descriptions for imports of ``forbidden`` in one file.
 
     Args:
@@ -71,23 +80,25 @@ def _find_forbidden_imports(path: Path, forbidden: str, tree_root: Path) -> list
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                if _is_under(alias.name, forbidden):
+                if _is_under(alias.name, forbidden, exempt=exempt):
                     violations.append(f"{path}:{node.lineno}: import {alias.name}")
 
         elif isinstance(node, ast.ImportFrom):
             module = _absolute_module(node, package_parts)
-            if _is_under(module, forbidden):
+            if _is_under(module, forbidden, exempt=exempt):
                 names = ", ".join(alias.name for alias in node.names)
                 violations.append(f"{path}:{node.lineno}: from {module} import {names}")
 
     return violations
 
 
-def _scan(source_dir: Path, forbidden: str, tree_root: Path) -> list[str]:
+def _scan(
+    source_dir: Path, forbidden: str, tree_root: Path, exempt: str | None = None
+) -> list[str]:
     """AST-scan every .py file under ``source_dir`` for imports of ``forbidden``."""
     violations: list[str] = []
     for py_file in sorted(source_dir.rglob("*.py")):
-        violations.extend(_find_forbidden_imports(py_file, forbidden, tree_root))
+        violations.extend(_find_forbidden_imports(py_file, forbidden, tree_root, exempt))
     return violations
 
 
@@ -124,7 +135,15 @@ def test_ingest_does_not_import_longmemeval() -> None:
     ingest = _REPO_ROOT / "evaluations" / "longmemeval" / "ingest"
     assert ingest.exists(), f"evaluations/longmemeval/ingest/ not found at {ingest}"
 
-    violations = _scan(ingest, forbidden="evaluations.longmemeval", tree_root=_REPO_ROOT)
+    # ingest/ now lives inside the harness directory, so it must still be able
+    # to import itself. Everything ELSE under evaluations.longmemeval — the
+    # corpus adapter, dataset, judge, scoring — remains forbidden.
+    violations = _scan(
+        ingest,
+        forbidden="evaluations.longmemeval",
+        tree_root=_REPO_ROOT,
+        exempt="evaluations.longmemeval.ingest",
+    )
 
     assert not violations, (
         "ARCHITECTURE VIOLATION: evaluations/longmemeval/ingest/ imports "

@@ -35,7 +35,9 @@ class _FakeWS:
 
 
 def _client(
-    incoming: list[str], *, token: str = "tok"  # noqa: S107 — test fixture token, not a secret
+    incoming: list[str],
+    *,
+    token: str = "tok",  # noqa: S107 — test fixture token, not a secret
 ) -> tuple[GatewayChatClient, list[str]]:
     ws = _FakeWS(incoming)
     seen_urls: list[str] = []
@@ -44,9 +46,7 @@ def _client(
         seen_urls.append(url)
         return ws
 
-    client = GatewayChatClient(
-        "http://127.0.0.1:8420", "employee", token, connect=_connect
-    )
+    client = GatewayChatClient("http://127.0.0.1:8420", "employee", token, connect=_connect)
     return client, seen_urls
 
 
@@ -57,16 +57,12 @@ def _client(
 
 def test_to_ws_url_maps_http_to_ws_with_chat_path() -> None:
     assert (
-        _to_ws_url("http://127.0.0.1:8420", "employee")
-        == "ws://127.0.0.1:8420/ws/chat/employee"
+        _to_ws_url("http://127.0.0.1:8420", "employee") == "ws://127.0.0.1:8420/ws/chat/employee"
     )
 
 
 def test_to_ws_url_maps_https_to_wss_and_strips_trailing_slash() -> None:
-    assert (
-        _to_ws_url("https://host:9000/", "coder")
-        == "wss://host:9000/ws/chat/coder"
-    )
+    assert _to_ws_url("https://host:9000/", "coder") == "wss://host:9000/ws/chat/coder"
 
 
 def test_to_ws_url_quotes_agent_id() -> None:

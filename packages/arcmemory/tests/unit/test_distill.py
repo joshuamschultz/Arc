@@ -156,7 +156,9 @@ async def test_contradiction_writes_was_trail_not_overwrite(workspace, db, scope
     distiller = FakeDistiller(
         FactExtraction(facts=[FactCandidate(slug="alice", predicate="role", value="manager")])
     )
-    await extract_facts([_obs(scope, "w", 8)], distiller=distiller, store=store, config=MemoryConfig())
+    await extract_facts(
+        [_obs(scope, "w", 8)], distiller=distiller, store=store, config=MemoryConfig()
+    )
 
     entity = store.read("alice")
     assert entity is not None

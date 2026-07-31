@@ -183,7 +183,12 @@ async def test_distiller_extracts_procedures_from_parsed_content() -> None:
     provider = _FakeProvider(
         parsed={
             "procedures": [
-                {"slug": "deploy", "title": "Deploy", "when_to_use": "shipping", "steps": ["a", "b"]}
+                {
+                    "slug": "deploy",
+                    "title": "Deploy",
+                    "when_to_use": "shipping",
+                    "steps": ["a", "b"],
+                }
             ]
         }
     )

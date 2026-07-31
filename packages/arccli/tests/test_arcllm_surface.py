@@ -41,9 +41,19 @@ class TestRotGuard:
     def test_packaged_set_is_the_known_thirteen(self) -> None:
         # A human tripwire: names change -> read the diff, don't rubber-stamp.
         assert _packaged_module_names() == {
-            "routing", "telemetry", "audit", "retry", "fallback", "rate_limit",
-            "circuit_breaker", "load_balance", "queue", "otel", "security",
-            "injection", "guardrails",
+            "routing",
+            "telemetry",
+            "audit",
+            "retry",
+            "fallback",
+            "rate_limit",
+            "circuit_breaker",
+            "load_balance",
+            "queue",
+            "otel",
+            "security",
+            "injection",
+            "guardrails",
         }
 
 

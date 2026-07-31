@@ -372,9 +372,7 @@ class SqliteBackend:
         if sink is None:
             return
         try:
-            event = AuditEvent(
-                actor_did=actor_did, action=action, target=target, outcome=outcome
-            )
+            event = AuditEvent(actor_did=actor_did, action=action, target=target, outcome=outcome)
             emit(event, sink)
         except Exception:  # reason: fail-open — audit must never break the write path
             _logger.warning(

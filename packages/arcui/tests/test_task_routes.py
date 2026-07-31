@@ -199,4 +199,3 @@ class TestTaskRowExposesRunLink:
 
         tasks = {t["id"]: t for t in resp.json()["tasks"]}
         assert tasks["t1"]["run_id"] == "run-42"
-

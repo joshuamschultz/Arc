@@ -924,8 +924,13 @@ class _ClaimBarrierBackend(SqliteBackend):
             self._waited.add(task)
             await self._barrier.wait()
         return await super().update_if(
-            collection, key, patch, where,
-            actor_did=actor_did, sink=sink, absent_where=absent_where,
+            collection,
+            key,
+            patch,
+            where,
+            actor_did=actor_did,
+            sink=sink,
+            absent_where=absent_where,
         )
 
 
@@ -1093,17 +1098,15 @@ class TestStartTaskRunId:
         be = await _backend(tmp_path)
         try:
             store = TaskStore(be)
-            await store.create(
-                Task(id="r1", title="One", creator_did=_CREATOR, status="todo")
-            )
+            await store.create(Task(id="r1", title="One", creator_did=_CREATOR, status="todo"))
             await store.start_task("r1", _AGENT_A, run_id="run-abc")
-            done = await store.update("r1", {"status": "done", "resolution": "ok"}, actor_did=_AGENT_A)
+            done = await store.update(
+                "r1", {"status": "done", "resolution": "ok"}, actor_did=_AGENT_A
+            )
             assert done is not None and done.status == "done"
             assert done.run_id == "run-abc", "complete must not clear the run link"
 
-            await store.create(
-                Task(id="r2", title="Two", creator_did=_CREATOR, status="todo")
-            )
+            await store.create(Task(id="r2", title="Two", creator_did=_CREATOR, status="todo"))
             await store.start_task("r2", _AGENT_A, run_id="run-xyz")
             failed = await store.update(
                 "r2", {"status": "failed", "resolution": "boom"}, actor_did=_AGENT_A
@@ -1119,9 +1122,7 @@ class TestStartTaskRunId:
         be = await _backend(tmp_path)
         try:
             store = TaskStore(be)
-            await store.create(
-                Task(id="r1", title="Manual", creator_did=_CREATOR, status="todo")
-            )
+            await store.create(Task(id="r1", title="Manual", creator_did=_CREATOR, status="todo"))
             started, _reason = await store.start_task("r1", _AGENT_A)
             assert started is not None and started.run_id is None
         finally:
@@ -1154,9 +1155,7 @@ class TestReliabilityTransitions:
             store = TaskStore(be)
             await store.create(Task(id="t1", title="Go", creator_did=_CREATOR, status="todo"))
             await store.start_task("t1", _AGENT_A, run_id="r1")
-            done = await store.finish(
-                "t1", status="done", resolution="ok", actor_did=_AGENT_A
-            )
+            done = await store.finish("t1", status="done", resolution="ok", actor_did=_AGENT_A)
             assert done is not None
             assert done.status == "done"
             assert done.completed_at is not None
@@ -1174,7 +1173,10 @@ class TestReliabilityTransitions:
             await store.create(Task(id="t1", title="Go", creator_did=_CREATOR, status="todo"))
             await store.start_task("t1", _AGENT_A, run_id="r1")
             requeued = await store.requeue(
-                "t1", actor_did=_AGENT_A, last_error="boom", next_attempt_at="2999-01-01T00:00:00+00:00"
+                "t1",
+                actor_did=_AGENT_A,
+                last_error="boom",
+                next_attempt_at="2999-01-01T00:00:00+00:00",
             )
             assert requeued is not None
             assert requeued.status == "todo"
@@ -1193,9 +1195,15 @@ class TestReliabilityTransitions:
             store = TaskStore(be)
             await store.create(Task(id="t1", title="Go", creator_did=_CREATOR, status="todo"))
             # Never started (still todo) -> requeue must no-op.
-            assert await store.requeue(
-                "t1", actor_did=_AGENT_A, last_error="x", next_attempt_at="2999-01-01T00:00:00+00:00"
-            ) is None
+            assert (
+                await store.requeue(
+                    "t1",
+                    actor_did=_AGENT_A,
+                    last_error="x",
+                    next_attempt_at="2999-01-01T00:00:00+00:00",
+                )
+                is None
+            )
         finally:
             await be.stop()
 
@@ -1226,9 +1234,10 @@ class TestReliabilityTransitions:
         try:
             store = TaskStore(be)
             await store.create(Task(id="t1", title="Go", creator_did=_CREATOR, status="todo"))
-            assert await store.dead_letter(
-                "t1", actor_did=_AGENT_A, resolution="x", last_error="y"
-            ) is None
+            assert (
+                await store.dead_letter("t1", actor_did=_AGENT_A, resolution="x", last_error="y")
+                is None
+            )
         finally:
             await be.stop()
 
@@ -1326,7 +1335,9 @@ class TestRoutingAndReview:
         be = await _backend(tmp_path)
         try:
             store = TaskStore(be)
-            await store.create(Task(id="u", title="Unowned", creator_did=_CREATOR, status="backlog"))
+            await store.create(
+                Task(id="u", title="Unowned", creator_did=_CREATOR, status="backlog")
+            )
             routed = await store.route("u", _AGENT_A, _OPERATOR)
             assert routed is not None
             assert routed.owner_did == _AGENT_A
@@ -1390,7 +1401,9 @@ class TestSetStatus:
         try:
             store = TaskStore(be)
             await store.create(
-                Task(id="m1", title="M", creator_did=_CREATOR, owner_did=_AGENT_A, status="backlog")
+                Task(
+                    id="m1", title="M", creator_did=_CREATOR, owner_did=_AGENT_A, status="backlog"
+                )
             )
             moved = await store.set_status("m1", "todo", actor_did=_OPERATOR)
             assert moved is not None and moved.status == "todo"

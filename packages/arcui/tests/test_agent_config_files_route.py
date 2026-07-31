@@ -21,10 +21,10 @@ from arcui.routes.agent_detail import routes as agent_routes
 
 _ARCLLM_TOML = (
     "# arcllm config for the agent\n"
-    '[defaults]\n'
+    "[defaults]\n"
     'provider = "anthropic"  # keep the comment\n'
     "temperature = 0.7\n"
-    '[vault]\n'
+    "[vault]\n"
     'backend = "env"\n'
     'signing_key = "sk-should-be-redacted-for-viewers-1234"\n'
 )

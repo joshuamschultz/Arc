@@ -66,7 +66,10 @@ class TestUpdateIfConditionalCorrectness:
         await be.start()
         try:
             won = await be.update_if(
-                "tasks", "does-not-exist", {"owner": _ACTOR_A}, where={"owner": None},
+                "tasks",
+                "does-not-exist",
+                {"owner": _ACTOR_A},
+                where={"owner": None},
                 actor_did=_ACTOR_A,
             )
             assert won is False
@@ -137,7 +140,9 @@ class TestUpdateIfSingleOwnerClaimStress:
                 await be.mutable_write("tasks", key, {"owner": None}, actor_did=_SYSTEM)
                 barrier = asyncio.Barrier(2)
 
-                async def claim(owner: str, key: str = key, barrier: asyncio.Barrier = barrier) -> bool:
+                async def claim(
+                    owner: str, key: str = key, barrier: asyncio.Barrier = barrier
+                ) -> bool:
                     await barrier.wait()
                     return await be.update_if(
                         "tasks", key, {"owner": owner}, where={"owner": None}, actor_did=owner

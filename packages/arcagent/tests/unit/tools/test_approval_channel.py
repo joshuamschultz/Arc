@@ -57,7 +57,9 @@ async def test_channel_writes_enriched_pending_row(tmp_path: Path) -> None:
             legs=_TRIFECTA,
             call_hash="hash123",
             arguments={"to": "x@example.com", "body": "hi"},
-            leg_provenance=[{"legs": ["private_data"], "tool": "file_read", "args": "p", "at": "t"}],
+            leg_provenance=[
+                {"legs": ["private_data"], "tool": "file_read", "args": "p", "at": "t"}
+            ],
             session_id="sess-9",
         )
 
@@ -94,8 +96,11 @@ async def test_channel_returns_operator_grant_when_approved(tmp_path: Path) -> N
                 await asyncio.sleep(0.01)
             grant = sign_approval_for_hash(req.call_hash, operator)
             await store.resolve(
-                "req1", status="approved", actor_did=operator.did,
-                resolved_by=operator.did, grant=grant_to_wire(grant),
+                "req1",
+                status="approved",
+                actor_did=operator.did,
+                resolved_by=operator.did,
+                grant=grant_to_wire(grant),
             )
 
         approver = asyncio.create_task(approve_soon())
@@ -137,15 +142,20 @@ async def test_end_to_end_gate_admits_only_valid_operator_grant(tmp_path: Path) 
         op_signer = InProcessSigner(bytes(SigningKey.generate()))
         operator = OperatorApprovalAuthority(op_signer)
         call = ToolCall(
-            tool_name="egress", arguments={"url": "https://x"}, agent_did=_AGENT,
-            session_id="", classification="unclassified",
+            tool_name="egress",
+            arguments={"url": "https://x"},
+            agent_did=_AGENT,
+            session_id="",
+            classification="unclassified",
             capability_tags=frozenset({"external_comms"}),
         )
         call_hash = _hash_call(call)
         channel = ArcStoreApprovalChannel(store, id_factory=lambda: "req1")
         gate = HumanGate(
             operator_signer=op_signer,
-            agent_did=_AGENT, tier="enterprise", channel=channel,
+            agent_did=_AGENT,
+            tier="enterprise",
+            channel=channel,
         )
 
         async def approve_for(target_hash: str) -> None:
@@ -155,8 +165,11 @@ async def test_end_to_end_gate_admits_only_valid_operator_grant(tmp_path: Path) 
                 await asyncio.sleep(0.01)
             grant = sign_approval_for_hash(target_hash, operator)
             await store.resolve(
-                "req1", status="approved", actor_did=operator.did,
-                resolved_by=operator.did, grant=grant_to_wire(grant),
+                "req1",
+                status="approved",
+                actor_did=operator.did,
+                resolved_by=operator.did,
+                grant=grant_to_wire(grant),
             )
 
         # Correct hash -> gate returns a verified grant.

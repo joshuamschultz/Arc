@@ -226,9 +226,7 @@ class TestArgumentRedaction:
     """SPEC-035 approval enrichment — arguments are redacted + length-bounded."""
 
     def test_secrets_and_pii_are_redacted(self) -> None:
-        preview = redact_arguments(
-            {"to": "victim@example.com", "body": "my ssn is 123-45-6789"}
-        )
+        preview = redact_arguments({"to": "victim@example.com", "body": "my ssn is 123-45-6789"})
         assert "victim@example.com" not in preview["to"]
         assert "123-45-6789" not in preview["body"]
 
@@ -269,7 +267,9 @@ class TestApprovalRequestEnrichment:
             tier="enterprise",
             channel=capture,
         )
-        provenance = [{"legs": ["private_data"], "tool": "file_read", "args": "path=/x", "at": "t"}]
+        provenance = [
+            {"legs": ["private_data"], "tool": "file_read", "args": "path=/x", "at": "t"}
+        ]
         await gate.request(call, legs=_TRIFECTA, provenance=provenance)
 
         req = captured["req"]

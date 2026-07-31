@@ -67,9 +67,7 @@ class ArcLLMChatModel:
     def name(self) -> str:
         return self.model
 
-    async def ainvoke(
-        self, messages: list[Any], output_format: Any = None, **_kwargs: Any
-    ) -> Any:
+    async def ainvoke(self, messages: list[Any], output_format: Any = None, **_kwargs: Any) -> Any:
         """Call arcllm and wrap the result as a ``ChatInvokeCompletion``."""
         from browser_use.llm.views import ChatInvokeCompletion, ChatInvokeUsage
 

@@ -140,9 +140,7 @@ class TestCreateTaskOperatorGate:
         client = TestClient(app)
 
         with caplog.at_level("INFO", logger="arcui.audit"):
-            resp = client.post(
-                "/api/team/tasks", headers=_viewer(auth), json={"title": "Nope"}
-            )
+            resp = client.post("/api/team/tasks", headers=_viewer(auth), json={"title": "Nope"})
 
         assert resp.status_code == 403
         assert resp.json() == {"error": "operator_role_required"}
@@ -300,9 +298,7 @@ class TestPatchTaskAtRestOnly:
         unchanged = asyncio.run(store.get("t1"))
         assert unchanged is not None and unchanged.priority == "medium"
 
-    def test_disallowed_key_is_ignored_while_allowed_field_applies(
-        self, tmp_path: Path
-    ) -> None:
+    def test_disallowed_key_is_ignored_while_allowed_field_applies(self, tmp_path: Path) -> None:
         """SEC-F4: a raw patch can never write `status` (or id/created_at/...).
 
         A patch mixing an allowlisted field with a disallowed one applies only
@@ -358,6 +354,7 @@ class TestPatchTaskAtRestOnly:
         store = asyncio.run(_seed_store(tmp_path))
         row = asyncio.run(store.get("t1"))
         assert row is not None and row.description == "clean"  # unchanged
+
 
 class TestDeleteTaskOperatorGate:
     def test_operator_deletes_task_and_it_is_audited(
@@ -609,32 +606,28 @@ class TestMoveTask:
     def test_operator_moves_backlog_to_todo(self, tmp_path: Path) -> None:
         app, auth = _make_app(tmp_path)
         client = TestClient(app)
-        tid = client.post(
-            "/api/team/tasks", headers=_operator(auth), json={"title": "X"}
-        ).json()["id"]
-        r = client.post(
-            f"/api/tasks/{tid}/move", headers=_operator(auth), json={"status": "todo"}
-        )
+        tid = client.post("/api/team/tasks", headers=_operator(auth), json={"title": "X"}).json()[
+            "id"
+        ]
+        r = client.post(f"/api/tasks/{tid}/move", headers=_operator(auth), json={"status": "todo"})
         assert r.status_code == 200, r.text
         assert r.json()["status"] == "todo"
 
     def test_viewer_is_forbidden(self, tmp_path: Path) -> None:
         app, auth = _make_app(tmp_path)
         client = TestClient(app)
-        tid = client.post(
-            "/api/team/tasks", headers=_operator(auth), json={"title": "X"}
-        ).json()["id"]
-        r = client.post(
-            f"/api/tasks/{tid}/move", headers=_viewer(auth), json={"status": "todo"}
-        )
+        tid = client.post("/api/team/tasks", headers=_operator(auth), json={"title": "X"}).json()[
+            "id"
+        ]
+        r = client.post(f"/api/tasks/{tid}/move", headers=_viewer(auth), json={"status": "todo"})
         assert r.status_code == 403
 
     def test_cannot_move_to_in_progress(self, tmp_path: Path) -> None:
         app, auth = _make_app(tmp_path)
         client = TestClient(app)
-        tid = client.post(
-            "/api/team/tasks", headers=_operator(auth), json={"title": "X"}
-        ).json()["id"]
+        tid = client.post("/api/team/tasks", headers=_operator(auth), json={"title": "X"}).json()[
+            "id"
+        ]
         r = client.post(
             f"/api/tasks/{tid}/move", headers=_operator(auth), json={"status": "in_progress"}
         )

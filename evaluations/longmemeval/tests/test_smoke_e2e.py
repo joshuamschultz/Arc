@@ -224,9 +224,7 @@ class _RecordingWaiter:
     discarded by the phase runner, so there is nowhere else to see it from.
     """
 
-    def __init__(
-        self, waiter: ConsolidationWaiter, recorded: list[ConsolidationResult]
-    ) -> None:
+    def __init__(self, waiter: ConsolidationWaiter, recorded: list[ConsolidationResult]) -> None:
         self._waiter = waiter
         self._recorded = recorded
 

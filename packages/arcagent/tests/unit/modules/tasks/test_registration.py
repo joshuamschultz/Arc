@@ -92,6 +92,6 @@ class TestLoaderRegistration:
         assert watcher_entry is not None, "reliability watcher not registered by loader"
 
         ready_hooks = await reg.get_hooks("agent:ready")
-        assert any(
-            h.meta.name == "tasks_bind_run_fn" for h in ready_hooks
-        ), "agent:ready run-fn bind hook not registered by loader"
+        assert any(h.meta.name == "tasks_bind_run_fn" for h in ready_hooks), (
+            "agent:ready run-fn bind hook not registered by loader"
+        )

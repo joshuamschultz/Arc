@@ -20,7 +20,8 @@ def test_relocated_symbols_import_from_new_homes() -> None:
     from arcagent.utils.file_handler import FileHandler
 
     assert all(
-        callable(x) for x in (make_backend, message_signer, resolve_secret, FileHandler, ModuleConfig)
+        callable(x)
+        for x in (make_backend, message_signer, resolve_secret, FileHandler, ModuleConfig)
     )
 
 

@@ -131,9 +131,7 @@ def test_patch_missing_file_is_404(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert resp.status_code == 404
 
 
-def test_patch_non_object_body_is_400(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_patch_non_object_body_is_400(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     client, _ = _client(tmp_path, monkeypatch)
     resp = client.patch(
         "/api/system-config/arcrun",

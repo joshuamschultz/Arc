@@ -106,7 +106,14 @@ def test_get_gated_lists_new_sighting(tmp_path: Path) -> None:
     assert item["status"] == "new_sighting"
     assert item["agent_id"] == "olivia"
     assert set(item) == {
-        "agent_id", "agent_label", "name", "kind", "status", "path", "hash", "detail"
+        "agent_id",
+        "agent_label",
+        "name",
+        "kind",
+        "status",
+        "path",
+        "hash",
+        "detail",
     }
 
 

@@ -51,7 +51,9 @@ def test_build_brain_threads_model_identity_and_pipeline(
     monkeypatch.setattr(arcllm, "load_model", lambda *_a, **_k: "MODEL")
     ident, pipe = object(), object()
 
-    ctx = _context(tmp_path, embed_backend="none", distill_provider="anthropic", distill_model="claude")
+    ctx = _context(
+        tmp_path, embed_backend="none", distill_provider="anthropic", distill_model="claude"
+    )
     ctx["identity"] = ident
     ctx["policy_pipeline"] = pipe
     build_brain(ctx)
@@ -68,13 +70,17 @@ def test_build_brain_dynamics_override_reaches_config(
     recorded: dict[str, object] = {}
 
     class _SpyBrain:
-        def __init__(self, _workspace: Path, _agent_did: str, *, config: object = None, **_k: object) -> None:
+        def __init__(
+            self, _workspace: Path, _agent_did: str, *, config: object = None, **_k: object
+        ) -> None:
             recorded["config"] = config
 
     monkeypatch.setattr("arcmemory.provider.ArcMemoryBrain", _SpyBrain)
 
     build_brain(
-        _context(tmp_path, embed_backend="none", dynamics={"entity_merge_candidate_threshold": 0.55})
+        _context(
+            tmp_path, embed_backend="none", dynamics={"entity_merge_candidate_threshold": 0.55}
+        )
     )
     cfg = recorded["config"]
     assert cfg.entity_merge_candidate_threshold == 0.55  # type: ignore[attr-defined]

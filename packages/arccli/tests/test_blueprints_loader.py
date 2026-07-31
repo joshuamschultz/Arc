@@ -118,8 +118,14 @@ def test_personal_blueprint_cannot_weaken_federal_deployment() -> None:
 
 def _bp(overlay: dict) -> bp.ResolvedBlueprint:
     return bp.ResolvedBlueprint(
-        name="x", version="1", tier="personal", overlay=overlay,
-        source="user", signed=False, sha256="", signer_did="",
+        name="x",
+        version="1",
+        tier="personal",
+        overlay=overlay,
+        source="user",
+        signed=False,
+        sha256="",
+        signer_did="",
     )
 
 

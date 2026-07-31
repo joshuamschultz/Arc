@@ -61,7 +61,10 @@ async def request_cancellation(request: Request) -> JSONResponse:
     """POST /api/cancellations — park a pending cancel request (operator only)."""
     if not _is_operator(request):
         emit_mutation_audit(
-            request, target="run:cancel", operation="run.cancel", outcome="denied",
+            request,
+            target="run:cancel",
+            operation="run.cancel",
+            outcome="denied",
             detail="viewer role",
         )
         return _error("operator_role_required", 403)

@@ -56,7 +56,9 @@ def _agent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient,
     app.state.auth_config = auth
     app.state.agent_registry = AgentRegistry()
     app.state.embedded_agent_cache = None
-    app.state.roster_provider = lambda: team_roster.list_team(team_root=team_root, online_ids=set())
+    app.state.roster_provider = lambda: team_roster.list_team(
+        team_root=team_root, online_ids=set()
+    )
     return TestClient(app), "olivia", agent_dir
 
 
@@ -72,7 +74,9 @@ def _resolved_operator_did() -> str:
     return OperatorApprovalAuthority(key.into_signer()).did
 
 
-def _put(client: TestClient, agent: str, pkg: str, name: str, content: str, token: str = "operator"):
+def _put(
+    client: TestClient, agent: str, pkg: str, name: str, content: str, token: str = "operator"
+):
     return client.put(
         f"/api/agents/{agent}/prompts/{pkg}/{name}",
         json={"content": content},
@@ -174,7 +178,9 @@ def test_put_writes_signed_overlay_with_resolved_signer(
 
     # The list + detail now reflect the override.
     listed = _get(client, f"/api/agents/{agent}/prompts").json()["items"]
-    assert any(i["package"] == pkg and i["name"] == name and i["status"] == "overridden" for i in listed)
+    assert any(
+        i["package"] == pkg and i["name"] == name and i["status"] == "overridden" for i in listed
+    )
     detail = _get(client, f"/api/agents/{agent}/prompts/{pkg}/{name}").json()
     assert detail["status"] == "overridden"
     assert detail["effective"] == "Overridden body for the test."
@@ -341,9 +347,7 @@ def test_get_rubric_non_rubric_prompt_is_404(
     assert resp.status_code == 404
 
 
-def test_get_rubric_unknown_agent_is_404(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_get_rubric_unknown_agent_is_404(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     client, _, _ = _agent(tmp_path, monkeypatch)
     resp = _get(client, f"/api/agents/nobody/prompts/{_RUBRIC_PKG}/{_RUBRIC_NAME}/rubric")
     assert resp.status_code == 404
@@ -380,9 +384,7 @@ def test_put_rubric_round_trips_edit_to_signed_overlay(
     assert verify_artifact(overlay.read_bytes(), manifest)
 
     # Re-reading the rubric reflects the edit, overlay-sourced, order preserved.
-    after = _get(
-        client, f"/api/agents/{agent}/prompts/{_RUBRIC_PKG}/{_RUBRIC_NAME}/rubric"
-    ).json()
+    after = _get(client, f"/api/agents/{agent}/prompts/{_RUBRIC_PKG}/{_RUBRIC_NAME}/rubric").json()
     assert after["status"] == "overridden"
     assert list(after["dimensions"]) == ["accuracy", "efficiency", "error_handling", "clarity"]
     assert "A brand-new checklist row" in after["dimensions"]["accuracy"]["checklist"]

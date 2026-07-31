@@ -55,9 +55,7 @@ async def test_caller_pinned_run_id_is_used_for_the_run() -> None:
     from arcrun.loop import run
 
     model = MockModel([LLMResponse(content="done", stop_reason="end_turn")])
-    result = await run(
-        model, StaticProvider(_tools()), "prompt", "task", run_id="pinned-run-id"
-    )
+    result = await run(model, StaticProvider(_tools()), "prompt", "task", run_id="pinned-run-id")
     assert result.events, "the run should emit lifecycle events"
     assert all(e.run_id == "pinned-run-id" for e in result.events)
 

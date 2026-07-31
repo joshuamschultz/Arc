@@ -28,8 +28,7 @@ def test_arccli_commands_minimal_surface() -> None:
         exported = {
             name
             for name, obj in inspect.getmembers(mod)
-            if not name.startswith("_")
-            and not inspect.ismodule(obj)
+            if not name.startswith("_") and not inspect.ismodule(obj)
         }
 
     extra = exported - ALLOWED_PUBLIC_NAMES

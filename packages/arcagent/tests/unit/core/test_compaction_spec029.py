@@ -77,7 +77,9 @@ class TestCompactionTimeout:
         after = sm.get_messages()
         assert after == before  # untouched — no summary entry prepended
         assert after[0].get("type") != "compaction_summary"
-        skipped = [c for c in tel.audit_event.call_args_list if c.args[0] == "context.compaction_skipped"]
+        skipped = [
+            c for c in tel.audit_event.call_args_list if c.args[0] == "context.compaction_skipped"
+        ]
         assert len(skipped) == 1
 
 

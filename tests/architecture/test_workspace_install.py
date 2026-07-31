@@ -87,8 +87,7 @@ def test_all_canonical_packages_have_pyproject_toml() -> None:
     packages_dir = root / "packages"
 
     assert packages_dir.exists(), (
-        f"packages/ directory not found at {packages_dir}. "
-        "Is this the repository root?"
+        f"packages/ directory not found at {packages_dir}. Is this the repository root?"
     )
 
     missing: list[str] = []
@@ -135,18 +134,14 @@ def test_all_canonical_packages_have_valid_pyproject() -> None:
 
         # Must have [project] section
         if "project" not in data:
-            errors.append(
-                f"packages/{pkg_name}/pyproject.toml: missing [project] section"
-            )
+            errors.append(f"packages/{pkg_name}/pyproject.toml: missing [project] section")
             continue
 
         project = data["project"]
 
         # Must have name
         if "name" not in project:
-            errors.append(
-                f"packages/{pkg_name}/pyproject.toml: [project] missing 'name' field"
-            )
+            errors.append(f"packages/{pkg_name}/pyproject.toml: [project] missing 'name' field")
 
         # Must have requires-python
         if "requires-python" not in project:
@@ -157,9 +152,7 @@ def test_all_canonical_packages_have_valid_pyproject() -> None:
             )
 
     assert not errors, (
-        "pyproject.toml validation failures:\n"
-        + "\n".join(f"  {e}" for e in errors)
-        + "\n"
+        "pyproject.toml validation failures:\n" + "\n".join(f"  {e}" for e in errors) + "\n"
     )
 
 
@@ -197,9 +190,7 @@ def test_arcgateway_readme_documents_canonical_install() -> None:
     content = readme_path.read_text(encoding="utf-8")
 
     missing_fragments: list[str] = [
-        fragment
-        for fragment in _CANONICAL_INSTALL_FRAGMENTS
-        if fragment not in content
+        fragment for fragment in _CANONICAL_INSTALL_FRAGMENTS if fragment not in content
     ]
 
     assert not missing_fragments, (

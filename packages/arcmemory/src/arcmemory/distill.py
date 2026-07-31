@@ -441,6 +441,7 @@ def _existing_procedures(store: ProceduralStore) -> list[Procedure]:
     """Every stored how-to card — what the distiller merges its answer into."""
     return [card for slug in store.slugs() if (card := store.read(slug)) is not None]
 
+
 async def extract_events(
     episodes: list[Event],
     *,

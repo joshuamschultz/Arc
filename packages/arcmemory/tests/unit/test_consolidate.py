@@ -310,7 +310,9 @@ class _RecordingDistiller:
         return DaySummaryDraft()
 
 
-async def test_curation_keeps_tool_plumbing_out_of_every_distiller_input(workspace, db, scope) -> None:
+async def test_curation_keeps_tool_plumbing_out_of_every_distiller_input(
+    workspace, db, scope
+) -> None:
     episodic = EpisodicStore(db, workspace)
     episodic.append(
         Event(
@@ -332,7 +334,9 @@ async def test_curation_keeps_tool_plumbing_out_of_every_distiller_input(workspa
     )
     distiller = _RecordingDistiller()
 
-    await Consolidator(db, workspace, scope, distiller=distiller, config=MemoryConfig()).run(now=_NOW)
+    await Consolidator(db, workspace, scope, distiller=distiller, config=MemoryConfig()).run(
+        now=_NOW
+    )
 
     for channel, ids in distiller.seen.items():
         assert "plumb" not in ids, f"tool plumbing leaked into {channel}"
@@ -500,8 +504,13 @@ async def test_candidate_clustering_groups_similar_not_distinct(workspace, db, s
 
     confirmer = RecordingConfirmer()
     consolidator = Consolidator(
-        db, workspace, scope, distiller=_distiller(), config=MemoryConfig(),
-        embedder=SubstringEmbedder(), confirmer=confirmer,
+        db,
+        workspace,
+        scope,
+        distiller=_distiller(),
+        config=MemoryConfig(),
+        embedder=SubstringEmbedder(),
+        confirmer=confirmer,
     )
     await consolidator.merge_entities()
 
@@ -518,7 +527,11 @@ async def test_only_llm_confirmed_subset_merges(workspace, db, scope) -> None:
     _place(store, "austin-metro", "Austin metro", "note", "hub")
 
     consolidator = Consolidator(
-        db, workspace, scope, distiller=_distiller(), config=MemoryConfig(),
+        db,
+        workspace,
+        scope,
+        distiller=_distiller(),
+        config=MemoryConfig(),
         embedder=SubstringEmbedder(),
         confirmer=SubsetConfirmer({"austin-texas", "austin-tx"}),
     )
@@ -534,13 +547,19 @@ async def test_confirmer_keeps_similar_but_different_people(workspace, db, scope
     """Josh Schultz vs Joshua Shubbie: a candidate pair the LLM rejects -> NO merge."""
     store = SemanticStore(workspace, WeightedGraph(db), scope=scope.key)
     store.write_fact("josh-schultz", "role", "founder", name="Josh Schultz", entity_type="person")
-    store.write_fact("joshua-shubbie", "role", "artist", name="Joshua Shubbie",
-                     entity_type="person")
+    store.write_fact(
+        "joshua-shubbie", "role", "artist", name="Joshua Shubbie", entity_type="person"
+    )
 
     confirmer = RejectingConfirmer()
     consolidator = Consolidator(
-        db, workspace, scope, distiller=_distiller(), config=MemoryConfig(),
-        embedder=SubstringEmbedder(), confirmer=confirmer,
+        db,
+        workspace,
+        scope,
+        distiller=_distiller(),
+        config=MemoryConfig(),
+        embedder=SubstringEmbedder(),
+        confirmer=confirmer,
     )
     merges = await consolidator.merge_entities()
 
@@ -557,8 +576,13 @@ async def test_candidate_clusters_never_cross_type(workspace, db, scope) -> None
 
     confirmer = RecordingConfirmer()
     consolidator = Consolidator(
-        db, workspace, scope, distiller=_distiller(), config=MemoryConfig(),
-        embedder=SubstringEmbedder(), confirmer=confirmer,
+        db,
+        workspace,
+        scope,
+        distiller=_distiller(),
+        config=MemoryConfig(),
+        embedder=SubstringEmbedder(),
+        confirmer=confirmer,
     )
     assert await consolidator.merge_entities() == []
     assert confirmer.groups == []  # cross-type pairs never reach the LLM
@@ -573,8 +597,14 @@ async def test_no_embedder_emits_loud_dedup_skipped(workspace, db, scope) -> Non
 
     sink = RecordingSink()
     consolidator = Consolidator(
-        db, workspace, scope, distiller=_distiller(), config=MemoryConfig(),
-        embedder=None, confirmer=RecordingConfirmer(), audit_sink=sink,
+        db,
+        workspace,
+        scope,
+        distiller=_distiller(),
+        config=MemoryConfig(),
+        embedder=None,
+        confirmer=RecordingConfirmer(),
+        audit_sink=sink,
     )
     assert await consolidator.merge_entities() == []
     assert "no-embedder" in sink._reasons()
@@ -589,8 +619,14 @@ async def test_no_confirmer_skips_and_logs(workspace, db, scope, caplog) -> None
 
     sink = RecordingSink()
     consolidator = Consolidator(
-        db, workspace, scope, distiller=_distiller(), config=MemoryConfig(),
-        embedder=SubstringEmbedder(), confirmer=None, audit_sink=sink,
+        db,
+        workspace,
+        scope,
+        distiller=_distiller(),
+        config=MemoryConfig(),
+        embedder=SubstringEmbedder(),
+        confirmer=None,
+        audit_sink=sink,
     )
     with caplog.at_level(logging.WARNING):
         assert await consolidator.merge_entities() == []
@@ -609,8 +645,13 @@ async def test_confirmed_merge_is_non_lossy(workspace, db, scope) -> None:
     graph.link(scope.key, "austin-tx", "acme", kind="link")  # edge must follow the survivor
 
     consolidator = Consolidator(
-        db, workspace, scope, distiller=_distiller(), config=MemoryConfig(),
-        embedder=SubstringEmbedder(), confirmer=RecordingConfirmer(),
+        db,
+        workspace,
+        scope,
+        distiller=_distiller(),
+        config=MemoryConfig(),
+        embedder=SubstringEmbedder(),
+        confirmer=RecordingConfirmer(),
     )
     merges = await consolidator.merge_entities()
 

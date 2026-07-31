@@ -27,7 +27,9 @@ def _write(path: Path, body: str) -> None:
 
 
 @pytest.fixture(autouse=True)
-def isolated_user_config(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch):
+def isolated_user_config(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+):
     """Point the user-wide config root at an empty dir so the real ~/.arc can't leak.
 
     Layering tests that need a user-wide layer override ARC_CONFIG_DIR themselves.
@@ -155,8 +157,8 @@ class TestPerFileLayering:
         )
         agent = tmp_path / "agent"
         agent.mkdir()
-        _write(agent / "arcagent.toml", "[agent]\nname = \"layered\"\n")
-        _write(agent / "arcllm.toml", "[llm]\nmodel = \"peragent/model\"\n")
+        _write(agent / "arcagent.toml", '[agent]\nname = "layered"\n')
+        _write(agent / "arcllm.toml", '[llm]\nmodel = "peragent/model"\n')
 
         cfg = load_config(agent / "arcagent.toml")
         # Per-agent model wins; user-wide temperature still merges through.
@@ -172,7 +174,7 @@ class TestPerFileLayering:
         _write(user_dir / "arcrun.toml", "max_turns = 3\n")
         agent = tmp_path / "agent"
         agent.mkdir()
-        _write(agent / "arcagent.toml", "[agent]\nname = \"layered\"\n")
+        _write(agent / "arcagent.toml", '[agent]\nname = "layered"\n')
 
         cfg = load_config(agent / "arcagent.toml")
         assert cfg.arcrun.max_turns == 3
