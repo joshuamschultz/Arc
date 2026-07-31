@@ -1,0 +1,189 @@
+# ArcLLM config — everything LLM-wire for this agent. arcagent composes the
+# [llm]/[eval]/[budget] tables below into the effective config. The full arcllm
+# module surface is listed at the bottom under [llm.modules.*], commented at its
+# packaged default — uncomment a line to override that module for THIS agent
+# only. arcllm's OWN global module + provider defaults live in the user-wide
+# ~/.arc/arcllm.toml ([defaults]/[modules]/[vault]), read by arcllm itself.
+
+[llm]
+model = "anthropic/claude-sonnet-4-5-20250929"  # ArcLLM model id (provider/model)
+max_tokens = 8192   # max output tokens per LLM call
+temperature = 0.7   # sampling temperature
+
+[eval]
+# The cheaper background/eval model (entity extraction, policy eval, compaction,
+# memory consolidation). Empty provider/model fall back to the agent's own.
+provider = ""              # empty = agent's provider
+model = ""                 # empty = agent's model
+max_tokens = 1024          # eval output cap
+max_input_tokens = 100000  # per-eval input budget (over-budget = chunked; 0 = unlimited)
+temperature = 0.2          # low for evaluation consistency
+timeout_seconds = 30       # per eval call
+fallback_behavior = "skip"  # skip | error
+max_concurrent = 2         # eval semaphore limit
+background_queue_size = 10   # per-module background task queue depth
+background_task_timeout = 120  # seconds before a background task times out
+
+[budget]
+# max_tokens =      # per-run token ceiling (unset = unbounded at personal)
+# max_cost_usd =    # per-run cost ceiling
+# max_requests =    # per-run request ceiling
+
+# --- Per-agent arcllm module overrides. Every module below is shown
+# commented at its packaged default; uncomment a line to override that
+# module for THIS agent only (unknown module names are rejected). ---
+# --- Classification-based routing ---
+# [llm.modules.routing]
+# enabled = false
+# enforcement = "warn"
+# default_classification = "unclassified"
+
+# [llm.modules.routing.rules.cui]
+# provider = "anthropic"
+# model = "claude-sonnet-5"
+
+# [llm.modules.routing.rules.unclassified]
+# provider = "openai"
+# model = "gpt-4o-mini"
+
+# --- Telemetry: token counting, cost tracking, TraceRecord emission ---
+# [llm.modules.telemetry]
+# enabled = true
+# log_level = "INFO"
+# SPEC-016 D-435 — full forensic capture (request/response bodies) is ON
+# by default: every call is reconstructable for replay/incident review.
+# Disabling this is itself an audited act (FR-21) — see D-444.
+# store_raw_bodies = true
+# Classification watermark FLOOR (D-439) — a per-call value may be
+# supplied (upstream, data-source-aware) but never resolves below this.
+# classification = "unclassified"
+# Budget fields (all optional — budget disabled if none present)
+# monthly_limit_usd = 500.00
+# daily_limit_usd = 50.00
+# per_call_max_usd = 5.00
+# alert_threshold_pct = 80
+# enforcement = "block"
+
+# Envelope encryption at rest for captured bodies (SPEC-016 D-438).
+# Off by default (personal/enterprise plaintext, chmod-0600-locked).
+# Federal deployments set enabled=true (+ require_fips=true) so bodies are
+# AES-256-GCM sealed under a vault-resolved wrapping key before write.
+# [llm.modules.telemetry.encryption]
+# enabled = false
+# backend = ""                              # e.g. "arcvault.aws:KmsBackend"
+# key_ref = ""
+# key_env = "ARCLLM_TRACE_WRAP_KEY"
+# cache_ttl_seconds = 300
+# require_fips = false                      # federal: true — fail-closed self-check (SC-13)
+
+# Retention purge bounds for rotated trace files (SPEC-016 D-440, FR-11).
+# Unset = unlimited. Read via arcllm.config.load_telemetry_retention_config()
+# and wired into JSONLTraceStore(..., retention_max_age_days=..., ...) by
+# whoever constructs the store (arcagent owns agent_root).
+# [llm.modules.telemetry.retention]
+# max_age_days = 365
+# max_bytes = 10737418240
+
+# --- Audit: PII-safe metadata logging ---
+# [llm.modules.audit]
+# enabled = false
+
+# --- Retry: exponential backoff on transient failures ---
+# [llm.modules.retry]
+# enabled = true
+# max_retries = 3
+# backoff_base_seconds = 1.0
+
+# --- Fallback: provider failover chain ---
+# [llm.modules.fallback]
+# enabled = false
+# chain = ["anthropic", "openai"]
+
+# --- Rate limiting: per-minute request caps ---
+# [llm.modules.rate_limit]
+# enabled = false
+# requests_per_minute = 60
+# burst_capacity = 60
+
+# --- Circuit breaker: trip on consecutive failures, cool down before retry ---
+# [llm.modules.circuit_breaker]
+# enabled = false
+# failure_threshold = 5
+# cooldown_seconds = 30.0
+# half_open_max_calls = 1
+
+# --- Load balancing: intra-provider endpoint/key distribution (SPEC-017) ---
+# Distributes invoke() calls across a provider's [[endpoints]] pool (see
+# providers/*.toml). No-op when the provider has no endpoint pool configured.
+# [llm.modules.load_balance]
+# enabled = false
+# strategy = "weighted_round_robin"
+# sticky_key = "session_id"
+# failure_threshold = 5
+# cooldown_seconds = 30.0
+# half_open_max_calls = 1
+
+# --- Queue: bounded concurrency with backpressure ---
+# [llm.modules.queue]
+# enabled = true
+# max_concurrent = 2
+# 180s — long agentic turns (multi-tool reasoning + 100k-token context
+# + thinking) routinely take 60-90s on a single LLM call. The previous
+# 60s default failed legitimate calls in production demos.
+# call_timeout = 180.0
+# max_queued = 10
+
+# --- OpenTelemetry distributed tracing ---
+# [llm.modules.otel]
+# enabled = false
+# exporter = "otlp"
+# endpoint = "http://localhost:4317"
+# protocol = "grpc"
+# service_name = "arcllm"
+# sample_rate = 1.0
+# headers = {}
+# insecure = false
+# certificate_file = ""
+# client_key_file = ""
+# client_cert_file = ""
+# timeout_ms = 10000
+# max_batch_size = 512
+# max_queue_size = 2048
+# schedule_delay_ms = 5000
+
+# --- Security: PII redaction + request signing ---
+# [llm.modules.security]
+# enabled = true
+# pii_enabled = true
+# pii_detector = "regex"
+# pii_custom_patterns = []
+# pii_detector_class = ""     # "" = built-in RegexPiiDetector; else "module:Class"
+# signing_enabled = false
+# signing_algorithm = "ed25519"             # asymmetric: ed25519 (default) | ecdsa-p256 (FIPS)
+# signing_key_env = "ARCLLM_SIGNING_KEY"    # holds a hex-encoded 32-byte seed
+
+# [llm.modules.security.pii_entities]
+# allow = ["SSN", "EMAIL", "SECRETS"]   # if present, only these scan
+# deny  = ["IPV4"]                        # else all-but-these scan
+
+# --- Prompt-injection detection: inbound user/tool-result scan (OFF by default) ---
+# [llm.modules.injection]
+# enabled = false
+# enforcement = "warn"        # observe before enforce
+# tier = "pattern"             # "semantic" requires arcllm[injection-semantic]
+# scan_user = true
+# scan_tool_results = true
+
+# --- Structural output guardrails: schema/regex/length/stop-list (per-call) ---
+# [llm.modules.guardrails]
+# enabled = false
+# enforcement = "block"
+# max_length = 0               # 0 = uncapped
+# banned_content = []
+
+# [llm.modules.otel.resource_attributes]
+
+# Raw request/response capture persists every haystack chunk verbatim as
+# plaintext JSONL inside the repo tree — several GB across a full run.
+[llm.modules.telemetry]
+store_raw_bodies = false
