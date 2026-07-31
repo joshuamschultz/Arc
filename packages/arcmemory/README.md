@@ -42,12 +42,13 @@ Design commitments:
 
 ```bash
 pip install arcmemory              # core: in-process vector index + agentic sleep pass
-pip install "arcmemory[local]"     # + offline local embedder (sentence-transformers)
+pip install "arcmemory[local]"     # + on-device embedder (via arcllm[local])
 ```
 
-`sqlite-vec` ships by default, so semantic recall works out of the box; it is still
-load-guarded, so an environment without it degrades to BM25 + graph rather than
-failing. Requires Python ≥ 3.11.
+`sqlite-vec` ships by default, so the vector table always exists; the `[local]` extra is
+what *fills* it. Without an embedder the vec list is dropped and recall runs on
+BM25 + graph — deliberate, never a crash, and no longer silent: it warns once per
+process and `arc memory status` reports it (exit 1). Requires Python ≥ 3.11.
 
 ---
 

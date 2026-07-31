@@ -11,7 +11,12 @@ dependencies = [
     # arcmemory ships in the default workspace env so scaffolded agents
     # (brain = "arcmemory") have a working Brain out of the box. arc-agent
     # itself keeps it optional (no static import); this is the deployment env.
-    "arcmemory",
+    # The [local] extra is pinned here for the same reason as arcskill below:
+    # extras are NOT installed by `uv sync --all-packages`, so without this edge
+    # the default embed_backend = "local" had no embedder and hybrid recall ran
+    # with its semantic third silently missing. Heavy (pulls torch, ~2GB) — that
+    # is the price of "semantic recall works out of the box".
+    "arcmemory[local]",
     # arcskill is the default skills adapter (skills.adapter = "arcskill" ->
     # arcskill.improver). Nothing else depends on it, so without this edge it is
     # only present under `uv sync --all-packages` and `arc ext verify` sees the

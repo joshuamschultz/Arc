@@ -20,6 +20,7 @@ from typing import Protocol
 
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
+from arcmemory.degrade import warn_once
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.source import iter_source_chunks
 from arcmemory.mdfile import parse_document
@@ -35,6 +36,18 @@ try:  # optional [vec] extra
     _SQLITE_VEC_IMPORTABLE = True
 except ImportError:  # pragma: no cover
     _SQLITE_VEC_IMPORTABLE = False
+
+
+_FIX = "Run `arc memory status` for the live readout and the exact install/config fix."
+_NOT_WIRED = (
+    "SEMANTIC RECALL IS OFF: no embedder is wired, so the vector channel is dropped "
+    "and memory recall runs on BM25 + graph only. Paraphrase and cross-domain matches "
+    "will be missed, and entity de-duplication is a no-op. " + _FIX
+)
+_UNAVAILABLE = (
+    "SEMANTIC RECALL IS OFF: the wired embedder cannot serve ({0}), so the vector "
+    "channel is dropped and memory recall runs on BM25 + graph only. " + _FIX
+)
 
 
 class EmbeddingUnavailableError(Exception):
@@ -64,14 +77,20 @@ async def embed_or_none(embedder: Embedder | None, texts: list[str]) -> list[lis
     The single degrade funnel every call site shares: ``None`` embedder (never
     wired) and a wired-but-unavailable embedder (``EmbeddingUnavailableError``) both
     collapse to ``None`` so the caller drops the vector channel and never raises.
+
+    Because it is the one funnel, it is also where the degrade is made **loud** —
+    once per process per reason (``arcmemory.degrade``), so semantic recall can
+    never go dark unnoticed again.
     """
     if embedder is None:
+        warn_once("embedder:not-wired", _NOT_WIRED)
         return None
     if not texts:
         return []
     try:
         return await embedder.embed_texts(texts)
-    except EmbeddingUnavailableError:
+    except EmbeddingUnavailableError as exc:
+        warn_once("embedder:unavailable", _UNAVAILABLE.format(exc))
         return None
 
 

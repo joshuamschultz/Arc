@@ -54,6 +54,48 @@ async def test_embedder_unavailable_degrades(monkeypatch: pytest.MonkeyPatch) ->
         await ArcLLMEmbedder(model="m").embed_texts(["x"])
 
 
+async def test_misconfigured_backend_degrades_instead_of_crashing_recall() -> None:
+    """A bad ``embed_backend`` must never escape as a hard error into recall.
+
+    ``arcllm.resolve_embedder`` raises ``ArcLLMConfigError`` for an unknown backend
+    name (a typo in the agent TOML) — a *config* error, not an availability one, so
+    it used to sail past this adapter and out through ``retrieve``. It is exactly
+    "a wired embedder that cannot serve this call", so it degrades like one.
+    """
+    embedder = ArcLLMEmbedder(model="m", backend="opeanai")  # typo'd backend
+    with pytest.raises(EmbeddingUnavailableError):
+        await embedder.embed_texts(["x"])
+
+
+async def test_remote_provider_backend_is_reachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``backend="provider"`` must be usable — it needs a base_url forwarded to arcllm.
+
+    Without this the remote embeddings path was a trap: ``resolve_embedder`` always
+    raised "requires a 'base_url'" because the adapter had no way to carry one.
+    """
+    seen: dict[str, Any] = {}
+
+    async def fake_embed(texts: list[str], **kwargs: Any) -> Any:
+        seen.update(kwargs)
+        return SimpleNamespace(vectors=[[0.5]])
+
+    monkeypatch.setattr(arcllm, "embed", fake_embed)
+    embedder = ArcLLMEmbedder(
+        model="m", backend="provider", base_url="https://embed.example/v1", api_key="k"
+    )
+
+    assert await embedder.embed_texts(["x"]) == [[0.5]]
+    assert seen["provider"] is not None, "an explicit ProviderEmbedder must be passed"
+
+
+async def test_degraded_embedder_never_escapes_the_recall_path() -> None:
+    """The funnel that guards recall swallows the misconfiguration and returns None."""
+    from arcmemory.index.rebuild import embed_or_none
+
+    embedder = ArcLLMEmbedder(model="m", backend="provider")  # no base_url
+    assert await embed_or_none(embedder, ["x"]) is None
+
+
 # -- ArcLLMDistiller --------------------------------------------------------
 
 

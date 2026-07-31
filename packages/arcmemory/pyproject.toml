@@ -41,9 +41,13 @@ dependencies = [
 # Retained as a no-op alias: `arcmemory[vec]` still resolves, but sqlite-vec is
 # now a base dependency (see above), so the vector channel is always available.
 vec = ["sqlite-vec>=0.1.6"]
-# Offline, deterministic local embedder (bge-small / MiniLM). Federal air-gap
-# path — no network embeddings API.
-local = ["sentence-transformers>=3.0"]
+# Offline, deterministic on-device embedder (MiniLM) — the default
+# `embed_backend = "local"` path, and the federal air-gap path (no network
+# embeddings API). Declared as arcllm's extra, never as sentence-transformers
+# directly: arcllm owns embedding inference, so only arcllm names the library.
+# The vec0 table exists without this (sqlite-vec is a base dep) but stays EMPTY,
+# which is exactly the silent-degrade this extra closes.
+local = ["arcllm[local]>=0.1"]
 
 [project.urls]
 Homepage = "https://github.com/joshuamschultz/Arc"

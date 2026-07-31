@@ -51,7 +51,15 @@ ProviderFactory = Callable[[], Any]
 
 
 class ArcLLMEmbedder:
-    """arcmemory ``Embedder`` seam backed by ``arcllm.embed`` (async, loop-safe)."""
+    """arcmemory ``Embedder`` seam backed by ``arcllm.embed`` (async, loop-safe).
+
+    ``backend`` selects the arcllm embedding backend: ``local`` (the default —
+    on-device sentence-transformers, the federal air-gap path), ``provider`` (a
+    remote OpenAI-compatible ``/embeddings`` endpoint, which needs ``base_url``),
+    or ``none`` (deliberately off). The remote endpoint is resolved *here* rather
+    than through ``arcllm.embed``'s backend name, because that entry point takes no
+    connection details — passing the resolved provider is how a base_url reaches it.
+    """
 
     def __init__(
         self,
@@ -59,15 +67,27 @@ class ArcLLMEmbedder:
         model: str | None = None,
         backend: str = "local",
         provider: Any = None,
+        base_url: str | None = None,
+        api_key: str = "",
         telemetry: dict[str, Any] | None = None,
     ) -> None:
         self._model = model or arcllm.DEFAULT_EMBED_MODEL
         self._backend = backend
         self._provider = provider
+        self._base_url = base_url
+        self._api_key = api_key
         self._telemetry = telemetry
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        """Embed via arcllm; translate 'no backend' into arcmemory's degrade signal."""
+        """Embed via arcllm; translate any 'cannot serve' into the degrade signal.
+
+        Both an unavailable backend (``ArcLLMEmbeddingUnavailableError`` — the
+        ``[local]`` extra absent) and a misconfigured one (``ArcLLMConfigError`` —
+        an unknown backend name, a ``provider`` backend with no ``base_url``)
+        become :class:`EmbeddingUnavailableError`, which the ``embed_or_none``
+        funnel collapses to a dropped vector channel. A typo in an agent's TOML
+        must degrade recall, never crash it.
+        """
         if not texts:
             return []
         try:
@@ -75,12 +95,26 @@ class ArcLLMEmbedder:
                 texts,
                 model=self._model,
                 backend=self._backend,
-                provider=self._provider,
+                provider=self._resolve_provider(),
                 telemetry=self._telemetry,
             )
-        except arcllm.ArcLLMEmbeddingUnavailableError as exc:  # -> BM25 + graph degrade
+        except (
+            arcllm.ArcLLMEmbeddingUnavailableError,
+            arcllm.ArcLLMConfigError,
+        ) as exc:  # -> BM25 + graph degrade
             raise EmbeddingUnavailableError(str(exc)) from exc
         return [[float(x) for x in vector] for vector in response.vectors]
+
+    def _resolve_provider(self) -> Any:
+        """The explicit backend instance, when connection details were supplied."""
+        if self._provider is not None or self._base_url is None:
+            return self._provider
+        return arcllm.resolve_embedder(
+            self._model,
+            backend=self._backend,
+            base_url=self._base_url,
+            api_key=self._api_key,
+        )
 
 
 class ArcLLMDistiller:

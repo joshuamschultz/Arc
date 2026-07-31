@@ -55,8 +55,10 @@ guardrails-schema = [
 local = [
     # On-device embeddings (SPEC-041): all-MiniLM-L6-v2 via sentence-transformers.
     # Heavy (pulls torch) — arcllm imports + functions WITHOUT it, degrading
-    # embed() to the 'none' signal when absent.
-    "sentence-transformers>=2.2",
+    # embed() to the 'none' signal when absent. arcllm is the ONLY package that
+    # names this library: consumers that need on-device vectors depend on
+    # `arcllm[local]`, never on sentence-transformers directly.
+    "sentence-transformers>=3.0",
 ]
 
 [tool.hatch.build.targets.wheel]

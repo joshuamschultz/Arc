@@ -8,32 +8,33 @@ codebase (system packages, model downloads, environment). Keep this file current
 
 ## 1. The embedder is REQUIRED for dedup and analogical recall
 
-arcmemory's default `embed_backend = "local"` uses **`sentence-transformers`**, which
-is an **optional extra** (`arcmemory[local]`) — it is NOT pulled in by a bare
-`pip install arcmemory` or by `uv sync` without the extra.
+arcmemory's default `embed_backend = "local"` is arcllm's on-device backend, which
+needs **`sentence-transformers`**. That library is declared by `arcllm[local]`, pulled
+in through `arcmemory[local]`, which the **root `arc` package now depends on** — so a
+plain `uv sync --all-packages` installs it. (It used to be an extra nobody's install
+command asked for, which is exactly how the fleet ran for months with no embedder.)
 
-**If the embedder is absent, arcmemory silently degrades** — no crash, but:
+**If the embedder is absent, arcmemory degrades** — no crash, but:
 
+- **Hybrid recall loses its semantic third.** Recall fuses vec (semantic) + BM25
+  (lexical) + graph (associative) + recency; with no embedder the vec list is dropped
+  and only the last three answer. Paraphrase and cross-domain matches are missed.
 - **Entity dedup does nothing.** `merge_entities` clusters candidate duplicate cards by
   name embedding; with no embedder it finds no candidates, so `custom-erp`,
   `custom-erp-project`, `custom-erp-ctg` … accumulate forever. This is the #1 symptom of
   a missing embedder: **multiple cards for the same real-world entity.**
-- **Structural / analogical recall degrades to keyword-only** (BM25 + graph). The
-  cross-domain "match the pattern with zero surface overlap" channel goes dark.
 - **The agentic sleep pass's `search_similar_entity` tool** falls back to lexical only,
   so the consolidation agent can't find near-duplicates to merge either.
 
-> The code now emits a LOUD warning + a `memory.dedup_skipped` (reason `no-embedder`)
-> audit event when it runs without an embedder — so this can never silently degrade
-> again. But the fix is to install the embedder.
+> The degrade is now LOUD: a one-per-process `WARNING` on the `arcmemory.degrade`
+> logger, plus the per-query `recall.degraded` audit event, plus a non-zero exit from
+> `arc memory status`. It can no longer happen unnoticed.
 
 ### Install
 
 ```bash
-# with the package extra (preferred):
-pip install "arcmemory[local]"
-#   or, into an existing arc venv managed by uv:
-uv pip install "sentence-transformers>=3.0"
+uv sync --all-packages          # the deployment command; installs the embedder
+pip install "arcmemory[local]"  # standalone equivalent
 ```
 
 This pulls `torch` + `transformers` (~2 GB). On a CUDA box (e.g. DGX Spark) it uses the
@@ -43,25 +44,33 @@ model (~100 MB) to the HuggingFace cache.
 ### Verify
 
 ```bash
-python - <<'PY'
-import asyncio, arcmemory
-async def main():
-    emb = arcmemory.ArcLLMEmbedder(model=None, backend="local", telemetry={"agent_did": "x"})
-    v = await emb.embed_texts(["Custom ERP", "Custom ERP Project"])
-    print("embedder OK, dims:", len(v[0]))
-asyncio.run(main())
-PY
+arc memory status ~/arc/team
 ```
 
-If this prints a dimension count, the embedder is live. If it raises
-`ModuleNotFoundError: sentence_transformers`, the extra is not installed.
+`semantic recall: LIVE` means the real embed call answered and the sqlite-vec extension
+loaded. `DEGRADED` prints the reason, the fix, and exits 1 (so a deploy check can gate
+on it). Pass workspace dirs to also see per-agent `chunks / embedded` counts — an
+embedder can be live while an agent's index was never rebuilt.
+
+### The remote alternative
+
+Instead of on-device weights, point at an OpenAI-compatible `/embeddings` endpoint:
+
+```toml
+[modules.memory.config.backend]
+embed_backend  = "provider"
+embed_base_url = "https://your-endpoint/v1"
+embed_model    = "text-embedding-3-small"
+```
+
+The API key comes from the `ARC_EMBED_API_KEY` environment variable — never from the
+TOML, so no credential lands on the filesystem.
 
 ### Turning it off deliberately
 
 If you truly want a keyword-only, embedder-free deployment, set
-`[modules.memory.config] embed_backend = "none"` in the agent's `arcagent.toml`. Then the
-degrade is intentional and the warning is suppressed. Do NOT leave `embed_backend = "local"`
-(the default) with the package uninstalled — that is the silent-degrade trap above.
+`[modules.memory.config.backend] embed_backend = "none"`. Then the degrade is
+intentional and `arc memory status` says so.
 
 ---
 
