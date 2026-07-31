@@ -22,8 +22,8 @@ from typing import Any, Literal
 import pytest
 from freezegun import freeze_time
 
-from evaluations.longmemeval.ingest.types import Chunk
 from evaluations.longmemeval.adapter import QuestionMeta
+from evaluations.longmemeval.ingest.types import Chunk
 from evaluations.longmemeval.query import (
     QUERY_SESSION_KEY,
     QueryRunner,

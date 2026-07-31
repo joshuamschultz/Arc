@@ -114,7 +114,9 @@ def _fake_poll(
         calls.append(1)
         return behavior()
 
-    monkeypatch.setattr("evaluations.longmemeval.ingest.consolidation.consolidate_poll_once", _poll)
+    monkeypatch.setattr(
+        "evaluations.longmemeval.ingest.consolidation.consolidate_poll_once", _poll
+    )
     return lambda: calls
 
 

@@ -21,7 +21,10 @@ from pathlib import Path
 
 import pytest
 
-from evaluations.longmemeval.ingest.agent_factory import WorkspaceEscapeError, assert_workspace_contained
+from evaluations.longmemeval.ingest.agent_factory import (
+    WorkspaceEscapeError,
+    assert_workspace_contained,
+)
 
 
 @pytest.fixture

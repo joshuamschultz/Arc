@@ -30,9 +30,6 @@ from typing import Any
 
 import pytest
 
-from evaluations.longmemeval.ingest.lifecycle import INGEST_COMPLETE_MARKER
-from evaluations.longmemeval.ingest.limits import MAX_EVENT_CHARS
-from evaluations.longmemeval.ingest.types import Chunk
 from evaluations.longmemeval.adapter import QuestionMeta
 from evaluations.longmemeval.budget import (
     CURRENT_PRICING_TABLE_VERSION,
@@ -41,6 +38,9 @@ from evaluations.longmemeval.budget import (
     SpendCeilingExceeded,
 )
 from evaluations.longmemeval.dataset import Dataset
+from evaluations.longmemeval.ingest.lifecycle import INGEST_COMPLETE_MARKER
+from evaluations.longmemeval.ingest.limits import MAX_EVENT_CHARS
+from evaluations.longmemeval.ingest.types import Chunk
 from evaluations.longmemeval.ledger import ResultLedger, ResultRow
 from evaluations.longmemeval.manifest import (
     MANIFEST_FILENAME,

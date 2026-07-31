@@ -51,11 +51,6 @@ from typing import Any
 
 from arcllm.embeddings import DEFAULT_EMBED_MODEL
 
-from evaluations.longmemeval.ingest.agent_factory import (
-    ARCLLM_EVAL_CONFIG,
-    ARCRUN_EVAL_CONFIG,
-    render_eval_agent_config,
-)
 from evaluations.longmemeval.adapter import LongMemEvalAdapter, QuestionNotFoundError
 from evaluations.longmemeval.budget import (
     CEILING_FRACTION,
@@ -70,6 +65,11 @@ from evaluations.longmemeval.budget import (
 )
 from evaluations.longmemeval.dataset import Dataset, load_dataset
 from evaluations.longmemeval.hygiene import RepoHygieneError, RepoHygieneGuard
+from evaluations.longmemeval.ingest.agent_factory import (
+    ARCLLM_EVAL_CONFIG,
+    ARCRUN_EVAL_CONFIG,
+    render_eval_agent_config,
+)
 from evaluations.longmemeval.judge import JUDGE_MODEL_NAME
 from evaluations.longmemeval.ledger import ResultLedger, ResultRow
 from evaluations.longmemeval.manifest import MeasurementScope, RunManifest, build_provenance

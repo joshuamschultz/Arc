@@ -271,7 +271,9 @@ def test_a_relative_run_dir_is_refused(tmp_path: Path) -> None:
     """A relative run dir puts the arcstore back under the process CWD — the
     repo root — which is the leak this component exists to close."""
     with pytest.raises(ValueError, match="absolute"):
-        render_eval_agent_config(question_id="q0001", run_dir=Path("evaluations/longmemeval/runs/x"))
+        render_eval_agent_config(
+            question_id="q0001", run_dir=Path("evaluations/longmemeval/runs/x")
+        )
 
 
 # ---------------------------------------------------------------------------

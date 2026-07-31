@@ -23,9 +23,6 @@ from typing import Any
 
 import pytest
 
-from evaluations.longmemeval.ingest import chunker as production_chunker
-from evaluations.longmemeval.ingest.limits import MAX_EVENT_CHARS
-from evaluations.longmemeval.ingest.types import Chunk, Session
 from evaluations.longmemeval import budget
 from evaluations.longmemeval.adapter import LongMemEvalAdapter
 from evaluations.longmemeval.budget import (
@@ -44,6 +41,9 @@ from evaluations.longmemeval.budget import (
     estimate_run,
 )
 from evaluations.longmemeval.dataset import Dataset
+from evaluations.longmemeval.ingest import chunker as production_chunker
+from evaluations.longmemeval.ingest.limits import MAX_EVENT_CHARS
+from evaluations.longmemeval.ingest.types import Chunk, Session
 
 CAP = MAX_EVENT_CHARS
 """The cap ``estimate_run`` defaults to; the re-walk below must chunk identically."""

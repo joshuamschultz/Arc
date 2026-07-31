@@ -50,12 +50,6 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from arcstore.config import ENV_DATA_DIR
 
-from evaluations.longmemeval.ingest.agent_factory import build_eval_agent
-from evaluations.longmemeval.ingest.chunker import TurnChunker
-from evaluations.longmemeval.ingest.consolidation import ConsolidationResult, ConsolidationWaiter
-from evaluations.longmemeval.ingest.fidelity import SanitizeFidelityGate
-from evaluations.longmemeval.ingest.lifecycle import leftover_workspaces
-from evaluations.longmemeval.ingest.types import Session, Turn
 from evaluations.longmemeval import cli
 from evaluations.longmemeval.adapter import LongMemEvalAdapter
 from evaluations.longmemeval.budget import (
@@ -67,6 +61,12 @@ from evaluations.longmemeval.budget import (
 )
 from evaluations.longmemeval.dataset import Dataset, load_dataset
 from evaluations.longmemeval.hygiene import RepoHygieneGuard
+from evaluations.longmemeval.ingest.agent_factory import build_eval_agent
+from evaluations.longmemeval.ingest.chunker import TurnChunker
+from evaluations.longmemeval.ingest.consolidation import ConsolidationResult, ConsolidationWaiter
+from evaluations.longmemeval.ingest.fidelity import SanitizeFidelityGate
+from evaluations.longmemeval.ingest.lifecycle import leftover_workspaces
+from evaluations.longmemeval.ingest.types import Session, Turn
 from evaluations.longmemeval.judge import JUDGE_API_KEY_ENV
 from evaluations.longmemeval.ledger import ResultLedger
 from evaluations.longmemeval.preflight import PREFLIGHT_QUESTION_ID
@@ -492,7 +492,8 @@ async def test_a_run_leaves_nothing_git_can_see(repo_results_dir: Path) -> None:
     assert (repo_results_dir / "oracle.costs.jsonl").is_file()
     assert _harness_visible_to_git() == before, (
         "the run put artifacts where git can see them; every path under "
-        "evaluations/longmemeval/runs/ and evaluations/longmemeval/results/ must stay ignored (REQ-195)"
+        "evaluations/longmemeval/runs/ and evaluations/longmemeval/results/ "
+        "must stay ignored"
     )
 
 

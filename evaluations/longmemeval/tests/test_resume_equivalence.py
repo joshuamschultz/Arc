@@ -45,8 +45,6 @@ from typing import Any
 
 import pytest
 
-from evaluations.longmemeval.ingest.lifecycle import INGEST_COMPLETE_MARKER
-from evaluations.longmemeval.ingest.types import Chunk
 from evaluations.longmemeval.adapter import QuestionMeta
 from evaluations.longmemeval.budget import (
     CURRENT_PRICING_TABLE_VERSION,
@@ -54,6 +52,8 @@ from evaluations.longmemeval.budget import (
     Estimate,
 )
 from evaluations.longmemeval.dataset import Dataset
+from evaluations.longmemeval.ingest.lifecycle import INGEST_COMPLETE_MARKER
+from evaluations.longmemeval.ingest.types import Chunk
 from evaluations.longmemeval.ledger import ResultLedger
 from evaluations.longmemeval.manifest import MeasurementScope, Provenance, RunManifest
 from evaluations.longmemeval.query import Answer

@@ -36,7 +36,10 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from arcstore.config import ENV_DATA_DIR
 
-from evaluations.longmemeval.ingest.agent_factory import pin_arcstore_data_dir, write_eval_agent_config
+from evaluations.longmemeval.ingest.agent_factory import (
+    pin_arcstore_data_dir,
+    write_eval_agent_config,
+)
 from evaluations.longmemeval.ingest.driver import CONSOLIDATE_LOOP_NAME
 from evaluations.longmemeval.preflight import (
     REQUIRED_POLL_INTERVAL,

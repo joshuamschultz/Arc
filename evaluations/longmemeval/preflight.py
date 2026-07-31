@@ -42,12 +42,15 @@ from arcagent.core.agent_lifecycle import activate_runtime_bindings
 from arcagent.modules.memory import _runtime
 from arcagent.modules.memory import capabilities as memory_capabilities
 
-from evaluations.longmemeval.ingest.agent_factory import build_eval_agent
-from evaluations.longmemeval.ingest.consolidation import ConsolidationStalledError, ConsolidationWaiter
-from evaluations.longmemeval.ingest.driver import CONSOLIDATE_LOOP_NAME
 from evaluations.longmemeval.adapter import LongMemEvalAdapter, QuestionDateError
 from evaluations.longmemeval.dataset import DatasetIntegrityError, load_dataset
 from evaluations.longmemeval.hygiene import REPO_ROOT, RepoHygieneError, RepoHygieneGuard
+from evaluations.longmemeval.ingest.agent_factory import build_eval_agent
+from evaluations.longmemeval.ingest.consolidation import (
+    ConsolidationStalledError,
+    ConsolidationWaiter,
+)
+from evaluations.longmemeval.ingest.driver import CONSOLIDATE_LOOP_NAME
 
 if TYPE_CHECKING:
     from arcagent.core.agent import ArcAgent

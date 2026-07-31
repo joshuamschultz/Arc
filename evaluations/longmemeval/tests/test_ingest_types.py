@@ -16,7 +16,8 @@ Two things are under test and nothing else:
    from ``evaluations.longmemeval`` — that absence is the whole point of the
    seam, and it is what keeps ``evaluations/longmemeval/ingest/`` source-agnostic.
 
-``evaluations.longmemeval.ingest.types`` and ``evaluations.longmemeval.ingest.adapter`` do not exist yet.
+``evaluations.longmemeval.ingest.types`` and
+``evaluations.longmemeval.ingest.adapter`` do not exist yet.
 Following the convention in ``packages/arcstore/tests/unit/test_tasks.py``, every
 import below is local to its test rather than module-level, so the missing module
 surfaces as one failure per test instead of a single collection error masking the
