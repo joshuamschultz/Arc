@@ -3,7 +3,7 @@
 > **Layer:** Runtime  
 > **Dependencies:** arcllm, arctrust, arcstore  
 > **Install:** `pip install arcrun`
-> **See also:** [05-steering-and-strategies.md](../05-steering-and-strategies.md), [DATA_FLOW.md](../DATA_FLOW.md), [API_REFERENCE.md](../API_REFERENCE.md)
+> **See also:** [API_REFERENCE.md](../API_REFERENCE.md#steering-strategies), [DATA_FLOW.md](../DATA_FLOW.md), [API_REFERENCE.md](../API_REFERENCE.md)
 
 ---
 

@@ -3,7 +3,7 @@
 > **Section:** 3. Reference · **Topic:** Technical Reference
 > **Who this is for:** Developers building on Arc who need detailed API documentation.
 > **Read this after:** [DATA_FLOW.md](DATA_FLOW.md) · **Read this next:** [IMPLEMENTATION_GUIDES.md](IMPLEMENTATION_GUIDES.md)
-> **See also:** [PACKAGE_INDEX.md](PACKAGE_INDEX.md), [11-extension-points.md](11-extension-points.md)
+> **See also:** [PACKAGE_INDEX.md](PACKAGE_INDEX.md), [IMPLEMENTATION_GUIDES.md](IMPLEMENTATION_GUIDES.md)
 
 ---
 
@@ -657,20 +657,30 @@ class Priority(Enum):
 
 ## arcskill - Skill Hub
 
-Verified skill installation and management.
+Verified skill installation with Sigstore/Rekor verification.
 
-### `install()` Function
+### Install Pipeline
 
-```python
-async def install(
-    skill_name: str,
-    source_url: str,
-    config: HubConfig
-) -> SkillMetadata:
-    """Install a skill through the verified pipeline."""
+```mermaid
+flowchart LR
+    classDef gate fill:#002550,stroke:#001A38,color:#FFFFFF
+    classDef term fill:#D6E6FF,stroke:#0073FE,color:#002550
+    classDef fail fill:#F68D2E,stroke:#C06000,color:#FFFFFF
+
+    A[1. Fetch<br/>to quarantine]:::gate --> B[2. Sigstore<br/>signature]:::gate
+    B --> C[3. Rekor<br/>inclusion proof]:::gate
+    C --> D[4. CRL check]:::gate
+    D --> E[5. Static scan<br/>regex+AST+semgrep+bandit]:::gate
+    E --> F[6. Sandboxed<br/>dry-run]:::gate
+    F --> G[7. Atomic<br/>activation]:::gate
+    G --> H[8. Lock file<br/>entry]:::term
+    
+    B -.-> X[SignatureInvalid]:::fail
+    D -.-> Y[CRLUnreachable]:::fail
+    E -.-> Z[ScanVerdictFailed]:::fail
 ```
 
-### `HubConfig` Type
+### HubConfig
 
 ```python
 class HubConfig(TypedDict):
@@ -679,26 +689,46 @@ class HubConfig(TypedDict):
     allowed_sources: list[str] = None
     require_sigstore: bool = True
     require_rekor: bool = True
+    require_crl: bool = True
+    require_static_scan: bool = True
+    require_sandbox: bool = True
 ```
 
-### `scan()` Function
+### Key Functions
 
 ```python
-def scan(
-    source: Path,
-    rules: list[str] = None
-) -> ScanResult:
+async def install(skill_name: str, source_url: str, config: HubConfig) -> SkillMetadata:
+    """Install through 8-gate verified pipeline."""
+
+def scan(source: Path, rules: list[str] = None) -> ScanResult:
     """Static scan of capability/skill code."""
+
+async def improve(skill: Skill, traces: list, config: ImproverConfig) -> ImprovementProposal:
+    """Propose improvements via golden-task gate."""
 ```
 
-### `ScanResult` Type
+### Scan Verdicts
 
 ```python
 class ScanResult(TypedDict):
     verdict: str  # "pass" | "warn" | "fail"
     findings: list[Finding]
     score: float
+
+class Finding(TypedDict):
+    rule_id: str
+    severity: str  # "info" | "warn" | "error" | "critical"
+    message: str
+    location: str
 ```
+
+### Edit Budgets (Improver)
+
+| Tier | Max Edits | Max Lines |
+|---|---|---|
+| Personal | 8 | 80 |
+| Enterprise | 4 | 40 |
+| Federal | 2 | 20 |
 
 ---
 

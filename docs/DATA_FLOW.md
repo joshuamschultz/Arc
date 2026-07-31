@@ -3,7 +3,7 @@
 > **Section:** 3. Reference · **Topic:** Architecture
 > **Who this is for:** Developers and operators who need to understand how data moves through Arc.
 > **Read this after:** [SECURITY.md](SECURITY.md) · **Read this next:** [API_REFERENCE.md](API_REFERENCE.md)
-> **See also:** [03-anatomy-of-a-turn.md](03-anatomy-of-a-turn.md), [08-data-storage.md](08-data-storage.md), [DIAGRAMS.md](DIAGRAMS.md)
+> **See also:** [PACKAGE_INDEX.md](PACKAGE_INDEX.md), [IMPLEMENTATION_GUIDES.md](IMPLEMENTATION_GUIDES.md)
 
 ---
 
@@ -560,37 +560,181 @@ flowchart LR
 ## Data Storage Layout
 
 ```mermaid
-flowchart TD
-    classDef root fill:#002550,stroke:#001A38,color:#FFFFFF
-    classDef dir fill:#0073FE,stroke:#0055BC,color:#FFFFFF
-    classDef file fill:#D6E6FF,stroke:#0073FE,color:#002550
-
-    subgraph "workspace/"
-        Root[workspace/]:::root
-        
-        subgraph "sessions/"
-            S1[sessions/.keep]:::file
-            S2[2026-04-28.jsonl]:::file
-            S3[2026-04-29.jsonl]:::file
-        end
-        
-        subgraph "memory/"
-            M1[memory/episodic.json]:::file
-            M2[memory/entities.json]:::file
-            M3[memory/daily/2026-04-28.jsonl]:::file
-        end
-        
-        subgraph ".capabilities/"
-            C1[.capabilities/untrusted_tool.py]:::file
-        end
-        
-        subgraph "tasks/"
-            T1[tasks/todo.jsonl]:::file
-            T2[tasks/done.jsonl]:::file
-            T3[tasks/review.jsonl]:::file
-        end
-    end
+erDiagram
+    LLM_CALLS ||--o{ RUN_EVENTS : "request_id"
+    LLM_CALLS {
+        text record_id PK
+        text kind
+        text actor_did
+        text ts
+        text request_id
+        text model
+        text provider
+        integer prompt_tokens
+        integer completion_tokens
+        real cost_usd
+        real latency_ms
+        text outcome
+    }
+    RUN_EVENTS {
+        text record_id PK
+        text actor_did
+        text ts
+        text request_id
+        text name
+    }
+    AGENT_EVENTS {
+        text record_id PK
+        text actor_did
+        text ts
+        text name
+    }
+    TOOL_EVENTS {
+        text record_id PK
+        text tool_name
+        text phase
+        text args_digest
+        text result_digest
+    }
+    SPAWN_EVENTS {
+        text record_id PK
+        text parent_did
+        text child_did
+        text role
+        integer depth
+    }
+    AUDIT_CHAIN {
+        text record_id PK
+        integer seq
+        text actor_did
+        text action
+        text target
+        text outcome
+        text event_hash
+        text prev_hash
+        text signature
+        integer verified
+    }
+    MUTABLE_RECORDS {
+        text collection PK
+        text key PK
+        text value
+        text updated_at
+    }
+    SKILL_CANDIDATES {
+        text record_id PK
+        text skill_name
+        text candidate_id
+        integer generation
+        text body_hash
+    }
+    SKILL_CANDIDATE_BODIES {
+        text record_id PK
+        text body
+    }
 ```
+
+### Disk Layout
+
+Two independent path roots exist:
+
+- **`arc_home()`** — `${ARC_CONFIG_DIR:-~/.arc}` — user-wide config root (operator key, trust store, shared config files)
+- **`resolve_data_dir()`** — `${ARCSTORE_DATA_DIR:-~/.arc/store}` — arcstore data root (spool, WORM mirror, SQLite mirrors)
+
+```text
+~/.arc/                                  # arc_home() — user-wide config root
+├── arcllm.toml                          # provider/model defaults (shared layer)
+├── arcagent.toml                        # agent-runtime defaults (shared layer)
+├── gateway.toml                         # embedded gateway: platforms, agent_did
+├── arc.env                              # 0600 — viewer/operator tokens, secrets
+├── operator/
+│   ├── operator.key                     # 0600 — Ed25519 seed, the audit authority
+│   └── operator.key.pub                 # 0644 — anti-erasure/anti-swap sentinel
+├── trust/
+│   ├── operators.toml                   # 0600 — pairing-approver pubkeys
+│   └── issuers.toml                     # 0600 — manifest-signer pubkeys
+├── team/                                # default team root
+│   └── <agent>/                         # one dir per agent — see agent-root tree below
+└── store/                               # resolve_data_dir() default
+    ├── spool/
+    │   └── operational-YYYY-MM-DD.jsonl # 0600 — always-on telemetry, daily rotation
+    ├── worm/
+    │   ├── audit-chain-<agent>.jsonl    # per-agent WORM chain (single-writer flock)
+    │   └── audit-chain-<agent>.<seq>.jsonl  # rotated segments (100k records / 50MB)
+    └── store/
+        ├── arcui.db                     # arcui's SQLite mirror (WAL)
+        └── arcstore.db                  # agent process's SQLite mirror (WAL)
+
+<agent-root>/                            # e.g. ~/.arc/team/<agent>/
+├── arcagent.toml                        # per-agent config
+├── .audit/
+│   └── skills.worm                      # skill-improver's own WORM chain
+└── workspace/
+    ├── identity.md                      # read-only goal charter
+    ├── context.md                       # sole writer: workpad module
+    ├── policy.md                        # protected — not agent-writable
+    ├── capabilities/                    # workspace-scoped tools/skills
+    ├── skill_traces/<skill>/candidates/ # mutation candidates
+    └── memory/
+        ├── index.db                     # SQLite: episodic + indices
+        ├── entities/*.md                # semantic store
+        ├── procedures/*.md              # procedural store
+        ├── insights/*.md                # insight store
+        └── daily-log/*.md               # curated daily summaries
+```
+
+### The Spool — Always-On Operational Telemetry
+
+**Design points:**
+- Filename: `spool/operational-YYYY-MM-DD.jsonl`, daily rotation by UTC date
+- Append-only, single `os.write()` syscall per record (atomic on local filesystem)
+- Mode `0600` — set on open and re-asserted
+- No per-record `fsync` — durability = survives process crash, not OS crash
+- Fail-open — write errors logged and swallowed; telemetry must never break the call
+- `request_id` — correlation id bound via `contextvars.ContextVar` for concurrent runs
+
+**SpoolRecord kinds:** `llm_call`, `run_event`, `agent_event`, `tool_event`, `spawn_event`
+
+### The WORM Audit Chain — Compliance System of Record
+
+**Design points:**
+- Two sinks: `NullSink` (discard) and `WormSink` (durable, signed, chained)
+- Each record: `seq`, `prev_hash`, `event_hash` (SHA-256 of seq+prev+event), `signature`
+- Single-writer `flock` per agent chain file
+- Crash recovery: torn final line truncated, signed `audit.worm.recovery` appended
+- Rotation: at 100,000 records or 50MB
+- Signature: Ed25519 (personal/enterprise) or ECDSA-P256 (FIPS/federal), by operator key
+
+### The SQLite Mirror — Queryable Read Plane
+
+- WAL mode, `busy_timeout=5000`, `journal_size_limit=64MB`
+- `INSERT OR IGNORE` keyed on content-derived `record_id` (idempotent ingest)
+- Each process owns its own DB file (`arcstore.db` vs `arcui.db`)
+- Mirrors both spool and WORM files
+
+**Mutable Records:** Tasks, Approvals, Cancellations — overwritten in place, not append logs
+
+### Memory on Disk — Glass-Box Markdown + Disposable Index
+
+- Markdown files are the durable truth; SQLite index is disposable/re-derivable
+- `sqlite-vec` optional extension; absence degrades to BM25 + graph (silent unless watched)
+- Atomic writes via temp file + `os.replace`
+- Insight card format: YAML frontmatter (id, trigger, cues, instances, confidence, status) + markdown body
+
+### Keys and Secrets
+
+| Credential | Location | Mode | Custody |
+|---|---|---|---|
+| Agent DID keypair | `~/.arcagent/keys/<did>.key` / `.pub` | `0700` dir | Vault resolver seam supports Azure KV, file, env backends |
+| Operator key | `~/.arc/operator/operator.key` | `0600`, `O_NOFOLLOW` | In-process by default; VaultSigner/VaultTransit for external custody |
+| Trust store | `~/.arc/trust/operators.toml`, `issuers.toml` | `0600` | Public keys only |
+| UI tokens | `~/.arc/arc.env` | `0600` | Minted once, pinned |
+
+### Retention and Deletion
+
+- **Spool/WORM purge:** Whole rotated files only; oldest files deleted until under `max_bytes`
+- **No per-record erasure:** Deleting one record breaks hash chain links
+- **GDPR tombstone:** Separate workflow for user profile data only (`user_profile/tombstone.py`)
 
 ---
 

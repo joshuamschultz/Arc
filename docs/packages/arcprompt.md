@@ -3,7 +3,7 @@
 > **Layer:** Runtime  
 > **Dependencies:** None  
 > **Install:** `pip install arcprompt`
-> **See also:** [06-prompts-tools-skills.md](../06-prompts-tools-skills.md), [API_REFERENCE.md](../API_REFERENCE.md)
+> **See also:** [BLUEPRINTS.md](../BLUEPRINTS.md#prompts-assembly), [API_REFERENCE.md](../API_REFERENCE.md)
 
 ---
 

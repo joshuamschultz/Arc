@@ -9,7 +9,7 @@ top-level.
 Full per-feature detail lives with each package:
 `docs/tasks-module.md`, `packages/arcmemory/`, `packages/arcgateway/`.
 
-**See also:** [12-configuration.md](12-configuration.md), [TIERS_AND_PRESETS.md](TIERS_AND_PRESETS.md)
+**See also:** [SETUP.md](SETUP.md), [TIERS_AND_PRESETS.md](TIERS_AND_PRESETS.md)
 
 ---
 

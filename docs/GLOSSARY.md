@@ -1,10 +1,10 @@
-# 14. Glossary — Every Arc Term, Plainly Defined
+# GLOSSARY — Every Arc Term, Plainly Defined
 
 > **Section:** 2. System Walkthroughs · **Topic:** Building on Arc
 > **Who this is for:** anyone who hits an unfamiliar word anywhere in these
 > docs — a program manager, a security officer, a new contributor, a buyer.
 > **Read this after:** any other doc, whenever a term stops you.
-> **Read this next:** [`docs/01-what-is-arc.md`](01-what-is-arc.md) if you
+> **Read this next:** [QUICKSTART.md](QUICKSTART.md) if you
 > haven't started there yet.
 > **Plain-language summary lives in:** every entry below — that's the whole
 > point of this file.
@@ -40,7 +40,7 @@ as design intent, not shipped behavior, until a human checks.
 
 Eighteen directories live under `packages/`. Sixteen are real, shipping code
 with tests; two (`arcmas`, `arcmodel`) are near-empty placeholders. Full
-dependency table: [`docs/02-architecture.md`](02-architecture.md#the-package-inventory).
+dependency table: [`docs/PACKAGE_INDEX.md`](PACKAGE_INDEX.md#the-package-inventory).
 
 | Package | Plain language | Technical precision | Code |
 |---|---|---|---|
@@ -78,7 +78,7 @@ dependency table: [`docs/02-architecture.md`](02-architecture.md#the-package-inv
 | **ReAct** | "Think, then act, then look at the result, repeat." | The default strategy: reason → tool call → observe → repeat, one turn at a time. | `packages/arcrun/src/arcrun/strategies/react.py` |
 | **plan-and-execute** | Make a plan first, then carry it out. | An alternate strategy prompt shape; described in a strategy markdown file, not (per the docs audit) a separate fully-wired loop implementation. | `packages/arcrun/src/arcrun/context/strategy_plan_execute.md` |
 | **code-as-action** | The model writes code instead of calling discrete tools one at a time. | An alternate strategy prompt shape alongside ReAct and plan-and-execute. | `packages/arcrun/src/arcrun/context/strategy_code.md` |
-| **steering** | Sending a live message into a run that's already in progress. | A message queued via the run's `RunHandle`, drained as a `user`-role message at the top of the next turn (or after tool results, if mid-turn). | `packages/arcrun/src/arcrun/state.py:38`, [`docs/05-steering-and-strategies.md`](05-steering-and-strategies.md) |
+| **steering** | Sending a live message into a run that's already in progress. | A message queued via the run's `RunHandle`, drained as a `user`-role message at the top of the next turn (or after tool results, if mid-turn). | `packages/arcrun/src/arcrun/state.py:38`, [`docs/API_REFERENCE.md`](API_REFERENCE.md#steering-strategies) |
 | **interjection** | Informal name people use for a steering message. | Not a distinct code construct — see **steering**; no `interject`/`interjection` symbol exists in the codebase. | — |
 | **compaction** | Trimming a conversation so it still fits in the model's memory, without losing what matters. | `SessionManager`-driven summarization pass with boundary masking; the sole compactor (`ADR-026`: append-only with an emergency valve). | `packages/arcagent/src/arcagent/core/session_internal/context.py` |
 | **context window** | How much conversation the model can "see" at once. | The token budget a provider enforces per call; what compaction manages against. | `packages/arcagent/src/arcagent/core/session_internal/context.py` |
@@ -88,7 +88,7 @@ dependency table: [`docs/02-architecture.md`](02-architecture.md#the-package-inv
 | **tool** | Something an agent can actually do — run a command, read a file, search the web. | A `RegisteredTool` in `ToolRegistry`, built via the `@tool` decorator from a Python function's signature. | `packages/arcagent/src/arcagent/core/tool_registry.py:91` |
 | **tool set freeze** | The list of tools available to a run is locked before the run starts and can't change mid-run. | `ToolRegistry.freeze()`, called before turn 0; a documented security invariant (`ADR-027`) — mutation after freeze invalidates the prompt cache and is disallowed. | `packages/arcrun/src/arcrun/loop.py:69`, `packages/arcrun/src/arcrun/registry.py:32` |
 | **transport** | How a tool call is actually carried out. | `ToolTransport` enum, four members. Only `NATIVE` (in-process Python) is wired; `MCP`, `HTTP`, and `PROCESS` are enum-and-config-only — see [§7, producers-unwired](#7-process-project). | `packages/arcagent/src/arcagent/tools/_transport.py:29` |
-| **skill** | A packaged how-to an agent can learn and call on, like a recipe. | A signed `SKILL.md` capability folder, discovered by `CapabilityLoader`, loaded lazily only when the model calls it. | `packages/arcskill/src/arcskill/`, [`docs/06-prompts-tools-skills.md`](06-prompts-tools-skills.md) |
+| **skill** | A packaged how-to an agent can learn and call on, like a recipe. | A signed `SKILL.md` capability folder, discovered by `CapabilityLoader`, loaded lazily only when the model calls it. | `packages/arcskill/src/arcskill/`, [`docs/BLUEPRINTS.md`](BLUEPRINTS.md#skills) |
 | **capability** | The umbrella term for anything discoverable an agent can use — a tool or a skill, before it's wired into the registry. | Resolved by `CapabilityLoader` from four precedence-ordered roots (package-internal, global, agent-declared, agent-authored); held by `CapabilityRegistry`. | `packages/arcagent/src/arcagent/capabilities/capability_loader.py` |
 | **module** | An official, event-driven piece of agent behavior — messaging, memory, tasks, browser, and so on — not a Python `.py` file. | A directory under `arcagent/modules/` wired onto the `ModuleBus` with a priority (10=policy … 200=logging); see [false friends](#false-friends) for the "not a Python module" distinction. | `packages/arcagent/src/arcagent/modules/`, `packages/arcagent/src/arcagent/core/module_bus.py:1` |
 | **extension** | A named seam where Arc lets you swap in your own implementation without forking — e.g. which memory backend, which skill adapter. | An `ExtensionPoint` descriptor; "select-one" (config picks one implementation, e.g. `brain`) or "scan-many" (a filtered view over the capability registry, e.g. `tools`). | `packages/arcagent/src/arcagent/extension/point.py`, `families.py` |
@@ -105,7 +105,7 @@ dependency table: [`docs/02-architecture.md`](02-architecture.md#the-package-inv
 ## 3. Security & trust
 
 The Four Pillars — Identity, Sign, Authorize, Audit — are universal at every
-tier, not a federal-only feature. Full model: [`docs/10-security-model.md`](10-security-model.md).
+tier, not a federal-only feature. Full model: [`docs/SECURITY.md`](SECURITY.md).
 
 | Term | Plain language | Technical precision | Code |
 |---|---|---|---|
@@ -148,7 +148,7 @@ tier, not a federal-only feature. Full model: [`docs/10-security-model.md`](10-s
 
 ## 4. Data & storage
 
-Full picture: [`docs/08-data-storage.md`](08-data-storage.md).
+Full picture: [`docs/DATA_FLOW.md`](DATA_FLOW.md#data-storage-layout).
 
 | Term | Plain language | Technical precision | Code |
 |---|---|---|---|
@@ -172,7 +172,7 @@ Full picture: [`docs/08-data-storage.md`](08-data-storage.md).
 
 ## 5. Memory
 
-Full picture: [`docs/07-memory-lifecycle.md`](07-memory-lifecycle.md).
+Full picture: [`docs/DATA_FLOW.md`](DATA_FLOW.md#memory-lifecycle).
 
 | Term | Plain language | Technical precision | Code |
 |---|---|---|---|
@@ -201,7 +201,7 @@ Full picture: [`docs/07-memory-lifecycle.md`](07-memory-lifecycle.md).
 
 ## 6. LLM layer
 
-Full picture: [`docs/04-the-unified-adapter.md`](04-the-unified-adapter.md).
+Full picture: [`docs/API_REFERENCE.md`](API_REFERENCE.md#unified-adapter).
 
 | Term | Plain language | Technical precision | Code |
 |---|---|---|---|
@@ -248,7 +248,7 @@ Full picture: [`docs/04-the-unified-adapter.md`](04-the-unified-adapter.md).
 | **FedRAMP** | The US federal program that authorizes cloud services for government use. | A named compliance target for Arc's eventual authorization. | `CLAUDE.md` |
 | **CMMC** | The Cybersecurity Maturity Model Certification — a DoD contractor security standard. | A named compliance target. | `CLAUDE.md` |
 | **SCIF** | A "Sensitive Compartmented Information Facility" — a room built to prevent electronic eavesdropping. | Cited as a deployment environment Arc must run in (`CLAUDE.md`: "DOE machines, in labs, in SCIFs"). | `CLAUDE.md` |
-| **air-gapped** | A machine or network with no physical connection to the internet. | The deployment context `arcgateway-mattermost` is explicitly built for. | `docs/02-architecture.md` |
+| **air-gapped** | A machine or network with no physical connection to the internet. | The deployment context `arcgateway-mattermost` is explicitly built for. | `docs/deploy/single-node.md` |
 | **OWASP LLM Top 10 (LLM01–LLM10)** | The industry-standard list of the ten biggest risks specific to LLM-powered applications. | Each code mapped to a concrete mitigation in `CLAUDE.md`'s threat-surface table (e.g. LLM06 Excessive Agency → tool allowlists + `HumanGate`). | `CLAUDE.md` |
 | **OWASP Agentic Top 10 (ASI01–ASI10)** | The equivalent list for autonomous *agents* specifically, not just chat LLMs. | Same table format; e.g. ASI05 (Unexpected Code Execution) → Firecracker microVM isolation. | `CLAUDE.md` |
 | **CUI** | "Controlled Unclassified Information" — sensitive-but-not-classified US government data. | A `Classification` enum value, ranked above `UNCLASSIFIED`. | `packages/arctrust/src/arctrust/classification.py:27` |

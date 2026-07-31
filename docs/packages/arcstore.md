@@ -3,7 +3,7 @@
 > **Layer:** Foundation  
 > **Dependencies:** None  
 > **Install:** `pip install arcstore`
-> **See also:** [08-data-and-storage.md](../08-data-and-storage.md), [DATA_FLOW.md](../DATA_FLOW.md), [API_REFERENCE.md](../API_REFERENCE.md)
+> **See also:** [DATA_FLOW.md](../DATA_FLOW.md#data-storage-layout), [DATA_FLOW.md](../DATA_FLOW.md), [API_REFERENCE.md](../API_REFERENCE.md)
 
 ---
 

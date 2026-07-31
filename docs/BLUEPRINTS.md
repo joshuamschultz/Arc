@@ -2,7 +2,7 @@
 
 > **Who this is for:** Users who want to use or create signed preset configurations for Arc agents.
 > **Read this after:** [QUICKSTART.md](QUICKSTART.md) · **Read this next:** [SECURITY.md](SECURITY.md)
-> **See also:** [IMPLEMENTATION_GUIDES.md](IMPLEMENTATION_GUIDES.md), [06-prompts-tools-skills.md](06-prompts-tools-skills.md)
+> **See also:** [IMPLEMENTATION_GUIDES.md](IMPLEMENTATION_GUIDES.md), [BLUEPRINTS.md](BLUEPRINTS.md#skills)
 
 ---
 

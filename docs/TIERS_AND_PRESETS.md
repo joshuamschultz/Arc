@@ -3,7 +3,7 @@
 > **Section:** 1. Quickstart and Basics
 > **Who this is for:** Operators and architects choosing the right security level for their deployment.
 > **Read this after:** [IMPLEMENTATION_GUIDES.md](IMPLEMENTATION_GUIDES.md) · **Read this next:** [PACKAGE_INDEX.md](PACKAGE_INDEX.md)
-> **See also:** [SECURITY.md](SECURITY.md), [SETUP.md](SETUP.md), [10-security-model.md](10-security-model.md)
+> **See also:** [SECURITY.md](SECURITY.md), [SETUP.md](SETUP.md), [SECURITY.md](SECURITY.md)
 
 ---
 

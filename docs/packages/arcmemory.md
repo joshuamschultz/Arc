@@ -3,7 +3,7 @@
 > **Layer:** Agent  
 > **Dependencies:** arcstore  
 > **Install:** `pip install arcmemory`
-> **See also:** [07-memory-lifecycle.md](../07-memory-lifecycle.md), [DATA_FLOW.md](../DATA_FLOW.md), [API_REFERENCE.md](../API_REFERENCE.md)
+> **See also:** [DATA_FLOW.md](../DATA_FLOW.md#memory-lifecycle), [DATA_FLOW.md](../DATA_FLOW.md), [API_REFERENCE.md](../API_REFERENCE.md)
 
 ---
 

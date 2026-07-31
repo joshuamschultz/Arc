@@ -53,7 +53,7 @@ flowchart TB
     end
 ```
 
-**Found in:** [PACKAGE_INDEX.md](PACKAGE_INDEX.md), [02-architecture.md](02-architecture.md)
+**Found in:** [PACKAGE_INDEX.md](PACKAGE_INDEX.md)
 
 ---
 
@@ -82,7 +82,7 @@ flowchart TB
     TRUST["arctrust — identity, sign, policy, WORM"]
 ```
 
-**Found in:** [02-architecture.md](02-architecture.md)
+**Found in:** [PACKAGE_INDEX.md](PACKAGE_INDEX.md)
 
 ---
 
@@ -110,7 +110,7 @@ flowchart LR
     end
 ```
 
-**Found in:** [02-architecture.md](02-architecture.md)
+**Found in:** [PACKAGE_INDEX.md](PACKAGE_INDEX.md)
 
 ---
 
@@ -321,10 +321,10 @@ flowchart TB
     START --> C["I'm evaluating Arc<br/>for security"]
     START --> D["I'm adding a<br/>capability"]
 
-    A --> A1["01 What Arc Is"] --> A2["02 Architecture"] --> A3["14 Glossary"]
-    B --> B1["03 Anatomy of a Turn"] --> B2["02 Architecture"] --> B3["13 Contributing"]
-    C --> C1["10 Security Model"] --> C2["08 Data and Storage"] --> C3["12 Configuration"]
-    D --> D1["11 Extension Points"] --> D2["06 Prompts, Tools, Skills"] --> D3["12 Configuration"]
+    A --> A1["QUICKSTART.md"] --> A2["PACKAGE_INDEX.md"] --> A3["GLOSSARY.md"]
+    B --> B1["DATA_FLOW.md"] --> B2["PACKAGE_INDEX.md"] --> B3["CONTRIBUTING.md"]
+    C --> C1["SECURITY.md"] --> C2["DATA_FLOW.md"] --> C3["TIERS_AND_PRESETS.md"]
+    D --> D1["IMPLEMENTATION_GUIDES.md"] --> D2["BLUEPRINTS.md"] --> D3["TIERS_AND_PRESETS.md"]
 
     class START entry
     class A,B,C,D surface
@@ -341,4 +341,4 @@ flowchart TB
 ## Next Steps
 
 - [README.md](README.md) - Main documentation index
-- [02-architecture.md](02-architecture.md) - Detailed architecture
+- [PACKAGE_INDEX.md](PACKAGE_INDEX.md) - Detailed architecture

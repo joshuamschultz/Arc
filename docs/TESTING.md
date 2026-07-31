@@ -3,7 +3,7 @@
 > **Section:** 3. Reference · **Topic:** Development
 > **Who this is for:** Developers writing tests for Arc.
 > **Read this after:** [CONTRIBUTING.md](CONTRIBUTING.md) · **Read this next:** [PERFORMANCE.md](PERFORMANCE.md)
-> **See also:** [13-contributing.md](13-contributing.md) for contribution process
+> **See also:** [CONTRIBUTING.md](CONTRIBUTING.md) for contribution process
 
 ---
 

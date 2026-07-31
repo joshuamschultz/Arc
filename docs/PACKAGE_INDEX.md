@@ -677,13 +677,25 @@ Run to verify layering:
 pytest tests/architecture/ packages/*/tests/architecture/
 ```
 
-| Test | Guards |
-|---|---|
-| `test_no_arcagent_imports_arcgateway` | `arcagent` has zero knowledge of `arcgateway` |
-| `test_no_arcrun_imports_arcagent` | `arcrun` has zero knowledge of `arcagent` |
-| `test_no_arcrun_calls_load_model` | `arcrun` never calls `arcllm.registry.load_model()` |
-| `test_no_arcagent_import` | `arcmemory` never imports `arcagent` |
-| `test_arcui_imports_arcagent_only_via_inventory_seam` | `arcui` only imports `arcagent.capabilities.inventory` |
+| Test | Location | Guards |
+|---|---|---|
+| `test_no_arcagent_imports_arcgateway` | `tests/architecture/test_no_arcagent_imports_arcgateway.py` | `arcagent` has zero knowledge of `arcgateway` — one-way dependency |
+| `test_no_arcrun_imports_arcagent` | `tests/architecture/test_no_arcrun_imports_arcagent.py` | `arcrun` has zero knowledge of `arcagent` |
+| `test_no_arcrun_calls_load_model` | `tests/architecture/test_no_arcrun_calls_load_model.py` | `arcrun` never calls `arcllm.registry.load_model()` directly — model lifecycle stays in `arcllm` |
+| `test_no_arcagent_import` | `packages/arcmemory/tests/architecture/test_no_arcagent_import.py` | `arcmemory` never imports `arcagent` — the hard DAG boundary |
+| `test_arcui_imports_arcagent_only_via_inventory_seam` | `packages/arcgateway/tests/architecture/test_imports.py:61` | `arcui` only imports `arcagent.capabilities.inventory` |
+| `test_no_arcstore_upward_imports` | `tests/architecture/test_no_arcstore_arcteam_upward_imports.py` | `arcstore`/`arcteam` never import `arcagent`, `arcui`, `arccli`, `arcrun`, or `arcgateway` |
+| `test_no_click_in_arccli` | `tests/architecture/test_no_click_in_arccli.py` | No `import click` in `arccli` outside allowlist |
+| `test_no_global_tool_name_mutation` | `tests/architecture/test_no_global_tool_name_mutation.py` | `arcrun` never mutates process-global tool-name state |
+| `test_no_unsigned_backends_at_federal` | `tests/architecture/test_no_unsigned_backends_at_federal.py` | `arcrun.backends.loader.load_backend` calls signature verification before loading any non-builtin backend |
+| `test_module_bus_priority_assignments` | `tests/architecture/test_module_bus_priority_assignments.py` | Module-bus subscription priorities (10=policy/security, 50=security, 100=default, 200=logging) |
+| `test_backend_protocol_duck_typing` | `tests/architecture/test_backend_protocol_duck_typing.py` | Third-party `ExecutorBackend`s satisfy the Protocol structurally |
+| `test_arccli_command_registry_minimal_surface` | `tests/architecture/test_arccli_command_registry_minimal_surface.py` | `arccli.commands` exports only `CommandDef`, `COMMAND_REGISTRY`, `resolve_command`, `commands_by_category` |
+| `test_prompt_markdown_ships_in_wheels` | `tests/architecture/test_prompt_markdown_ships_in_wheels.py` | Every package with `context/` declares it under `artifacts` |
+| `test_workspace_install` | `tests/architecture/test_workspace_install.py` | Canonical `uv pip install -e` sequence stays valid |
+| `test_no_module_global_agent_state` | `packages/arcagent/tests/architecture/test_no_module_global_agent_state.py` | No `_runtime.py` module holds per-agent state as module-level global |
+| `test_improver_no_provider_import` | `packages/arcskill/tests/architecture/test_improver_no_provider_import.py` | `arcskill.improver` imports no `arcagent`, `arcllm`, or `arcmemory` |
+| `test_reuses_arctrust_comparator` | `packages/arcmemory/tests/architecture/test_reuses_arctrust_comparator.py` | `arcmemory` imports `arctrust`'s `dominates`/`parse_classification` |
 
 ---
 

@@ -3,7 +3,7 @@
 > **Layer:** Agent  
 > **Dependencies:** arcrun, arcllm, arctrust, arcstore, arcskill, arcteam, arcmemory  
 > **Install:** `pip install arc-agent`
-> **See also:** [06-prompts-tools-skills.md](../06-prompts-tools-skills.md), [API_REFERENCE.md](../API_REFERENCE.md), [PACKAGE_INDEX.md](../PACKAGE_INDEX.md)
+> **See also:** [BLUEPRINTS.md](../BLUEPRINTS.md#skills), [API_REFERENCE.md](../API_REFERENCE.md), [PACKAGE_INDEX.md](../PACKAGE_INDEX.md)
 
 ---
 
