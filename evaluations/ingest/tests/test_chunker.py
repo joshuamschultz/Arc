@@ -26,8 +26,8 @@ from datetime import date
 
 import pytest
 
-from evaluations.longmemeval.ingest.chunker import TurnChunker, TurnExceedsCapError
-from evaluations.longmemeval.ingest.types import Chunk, Session, Turn
+from evaluations.ingest.chunker import TurnChunker, TurnExceedsCapError
+from evaluations.ingest.types import Chunk, Session, Turn
 
 # `arcmemory.security.sanitize` caps at `max_length=2000` by default; 1700 is the
 # target the spec leaves beneath it so NFKC expansion plus the repeated date

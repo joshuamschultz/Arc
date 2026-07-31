@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from evaluations.longmemeval.ingest.lifecycle import (
+from evaluations.ingest.lifecycle import (
     INGEST_COMPLETE_MARKER,
     LeftoverWorkspacesError,
     WorkspaceLifecycle,
@@ -193,7 +193,7 @@ def test_teardown_removes_a_tree_holding_an_unreadable_database(
     (run_dir / "memory").mkdir(parents=True)
     (run_dir / "memory" / "index.db").write_text("this is not a database")
 
-    with caplog.at_level(logging.WARNING, logger="evaluations.longmemeval.ingest.lifecycle"):
+    with caplog.at_level(logging.WARNING, logger="evaluations.ingest.lifecycle"):
         WorkspaceLifecycle(run_dir).teardown()
 
     assert not run_dir.exists()

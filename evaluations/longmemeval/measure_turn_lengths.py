@@ -29,9 +29,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from evaluations.longmemeval.ingest.chunker import TurnChunker, TurnExceedsCapError
-from evaluations.longmemeval.ingest.limits import MAX_EVENT_CHARS
-from evaluations.longmemeval.ingest.types import Session, Turn
+from evaluations.ingest.chunker import TurnChunker, TurnExceedsCapError
+from evaluations.ingest.limits import MAX_EVENT_CHARS
+from evaluations.ingest.types import Session, Turn
 from evaluations.longmemeval.paths import DATA_DIR
 
 _DATA_DIR = DATA_DIR

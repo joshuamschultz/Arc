@@ -29,8 +29,8 @@ from arccli.commands.agent._common import (
 )
 from arcstore.config import ENV_DATA_DIR
 
-from evaluations.longmemeval.ingest.limits import MAX_EVENT_CHARS, RECALL_BUDGET, RECALL_TOP_K
-from evaluations.longmemeval.ingest.models import AGENT_MODEL, DISTILL_MODEL, DISTILL_PROVIDER
+from evaluations.ingest.limits import MAX_EVENT_CHARS, RECALL_BUDGET, RECALL_TOP_K
+from evaluations.ingest.models import AGENT_MODEL, DISTILL_MODEL, DISTILL_PROVIDER
 
 if TYPE_CHECKING:
     from arcagent.core.agent import ArcAgent

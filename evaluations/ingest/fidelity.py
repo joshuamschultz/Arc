@@ -35,8 +35,8 @@ from difflib import SequenceMatcher
 
 from arcmemory.security import privacy_filter, sanitize
 
-from evaluations.longmemeval.ingest.limits import MAX_EVENT_CHARS
-from evaluations.longmemeval.ingest.types import Chunk
+from evaluations.ingest.limits import MAX_EVENT_CHARS
+from evaluations.ingest.types import Chunk
 
 
 class GoldEvidenceFilteredError(Exception):

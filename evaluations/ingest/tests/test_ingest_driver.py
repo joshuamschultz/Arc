@@ -26,16 +26,16 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from evaluations.longmemeval.ingest.chunker import TurnChunker
-from evaluations.longmemeval.ingest.driver import (
+from evaluations.ingest.chunker import TurnChunker
+from evaluations.ingest.driver import (
     CONSOLIDATE_LOOP_NAME,
     BackgroundConsolidationError,
     IngestDriver,
     IngestTarget,
     session_key,
 )
-from evaluations.longmemeval.ingest.fidelity import GoldEvidenceFilteredError, SanitizeFidelityGate
-from evaluations.longmemeval.ingest.types import Chunk, Session, Turn
+from evaluations.ingest.fidelity import GoldEvidenceFilteredError, SanitizeFidelityGate
+from evaluations.ingest.types import Chunk, Session, Turn
 
 if TYPE_CHECKING:
     from arcagent.core.agent import ArcAgent

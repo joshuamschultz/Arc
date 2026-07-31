@@ -23,6 +23,9 @@ from typing import Any
 
 import pytest
 
+from evaluations.ingest import chunker as production_chunker
+from evaluations.ingest.limits import MAX_EVENT_CHARS
+from evaluations.ingest.types import Chunk, Session
 from evaluations.longmemeval import budget
 from evaluations.longmemeval.adapter import LongMemEvalAdapter
 from evaluations.longmemeval.budget import (
@@ -41,9 +44,6 @@ from evaluations.longmemeval.budget import (
     estimate_run,
 )
 from evaluations.longmemeval.dataset import Dataset
-from evaluations.longmemeval.ingest import chunker as production_chunker
-from evaluations.longmemeval.ingest.limits import MAX_EVENT_CHARS
-from evaluations.longmemeval.ingest.types import Chunk, Session
 
 CAP = MAX_EVENT_CHARS
 """The cap ``estimate_run`` defaults to; the re-walk below must chunk identically."""
@@ -119,7 +119,7 @@ def _real_chunk_count(dataset: Dataset) -> tuple[int, int, list[Chunk]]:
 
 
 def test_budget_imports_the_production_chunker_not_a_copy() -> None:
-    """REQ-208: the symbol the estimate uses IS ``evaluations.longmemeval.ingest.chunker``'s."""
+    """REQ-208: the symbol the estimate uses IS ``evaluations.ingest.chunker``'s."""
     # Read through __dict__ because the name is an import, not part of budget's API.
     assert budget.__dict__["TurnChunker"] is production_chunker.TurnChunker
 

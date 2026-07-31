@@ -27,7 +27,7 @@ from arccli.commands.agent._common import (
 )
 from pydantic import BaseModel, ConfigDict
 
-from evaluations.longmemeval.ingest.agent_factory import (
+from evaluations.ingest.agent_factory import (
     ARCLLM_EVAL_CONFIG,
     _apply_toml_overrides,
     assert_workspace_contained,

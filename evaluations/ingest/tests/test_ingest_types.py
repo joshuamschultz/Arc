@@ -14,10 +14,10 @@ Two things are under test and nothing else:
 2. A *second* corpus adapter, written here from scratch, satisfies the
    ``SourceAdapter`` protocol. It is defined inside the test and imports nothing
    from ``evaluations.longmemeval`` — that absence is the whole point of the
-   seam, and it is what keeps ``evaluations/longmemeval/ingest/`` source-agnostic.
+   seam, and it is what keeps ``evaluations/ingest/`` source-agnostic.
 
-``evaluations.longmemeval.ingest.types`` and
-``evaluations.longmemeval.ingest.adapter`` do not exist yet.
+``evaluations.ingest.types`` and
+``evaluations.ingest.adapter`` do not exist yet.
 Following the convention in ``packages/arcstore/tests/unit/test_tasks.py``, every
 import below is local to its test rather than module-level, so the missing module
 surfaces as one failure per test instead of a single collection error masking the
@@ -49,7 +49,7 @@ def _chunk_kwargs() -> dict[str, Any]:
 
 
 def test_turn_is_a_pydantic_model_carrying_role_text_and_turn_id() -> None:
-    from evaluations.longmemeval.ingest.types import Turn
+    from evaluations.ingest.types import Turn
 
     turn = Turn(**_turn_kwargs())
 
@@ -61,7 +61,7 @@ def test_turn_is_a_pydantic_model_carrying_role_text_and_turn_id() -> None:
 
 @pytest.mark.parametrize("missing", ["turn_id", "role", "text"])
 def test_turn_requires_every_field(missing: str) -> None:
-    from evaluations.longmemeval.ingest.types import Turn
+    from evaluations.ingest.types import Turn
 
     kwargs = _turn_kwargs()
     del kwargs[missing]
@@ -72,7 +72,7 @@ def test_turn_requires_every_field(missing: str) -> None:
 
 @pytest.mark.parametrize("field", ["turn_id", "role", "text"])
 def test_turn_rejects_a_non_string_field(field: str) -> None:
-    from evaluations.longmemeval.ingest.types import Turn
+    from evaluations.ingest.types import Turn
 
     kwargs = _turn_kwargs()
     kwargs[field] = 17
@@ -87,7 +87,7 @@ def test_turn_rejects_a_non_string_field(field: str) -> None:
 def test_session_is_a_pydantic_model_carrying_id_source_date_and_turns() -> None:
     from datetime import date
 
-    from evaluations.longmemeval.ingest.types import Session, Turn
+    from evaluations.ingest.types import Session, Turn
 
     session = Session(
         conversation_id="conv-1",
@@ -105,7 +105,7 @@ def test_session_preserves_turn_order() -> None:
     """Ingest order is what the recency channel ranks by (REQ-178) — never reorder."""
     from datetime import date
 
-    from evaluations.longmemeval.ingest.types import Session, Turn
+    from evaluations.ingest.types import Session, Turn
 
     turns = [
         Turn(turn_id=f"s0:t{index}", role="user", text=f"message {index}") for index in range(5)
@@ -120,7 +120,7 @@ def test_session_preserves_turn_order() -> None:
 def test_session_requires_every_field(missing: str) -> None:
     from datetime import date
 
-    from evaluations.longmemeval.ingest.types import Session, Turn
+    from evaluations.ingest.types import Session, Turn
 
     kwargs: dict[str, Any] = {
         "conversation_id": "conv-1",
@@ -135,7 +135,7 @@ def test_session_requires_every_field(missing: str) -> None:
 
 def test_session_rejects_an_unparseable_source_date() -> None:
     """The date is stamped onto every chunk (REQ-178); a junk date must not reach it."""
-    from evaluations.longmemeval.ingest.types import Session, Turn
+    from evaluations.ingest.types import Session, Turn
 
     kwargs: dict[str, Any] = {
         "conversation_id": "conv-1",
@@ -150,7 +150,7 @@ def test_session_rejects_an_unparseable_source_date() -> None:
 def test_session_rejects_a_non_turn_member_of_turns() -> None:
     from datetime import date
 
-    from evaluations.longmemeval.ingest.types import Session
+    from evaluations.ingest.types import Session
 
     kwargs: dict[str, Any] = {
         "conversation_id": "conv-1",
@@ -166,7 +166,7 @@ def test_session_rejects_a_non_turn_member_of_turns() -> None:
 
 
 def test_chunk_is_a_pydantic_model_carrying_text_indices_and_turn_ids() -> None:
-    from evaluations.longmemeval.ingest.types import Chunk
+    from evaluations.ingest.types import Chunk
 
     chunk = Chunk(**_chunk_kwargs())
 
@@ -179,7 +179,7 @@ def test_chunk_is_a_pydantic_model_carrying_text_indices_and_turn_ids() -> None:
 
 @pytest.mark.parametrize("missing", ["text", "session_idx", "chunk_idx", "turn_ids"])
 def test_chunk_requires_every_field(missing: str) -> None:
-    from evaluations.longmemeval.ingest.types import Chunk
+    from evaluations.ingest.types import Chunk
 
     kwargs = _chunk_kwargs()
     del kwargs[missing]
@@ -191,7 +191,7 @@ def test_chunk_requires_every_field(missing: str) -> None:
 @pytest.mark.parametrize("field", ["session_idx", "chunk_idx"])
 def test_chunk_rejects_a_non_integer_index(field: str) -> None:
     """The pair is the chunk's ingest-order coordinate; a non-index makes it unorderable."""
-    from evaluations.longmemeval.ingest.types import Chunk
+    from evaluations.ingest.types import Chunk
 
     kwargs = _chunk_kwargs()
     kwargs[field] = "second"
@@ -202,7 +202,7 @@ def test_chunk_rejects_a_non_integer_index(field: str) -> None:
 
 def test_chunk_rejects_a_bare_string_for_turn_ids() -> None:
     """turn_ids is the gold-overlap key (REQ-181) — a string would silently iterate chars."""
-    from evaluations.longmemeval.ingest.types import Chunk
+    from evaluations.ingest.types import Chunk
 
     kwargs = _chunk_kwargs()
     kwargs["turn_ids"] = "s0:t0"
@@ -224,8 +224,8 @@ def test_a_second_corpus_adapter_satisfies_the_source_adapter_seam() -> None:
     from collections.abc import Iterator
     from datetime import date
 
-    from evaluations.longmemeval.ingest.adapter import SourceAdapter
-    from evaluations.longmemeval.ingest.types import Session, Turn
+    from evaluations.ingest.adapter import SourceAdapter
+    from evaluations.ingest.types import Session, Turn
 
     class FakeCorpusAdapter:
         """A hypothetical second corpus, with no relationship to LongMemEval."""
@@ -251,8 +251,8 @@ def test_a_class_without_read_does_not_satisfy_the_source_adapter_seam() -> None
     """One method is the whole contract — so the absence of that method must fail."""
     from collections.abc import Iterator
 
-    from evaluations.longmemeval.ingest.adapter import SourceAdapter
-    from evaluations.longmemeval.ingest.types import Session
+    from evaluations.ingest.adapter import SourceAdapter
+    from evaluations.ingest.types import Session
 
     class NotAnAdapter:
         def load(self) -> Iterator[Session]:

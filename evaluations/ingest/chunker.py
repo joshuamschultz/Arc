@@ -14,7 +14,7 @@ date. The prefix is the chunk's own first line and costs budget on every chunk,
 not just the first.
 
 *Raise, never truncate.* ``sanitize`` caps at the configured
-``max_event_chars`` (``evaluations.longmemeval.ingest.limits``) and the capture path
+``max_event_chars`` (``evaluations.ingest.limits``) and the capture path
 discards its return value, so a turn that overflows the cap would be silently
 shortened and scored as a memory failure. A turn that cannot be dated and stay
 under the cap voids its question instead (REQ-177).
@@ -26,7 +26,7 @@ larger than it still ships whole — only ``max_event_chars`` raises.
 
 from __future__ import annotations
 
-from evaluations.longmemeval.ingest.types import Chunk, Session, Turn
+from evaluations.ingest.types import Chunk, Session, Turn
 
 
 class TurnExceedsCapError(Exception):

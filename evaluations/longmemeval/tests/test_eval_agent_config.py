@@ -20,14 +20,14 @@ from typing import Any
 
 import pytest
 
-from evaluations.longmemeval.ingest.agent_factory import (
+from evaluations.ingest.agent_factory import (
     ARCSTORE_DIR_NAME,
     eval_agent_name,
     pin_arcstore_data_dir,
     render_eval_agent_config,
     write_eval_agent_config,
 )
-from evaluations.longmemeval.ingest.limits import MAX_EVENT_CHARS, RECALL_BUDGET, RECALL_TOP_K
+from evaluations.ingest.limits import MAX_EVENT_CHARS, RECALL_BUDGET, RECALL_TOP_K
 
 CONFIG_DIR = Path(__file__).resolve().parents[1] / "config"
 

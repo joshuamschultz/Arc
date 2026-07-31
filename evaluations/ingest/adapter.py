@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import Protocol, runtime_checkable
 
-from evaluations.longmemeval.ingest.types import Session
+from evaluations.ingest.types import Session
 
 
 @runtime_checkable

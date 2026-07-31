@@ -34,9 +34,9 @@ from datetime import date
 import pytest
 from arcmemory.security import privacy_filter, sanitize
 
-from evaluations.longmemeval.ingest.chunker import TurnChunker
-from evaluations.longmemeval.ingest.fidelity import FidelityVerdict, SanitizeFidelityGate
-from evaluations.longmemeval.ingest.types import Chunk, Session, Turn
+from evaluations.ingest.chunker import TurnChunker
+from evaluations.ingest.fidelity import FidelityVerdict, SanitizeFidelityGate
+from evaluations.ingest.types import Chunk, Session, Turn
 
 CAP = 2000
 SESSION_DATE = date(2023, 5, 20)

@@ -38,7 +38,7 @@ from arcagent.brain import NullBrain
 from arcagent.modules.memory import _runtime
 from arcagent.modules.memory.config import MemoryConfig
 
-from evaluations.longmemeval.ingest.consolidation import (
+from evaluations.ingest.consolidation import (
     CONSOLIDATE_LOGGER_NAME,
     LAST_RUN_NAME,
     MANIFEST_NAME,
@@ -114,9 +114,7 @@ def _fake_poll(
         calls.append(1)
         return behavior()
 
-    monkeypatch.setattr(
-        "evaluations.longmemeval.ingest.consolidation.consolidate_poll_once", _poll
-    )
+    monkeypatch.setattr("evaluations.ingest.consolidation.consolidate_poll_once", _poll)
     return lambda: calls
 
 

@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from pydantic import BaseModel
 
-from evaluations.longmemeval.ingest.types import Chunk
+from evaluations.ingest.types import Chunk
 
 if TYPE_CHECKING:
     from evaluations.longmemeval.adapter import QuestionMeta

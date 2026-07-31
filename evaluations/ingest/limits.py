@@ -6,7 +6,7 @@ that pack beneath the cap, the dry-run estimator, the two corpus report scripts.
 They live here, above every one of those readers, so a raise lands everywhere at
 once instead of in the three places somebody remembered.
 
-``evaluations/longmemeval`` imports these; ``evaluations/longmemeval/ingest`` owns them, so
+``evaluations/longmemeval`` imports these; ``evaluations/ingest`` owns them, so
 the dependency still points one way. ``longmemeval/preflight.py`` deliberately
 does NOT import them — an assumption guard that reads its expectations out of
 the thing it guards agrees with any drift it was written to catch.

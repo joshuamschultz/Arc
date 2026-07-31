@@ -37,10 +37,10 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from evaluations.ingest.adapter import SourceAdapter
+from evaluations.ingest.types import Session
 from evaluations.longmemeval.adapter import LongMemEvalAdapter, QuestionMeta
 from evaluations.longmemeval.dataset import Dataset, load_dataset
-from evaluations.longmemeval.ingest.adapter import SourceAdapter
-from evaluations.longmemeval.ingest.types import Session
 
 _FIXTURES = Path(__file__).parent / "fixtures"
 

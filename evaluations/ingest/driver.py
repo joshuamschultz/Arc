@@ -33,8 +33,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from evaluations.longmemeval.ingest.fidelity import GoldEvidenceFilteredError, SanitizeFidelityGate
-from evaluations.longmemeval.ingest.types import Chunk
+from evaluations.ingest.fidelity import GoldEvidenceFilteredError, SanitizeFidelityGate
+from evaluations.ingest.types import Chunk
 
 CONSOLIDATE_LOOP_NAME = "memory_consolidate_loop"
 """Registered name of arcmemory's polling loop (``memory.capabilities``)."""

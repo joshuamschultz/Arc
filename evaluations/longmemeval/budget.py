@@ -48,13 +48,13 @@ from typing import Final
 
 from pydantic import BaseModel, ConfigDict
 
-from evaluations.longmemeval.adapter import LongMemEvalAdapter
-from evaluations.longmemeval.dataset import Dataset, load_dataset
-from evaluations.longmemeval.ingest.chunker import TurnChunker, TurnExceedsCapError
+from evaluations.ingest.chunker import TurnChunker, TurnExceedsCapError
 
 # Redundant alias: the explicit re-export form, so the modules that already read
 # the cap off this one (the CLI, the runner) keep resolving it under strict mypy.
-from evaluations.longmemeval.ingest.limits import MAX_EVENT_CHARS as MAX_EVENT_CHARS
+from evaluations.ingest.limits import MAX_EVENT_CHARS as MAX_EVENT_CHARS
+from evaluations.longmemeval.adapter import LongMemEvalAdapter
+from evaluations.longmemeval.dataset import Dataset, load_dataset
 
 LOGGER_NAME: Final = "evaluations.budget"
 _LOG = logging.getLogger(LOGGER_NAME)

@@ -31,8 +31,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from evaluations.ingest.types import Session, Turn
 from evaluations.longmemeval.dataset import Dataset
-from evaluations.longmemeval.ingest.types import Session, Turn
 
 
 class QuestionNotFoundError(Exception):

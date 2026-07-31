@@ -10,11 +10,8 @@ harness-side code — the framework is never patched to make a number look bette
 ## Layout
 
 ```
-ingest/       source-agnostic — how a corpus becomes agent input
-              types adapter chunker fidelity agent_factory driver
-              consolidation lifecycle limits models
 config/       *.toml.example templates for the generated per-question agent
-tests/        this harness's suite (541 tests)
+tests/        this harness's own suite
 data/         gitignored — the corpus JSON (manual download)
 runs/         gitignored — throwaway per-question workspaces. NO source, ever.
 results/      gitignored — the JSONL ledger + run_manifest.json
@@ -23,9 +20,12 @@ adapter dataset query judge scoring reference_prompts agreement
 runner ledger preflight budget manifest hygiene scrub paths cli
 ```
 
-`ingest/` must not import from the harness modules beside it — that keeps the
-pathway reusable for a second corpus.
-`tests/architecture/test_no_evaluations_layering_violations.py` enforces it.
+The corpus-to-agent pathway lives one level up in
+[`evaluations/ingest/`](../ingest/) because it is **shared** — it is
+source-agnostic so a second benchmark can reuse it. This harness plugs into it
+by providing a `SourceAdapter`. `ingest/` must never import from this
+directory; `tests/architecture/test_no_evaluations_layering_violations.py`
+enforces that by AST-scanning it.
 
 `runs/`, `results/` and `data/` hold no source because **git cannot re-include a
 file beneath an ignored directory**. A `!` negation cannot rescue it.

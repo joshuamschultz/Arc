@@ -50,6 +50,12 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from arcstore.config import ENV_DATA_DIR
 
+from evaluations.ingest.agent_factory import build_eval_agent
+from evaluations.ingest.chunker import TurnChunker
+from evaluations.ingest.consolidation import ConsolidationResult, ConsolidationWaiter
+from evaluations.ingest.fidelity import SanitizeFidelityGate
+from evaluations.ingest.lifecycle import leftover_workspaces
+from evaluations.ingest.types import Session, Turn
 from evaluations.longmemeval import cli
 from evaluations.longmemeval.adapter import LongMemEvalAdapter
 from evaluations.longmemeval.budget import (
@@ -61,12 +67,6 @@ from evaluations.longmemeval.budget import (
 )
 from evaluations.longmemeval.dataset import Dataset, load_dataset
 from evaluations.longmemeval.hygiene import RepoHygieneGuard
-from evaluations.longmemeval.ingest.agent_factory import build_eval_agent
-from evaluations.longmemeval.ingest.chunker import TurnChunker
-from evaluations.longmemeval.ingest.consolidation import ConsolidationResult, ConsolidationWaiter
-from evaluations.longmemeval.ingest.fidelity import SanitizeFidelityGate
-from evaluations.longmemeval.ingest.lifecycle import leftover_workspaces
-from evaluations.longmemeval.ingest.types import Session, Turn
 from evaluations.longmemeval.judge import JUDGE_API_KEY_ENV
 from evaluations.longmemeval.ledger import ResultLedger
 from evaluations.longmemeval.preflight import PREFLIGHT_QUESTION_ID
