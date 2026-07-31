@@ -86,18 +86,18 @@ So the model sees, top to bottom:
 
 ```
 # cache segment 1 — session-stable
---- base ---                (harness preamble)                        [arcagent:base_system]
---- identity ---            (workspace/identity.md)
---- capabilities ---        (tool/skill manifest; preamble = tool_manifest_preamble)
---- code_exec_guidance ---  (if execute_python is available)          [arcrun]
---- policy ---              (if the policy module is on)
---- skill_usage ---         (if the agent has skills)                 [arcagent:skill_usage_instruction]
---- spawn_guidance ---      (if spawn enabled)                        [arcagent:spawn_guidance]
---- strategy_react ---      (per allowed strategy)                    [arcrun:strategy_react]
---- strategy_selection ---  (only if >1 strategy; built from *_description) [arcrun]
+<base>                      (harness preamble)                        [arcagent:base_system]
+<identity>                  (workspace/identity.md)
+<capabilities>              (tool/skill manifest; preamble = tool_manifest_preamble)
+<code_exec_guidance>        (if execute_python is available)          [arcrun]
+<policy>                    (if the policy module is on)
+<skill_usage>               (if the agent has skills)                 [arcagent:skill_usage_instruction]
+<spawn_guidance>            (if spawn enabled)                        [arcagent:spawn_guidance]
+<strategy_react>            (per allowed strategy)                    [arcrun:strategy_react]
+<strategy_selection>        (only if >1 strategy; built from *_description) [arcrun]
 
 # cache segment 2 — run-stable
---- context ---             (workspace/context.md)
+<context>                   (workspace/context.md)
 ```
 
 Within a tier: fixed head (`base`, then `identity`), then alphabetical, then fixed

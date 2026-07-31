@@ -150,24 +150,24 @@ flowchart TB
 
 ```text
 # ---- cache segment 1: session-stable ----
---- base ---
+<base>
 <arcagent:base_system — the harness preamble, operator-overridable>
 
---- identity ---
+<identity>
 <identity.md content — the agent's immutable goal charter>
 
---- <module-injected + caller sections, sorted alphabetically> ---
+<module-injected + caller sections, sorted alphabetically>
 <e.g. capabilities (tool+skill XML manifest, prio 85), policy,
  skill_usage (prio 91)>
 
---- spawn_guidance ---
+<spawn_guidance>
 <only if spawn.enabled>
 
---- strategy: react (or whichever strategy is active) ---
+<strategy_react>  (or whichever strategy is active)
 <arcrun strategy prompt>
 
 # ---- cache segment 2: run-stable ----
---- context ---
+<context>
 <context.md content — the workpad's open-loops cockpit>
 ```
 

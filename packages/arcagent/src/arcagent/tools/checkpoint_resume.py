@@ -18,8 +18,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 
-from arcllm import Message
-from arcrun import LoopCheckpoint, StreamEvent, TurnEndEvent
+from arcrun import LoopCheckpoint, StreamEvent, TurnEndEvent, system_messages
 from arcrun import run_stream as arcrun_run_stream
 
 from arcagent.core.agent_dispatch import build_run_context, maybe_compact, track_active_run
@@ -56,10 +55,11 @@ async def resume_stream(agent: ArcAgent, *, session_key: str) -> AsyncIterator[S
     transcript = wire_messages(session.get_messages())
     # apply_checkpoint (in arcrun) replaces the loop's message list with this one,
     # so the freshly-assembled system prompt must lead it — the transcript on disk
-    # never carries the system message (it is rebuilt every run). One message per
-    # cache segment, matching what the loop itself would build.
-    system = [Message(role="system", content=s) for s in prompt.segments]
-    cp = LoopCheckpoint.from_record(record, messages=[*system, *transcript])
+    # never carries the system message (it is rebuilt every run). Built by arcrun's
+    # own helper so a resumed run's system messages are identical to a live run's.
+    cp = LoopCheckpoint.from_record(
+        record, messages=[*system_messages(prompt.segments), *transcript]
+    )
     transform = agent._context.transform_context if agent._context else None
 
     final_text = ""

@@ -2,6 +2,7 @@
 
 __version__ = "0.9.0"
 
+from arcrun._messages import SystemPrompt, system_messages
 from arcrun.builtins import (
     SandboxError,
     SandboxOOMError,
@@ -59,6 +60,7 @@ __all__ = [
     "StaticProvider",
     "Strategy",
     "StreamEvent",
+    "SystemPrompt",
     "TokenEvent",
     "Tool",
     "ToolContext",
@@ -78,6 +80,7 @@ __all__ = [
     "run_shell",
     "run_stream",
     "stream_llm_response",
+    "system_messages",
     "to_checkpoint",
     "verify_chain",
 ]

@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 import math
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -69,6 +69,33 @@ _RUN_TAIL = ("context",)
 TURN_CONTEXT_KEY = "turn_context"
 
 
+# Every boundary this module emits is an XML element: ``<identity>…</identity>``
+# for a section, ``<agent-context>…</agent-context>`` for a turn's retrieved
+# material. One shape for both, and unambiguous to read back out of a transcript.
+TURN_CONTEXT_TAG = "agent-context"
+
+
+def _defang(text: str, tags: Iterable[str]) -> str:
+    """Strip tags in untrusted text that could forge a boundary (LLM01).
+
+    Section bodies and retrieved material are shaped by web pages, file
+    contents, other agents, and the agent's own writing — ``context.md`` is
+    agent-authored, and any module may inject a section. None of it may name a
+    boundary this module emits: closing ``</agent-context>`` early would make
+    the remainder read as the operator's own words, and forging ``<identity>``
+    would let it pose as a system-prompt section, the stronger position of the two.
+
+    Only the exact tags being emitted are stripped, so unrelated XML or HTML in
+    a body (a code sample, a quoted document) survives untouched. Neutralizing
+    keeps the text and drops only the markers, which carry no meaning inside a
+    body. Pure, so a replayed turn reproduces identical bytes and the provider's
+    cached prefix still matches.
+    """
+    for tag in tags:
+        text = text.replace(f"<{tag}>", "").replace(f"</{tag}>", "")
+    return text
+
+
 def with_turn_context(user_text: str, turn: str) -> str:
     """The exact bytes the model sees for one user turn.
 
@@ -79,10 +106,14 @@ def with_turn_context(user_text: str, turn: str) -> str:
 
     Tagged rather than merged: retrieved material is reference data, and the
     model is told (in ``base_system``) never to read it as instruction.
+
+    ``turn`` is defanged first — see :func:`_defang` for why retrieved material
+    must not be able to name its own container.
     """
     if not turn:
         return user_text
-    return f"{user_text}\n\n<agent-context>\n{turn}\n</agent-context>"
+    body = _defang(turn, (TURN_CONTEXT_TAG,))
+    return f"{user_text}\n\n<{TURN_CONTEXT_TAG}>\n{body}\n</{TURN_CONTEXT_TAG}>"
 
 
 @dataclass(frozen=True)
@@ -101,7 +132,15 @@ class AssembledPrompt:
 
     @property
     def segments(self) -> list[str]:
-        """The system prompt as ordered cache segments, most-stable first."""
+        """The system prompt as ordered cache segments, most-stable first.
+
+        At most two, which is the budget ``arcllm``'s Anthropic adapter enforces
+        in ``_MAX_SYSTEM_SEGMENTS`` (4 breakpoints per request, less the last
+        tool and the conversation tail). Adding a third tier here means raising
+        it there too — the packages stay independently installable, so the
+        contract is documented rather than shared, and the adapter rejects an
+        over-long list loudly instead of letting the provider 400.
+        """
         return [s for s in (self.session, self.run) if s]
 
     def session_record(self, user_text: str) -> dict[str, str]:
@@ -152,13 +191,21 @@ def _render(
     sections: dict[str, str],
     keys: list[str],
     *,
+    reserved: Iterable[str],
     head: tuple[str, ...] = (),
     tail: tuple[str, ...] = (),
 ) -> str:
-    """Render named sections in a stable order: ``head``, then sorted, then ``tail``."""
+    """Render sections as XML elements in a stable order: head, sorted, tail.
+
+    ``reserved`` is every tag name in play across the whole prompt, not just
+    this tier — a body must not be able to forge a section that lives in another
+    segment either.
+    """
     middle = sorted(k for k in keys if k not in head and k not in tail)
     ordered = [k for k in head if k in keys] + middle + [k for k in tail if k in keys]
-    return "\n\n".join(f"--- {k} ---\n{sections[k]}" for k in ordered if sections[k])
+    return "\n\n".join(
+        f"<{k}>\n{_defang(sections[k], reserved)}\n</{k}>" for k in ordered if sections[k]
+    )
 
 
 def _msg_attr(msg: Any, key: str, default: Any = "") -> Any:
@@ -260,10 +307,13 @@ class ContextManager:
         for key in sections:
             tiered[_tier_of(key, caller_keys)].append(key)
 
+        # Every tag the prompt emits, so no body can forge a boundary — including
+        # one belonging to a section in a different segment.
+        reserved = (*sections, TURN_CONTEXT_TAG)
         return AssembledPrompt(
-            session=_render(sections, tiered["session"], head=_SESSION_HEAD),
-            run=_render(sections, tiered["run"], tail=_RUN_TAIL),
-            turn=_render(sections, tiered["turn"]),
+            session=_render(sections, tiered["session"], reserved=reserved, head=_SESSION_HEAD),
+            run=_render(sections, tiered["run"], reserved=reserved, tail=_RUN_TAIL),
+            turn=_render(sections, tiered["turn"], reserved=reserved),
         )
 
     def estimate_tokens(self, text: str) -> int:

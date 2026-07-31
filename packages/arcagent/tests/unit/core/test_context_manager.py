@@ -77,7 +77,7 @@ class TestAssembleSystemPrompt:
     async def test_section_headers_included(self, ctx_mgr: ContextManager, tmp_path: Path) -> None:
         (tmp_path / "identity.md").write_text("content")
         prompt = (await ctx_mgr.assemble_system_prompt(tmp_path)).as_text()
-        assert "--- identity ---" in prompt.lower() or "identity" in prompt.lower()
+        assert "<identity>" in prompt.lower()
 
     async def test_works_without_bus(self, ctx_mgr: ContextManager, tmp_path: Path) -> None:
         """No bus parameter = no event emitted, still works."""
