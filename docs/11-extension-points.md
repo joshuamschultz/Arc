@@ -1,10 +1,12 @@
 # 11. Extension Points — Every Seam You Can Hook Into
 
+> **Section:** 2. System Walkthroughs · **Topic:** Building on Arc
 > **Who this is for:** anyone about to add a capability to Arc — a new chat
 > platform, model provider, tool, memory backend, audit destination, or UI
 > panel — and who needs to know which file to add, not which core file to edit.
 > **Read this after:** [`docs/10-security-model.md`](10-security-model.md) · **Read this next:** [`docs/12-configuration.md`](12-configuration.md)
 > **Plain-language summary lives in:** the "In one breath" section below.
+> **See also:** [IMPLEMENTATION_GUIDES.md](IMPLEMENTATION_GUIDES.md), [API_REFERENCE.md](API_REFERENCE.md)
 
 ---
 

@@ -1,5 +1,6 @@
 # 10. The Security Model — Identity, Signing, Authorization, Audit
 
+> **Section:** 2. System Walkthroughs · **Topic:** The Record
 > **Who this is for:** anyone who needs to know what actually stops a rogue
 > agent, a compromised skill, or a forged approval in Arc — a contributor
 > wiring a new tool, a security officer evaluating the framework, an auditor
@@ -7,6 +8,7 @@
 > **Read this after:** [`docs/03-anatomy-of-a-turn.md`](03-anatomy-of-a-turn.md)
 > · **Read this next:** [`docs/11-extension-points.md`](11-extension-points.md)
 > **Plain-language summary lives in:** the "In one breath" section below.
+> **See also:** [SECURITY.md](SECURITY.md), [TIERS_AND_PRESETS.md](TIERS_AND_PRESETS.md)
 
 ---
 
@@ -465,7 +467,7 @@ append-only and retained by NIST AU-9/10/11; GDPR/CCPA-style erasure
 conflicts directly — shredding one record invalidates every record after it
 in the chain. Arc supports retention-driven purge of whole aged segments; it
 does **not** support crypto-shredding an individual record on request. See
-[`docs/08-data-and-storage.md`](08-data-and-storage.md) for formats.
+[`docs/08-data-storage.md`](08-data-storage.md) for formats.
 
 `worm_policy_sink` (`audit.py:533`) adapts the policy pipeline's
 `(event_type, payload)` callback into an `AuditEvent` — raw tool `arguments`

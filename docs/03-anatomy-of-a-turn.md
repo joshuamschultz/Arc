@@ -1,9 +1,10 @@
 # 3. Anatomy of a Turn — One Request, End to End
 
+> **Section:** 2. System Walkthroughs · **Topic:** The Engine
 > **Who this is for:** any contributor who needs to know what actually happens
 > between a user hitting Enter and Arc's reply appearing — the spine every
 > other doc in this set hangs off of.
-> **Read this after:** [`02-architecture.md`](02-architecture.md) · **Read this next:** [`04-the-unified-adapter.md`](04-the-unified-adapter.md)
+> **Read this after:** [`02-architecture.md`](02-architecture.md) · **Read this next:** [`04-the-unified-adapter.md`](04-the-unified-adapter.md) · See also: [DATA_FLOW.md](DATA_FLOW.md) for visual diagrams
 > **Plain-language summary lives in:** the "In one breath" section below.
 
 ---
@@ -523,7 +524,7 @@ Three parallel write paths fire during a turn, not after it:
    go through `arctrust.audit.emit()` to `WormSink`, a hash-chained,
    append-once JSONL file — the write-once-read-many trail (detail on
    format and segment rotation in
-   [`08-data-and-storage.md`](08-data-and-storage.md)).
+   [`08-data-storage.md`](08-data-storage.md)).
 
 **The read path.** `arcui` does not receive a live push of any of this — it
 queries the arcstore spool after the fact, through `arcstore.query`

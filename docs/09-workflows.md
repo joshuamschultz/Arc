@@ -1,10 +1,12 @@
 # 9. The Workflows — What Arc Actually Does, Day to Day
 
+> **Section:** 2. System Walkthroughs · **Topic:** The Record
 > **Who this is for:** anyone who needs to know what happens *between* turns —
 > how a message finds its way to an agent, how work gets scheduled, and how a
 > human gets pulled in when something needs their say-so.
 > **Read this after:** [`docs/03-anatomy-of-a-turn.md`](03-anatomy-of-a-turn.md) · **Read this next:** [`docs/10-security-model.md`](10-security-model.md)
 > **Plain-language summary lives in:** the "In one breath" section below.
+> **See also:** [DATA_FLOW.md](DATA_FLOW.md), [IMPLEMENTATION_GUIDES.md](IMPLEMENTATION_GUIDES.md)
 
 ---
 
@@ -588,7 +590,7 @@ flowchart LR
     class R,UI surface
 ```
 
-Full detail on every durable format: [`docs/08-data-and-storage.md`](08-data-and-storage.md).
+Full detail on every durable format: [`docs/08-data-storage.md`](08-data-storage.md).
 
 ---
 

@@ -2,6 +2,7 @@
 
 > Where every prompt lives, how it's resolved, and how the pieces stack into what
 > a model actually sees. Companion to `.claude/specs/editable-system-prompts/`.
+> **See also:** [06-prompts-tools-skills.md](06-prompts-tools-skills.md), [IMPLEMENTATION_GUIDES.md](IMPLEMENTATION_GUIDES.md)
 
 ## 1. The mental model
 

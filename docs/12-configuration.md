@@ -1,11 +1,13 @@
 # 12. Configuration — The Whole Surface, and How It Resolves
 
+> **Section:** 2. System Walkthroughs · **Topic:** Building on Arc
 > **Who this is for:** a contributor who needs to add a config knob, debug why
 > a setting isn't taking effect, or understand why a feature they wired stays
 > dead in production.
 > **Read this after:** [11. Extension Points](11-extension-points.md) ·
 > **Read this next:** [13. Contributing](13-contributing.md)
 > **Plain-language summary lives in:** the "In one breath" section below.
+> **See also:** [TIERS_AND_PRESETS.md](TIERS_AND_PRESETS.md), [SETUP.md](SETUP.md)
 
 ---
 

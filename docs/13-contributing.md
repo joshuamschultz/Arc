@@ -1,11 +1,13 @@
 # 13. Contributing — Setup, Gates, and How Work Lands
 
+> **Section:** 2. System Walkthroughs · **Topic:** Building on Arc
 > **Who this is for:** anyone about to write, review, or merge code in this
 > repository — a new contributor's first PR, or a returning one who forgot a
 > flag.
 > **Read this after:** [`docs/02-architecture.md`](02-architecture.md) ·
 > **Read this next:** [`docs/14-glossary.md`](14-glossary.md)
 > **Plain-language summary lives in:** the "In one breath" section below.
+> **See also:** [CONTRIBUTING.md](CONTRIBUTING.md), [TESTING.md](TESTING.md)
 
 ---
 

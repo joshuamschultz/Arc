@@ -1,10 +1,12 @@
 # 6. How System Prompts, Tools, and Skills Get Loaded
 
+> **Section:** 2. System Walkthroughs · **Topic:** The Engine
 > **Who this is for:** anyone about to write or debug what an agent "knows" or
 > "can do" — a new contributor, a security reviewer, or an operator writing an
 > `identity.md`.
-> **Read this after:** [`docs/05-steering-and-strategies.md`](05-steering-and-strategies.md) · **Read this next:** [`docs/07-memory-lifecycle.md`](07-memory-lifecycle.md)
+> **Read this after:** [`docs/05-steering-strategies.md`](05-steering-strategies.md) · **Read this next:** [`docs/07-memory-lifecycle.md`](07-memory-lifecycle.md)
 > **Plain-language summary lives in:** the "In one breath" section below.
+> **See also:** [BLUEPRINTS.md](BLUEPRINTS.md), [IMPLEMENTATION_GUIDES.md](IMPLEMENTATION_GUIDES.md), [API_REFERENCE.md](API_REFERENCE.md)
 
 ---
 

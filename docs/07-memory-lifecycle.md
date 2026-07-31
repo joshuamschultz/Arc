@@ -1,10 +1,12 @@
 # 7. The Memory Lifecycle — How Information Gets In, and How It Comes Back
 
+> **Section:** 2. System Walkthroughs · **Topic:** The Engine
 > **Who this is for:** anyone extending or auditing Arc's memory package — the
 > question this doc answers is "when the agent sees or says something, how does
 > that become durable memory, and how does it come back later?"
-> **Read this after:** [`docs/06-prompts-tools-skills.md`](06-prompts-tools-skills.md) · **Read this next:** [`docs/08-data-and-storage.md`](08-data-and-storage.md)
+> **Read this after:** [`docs/06-prompts-tools-skills.md`](06-prompts-tools-skills.md) · **Read this next:** [`docs/08-data-storage.md`](08-data-storage.md)
 > **Plain-language summary lives in:** the "In one breath" section below.
+> **See also:** [DATA_FLOW.md](DATA_FLOW.md), [PACKAGE_INDEX.md](packages/arcmemory.md)
 
 ---
 

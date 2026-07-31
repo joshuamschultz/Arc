@@ -1,9 +1,10 @@
 # 1. What Arc Is (and Why It Exists)
 
+> **Section:** 2. System Walkthroughs · **Topic:** Orientation
 > **Who this is for:** anyone opening this repo for the first time — a new
 > contributor, a program manager, a security officer, a buyer.
 > **Read this after:** nothing — start here. · **Read this next:**
-> [`docs/02-architecture.md`](02-architecture.md)
+> [`docs/02-architecture.md`](02-architecture.md) · See also: [SETUP.md](SETUP.md) for installation
 > **Plain-language summary lives in:** the "In one breath" section below.
 
 ---

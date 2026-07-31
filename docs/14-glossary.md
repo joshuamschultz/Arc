@@ -1,5 +1,6 @@
 # 14. Glossary — Every Arc Term, Plainly Defined
 
+> **Section:** 2. System Walkthroughs · **Topic:** Building on Arc
 > **Who this is for:** anyone who hits an unfamiliar word anywhere in these
 > docs — a program manager, a security officer, a new contributor, a buyer.
 > **Read this after:** any other doc, whenever a term stops you.
@@ -7,6 +8,7 @@
 > haven't started there yet.
 > **Plain-language summary lives in:** every entry below — that's the whole
 > point of this file.
+> **See also:** [PACKAGE_INDEX.md](PACKAGE_INDEX.md) for package details
 
 ---
 
@@ -146,7 +148,7 @@ tier, not a federal-only feature. Full model: [`docs/10-security-model.md`](10-s
 
 ## 4. Data & storage
 
-Full picture: [`docs/08-data-and-storage.md`](08-data-and-storage.md).
+Full picture: [`docs/08-data-storage.md`](08-data-storage.md).
 
 | Term | Plain language | Technical precision | Code |
 |---|---|---|---|

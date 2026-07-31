@@ -1,9 +1,11 @@
 # 2. Architecture — The Layered Package Stack
 
+> **Section:** 2. System Walkthroughs · **Topic:** Orientation
 > **Who this is for:** anyone about to write code in this repo who needs to know
 > which of the 18 packages under `packages/` their change belongs in.
 > **Read this after:** [`docs/01-what-is-arc.md`](01-what-is-arc.md) · **Read this next:** [`docs/03-anatomy-of-a-turn.md`](03-anatomy-of-a-turn.md)
 > **Plain-language summary lives in:** the "In one breath" section below.
+> **See also:** [PACKAGE_INDEX.md](PACKAGE_INDEX.md), [DIAGRAMS.md](DIAGRAMS.md)
 
 ---
 
@@ -23,9 +25,7 @@ your build if you break the floor plan.
 
 ## The package inventory
 
-Eighteen directories live under `packages/`. Two are real, shipping code with
-tests and architecture guards; two (`arcmas`, `arcmodel`) are near-empty
-placeholders — flagged below, not glossed over.
+Eighteen directories live under `packages/`. See [PACKAGE_INDEX.md](PACKAGE_INDEX.md) for detailed documentation on each package. Two are real, shipping code with tests and architecture guards; two (`arcmas`, `arcmodel`) are near-empty placeholders — flagged below, not glossed over.
 
 | Package | Source root | One job | Depends on | Must never |
 |---|---|---|---|---|

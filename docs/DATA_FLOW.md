@@ -1,0 +1,601 @@
+# Data Flow Pathways
+
+> **Section:** 3. Reference · **Topic:** Architecture
+> **Who this is for:** Developers and operators who need to understand how data moves through Arc.
+> **Read this after:** [SECURITY.md](SECURITY.md) · **Read this next:** [API_REFERENCE.md](API_REFERENCE.md)
+> **See also:** [03-anatomy-of-a-turn.md](03-anatomy-of-a-turn.md), [08-data-storage.md](08-data-storage.md), [DIAGRAMS.md](DIAGRAMS.md)
+
+---
+
+## Architecture Layers
+
+```mermaid
+flowchart TB
+    classDef surface fill:#5A9CFF,stroke:#0073FE,color:#002550
+    classDef agent fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef runtime fill:#0055BC,stroke:#003B82,color:#FFFFFF
+    classDef llm fill:#003B82,stroke:#002550,color:#FFFFFF
+    classDef found fill:#002550,stroke:#001A38,color:#FFFFFF
+
+    subgraph "Surface Layer"
+        arcgateway[arcgateway<br/>Chat platforms]:::surface
+        arcui[arcui<br/>Dashboard]:::surface
+    end
+
+    subgraph "Entry Layer"
+        arccli[arccli<br/>CLI commands]:::surface
+    end
+
+    subgraph "Agent Layer"
+        arcagent[arcagent<br/>Agent framework]:::agent
+        arcteam[arcteam<br/>Multi-agent]:::agent
+        arcmemory[arcmemory<br/>Memory system]:::agent
+        arcskill[arcskill<br/>Skill hub]:::agent
+    end
+
+    subgraph "Runtime Layer"
+        arcrun[arcrun<br/>Execution loop]:::runtime
+        arcprompt[arcprompt<br/>Prompt engine]:::runtime
+    end
+
+    subgraph "LLM Layer"
+        arcllm[arcllm<br/>LLM client]:::llm
+    end
+
+    subgraph "Foundation Layer"
+        arctrust[arctrust<br/>Security primitives]:::found
+        arcstore[arcstore<br/>Storage backend]:::found
+    end
+
+    arcgateway --> arcagent
+    arcui --> arcagent
+    arccli --> arcteam
+    arccli --> arcagent
+    arcagent --> arcrun
+    arcagent --> arcteam
+    arcagent --> arcmemory
+    arcagent --> arcskill
+    arcrun --> arcllm
+    arcprompt --> arcllm
+    arcllm --> arctrust
+    arcllm --> arcstore
+    arcteam --> arctrust
+    arcteam --> arcstore
+    arcskill --> arctrust
+    arcagent --> arctrust
+    arcagent --> arcstore
+```
+
+---
+
+## Single-Agent Turn Flow
+
+When an agent processes a message, data flows through this pathway:
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant CLI as arccli
+    participant Agent as arcagent
+    participant Run as arcrun
+    participant LLM as arcllm
+    participant Trust as arctrust
+    participant Store as arcstore
+
+    U->>CLI: "Analyze this data"
+    CLI->>Agent: load_config()
+    Agent->>Trust: verify_identity()
+    Agent->>Store: load_memory()
+    Agent->>Agent: build_prompt()
+    
+    Agent->>Run: run_turn()
+    Run->>LLM: chat_completion()
+    LLM->>LLM: select_provider()
+    LLM->>Store: record_llm_call()
+    LLM-->>Run: response
+    Run->>Agent: parse_tool_calls()
+    Agent->>Trust: authorize_action()
+    Agent->>Store: execute_tool()
+    Agent->>Trust: audit_log()
+    Agent-->>CLI: result
+    CLI-->>U: formatted output
+```
+
+### Detailed Turn Steps
+
+```mermaid
+flowchart TD
+    classDef step fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef check fill:#002550,stroke:#001A38,color:#FFFFFF
+    classDef store fill:#D6E6FF,stroke:#0073FE,color:#002550
+
+    Start[User Input]:::step --> Prompt[Build Prompt<br/>arcprompt]:::step
+    Prompt --> LLM[LLM Call<br/>arcllm]:::step
+    LLM --> Parse[Parse Response<br/>Tool calls?]:::check
+    Parse -->|No| Return[Return Result]:::step
+    Parse -->|Yes| Auth[Authorize<br/>arctrust]:::check
+    Auth --> Exec[Execute Tool<br/>arcstore]:::step
+    Exec --> Audit[Audit Log<br/>arctrust]:::step
+    Audit --> Prompt
+```
+
+---
+
+## Capability Loading Flow
+
+Capabilities are loaded from multiple sources with security checks:
+
+```mermaid
+flowchart TB
+    classDef source fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef scan fill:#002550,stroke:#001A38,color:#FFFFFF
+    classDef active fill:#D6E6FF,stroke:#0073FE,color:#002550
+
+    subgraph "Capability Sources"
+        S1[Builtins<br/>packages/arcagent/tools]:::source
+        S2[Global<br/>~/.arc/capabilities]:::source
+        S3[Agent<br/>agent/capabilities]:::source
+        S4[Workspace<br/>workspace/.capabilities]:::source
+    end
+
+    subgraph "Security Pipeline"
+        Scan[Static Scan<br/>arcskill]:::scan
+        Sign[Signature Verify<br/>arctrust]:::scan
+        CRL[CRL Check<br/>arcskill]:::scan
+    end
+
+    S1 --> Scan
+    S2 --> Scan
+    S3 --> Scan
+    S4 --> Scan
+    Scan --> Sign
+    Sign --> CRL
+    CRL --> Active[Active Capabilities]:::active
+```
+
+---
+
+## Skill Installation Pipeline
+
+The 8-gate skill install pipeline:
+
+```mermaid
+flowchart LR
+    classDef gate fill:#002550,stroke:#001A38,color:#FFFFFF
+    classDef term fill:#D6E6FF,stroke:#0073FE,color:#002550
+    classDef fail fill:#F68D2E,stroke:#C06000,color:#FFFFFF
+
+    A[1. Fetch<br/>to quarantine]:::gate --> B[2. Sigstore<br/>signature]:::gate
+    B --> C[3. Rekor<br/>inclusion proof]:::gate
+    C --> D[4. CRL check]:::gate
+    D --> E[5. Static scan<br/>regex+AST+semgrep+bandit]:::gate
+    E --> F[6. Sandboxed<br/>dry-run]:::gate
+    F --> G[7. Atomic<br/>activation]:::gate
+    G --> H[8. Lock file<br/>entry]:::term
+    
+    B -.-> X[SignatureInvalid]:::fail
+    D -.-> Y[CRLUnreachable]:::fail
+    E -.-> Z[ScanVerdictFailed]:::fail
+```
+
+---
+
+## Multi-Agent Communication Flow
+
+```mermaid
+sequenceDiagram
+    participant A1 as Agent 1
+    participant Team as arcteam
+    participant NATS as NATS Backend
+    participant A2 as Agent 2
+    participant Audit as arctrust
+
+    A1->>Team: send(sender, to, body, type, priority)
+    Team->>Audit: sign_message()
+    Team->>NATS: publish(channel, message)
+    NATS->>A2: deliver(message)
+    A2->>Team: ack(message_id)
+    Team->>Audit: log_ack()
+```
+
+### Team Message Flow
+
+```mermaid
+flowchart LR
+    classDef agent fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef msg fill:#002550,stroke:#001A38,color:#FFFFFF
+    classDef backend fill:#D6E6FF,stroke:#0073FE,color:#002550
+
+    A1[Agent 1]:::agent -->|task| Team[arcteam]:::msg
+    Team -->|signed message| NATS[NATS JetStream]:::backend
+    NATS -->|deliver| A2[Agent 2]:::agent
+    A2 -->|ack| Team
+    Team -->|log| Audit[Audit Trail]:::msg
+```
+
+---
+
+## Memory System Flow
+
+```mermaid
+flowchart TB
+    classDef mem fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef store fill:#002550,stroke:#001A38,color:#FFFFFF
+    classDef active fill:#D6E6FF,stroke:#0073FE,color:#002550
+
+    subgraph "Memory Types"
+        M1[Episodic<br/>Recent events]:::mem
+        M2[Entity<br/>Facts graph]:::mem
+        M3[Daily Log<br/>Long-term]:::mem
+    end
+
+    subgraph "Storage"
+        S1[workspace/sessions/]:::store
+        S2[workspace/memory/]:::store
+        S3[workspace/daily/]:::store
+    end
+
+    subgraph "Access"
+        Active[Active Memory<br/>in prompt]:::active
+        Query[Memory Query]:::active
+    end
+
+    M1 --> S1
+    M2 --> S2
+    M3 --> S3
+    S1 --> Active
+    S2 --> Query
+    S3 --> Query
+```
+
+---
+
+## LLM Provider Selection Flow
+
+```mermaid
+flowchart TD
+    classDef req fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef sel fill:#002550,stroke:#001A38,color:#FFFFFF
+    classDef prov fill:#D6E6FF,stroke:#0073FE,color:#002550
+
+    Start[LLM Request]:::req --> Features[Check required<br/>features]:::sel
+    Features -->|tools| ToolCheck[Tool support]:::sel
+    Features -->|vision| VisionCheck[Vision support]:::sel
+    Features -->|json| JSONCheck[JSON mode support]:::sel
+    ToolCheck --> Provider[Select Provider<br/>arcllm]:::prov
+    VisionCheck --> Provider
+    JSONCheck --> Provider
+    Provider -->|HTTP direct| API[LLM API]:::req
+    API --> Provider
+    Provider --> Start
+```
+
+---
+
+## Turn Flow — From Message to Response
+
+When an agent processes a message, data flows through this pathway:
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant Entry as Entry Surface
+    participant Agent as ArcAgent.run
+    participant Dispatch as dispatch_stream
+    participant RunStream as arcrun.run_stream
+    participant Loop as react_loop
+    participant LLM as arcllm
+    participant Tool as Tool (policy-wrapped)
+    participant Spool as arcstore spool
+    participant UI as arcui
+
+    U->>Entry: message (CLI, TUI, or Gateway)
+    Entry->>Agent: agent.run(input_text, session)
+    Agent->>Dispatch: build_run_context (prompt, tools, provider)
+    Dispatch->>RunStream: model, capabilities, actor_did, run_id
+    RunStream->>Loop: same run_id (mint if None)
+    Loop->>Loop: registry.freeze() - tool-set lock
+    Loop-->>RunStream: RunState (run_id fixed for the whole run)
+    RunStream-->>Dispatch: AsyncIterator[StreamEvent]
+    
+    loop each turn
+        Dispatch->>LLM: model.invoke(messages, tools)
+        LLM-->>Dispatch: LLMResponse
+        LLM->>Spool: llm_call record (request_id=run_id)
+        Dispatch->>Tool: dispatch tool_call
+        Tool->>Tool: policy.evaluate (DENY short-circuits)
+        Tool-->>Dispatch: tool_result
+        Dispatch->>Spool: run_event / tool_event (request_id=run_id)
+        Tool->>Spool: audit tool.executed (WormSink)
+    end
+    
+    Dispatch-->>Agent: TokenEvent... TurnEndEvent
+    Agent-->>Entry: StreamEvent stream
+    Entry-->>U: reply
+    UI->>Spool: query (list_traces / get_trace)
+```
+
+### Three Entry Surfaces, One Path
+
+The three entry surfaces converge on the same function almost immediately:
+
+**`arc` CLI.** `arc agent chat` loads the agent's config, opens a session, and drives the streaming entry directly:
+```python
+session = await arc_agent.session(current_session_id)
+result = await collect(arc_agent.run(user_input, session=session))
+```
+
+**The `arctui` TUI.** Holds its own `ArcAgent` instance in-process and calls the identical entry point when the user submits text:
+```python
+session = await self._agent.session("tui:main")
+async for event in self._agent.run(text, session=session):
+    if isinstance(event, TokenEvent):
+        self._transcript.append_delta(event.text)
+```
+
+**A gateway channel.** Telegram/Slack/Mattermost adapters receive platform updates, normalize them into `InboundEvent`, and route through `SessionRouter`:
+```
+TelegramAdapter → SessionRouter.handle → Executor.run → ArcAgent.run
+```
+
+### Tool Execution Pipeline
+
+```mermaid
+flowchart LR
+    classDef runtime fill:#0055BC,stroke:#003B82,color:#FFFFFF
+    classDef found   fill:#002550,stroke:#001A38,color:#FFFFFF
+
+    A["0 Schema validate"] --> B["1 Policy pipeline evaluate"]
+    B -->|"DENY"| X["PolicyDenied raised"]
+    B -->|"ALLOW"| C["2 agent:pre_tool event"]
+    C -->|"vetoed"| Y["ToolVetoedError raised"]
+    C --> D["3 Execute handler"]
+    D --> E["4 agent:post_tool event"]
+    E --> F["5 telemetry.audit_event tool.executed"]
+
+    class A,C,D,E runtime
+    class B,F found
+```
+
+**Authorize.** The policy pipeline builds a signed `ToolCall` (tool_name, arguments, agent_did, session_id, classification) and signs it with the agent's identity key. The pipeline's `evaluate()` loop calls each configured layer in order and returns on the first `DENY` (first-DENY-wins, fail-closed). A denied call raises `PolicyDenied` before the handler runs.
+
+**Audit.** Every successful execute emits `tool.executed` with `actor_did`, `tier`, `transport`, and duration to `WormSink` — a hash-chained, append-only JSONL file. The audit system is fail-open by design: it must never interrupt the operation being audited.
+
+---
+
+## Memory Lifecycle
+
+Dual-speed, four-store, analogical memory: markdown source + SQLite index.
+
+```mermaid
+flowchart LR
+    classDef entry   fill:#D6E6FF,stroke:#0073FE,color:#002550
+    classDef agent   fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef llm     fill:#003B82,stroke:#002550,color:#FFFFFF
+    classDef runtime fill:#0055BC,stroke:#003B82,color:#FFFFFF
+
+    See["1 See — FastCapture.capture"]:::entry --> Curate["2 Curate — curate_for_distillation"]:::agent
+    Curate --> Distill["3 Distill — extract_facts / mint_insights / extract_procedures"]:::llm
+    Distill --> Consolidate["Consolidator.run — orchestrates 4-7"]:::agent
+    Consolidate --> Dedup["4 Dedup / hygiene — merge_entities, merge_cues, dedup_workspace"]:::agent
+    Dedup --> Index["5 Index — SurfaceIndex + StructuralIndex"]:::runtime
+    Index --> Retrieve["6 Retrieve / fuse — Retriever.retrieve"]:::runtime
+    Retrieve --> Enrich["7 Enrich — spot then enrich"]:::runtime
+    Enrich --> Prompt["boundary-marked memory-result block"]:::entry
+
+    classDef entry   fill:#D6E6FF,stroke:#0073FE,color:#002550
+    classDef surface fill:#5A9CFF,stroke:#003B82,color:#002550
+    classDef agent   fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef runtime fill:#0055BC,stroke:#003B82,color:#002550
+    classDef llm     fill:#003B82,stroke:#002550,color:#FFFFFF
+    classDef found   fill:#002550,stroke:#001A38,color:#FFFFFF
+```
+
+### Dual-Speed Memory Cadence
+
+```mermaid
+timeline
+    title Dual-speed memory cadence
+    section Fast path — every turn
+        Capture : sanitize, dedup, tag, Hebbian-bump : zero LLM
+        Retrieve : one bounded fuse-and-gate pass, cached once per turn
+    section Slow path — trigger fires
+        Consolidate light : distill facts/insights/procedures/days : decay edges : cue + entity merge
+    section Slow path — first call after local date rolls
+        Consolidate hygiene : + alias fold : + backlink repair : + workspace file dedup
+```
+
+### Four Stores
+
+| Store | File | Holds | Written by | Read for |
+|---|---|---|---|---|
+| Episodic | `stores/episodic.py` | Raw event stream (SQLite `episodic` table) | `FastCapture.capture` | Consolidation input, enrichment context |
+| Semantic | `stores/semantic.py` | Entity cards (`memory/entities/<slug>.md`) | Distillation, agentic tools | Facts, structural enrichment |
+| Insight | `stores/insight.py` | Minted abstractions (`memory/insights/<id>.md`) | `mint_insights` / agentic tools | Structural recall |
+| Procedural | `stores/procedural.py` | How-to cards (`memory/procedures/<slug>.md`) | `extract_procedures` / `record_procedure` | Recall, skill improvement |
+| Daily notes | `stores/daily.py` | Curated per-day rollup | `_summarize_days` | Human/operator review, surface index source |
+
+### Insight Confidence Lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> guessed: first mint — hits = 1
+    guessed --> guessed: re-mint, confidence < known_threshold
+    guessed --> known: confidence crosses known_threshold
+    known --> known: further corroboration
+    note right of guessed: surfaced with verify_first = true
+    note right of known: actionable anchor, no verify flag
+```
+
+---
+
+## Session Lifecycle
+
+```mermaid
+flowchart LR
+    classDef sess fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef store fill:#002550,stroke:#001A38,color:#FFFFFF
+    classDef replay fill:#D6E6FF,stroke:#0073FE,color:#002550
+
+    Start[New Session]:::sess --> Store[Write to<br/>sessions/*.jsonl]:::store
+    Store --> Next[Next Turn]:::sess
+    Next --> Store
+    Store --> End[Session End]:::sess
+    End --> Replay[Replay by ID<br/>arc agent chat --session]:::replay
+```
+
+---
+
+## Tool Execution Flow
+
+```mermaid
+sequenceDiagram
+    participant Agent as arcagent
+    participant Validator as arctrust
+    participant Sandbox as arcrun
+    participant Store as arcstore
+    participant Audit as arctrust
+
+    Agent->>Validator: authorize(tool, params)
+    Validator->>Validator: check_lethal_trifecta()
+    Validator->>Validator: check_allowlist()
+    Validator->>Validator: check_tier_rules()
+    Validator-->>Agent: approved
+    
+    Agent->>Sandbox: execute(tool, params)
+    Sandbox->>Sandbox: select_sandbox()
+    Sandbox->>Sandbox: run_in_isolation()
+    Sandbox-->>Agent: result
+    
+    Agent->>Audit: log(tool_execution)
+```
+
+### Dynamic Tool Creation Pipeline
+
+```mermaid
+flowchart LR
+    classDef check fill:#002550,stroke:#001A38,color:#FFFFFF
+    classDef exec fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef term fill:#D6E6FF,stroke:#0073FE,color:#002550
+
+    A[Agent Code]:::exec --> B[Encoding Check]:::check
+    B --> C[AST Validate]:::check
+    C --> D[Restricted Builtins]:::check
+    D --> E[Egress Proxy]:::check
+    E --> F[Execute]:::exec
+    F --> G[Result to LLM]:::term
+```
+
+---
+
+## Dashboard Data Flow
+
+```mermaid
+flowchart TB
+    classDef ui fill:#5A9CFF,stroke:#0073FE,color:#002550
+    classDef store fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef agent fill:#003B82,stroke:#002550,color:#FFFFFF
+
+    subgraph "arcui"
+        Observe[Observe Plane<br/>WebSocket]:::ui
+        Interact[Interact Plane<br/>Live chat]:::ui
+        Manage[Manage Plane<br/>Control]:::ui
+    end
+
+    subgraph "Data Source"
+        Store[arcstore<br/>On-demand read]:::store
+    end
+
+    subgraph "Agents"
+        A1[Agent 1]:::agent
+        A2[Agent 2]:::agent
+    end
+
+    A1 -->|writes| Store
+    A2 -->|writes| Store
+    Store -->|reads| Observe
+    Observe -->|displays| UI[Dashboard UI]:::ui
+    UI -->|commands| Manage
+    Manage -->|affects| A1
+    Manage -->|affects| A2
+```
+
+---
+
+## Gateway Message Flow
+
+```mermaid
+sequenceDiagram
+    participant User as Chat User
+    participant Gateway as arcgateway
+    participant Agent as arcagent
+    participant Platform as Chat Platform
+
+    User->>Platform: Message
+    Platform->>Gateway: Webhook
+    Gateway->>Gateway: verify_signature()
+    Gateway->>Agent: enqueue(message)
+    Agent->>Agent: process_turn()
+    Agent-->>Gateway: response
+    Gateway->>Platform: reply
+    Platform-->>User: Response
+```
+
+### Platform Adapter Flow
+
+```mermaid
+flowchart LR
+    classDef plat fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef gw fill:#002550,stroke:#001A38,color:#FFFFFF
+    classDef agent fill:#D6E6FF,stroke:#0073FE,color:#002550
+
+    Telegram[Telegram]:::plat -->|adapter| Gateway[arcgateway]:::gw
+    Slack[Slack]:::plat -->|adapter| Gateway
+    Mattermost[Mattermost]:::plat -->|adapter| Gateway
+    Gateway -->|unified| Agent[arcagent]:::agent
+```
+
+---
+
+## Data Storage Layout
+
+```mermaid
+flowchart TD
+    classDef root fill:#002550,stroke:#001A38,color:#FFFFFF
+    classDef dir fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef file fill:#D6E6FF,stroke:#0073FE,color:#002550
+
+    subgraph "workspace/"
+        Root[workspace/]:::root
+        
+        subgraph "sessions/"
+            S1[sessions/.keep]:::file
+            S2[2026-04-28.jsonl]:::file
+            S3[2026-04-29.jsonl]:::file
+        end
+        
+        subgraph "memory/"
+            M1[memory/episodic.json]:::file
+            M2[memory/entities.json]:::file
+            M3[memory/daily/2026-04-28.jsonl]:::file
+        end
+        
+        subgraph ".capabilities/"
+            C1[.capabilities/untrusted_tool.py]:::file
+        end
+        
+        subgraph "tasks/"
+            T1[tasks/todo.jsonl]:::file
+            T2[tasks/done.jsonl]:::file
+            T3[tasks/review.jsonl]:::file
+        end
+    end
+```
+
+---
+
+## Next Steps
+
+- [API Reference](API_REFERENCE.md) - Detailed class and method documentation
+- [Package Index](PACKAGE_INDEX.md) - Package-specific details
+- [Implementation Guides](IMPLEMENTATION_GUIDES.md) - Custom integrations
