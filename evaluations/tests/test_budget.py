@@ -24,6 +24,7 @@ from typing import Any
 import pytest
 
 from evaluations.ingest import chunker as production_chunker
+from evaluations.ingest.limits import MAX_EVENT_CHARS
 from evaluations.ingest.types import Chunk, Session
 from evaluations.longmemeval import budget
 from evaluations.longmemeval.adapter import LongMemEvalAdapter
@@ -44,8 +45,8 @@ from evaluations.longmemeval.budget import (
 )
 from evaluations.longmemeval.dataset import Dataset
 
-CAP = 2000
-"""``arcmemory.security.sanitize`` caps at ``max_length=2000``."""
+CAP = MAX_EVENT_CHARS
+"""The cap ``estimate_run`` defaults to; the re-walk below must chunk identically."""
 
 AGENT_MODEL = "anthropic/claude-sonnet-4-5-20250929"
 JUDGE_MODEL = "openai/gpt-4o-2024-08-06"

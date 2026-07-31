@@ -31,6 +31,7 @@ from typing import Any
 import pytest
 
 from evaluations.ingest.lifecycle import INGEST_COMPLETE_MARKER
+from evaluations.ingest.limits import MAX_EVENT_CHARS
 from evaluations.ingest.types import Chunk
 from evaluations.longmemeval.adapter import QuestionMeta
 from evaluations.longmemeval.budget import (
@@ -722,7 +723,7 @@ async def test_gold_evidence_damage_voids_the_question(tmp_path: Path) -> None:
 async def test_a_turn_over_the_cap_voids_before_an_agent_is_built(tmp_path: Path) -> None:
     """REQ-177: the question is voided rather than its evidence truncated."""
     harness = Harness()
-    question = _question("q1", sessions=((("x" * 5000, True),),))
+    question = _question("q1", sessions=((("x" * (MAX_EVENT_CHARS + 1), True),),))
 
     report = await _runner(tmp_path, _dataset(question), harness).run("oracle")
 

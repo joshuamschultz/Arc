@@ -40,7 +40,7 @@ GITIGNORE = REPO_ROOT / ".gitignore"
 # the requirement, and a test that read the patterns out of the file it is
 # checking could not detect one going missing.
 SPEC_060_PATTERNS = (
-    "/evaluations/data/",
+    "/evaluations/longmemeval/data/",
     "/evaluations/runs/",
     "/evaluations/results/",
     "/evaluations/**/traces/",
@@ -112,8 +112,8 @@ def test_no_blanket_toml_glob_was_used() -> None:
     "artifact",
     [
         # Dataset (COMP-003) — a third-party download, never repo content.
-        "evaluations/data/longmemeval_oracle.json",
-        "evaluations/data/longmemeval_s_cleaned.json",
+        "evaluations/longmemeval/data/longmemeval_oracle.json",
+        "evaluations/longmemeval/data/longmemeval_s_cleaned.json",
         # Per-question throwaway workspaces (COMP-019).
         "evaluations/runs/lme-q0001/context.md",
         "evaluations/runs/lme-q0001/memory/daily-log/2023-05-20.md",

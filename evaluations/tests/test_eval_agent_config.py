@@ -27,6 +27,7 @@ from evaluations.ingest.agent_factory import (
     render_eval_agent_config,
     write_eval_agent_config,
 )
+from evaluations.ingest.limits import MAX_EVENT_CHARS, RECALL_BUDGET, RECALL_TOP_K
 
 CONFIG_DIR = Path(__file__).resolve().parents[1] / "longmemeval" / "config"
 
@@ -104,8 +105,24 @@ def test_the_recall_envelope_is_raised(emitted: dict[str, Any]) -> None:
     """At the default budget of 1024 exactly one recall survives enforce_budget."""
     memory = _memory(emitted)
 
-    assert memory["top_k"] == 20
-    assert memory["budget"] == 8000
+    assert memory["top_k"] == RECALL_TOP_K == 20
+    assert memory["budget"] == RECALL_BUDGET == 34_000
+
+
+def test_the_sanitize_cap_is_raised_under_dynamics(emitted: dict[str, Any]) -> None:
+    """The table matters as much as the value.
+
+    `[modules.memory.config]` is a pydantic model with `extra="forbid"`, so
+    `max_event_chars` there is a validation error the fail-open module loader
+    turns into a NullBrain; `dynamics` is the opaque dict arcmemory's
+    `build_brain` re-validates as its own config. Only the second reaches
+    `sanitize`, and at arcmemory's own 2000 default 31.75% of this corpus's
+    turns lose their tail with nothing raised.
+    """
+    memory = _memory(emitted)
+
+    assert memory["dynamics"]["max_event_chars"] == MAX_EVENT_CHARS == 6000
+    assert "max_event_chars" not in memory
 
 
 def test_the_six_settings_survive_config_composition(
@@ -123,8 +140,9 @@ def test_the_six_settings_survive_config_composition(
     assert memory["consolidate_idle_seconds"] == 0.0
     assert memory["consolidate_interval_seconds"] == 0.0
     assert memory["dynamics"]["consolidate_interval_minutes"] == 0.0
-    assert memory["top_k"] == 20
-    assert memory["budget"] == 8000
+    assert memory["dynamics"]["max_event_chars"] == MAX_EVENT_CHARS
+    assert memory["top_k"] == RECALL_TOP_K
+    assert memory["budget"] == RECALL_BUDGET
 
 
 # ---------------------------------------------------------------------------

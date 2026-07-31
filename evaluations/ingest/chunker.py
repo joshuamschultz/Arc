@@ -13,14 +13,15 @@ retrieval landing on the fourth chunk of a session must still see the session's
 date. The prefix is the chunk's own first line and costs budget on every chunk,
 not just the first.
 
-*Raise, never truncate.* ``sanitize`` caps at ``max_length=2000`` and the capture
-path discards its return value, so a turn that overflows the cap would be
-silently shortened and scored as a memory failure. A turn that cannot be dated
-and stay under the cap voids its question instead (REQ-177).
+*Raise, never truncate.* ``sanitize`` caps at the configured
+``max_event_chars`` (``evaluations.ingest.limits``) and the capture path
+discards its return value, so a turn that overflows the cap would be silently
+shortened and scored as a memory failure. A turn that cannot be dated and stay
+under the cap voids its question instead (REQ-177).
 
-The 1700 default target is the margin beneath that 2000 cap: it absorbs the
-repeated date prefix plus the growth NFKC normalization can add before
-``sanitize`` measures the text.
+The 1700 default target is a packing budget, not a second cap: it keeps a
+multi-turn chunk near the size the recall budget is sized against. A single turn
+larger than it still ships whole — only ``max_event_chars`` raises.
 """
 
 from __future__ import annotations

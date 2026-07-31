@@ -55,25 +55,41 @@ if TYPE_CHECKING:
 REQUIRED_POLL_INTERVAL = 300.0
 """What ``capabilities._CONSOLIDATE_POLL_INTERVAL`` must still be (REQ-216)."""
 
-REQUIRED_CONSOLIDATION_SETTINGS: Mapping[str, object] = {
+REQUIRED_MODULE_SETTINGS: Mapping[str, object] = {
     "brain": "arcmemory",
-    "distill_provider": "anthropic",
     "consolidate_event_threshold": 1,
     "consolidate_idle_seconds": 0.0,
     "consolidate_interval_seconds": 0.0,
+    # The recall envelope. At the 1024 default exactly one recall survives
+    # enforce_budget whatever top_k says, so the run measures the budget.
+    "top_k": 20,
+    "budget": 34_000,
 }
-"""Five of the six consolidation settings, restated independently of COMP-006.
+"""What ``[modules.memory.config]`` must hold, restated independently of COMP-006.
 
-Deliberately not derived from ``agent_factory``'s override table: an assumption
-guard that reads its expectations out of the thing it guards agrees with any
-drift it was written to catch.
+Deliberately not derived from ``agent_factory``'s override table, and deliberately
+not imported from ``evaluations.ingest.limits``: an assumption guard that reads
+its expectations out of the thing it guards agrees with any drift it was written
+to catch. These literals are the second, independent statement of the numbers.
 """
 
-REQUIRED_DYNAMICS_INTERVAL_MINUTES = 0.0
-"""The sixth — arcmemory's OWN cadence gate, read back from the built brain.
+REQUIRED_DYNAMICS_SETTINGS: Mapping[str, object] = {
+    # arcmemory's OWN cadence gate. Left at its 60-minute default, every
+    # harness-driven pass after the first returns an empty result and every
+    # consolidation setting above it is theatre.
+    "consolidate_interval_minutes": 0.0,
+    # The sanitize cap. `[modules.memory.config] max_event_chars` would be a
+    # validation error (arcagent's MemoryConfig forbids extra keys) and
+    # `dynamics` is the only path that reaches the brain, so a value written one
+    # table too high leaves arcmemory truncating at its own 2000 default —
+    # which silently destroys the tail of a third of this corpus's turns.
+    "max_event_chars": 6000,
+}
+"""What the BUILT BRAIN's own config must hold, read back off ``brain._cfg``.
 
-Left at its 60-minute default every harness-driven pass after the first returns
-an empty result and the other five settings are theatre.
+Restated for the same reason as the module settings above. These land through
+arcagent's opaque ``backend`` dict, which no schema validates on the way past —
+a key that never arrives is silently the backend default.
 """
 
 PREFLIGHT_QUESTION_ID = "preflight"
@@ -110,7 +126,7 @@ def _fail(assertion: str, detail: str) -> NoReturn:
 
 
 # ---------------------------------------------------------------------------
-# Gate 1 — the consolidation contract (REQ-216)
+# Gate 1 — the consolidation contract and the memory settings (REQ-216)
 # ---------------------------------------------------------------------------
 
 
@@ -132,8 +148,8 @@ def check_poll_interval_contract() -> None:
         )
 
 
-def check_consolidation_settings(agent: ArcAgent) -> None:
-    """Assert the six consolidation settings hold, read off the LIVE agent.
+def check_memory_settings(agent: ArcAgent) -> None:
+    """Assert every consolidation, recall and dynamics setting holds, LIVE.
 
     Read from the running memory state and the built brain rather than from the
     emitted TOML: a setting the config layer dropped, coerced or never folded
@@ -141,24 +157,36 @@ def check_consolidation_settings(agent: ArcAgent) -> None:
     on it.
     """
     state = _memory_state(agent)
-    for name, required in REQUIRED_CONSOLIDATION_SETTINGS.items():
+    # REQ-183 asks for a distiller that exists, not a particular vendor: an
+    # empty provider is a consolidation that mints nothing and raises nothing,
+    # which is the failure this guards. Which model answered is recorded by the
+    # manifest's provenance block, so a substitution is visible without being
+    # forbidden here.
+    if not getattr(state.config, "distill_provider", ""):
+        _fail(
+            "memory_settings",
+            "[modules.memory.config] distill_provider is empty on the live agent; "
+            "consolidation would distill nothing and report success",
+        )
+
+    for name, required in REQUIRED_MODULE_SETTINGS.items():
         actual = getattr(state.config, name, None)
         if actual != required:
             _fail(
-                "consolidation_settings",
+                "memory_settings",
                 f"[modules.memory.config] {name} is {actual!r} on the live agent, "
                 f"expected {required!r}",
             )
 
-    minutes = getattr(state.brain, "_cfg", None)
-    actual_minutes = getattr(minutes, "consolidate_interval_minutes", None)
-    if actual_minutes != REQUIRED_DYNAMICS_INTERVAL_MINUTES:
-        _fail(
-            "consolidation_settings",
-            f"the built brain's consolidate_interval_minutes is {actual_minutes!r}, "
-            f"expected {REQUIRED_DYNAMICS_INTERVAL_MINUTES!r}; at any larger value every "
-            "harness-driven pass after the first returns an empty result",
-        )
+    brain_config = getattr(state.brain, "_cfg", None)
+    for name, required in REQUIRED_DYNAMICS_SETTINGS.items():
+        actual = getattr(brain_config, name, None)
+        if actual != required:
+            _fail(
+                "memory_settings",
+                f"the built brain's {name} is {actual!r}, expected {required!r}; the "
+                "value reached neither arcmemory's config nor anything that raises",
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -308,7 +336,7 @@ async def run_preflight(
     scratch_dir.mkdir(parents=True, exist_ok=True)
     agent = await build_eval_agent(question_id=PREFLIGHT_QUESTION_ID, run_dir=scratch_dir)
     try:
-        check_consolidation_settings(agent)
+        check_memory_settings(agent)
         check_live_seams(agent)
         await check_consolidation_pass(agent)
     finally:
@@ -356,17 +384,17 @@ async def _stop_background_consolidation(agent: ArcAgent) -> None:
 __all__ = [
     "DAILY_LOG_DIRNAME",
     "PREFLIGHT_QUESTION_ID",
-    "REQUIRED_CONSOLIDATION_SETTINGS",
-    "REQUIRED_DYNAMICS_INTERVAL_MINUTES",
+    "REQUIRED_DYNAMICS_SETTINGS",
+    "REQUIRED_MODULE_SETTINGS",
     "REQUIRED_POLL_INTERVAL",
     "SEED_SESSION_KEY",
     "SEED_TEXT",
     "PreflightError",
     "check_consolidation_pass",
-    "check_consolidation_settings",
     "check_daily_log",
     "check_environment",
     "check_live_seams",
+    "check_memory_settings",
     "check_poll_interval_contract",
     "run_preflight",
 ]

@@ -145,13 +145,14 @@ embed_model = ""             # empty → arcllm default (all-MiniLM-L6-v2)
 distill_provider = "anthropic"  # consolidation distiller provider (empty = no-op)
 distill_model = "claude-sonnet-4-5-20250929"  # distiller model
 top_k = 20  # recall count at assemble_prompt
-budget = 8000  # recall token budget
+budget = 34000  # recall token budget
 consolidate_event_threshold = 1  # fire consolidation after N events
 consolidate_idle_seconds = 0.0  # fire after idle seconds
 consolidate_interval_seconds = 0.0  # time-based cadence floor
 
 [modules.memory.config.dynamics]
 consolidate_interval_minutes = 0.0
+max_event_chars = 6000
 # Overrides for the memory backend's own dynamics (arcmemory MemoryConfig), applied
 # OVER the tier defaults. Otherwise these are tier-locked. Uncomment to tune. Examples:
 #   entity_merge_candidate_threshold = 0.80  # name-embedding cosine to become a merge

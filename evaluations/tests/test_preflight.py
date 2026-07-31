@@ -42,10 +42,10 @@ from evaluations.longmemeval.preflight import (
     REQUIRED_POLL_INTERVAL,
     PreflightError,
     _stop_background_consolidation,
-    check_consolidation_settings,
     check_daily_log,
     check_environment,
     check_live_seams,
+    check_memory_settings,
     check_poll_interval_contract,
     run_preflight,
 )
@@ -73,6 +73,8 @@ _EMBEDDER_LINE = 'embed_backend = "local"'
 _BRAIN_LINE = 'brain = "arcmemory"'
 _EVENT_THRESHOLD_LINE = "consolidate_event_threshold = 1"
 _DYNAMICS_LINE = "consolidate_interval_minutes = 0.0"
+_MAX_EVENT_CHARS_LINE = "max_event_chars = 6000"
+_BUDGET_LINE = "budget = 34000"
 
 AgentFactory = Callable[..., Awaitable["ArcAgent"]]
 
@@ -207,9 +209,52 @@ async def test_lowered_poll_interval_aborts_before_any_ingest(
     assert not scratch_dir.exists()
 
 
-async def test_live_agent_holds_the_six_consolidation_settings(eval_agent: ArcAgent) -> None:
+async def test_live_agent_holds_every_memory_setting(eval_agent: ArcAgent) -> None:
     """Read off the running agent and the built brain, not the emitted TOML."""
-    check_consolidation_settings(eval_agent)
+    check_memory_settings(eval_agent)
+
+
+async def test_the_raised_sanitize_cap_reaches_the_built_brain(eval_agent: ArcAgent) -> None:
+    """The one setting whose failure is silent, asserted on the object that uses it.
+
+    ``arcmemory.capture`` calls ``sanitize(text, max_length=self._cfg.max_event_chars)``
+    and throws the length away. A cap that never arrives leaves that ``_cfg`` at
+    arcmemory's own 2000 default, which truncates the tail of a third of this
+    corpus's turns and raises nothing anywhere — a memory failure that is really
+    a config failure. Read here off the constructed ``ArcMemoryBrain``, not off
+    the TOML, because every layer between the two can drop it silently.
+    """
+    from arcagent.core.agent_lifecycle import activate_runtime_bindings
+    from arcagent.modules.memory import _runtime
+    from arcmemory.brain import ArcMemoryBrain
+
+    activate_runtime_bindings(eval_agent)
+    brain = _runtime.state().brain
+
+    assert isinstance(brain, ArcMemoryBrain)
+    assert brain._cfg.max_event_chars == 6000
+
+
+async def test_drifted_sanitize_cap_is_caught(degraded_agent: AgentFactory) -> None:
+    """Back at the backend default, a third of the corpus is silently truncated."""
+    agent = await degraded_agent("cap-drift", (_MAX_EVENT_CHARS_LINE, "max_event_chars = 2000"))
+
+    with pytest.raises(PreflightError) as excinfo:
+        check_memory_settings(agent)
+
+    assert excinfo.value.assertion == "memory_settings"
+    assert "max_event_chars" in str(excinfo.value)
+
+
+async def test_drifted_recall_budget_is_caught(degraded_agent: AgentFactory) -> None:
+    """At a budget below the bundle size, top_k stops meaning what it says."""
+    agent = await degraded_agent("budget-drift", (_BUDGET_LINE, "budget = 1024"))
+
+    with pytest.raises(PreflightError) as excinfo:
+        check_memory_settings(agent)
+
+    assert excinfo.value.assertion == "memory_settings"
+    assert "budget" in str(excinfo.value)
 
 
 async def test_drifted_event_threshold_is_caught(degraded_agent: AgentFactory) -> None:
@@ -219,9 +264,9 @@ async def test_drifted_event_threshold_is_caught(degraded_agent: AgentFactory) -
     )
 
     with pytest.raises(PreflightError) as excinfo:
-        check_consolidation_settings(agent)
+        check_memory_settings(agent)
 
-    assert excinfo.value.assertion == "consolidation_settings"
+    assert excinfo.value.assertion == "memory_settings"
     assert "consolidate_event_threshold" in str(excinfo.value)
 
 
@@ -232,9 +277,9 @@ async def test_drifted_arcmemory_cadence_is_caught(degraded_agent: AgentFactory)
     )
 
     with pytest.raises(PreflightError) as excinfo:
-        check_consolidation_settings(agent)
+        check_memory_settings(agent)
 
-    assert excinfo.value.assertion == "consolidation_settings"
+    assert excinfo.value.assertion == "memory_settings"
     assert "consolidate_interval_minutes" in str(excinfo.value)
 
 

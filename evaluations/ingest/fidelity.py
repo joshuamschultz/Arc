@@ -35,6 +35,7 @@ from difflib import SequenceMatcher
 
 from arcmemory.security import privacy_filter, sanitize
 
+from evaluations.ingest.limits import MAX_EVENT_CHARS
 from evaluations.ingest.types import Chunk
 
 
@@ -68,7 +69,7 @@ class FidelityVerdict:
 class SanitizeFidelityGate:
     """Check a chunk against the live filters before it is ingested."""
 
-    def __init__(self, *, max_event_chars: int = 2000) -> None:
+    def __init__(self, *, max_event_chars: int = MAX_EVENT_CHARS) -> None:
         # Mirrors ``arcmemory.capture``, which calls sanitize with the configured
         # cap; a gate on the default cap would miss truncation the real path does.
         self._max_event_chars = max_event_chars

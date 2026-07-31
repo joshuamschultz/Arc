@@ -29,6 +29,9 @@ from arccli.commands.agent._common import (
 )
 from arcstore.config import ENV_DATA_DIR
 
+from evaluations.ingest.limits import MAX_EVENT_CHARS, RECALL_BUDGET, RECALL_TOP_K
+from evaluations.ingest.models import AGENT_MODEL, DISTILL_MODEL, DISTILL_PROVIDER
+
 if TYPE_CHECKING:
     from arcagent.core.agent import ArcAgent
 
@@ -80,7 +83,8 @@ _EVAL_ARCAGENT_OVERRIDES: Mapping[str, Mapping[str, str]] = {
         # no-op distiller because a default moved would look like a memory
         # result rather than a dead seam.
         "brain": '"arcmemory"',
-        "distill_provider": '"anthropic"',
+        "distill_provider": f'"{DISTILL_PROVIDER}"',
+        "distill_model": f'"{DISTILL_MODEL}"',
         # The harness fires every consolidation pass itself, once per session
         # boundary (COMP-008), because the module's poll interval is a constant
         # and per-session cadence is unreachable by config. The outer trigger
@@ -91,14 +95,21 @@ _EVAL_ARCAGENT_OVERRIDES: Mapping[str, Mapping[str, str]] = {
         # At the default budget of 1024 exactly one 2000-char recall survives
         # enforce_budget whatever top_k says, so the run would measure the
         # budget rather than the memory.
-        "top_k": "20",
-        "budget": "8000",
+        "top_k": str(RECALL_TOP_K),
+        "budget": str(RECALL_BUDGET),
     },
     "modules.memory.config.dynamics": {
         # arcmemory's OWN cadence gate, read from a persisted last-run stamp.
         # Left at its 60-minute default, every harness-driven pass after the
         # first returns an empty result and the five settings above are theatre.
         "consolidate_interval_minutes": "0.0",
+        # The sanitize cap, and the ONLY key path that reaches it: arcagent's
+        # MemoryConfig forbids extra keys, so `max_event_chars` one table up is
+        # a validation error, while `dynamics` is the opaque dict arcmemory's
+        # build_brain re-validates as its own MemoryConfig. At arcmemory's 2000
+        # default a third of this corpus's turns overflow and their questions
+        # void, so this is the number the corpus is ingestible under at all.
+        "max_event_chars": str(MAX_EVENT_CHARS),
     },
     # NATS is deliberately not integrated (SDD External Integrations): there is
     # no broker for a local benchmark, and a per-question throwaway must not
@@ -114,8 +125,6 @@ _EVAL_ARCLLM_TELEMETRY = """
 store_raw_bodies = false
 """
 
-ARCLLM_EVAL_CONFIG = _DEFAULT_ARCLLM_CONFIG + _EVAL_ARCLLM_TELEMETRY
-"""The eval agent's ``arcllm.toml``: the scaffold's, with raw capture off."""
 
 ARCRUN_EVAL_CONFIG = _DEFAULT_ARCRUN_CONFIG
 """The eval agent's ``arcrun.toml`` — the scaffold's loop controls, unchanged."""
@@ -149,6 +158,13 @@ def _apply_toml_overrides(text: str, overrides: Mapping[str, Mapping[str, str]])
     for (header, key), value in reversed(list(pending.items())):
         lines.insert(lines.index(f"[{header}]") + 1, f"{key} = {value}")
     return "\n".join(lines) + "\n"
+
+
+ARCLLM_EVAL_CONFIG = _apply_toml_overrides(
+    _DEFAULT_ARCLLM_CONFIG + _EVAL_ARCLLM_TELEMETRY,
+    {"llm": {"model": f'"{AGENT_MODEL}"'}},
+)
+"""The eval agent's ``arcllm.toml``: the scaffold's, with raw capture off."""
 
 
 def eval_agent_name(question_id: str) -> str:

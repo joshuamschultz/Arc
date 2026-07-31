@@ -10,7 +10,7 @@ call is made.
 Runs the real corpus through the real ``TurnChunker`` rather than a re-derived
 length model, so what it reports is what the harness will actually do.
 
-The dataset is a manual, gitignored download (``evaluations/data/``), so the
+The dataset is a manual, gitignored download (``evaluations/longmemeval/data/``), so the
 script names the missing file and exits rather than fabricating a corpus.
 
 Run it from the repository root — ``evaluations`` is deliberately not an
@@ -30,9 +30,11 @@ from pathlib import Path
 from typing import Any
 
 from evaluations.ingest.chunker import TurnChunker, TurnExceedsCapError
+from evaluations.ingest.limits import MAX_EVENT_CHARS
 from evaluations.ingest.types import Session, Turn
+from evaluations.longmemeval.paths import DATA_DIR
 
-_DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+_DATA_DIR = DATA_DIR
 _DEFAULT_DATASET = _DATA_DIR / "longmemeval_oracle.json"
 _DATASET_HOME = "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned"
 
@@ -72,7 +74,7 @@ def main() -> int:
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", type=Path, default=_DEFAULT_DATASET)
-    parser.add_argument("--max-event-chars", type=int, default=2000)
+    parser.add_argument("--max-event-chars", type=int, default=MAX_EVENT_CHARS)
     parser.add_argument("--target", type=int, default=1700)
     return parser.parse_args()
 

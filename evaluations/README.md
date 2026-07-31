@@ -16,7 +16,7 @@ ingest/        source-agnostic — the reusable pathway
 longmemeval/   the first and only consumer
                adapter dataset query judge scoring reference_prompts agreement
                runner ledger preflight budget manifest hygiene scrub cli
-data/          gitignored — the dataset JSON (manual download)
+longmemeval/data/   gitignored — the dataset JSON (manual download)
 runs/          gitignored — throwaway per-question workspaces. NO harness code, ever.
 results/       gitignored — the JSONL ledger + run_manifest.json
 ```
@@ -40,7 +40,7 @@ uv run python -m evaluations.longmemeval.cli --phase oracle
 Before the first run, two things must happen by hand:
 
 1. Download `longmemeval_oracle.json` / `longmemeval_s_cleaned.json` from
-   `xiaowu0162/longmemeval-cleaned` into `evaluations/data/`. The SHA-256 is verified at
+   `xiaowu0162/longmemeval-cleaned` into `evaluations/longmemeval/data/`. The SHA-256 is verified at
    preflight — the Sept-2025 "cleaned" revision is **not** numerically comparable to the
    original, which is why the hash and revision are pinned in the manifest.
 2. Export the judge's own API key. It is read from the environment only, never a file.

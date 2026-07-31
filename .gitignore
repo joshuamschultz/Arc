@@ -130,7 +130,7 @@ site/
 # re-include a file beneath an ignored directory, so a `!` negation could never
 # rescue harness code that fell under one. That is why evaluations/ingest/ and
 # evaluations/longmemeval/ are peers of these paths and never inside them.
-/evaluations/data/
+/evaluations/longmemeval/data/
 /evaluations/runs/
 /evaluations/results/
 # Traces and the audit chain the agent writes inside a run workspace.

@@ -6,8 +6,8 @@ Estimate before spending; abort when the estimate is exceeded.
 chunks the production ``TurnChunker`` actually produces from the production
 ``LongMemEvalAdapter``, not a guess from raw dataset size. That distinction is
 the whole point: the chunker re-carries the session date on every chunk, packs
-to a 1700 target rather than filling the 2000 cap, and voids a question whose
-turn overflows the cap. A raw ``len(text) / 4`` sweep misses all three, and at
+to a 1700 target rather than filling ``MAX_EVENT_CHARS``, and voids a question
+whose turn overflows the cap. A raw ``len(text) / 4`` sweep misses all three, and at
 ~40,000 calls a 20-30% error compounds into a meaningfully wrong ceiling.
 
 *Characters still become tokens through a ratio, and that ratio is versioned.*
@@ -49,14 +49,15 @@ from typing import Final
 from pydantic import BaseModel, ConfigDict
 
 from evaluations.ingest.chunker import TurnChunker, TurnExceedsCapError
+
+# Redundant alias: the explicit re-export form, so the modules that already read
+# the cap off this one (the CLI, the runner) keep resolving it under strict mypy.
+from evaluations.ingest.limits import MAX_EVENT_CHARS as MAX_EVENT_CHARS
 from evaluations.longmemeval.adapter import LongMemEvalAdapter
 from evaluations.longmemeval.dataset import Dataset, load_dataset
 
 LOGGER_NAME: Final = "evaluations.budget"
 _LOG = logging.getLogger(LOGGER_NAME)
-
-MAX_EVENT_CHARS: Final = 2000
-"""``arcmemory.security.sanitize`` truncates above this, so the chunker packs below it."""
 
 CEILING_FRACTION: Final = 1.10
 """REQ-209: the run aborts once spend reaches 110% of the dry-run estimate."""

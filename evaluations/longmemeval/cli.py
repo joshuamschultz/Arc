@@ -12,6 +12,13 @@ across 500 near-free questions, ``sample-s`` measures a stratified ~50, and
 ``full-s`` additionally requires that ``--smoke N`` has already run 3-5 questions
 spanning question types end to end and left its gate behind.
 
+*One question, watched* (``--question-id ID``, repeatable). The smallest run there
+is: the named question(s) go through ingest, consolidate, query and judge, and
+what the agent answered is printed beside the gold answer and the judge's call.
+It defaults to the cheap oracle corpus, writes into a fresh directory of its own
+so a one-off cannot pollute a scored phase's ledger, and opens nothing — only
+``--smoke`` sets the ``full-s`` gate.
+
 *Invocation.* ``evaluations/`` is deliberately not a uv workspace member, so
 there is no package, no install and no console-script entry. Run it as a module
 from the repository root::
@@ -49,7 +56,7 @@ from evaluations.ingest.agent_factory import (
     ARCRUN_EVAL_CONFIG,
     render_eval_agent_config,
 )
-from evaluations.longmemeval.adapter import LongMemEvalAdapter
+from evaluations.longmemeval.adapter import LongMemEvalAdapter, QuestionNotFoundError
 from evaluations.longmemeval.budget import (
     CEILING_FRACTION,
     CURRENT_PRICING_TABLE_VERSION,
@@ -64,8 +71,13 @@ from evaluations.longmemeval.budget import (
 from evaluations.longmemeval.dataset import Dataset, load_dataset
 from evaluations.longmemeval.hygiene import RepoHygieneError, RepoHygieneGuard
 from evaluations.longmemeval.judge import JUDGE_MODEL_NAME
-from evaluations.longmemeval.ledger import ResultLedger
+from evaluations.longmemeval.ledger import ResultLedger, ResultRow
 from evaluations.longmemeval.manifest import MeasurementScope, RunManifest, build_provenance
+from evaluations.longmemeval.paths import (
+    DATA_DIR,
+    RESULTS_DIR,
+    RUNS_ROOT,
+)
 from evaluations.longmemeval.preflight import PREFLIGHT_QUESTION_ID, PreflightError, run_preflight
 from evaluations.longmemeval.runner import (
     PHASES,
@@ -77,11 +89,6 @@ from evaluations.longmemeval.runner import (
     resolve_phase,
 )
 from evaluations.longmemeval.scoring import QUESTION_TYPES
-
-EVALUATIONS_ROOT = Path(__file__).resolve().parents[1]
-DATA_DIR = EVALUATIONS_ROOT / "data"
-RUNS_ROOT = EVALUATIONS_ROOT / "runs"
-RESULTS_DIR = EVALUATIONS_ROOT / "results"
 
 PHASE_DATASETS: dict[str, str] = {
     "oracle": "longmemeval_oracle.json",
@@ -95,6 +102,15 @@ SMOKE_DIRNAME = "smoke"
 SMOKE_MIN = 3
 SMOKE_MAX = 5
 """The smoke runs 3-5 questions: fewer cannot span types, more is no longer a smoke."""
+
+QUESTION_DIRNAME = "questions"
+QUESTION_RESULTS_FILENAME = "results.jsonl"
+QUESTION_DEFAULT_PHASE: Phase = "oracle"
+"""Where a ``--question-id`` run lands, and which corpus it reads by default.
+
+Each run gets its own timestamped directory under ``<results-dir>/questions``, so
+a one-off can neither append to a scored phase's ledger nor overwrite the last
+one-off's manifest."""
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -153,6 +169,15 @@ def build_parser() -> argparse.ArgumentParser:
         "end on the S corpus; passing it is what opens --phase full-s",
     )
     parser.add_argument(
+        "--question-id",
+        action="append",
+        metavar="ID",
+        help="run exactly this question end to end and print what it answered; repeat "
+        f"the flag for more. Reads {PHASE_DATASETS[QUESTION_DEFAULT_PHASE]} unless "
+        "--dataset says otherwise, writes each run to a new directory under "
+        f"<results-dir>/{QUESTION_DIRNAME}, and never opens the --phase full-s gate",
+    )
+    parser.add_argument(
         "--keep-workspace-on-failure",
         action="store_true",
         help="retain the workspace of any question that voids or errors, instead of "
@@ -199,6 +224,8 @@ Run from the repository root:
   uv run python -m evaluations.longmemeval.cli --phase full-s --dry-run
   uv run python -m evaluations.longmemeval.cli --smoke {SMOKE_MIN} \\
       --dataset-sha256 <sha256> --dataset-revision <hf-revision>
+  uv run python -m evaluations.longmemeval.cli --question-id <question-id> \\
+      --dataset-sha256 <sha256> --dataset-revision <hf-revision>
 
 `python evaluations/longmemeval/cli.py` does NOT work: Python puts the script's
 own directory on sys.path instead of the repository root, so the first import
@@ -229,6 +256,16 @@ def _smoke_count(value: str) -> int:
 
 def _check_usage(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
     """Reject flag combinations that name no run, or two of them."""
+    if args.question_id:
+        if args.phase is not None:
+            parser.error("--question-id names its own run; do not also pass --phase")
+        if args.smoke is not None:
+            parser.error("--question-id and --smoke are separate runs; pass one")
+        if args.dry_run:
+            parser.error("--question-id and --dry-run are separate runs; pass one")
+        if args.strategy is not None:
+            parser.error("--strategy is not applied by --question-id")
+        return
     if args.smoke is not None:
         if args.dry_run:
             parser.error("--smoke and --dry-run are separate runs; pass one")
@@ -287,6 +324,31 @@ def write_smoke_gate(gate_path: Path, *, question_ids: Sequence[str]) -> Path:
     }
     gate_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     return gate_path
+
+
+# ---------------------------------------------------------------------------
+# Named questions
+# ---------------------------------------------------------------------------
+
+
+def select_questions(dataset: Dataset, *, question_ids: Sequence[str]) -> list[dict[str, Any]]:
+    """The named questions, in the order asked, refusing an id the corpus lacks.
+
+    A typo'd id must be named and refused here, before the run spends anything:
+    silently running nothing looks exactly like a question that produced no
+    output. Repeats collapse, because paying to ingest one haystack twice in a
+    single run measures nothing new.
+    """
+    by_id = {str(raw["question_id"]): raw for raw in dataset.questions}
+    wanted = list(dict.fromkeys(question_ids))
+    missing = [question_id for question_id in wanted if question_id not in by_id]
+    if missing:
+        raise QuestionNotFoundError(
+            f"no question {', '.join(repr(name) for name in missing)} in the loaded "
+            f"corpus of {len(by_id)} questions; check the id, or point --dataset at the "
+            "corpus that holds it"
+        )
+    return [by_id[question_id] for question_id in wanted]
 
 
 # ---------------------------------------------------------------------------
@@ -605,6 +667,40 @@ async def _smoke(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+async def _question_run(args: argparse.Namespace) -> int:
+    """Run the named question(s) end to end and show what each one did."""
+    expected_sha256, revision = _require_dataset_pin(args)
+    dataset_path: Path = args.dataset or _default_dataset(QUESTION_DEFAULT_PHASE)
+    dataset = _load(dataset_path, expected_sha256=expected_sha256, revision=revision)
+    questions = select_questions(dataset, question_ids=args.question_id)
+
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    run_dir: Path = args.results_dir / QUESTION_DIRNAME / stamp
+    results_path = run_dir / QUESTION_RESULTS_FILENAME
+
+    # Labelled oracle because that is the corpus it reads by default, and every
+    # phase but sample-s runs whatever question set it is handed — so handing
+    # PhaseRunner the subset IS the selection, exactly as --smoke does it. Which
+    # corpus was actually read is not left to the label: the manifest names the
+    # file and pins its SHA-256.
+    report = await _execute(
+        phase=QUESTION_DEFAULT_PHASE,
+        dataset=dataset.model_copy(update={"questions": questions}),
+        dataset_path=dataset_path,
+        expected_sha256=expected_sha256,
+        revision=revision,
+        strategy=None,
+        runs_root=args.runs_root,
+        results_dir=run_dir,
+        results_path=results_path,
+        keep_workspace_on_failure=args.keep_workspace_on_failure,
+        pricing_version=args.pricing_table_version,
+    )
+    _print_report(report, results_path=results_path)
+    _print_question_results(results_path, dataset=dataset)
+    return EXIT_OK
+
+
 # ---------------------------------------------------------------------------
 # Output
 # ---------------------------------------------------------------------------
@@ -640,6 +736,36 @@ def _print_report(report: PhaseReport, *, results_path: Path) -> None:
             print(f"  {name:<28} {count}")
 
 
+def _print_question_results(results_path: Path, *, dataset: Dataset) -> None:
+    """Show what each question answered, read back from the rows that were written.
+
+    Read back rather than reported from memory: the row is what a later analysis
+    will score, so a run that prints one thing and records another is a bug this
+    is positioned to catch rather than hide.
+    """
+    asked = {str(raw["question_id"]): raw for raw in dataset.questions}
+    for line in results_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        row = ResultRow.model_validate(json.loads(line))
+        raw = asked.get(row.question_id, {})
+        print()
+        print(f"question           {row.question_id} ({row.question_type})")
+        print(f"asked              {raw.get('question', '')}")
+        print(f"gold answer        {raw.get('answer', '')}")
+        print(f"agent answer       {row.answer or '(none)'}")
+        print(f"judge verdict      {_verdict_line(row)}")
+
+
+def _verdict_line(row: ResultRow) -> str:
+    """The judge's call on one row, or why that row never reached the judge."""
+    if row.verdict is not None:
+        return "CORRECT" if row.verdict.get("correct") else "INCORRECT"
+    if row.void_reason is not None:
+        return f"none — question voided ({row.void_reason})"
+    return f"none — status {row.status}"
+
+
 def _abort(code: int, assertion: str, detail: str) -> int:
     """Name the assertion that failed, then hand back its exit code."""
     print(f"ABORT [{assertion}] {detail}", file=sys.stderr)
@@ -654,6 +780,8 @@ def _abort(code: int, assertion: str, detail: str) -> int:
 async def _dispatch(args: argparse.Namespace) -> int:
     if args.dry_run:
         return _dry_run(args)
+    if args.question_id:
+        return await _question_run(args)
     if args.smoke is not None:
         return await _smoke(args)
     return await _phase(args)
@@ -676,11 +804,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _abort(EXIT_CEILING, "spend_ceiling", str(exc))
     except SmokeGateError as exc:
         return _abort(EXIT_SMOKE_GATE, "smoke_gate_passed", str(exc))
-    except (DatasetUnavailableError, DatasetPinRequiredError, ResumeRefusedError) as exc:
+    except (
+        DatasetUnavailableError,
+        DatasetPinRequiredError,
+        QuestionNotFoundError,
+        ResumeRefusedError,
+    ) as exc:
         return _abort(EXIT_ERROR, type(exc).__name__, str(exc))
 
 
 __all__ = [
+    # Re-exported from evaluations.longmemeval.paths, which owns them. Named
+    # here because the CLI is where they are the *defaults* a run resolves
+    # against, and tests patch them on this module to redirect a whole run.
+    "DATA_DIR",
     "EXIT_CEILING",
     "EXIT_ERROR",
     "EXIT_HYGIENE",
@@ -688,6 +825,11 @@ __all__ = [
     "EXIT_PREFLIGHT",
     "EXIT_SMOKE_GATE",
     "PHASE_DATASETS",
+    "QUESTION_DEFAULT_PHASE",
+    "QUESTION_DIRNAME",
+    "QUESTION_RESULTS_FILENAME",
+    "RESULTS_DIR",
+    "RUNS_ROOT",
     "SMOKE_GATE_FILENAME",
     "SMOKE_MAX",
     "SMOKE_MIN",
@@ -698,6 +840,7 @@ __all__ = [
     "build_parser",
     "main",
     "resolved_model_ids",
+    "select_questions",
     "select_smoke_questions",
     "write_smoke_gate",
 ]
