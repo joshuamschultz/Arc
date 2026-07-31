@@ -1,0 +1,11 @@
+# ArcRun config — the agentic-loop controls arcagent hands to the run loop.
+# (Per-run token/cost/request ceilings live in arcllm.toml [budget]; the
+# tier-floored circuit breakers live in arcagent.toml [security].)
+
+max_turns = 40          # hard cap on agentic loop turns
+# tool_timeout = 30.0   # per-tool-call wall-clock timeout (seconds); unset = none
+# allowed_strategies = ["react"]  # restrict the loop to these strategies; unset = all
+approval_opt_in = []    # tool names always requiring human approval at personal/enterprise
+
+[sandbox]
+# allowed_tools = ["calculate"]  # restrict the loop to these tools; unset = all allowed

@@ -1,0 +1,55 @@
+[
+  {
+    "question_id": "fixture_s_single_session_assistant_1",
+    "question_type": "single-session-assistant",
+    "question": "What did you suggest I do about the squeaky floorboard?",
+    "answer": "Drive a screw through the board into the joist beneath it",
+    "question_date": "2023/08/30 (Wed) 16:20",
+    "haystack_dates": [
+      "2023/03/05 (Sun) 09:00",
+      "2023/07/11 (Tue) 13:45",
+      "2023/08/02 (Wed) 20:15"
+    ],
+    "haystack_session_ids": [
+      "s_h0_recipes",
+      "answer_s_h1_gold",
+      "s_h2_travel"
+    ],
+    "answer_session_ids": [
+      "answer_s_h1_gold"
+    ],
+    "haystack_sessions": [
+      [
+        {
+          "role": "user",
+          "content": "I am trying to cut down on how much oil the weeknight stir fry takes."
+        },
+        {
+          "role": "assistant",
+          "content": "A carbon steel pan at high heat needs far less. Preheat it before anything goes in."
+        }
+      ],
+      [
+        {
+          "role": "user",
+          "content": "The floorboard outside the bedroom squeaks every single night."
+        },
+        {
+          "role": "assistant",
+          "content": "Drive a screw through the board into the joist beneath it to pull the two tight.",
+          "has_answer": true
+        }
+      ],
+      [
+        {
+          "role": "user",
+          "content": "We are deciding between Lisbon and Porto for four days in October."
+        },
+        {
+          "role": "assistant",
+          "content": "Porto is smaller and easier to walk. Lisbon has more day trips within reach."
+        }
+      ]
+    ]
+  }
+]

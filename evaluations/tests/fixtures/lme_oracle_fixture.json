@@ -1,0 +1,76 @@
+[
+  {
+    "question_id": "fixture_oracle_temporal_reasoning_1",
+    "question_type": "temporal-reasoning",
+    "question": "Which lens did I say I bought right before the Big Sur trip?",
+    "answer": "A 35mm prime lens",
+    "question_date": "2023/09/20 (Wed) 10:05",
+    "haystack_dates": [
+      "2023/06/14 (Wed) 08:12",
+      "2023/04/02 (Sun) 19:40",
+      "2023/09/01 (Fri) 07:05",
+      "2023/05/18 (Thu) 21:33"
+    ],
+    "haystack_session_ids": [
+      "orc_s0_bike",
+      "orc_s1_sourdough",
+      "answer_orc_s2_gold",
+      "orc_s3_dentist"
+    ],
+    "answer_session_ids": [
+      "answer_orc_s2_gold"
+    ],
+    "haystack_sessions": [
+      [
+        {
+          "role": "user",
+          "content": "The rear derailleur on my commuter bike keeps skipping in third gear."
+        },
+        {
+          "role": "assistant",
+          "content": "That usually means the cable has stretched. Try a quarter turn on the barrel adjuster."
+        }
+      ],
+      [
+        {
+          "role": "user",
+          "content": "My sourdough starter finally doubled overnight after a week of nothing."
+        },
+        {
+          "role": "assistant",
+          "content": "The warmer kitchen probably did it. Feeding twice a day should keep it lively."
+        }
+      ],
+      [
+        {
+          "role": "user",
+          "content": "I bought a 35mm prime lens the week before the Big Sur trip.",
+          "has_answer": true
+        },
+        {
+          "role": "assistant",
+          "content": "A good call for coastal landscapes. Did you shoot much at the overlooks?"
+        },
+        {
+          "role": "user",
+          "content": "I shot the whole Big Sur trip on that 35mm prime and never swapped it off.",
+          "has_answer": true
+        },
+        {
+          "role": "assistant",
+          "content": "One lens the whole way keeps you moving. Any shot you wish you had gone wider for?"
+        }
+      ],
+      [
+        {
+          "role": "user",
+          "content": "The dentist wants me back in six months for the other filling."
+        },
+        {
+          "role": "assistant",
+          "content": "Worth booking now while the slot is open. They fill up fast in the fall."
+        }
+      ]
+    ]
+  }
+]
