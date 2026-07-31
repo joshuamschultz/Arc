@@ -4,7 +4,19 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import freezegun
 import pytest
+
+# freezegun patches datetime references by walking every module in sys.modules.
+# Once a memory test has imported the arcmemory brain, sentence-transformers has
+# pulled `transformers` in, and walking it triggers that package's lazy module
+# machinery — which raises on an unrelated broken submodule. The failure then
+# lands on whichever test next calls @freeze_time, so the scheduler suite fails
+# only when a memory test ran first.
+#
+# Nothing under `transformers` holds a datetime freezegun needs to patch, so
+# skipping it is the correct fix rather than a workaround.
+freezegun.configure(extend_ignore_list=["transformers"])
 
 
 @pytest.fixture(autouse=True)
