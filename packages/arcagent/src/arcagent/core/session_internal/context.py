@@ -10,16 +10,29 @@ Two responsibilities:
    ``prune_observations`` (observation masking) — are invoked by
    ``SessionManager.compact`` at a discrete, persisted compaction boundary,
    NOT per turn. Structured LLM summarization lives in the session manager.
+
+Assembly is tiered by *change rate*, because a provider caches the longest
+stable prefix and the conversation sits behind the whole system prompt. One
+volatile byte in front of the history re-bills the entire history every turn.
+So the prompt is split three ways: a session-stable segment (harness preamble,
+identity, capabilities), a run-stable segment (``context.md``, rewritten
+between runs), and per-turn material (recall, plan frontier, team inbox) that
+rides with the user's message instead of the system prompt.
 """
 
 from __future__ import annotations
 
 import logging
 import math
+import re
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 # TYPE_CHECKING-only import to avoid circular dependency
 from typing import TYPE_CHECKING, Any
+
+from arcllm import Message
 
 from arcagent.core.config import ContextConfig
 from arcagent.core.telemetry import AgentTelemetry
@@ -35,6 +48,207 @@ _CORE_PROMPT_FILES = ["identity.md", "context.md"]
 # Approximate characters per token for estimation
 _CHARS_PER_TOKEN = 4
 
+# Sections whose content is derived from the current turn. They move out of the
+# system prompt entirely so the cached prefix survives the turn.
+#
+# All three are persisted with the turn (``turn_context``), so their clearance
+# story matters. ``recall`` is gated: the memory module retrieves at a hardcoded
+# ``clearance="unclassified"`` and arcmemory runs ``gate_no_read_up`` before the
+# text is ever handed back, so nothing above that clearance can reach the
+# session. ``planning`` and ``teams`` have no equivalent gate — deliberately, as
+# they are not cross-classification retrieval: planning renders this agent's own
+# plan store, and teams its own mailbox and roster. Both are already within the
+# agent's clearance by construction. Wiring a classified store into either would
+# invalidate that reasoning and require a gate here.
+_TURN_SECTIONS = frozenset({"planning", "recall", "teams"})
+
+# Bus-injected sections known to hold still for the life of the process. A
+# section we cannot vouch for defaults to the run tier instead: an unknown
+# volatile section must never sit in front of the session-stable segment.
+_SESSION_SECTIONS = frozenset(
+    {"capabilities", "identity", "memory_status", "policy", "skill_usage"}
+)
+
+# Fixed positions inside their tier; everything else sorts alphabetically.
+_SESSION_HEAD = ("base", "identity")
+_RUN_TAIL = ("context",)
+
+# Where a turn's retrieved material is stored on a session record. It is a
+# sibling of ``content``, never part of it: the session is the human
+# conversation, and a chat view, a session tool, or memory capture must see
+# only what the person actually said.
+TURN_CONTEXT_KEY = "turn_context"
+
+
+# Every boundary this module emits is an XML element: ``<identity>…</identity>``
+# for a section, ``<agent-context>…</agent-context>`` for a turn's retrieved
+# material. One shape for both, and unambiguous to read back out of a transcript.
+TURN_CONTEXT_TAG = "agent-context"
+
+# Every tag name the assembly can EVER emit — deliberately static, not derived
+# from the sections a given turn happens to populate. ``policy`` appears only
+# when ``policy.md`` exists and ``skill_usage`` only when skills are loaded, so
+# a per-call set would leave exactly those names forgeable on the turns they are
+# missing. Caller-supplied names (strategy/spawn guidance) are added per call on
+# top of this.
+_RESERVED_TAGS = frozenset(
+    {*_SESSION_SECTIONS, *_TURN_SECTIONS, *_SESSION_HEAD, *_RUN_TAIL, TURN_CONTEXT_TAG}
+)
+
+
+def _defang(text: str, tags: Iterable[str]) -> str:
+    """Strip tags in untrusted text that could forge a boundary (LLM01).
+
+    Section bodies and retrieved material are shaped by web pages, file
+    contents, other agents, and the agent's own writing — ``context.md`` is
+    agent-authored, and any module may inject a section. None of it may name a
+    boundary this module emits: closing ``</agent-context>`` early would make
+    the remainder read as the operator's own words, and forging ``<identity>``
+    would let it pose as a system-prompt section, the stronger position of the two.
+
+    Only this prompt's own tag names are stripped, so unrelated markup in a body
+    (``<div>``, a quoted document) survives untouched. Matching is deliberately
+    looser than what the renderer emits — case-insensitive, and tolerant of
+    inner whitespace, attributes, and a self-closing slash — because a model
+    reads ``<Identity >`` as the element even though the renderer would never
+    write it that way. Defending only the exact spelling would leave the promise
+    in ``base_system`` (that a boundary is authoritative) forgeable.
+
+    Removal repeats to a fixed point: stripping one tag can reveal another that
+    the raw text only spelled in pieces (``<<identity>identity>``). Each pass
+    strictly shortens the text, so this terminates. Reaching a fixed point also
+    makes the function idempotent, which the cache depends on — ``wire_messages``
+    re-runs this over stored content, and a transform that changed a byte on the
+    second pass would silently break the replayed prefix.
+
+    Accepted residual risk: entity-encoded spellings (``&lt;identity&gt;``) pass
+    through, because they are not tags — a model would have to decode them
+    itself before they could be confused for a boundary. Decoding entities here
+    would instead corrupt any body that legitimately quotes escaped markup.
+    """
+    patterns = [
+        re.compile(rf"</?\s*{re.escape(tag)}(\s[^>]*)?/?\s*>", re.IGNORECASE) for tag in tags
+    ]
+    while True:
+        stripped = text
+        for pattern in patterns:
+            stripped = pattern.sub("", stripped)
+        if stripped == text:
+            return text
+        text = stripped
+
+
+def with_turn_context(user_text: str, turn: str) -> str:
+    """The exact bytes the model sees for one user turn.
+
+    The single definition of that composition, used both when a turn is first
+    sent and when it is replayed from storage — if the two ever disagreed by a
+    byte, the provider's cached prefix would stop matching and every turn would
+    re-bill the whole conversation.
+
+    Tagged rather than merged: retrieved material is reference data, and the
+    model is told (in ``base_system``) never to read it as instruction.
+
+    ``turn`` is defanged first — see :func:`_defang` for why retrieved material
+    must not be able to name its own container.
+    """
+    if not turn:
+        return user_text
+    body = _defang(turn, _RESERVED_TAGS)
+    return f"{user_text}\n\n<{TURN_CONTEXT_TAG}>\n{body}\n</{TURN_CONTEXT_TAG}>"
+
+
+@dataclass(frozen=True)
+class AssembledPrompt:
+    """A system prompt split by how often each part changes.
+
+    ``session`` and ``run`` are the ordered provider cache segments (most
+    stable first). ``turn`` is this turn's retrieved material, which the caller
+    attaches to the user's message via :meth:`turn_text` — persisted with that
+    message, so the next turn's prefix is still byte-identical.
+    """
+
+    session: str
+    run: str
+    turn: str
+
+    @property
+    def segments(self) -> list[str]:
+        """The system prompt as ordered cache segments, most-stable first.
+
+        At most two, which is the budget ``arcllm``'s Anthropic adapter enforces
+        in ``_MAX_SYSTEM_SEGMENTS`` (4 breakpoints per request, less the last
+        tool and the conversation tail). Adding a third tier here means raising
+        it there too — the packages stay independently installable, so the
+        contract is documented rather than shared, and the adapter rejects an
+        over-long list loudly instead of letting the provider 400.
+        """
+        return [s for s in (self.session, self.run) if s]
+
+    def session_record(self, user_text: str) -> dict[str, str]:
+        """The user turn as it is stored: what the person said, plus a sibling
+        field holding this turn's retrieved material.
+
+        Stored, not discarded, because the bytes sent on this turn must be
+        reproducible on the next one or the cached prefix stops matching. Kept
+        out of ``content`` so the session stays the conversation.
+        """
+        record = {"role": "user", "content": user_text}
+        if self.turn:
+            record[TURN_CONTEXT_KEY] = self.turn
+        return record
+
+    def as_text(self) -> str:
+        """The system prompt as one string, for callers that take a single prompt."""
+        return "\n\n".join(self.segments)
+
+
+def wire_messages(records: Sequence[dict[str, Any]]) -> list[Message]:
+    """Session records as the messages the model actually receives.
+
+    Each record's stored turn context is re-attached verbatim, so a replayed
+    turn is byte-identical to the turn as first sent. This is the counterpart
+    of :meth:`AssembledPrompt.session_record`; the two must stay paired.
+    """
+    out: list[Message] = []
+    for record in records:
+        turn = record.get(TURN_CONTEXT_KEY) or ""
+        content = record.get("content")
+        if turn and isinstance(content, str):
+            record = {**record, "content": with_turn_context(content, turn)}
+        out.append(Message(**record))
+    return out
+
+
+def _tier_of(key: str, caller_keys: frozenset[str]) -> str:
+    """Which cache tier a section belongs to. Unknown sections fail safe to ``run``."""
+    if key in _TURN_SECTIONS:
+        return "turn"
+    if key in _SESSION_SECTIONS or key in caller_keys:
+        return "session"
+    return "run"
+
+
+def _render(
+    sections: dict[str, str],
+    keys: list[str],
+    *,
+    reserved: Iterable[str],
+    head: tuple[str, ...] = (),
+    tail: tuple[str, ...] = (),
+) -> str:
+    """Render sections as XML elements in a stable order: head, sorted, tail.
+
+    ``reserved`` is every tag name in play across the whole prompt, not just
+    this tier — a body must not be able to forge a section that lives in another
+    segment either.
+    """
+    middle = sorted(k for k in keys if k not in head and k not in tail)
+    ordered = [k for k in head if k in keys] + middle + [k for k in tail if k in keys]
+    return "\n\n".join(
+        f"<{k}>\n{_defang(sections[k], reserved)}\n</{k}>" for k in ordered if sections[k]
+    )
+
 
 def _msg_attr(msg: Any, key: str, default: Any = "") -> Any:
     """Extract attribute from a message (dict or Pydantic model)."""
@@ -44,9 +258,18 @@ def _msg_attr(msg: Any, key: str, default: Any = "") -> Any:
 
 
 def _msg_content_str(msg: Any) -> str:
-    """Extract string content from a message, or empty string."""
+    """The text this message actually puts on the wire, or empty string.
+
+    Includes any stored ``turn_context``, composed exactly as
+    :func:`wire_messages` composes it before sending. Counting ``content``
+    alone would under-report by every stored recall block — an error that
+    compounds with the conversation — and compaction and the emergency
+    truncation valve both trigger off this estimate, so both would fire late.
+    """
     content = _msg_attr(msg, "content", "")
-    return content if isinstance(content, str) else ""
+    text = content if isinstance(content, str) else ""
+    turn = _msg_attr(msg, TURN_CONTEXT_KEY, "")
+    return with_turn_context(text, turn) if isinstance(turn, str) and turn else text
 
 
 class ContextManager:
@@ -78,15 +301,19 @@ class ContextManager:
         extra_sections: dict[str, str] | None = None,
         *,
         query: str = "",
-    ) -> str:
-        """Build system prompt from workspace files.
+    ) -> AssembledPrompt:
+        """Build the tiered system prompt from workspace files.
 
         Reads core files (identity.md, context.md), then emits
         agent:assemble_prompt so modules can inject their own sections.
         Caller-supplied extra_sections (e.g. ArcRun strategy guidance)
         are merged after bus handlers but before ordering.
 
-        Final ordering: identity first, context last, rest alphabetically.
+        Tiering: ``extra_sections`` and the named ``_SESSION_SECTIONS`` form the
+        session-stable segment (``base`` and ``identity`` lead it); ``context.md``
+        and any unrecognized section form the run-stable segment; the named
+        ``_TURN_SECTIONS`` are returned separately for the caller to attach to the
+        user's message. Within a tier: fixed head, then alphabetical, then fixed tail.
 
         ``workspace/identity.md`` re-read every call (hot-reload contract):
             The file content is read from disk on every invocation, so an
@@ -123,23 +350,22 @@ class ContextManager:
             )
 
         # Merge caller-supplied sections (strategy guidance, etc.)
+        caller_keys = frozenset(extra_sections or ())
         if extra_sections:
             sections.update(extra_sections)
 
-        # Dynamic ordering: identity first, context last, rest sorted
-        parts: list[str] = []
-        if sections.get("identity"):
-            parts.append(f"--- identity ---\n{sections['identity']}")
+        tiered: dict[str, list[str]] = {"session": [], "run": [], "turn": []}
+        for key in sections:
+            tiered[_tier_of(key, caller_keys)].append(key)
 
-        middle_keys = sorted(k for k in sections if k not in ("identity", "context"))
-        for key in middle_keys:
-            if sections[key]:
-                parts.append(f"--- {key} ---\n{sections[key]}")
-
-        if sections.get("context"):
-            parts.append(f"--- context ---\n{sections['context']}")
-
-        return "\n\n".join(parts)
+        # Static names plus whatever this call adds, so no body can forge a
+        # boundary — including one for a section absent this turn.
+        reserved = _RESERVED_TAGS | set(sections)
+        return AssembledPrompt(
+            session=_render(sections, tiered["session"], reserved=reserved, head=_SESSION_HEAD),
+            run=_render(sections, tiered["run"], reserved=reserved, tail=_RUN_TAIL),
+            turn=_render(sections, tiered["turn"], reserved=reserved),
+        )
 
     def estimate_tokens(self, text: str) -> int:
         """Estimate token count with conservative multiplier.

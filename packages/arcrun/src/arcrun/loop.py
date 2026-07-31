@@ -9,7 +9,7 @@ from typing import Any
 
 from arcstore.spool import request_context
 
-from arcrun._messages import system_message, user_message
+from arcrun._messages import SystemPrompt, system_messages, user_message
 from arcrun.capabilities import CapabilityProvider, provider_tools
 from arcrun.checkpoint import LoopCheckpoint, apply_checkpoint
 from arcrun.events import EventBus
@@ -24,7 +24,7 @@ _DEFAULT_CALLER_DID = "did:arc:unknown"
 
 def _build_state(
     capabilities: CapabilityProvider,
-    system_prompt: str,
+    system_prompt: SystemPrompt,
     task: str,
     *,
     messages: list[Any] | None = None,
@@ -72,9 +72,9 @@ def _build_state(
     # When session history provided, prepend fresh system prompt.
     # System prompt is always rebuilt (never carried from old messages).
     if messages is not None:
-        initial_messages = [system_message(system_prompt), *messages]
+        initial_messages = [*system_messages(system_prompt), *messages]
     else:
-        initial_messages = [system_message(system_prompt), user_message(task)]
+        initial_messages = [*system_messages(system_prompt), user_message(task)]
 
     state = RunState(
         messages=initial_messages,
@@ -122,7 +122,7 @@ async def _select_and_emit(
 async def run(
     model: Any,
     capabilities: CapabilityProvider,
-    system_prompt: str,
+    system_prompt: SystemPrompt,
     task: str,
     *,
     messages: list[Any] | None = None,
@@ -194,7 +194,7 @@ async def run(
 async def run_async(
     model: Any,
     capabilities: CapabilityProvider,
-    system_prompt: str,
+    system_prompt: SystemPrompt,
     task: str,
     *,
     messages: list[Any] | None = None,

@@ -17,10 +17,20 @@ builds messages with, and every OpenAI-wire adapter would have to ignore it.
 ## Decision
 
 `cache_control` lives **only** in `arcllm/adapters/anthropic.py`. The adapter
-auto-places at most three breakpoints (last tool, system block, rolling tail
-message) when caching is enabled via `ProviderSettings.enable_prompt_caching`
+auto-places at most four breakpoints (last tool, one per system segment, rolling
+tail message) when caching is enabled via `ProviderSettings.enable_prompt_caching`
 (default on) with `cache_ttl` of `5m` (default) or `1h`. No shared arcllm type
 carries a cache field; arcrun and arcagent never see the concept.
+
+A caller *does* express which parts of its prompt change at different rates, but
+in provider-neutral terms: it passes an ordered list of **system segments**,
+most-stable first (`arcrun`'s `system_prompt: str | Sequence[str]`, one
+`Message(role="system")` per segment). "Order these by stability" is a fact about
+the prompt, not an Anthropic wire directive — the OpenAI-wire adapters simply
+concatenate them, and their automatic prefix caching benefits from the same
+stability without knowing the concept exists. Anthropic caps a request at four
+breakpoints, so the adapter rejects more than two system segments rather than let
+the provider return an opaque 400.
 
 The normalized `Usage.cache_read_tokens`/`cache_write_tokens` fields are *telemetry*,
 not directives — every adapter may populate them (OpenAI/Gemini read
@@ -30,9 +40,11 @@ not directives — every adapter may populate them (OpenAI/Gemini read
 
 - Enabling/tuning caching is a one-file change; no ripple across packages.
 - The cross-provider message/tool contract stays provider-agnostic.
-- A caller cannot request a manual breakpoint. Accepted: the adapter places the
-  correct three automatically (cascade covers the whole prefix), and there is no
-  demonstrated need for manual placement (revisit under the rule-of-three).
+- A caller cannot request a manual breakpoint at an arbitrary position — only
+  declare system segments. Accepted: the adapter places the rest automatically
+  (cascade covers the whole prefix).
+- The two-segment cap is a hard error, not a silent degradation. Accepted: the
+  alternative is a provider 400 that is far harder to trace back to its cause.
 
 ## Alternatives considered
 

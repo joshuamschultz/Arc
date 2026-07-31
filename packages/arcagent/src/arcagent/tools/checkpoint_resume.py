@@ -18,12 +18,12 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 
-from arcllm import Message
-from arcrun import LoopCheckpoint, StreamEvent, TurnEndEvent
+from arcrun import LoopCheckpoint, StreamEvent, TurnEndEvent, system_messages
 from arcrun import run_stream as arcrun_run_stream
 
 from arcagent.core.agent_dispatch import build_run_context, maybe_compact, track_active_run
 from arcagent.core.agent_lifecycle import activate_runtime_bindings
+from arcagent.core.session_internal import wire_messages
 from arcagent.core.session_internal.capability_ledger import bind_session_id, reset_session_id
 from arcagent.tools.approval_policy import build_loop_controls
 from arcagent.tools.checkpoint_signing import verify_record
@@ -51,13 +51,14 @@ async def resume_stream(agent: ArcAgent, *, session_key: str) -> AsyncIterator[S
     if signer is not None:
         verify_record(record, public_key=signer.public_key, algorithm=signer.algorithm)
 
-    _telemetry, bus, model, provider, system_prompt, bridge = await build_run_context(agent, "")
-    transcript = [Message(**m) for m in session.get_messages()]
+    _telemetry, bus, model, provider, prompt, bridge = await build_run_context(agent, "")
+    transcript = wire_messages(session.get_messages())
     # apply_checkpoint (in arcrun) replaces the loop's message list with this one,
     # so the freshly-assembled system prompt must lead it — the transcript on disk
-    # never carries the system message (it is rebuilt every run).
+    # never carries the system message (it is rebuilt every run). Built by arcrun's
+    # own helper so a resumed run's system messages are identical to a live run's.
     cp = LoopCheckpoint.from_record(
-        record, messages=[Message(role="system", content=system_prompt), *transcript]
+        record, messages=[*system_messages(prompt.segments), *transcript]
     )
     transform = agent._context.transform_context if agent._context else None
 
@@ -70,7 +71,7 @@ async def resume_stream(agent: ArcAgent, *, session_key: str) -> AsyncIterator[S
         raw_stream = await arcrun_run_stream(
             model=model,
             capabilities=provider,
-            system_prompt=system_prompt,
+            system_prompt=prompt.segments,
             task="",
             messages=transcript,
             on_event=bridge,

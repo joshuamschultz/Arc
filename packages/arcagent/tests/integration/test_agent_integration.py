@@ -171,13 +171,15 @@ class TestRunWithMockLLM:
         assert captured["model"] is not None
         # arcrun now receives a CapabilityProvider, not a flat tool list.
         assert hasattr(captured["capabilities"], "advertise")
-        assert isinstance(captured["system_prompt"], str)
+        # The system prompt arrives as ordered cache segments, most-stable first.
+        assert all(isinstance(s, str) for s in captured["system_prompt"])
         assert callable(captured["on_event"])
         assert callable(captured["transform_context"])
 
-        # System prompt includes workspace content
-        assert "integration-agent" in captured["system_prompt"]
-        assert "test-only" in captured["system_prompt"]
+        # System prompt includes workspace content: identity in the session-stable
+        # segment, context.md in the run-stable one.
+        assert "integration-agent" in captured["system_prompt"][0]
+        assert "test-only" in captured["system_prompt"][1]
 
         assert isinstance(events[-1], TurnEndEvent)
         await agent.shutdown()

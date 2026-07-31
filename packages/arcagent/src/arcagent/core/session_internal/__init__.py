@@ -16,7 +16,11 @@ preserving a single import path for consumers.
 
 from __future__ import annotations
 
-from arcagent.core.session_internal.context import ContextManager
+from arcagent.core.session_internal.context import (
+    AssembledPrompt,
+    ContextManager,
+    wire_messages,
+)
 from arcagent.core.session_internal.manager import SessionManager
 
-__all__ = ["ContextManager", "SessionManager"]
+__all__ = ["AssembledPrompt", "ContextManager", "SessionManager", "wire_messages"]

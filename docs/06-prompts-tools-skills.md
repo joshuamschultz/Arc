@@ -112,10 +112,15 @@ is where the pieces converge for one turn:
      `_inject_skill_usage` at priority 91, adding a `skill_usage` section
      when any skills are registered. Memory recall and planning guidance
      inject the same way at their own priorities.
-   - Merges the caller-supplied `extra_sections` (strategy + spawn guidance)
-     in after the bus handlers run.
-   - **Final order:** `identity` first, `context` last, everything else
-     sorted alphabetically in between (`context.py:129-141`).
+   - Merges the caller-supplied `extra_sections` (the `base_system` harness
+     preamble + strategy + spawn guidance) in after the bus handlers run.
+   - **Splits the result by change rate**, because a provider caches the
+     longest stable prefix and the conversation sits behind the whole system
+     prompt. Session-stable sections (`base`, `identity`, capabilities,
+     `skill_usage`, `policy`, and everything the caller passed) form cache
+     segment 1; `context.md` and any unrecognized section form segment 2;
+     `recall` / `planning` / `teams` leave the system prompt entirely and ride
+     with the user's message. See `docs/prompts.md` for the full table.
 
 ```mermaid
 flowchart TB
@@ -127,7 +132,7 @@ flowchart TB
     BUS["agent:assemble_prompt<br/>module-injected sections"] --> ASM["ContextManager.assemble_system_prompt"]
     STRAT --> ASM
     SPAWN --> ASM
-    ASM --> OUT["identity -- middle (alpha) -- context"]
+    ASM --> OUT["segment 1: base -- identity -- middle (alpha)<br/>segment 2: context<br/>turn block: recall/planning/teams -> user message"]
     class R,S found
     class STRAT,SPAWN,BUS,ASM agent
     class ID,CTX surface
@@ -144,22 +149,33 @@ flowchart TB
 `context.py` emits):
 
 ```text
---- identity ---
+# ---- cache segment 1: session-stable ----
+<base>
+<arcagent:base_system — the harness preamble, operator-overridable>
+
+<identity>
 <identity.md content — the agent's immutable goal charter>
 
---- <module-injected sections, sorted alphabetically> ---
-<e.g. capabilities (tool+skill XML manifest, prio 85), memory recall,
- planning guidance, skill_usage (prio 91)>
+<module-injected + caller sections, sorted alphabetically>
+<e.g. capabilities (tool+skill XML manifest, prio 85), policy,
+ skill_usage (prio 91)>
 
---- spawn_guidance ---
+<spawn_guidance>
 <only if spawn.enabled>
 
---- strategy: react (or whichever strategy is active) ---
+<strategy_react>  (or whichever strategy is active)
 <arcrun strategy prompt>
 
---- context ---
+# ---- cache segment 2: run-stable ----
+<context>
 <context.md content — the workpad's open-loops cockpit>
 ```
+
+Memory recall, the plan frontier, and the team inbox are **not** in the system
+prompt. They are attached to the user's message inside an `<agent-context>` tag,
+and stored in a `turn_context` field *beside* `content` rather than inside it —
+so the session stays the conversation while the bytes remain reproducible on the
+next turn. See `docs/prompts.md`.
 
 ### `identity.md` is read-only; `context.md` is workpad-owned
 

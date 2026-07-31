@@ -106,6 +106,55 @@ class TestAnthropicBreakpoints:
         assert body["system"][-1]["cache_control"] == {"type": "ephemeral"}
         assert body["messages"][-1]["content"][-1]["cache_control"] == {"type": "ephemeral"}
 
+    def test_system_segments_each_get_a_breakpoint(self):
+        """Two system messages = two cache segments, most-stable first.
+
+        A change in the volatile second segment must still read the first
+        segment's cache, so each segment end carries its own breakpoint.
+        """
+        adapter = AnthropicAdapter(_config(enable_caching=True), FAKE_MODEL)
+        messages = [
+            Message(role="system", content="session-stable"),
+            Message(role="system", content="run-stable"),
+            Message(role="user", content="Hello"),
+        ]
+        body = adapter._build_request_body(messages)
+
+        assert [b["text"] for b in body["system"]] == ["session-stable", "run-stable"]
+        assert all(b["cache_control"] == {"type": "ephemeral"} for b in body["system"])
+
+    def test_system_segments_concatenate_when_caching_off(self):
+        adapter = AnthropicAdapter(_config(enable_caching=False), FAKE_MODEL)
+        messages = [
+            Message(role="system", content="session-stable"),
+            Message(role="system", content="run-stable"),
+            Message(role="user", content="Hello"),
+        ]
+        body = adapter._build_request_body(messages)
+        assert body["system"] == "session-stable\nrun-stable"
+
+    def test_excess_system_segments_degrade_instead_of_failing(self):
+        """Anthropic allows 4 breakpoints; tools + 2 system + tail fills it.
+
+        Over budget the request must still go out — caching is an optimization,
+        and ``system_prompt`` is public arcrun API, so a caller passing three
+        segments cannot be allowed to turn a cache hint into a hard outage.
+        """
+        adapter = AnthropicAdapter(_config(enable_caching=True), FAKE_MODEL)
+        messages = [
+            Message(role="system", content="a"),
+            Message(role="system", content="b"),
+            Message(role="system", content="c"),
+            Message(role="user", content="Hello"),
+        ]
+        body = adapter._build_request_body(messages)
+
+        # Within budget, nothing dropped, and the stable head keeps its own entry.
+        assert len(body["system"]) == 2
+        assert body["system"][0]["text"] == "a"
+        assert body["system"][1]["text"] == "b\nc"
+        assert all(b["cache_control"] == {"type": "ephemeral"} for b in body["system"])
+
     def test_usage_reads_cache_tokens(self):
         adapter = AnthropicAdapter(_config(), FAKE_MODEL)
         usage = adapter._parse_usage(
