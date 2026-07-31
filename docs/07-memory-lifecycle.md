@@ -102,6 +102,7 @@ Two speeds, over five on-disk stores (`packages/arcmemory/src/arcmemory/stores/`
 | Semantic | `stores/semantic.py` | entity cards (`memory/entities/<slug>.md`) — `predicate: value` fact triplets + wiki-links | distillation (`write_fact`), the agentic tools | facts, structural enrichment |
 | Insight | `stores/insight.py` | minted abstractions (`memory/insights/<id>.md`) — the analogical-retrieval centerpiece | `mint_insights` / the agentic `record_insight` tool | structural recall |
 | Procedural | `stores/procedural.py` | how-to cards (`memory/procedures/<slug>.md`) — reusable methods, not tool sequences | `extract_procedures` / `record_procedure` | recall, skill improvement |
+| Events | `stores/events.py` | life-event cards (`memory/events/<slug>.md`) — what happened in the USER's life: when, who was in it (`[[participants]]` as graph edges), how it came out | `extract_events` / `record_event` | recall, timeline queries |
 | Daily notes | `stores/daily.py` | curated per-day rollup (`memory/daily-log/YYYY-MM-DD.md`) — meeting-minutes bullets, **not** a transcript | `_summarize_days` | human/operator review, surface index source |
 
 The raw episodic stream is the only place a full transcript ever lands; the
@@ -328,7 +329,7 @@ mechanism level, the trigger-embedding channel closes the surface-distance gap
 that would defeat a raw-text embedding comparison.
 
 Both indices index the *same* underlying units — curated markdown files under
-`entities/insights/procedures/daily-log`, then every raw episodic event
+`entities/insights/procedures/events/daily-log`, then every raw episodic event
 (`index/source.py`'s `iter_source_chunks`) — walked identically by the
 incremental indexer and the deterministic rebuilder so the two can never
 drift. Indexing is content-hash-gated: only new/changed chunks are re-embedded.
@@ -411,7 +412,7 @@ timeline
         Capture : sanitize, dedup, tag, Hebbian-bump : zero LLM
         Retrieve : one bounded fuse-and-gate pass, cached once per turn
     section Slow path — trigger fires
-        Consolidate light : distill facts/insights/procedures/days : decay edges : cue + entity merge
+        Consolidate light : distill facts/insights/procedures/events/days : decay edges : cue + entity merge
     section Slow path — first call after local date rolls
         Consolidate hygiene : + alias fold : + backlink repair : + workspace file dedup
 ```

@@ -310,7 +310,7 @@ _DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 # ---------------------------------------------------------------------------
-# Curated glass-box layer — insights, procedures, daily notes (U3/U4)
+# Curated glass-box layer — insights, procedures, events, daily notes (U3/U4)
 # ---------------------------------------------------------------------------
 
 
@@ -342,6 +342,21 @@ async def list_procedures(request: Request) -> JSONResponse:
     except Exception as exc:
         return _store_unreadable(exc)
     return JSONResponse({"items": [p.model_dump(mode="json") for p in procedures]})
+
+
+async def list_events(request: Request) -> JSONResponse:
+    """GET .../knowledge/events — every life-event card, most recent occurrence first."""
+    agent_id = request.path_params["agent_id"]
+    agent = _resolve_agent(request, agent_id)
+    if agent is None:
+        return _agent_not_found(agent_id)
+
+    op = _operator_for(Path(agent.workspace_path), agent.did)
+    try:
+        events = op.list_events()
+    except Exception as exc:
+        return _store_unreadable(exc)
+    return JSONResponse({"items": [e.model_dump(mode="json") for e in events]})
 
 
 async def list_daily_notes(request: Request) -> JSONResponse:
@@ -426,6 +441,7 @@ async def knowledge_summary(request: Request) -> JSONResponse:
                 "entities": summary.entities,
                 "insights": summary.insights,
                 "procedures": summary.procedures,
+                "events": summary.events,
                 "daily_notes": summary.daily_notes,
             },
         }
@@ -460,6 +476,7 @@ routes = [
     ),
     Route("/api/agents/{agent_id}/knowledge/insights", list_insights, methods=["GET"]),
     Route("/api/agents/{agent_id}/knowledge/procedures", list_procedures, methods=["GET"]),
+    Route("/api/agents/{agent_id}/knowledge/events", list_events, methods=["GET"]),
     Route("/api/agents/{agent_id}/knowledge/daily-notes", list_daily_notes, methods=["GET"]),
     Route(
         "/api/agents/{agent_id}/knowledge/daily-notes/{day}",

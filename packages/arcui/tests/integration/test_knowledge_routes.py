@@ -23,10 +23,11 @@ from arcmemory.brain import ArcMemoryBrain
 from arcmemory.db import MemoryDB
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.stores.daily import DailyNotesStore
+from arcmemory.stores.events import EventStore
 from arcmemory.stores.insight import InsightStore
 from arcmemory.stores.procedural import ProceduralStore
 from arcmemory.stores.semantic import SemanticStore
-from arcmemory.types import DaySummary, Insight, Procedure
+from arcmemory.types import DaySummary, Insight, LifeEvent, Procedure
 from starlette.testclient import TestClient
 
 from arcui.auth import AuthConfig
@@ -63,7 +64,7 @@ def _seed_entities(workspace: Path) -> None:
 
 
 def _seed_curated(workspace: Path) -> None:
-    """Write insight/procedure/daily-note cards through their own store paths."""
+    """Write insight/procedure/event/daily-note cards through their own store paths."""
     InsightStore(workspace).write(
         Insight(
             id="producers-unwired",
@@ -75,6 +76,17 @@ def _seed_curated(workspace: Path) -> None:
     )
     ProceduralStore(workspace).write(
         Procedure(slug="deploy", title="Deploy", when_to_use="shipping a release", steps=["build", "ship"], use_count=3)
+    )
+    EventStore(workspace).write(
+        LifeEvent(
+            slug="q3-kickoff-with-acme",
+            title="Q3 kickoff with Acme",
+            date="2026-07-06",
+            event_type="meeting",
+            participants=["alice", "bob"],
+            summary="walked Acme through the Q3 plan",
+            outcome="Acme agreed to a paid pilot",
+        )
     )
     DailyNotesStore(workspace).write(
         DaySummary(
@@ -510,6 +522,36 @@ class TestProcedures:
         assert resp.json()["items"] == []
 
 
+class TestEvents:
+    def test_list_events(self, app_with_memories: Any) -> None:
+        with TestClient(app_with_memories) as client:
+            resp = client.get("/api/agents/concierge/knowledge/events", headers=_viewer())
+        assert resp.status_code == 200
+        items = resp.json()["items"]
+        assert len(items) == 1
+        assert items[0]["slug"] == "q3-kickoff-with-acme"
+        assert items[0]["date"] == "2026-07-06"
+        assert items[0]["event_type"] == "meeting"
+        assert items[0]["participants"] == ["alice", "bob"]
+        assert items[0]["outcome"] == "Acme agreed to a paid pilot"
+
+    def test_list_events_empty_is_200(self, app_no_memories: Any) -> None:
+        with TestClient(app_no_memories) as client:
+            resp = client.get("/api/agents/fresh/knowledge/events", headers=_viewer())
+        assert resp.status_code == 200
+        assert resp.json()["items"] == []
+
+    def test_list_events_no_auth_is_401(self, app_with_memories: Any) -> None:
+        with TestClient(app_with_memories) as client:
+            resp = client.get("/api/agents/concierge/knowledge/events")
+        assert resp.status_code == 401
+
+    def test_list_events_unknown_agent_is_404(self, app_with_memories: Any) -> None:
+        with TestClient(app_with_memories) as client:
+            resp = client.get("/api/agents/nope/knowledge/events", headers=_viewer())
+        assert resp.status_code == 404
+
+
 class TestDailyNotes:
     def test_list_daily_notes(self, app_with_memories: Any) -> None:
         with TestClient(app_with_memories) as client:
@@ -581,6 +623,7 @@ def test_knowledge_summary_returns_context_graph_memory(app_with_memories: Any) 
     assert set(body) >= {"context", "graph", "memory"}
     assert body["memory"]["episodic"] == 3  # three seeded episodic events
     assert body["memory"]["entities"] == 2  # alice.md, bob.md
+    assert body["memory"]["events"] == 1  # q3-kickoff-with-acme.md
     assert body["graph"]["nodes"] >= 2  # alice, bob
     assert isinstance(body["context"], dict)
 

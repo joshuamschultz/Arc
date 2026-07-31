@@ -254,6 +254,7 @@ async def test_user_message_survives_curation_into_distillation(tmp_path: Path) 
     from arcmemory.brain import ArcMemoryBrain
     from arcmemory.distill import (
         DaySummaryDraft,
+        EventExtraction,
         FactExtraction,
         InsightMint,
         ProcedureExtraction,
@@ -274,6 +275,10 @@ async def test_user_message_survives_curation_into_distillation(tmp_path: Path) 
         async def extract_procedures(self, events: Any, existing: Any) -> ProcedureExtraction:
             self.texts += [e.text for e in events]
             return ProcedureExtraction()
+
+        async def extract_events(self, episodes: Any) -> EventExtraction:
+            self.texts += [e.text for e in episodes]
+            return EventExtraction()
 
         async def summarize_day(self, events: Any) -> DaySummaryDraft:
             self.texts += [e.text for e in events]

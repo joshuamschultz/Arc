@@ -17,13 +17,12 @@ lesson).
 from __future__ import annotations
 
 import re
-from datetime import UTC, datetime
 from pathlib import Path
 
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.mdfile import atomic_write_text, parse_document, render_document
 from arcmemory.slug import canonical_slug
-from arcmemory.types import Entity, Fact
+from arcmemory.types import Entity, Fact, utc_today
 
 _FACT_RE = re.compile(
     r"^-\s+(.+?):\s+(.+?)\s+(\.\d+|1)\s+(\d{4}-\d{2}-\d{2})"
@@ -31,10 +30,6 @@ _FACT_RE = re.compile(
 )
 _WIKI_LINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
 _MAX_FACT_TEXT = 500
-
-
-def _today() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%d")
 
 
 def _format_confidence(confidence: float) -> str:
@@ -180,7 +175,7 @@ class SemanticStore:
             predicate=predicate,
             value=value,
             confidence=confidence,
-            date=_today(),
+            date=utc_today(),
             was_value=was_value,
             was_confidence=was_conf,
         )
@@ -298,7 +293,7 @@ class SemanticStore:
             "classification": entity.classification,
             "cross_session_visibility": entity.cross_session_visibility,
             "confidence": entity.confidence,
-            "last_updated": _today(),
+            "last_updated": utc_today(),
             "links_to": entity.links_to,
             "tags": entity.tags,
             "aliases": entity.aliases,

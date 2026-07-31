@@ -15,6 +15,7 @@ from pathlib import Path
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
 from arcmemory.distill import (
+    EventExtraction,
     FactCandidate,
     FactExtraction,
     InsightCandidate,
@@ -77,6 +78,9 @@ class _RecordingDistiller:
         self, events: list[Event], existing: list[Procedure]
     ) -> ProcedureExtraction:
         return ProcedureExtraction()
+
+    async def extract_events(self, episodes: list[Event]) -> EventExtraction:
+        return EventExtraction()
 
 
 def _obs(scope: Scope, ident: str, chars: int) -> Event:

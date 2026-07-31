@@ -6,14 +6,16 @@ This is the orchestrator (SDD 4.4, REQ-030/031/034). Off the hot path, over a
 1. **extracts facts** (additive, `was:` trails, corroboration-grown confidence);
 2. **mints insights** (the analogical abstractions, cues wired as graph nodes);
 3. **promotes procedures** (action-sequences seen >= threshold — zero-LLM);
-4. **decays** unreinforced edges (salience-slowed, so a rare-but-vital edge lives);
-5. **merges near-duplicate cues** to bound controlled-vocabulary drift (T-054);
-6. **merges duplicate entity cards** — same-type name embeddings generate CANDIDATE
+4. **records life events** — what happened in the USER's life (a meeting, a sale),
+   each participant wired into the shared graph so a person is one hop from history;
+5. **decays** unreinforced edges (salience-slowed, so a rare-but-vital edge lives);
+6. **merges near-duplicate cues** to bound controlled-vocabulary drift (T-054);
+7. **merges duplicate entity cards** — same-type name embeddings generate CANDIDATE
    clusters (a wide cosine bar), one bounded LLM call conservatively confirms which
    cards are the same real-world entity, and only the confirmed sub-groups fold. No
    merge is ever done on embedding similarity alone (a false merge is worse than a
    duplicate), and a card with no similar neighbor costs no LLM call;
-7. **reindexes** the touched chunks so surface recall sees the new curated files.
+8. **reindexes** the touched chunks so surface recall sees the new curated files.
 
 Every mutation emits an ``AuditEvent`` to the injected sink (REQ-034), so the whole
 cycle is reconstructable from a tamper-evident chain.
@@ -52,6 +54,7 @@ from arcmemory.index.surface import SurfaceIndex, _cosine
 from arcmemory.react_adapter import ReactLoop, run_react_loop
 from arcmemory.stores.daily import DailyNotesStore
 from arcmemory.stores.episodic import EpisodicStore
+from arcmemory.stores.events import EventStore
 from arcmemory.stores.insight import InsightStore
 from arcmemory.stores.procedural import ProceduralStore
 from arcmemory.stores.semantic import SemanticStore
@@ -63,6 +66,7 @@ from arcmemory.types import (
     Event,
     Fact,
     Insight,
+    LifeEvent,
     Procedure,
     Scope,
     TimeWindow,
@@ -139,6 +143,7 @@ class Consolidator:
         self._semantic = SemanticStore(workspace, self._graph, scope=scope.key)
         self._insights = InsightStore(workspace)
         self._procedures = ProceduralStore(workspace)
+        self._events = EventStore(workspace)
         self._daily = DailyNotesStore(workspace)
         self._episodic = EpisodicStore(db, workspace)
         self._surface = SurfaceIndex(
@@ -194,7 +199,7 @@ class Consolidator:
             return ConsolidationResult()
 
         self._begin_manifest(len(events))
-        facts, insights, procedures, agentic_writes = await self._distill(events)
+        facts, insights, procedures, life_events, agentic_writes = await self._distill(events)
         days = await self._summarize_days(events)
         decayed = self._decay(now)
         await self._merge_cues_audited()
@@ -207,10 +212,16 @@ class Consolidator:
             facts_updated=len(facts),
             insights_minted=len(insights),
             procedures_promoted=len(procedures),
+            events_recorded=len(life_events),
             days_summarized=len(days),
             edges_decayed=decayed,
             files_rewritten=(
-                len(facts) + len(insights) + len(procedures) + len(days) + agentic_writes
+                len(facts)
+                + len(insights)
+                + len(procedures)
+                + len(life_events)
+                + len(days)
+                + agentic_writes
             ),
             window_events=len(events),
         )
@@ -219,18 +230,18 @@ class Consolidator:
 
     async def _distill(
         self, events: list[Event]
-    ) -> tuple[list[tuple[str, Fact]], list[Insight], list[Procedure], int]:
+    ) -> tuple[list[tuple[str, Fact]], list[Insight], list[Procedure], list[LifeEvent], int]:
         """Route the DISTILL step: agentic engine by default, pipeline as fallback.
 
         Agentic mode runs the bounded ReAct loop over the memory tools (which write
-        cards — facts, insights, and procedures — directly). On a degrade
+        cards — facts, insights, procedures, and life events — directly). On a degrade
         (breach/timeout/arcrun-absent, or no model wired) the whole window is finished
         by the pipeline distiller so no data is lost.
         """
         if self._cfg.consolidate_engine == "agentic" and self._model is not None:
             result = await self._run_agentic(events)
             if not result.degraded:
-                return [], [], [], result.tool_calls_made
+                return [], [], [], [], result.tool_calls_made
             self._emit("memory.consolidation_degraded", result.reason or "degraded")
         return await self._distill_pipeline(events)
 
@@ -260,12 +271,13 @@ class Consolidator:
 
     async def _distill_pipeline(
         self, events: list[Event]
-    ) -> tuple[list[tuple[str, Fact]], list[Insight], list[Procedure], int]:
+    ) -> tuple[list[tuple[str, Fact]], list[Insight], list[Procedure], list[LifeEvent], int]:
         """The deterministic single-shot distiller path (fallback + engine=pipeline)."""
         facts = await self._extract_facts(events)
         insights = await self._mint_insights(events, [f for _, f in facts])
         procedures = await self._extract_procedures(events)
-        return facts, insights, procedures, 0
+        life_events = await self._extract_events(events)
+        return facts, insights, procedures, life_events, 0
 
     # -- nightly hygiene (heavier, once-per-local-day) ---------------------
 
@@ -384,6 +396,21 @@ class Consolidator:
             self._emit("memory.procedure_extracted", procedure.slug)
             self._emit("memory.file_rewritten", str(self._procedures.path_for(procedure.slug)))
         return extracted
+
+    async def _extract_events(self, events: list[Event]) -> list[LifeEvent]:
+        """Distill what happened in the USER's life (LLM); audit each card + its file."""
+        recorded = await distill.extract_events(
+            events,
+            distiller=self._distiller,
+            store=self._events,
+            graph=self._graph,
+            scope=self._scope,
+            config=self._cfg,
+        )
+        for event in recorded:
+            self._emit("memory.event_recorded", event.slug)
+            self._emit("memory.file_rewritten", str(self._events.path_for(event.slug)))
+        return recorded
 
     async def _summarize_days(self, events: list[Event]) -> list[DaySummary]:
         """Condense each day into meeting-minutes notes; link people to entities; audit.

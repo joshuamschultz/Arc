@@ -21,7 +21,7 @@ from arcmemory.mdfile import parse_document
 from arcmemory.types import Event
 
 # Curated markdown source directories, in a fixed order (determinism).
-_SOURCE_SUBDIRS = ("entities", "insights", "procedures", "daily-log")
+_SOURCE_SUBDIRS = ("entities", "insights", "procedures", "events", "daily-log")
 
 
 class SourceChunk(BaseModel):

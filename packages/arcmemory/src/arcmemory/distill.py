@@ -1,8 +1,7 @@
 """Distillation — the ONE LLM path (SDD 4.4, 7; REQ-031/032/033/050).
 
 Consolidation's slow path calls a *bounded structured completion* (one call each,
-no agentic loop — OQ-3) to turn a window of raw episodes into two additive
-artifacts:
+no agentic loop — OQ-3) to turn a window of raw episodes into additive artifacts:
 
 * **facts** — semantic triplets, applied *additively*: a contradiction folds the
   prior value into a ``was:`` trail (never a destructive overwrite — mem0's
@@ -13,6 +12,9 @@ artifacts:
   graph node), and ``instances`` linking the episodes it generalizes. New insights
   start ``guessed`` and only become ``known`` once corroboration crosses the
   confidence threshold (REQ-053).
+* **events** — things that happened in the USER's life (a meeting, a sale, a call),
+  each recording WHEN it occurred, WHO was in it, and HOW it came out. Participants
+  become shared-graph edges, so a person's card is one hop from their history.
 
 The LLM is an **injected seam** (``Distiller`` Protocol), never imported here — so
 production wires an arcllm-backed structured completion while tests inject a fake
@@ -33,10 +35,11 @@ from arcmemory.index.rebuild import Embedder, embed_or_none
 from arcmemory.index.surface import _cosine
 from arcmemory.security import dominating_classification, token_estimate
 from arcmemory.slug import canonical_slug
+from arcmemory.stores.events import EventStore
 from arcmemory.stores.insight import InsightStore
 from arcmemory.stores.procedural import ProceduralStore, procedure_link_targets
 from arcmemory.stores.semantic import SemanticStore
-from arcmemory.types import Confidence, Event, Fact, Insight, Procedure, Scope
+from arcmemory.types import Confidence, Event, Fact, Insight, LifeEvent, Procedure, Scope
 
 
 def _coerce_str_items(value: object) -> object:
@@ -136,6 +139,24 @@ class ProcedureExtraction(BaseModel):
     procedures: list[ProcedureCandidate] = Field(default_factory=list)
 
 
+class EventCandidate(BaseModel):
+    """One thing-that-happened the distiller proposes (the structured-output shape)."""
+
+    slug: str
+    title: str
+    date: str = ""
+    event_type: str = "unknown"
+    participants: _StrList = Field(default_factory=list)
+    summary: str = ""
+    outcome: str = ""
+
+
+class EventExtraction(BaseModel):
+    """The structured result of the life-event-extraction completion."""
+
+    events: list[EventCandidate] = Field(default_factory=list)
+
+
 class EntityRef(BaseModel):
     """A compact card summary handed to the LLM merge-confirmer (slug + a few facts).
 
@@ -154,10 +175,10 @@ class Distiller(Protocol):
 
     Single-shot calls, no agentic loop: ``extract_facts`` proposes fact triplets;
     ``mint_insights`` proposes abstractions; ``extract_procedures`` proposes reusable
-    how-tos MERGED with the existing cards it is handed; ``summarize_day`` condenses a
-    day's events into meeting-minutes notes; ``confirm_entity_merges`` conservatively
-    confirms which candidate cards are the same real-world entity (the slow-path de-dup
-    gate).
+    how-tos MERGED with the existing cards it is handed; ``extract_events`` proposes
+    things that happened in the USER's life; ``summarize_day`` condenses a day's events
+    into meeting-minutes notes; ``confirm_entity_merges`` conservatively confirms which
+    candidate cards are the same real-world entity (the slow-path de-dup gate).
     """
 
     async def extract_facts(self, events: list[Event]) -> FactExtraction: ...
@@ -167,6 +188,8 @@ class Distiller(Protocol):
     async def extract_procedures(
         self, events: list[Event], existing: list[Procedure]
     ) -> ProcedureExtraction: ...
+
+    async def extract_events(self, episodes: list[Event]) -> EventExtraction: ...
 
     async def summarize_day(self, events: list[Event]) -> DaySummaryDraft: ...
 
@@ -418,6 +441,44 @@ def _existing_procedures(store: ProceduralStore) -> list[Procedure]:
     """Every stored how-to card — what the distiller merges its answer into."""
     return [card for slug in store.slugs() if (card := store.read(slug)) is not None]
 
+async def extract_events(
+    episodes: list[Event],
+    *,
+    distiller: Distiller,
+    store: EventStore,
+    graph: WeightedGraph,
+    scope: Scope,
+    config: MemoryConfig,
+) -> list[LifeEvent]:
+    """Record what happened in the USER's life; wire each participant as a graph edge.
+
+    An occurrence happens once, so a re-extraction refreshes the card in place rather
+    than accumulating hits. Undated candidates fall back to the day they were discussed.
+    Each card inherits the dominating classification of the episodes it was learned from,
+    so an event can never launder a classified conversation down to a lower clearance.
+    Candidates without a slug or title are skipped (nothing findable to store).
+    """
+    recorded: list[LifeEvent] = []
+    for chunk in chunk_events(episodes, config.distill_max_input_tokens):
+        result = await distiller.extract_events(chunk)
+        for cand in result.events:
+            if not cand.slug or not cand.title:
+                continue
+            event = store.upsert(
+                cand.slug,
+                cand.title,
+                date=cand.date or chunk[0].ts[:10],
+                event_type=cand.event_type,
+                participants=cand.participants,
+                summary=cand.summary,
+                outcome=cand.outcome,
+                classification=dominating_classification([e.classification for e in chunk]),
+            )
+            for participant in event.participants:
+                graph.link(scope.key, event.slug, participant, kind="link")
+            recorded.append(event)
+    return recorded
+
 
 async def mint_insights(
     events: list[Event],
@@ -497,6 +558,8 @@ __all__ = [
     "EntityDisambiguator",
     "EntityMergeConfirmer",
     "EntityRef",
+    "EventCandidate",
+    "EventExtraction",
     "FactCandidate",
     "FactExtraction",
     "InsightCandidate",
@@ -505,6 +568,7 @@ __all__ = [
     "ProcedureExtraction",
     "chunk_events",
     "confidence_from_hits",
+    "extract_events",
     "extract_facts",
     "extract_procedures",
     "hits_from_confidence",

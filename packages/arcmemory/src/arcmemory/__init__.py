@@ -35,11 +35,14 @@ from arcmemory.degrade import reset_degrade_warnings, semantic_degraded
 from arcmemory.distill import (
     Distiller,
     EntityDisambiguator,
+    EventCandidate,
+    EventExtraction,
     FactCandidate,
     FactExtraction,
     InsightCandidate,
     InsightMint,
     confidence_from_hits,
+    extract_events,
     extract_facts,
     mint_insights,
     resolve_entity,
@@ -80,6 +83,7 @@ from arcmemory.security import (
 )
 from arcmemory.status import SemanticStatus, WorkspaceVectors, semantic_status
 from arcmemory.stores.episodic import EpisodicStore
+from arcmemory.stores.events import EventStore
 from arcmemory.stores.insight import InsightStore
 from arcmemory.stores.procedural import ProceduralStore
 from arcmemory.stores.semantic import SemanticStore
@@ -92,6 +96,7 @@ from arcmemory.types import (
     Event,
     Fact,
     Insight,
+    LifeEvent,
     Procedure,
     Recall,
     RecallCard,
@@ -122,6 +127,9 @@ __all__ = [
     "EntityRecord",
     "EpisodicStore",
     "Event",
+    "EventCandidate",
+    "EventExtraction",
+    "EventStore",
     "Fact",
     "FactCandidate",
     "FactExtraction",
@@ -133,6 +141,7 @@ __all__ = [
     "InsightCandidate",
     "InsightMint",
     "InsightStore",
+    "LifeEvent",
     "LinkRecord",
     "MemoryACLConfig",
     "MemoryConfig",
@@ -173,6 +182,7 @@ __all__ = [
     "dedup_workspace",
     "discover_workspaces",
     "extract_acl_from_session_data",
+    "extract_events",
     "extract_facts",
     "gate_no_read_up",
     "mint_insights",

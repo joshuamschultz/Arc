@@ -40,10 +40,20 @@ from arcmemory.index.rebuild import Embedder
 from arcmemory.retrieve import Retriever
 from arcmemory.stores.daily import DailyNotesStore
 from arcmemory.stores.episodic import EpisodicStore
+from arcmemory.stores.events import EventStore
 from arcmemory.stores.insight import InsightStore
 from arcmemory.stores.procedural import ProceduralStore
 from arcmemory.stores.semantic import SemanticStore, format_fact
-from arcmemory.types import DaySummary, Event, Insight, Procedure, Recall, Scope, Situation
+from arcmemory.types import (
+    DaySummary,
+    Event,
+    Insight,
+    LifeEvent,
+    Procedure,
+    Recall,
+    Scope,
+    Situation,
+)
 
 
 class MutationStatus(StrEnum):
@@ -120,6 +130,7 @@ class MemorySummary(BaseModel):
     entities: int = 0
     insights: int = 0
     procedures: int = 0
+    events: int = 0
     daily_notes: int = 0
     graph_nodes: int = 0
     graph_edges: int = 0
@@ -164,6 +175,7 @@ class MemoryOperator:
         self._episodic = EpisodicStore(self._db, self._workspace)
         self._insights = InsightStore(self._workspace)
         self._procedures = ProceduralStore(self._workspace)
+        self._events = EventStore(self._workspace)
         self._daily = DailyNotesStore(self._workspace)
 
     # -- reads -------------------------------------------------------------
@@ -205,6 +217,7 @@ class MemoryOperator:
             entities=_md_count(mem / "entities"),
             insights=_md_count(mem / "insights"),
             procedures=_md_count(mem / "procedures"),
+            events=_md_count(mem / "events"),
             daily_notes=_md_count(mem / "daily-log"),
             graph_nodes=int(nodes),
             graph_edges=int(edges),
@@ -247,6 +260,13 @@ class MemoryOperator:
         """Every how-to procedure card, sorted by slug."""
         procedures = [self._procedures.read(slug) for slug in self._procedures.slugs()]
         return sorted((p for p in procedures if p is not None), key=lambda p: p.slug)
+
+    def list_events(self) -> list[LifeEvent]:
+        """Every life-event card, most recent occurrence first (the user's timeline)."""
+        events = [self._events.read(slug) for slug in self._events.slugs()]
+        return sorted(
+            (e for e in events if e is not None), key=lambda e: (e.date, e.slug), reverse=True
+        )
 
     def list_daily_notes(self) -> list[DaySummary]:
         """Every day's curated notes, newest day first."""

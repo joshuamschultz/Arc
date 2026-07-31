@@ -28,6 +28,7 @@ from arcmemory.config import MemoryConfig
 from arcmemory.db import DEFAULT_DIMS, MemoryDB, sqlite_vec_loadable
 from arcmemory.distill import (
     DaySummaryDraft,
+    EventExtraction,
     FactCandidate,
     FactExtraction,
     InsightCandidate,
@@ -102,6 +103,9 @@ class SpyDistiller:
     ) -> ProcedureExtraction:
         return ProcedureExtraction()
 
+    async def extract_events(self, episodes: list[Event]) -> EventExtraction:
+        return EventExtraction()
+
     async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
         self.day_calls = getattr(self, "day_calls", 0) + 1
         return DaySummaryDraft()
@@ -141,6 +145,9 @@ class ConsolidatingDistiller:
             ]
         )
 
+    async def extract_events(self, episodes: list[Event]) -> EventExtraction:
+        return EventExtraction()
+
     async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
         return DaySummaryDraft(timeline=["engaged then verified"], people=["Alice"])
 
@@ -155,6 +162,9 @@ class PlantingDistiller:
         self, events: list[Event], existing: list[Procedure]
     ) -> ProcedureExtraction:
         return ProcedureExtraction()
+
+    async def extract_events(self, episodes: list[Event]) -> EventExtraction:
+        return EventExtraction()
 
     async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
         return DaySummaryDraft()

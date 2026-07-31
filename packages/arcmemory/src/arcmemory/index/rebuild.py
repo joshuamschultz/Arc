@@ -30,6 +30,18 @@ from arcmemory.stores.semantic import extract_wiki_links
 from arcmemory.tagging import entity_vocabulary, tag_entities
 from arcmemory.types import Scope
 
+# Card stores that carry wiki-link edges: (subdir, frontmatter link key, date key).
+# The date key fixes the edge's ``last_hit`` so a replay is byte-identical.
+# Every card store that carries ``[[slug]]`` links into the one shared node
+# namespace, with the frontmatter key holding them and the key dating the card.
+# A store left out here silently loses its edges on the next rebuild — the index
+# is disposable, and this walk is what re-derives it.
+_LINK_SOURCES: tuple[tuple[str, str, str], ...] = (
+    ("entities", "links_to", "last_updated"),
+    ("procedures", "links_to", "last_updated"),
+    ("events", "participants", "recorded"),
+)
+
 try:  # optional [vec] extra
     import sqlite_vec
 
@@ -38,7 +50,6 @@ except ImportError:  # pragma: no cover
     _SQLITE_VEC_IMPORTABLE = False
 
 # Card directories whose markdown carries ``[[slug]]`` links into the shared graph.
-_LINKING_SUBDIRS = ("entities", "procedures")
 
 
 _FIX = "Run `arc memory status` for the live readout and the exact install/config fix."
@@ -188,25 +199,26 @@ class IndexRebuilder:
     # -- edges -------------------------------------------------------------
 
     def _rebuild_link_edges(self) -> None:
-        """Re-derive wiki-link edges from every linking card (deterministic ts).
+        """Re-derive wiki-link edges from every card store that carries them.
 
-        Entity cards AND procedure cards carry ``[[slug]]`` links into the one shared
-        node namespace, so both are walked — a rebuild that skipped procedures would
-        silently drop every method out of the graph and make it unreachable.
+        Entities link through ``links_to``, procedures through the ``[[slug]]``
+        references in their steps, events through ``participants``. All three
+        share one node namespace, so all three are walked — a rebuild that
+        skipped one would silently drop those cards out of the graph.
         """
-        for subdir in _LINKING_SUBDIRS:
+        for subdir, link_key, date_key in _LINK_SOURCES:
             directory = self._mem_dir / subdir
             if not directory.exists():
                 continue
             for path in sorted(directory.glob("*.md")):
-                self._link_card(path)
+                self._link_card(path, link_key, date_key)
 
-    def _link_card(self, path: Path) -> None:
+    def _link_card(self, path: Path, link_key: str, date_key: str) -> None:
         """Replay one card's wiki-links as graph edges, dated from its frontmatter."""
         fm, body = parse_document(path.read_text(encoding="utf-8"))
-        ts = f"{fm.get('last_updated', '1970-01-01')}T00:00:00+00:00"
+        ts = f"{fm.get(date_key, '1970-01-01')}T00:00:00+00:00"
         targets: list[str] = []
-        for ref in fm.get("links_to", []):
+        for ref in fm.get(link_key, []):
             targets.extend(extract_wiki_links(str(ref)) or [str(ref)])
         targets.extend(extract_wiki_links(body))
         for target in sorted(set(targets)):
