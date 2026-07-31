@@ -25,6 +25,7 @@ never learns an arcmemory field name.
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import arcllm
@@ -32,6 +33,10 @@ import arcllm
 from arcmemory.arcllm_seam import ArcLLMDistiller, ArcLLMEmbedder
 from arcmemory.brain import ArcMemoryBrain
 from arcmemory.config import MemoryConfig, Tier
+
+# API key for a remote ``provider`` embedding endpoint. Environment only —
+# credentials never touch the agent TOML (ADR-019, LLM07).
+_EMBED_API_KEY_ENV = "ARC_EMBED_API_KEY"
 
 
 def build_brain(context: dict[str, Any]) -> ArcMemoryBrain:
@@ -54,6 +59,7 @@ def build_brain(context: dict[str, Any]) -> ArcMemoryBrain:
     agent_did = context["agent_did"]
     embed_backend = str(backend.get("embed_backend", "local"))
     embed_model = str(backend.get("embed_model", ""))
+    embed_base_url = str(backend.get("embed_base_url", ""))
     distill_provider = str(backend.get("distill_provider", ""))
     distill_model = str(backend.get("distill_model", ""))
 
@@ -61,7 +67,7 @@ def build_brain(context: dict[str, Any]) -> ArcMemoryBrain:
         context["workspace"],
         agent_did,
         config=config,
-        embedder=build_embedder(agent_did, embed_backend, embed_model),
+        embedder=build_embedder(agent_did, embed_backend, embed_model, base_url=embed_base_url),
         distiller=build_distiller(distill_provider, distill_model, agent_did),
         audit_sink=context.get("audit_sink"),
         model=_build_loop_model(distill_provider, distill_model, agent_did),
@@ -89,12 +95,26 @@ def _build_loop_model(provider: str, model: str, agent_did: str) -> Any:
     return arcllm.load_model(provider, model or None, telemetry={"agent_did": agent_did})
 
 
-def build_embedder(agent_did: str, backend: str, model: str) -> ArcLLMEmbedder | None:
-    """arcllm-backed embedder, or ``None`` when the backend is explicitly off."""
+def build_embedder(
+    agent_did: str, backend: str, model: str, *, base_url: str = ""
+) -> ArcLLMEmbedder | None:
+    """arcllm-backed embedder, or ``None`` when the backend is explicitly off.
+
+    ``backend="local"`` (the default) is the on-device path and needs no endpoint;
+    ``backend="provider"`` needs ``base_url`` plus ``ARC_EMBED_API_KEY`` in the
+    environment — the key is read here and never stored in the agent TOML, so a
+    credential never lands on the filesystem or in a prompt (LLM07).
+    """
     if backend == "none":
         return None
     telemetry = {"agent_did": agent_did}
-    return ArcLLMEmbedder(model=model or None, backend=backend, telemetry=telemetry)
+    return ArcLLMEmbedder(
+        model=model or None,
+        backend=backend,
+        base_url=base_url or None,
+        api_key=os.environ.get(_EMBED_API_KEY_ENV, ""),
+        telemetry=telemetry,
+    )
 
 
 def build_distiller(provider: str, model: str, agent_did: str) -> ArcLLMDistiller | None:

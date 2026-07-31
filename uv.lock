@@ -237,7 +237,7 @@ dependencies = [
     { name = "arccmd" },
     { name = "arcgateway" },
     { name = "arcgateway-telegram" },
-    { name = "arcmemory" },
+    { name = "arcmemory", extra = ["local"] },
     { name = "arcskill" },
     { name = "croniter" },
 ]
@@ -276,7 +276,7 @@ requires-dist = [
     { name = "arccmd", editable = "packages/arccli" },
     { name = "arcgateway", editable = "packages/arcgateway" },
     { name = "arcgateway-telegram", editable = "packages/arcgateway-telegram" },
-    { name = "arcmemory", editable = "packages/arcmemory" },
+    { name = "arcmemory", extras = ["local"], editable = "packages/arcmemory" },
     { name = "arcskill", editable = "packages/arcskill" },
     { name = "croniter", specifier = ">=6.2.2" },
 ]
@@ -340,13 +340,6 @@ azure = [
 memory = [
     { name = "arcmemory" },
 ]
-slack = [
-    { name = "aiohttp" },
-    { name = "slack-bolt" },
-]
-telegram = [
-    { name = "python-telegram-bot" },
-]
 
 [package.dev-dependencies]
 dev = [
@@ -360,7 +353,6 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aiohttp", marker = "extra == 'slack'", specifier = ">=3.14.1,<4" },
     { name = "aiorwlock", specifier = ">=1.4,<2" },
     { name = "arcllm", editable = "packages/arcllm" },
     { name = "arcmemory", marker = "extra == 'memory'", editable = "packages/arcmemory" },
@@ -377,13 +369,11 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.0,<3" },
     { name = "pydantic-settings", specifier = ">=2.14.2,<3" },
     { name = "pynacl", specifier = ">=1.5,<2" },
-    { name = "python-telegram-bot", marker = "extra == 'telegram'", specifier = ">=20.0,<22" },
     { name = "pyyaml", specifier = ">=6.0,<7" },
-    { name = "slack-bolt", marker = "extra == 'slack'", specifier = ">=1.20.0" },
     { name = "tomlkit", specifier = ">=0.12" },
     { name = "websockets", specifier = ">=13.0,<16" },
 ]
-provides-extras = ["memory", "telegram", "slack", "azure"]
+provides-extras = ["memory", "azure"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -400,7 +390,7 @@ name = "arccmd"
 version = "0.7.0"
 source = { editable = "packages/arccli" }
 dependencies = [
-    { name = "arc-agent", extra = ["telegram"] },
+    { name = "arc-agent" },
     { name = "arcllm" },
     { name = "arcrun" },
     { name = "arcteam" },
@@ -411,7 +401,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "arc-agent", extras = ["telegram"], editable = "packages/arcagent" },
+    { name = "arc-agent", editable = "packages/arcagent" },
     { name = "arcllm", editable = "packages/arcllm" },
     { name = "arcrun", editable = "packages/arcrun" },
     { name = "arcteam", editable = "packages/arcteam" },
@@ -546,7 +536,7 @@ requires-dist = [
     { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'otel'", specifier = ">=1.20" },
     { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.20" },
     { name = "pydantic", specifier = ">=2.0" },
-    { name = "sentence-transformers", marker = "extra == 'local'", specifier = ">=2.2" },
+    { name = "sentence-transformers", marker = "extra == 'local'", specifier = ">=3.0" },
 ]
 provides-extras = ["otel", "trace-encryption", "injection-semantic", "guardrails-schema", "local"]
 
@@ -582,7 +572,7 @@ dependencies = [
 
 [package.optional-dependencies]
 local = [
-    { name = "sentence-transformers" },
+    { name = "arcllm", extra = ["local"] },
 ]
 vec = [
     { name = "sqlite-vec" },
@@ -600,13 +590,13 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "arcllm", editable = "packages/arcllm" },
+    { name = "arcllm", extras = ["local"], marker = "extra == 'local'", editable = "packages/arcllm" },
     { name = "arcprompt", editable = "packages/arcprompt" },
     { name = "arcrun", editable = "packages/arcrun" },
     { name = "arcstore", editable = "packages/arcstore" },
     { name = "arctrust", editable = "packages/arctrust" },
     { name = "pydantic", specifier = ">=2.0,<3" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "sentence-transformers", marker = "extra == 'local'", specifier = ">=3.0" },
     { name = "sqlite-vec", specifier = ">=0.1.6" },
     { name = "sqlite-vec", marker = "extra == 'vec'", specifier = ">=0.1.6" },
 ]

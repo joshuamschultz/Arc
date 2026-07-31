@@ -24,8 +24,21 @@ try:  # optional [vec] extra — guarded, never fatal
 except ImportError:  # pragma: no cover - exercised only where the extra is absent
     _SQLITE_VEC_IMPORTABLE = False
 
+from arcmemory.degrade import warn_once
+
 # Default embedding width (bge-small / MiniLM are both 384-dim).
 DEFAULT_DIMS = 384
+
+_VEC_MISSING = (
+    "SEMANTIC RECALL IS OFF: the sqlite-vec package is not installed, so the vec0 "
+    "table cannot exist and memory recall runs on BM25 + graph only. "
+    "Reinstall arcmemory (`uv sync --all-packages`) — sqlite-vec is a base dependency."
+)
+_VEC_UNLOADABLE = (
+    "SEMANTIC RECALL IS OFF: this Python/SQLite build cannot load the sqlite-vec "
+    "extension, so memory recall runs on BM25 + graph only. Use a Python built with "
+    "SQLite extension loading enabled."
+)
 
 
 def _load_sqlite_vec(conn: sqlite3.Connection) -> bool:
@@ -36,14 +49,17 @@ def _load_sqlite_vec(conn: sqlite3.Connection) -> bool:
     so a missing extension degrades instead of crashing.
     """
     if not _SQLITE_VEC_IMPORTABLE:
+        warn_once("sqlite-vec:not-installed", _VEC_MISSING)
         return False
     if not hasattr(conn, "enable_load_extension"):
+        warn_once("sqlite-vec:not-loadable", _VEC_UNLOADABLE)
         return False
     try:
         conn.enable_load_extension(True)
         sqlite_vec.load(conn)
         conn.enable_load_extension(False)
     except (sqlite3.OperationalError, AttributeError):
+        warn_once("sqlite-vec:not-loadable", _VEC_UNLOADABLE)
         return False
     return True
 

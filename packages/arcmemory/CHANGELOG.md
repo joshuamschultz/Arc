@@ -8,6 +8,30 @@ versioning.
 
 ### Added
 
+- **The semantic channel can no longer go dark silently.** `arcmemory.degrade` warns
+  once per process per reason (never once per query) when the vector list is dropped —
+  no embedder wired, a wired embedder that cannot serve, or an unloadable `sqlite-vec`.
+  `arc memory status` is the operator readout: it runs a real embed probe, reports the
+  sqlite-vec extension and per-workspace `chunks / embedded` coverage, and exits 1 when
+  the channel is down. The per-query `recall.degraded` audit event is unchanged.
+- **The embedder is now installed by the deployment command.** `arcmemory[local]` is a
+  dependency of the root `arc` package, so a plain `uv sync --all-packages` installs it
+  (extras are not installed otherwise — that gap is why the fleet ran without an
+  embedder). `arcmemory[local]` now resolves to `arcllm[local]`: arcllm owns embedding
+  inference, so only arcllm names `sentence-transformers`.
+- **The remote embeddings backend is reachable.** `embed_base_url` in
+  `[modules.memory.config.backend]` plus `ARC_EMBED_API_KEY` in the environment wire
+  arcllm's OpenAI-compatible `provider` backend. It previously had no way to carry a
+  base_url, so selecting it always failed.
+
+### Fixed
+
+- **A misconfigured embedder no longer crashes recall.** `ArcLLMConfigError` (an unknown
+  backend name, a `provider` backend with no base_url) escaped `ArcLLMEmbedder` and
+  propagated out through `retrieve()`. It is now translated to
+  `EmbeddingUnavailableError`, which the `embed_or_none` funnel collapses to a dropped
+  vector channel — a typo in an agent TOML degrades recall, never breaks it.
+
 - **Agentic consolidation (default engine).** The "sleep" pass is now a bounded arcrun
   ReAct loop over a signed/authorized/audited memory-tool registry (`arcmemory.tools`) —
   it searches before writing, merges, and links with judgment. Degrades cleanly to the

@@ -106,3 +106,48 @@ def test_build_brain_distiller_rides_budget_telemetry(monkeypatch: pytest.Monkey
 
     telemetry = captured["telemetry"]
     assert isinstance(telemetry, dict) and telemetry.get("agent_did") == "did:arc:agent"
+
+
+# -- the embedder config surface (which path an operator actually gets) -----
+
+
+def test_build_embedder_defaults_to_the_on_device_local_backend() -> None:
+    """The out-of-the-box path is arcllm's ``local`` backend (offline, air-gap safe)."""
+    from arcmemory.provider import build_embedder
+
+    embedder = build_embedder("did:arc:a", "local", "")
+    assert embedder is not None
+    assert embedder._backend == "local"
+
+
+def test_build_embedder_forwards_the_remote_endpoint(tmp_path: Path) -> None:
+    """``embed_base_url`` must reach the adapter, or ``provider`` backend is a trap."""
+    from arcmemory.provider import build_embedder
+
+    embedder = build_embedder(
+        "did:arc:a", "provider", "text-embedding-3-small", base_url="https://e.example/v1"
+    )
+    assert embedder is not None
+    assert embedder._base_url == "https://e.example/v1"
+
+
+def test_build_brain_reads_the_embed_api_key_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Credentials come from the environment, never from the agent TOML on disk."""
+    recorded: dict[str, object] = {}
+
+    class _SpyBrain:
+        def __init__(self, _workspace: Path, _agent_did: str, **kw: object) -> None:
+            recorded.update(kw)
+
+    monkeypatch.setattr("arcmemory.provider.ArcMemoryBrain", _SpyBrain)
+    monkeypatch.setenv("ARC_EMBED_API_KEY", "secret-from-env")
+
+    build_brain(
+        _context(tmp_path, embed_backend="provider", embed_base_url="https://e.example/v1")
+    )
+
+    embedder = recorded["embedder"]
+    assert isinstance(embedder, arcmemory.ArcLLMEmbedder)
+    assert embedder._api_key == "secret-from-env"

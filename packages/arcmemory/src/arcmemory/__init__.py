@@ -6,6 +6,10 @@ path, the surface + structural retrieval channels, sleep consolidation, and the
 ``ArcMemoryBrain`` that satisfies arcagent's structural ``Brain`` seam. The
 ``ArcLLMEmbedder`` / ``ArcLLMDistiller`` adapters bridge the async embedder /
 distiller seams onto arcllm so semantic recall and consolidation run in production.
+
+``semantic_status`` + ``semantic_degraded`` are the operator-facing half of that:
+recall degrades to BM25 + graph when no embedder is available, and those two make
+the degrade visible instead of silent (see ``arcmemory.degrade``).
 """
 
 from __future__ import annotations
@@ -26,7 +30,8 @@ from arcmemory.brain import ArcMemoryBrain
 from arcmemory.capture import FastCapture
 from arcmemory.config import MemoryConfig, Tier
 from arcmemory.consolidate import Consolidator
-from arcmemory.db import MemoryDB
+from arcmemory.db import MemoryDB, sqlite_vec_loadable
+from arcmemory.degrade import reset_degrade_warnings, semantic_degraded
 from arcmemory.distill import (
     Distiller,
     EntityDisambiguator,
@@ -73,6 +78,7 @@ from arcmemory.security import (
     gate_no_read_up,
     render_recalls,
 )
+from arcmemory.status import SemanticStatus, WorkspaceVectors, semantic_status
 from arcmemory.stores.episodic import EpisodicStore
 from arcmemory.stores.insight import InsightStore
 from arcmemory.stores.procedural import ProceduralStore
@@ -146,6 +152,7 @@ __all__ = [
     "Reranker",
     "Retriever",
     "Scope",
+    "SemanticStatus",
     "SemanticStore",
     "SessionACL",
     "Situation",
@@ -157,6 +164,7 @@ __all__ = [
     "Tier",
     "TimeWindow",
     "WeightedGraph",
+    "WorkspaceVectors",
     "__version__",
     "boundary_mark",
     "build_brain",
@@ -170,7 +178,11 @@ __all__ = [
     "mint_insights",
     "render_recalls",
     "repair_backlinks",
+    "reset_degrade_warnings",
     "resolve_entity",
     "run_agentic_consolidation",
     "run_react_loop",
+    "semantic_degraded",
+    "semantic_status",
+    "sqlite_vec_loadable",
 ]
