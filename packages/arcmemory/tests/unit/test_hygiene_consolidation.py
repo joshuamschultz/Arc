@@ -22,7 +22,7 @@ from arcmemory.distill import (
 )
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.stores.semantic import SemanticStore
-from arcmemory.types import Event, Scope
+from arcmemory.types import Event, Procedure, Scope
 
 _NOW = datetime(2026, 7, 7, 12, tzinfo=UTC)
 
@@ -36,7 +36,9 @@ class _NullDistiller:
     async def mint_insights(self, events: list[Event], facts: list) -> InsightMint:
         return InsightMint()
 
-    async def extract_procedures(self, events: list[Event]) -> ProcedureExtraction:
+    async def extract_procedures(
+        self, events: list[Event], existing: list[Procedure]
+    ) -> ProcedureExtraction:
         return ProcedureExtraction()
 
     async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:

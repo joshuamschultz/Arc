@@ -38,7 +38,7 @@ from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.structural import StructuralIndex
 from arcmemory.retrieve import Retriever
 from arcmemory.stores.episodic import EpisodicStore
-from arcmemory.types import Event, Scope, Situation
+from arcmemory.types import Event, Procedure, Scope, Situation
 
 _DID = "did:arc:analogy-agent"
 
@@ -105,7 +105,9 @@ class PlantingDistiller:
             ]
         )
 
-    async def extract_procedures(self, events: list[Event]) -> ProcedureExtraction:
+    async def extract_procedures(
+        self, events: list[Event], existing: list[Procedure]
+    ) -> ProcedureExtraction:
         return ProcedureExtraction()
 
     async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:

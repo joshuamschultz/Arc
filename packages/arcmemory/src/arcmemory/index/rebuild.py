@@ -37,6 +37,9 @@ try:  # optional [vec] extra
 except ImportError:  # pragma: no cover
     _SQLITE_VEC_IMPORTABLE = False
 
+# Card directories whose markdown carries ``[[slug]]`` links into the shared graph.
+_LINKING_SUBDIRS = ("entities", "procedures")
+
 
 _FIX = "Run `arc memory status` for the live readout and the exact install/config fix."
 _NOT_WIRED = (
@@ -185,19 +188,29 @@ class IndexRebuilder:
     # -- edges -------------------------------------------------------------
 
     def _rebuild_link_edges(self) -> None:
-        """Re-derive wiki-link edges from entity files (deterministic ts)."""
-        entities_dir = self._mem_dir / "entities"
-        if not entities_dir.exists():
-            return
-        for path in sorted(entities_dir.glob("*.md")):
-            fm, body = parse_document(path.read_text(encoding="utf-8"))
-            ts = f"{fm.get('last_updated', '1970-01-01')}T00:00:00+00:00"
-            targets: list[str] = []
-            for ref in fm.get("links_to", []):
-                targets.extend(extract_wiki_links(str(ref)) or [str(ref)])
-            targets.extend(extract_wiki_links(body))
-            for target in sorted(set(targets)):
-                self._graph.link(self._scope.key, path.stem, target, kind="link", ts=ts)
+        """Re-derive wiki-link edges from every linking card (deterministic ts).
+
+        Entity cards AND procedure cards carry ``[[slug]]`` links into the one shared
+        node namespace, so both are walked — a rebuild that skipped procedures would
+        silently drop every method out of the graph and make it unreachable.
+        """
+        for subdir in _LINKING_SUBDIRS:
+            directory = self._mem_dir / subdir
+            if not directory.exists():
+                continue
+            for path in sorted(directory.glob("*.md")):
+                self._link_card(path)
+
+    def _link_card(self, path: Path) -> None:
+        """Replay one card's wiki-links as graph edges, dated from its frontmatter."""
+        fm, body = parse_document(path.read_text(encoding="utf-8"))
+        ts = f"{fm.get('last_updated', '1970-01-01')}T00:00:00+00:00"
+        targets: list[str] = []
+        for ref in fm.get("links_to", []):
+            targets.extend(extract_wiki_links(str(ref)) or [str(ref)])
+        targets.extend(extract_wiki_links(body))
+        for target in sorted(set(targets)):
+            self._graph.link(self._scope.key, path.stem, target, kind="link", ts=ts)
 
     def _rebuild_assoc_edges(self) -> None:
         """Replay the raw stream to reproduce Hebbian co-activation edges."""

@@ -45,7 +45,7 @@ from arcmemory.retrieve import Retriever
 from arcmemory.slug import canonical_slug
 from arcmemory.stores.episodic import EpisodicStore
 from arcmemory.stores.insight import InsightStore
-from arcmemory.stores.procedural import ProceduralStore
+from arcmemory.stores.procedural import ProceduralStore, procedure_link_targets
 from arcmemory.stores.semantic import SemanticStore
 from arcmemory.types import Confidence, Insight, Scope, Situation
 
@@ -226,6 +226,26 @@ class _MemoryToolFactory:
         links = ", ".join(entity.links_to)
         return f"{entity.name} ({entity.entity_type})\n{facts}\nlinks: {links}"
 
+    async def _list_procedures(self, args: dict[str, Any]) -> str:
+        """The method index: what playbooks exist, and the trigger each answers to."""
+        cards = [c for slug in self._procedures.slugs() if (c := self._procedures.read(slug))]
+        if not cards:
+            return "(no procedures)"
+        return "\n".join(f"- {c.slug} | {c.title} | when_to_use: {c.when_to_use}" for c in cards)
+
+    async def _read_procedure(self, args: dict[str, Any]) -> str:
+        # Read-before-rewrite: record_procedure REPLACES the wording and order of the
+        # steps it names, so dropping, rewording, or reordering one is only a deliberate
+        # act if the current card was seen first.
+        procedure = self._procedures.read(str(args.get("slug", "")))
+        if procedure is None:
+            return "(no such procedure)"
+        steps = "\n".join(f"{i}. {s}" for i, s in enumerate(procedure.steps, start=1))
+        return (
+            f"{procedure.title} (used {procedure.use_count}x)\n"
+            f"when_to_use: {procedure.when_to_use}\n{steps}"
+        )
+
     async def _search_similar_entity(self, args: dict[str, Any]) -> str:
         name = str(args.get("name", ""))
         entity_type = str(args.get("entity_type", "unknown"))
@@ -330,17 +350,23 @@ class _MemoryToolFactory:
         return f"recorded insight {insight_id}"
 
     async def _record_procedure(self, args: dict[str, Any]) -> str:
+        # Methods EVOLVE: the steps fold into the stored card (a step omitted here is
+        # kept, only ``dropped_steps`` removes one) and every [[slug]] the card names
+        # becomes a graph edge, so the method resurfaces when a like situation recurs.
         slug = canonical_slug(str(args.get("slug", "")))
         steps = [str(s) for s in args.get("steps", [])]
         if not slug or not steps:
             return "skipped (needs slug + steps)"
-        self._procedures.upsert(
+        procedure = self._procedures.upsert(
             slug,
             str(args.get("title", slug)),
             when_to_use=str(args.get("when_to_use", "")),
             steps=steps,
+            dropped=[str(s) for s in args.get("dropped_steps", [])],
         )
-        return f"recorded procedure {slug}"
+        for target in procedure_link_targets(procedure):
+            self._graph.link(self._scope.key, slug, target, kind="link")
+        return f"recorded procedure {slug} ({len(procedure.steps)} steps)"
 
     async def _set_alias(self, args: dict[str, Any]) -> str:
         slug = canonical_slug(str(args.get("entity", "")))
@@ -382,6 +408,19 @@ class _MemoryToolFactory:
                 "Read one entity card (facts + links) by slug.",
                 _obj({"slug": _str()}, required=["slug"]),
                 self._read_card,
+            ),
+            (
+                "list_procedures",
+                "List the how-to cards that already exist (slug + title + when_to_use).",
+                _obj({}),
+                self._list_procedures,
+            ),
+            (
+                "read_procedure",
+                "Read one how-to card (trigger + numbered steps) by slug. Read it BEFORE "
+                "record_procedure so a reorder, reword, or drop is deliberate.",
+                _obj({"slug": _str()}, required=["slug"]),
+                self._read_procedure,
             ),
             (
                 "search_similar_entity",
@@ -450,9 +489,17 @@ class _MemoryToolFactory:
             ),
             (
                 "record_procedure",
-                "Record a reusable how-to procedure (title + when_to_use + steps).",
+                "Record/refine a reusable how-to (title + when_to_use + steps). Steps merge "
+                "into the existing card: one you omit is kept, so list a step in "
+                "dropped_steps (verbatim) only when it was abandoned or reworded.",
                 _obj(
-                    {"slug": _str(), "title": _str(), "when_to_use": _str(), "steps": _arr()},
+                    {
+                        "slug": _str(),
+                        "title": _str(),
+                        "when_to_use": _str(),
+                        "steps": _arr(),
+                        "dropped_steps": _arr(),
+                    },
                     required=["slug", "steps"],
                 ),
                 self._record_procedure,

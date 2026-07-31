@@ -16,7 +16,7 @@ from arcmemory.distill import (
     InsightMint,
     ProcedureExtraction,
 )
-from arcmemory.types import Event
+from arcmemory.types import Event, Procedure
 
 _DID = "did:arc:test-agent"
 
@@ -42,7 +42,9 @@ class _FakeDistiller:
             ]
         )
 
-    async def extract_procedures(self, events: list[Event]) -> ProcedureExtraction:
+    async def extract_procedures(
+        self, events: list[Event], existing: list[Procedure]
+    ) -> ProcedureExtraction:
         return ProcedureExtraction()
 
     async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:

@@ -184,7 +184,12 @@ What comes out and where it lands:
 - **Procedures** — verified: these are LLM-derived reusable *methods*
   ("how a stock is analyzed," "how a customer is quoted"), not recorded tool
   sequences — `stores/procedural.py`'s own docstring states this explicitly.
-  A re-extracted procedure bumps `use_count` rather than duplicating.
+  A card is EDITED across sessions, not rewritten: the distiller is handed the
+  current cards and returns the merged method, and `merge_steps` folds it in so
+  a step re-enters at its original position. A step leaves a card only via an
+  explicit `dropped_steps` — omission never deletes, which is what stops a
+  passing mention from truncating an accumulated playbook. Every `[[slug]]` the
+  card names becomes a graph edge, so the method resurfaces with its entities.
 - **Day summaries** — meeting-minutes bullets (timeline, discussions,
   decisions, people, goals, tasks), merged additively into the existing day's
   file so a later run grows the notes instead of clobbering them. People
@@ -215,9 +220,12 @@ one of two engines, controlled by `consolidate_engine` (default `"agentic"`):
 - **Agentic** (default, when a `model` is wired): a *bounded ReAct loop* runs
   over the memory tools (`agent_consolidate.py:49`) — it reads recent
   episodes, searches before writing, extracts durable facts/insights/
-  procedures, merges duplicates, links related memories, and stops. Every tool
-  call is individually signed, authorized, and audited (see Security, below),
-  so partial progress is always safe.
+  procedures, merges duplicates, links related memories, and stops. Reading
+  before writing is symmetric across card types: `search_similar_entity` /
+  `read_card` for entities, `list_procedures` / `read_procedure` for methods —
+  the agent cannot deliberately reorder, reword, or drop a step it has not
+  read. Every tool call is individually signed, authorized, and audited (see
+  Security, below), so partial progress is always safe.
 - **Pipeline** (fallback, or `consolidate_engine = "pipeline"`): the
   deterministic single-shot `Distiller` calls described above, run directly.
 

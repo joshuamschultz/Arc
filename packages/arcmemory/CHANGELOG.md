@@ -68,6 +68,23 @@ versioning.
 
 ### Fixed
 
+- **CRITICAL — procedures did not evolve, they were TRUNCATED.** The card claimed to update
+  its steps in place, but the distiller only ever saw the window's events (never the existing
+  card) and `upsert` replaced `steps` wholesale: an eight-step method mentioned in passing next
+  session was rewritten to the two steps that came up, destroying six steps of accumulated
+  knowledge silently. The `Distiller.extract_procedures` seam is now handed the CURRENT cards
+  (title, trigger, steps) and returns the MERGED method; `ProceduralStore.upsert` folds that
+  answer in non-lossily (`merge_steps`) — a step re-enters at its original position and leaves
+  a card *only* via the new explicit `dropped_steps`. The rewritten `distill_procedure` prompt
+  asks for a runnable playbook (matchable trigger, concrete named tools/checks, `[[entity]]`
+  links) and states the merge rules. Procedure slugs are now wired into the shared graph
+  (`kind="link"`), on both the pipeline and agentic paths, and `IndexRebuilder` replays those
+  edges from `procedures/*.md` so a rebuild no longer drops every method out of the graph.
+  The agentic engine gets the matching READ side — `list_procedures` + `read_procedure`,
+  read-only tools on the same sign→authorize→audit wrapper as their siblings — so a reorder,
+  reword, or deliberate drop is the model's judgment there too, not merely something the
+  store-side merge protects it from. Read-before-write is now symmetric: entities have
+  `search_similar_entity` / `read_card`, methods have `list_procedures` / `read_procedure`.
 - **CRITICAL — the episodic table's `salience`/`entities` columns were missing on every
   pre-existing database.** Both were added to `episodic`'s `CREATE TABLE IF NOT EXISTS` — a
   no-op against a table that already existed on every deployed agent, so every capture, recall,

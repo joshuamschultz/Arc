@@ -34,7 +34,7 @@ from arcmemory.index.surface import _cosine
 from arcmemory.security import dominating_classification, token_estimate
 from arcmemory.slug import canonical_slug
 from arcmemory.stores.insight import InsightStore
-from arcmemory.stores.procedural import ProceduralStore
+from arcmemory.stores.procedural import ProceduralStore, procedure_link_targets
 from arcmemory.stores.semantic import SemanticStore
 from arcmemory.types import Confidence, Event, Fact, Insight, Procedure, Scope
 
@@ -115,12 +115,19 @@ class DaySummaryDraft(BaseModel):
 
 
 class ProcedureCandidate(BaseModel):
-    """One reusable how-to the distiller proposes (the structured-output shape)."""
+    """One reusable how-to the distiller proposes (the structured-output shape).
+
+    ``steps`` is the MERGED method — the distiller is handed the existing card and
+    re-states it with this session's refinements folded in. ``dropped_steps`` names the
+    stored steps the conversation abandoned (or reworded), verbatim: it is the only way
+    a step leaves a card, so a method the session merely referenced is never truncated.
+    """
 
     slug: str
     title: str
     when_to_use: str = ""
-    steps: list[str] = Field(default_factory=list)
+    steps: _StrList = Field(default_factory=list)
+    dropped_steps: _StrList = Field(default_factory=list)
 
 
 class ProcedureExtraction(BaseModel):
@@ -147,16 +154,19 @@ class Distiller(Protocol):
 
     Single-shot calls, no agentic loop: ``extract_facts`` proposes fact triplets;
     ``mint_insights`` proposes abstractions; ``extract_procedures`` proposes reusable
-    how-tos; ``summarize_day`` condenses a day's events into meeting-minutes notes;
-    ``confirm_entity_merges`` conservatively confirms which candidate cards are the
-    same real-world entity (the slow-path de-dup gate).
+    how-tos MERGED with the existing cards it is handed; ``summarize_day`` condenses a
+    day's events into meeting-minutes notes; ``confirm_entity_merges`` conservatively
+    confirms which candidate cards are the same real-world entity (the slow-path de-dup
+    gate).
     """
 
     async def extract_facts(self, events: list[Event]) -> FactExtraction: ...
 
     async def mint_insights(self, events: list[Event], facts: list[Fact]) -> InsightMint: ...
 
-    async def extract_procedures(self, events: list[Event]) -> ProcedureExtraction: ...
+    async def extract_procedures(
+        self, events: list[Event], existing: list[Procedure]
+    ) -> ProcedureExtraction: ...
 
     async def summarize_day(self, events: list[Event]) -> DaySummaryDraft: ...
 
@@ -372,24 +382,41 @@ async def extract_procedures(
     distiller: Distiller,
     store: ProceduralStore,
     config: MemoryConfig,
+    graph: WeightedGraph,
+    scope: Scope,
 ) -> list[Procedure]:
-    """Extract reusable how-tos from the window; upsert each as a procedure card.
+    """Evolve the how-to cards from this window; wire each into the graph; return them.
 
-    Over-budget windows are distilled in sequential chunks. A re-extracted
-    procedure bumps its ``use_count`` (reinforcement), so a process that recurs
-    across windows (or chunks) becomes more prominent. Candidates without a slug or
-    steps are skipped (nothing findable to store).
+    The distiller is handed the CURRENT cards (title, trigger, steps) so it returns the
+    merged method — a step can be added, reworded, reordered, or explicitly dropped. The
+    store then folds that answer in non-lossily, so a step the window merely failed to
+    mention survives. Cards are re-read per chunk, so an over-budget window's later
+    chunks build on what its earlier chunks already wrote. Every ``[[slug]]`` the card
+    names becomes a graph edge, which is what makes the method resurface on retrieval.
+    Candidates without a slug or steps are skipped (nothing findable to store).
     """
     upserted: list[Procedure] = []
     for chunk in chunk_events(events, config.distill_max_input_tokens):
-        result = await distiller.extract_procedures(chunk)
+        result = await distiller.extract_procedures(chunk, _existing_procedures(store))
         for cand in result.procedures:
             if not cand.slug or not cand.steps:
                 continue
-            upserted.append(
-                store.upsert(cand.slug, cand.title, when_to_use=cand.when_to_use, steps=cand.steps)
+            procedure = store.upsert(
+                cand.slug,
+                cand.title,
+                when_to_use=cand.when_to_use,
+                steps=cand.steps,
+                dropped=cand.dropped_steps,
             )
+            for target in procedure_link_targets(procedure):
+                graph.link(scope.key, procedure.slug, target, kind="link")
+            upserted.append(procedure)
     return upserted
+
+
+def _existing_procedures(store: ProceduralStore) -> list[Procedure]:
+    """Every stored how-to card — what the distiller merges its answer into."""
+    return [card for slug in store.slugs() if (card := store.read(slug)) is not None]
 
 
 async def mint_insights(

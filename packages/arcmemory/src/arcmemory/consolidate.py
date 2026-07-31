@@ -371,9 +371,14 @@ class Consolidator:
         return minted
 
     async def _extract_procedures(self, events: list[Event]) -> list[Procedure]:
-        """Distill reusable how-to procedures (LLM); audit each upsert + its file."""
+        """Evolve the reusable how-to cards (LLM merge); audit each upsert + its file."""
         extracted = await distill.extract_procedures(
-            events, distiller=self._distiller, store=self._procedures, config=self._cfg
+            events,
+            distiller=self._distiller,
+            store=self._procedures,
+            config=self._cfg,
+            graph=self._graph,
+            scope=self._scope,
         )
         for procedure in extracted:
             self._emit("memory.procedure_extracted", procedure.slug)

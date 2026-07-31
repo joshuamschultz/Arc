@@ -36,7 +36,7 @@ from arcmemory.distill import (
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.structural import StructuralIndex
 from arcmemory.stores.episodic import EpisodicStore
-from arcmemory.types import Event, Scope, Situation
+from arcmemory.types import Event, Procedure, Scope, Situation
 
 # Mechanism markers (abstraction space) — deliberately NOT domain words. No planted
 # episode contains any of these (asserted in the test), so a concept hit is only
@@ -102,7 +102,9 @@ class PlantingDistiller:
             ]
         )
 
-    async def extract_procedures(self, events: list[Event]) -> ProcedureExtraction:
+    async def extract_procedures(
+        self, events: list[Event], existing: list[Procedure]
+    ) -> ProcedureExtraction:
         return ProcedureExtraction()
 
     async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:

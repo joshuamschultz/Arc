@@ -29,7 +29,7 @@ from arcmemory.index.graph import WeightedGraph
 from arcmemory.stores.episodic import EpisodicStore
 from arcmemory.stores.insight import InsightStore
 from arcmemory.stores.semantic import SemanticStore
-from arcmemory.types import Event, Scope
+from arcmemory.types import Event, Procedure, Scope
 
 _NOW = datetime(2026, 7, 7, tzinfo=UTC)
 _30_DAYS_AGO = "2026-06-07T00:00:00+00:00"
@@ -48,7 +48,9 @@ class FakeDistiller:
     async def mint_insights(self, events: list[Event], facts: list) -> InsightMint:
         return self._mint
 
-    async def extract_procedures(self, events: list[Event]) -> ProcedureExtraction:
+    async def extract_procedures(
+        self, events: list[Event], existing: list[Procedure]
+    ) -> ProcedureExtraction:
         return ProcedureExtraction(
             procedures=[
                 ProcedureCandidate(
@@ -78,7 +80,9 @@ class RaisingDistiller:
     async def mint_insights(self, events: list[Event], facts: list) -> InsightMint:
         raise RuntimeError("boom mid-consolidation")
 
-    async def extract_procedures(self, events: list[Event]) -> ProcedureExtraction:
+    async def extract_procedures(
+        self, events: list[Event], existing: list[Procedure]
+    ) -> ProcedureExtraction:
         return ProcedureExtraction(
             procedures=[
                 ProcedureCandidate(
@@ -280,7 +284,9 @@ class _RecordingDistiller:
         self.seen["insights"] += [e.event_id for e in events]
         return InsightMint()
 
-    async def extract_procedures(self, events: list[Event]) -> ProcedureExtraction:
+    async def extract_procedures(
+        self, events: list[Event], existing: list[Procedure]
+    ) -> ProcedureExtraction:
         self.calls += 1
         self.seen["procedures"] += [e.event_id for e in events]
         return ProcedureExtraction()

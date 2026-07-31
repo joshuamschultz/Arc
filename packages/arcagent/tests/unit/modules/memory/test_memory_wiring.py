@@ -271,7 +271,7 @@ async def test_user_message_survives_curation_into_distillation(tmp_path: Path) 
             self.texts += [e.text for e in events]
             return InsightMint()
 
-        async def extract_procedures(self, events: Any) -> ProcedureExtraction:
+        async def extract_procedures(self, events: Any, existing: Any) -> ProcedureExtraction:
             self.texts += [e.text for e in events]
             return ProcedureExtraction()
 
