@@ -1,6 +1,7 @@
 # Arc CLI Reference
 
 All commands available via the `arc` console script (installed by `arcmas` or `arccli`).
+**See also:** [QUICKSTART.md](QUICKSTART.md), [packages/arccli.md](packages/arccli.md)
 
 ## Quick start
 
@@ -299,7 +300,7 @@ Operator commands for managing DM pairing codes. Require a running gateway
 — in practice that means `arc ui start --team-root <dir> --gateway-config
 <path>` (the embedded gateway); the standalone `arcgateway start` daemon
 unconditionally refuses to start at every tier (see
-[docs/arcgateway/getting-started.md](./arcgateway/getting-started.md)),
+[packages/arcgateway.md](../packages/arcgateway.md#embedded-gateway-pattern)),
 so it is never the "running arcgateway" these commands need.
 
 | Command | Purpose | Example |
@@ -316,7 +317,7 @@ so it is never the "running arcgateway" these commands need.
   which isn't a real field on `GatewayConfig`)
 - Approving a code requires a registered trust-anchor operator key first —
   run `arc identity init` once if you haven't (see DM pairing in
-  [docs/arcgateway/getting-started.md](./arcgateway/getting-started.md))
+  [packages/arcgateway.md](../packages/arcgateway.md#pairing-system))
 
 ---
 

@@ -7,7 +7,9 @@ table gives the default and what the knob does. Module config lives under
 top-level.
 
 Full per-feature detail lives with each package:
-`packages/arcagent/docs/tasks-module.md`, `packages/arcmemory/`, `packages/arcgateway/`.
+`docs/tasks-module.md`, `packages/arcmemory/`, `packages/arcgateway/`.
+
+**See also:** [SETUP.md](SETUP.md), [TIERS_AND_PRESETS.md](TIERS_AND_PRESETS.md)
 
 ---
 
@@ -29,7 +31,7 @@ Owned by the arcagent `tasks` module. `[modules.tasks] enabled = true` loads the
 | `nats_url` | `""` | JetStream url for the shared arcteam registry + messenger (`@handle` resolve + notify). Empty = no live registry |
 | `data_dir` | `""` | Forwarded to `resolve_data_dir()`; empty defers to env > default so agent + arcui share the SQLite file |
 
-See `packages/arcagent/docs/tasks-module.md` for the lifecycle and reliability engine.
+See `docs/tasks-module.md` for the lifecycle and reliability engine.
 
 ---
 
