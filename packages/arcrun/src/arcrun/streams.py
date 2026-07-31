@@ -206,7 +206,8 @@ async def run_stream(
         capabilities: CapabilityProvider whose advertised specs become the
             model's tool list; calls route to ``provider.invoke``.
         system_prompt: System prompt — one string, or ordered segments passed
-            most-stable-first so each becomes its own provider cache breakpoint.
+            most-stable-first (a statement about the prompt, not about any
+            provider's mechanism; adapters decide what to do with the order).
         task: User task.
         messages: Prior session history to seed the loop (history parity with
             the blocking path). When None, a fresh single-turn run from ``task``.

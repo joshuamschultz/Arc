@@ -26,8 +26,9 @@ __all__ = [
 
 # A system prompt is either one string or an ordered list of segments. A caller
 # that knows which parts of its prompt change at different rates passes the
-# segments most-stable-first; the provider adapter turns each into its own cache
-# breakpoint, so a change in a late segment still reads the earlier ones' cache.
+# segments most-stable-first. That order is a fact about the prompt, not a
+# provider directive: what a provider does with it — if anything — is the
+# adapter's business, and arcrun states nothing about any provider's mechanism.
 SystemPrompt = str | Sequence[str]
 
 

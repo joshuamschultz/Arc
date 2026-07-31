@@ -138,14 +138,16 @@ class AnthropicAdapter(BaseAdapter):
 
         Anthropic allows 4 breakpoints per request; the last tool and the
         conversation tail claim two, leaving ``_MAX_SYSTEM_SEGMENTS`` for the
-        system. Reject an over-long list here rather than let the provider
-        return an opaque 400.
+        system. Over that budget the overflow is folded into the last block
+        rather than raising: caching is an optimization, and `system_prompt` is
+        public arcrun API, so a standalone caller passing three segments must
+        not have every request fail over a cache hint. The earlier segments keep
+        their own breakpoints because they are the more stable — and therefore
+        more valuable — prefixes; only the tail loses its separate entry.
         """
         if len(parts) > _MAX_SYSTEM_SEGMENTS:
-            raise ArcLLMConfigError(
-                f"Prompt caching allows at most {_MAX_SYSTEM_SEGMENTS} system segments, "
-                f"got {len(parts)}."
-            )
+            keep = parts[: _MAX_SYSTEM_SEGMENTS - 1]
+            parts = [*keep, "\n".join(parts[_MAX_SYSTEM_SEGMENTS - 1 :])]
         return [
             {"type": "text", "text": text, "cache_control": self._cache_control()}
             for text in parts

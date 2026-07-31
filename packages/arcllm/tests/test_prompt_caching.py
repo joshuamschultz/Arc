@@ -9,7 +9,6 @@ import pytest
 from arcllm.adapters.anthropic import AnthropicAdapter
 from arcllm.adapters.openai import OpenaiAdapter, _parse_openai_sse_line
 from arcllm.config import ModelMetadata, ProviderConfig, ProviderSettings
-from arcllm.exceptions import ArcLLMConfigError
 from arcllm.types import Message, TextBlock, Tool
 
 FAKE_MODEL = "claude-test-1"
@@ -134,8 +133,13 @@ class TestAnthropicBreakpoints:
         body = adapter._build_request_body(messages)
         assert body["system"] == "session-stable\nrun-stable"
 
-    def test_too_many_system_segments_rejected_while_caching(self):
-        """Anthropic allows 4 breakpoints total; tools + 2 system + tail fills it."""
+    def test_excess_system_segments_degrade_instead_of_failing(self):
+        """Anthropic allows 4 breakpoints; tools + 2 system + tail fills it.
+
+        Over budget the request must still go out — caching is an optimization,
+        and ``system_prompt`` is public arcrun API, so a caller passing three
+        segments cannot be allowed to turn a cache hint into a hard outage.
+        """
         adapter = AnthropicAdapter(_config(enable_caching=True), FAKE_MODEL)
         messages = [
             Message(role="system", content="a"),
@@ -143,8 +147,13 @@ class TestAnthropicBreakpoints:
             Message(role="system", content="c"),
             Message(role="user", content="Hello"),
         ]
-        with pytest.raises(ArcLLMConfigError, match="system segments"):
-            adapter._build_request_body(messages)
+        body = adapter._build_request_body(messages)
+
+        # Within budget, nothing dropped, and the stable head keeps its own entry.
+        assert len(body["system"]) == 2
+        assert body["system"][0]["text"] == "a"
+        assert body["system"][1]["text"] == "b\nc"
+        assert all(b["cache_control"] == {"type": "ephemeral"} for b in body["system"])
 
     def test_usage_reads_cache_tokens(self):
         adapter = AnthropicAdapter(_config(), FAKE_MODEL)

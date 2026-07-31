@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -49,6 +50,16 @@ _CHARS_PER_TOKEN = 4
 
 # Sections whose content is derived from the current turn. They move out of the
 # system prompt entirely so the cached prefix survives the turn.
+#
+# All three are persisted with the turn (``turn_context``), so their clearance
+# story matters. ``recall`` is gated: the memory module retrieves at a hardcoded
+# ``clearance="unclassified"`` and arcmemory runs ``gate_no_read_up`` before the
+# text is ever handed back, so nothing above that clearance can reach the
+# session. ``planning`` and ``teams`` have no equivalent gate — deliberately, as
+# they are not cross-classification retrieval: planning renders this agent's own
+# plan store, and teams its own mailbox and roster. Both are already within the
+# agent's clearance by construction. Wiring a classified store into either would
+# invalidate that reasoning and require a gate here.
 _TURN_SECTIONS = frozenset({"planning", "recall", "teams"})
 
 # Bus-injected sections known to hold still for the life of the process. A
@@ -74,6 +85,16 @@ TURN_CONTEXT_KEY = "turn_context"
 # material. One shape for both, and unambiguous to read back out of a transcript.
 TURN_CONTEXT_TAG = "agent-context"
 
+# Every tag name the assembly can EVER emit — deliberately static, not derived
+# from the sections a given turn happens to populate. ``policy`` appears only
+# when ``policy.md`` exists and ``skill_usage`` only when skills are loaded, so
+# a per-call set would leave exactly those names forgeable on the turns they are
+# missing. Caller-supplied names (strategy/spawn guidance) are added per call on
+# top of this.
+_RESERVED_TAGS = frozenset(
+    {*_SESSION_SECTIONS, *_TURN_SECTIONS, *_SESSION_HEAD, *_RUN_TAIL, TURN_CONTEXT_TAG}
+)
+
 
 def _defang(text: str, tags: Iterable[str]) -> str:
     """Strip tags in untrusted text that could forge a boundary (LLM01).
@@ -85,15 +106,36 @@ def _defang(text: str, tags: Iterable[str]) -> str:
     the remainder read as the operator's own words, and forging ``<identity>``
     would let it pose as a system-prompt section, the stronger position of the two.
 
-    Only the exact tags being emitted are stripped, so unrelated XML or HTML in
-    a body (a code sample, a quoted document) survives untouched. Neutralizing
-    keeps the text and drops only the markers, which carry no meaning inside a
-    body. Pure, so a replayed turn reproduces identical bytes and the provider's
-    cached prefix still matches.
+    Only this prompt's own tag names are stripped, so unrelated markup in a body
+    (``<div>``, a quoted document) survives untouched. Matching is deliberately
+    looser than what the renderer emits — case-insensitive, and tolerant of
+    inner whitespace, attributes, and a self-closing slash — because a model
+    reads ``<Identity >`` as the element even though the renderer would never
+    write it that way. Defending only the exact spelling would leave the promise
+    in ``base_system`` (that a boundary is authoritative) forgeable.
+
+    Removal repeats to a fixed point: stripping one tag can reveal another that
+    the raw text only spelled in pieces (``<<identity>identity>``). Each pass
+    strictly shortens the text, so this terminates. Reaching a fixed point also
+    makes the function idempotent, which the cache depends on — ``wire_messages``
+    re-runs this over stored content, and a transform that changed a byte on the
+    second pass would silently break the replayed prefix.
+
+    Accepted residual risk: entity-encoded spellings (``&lt;identity&gt;``) pass
+    through, because they are not tags — a model would have to decode them
+    itself before they could be confused for a boundary. Decoding entities here
+    would instead corrupt any body that legitimately quotes escaped markup.
     """
-    for tag in tags:
-        text = text.replace(f"<{tag}>", "").replace(f"</{tag}>", "")
-    return text
+    patterns = [
+        re.compile(rf"</?\s*{re.escape(tag)}(\s[^>]*)?/?\s*>", re.IGNORECASE) for tag in tags
+    ]
+    while True:
+        stripped = text
+        for pattern in patterns:
+            stripped = pattern.sub("", stripped)
+        if stripped == text:
+            return text
+        text = stripped
 
 
 def with_turn_context(user_text: str, turn: str) -> str:
@@ -112,7 +154,7 @@ def with_turn_context(user_text: str, turn: str) -> str:
     """
     if not turn:
         return user_text
-    body = _defang(turn, (TURN_CONTEXT_TAG,))
+    body = _defang(turn, _RESERVED_TAGS)
     return f"{user_text}\n\n<{TURN_CONTEXT_TAG}>\n{body}\n</{TURN_CONTEXT_TAG}>"
 
 
@@ -216,9 +258,18 @@ def _msg_attr(msg: Any, key: str, default: Any = "") -> Any:
 
 
 def _msg_content_str(msg: Any) -> str:
-    """Extract string content from a message, or empty string."""
+    """The text this message actually puts on the wire, or empty string.
+
+    Includes any stored ``turn_context``, composed exactly as
+    :func:`wire_messages` composes it before sending. Counting ``content``
+    alone would under-report by every stored recall block — an error that
+    compounds with the conversation — and compaction and the emergency
+    truncation valve both trigger off this estimate, so both would fire late.
+    """
     content = _msg_attr(msg, "content", "")
-    return content if isinstance(content, str) else ""
+    text = content if isinstance(content, str) else ""
+    turn = _msg_attr(msg, TURN_CONTEXT_KEY, "")
+    return with_turn_context(text, turn) if isinstance(turn, str) and turn else text
 
 
 class ContextManager:
@@ -307,9 +358,9 @@ class ContextManager:
         for key in sections:
             tiered[_tier_of(key, caller_keys)].append(key)
 
-        # Every tag the prompt emits, so no body can forge a boundary — including
-        # one belonging to a section in a different segment.
-        reserved = (*sections, TURN_CONTEXT_TAG)
+        # Static names plus whatever this call adds, so no body can forge a
+        # boundary — including one for a section absent this turn.
+        reserved = _RESERVED_TAGS | set(sections)
         return AssembledPrompt(
             session=_render(sections, tiered["session"], reserved=reserved, head=_SESSION_HEAD),
             run=_render(sections, tiered["run"], reserved=reserved, tail=_RUN_TAIL),
