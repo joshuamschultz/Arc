@@ -10,6 +10,7 @@ import { MemoryBrowser } from '@/components/knowledge-memories'
 import { EntityBrowser } from '@/components/knowledge-entities'
 import { InsightBrowser } from '@/components/knowledge-insights'
 import { ProcedureBrowser } from '@/components/knowledge-procedures'
+import { EventBrowser } from '@/components/knowledge-events'
 import { DailyNotesBrowser } from '@/components/knowledge-daily-notes'
 import {
   Select,
@@ -102,6 +103,7 @@ export function KnowledgePage() {
               <TabsTrigger value="insights">Insights</TabsTrigger>
               <TabsTrigger value="procedures">Procedures</TabsTrigger>
               <TabsTrigger value="entities">Entities</TabsTrigger>
+              <TabsTrigger value="events">Events</TabsTrigger>
               <TabsTrigger value="daily-notes">Daily Notes</TabsTrigger>
               <TabsTrigger value="memories">Raw stream</TabsTrigger>
             </TabsList>
@@ -146,6 +148,10 @@ export function KnowledgePage() {
               selectedSlug={selectedEntitySlug}
               onSelectSlug={setSelectedEntitySlug}
             />
+          </TabsContent>
+
+          <TabsContent value="events" className="flex-1 overflow-auto p-6">
+            <EventBrowser agentId={agentId} />
           </TabsContent>
 
           <TabsContent value="daily-notes" className="flex-1 overflow-auto p-6">

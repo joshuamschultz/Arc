@@ -544,6 +544,18 @@ export interface ProcedureCard {
   classification: string
 }
 
+export interface LifeEventCard {
+  slug: string
+  title: string
+  date: string // when it HAPPENED (YYYY-MM-DD)
+  recorded: string // when memory wrote it down
+  event_type: string
+  participants: string[] // entity slugs
+  summary: string
+  outcome: string
+  classification: string
+}
+
 export interface DailyNoteMeta {
   day: string // YYYY-MM-DD
   classification: string
@@ -566,6 +578,10 @@ export interface InsightsResponse {
 
 export interface ProceduresResponse {
   items: ProcedureCard[]
+}
+
+export interface EventsResponse {
+  items: LifeEventCard[]
 }
 
 export interface DailyNotesResponse {

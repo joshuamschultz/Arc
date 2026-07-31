@@ -26,6 +26,7 @@ import type {
   MemoryPage,
   MemorySearchResponse,
   ProceduresResponse,
+  EventsResponse,
   PromptDetail,
   PromptListResponse,
   SkillDetail,
@@ -276,6 +277,13 @@ export const useAgentProcedures = (agentId: string | null) =>
   useQuery<ProceduresResponse>({
     queryKey: ['agent', agentId, 'knowledge', 'procedures'],
     queryFn: ({ signal }) => apiGet(`/api/agents/${agentId}/knowledge/procedures`, signal),
+    enabled: !!agentId,
+  })
+
+export const useAgentEvents = (agentId: string | null) =>
+  useQuery<EventsResponse>({
+    queryKey: ['agent', agentId, 'knowledge', 'events'],
+    queryFn: ({ signal }) => apiGet(`/api/agents/${agentId}/knowledge/events`, signal),
     enabled: !!agentId,
   })
 
