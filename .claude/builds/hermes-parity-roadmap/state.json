@@ -1,0 +1,60 @@
+{
+  "feature": "hermes-parity-roadmap",
+  "scope": "Cross-cutting architectural decisions for absorbing Hermes' feature surface (M1-M4) into Arc's package model. Per-feature decisions deferred to follow-up /build runs.",
+  "brainstorm_path": null,
+  "report_source": "Inline conversation 2026-04-18 (Hermes vs Arc comparison report)",
+  "current_category": "complete",
+  "current_decision": 17,
+  "decisions": {
+    "D-01": "ONE new sibling package: arcgateway. Modules in arcagent: voice, web, browser. Skills Hub extends arcskill (TOML+CLI gated). EXPLICITLY OUT OF SCOPE: MCP client, migration tooling, ACP/IDE adapter.",
+    "D-02": "arcgateway = separate long-running daemon; one ArcAgent per chat",
+    "D-03": "In-process asyncio task per chat; federal adds subprocess isolation",
+    "D-04": "JSONL primary + SQLite FTS5 derived index (background-built)",
+    "D-05": "Sessions in arcagent.modules.session; arcgateway depends on arcagent",
+    "D-06": "Session identity = (user, agent). Same user across platforms = same session. Agent shares own memory across its sessions per ACL.",
+    "D-07": "Per-session FIFO; no two-turn race; concurrent across different sessions",
+    "D-08": "Skills Hub: TOML toggle ([skills.hub] enabled=false) + CLI-only install gate. No auto-install at federal.",
+    "D-09": "Cross-session reads via per-session ACL (private/shared-with-agent/shared-with-others); tier-driven defaults",
+    "D-10": "NL cron: deterministic parser first, arcllm fallback only on parse failure (federal disables fallback by default)",
+    "D-11": "Subagent delegation: arcrun gains spawn() primitive; agent-facing tool lives in arcagent.tools.delegate",
+    "D-12": "Skill auto-create nudge: new arcagent.modules.skill_improver.nudge submodule subscribes to event bus",
+    "D-13": "ExecutorBackend protocol in arcrun; local+docker in core; ssh/modal/daytona/singularity as plugins",
+    "D-14": "Platform creds: vault required at federal/enterprise; ~/.arc/gateway.toml 0600 at personal",
+    "D-15": "TUI: Textual (Python-only). No Node/Ink.",
+    "D-16": "Memory: two-tier — agent_memory (shared across sessions) + user_profile/{user_id}.md per user. ACL-gated per D-09.",
+    "D-17": "Centralized slash command registry in arccli.commands.registry; consumed by all surfaces (arccli, arcgateway, arctui, platform adapters)"
+  },
+  "auto_applied": [
+    "AUTO-1: TLS 1.2+ inter-package; mTLS at federal (NIST 800-52r2, SC-8)",
+    "AUTO-2: Every state-changing op audited (NIST AU-2)",
+    "AUTO-3: Audit retention >=1y (NIST AU-11)",
+    "AUTO-4: Vault-backed creds at federal (NIST IA-5)",
+    "AUTO-5: Tamper-evident audit log (NIST AU-9)",
+    "AUTO-6: SBOM for all extras releases (EO 14028)",
+    "AUTO-7: AES-256 at-rest at federal (NIST SC-28)",
+    "AUTO-8: Voice transcripts = PII; bidirectional redaction at federal/enterprise (NIST SI-12)"
+  ],
+  "locked_decisions": [],
+  "open_questions": [
+    "arcgateway NATS vs in-process queue (>1 instance scenario) — defer to /build arcgateway",
+    "FTS5 indexer crash recovery — defer to /build session-search",
+    "Skill hub source allowlist + signature scheme — defer to /build skill-hub",
+    "Voice/web/browser provider lists + air-gap defaults — defer to per-module /build",
+    "Cron self-scheduling prevention — confirm in /build cron-nl",
+    "ExecutorBackend protocol contract + plugin discovery — defer to /build executor-backends"
+  ],
+  "out_of_scope": [
+    "MCP client (no arcagent.modules.mcp)",
+    "Migration tooling (no arc migrate hermes/claw)",
+    "ACP / IDE adapter (no arcacp)"
+  ],
+  "notes": [
+    "User overrides during walk: dropped arcmcp, arcmigrate, then on review also cut MCP/migration entirely (not even modules). Skills Hub stays with arcskill, gated by TOML+CLI.",
+    "User cut arcacp on review — IDE adapter not in roadmap; may ship later if demand emerges.",
+    "Final roadmap: ONE new sibling package (arcgateway) + arcagent module additions (voice/web/browser/skill_improver.nudge/session) + arcskill hub gating + arcrun ExecutorBackend + arctui Textual completion + arccli centralized command registry.",
+    "User reframed session model mid-walk: agent = person; sessions are (user, agent)-keyed and shareable across platforms for the same user.",
+    "User clarified delegation: arcrun.spawn() is the primitive; agent-side tool is just the surface.",
+    "Decision log appended to .claude/decisions-log.md (Hermes-Parity Roadmap section, 18 user decisions + 8 auto-applied)."
+  ],
+  "meta": { "last_updated": "2026-04-18", "sessions": 1, "completed": true, "next_step": "/specify (per-milestone)", "deepened": "2026-04-18", "research_agents_run": 8 }
+}

@@ -51,7 +51,7 @@ from typing import Any
 
 from arcllm.embeddings import DEFAULT_EMBED_MODEL
 
-from evaluations.ingest.agent_factory import (
+from evaluations.longmemeval.ingest.agent_factory import (
     ARCLLM_EVAL_CONFIG,
     ARCRUN_EVAL_CONFIG,
     render_eval_agent_config,

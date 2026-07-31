@@ -1,0 +1,27 @@
+{
+  "feature": "cdp-browser-module",
+  "brainstorm_path": ".claude/brainstorms/2026-02-16-cdp-browser-module.md",
+  "current_category": "complete",
+  "current_decision": 15,
+  "decisions": {
+    "D-001": "CDP library: cdp-use (browser-use's typed CDP layer)",
+    "D-002": "Module structure: tool-per-file",
+    "D-003": "Tool API: fine-grained individual tools",
+    "D-004": "Element selection: accessibility-first, CSS fallback",
+    "D-005": "Page state: accessibility snapshot with ref IDs",
+    "D-006": "Connection: launch + connect",
+    "D-007": "Registration: auto-register on module load",
+    "D-008": "URL security: dual-mode allowlist/denylist",
+    "D-009": "JS execution: enabled by default, toggle in config",
+    "D-010": "Credentials: configurable persistence, ephemeral default",
+    "D-011": "Timeouts: per-tool defaults, ArcRun enforces",
+    "D-012": "Screenshots: PNG base64 inline",
+    "D-013": "Testing: mock CDP WebSocket for unit, real Chrome for integration",
+    "D-014": "Config: flat under [modules.browser]",
+    "D-015": "Events: full action events for all browser operations"
+  },
+  "locked_decisions": [],
+  "open_questions": [],
+  "notes": ["All 15 decisions complete across 7 categories: architecture, integration, security, performance, testing, configuration, events"],
+  "meta": { "last_updated": "2026-02-16", "sessions": 1 }
+}

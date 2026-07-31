@@ -42,9 +42,9 @@ from arcagent.core.agent_lifecycle import activate_runtime_bindings
 from arcagent.modules.memory import _runtime
 from arcagent.modules.memory import capabilities as memory_capabilities
 
-from evaluations.ingest.agent_factory import build_eval_agent
-from evaluations.ingest.consolidation import ConsolidationStalledError, ConsolidationWaiter
-from evaluations.ingest.driver import CONSOLIDATE_LOOP_NAME
+from evaluations.longmemeval.ingest.agent_factory import build_eval_agent
+from evaluations.longmemeval.ingest.consolidation import ConsolidationStalledError, ConsolidationWaiter
+from evaluations.longmemeval.ingest.driver import CONSOLIDATE_LOOP_NAME
 from evaluations.longmemeval.adapter import LongMemEvalAdapter, QuestionDateError
 from evaluations.longmemeval.dataset import DatasetIntegrityError, load_dataset
 from evaluations.longmemeval.hygiene import REPO_ROOT, RepoHygieneError, RepoHygieneGuard
@@ -68,7 +68,7 @@ REQUIRED_MODULE_SETTINGS: Mapping[str, object] = {
 """What ``[modules.memory.config]`` must hold, restated independently of COMP-006.
 
 Deliberately not derived from ``agent_factory``'s override table, and deliberately
-not imported from ``evaluations.ingest.limits``: an assumption guard that reads
+not imported from ``evaluations.longmemeval.ingest.limits``: an assumption guard that reads
 its expectations out of the thing it guards agrees with any drift it was written
 to catch. These literals are the second, independent statement of the numbers.
 """

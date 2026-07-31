@@ -448,7 +448,7 @@ capture_tool_io = true
 
 [arcstore]
 enabled = true              # single on/off gate for spool/ingest recording
-data_dir = "/absolute/path/to/evaluations/runs/lme-EXAMPLE/.arcstore"  # empty → resolve_data_dir (env > this > ~/.arc/store)
+data_dir = "/absolute/path/to/evaluations/longmemeval/runs/lme-EXAMPLE/.arcstore"  # empty → resolve_data_dir (env > this > ~/.arc/store)
 backend = "sqlite"          # store backend
 store_raw_bodies = false    # persist raw request/response bodies
 rotation = "daily"          # store file rotation

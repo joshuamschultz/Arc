@@ -1,0 +1,830 @@
+=== arcagent (project=arc-agent) ===
+============================= test session starts ==============================
+collected 3394 items
+
+packages/arcagent/tests/integration/orchestration/test_spawn_depth_cap.py . [  0%]
+......                                                                   [  0%]
+packages/arcagent/tests/integration/orchestration/test_spawn_e2e.py FF.F [  0%]
+                                                                         [  0%]
+packages/arcagent/tests/integration/orchestration/test_spawn_integration.py . [  0%]
+........                                                                 [  0%]
+packages/arcagent/tests/integration/orchestration/test_spawn_many_parallel.py . [  0%]
+.....                                                                    [  0%]
+packages/arcagent/tests/integration/orchestration/test_spawn_otel_context.py . [  0%]
+.........                                                                [  1%]
+packages/arcagent/tests/integration/test_agent_integration.py .......... [  1%]
+....                                                                     [  1%]
+packages/arcagent/tests/integration/test_arcllm_bridge_integration.py .. [  1%]
+...                                                                      [  1%]
+packages/arcagent/tests/integration/test_bio_memory_integration.py ..... [  1%]
+.                                                                        [  1%]
+packages/arcagent/tests/integration/test_bio_memory_isolation.py ....... [  2%]
+.......                                                                  [  2%]
+packages/arcagent/tests/integration/test_bio_memory_retrieval.py ....... [  2%]
+...                                                                      [  2%]
+packages/arcagent/tests/integration/test_browser_audit_events.py ....... [  2%]
+..                                                                       [  2%]
+packages/arcagent/tests/integration/test_browser_federal_remote_forced.py . [  2%]
+.......                                                                  [  3%]
+packages/arcagent/tests/integration/test_browser_integration.py ssss     [  3%]
+packages/arcagent/tests/integration/test_builtins_loader_e2e.py .        [  3%]
+packages/arcagent/tests/integration/test_chat_stream.py .....            [  3%]
+packages/arcagent/tests/integration/test_cron_delivery.py .............. [  3%]
+....                                                                     [  3%]
+packages/arcagent/tests/integration/test_cron_self_scheduling_prevention.py . [  3%]
+.......                                                                  [  4%]
+packages/arcagent/tests/integration/test_full_capability_loader_e2e.py . [  4%]
+                                                                         [  4%]
+packages/arcagent/tests/integration/test_identity_graph_audit.py ....... [  4%]
+                                                                         [  4%]
+packages/arcagent/tests/integration/test_memory_acl_cross_session.py ... [  4%]
+.....                                                                    [  4%]
+packages/arcagent/tests/integration/test_memory_acl_tier_defaults.py ... [  4%]
+.....                                                                    [  4%]
+packages/arcagent/tests/integration/test_memory_integration.py ......... [  5%]
+......                                                                   [  5%]
+packages/arcagent/tests/integration/test_nudge_false_positive_rate.py .  [  5%]
+packages/arcagent/tests/integration/test_scheduler_integration.py ....   [  5%]
+packages/arcagent/tests/integration/test_session_index_polling.py ...... [  5%]
+.                                                                        [  5%]
+packages/arcagent/tests/integration/test_slack_integration.py ......     [  5%]
+packages/arcagent/tests/integration/test_telegram_integration.py .....   [  5%]
+packages/arcagent/tests/integration/test_user_profile_gdpr.py ........   [  6%]
+packages/arcagent/tests/integration/test_voice_gateway_integration.py .. [  6%]
+.......                                                                  [  6%]
+packages/arcagent/tests/integration/test_web_federal_allowlist.py ...... [  6%]
+.                                                                        [  6%]
+packages/arcagent/tests/integration/test_web_pii_redaction.py .......    [  6%]
+packages/arcagent/tests/performance/test_policy_perf.py ..               [  6%]
+packages/arcagent/tests/security/test_ast_bypasses.py ...............    [  7%]
+packages/arcagent/tests/security/test_ast_validator.py ................. [  7%]
+.......                                                                  [  8%]
+packages/arcagent/tests/security/test_capability_composition.py .......  [  8%]
+packages/arcagent/tests/security/test_egress_proxy.py .......            [  8%]
+packages/arcagent/tests/security/test_restricted_builtins.py .......     [  8%]
+packages/arcagent/tests/unit/builtins/test_builtin_tools.py ............ [  8%]
+....                                                                     [  9%]
+packages/arcagent/tests/unit/builtins/test_self_mod_tools.py ..........  [  9%]
+packages/arcagent/tests/unit/core/test_agent.py ........................ [ 10%]
+......................................................                   [ 11%]
+packages/arcagent/tests/unit/core/test_arctrust_audit_migration.py ..... [ 11%]
+.                                                                        [ 11%]
+packages/arcagent/tests/unit/core/test_capability_lifecycle_events.py .. [ 11%]
+...                                                                      [ 12%]
+packages/arcagent/tests/unit/core/test_capability_loader.py ........     [ 12%]
+packages/arcagent/tests/unit/core/test_capability_registry.py .......... [ 12%]
+........                                                                 [ 12%]
+packages/arcagent/tests/unit/core/test_compaction_trigger.py ....        [ 12%]
+packages/arcagent/tests/unit/core/test_config.py ....................... [ 13%]
+...........                                                              [ 13%]
+packages/arcagent/tests/unit/core/test_context_manager.py .............. [ 14%]
+......................                                                   [ 14%]
+packages/arcagent/tests/unit/core/test_errors.py ....................    [ 15%]
+packages/arcagent/tests/unit/core/test_identity.py ..................... [ 16%]
+.........                                                                [ 16%]
+packages/arcagent/tests/unit/core/test_identity_required.py .......      [ 16%]
+packages/arcagent/tests/unit/core/test_metrics.py ...................... [ 17%]
+                                                                         [ 17%]
+packages/arcagent/tests/unit/core/test_module_bus.py ................... [ 17%]
+......                                                                   [ 18%]
+packages/arcagent/tests/unit/core/test_module_context.py .....           [ 18%]
+packages/arcagent/tests/unit/core/test_native_tool.py ...............    [ 18%]
+packages/arcagent/tests/unit/core/test_os_sandbox.py ......              [ 18%]
+packages/arcagent/tests/unit/core/test_personal_tier_global_layer.py ... [ 18%]
+.....                                                                    [ 19%]
+packages/arcagent/tests/unit/core/test_protocols.py ....                 [ 19%]
+packages/arcagent/tests/unit/core/test_security_validators_config.py ... [ 19%]
+...                                                                      [ 19%]
+packages/arcagent/tests/unit/core/test_session_manager.py .............. [ 19%]
+.....................                                                    [ 20%]
+packages/arcagent/tests/unit/core/test_settings_manager.py ............. [ 20%]
+.........                                                                [ 21%]
+packages/arcagent/tests/unit/core/test_skill_validator.py ...........    [ 21%]
+packages/arcagent/tests/unit/core/test_telemetry.py ................     [ 21%]
+packages/arcagent/tests/unit/core/test_tier.py ....................      [ 22%]
+packages/arcagent/tests/unit/core/test_tofu_layer.py .......             [ 22%]
+packages/arcagent/tests/unit/core/test_tool_policy.py .................. [ 23%]
+......                                                                   [ 23%]
+packages/arcagent/tests/unit/core/test_tool_registry.py ................ [ 23%]
+...............................                                          [ 24%]
+packages/arcagent/tests/unit/core/test_tool_registry_did.py ...          [ 24%]
+packages/arcagent/tests/unit/core/test_trust_store.py ................   [ 25%]
+packages/arcagent/tests/unit/core/test_ui_reporter_wiring.py ........    [ 25%]
+packages/arcagent/tests/unit/modules/bio_memory/test_bio_memory_module.py . [ 25%]
+..............................................                           [ 26%]
+packages/arcagent/tests/unit/modules/bio_memory/test_cli.py ...........  [ 27%]
+packages/arcagent/tests/unit/modules/bio_memory/test_config.py ......... [ 27%]
+.............                                                            [ 27%]
+packages/arcagent/tests/unit/modules/bio_memory/test_consolidator.py ... [ 27%]
+.......................................                                  [ 29%]
+packages/arcagent/tests/unit/modules/bio_memory/test_daily_notes.py .... [ 29%]
+.....                                                                    [ 29%]
+packages/arcagent/tests/unit/modules/bio_memory/test_deep_consolidator.py . [ 29%]
+.............................                                            [ 30%]
+packages/arcagent/tests/unit/modules/bio_memory/test_entity_helpers.py . [ 30%]
+.............................                                            [ 31%]
+packages/arcagent/tests/unit/modules/bio_memory/test_facts.py .......... [ 31%]
+............                                                             [ 31%]
+packages/arcagent/tests/unit/modules/bio_memory/test_retriever.py ...... [ 31%]
+................................                                         [ 32%]
+packages/arcagent/tests/unit/modules/bio_memory/test_working_memory.py . [ 32%]
+.............                                                            [ 33%]
+packages/arcagent/tests/unit/modules/browser/providers/test_browserbase.py . [ 33%]
+.........                                                                [ 33%]
+packages/arcagent/tests/unit/modules/browser/providers/test_local_playwright.py . [ 33%]
+......                                                                   [ 33%]
+packages/arcagent/tests/unit/modules/browser/test_accessibility.py ..... [ 33%]
+.                                                                        [ 33%]
+packages/arcagent/tests/unit/modules/browser/test_browser_capabilities.py . [ 34%]
+..........                                                               [ 34%]
+packages/arcagent/tests/unit/modules/browser/test_browser_module.py .... [ 34%]
+...                                                                      [ 34%]
+packages/arcagent/tests/unit/modules/browser/test_cdp_client.py .......  [ 34%]
+packages/arcagent/tests/unit/modules/browser/test_config.py ............ [ 35%]
+                                                                         [ 35%]
+packages/arcagent/tests/unit/modules/browser/test_cookies.py ..          [ 35%]
+packages/arcagent/tests/unit/modules/browser/test_dialog.py ...          [ 35%]
+packages/arcagent/tests/unit/modules/browser/test_download.py ...        [ 35%]
+packages/arcagent/tests/unit/modules/browser/test_form.py ..             [ 35%]
+packages/arcagent/tests/unit/modules/browser/test_interact.py .......    [ 35%]
+packages/arcagent/tests/unit/modules/browser/test_javascript.py ..       [ 35%]
+packages/arcagent/tests/unit/modules/browser/test_navigate.py .......... [ 35%]
+.....                                                                    [ 36%]
+packages/arcagent/tests/unit/modules/browser/test_policy.py ............ [ 36%]
+.......                                                                  [ 36%]
+packages/arcagent/tests/unit/modules/browser/test_read.py ....           [ 36%]
+packages/arcagent/tests/unit/modules/browser/test_screenshot.py ..       [ 36%]
+packages/arcagent/tests/unit/modules/browser/test_security.py .......... [ 37%]
+.........                                                                [ 37%]
+packages/arcagent/tests/unit/modules/browser/test_session.py ........... [ 37%]
+.................                                                        [ 38%]
+packages/arcagent/tests/unit/modules/delegate/test_delegate_depth_propagates_from_parent.py . [ 38%]
+..........                                                               [ 38%]
+packages/arcagent/tests/unit/modules/delegate/test_delegate_tool.py .... [ 38%]
+..........................                                               [ 39%]
+packages/arcagent/tests/unit/modules/memory/test_context_guard.py ...... [ 39%]
+.                                                                        [ 39%]
+packages/arcagent/tests/unit/modules/memory/test_entity_extractor.py ... [ 39%]
+.........................                                                [ 40%]
+packages/arcagent/tests/unit/modules/memory/test_hybrid_search.py ...... [ 40%]
+......................                                                   [ 41%]
+packages/arcagent/tests/unit/modules/memory/test_identity_auditor.py ... [ 41%]
+......                                                                   [ 41%]
+packages/arcagent/tests/unit/modules/memory/test_markdown_memory.py .... [ 41%]
+........................................................                 [ 43%]
+packages/arcagent/tests/unit/modules/memory/test_memory_capabilities.py . [ 43%]
+......                                                                   [ 43%]
+packages/arcagent/tests/unit/modules/memory/test_memory_cli.py ......... [ 43%]
+..                                                                       [ 43%]
+packages/arcagent/tests/unit/modules/memory/test_memory_guidance.py ...  [ 43%]
+packages/arcagent/tests/unit/modules/memory/test_memory_wiring.py ...... [ 44%]
+........                                                                 [ 44%]
+packages/arcagent/tests/unit/modules/memory/test_notes_manager.py ...... [ 44%]
+.......                                                                  [ 44%]
+packages/arcagent/tests/unit/modules/memory_acl/test_acl.py ............ [ 45%]
+..........                                                               [ 45%]
+packages/arcagent/tests/unit/modules/memory_acl/test_caller_did_binding.py . [ 45%]
+.....................                                                    [ 45%]
+packages/arcagent/tests/unit/modules/memory_acl/test_capabilities.py ... [ 46%]
+.....................                                                    [ 46%]
+packages/arcagent/tests/unit/modules/memory_acl/test_memory_acl_module.py . [ 46%]
+............                                                             [ 47%]
+packages/arcagent/tests/unit/modules/messaging/test_byte_pos.py .....    [ 47%]
+packages/arcagent/tests/unit/modules/messaging/test_config.py ......     [ 47%]
+packages/arcagent/tests/unit/modules/messaging/test_module.py .......... [ 47%]
+.......................                                                  [ 48%]
+packages/arcagent/tests/unit/modules/messaging/test_tools.py ..........  [ 48%]
+packages/arcagent/tests/unit/modules/planning/test_module.py ........    [ 48%]
+packages/arcagent/tests/unit/modules/planning/test_tools.py ............ [ 49%]
+....                                                                     [ 49%]
+packages/arcagent/tests/unit/modules/policy/test_policy_capabilities.py . [ 49%]
+.....                                                                    [ 49%]
+packages/arcagent/tests/unit/modules/policy/test_policy_cli.py ......... [ 49%]
+                                                                         [ 49%]
+packages/arcagent/tests/unit/modules/policy/test_policy_engine.py ...... [ 50%]
+.............................                                            [ 50%]
+packages/arcagent/tests/unit/modules/policy/test_policy_module.py ...... [ 51%]
+................                                                         [ 51%]
+packages/arcagent/tests/unit/modules/proactive/test_circuit_breaker.py . [ 51%]
+...........                                                              [ 51%]
+packages/arcagent/tests/unit/modules/proactive/test_engine.py .......... [ 52%]
+....                                                                     [ 52%]
+packages/arcagent/tests/unit/modules/proactive/test_leader.py ........   [ 52%]
+packages/arcagent/tests/unit/modules/proactive/test_leader_k8s_redis.py . [ 52%]
+..........                                                               [ 52%]
+packages/arcagent/tests/unit/modules/proactive/test_timezone.py ........ [ 53%]
+...                                                                      [ 53%]
+packages/arcagent/tests/unit/modules/scheduler/test_cron_runner.py ..... [ 53%]
+.....................                                                    [ 53%]
+packages/arcagent/tests/unit/modules/scheduler/test_dst_regression.py .. [ 53%]
+............                                                             [ 54%]
+packages/arcagent/tests/unit/modules/scheduler/test_models.py .......... [ 54%]
+.........................                                                [ 55%]
+packages/arcagent/tests/unit/modules/scheduler/test_module.py ........   [ 55%]
+packages/arcagent/tests/unit/modules/scheduler/test_nl_parser.py ....... [ 55%]
+...............................                                          [ 56%]
+packages/arcagent/tests/unit/modules/scheduler/test_scheduler.py ....... [ 56%]
+......................                                                   [ 57%]
+packages/arcagent/tests/unit/modules/scheduler/test_scheduler_capabilities.py . [ 57%]
+..........                                                               [ 57%]
+packages/arcagent/tests/unit/modules/scheduler/test_store.py ........... [ 58%]
+.......                                                                  [ 58%]
+packages/arcagent/tests/unit/modules/scheduler/test_tools.py ........... [ 58%]
+.........                                                                [ 59%]
+packages/arcagent/tests/unit/modules/session/test_identity_graph.py .... [ 59%]
+...............                                                          [ 59%]
+packages/arcagent/tests/unit/modules/session/test_identity_graph_cache.py . [ 59%]
+........                                                                 [ 59%]
+packages/arcagent/tests/unit/modules/session/test_index.py ............. [ 60%]
+......                                                                   [ 60%]
+packages/arcagent/tests/unit/modules/session/test_search.py ............ [ 60%]
+..                                                                       [ 60%]
+packages/arcagent/tests/unit/modules/session/test_session_index_bulk.py . [ 60%]
+..                                                                       [ 60%]
+packages/arcagent/tests/unit/modules/session/test_session_module_lifecycle.py . [ 60%]
+.........                                                                [ 61%]
+packages/arcagent/tests/unit/modules/session/test_store.py ............. [ 61%]
+.                                                                        [ 61%]
+packages/arcagent/tests/unit/modules/skill_improver/nudge/test_cooldown.py . [ 61%]
+............                                                             [ 61%]
+packages/arcagent/tests/unit/modules/skill_improver/nudge/test_dedup.py . [ 62%]
+.....................                                                    [ 62%]
+packages/arcagent/tests/unit/modules/skill_improver/nudge/test_nudge_emitter.py . [ 62%]
+..........................                                               [ 63%]
+packages/arcagent/tests/unit/modules/skill_improver/nudge/test_signals.py . [ 63%]
+....                                                                     [ 63%]
+packages/arcagent/tests/unit/modules/skill_improver/test_candidate_store.py . [ 63%]
+....................                                                     [ 64%]
+packages/arcagent/tests/unit/modules/skill_improver/test_config.py ..... [ 64%]
+................                                                         [ 64%]
+packages/arcagent/tests/unit/modules/skill_improver/test_engine.py ..... [ 64%]
+...                                                                      [ 65%]
+packages/arcagent/tests/unit/modules/skill_improver/test_evaluator.py .. [ 65%]
+............                                                             [ 65%]
+packages/arcagent/tests/unit/modules/skill_improver/test_guardrails.py . [ 65%]
+.........................                                                [ 66%]
+packages/arcagent/tests/unit/modules/skill_improver/test_models.py ..... [ 66%]
+................                                                         [ 66%]
+packages/arcagent/tests/unit/modules/skill_improver/test_pareto.py ..... [ 67%]
+...............                                                          [ 67%]
+packages/arcagent/tests/unit/modules/skill_improver/test_reflector.py .. [ 67%]
+...........                                                              [ 67%]
+packages/arcagent/tests/unit/modules/skill_improver/test_skill_improver_module.py . [ 67%]
+......                                                                   [ 68%]
+packages/arcagent/tests/unit/modules/skill_improver/test_skill_improver_module_orchestration.py . [ 68%]
+...................                                                      [ 68%]
+packages/arcagent/tests/unit/modules/skill_improver/test_tools.py .....  [ 68%]
+packages/arcagent/tests/unit/modules/skill_improver/test_trace_collector.py . [ 68%]
+.......................                                                  [ 69%]
+packages/arcagent/tests/unit/modules/slack/test_bot.py ................. [ 69%]
+.............................                                            [ 70%]
+packages/arcagent/tests/unit/modules/slack/test_config.py .....          [ 70%]
+packages/arcagent/tests/unit/modules/slack/test_module.py .............. [ 71%]
+...........                                                              [ 71%]
+packages/arcagent/tests/unit/modules/slack/test_slack_capabilities.py .. [ 71%]
+...............                                                          [ 72%]
+packages/arcagent/tests/unit/modules/telegram/test_bot.py .............. [ 72%]
+...........................                                              [ 73%]
+packages/arcagent/tests/unit/modules/telegram/test_config.py .....       [ 73%]
+packages/arcagent/tests/unit/modules/telegram/test_module.py ........... [ 73%]
+..............                                                           [ 74%]
+packages/arcagent/tests/unit/modules/telegram/test_telegram_capabilities.py . [ 74%]
+........                                                                 [ 74%]
+packages/arcagent/tests/unit/modules/test_base_config.py ......          [ 74%]
+packages/arcagent/tests/unit/modules/ui_reporter/test_auto_enable.py ... [ 74%]
+..................                                                       [ 75%]
+packages/arcagent/tests/unit/modules/ui_reporter/test_ui_reporter.py ... [ 75%]
+..................................                                       [ 76%]
+packages/arcagent/tests/unit/modules/ui_reporter/test_ui_reporter_capabilities.py . [ 76%]
+................................                                         [ 77%]
+packages/arcagent/tests/unit/modules/user_profile/test_federation_annotations.py . [ 77%]
+.................                                                        [ 77%]
+packages/arcagent/tests/unit/modules/user_profile/test_models.py ....... [ 78%]
+.........                                                                [ 78%]
+packages/arcagent/tests/unit/modules/user_profile/test_store.py ........ [ 78%]
+............                                                             [ 79%]
+packages/arcagent/tests/unit/modules/user_profile/test_tombstone.py .... [ 79%]
+............                                                             [ 79%]
+packages/arcagent/tests/unit/modules/user_profile/test_user_profile_module.py . [ 79%]
+....................                                                     [ 80%]
+packages/arcagent/tests/unit/modules/vault/test_backend_azure.py ....... [ 80%]
+.                                                                        [ 80%]
+packages/arcagent/tests/unit/modules/vault/test_backend_file.py ........ [ 80%]
+..                                                                       [ 80%]
+packages/arcagent/tests/unit/modules/vault/test_backward_compat.py ....  [ 80%]
+packages/arcagent/tests/unit/modules/vault/test_cache.py ........        [ 80%]
+packages/arcagent/tests/unit/modules/vault/test_protocol.py .....        [ 81%]
+packages/arcagent/tests/unit/modules/vault/test_resolver_audit_gap.py .. [ 81%]
+.                                                                        [ 81%]
+packages/arcagent/tests/unit/modules/vault/test_resolver_enterprise.py . [ 81%]
+.......                                                                  [ 81%]
+packages/arcagent/tests/unit/modules/vault/test_resolver_federal.py .... [ 81%]
+..                                                                       [ 81%]
+packages/arcagent/tests/unit/modules/vault/test_resolver_personal.py ... [ 81%]
+.....                                                                    [ 81%]
+packages/arcagent/tests/unit/modules/vault/test_vault_unreachable_audit_event.py . [ 81%]
+........                                                                 [ 82%]
+packages/arcagent/tests/unit/modules/voice/providers/test_elevenlabs.py . [ 82%]
+.........                                                                [ 82%]
+packages/arcagent/tests/unit/modules/voice/providers/test_piper_real.py . [ 82%]
+.....................sss                                                 [ 83%]
+packages/arcagent/tests/unit/modules/voice/providers/test_piper_stub.py . [ 83%]
+........s                                                                [ 83%]
+packages/arcagent/tests/unit/modules/voice/providers/test_whisper_api.py . [ 83%]
+.........                                                                [ 83%]
+packages/arcagent/tests/unit/modules/voice/providers/test_whisper_cpp_real.py . [ 83%]
+..........................sss                                            [ 84%]
+packages/arcagent/tests/unit/modules/voice/providers/test_whisper_cpp_stub.py . [ 84%]
+.........s                                                               [ 84%]
+packages/arcagent/tests/unit/modules/voice/test_protocols.py ........... [ 85%]
+......                                                                   [ 85%]
+packages/arcagent/tests/unit/modules/voice/test_redaction.py ........... [ 85%]
+...........                                                              [ 86%]
+packages/arcagent/tests/unit/modules/voice/test_voice_audit_all_tiers.py . [ 86%]
+.....                                                                    [ 86%]
+packages/arcagent/tests/unit/modules/voice/test_voice_capabilities.py .. [ 86%]
+..............                                                           [ 86%]
+packages/arcagent/tests/unit/modules/voice/test_voice_module.py ........ [ 87%]
+............................                                             [ 87%]
+packages/arcagent/tests/unit/modules/web/providers/test_firecrawl.py ... [ 87%]
+..........                                                               [ 88%]
+packages/arcagent/tests/unit/modules/web/providers/test_parallel.py .... [ 88%]
+........                                                                 [ 88%]
+packages/arcagent/tests/unit/modules/web/providers/test_tavily.py ...... [ 88%]
+.........                                                                [ 89%]
+packages/arcagent/tests/unit/modules/web/test_protocols.py ............. [ 89%]
+                                                                         [ 89%]
+packages/arcagent/tests/unit/modules/web/test_url_policy.py ............ [ 89%]
+.......                                                                  [ 89%]
+packages/arcagent/tests/unit/modules/web/test_web_deny_by_default.py ... [ 90%]
+.......                                                                  [ 90%]
+packages/arcagent/tests/unit/modules/web/test_web_module.py ............ [ 90%]
+............                                                             [ 90%]
+packages/arcagent/tests/unit/orchestration/test_prompts.py .....         [ 91%]
+packages/arcagent/tests/unit/orchestration/test_root_token_budget.py ... [ 91%]
+.................                                                        [ 91%]
+packages/arcagent/tests/unit/orchestration/test_spawn_audit_events.py .. [ 91%]
+......                                                                   [ 91%]
+packages/arcagent/tests/unit/orchestration/test_spawn_coverage.py ...... [ 92%]
+...........                                                              [ 92%]
+packages/arcagent/tests/unit/orchestration/test_spawn_hardened.py ...... [ 92%]
+................                                                         [ 93%]
+packages/arcagent/tests/unit/orchestration/test_spawn_tool.py .......... [ 93%]
+..                                                                       [ 93%]
+packages/arcagent/tests/unit/orchestration/test_tool_context_carries_parent_state.py . [ 93%]
+...                                                                      [ 93%]
+packages/arcagent/tests/unit/orchestration/test_ui_reporter_hook.py .... [ 93%]
+.........                                                                [ 93%]
+packages/arcagent/tests/unit/test_utils.py .........                     [ 94%]
+packages/arcagent/tests/unit/tools/test_ast_cache.py ......              [ 94%]
+packages/arcagent/tests/unit/tools/test_bash.py ..............           [ 94%]
+packages/arcagent/tests/unit/tools/test_capability_decorators.py ....... [ 94%]
+............                                                             [ 95%]
+packages/arcagent/tests/unit/tools/test_dynamic_loader.py .........      [ 95%]
+packages/arcagent/tests/unit/tools/test_edit.py .............            [ 95%]
+packages/arcagent/tests/unit/tools/test_find.py ..................       [ 96%]
+packages/arcagent/tests/unit/tools/test_grep.py ........................ [ 97%]
+.                                                                        [ 97%]
+packages/arcagent/tests/unit/tools/test_ls.py ...............            [ 97%]
+packages/arcagent/tests/unit/tools/test_read.py ...............          [ 98%]
+packages/arcagent/tests/unit/tools/test_tool_decorator.py .............. [ 98%]
+....                                                                     [ 98%]
+packages/arcagent/tests/unit/tools/test_validation.py ................   [ 99%]
+packages/arcagent/tests/unit/tools/test_write.py ..........              [ 99%]
+packages/arcagent/tests/unit/utils/test_sanitizer.py ................... [100%]
+
+=================================== FAILURES ===================================
+E   AssertionError: Expected spawn.start event, got: ['strategy.selected', 'loop.start', 'turn.start', 'llm.call', 'tool.start', 'tool.end', 'turn.end', 'turn.start', 'llm.call', 'turn.end', 'loop.complete']
+    assert 'spawn.start' in ['strategy.selected', 'loop.start', 'turn.start', 'llm.call', 'tool.start', 'tool.end', ...]
+/Users/joshschultz/Projects/arc/packages/arcagent/tests/integration/orchestration/test_spawn_e2e.py:155: AssertionError: Expected spawn.start event, got: ['strategy.selected', 'loop.start', 'turn.start', 'llm.call', 'tool.start', 'tool.end', 'turn.end', 'turn.start', 'llm.call', 'turn.end', 'loop.complete']
+E   AssertionError: Expected at least one spawn
+    assert 0 >= 1
+     +  where 0 = len([])
+/Users/joshschultz/Projects/arc/packages/arcagent/tests/integration/orchestration/test_spawn_e2e.py:212: AssertionError: Expected at least one spawn
+E   AssertionError: Missing spawn.start: ['strategy.selected', 'loop.start', 'turn.start', 'llm.call', 'tool.start', 'tool.end', 'turn.end', 'turn.start', 'llm.call', 'turn.end', 'loop.complete']
+    assert 'spawn.start' in ['strategy.selected', 'loop.start', 'turn.start', 'llm.call', 'tool.start', 'tool.end', ...]
+/Users/joshschultz/Projects/arc/packages/arcagent/tests/integration/orchestration/test_spawn_e2e.py:287: AssertionError: Missing spawn.start: ['strategy.selected', 'loop.start', 'turn.start', 'llm.call', 'tool.start', 'tool.end', 'turn.end', 'turn.start', 'llm.call', 'turn.end', 'loop.complete']
+=============================== warnings summary ===============================
+packages/arcagent/tests/unit/modules/session/test_session_index_bulk.py:51
+  /Users/joshschultz/Projects/arc/packages/arcagent/tests/unit/modules/session/test_session_index_bulk.py:51: PytestUnknownMarkWarning: Unknown pytest.mark.performance - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.performance
+
+tests/integration/test_memory_integration.py::TestMemoryModuleStartupShutdown::test_module_registers_handlers
+tests/integration/test_memory_integration.py::TestMemoryModuleStartupShutdown::test_module_via_bus_lifecycle
+tests/integration/test_memory_integration.py::TestNotesAppendOnlyEndToEnd::test_write_to_notes_vetoed
+tests/integration/test_memory_integration.py::TestNonMemoryPathIgnored::test_write_to_random_file_not_vetoed
+  /Users/joshschultz/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/unittest/mock.py:2217: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    def __init__(self, name, parent):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/integration/test_memory_integration.py::TestNotesAppendOnlyEndToEnd::test_bash_to_notes_vetoed
+  /Users/joshschultz/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/unittest/mock.py:439: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    def __init__(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/integration/test_memory_integration.py::TestEntityExtractionIntegration::test_entity_extraction_path
+tests/integration/test_memory_integration.py::TestAgentWithMemoryModule::test_agent_startup_with_memory_enabled
+  /Users/joshschultz/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/inspect.py:754: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    def unwrap(func, *, stop=None):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/integration/test_scheduler_integration.py::TestSchedulerIntegration::test_create_and_fire_interval_schedule
+tests/integration/test_scheduler_integration.py::TestSchedulerIntegration::test_circuit_breaker_integration
+tests/integration/test_scheduler_integration.py::TestSchedulerIntegration::test_graceful_shutdown_drains_queue
+  /Users/joshschultz/Projects/arc/packages/arcagent/src/arcagent/modules/scheduler/__init__.py:67: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    ctx.bus.subscribe("agent:shutdown", self._on_agent_shutdown)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/integration/test_scheduler_integration.py::TestSchedulerIntegration::test_create_and_fire_interval_schedule
+tests/integration/test_scheduler_integration.py::TestSchedulerIntegration::test_circuit_breaker_integration
+tests/integration/test_scheduler_integration.py::TestSchedulerIntegration::test_graceful_shutdown_drains_queue
+  /Users/joshschultz/Projects/arc/packages/arcagent/src/arcagent/modules/scheduler/__init__.py:70: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    ctx.bus.subscribe("agent:ready", self._on_agent_ready)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/unit/core/test_agent.py::TestMaybeCompactEdgeCases::test_maybe_compact_triggers_when_threshold_exceeded
+  <string>:2: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/unit/modules/proactive/test_circuit_breaker.py::TestStateTransitions::test_starts_closed
+  /Users/joshschultz/Projects/arc/packages/arcagent/src/arcagent/modules/proactive/__init__.py:29: RuntimeWarning: coroutine 'PolicyModule._safe_evaluate' was never awaited
+    from arcagent.modules.proactive.timezone import ActiveHours, next_occurrence
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/unit/modules/skill_improver/test_skill_improver_module_orchestration.py::TestBusHandlers::test_on_ready_sets_collector_and_registry
+  /Users/joshschultz/Projects/arc/.venv/lib/python3.12/site-packages/_pytest/fixtures.py:967: RuntimeWarning: coroutine 'SkillImproverModule._optimize_skill' was never awaited
+    def __init__(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED packages/arcagent/tests/integration/orchestration/test_spawn_e2e.py::test_single_spawn_real_llm
+FAILED packages/arcagent/tests/integration/orchestration/test_spawn_e2e.py::test_parallel_spawns_real_llm
+FAILED packages/arcagent/tests/integration/orchestration/test_spawn_e2e.py::test_spawn_audit_trail_real_llm
+===== 3 failed, 3379 passed, 12 skipped, 17 warnings in 175.73s (0:02:55) ======
+[exit=1]
+=== arccli (project=arccmd) ===
+........................................................................ [ 22%]
+........................................................................ [ 44%]
+........................................................................ [ 66%]
+........................................................................ [ 89%]
+...................................                                      [100%]
+323 passed in 51.62s
+[exit=0]
+=== arcgateway (project=arcgateway) ===
+============================= test session starts ==============================
+collected 748 items
+
+packages/arcgateway/tests/architecture/test_imports.py ....              [  0%]
+packages/arcgateway/tests/architecture/test_send_with_id_in_protocol.py . [  0%]
+..............                                                           [  2%]
+packages/arcgateway/tests/integration/test_dual_adapter_chat.py ....     [  3%]
+packages/arcgateway/tests/integration/test_end_to_end_federal_tier.py .. [  3%]
+............                                                             [  4%]
+packages/arcgateway/tests/integration/test_end_to_end_personal_tier.py . [  5%]
+......                                                                   [  5%]
+packages/arcgateway/tests/integration/test_federal_vault_unreachable.py . [  6%]
+.......                                                                  [  6%]
+packages/arcgateway/tests/integration/test_mattermost_adapter.py ....... [  7%]
+                                                                         [  7%]
+packages/arcgateway/tests/integration/test_pairing_cleanup_scheduler.py . [  8%]
+....                                                                     [  8%]
+packages/arcgateway/tests/integration/test_pairing_concurrent.py .....   [  9%]
+packages/arcgateway/tests/integration/test_pairing_dm_delivery.py ....   [  9%]
+packages/arcgateway/tests/integration/test_race_regression.py .......    [ 10%]
+packages/arcgateway/tests/integration/test_race_regression_stress.py ..  [ 10%]
+packages/arcgateway/tests/integration/test_slack_socket_replay_dedup.py . [ 11%]
+...........                                                              [ 12%]
+packages/arcgateway/tests/integration/test_stream_bridge_wiring.py ..... [ 13%]
+                                                                         [ 13%]
+packages/arcgateway/tests/integration/test_stream_flood_control.py ..... [ 13%]
+                                                                         [ 13%]
+packages/arcgateway/tests/integration/test_subprocess_executor.py ...... [ 14%]
+...                                                                      [ 15%]
+packages/arcgateway/tests/integration/test_telegram_polling_conflict.py . [ 15%]
+.......                                                                  [ 16%]
+packages/arcgateway/tests/test_cli_smoke.py ...........                  [ 17%]
+packages/arcgateway/tests/unit/telemetry/test_dashboard_bus.py ......... [ 18%]
+...........                                                              [ 20%]
+packages/arcgateway/tests/unit/test_adapters_base.py ................... [ 22%]
+.                                                                        [ 22%]
+packages/arcgateway/tests/unit/test_adapters_slack.py .................. [ 25%]
+......                                                                   [ 26%]
+packages/arcgateway/tests/unit/test_adapters_slack_send_with_id.py ..... [ 26%]
+.................                                                        [ 29%]
+packages/arcgateway/tests/unit/test_adapters_telegram.py ............... [ 31%]
+...............                                                          [ 33%]
+packages/arcgateway/tests/unit/test_adapters_telegram_coverage.py ...... [ 33%]
+..                                                                       [ 34%]
+packages/arcgateway/tests/unit/test_adapters_telegram_send_with_id.py .. [ 34%]
+............                                                             [ 36%]
+packages/arcgateway/tests/unit/test_agent_config.py ..........           [ 37%]
+packages/arcgateway/tests/unit/test_bootstrap.py ........s               [ 38%]
+packages/arcgateway/tests/unit/test_cli_smoke.py ....................... [ 41%]
+.........                                                                [ 42%]
+packages/arcgateway/tests/unit/test_config.py .....                      [ 43%]
+packages/arcgateway/tests/unit/test_delivery.py ................         [ 45%]
+packages/arcgateway/tests/unit/test_delivery_sender.py .........         [ 46%]
+packages/arcgateway/tests/unit/test_executor.py ..............           [ 48%]
+packages/arcgateway/tests/unit/test_executor_nats.py ....                [ 49%]
+packages/arcgateway/tests/unit/test_executor_subprocess_module.py ...... [ 50%]
+..........                                                               [ 51%]
+packages/arcgateway/tests/unit/test_file_events.py ..........            [ 52%]
+packages/arcgateway/tests/unit/test_fs_audit_events.py ....              [ 53%]
+packages/arcgateway/tests/unit/test_fs_reader.py ....................... [ 56%]
+                                                                         [ 56%]
+packages/arcgateway/tests/unit/test_fs_watcher.py ...................... [ 59%]
+                                                                         [ 59%]
+packages/arcgateway/tests/unit/test_identity.py ...                      [ 59%]
+packages/arcgateway/tests/unit/test_mattermost_adapter.py .............. [ 61%]
+..................................                                       [ 66%]
+packages/arcgateway/tests/unit/test_mattermost_token_no_leak.py ......   [ 66%]
+packages/arcgateway/tests/unit/test_pairing.py ........................  [ 70%]
+packages/arcgateway/tests/unit/test_pairing_signature.py ......          [ 70%]
+packages/arcgateway/tests/unit/test_pairing_signature_enterprise_warn.py . [ 71%]
+...                                                                      [ 71%]
+packages/arcgateway/tests/unit/test_pairing_signature_federal_required.py . [ 71%]
+....                                                                     [ 72%]
+packages/arcgateway/tests/unit/test_pairing_signature_personal_tier_pillar.py . [ 72%]
+....                                                                     [ 72%]
+packages/arcgateway/tests/unit/test_pairing_signature_verify.py .......  [ 73%]
+packages/arcgateway/tests/unit/test_pairing_throttle.py .............    [ 75%]
+packages/arcgateway/tests/unit/test_pid_file.py ...............          [ 77%]
+packages/arcgateway/tests/unit/test_policy_parser.py ................... [ 80%]
+                                                                         [ 80%]
+packages/arcgateway/tests/unit/test_queue_manager.py ................    [ 82%]
+packages/arcgateway/tests/unit/test_runner_lifecycle.py ................ [ 84%]
+..........                                                               [ 85%]
+packages/arcgateway/tests/unit/test_session_pairing.py .............     [ 87%]
+packages/arcgateway/tests/unit/test_session_router.py ..........         [ 88%]
+packages/arcgateway/tests/unit/test_slack_token_no_leak.py .....         [ 89%]
+packages/arcgateway/tests/unit/test_stream_bridge_wiring.py ........     [ 90%]
+packages/arcgateway/tests/unit/test_subprocess_executor_resource_limits.py . [ 90%]
+...............                                                          [ 92%]
+packages/arcgateway/tests/unit/test_team_roster.py .................     [ 94%]
+packages/arcgateway/tests/unit/test_web_adapter.py ..................... [ 97%]
+.................                                                        [100%]
+
+=============================== warnings summary ===============================
+tests/unit/test_cli_smoke.py::test_cmd_start_applies_runtime_dir_override
+tests/unit/test_cli_smoke.py::test_wire_adapters_telegram_present_token_registers_adapter
+  /Users/joshschultz/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/unittest/mock.py:2217: RuntimeWarning: coroutine 'GatewayRunner.run' was never awaited
+    def __init__(self, name, parent):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================= 747 passed, 1 skipped, 2 warnings in 24.40s ==================
+[exit=0]
+=== arcllm (project=arcllm) ===
+........................................................................ [  7%]
+...........FFFFFFFF.FFFFF............................................... [ 15%]
+........................................................................ [ 23%]
+........................................................................ [ 31%]
+........................................................................ [ 39%]
+........................................................................ [ 47%]
+........................................................................ [ 55%]
+........................................................................ [ 63%]
+........................................................................ [ 71%]
+........................................................................ [ 79%]
+........................................................................ [ 87%]
+........................................................................ [ 95%]
+...........................................                              [100%]
+=================================== FAILURES ===================================
+E   ModuleNotFoundError: No module named 'boto3'
+<frozen importlib._bootstrap>:1324: ModuleNotFoundError: No module named 'boto3'
+E   ModuleNotFoundError: No module named 'boto3'
+<frozen importlib._bootstrap>:1324: ModuleNotFoundError: No module named 'boto3'
+E   ModuleNotFoundError: No module named 'boto3'
+<frozen importlib._bootstrap>:1324: ModuleNotFoundError: No module named 'boto3'
+E   ModuleNotFoundError: No module named 'boto3'
+<frozen importlib._bootstrap>:1324: ModuleNotFoundError: No module named 'boto3'
+E   ModuleNotFoundError: No module named 'botocore'
+/Users/joshschultz/Projects/arc/packages/arcllm/tests/test_aws_secrets_backend.py:28: ModuleNotFoundError: No module named 'botocore'
+E   ModuleNotFoundError: No module named 'botocore'
+/Users/joshschultz/Projects/arc/packages/arcllm/tests/test_aws_secrets_backend.py:28: ModuleNotFoundError: No module named 'botocore'
+E   ModuleNotFoundError: No module named 'botocore'
+/Users/joshschultz/Projects/arc/packages/arcllm/tests/test_aws_secrets_backend.py:37: ModuleNotFoundError: No module named 'botocore'
+E   ModuleNotFoundError: No module named 'botocore'
+/Users/joshschultz/Projects/arc/packages/arcllm/tests/test_aws_secrets_backend.py:28: ModuleNotFoundError: No module named 'botocore'
+E   ModuleNotFoundError: No module named 'boto3'
+<frozen importlib._bootstrap>:1324: ModuleNotFoundError: No module named 'boto3'
+E   ModuleNotFoundError: No module named 'boto3'
+<frozen importlib._bootstrap>:1324: ModuleNotFoundError: No module named 'boto3'
+E   ModuleNotFoundError: No module named 'boto3'
+<frozen importlib._bootstrap>:1324: ModuleNotFoundError: No module named 'boto3'
+E   ModuleNotFoundError: No module named 'boto3'
+<frozen importlib._bootstrap>:1324: ModuleNotFoundError: No module named 'boto3'
+E   ModuleNotFoundError: No module named 'boto3'
+<frozen importlib._bootstrap>:1324: ModuleNotFoundError: No module named 'boto3'
+=========================== short test summary info ============================
+FAILED packages/arcllm/tests/test_aws_secrets_backend.py::TestProtocolConformance::test_backend_satisfies_vault_protocol
+FAILED packages/arcllm/tests/test_aws_secrets_backend.py::TestHappyPath::test_get_secret_returns_string_value
+FAILED packages/arcllm/tests/test_aws_secrets_backend.py::TestHappyPath::test_get_secret_decodes_secret_binary
+FAILED packages/arcllm/tests/test_aws_secrets_backend.py::TestHappyPath::test_is_available_true_when_client_constructed
+FAILED packages/arcllm/tests/test_aws_secrets_backend.py::TestErrorSemantics::test_resource_not_found_returns_none
+FAILED packages/arcllm/tests/test_aws_secrets_backend.py::TestErrorSemantics::test_access_denied_raises_config_error
+FAILED packages/arcllm/tests/test_aws_secrets_backend.py::TestErrorSemantics::test_no_credentials_makes_backend_unavailable
+FAILED packages/arcllm/tests/test_aws_secrets_backend.py::TestErrorSemantics::test_generic_client_error_returns_none_marks_unavailable
+FAILED packages/arcllm/tests/test_aws_secrets_backend.py::TestRegionAndProfile::test_region_defaults_to_boto3_chain
+FAILED packages/arcllm/tests/test_aws_secrets_backend.py::TestRegionAndProfile::test_explicit_region_passed_through
+FAILED packages/arcllm/tests/test_aws_secrets_backend.py::TestRegionAndProfile::test_profile_uses_session
+FAILED packages/arcllm/tests/test_aws_secrets_backend.py::TestNoSecretsInRepr::test_repr_never_includes_fetched_secret
+FAILED packages/arcllm/tests/test_aws_secrets_backend.py::TestConstructorAcceptsKwargs::test_kwargs_only_init_does_not_raise
+13 failed, 894 passed in 4.74s
+[exit=1]
+=== arcmas (project=arcmas) ===
+ERROR: file or directory not found: packages/arcmas/tests
+
+============================= test session starts ==============================
+collected 0 items
+
+============================ no tests ran in 0.00s =============================
+[exit=4]
+=== arcmodel (project=arcmodel) ===
+ERROR: file or directory not found: packages/arcmodel/tests
+
+============================= test session starts ==============================
+collected 0 items
+
+============================ no tests ran in 0.00s =============================
+[exit=4]
+=== arcprompt (project=arcprompt) ===
+ERROR: file or directory not found: packages/arcprompt/tests
+
+============================= test session starts ==============================
+collected 0 items
+
+============================ no tests ran in 0.00s =============================
+[exit=4]
+=== arcrun (project=arcrun) ===
+ss...................................................................... [ 17%]
+........................................................................ [ 35%]
+........................................................................ [ 53%]
+........................................................................ [ 71%]
+...................................................s.................... [ 89%]
+.........................................                                [100%]
+=============================== warnings summary ===============================
+packages/arcrun/tests/integration/test_execute_via_docker_backend.py:42
+  /Users/joshschultz/Projects/arc/packages/arcrun/tests/integration/test_execute_via_docker_backend.py:42: PytestUnknownMarkWarning: Unknown pytest.mark.docker - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    pytestmark = pytest.mark.docker
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+398 passed, 3 skipped, 1 warning in 26.10s
+[exit=0]
+=== arcskill (project=arcskill) ===
+============================= test session starts ==============================
+collected 343 items / 4 skipped
+
+packages/arcskill/tests/integration/test_hub_attack_surface.py ......... [  2%]
+......                                                                   [  4%]
+packages/arcskill/tests/integration/test_hub_federal_install_pipeline.py . [  4%]
+...                                                                      [  5%]
+packages/arcskill/tests/integration/test_hub_revocation_lifecycle.py ... [  6%]
+....                                                                     [  7%]
+packages/arcskill/tests/unit/hub/test_config.py ........................ [ 14%]
+.                                                                        [ 14%]
+packages/arcskill/tests/unit/hub/test_dry_run_extended.py .............. [ 18%]
+...............                                                          [ 23%]
+packages/arcskill/tests/unit/hub/test_dry_run_firecracker.py ........... [ 26%]
+....s                                                                    [ 27%]
+packages/arcskill/tests/unit/hub/test_installer_pipeline.py .......      [ 30%]
+packages/arcskill/tests/unit/hub/test_installer_stages.py ............   [ 33%]
+packages/arcskill/tests/unit/hub/test_lifecycle_crl.py ............      [ 37%]
+packages/arcskill/tests/unit/hub/test_lifecycle_extended.py ............ [ 40%]
+.                                                                        [ 40%]
+packages/arcskill/tests/unit/hub/test_lock.py ................           [ 45%]
+packages/arcskill/tests/unit/hub/test_no_tier_bypass.py ............     [ 48%]
+packages/arcskill/tests/unit/hub/test_scanner_covert_config.py ......... [ 51%]
+..                                                                       [ 52%]
+packages/arcskill/tests/unit/hub/test_scanner_extended.py .............. [ 56%]
+..............                                                           [ 60%]
+packages/arcskill/tests/unit/hub/test_scanner_regex.py ................. [ 65%]
+..........                                                               [ 68%]
+packages/arcskill/tests/unit/hub/test_scanner_typosquat_clickfix.py .... [ 69%]
+......                                                                   [ 71%]
+packages/arcskill/tests/unit/hub/test_sources_mocked.py ................ [ 75%]
+...                                                                      [ 76%]
+packages/arcskill/tests/unit/hub/test_verify.py ................         [ 81%]
+packages/arcskill/tests/unit/hub/test_verify_fail_closed_when_sigstore_missing.py . [ 81%]
+..........                                                               [ 84%]
+packages/arcskill/tests/unit/hub/test_verify_internal.py ............... [ 88%]
+.........................                                                [ 96%]
+packages/arcskill/tests/unit/hub/test_verify_slsa_l3_required_at_federal.py . [ 96%]
+............                                                             [100%]
+
+======================== 342 passed, 5 skipped in 0.74s ========================
+[exit=0]
+=== arcteam (project=arcteam) ===
+============================= test session starts ==============================
+collected 331 items
+
+packages/arcteam/tests/e2e/test_cli.py .......                           [  2%]
+packages/arcteam/tests/integration/memory/test_team_memory_concurrency.py . [  2%]
+...                                                                      [  3%]
+packages/arcteam/tests/integration/memory/test_team_memory_service.py .. [  3%]
+........                                                                 [  6%]
+packages/arcteam/tests/integration/test_benchmarks.py ...                [  7%]
+packages/arcteam/tests/integration/test_messaging_flow.py .....          [  8%]
+packages/arcteam/tests/unit/memory/test_classification.py .............. [ 12%]
+.....                                                                    [ 14%]
+packages/arcteam/tests/unit/memory/test_cli.py .........                 [ 17%]
+packages/arcteam/tests/unit/memory/test_config.py .......                [ 19%]
+packages/arcteam/tests/unit/memory/test_index_manager.py ............... [ 23%]
+.                                                                        [ 24%]
+packages/arcteam/tests/unit/memory/test_promotion_gate.py ........       [ 26%]
+packages/arcteam/tests/unit/memory/test_search_engine.py ..............  [ 30%]
+packages/arcteam/tests/unit/memory/test_security.py .................... [ 36%]
+.....                                                                    [ 38%]
+packages/arcteam/tests/unit/memory/test_service.py ................      [ 43%]
+packages/arcteam/tests/unit/memory/test_storage.py ............          [ 46%]
+packages/arcteam/tests/unit/memory/test_types.py ............            [ 50%]
+packages/arcteam/tests/unit/test_audit.py .......                        [ 52%]
+packages/arcteam/tests/unit/test_cli.py ........................         [ 59%]
+packages/arcteam/tests/unit/test_config.py ...                           [ 60%]
+packages/arcteam/tests/unit/test_entity_workspace_path.py .....          [ 62%]
+packages/arcteam/tests/unit/test_messenger.py ........................   [ 69%]
+packages/arcteam/tests/unit/test_registry.py ...........                 [ 72%]
+packages/arcteam/tests/unit/test_storage.py ............................ [ 81%]
+..............................                                           [ 90%]
+packages/arcteam/tests/unit/test_types.py ..........................     [ 98%]
+packages/arcteam/tests/unit/test_uireporter_wiring.py ......             [100%]
+
+============================= 331 passed in 10.35s =============================
+[exit=0]
+=== arctrust (project=arctrust) ===
+============================= test session starts ==============================
+collected 176 items
+
+packages/arctrust/tests/test_audit.py ..................                 [ 10%]
+packages/arctrust/tests/test_identity.py ............................... [ 27%]
+............                                                             [ 34%]
+packages/arctrust/tests/test_keypair.py ...................              [ 45%]
+packages/arctrust/tests/test_policy.py ................................  [ 63%]
+packages/arctrust/tests/test_trust_store.py ................             [ 72%]
+packages/arctrust/tests/test_trust_store_security.py ................... [ 83%]
+.............................                                            [100%]
+
+============================= 176 passed in 0.27s ==============================
+[exit=0]
+=== arctui (project=arctui) ===
+ERROR: file or directory not found: packages/arctui/tests
+
+============================= test session starts ==============================
+collected 0 items
+
+============================ no tests ran in 0.00s =============================
+[exit=4]
+=== arcui (project=arcui) ===
+ss...................................................................... [ 10%]
+..................................F..................................... [ 20%]
+........................................................................ [ 31%]
+........................................................................ [ 41%]
+...........s....s...s................................................... [ 52%]
+........................................................................ [ 62%]
+........................................................................ [ 73%]
+........................................................................ [ 83%]
+........................................................................ [ 94%]
+.....................FFFFFF............                                  [100%]
+=================================== FAILURES ===================================
+E   assert 'font-family: "Inter"' in '/* Font loading — currently relying on system fallbacks.\n *\n * The CSS vars in arc-platform.css declare:\n *   --fo...ndows /\n * Linux without any network requests — which is also exactly what\n * an air-gapped deployment wants.\n */\n'
+/Users/joshschultz/Projects/arc/packages/arcui/tests/integration/test_self_hosted_fonts.py:43: assert 'font-family: "Inter"' in '/* Font loading — currently relying on system fallbacks.\n *\n * The CSS vars in arc-platform.css declare:\n *   --fo...ndows /\n * Linux without any network requests — which is also exactly what\n * an air-gapped deployment wants.\n */\n'
+E   AssertionError: /bin/bash: line 1: /Users/joshschultz/Projects/arc/deploy/lib/agent-manifest.sh: No such file or directory
+      /bin/bash: line 2: _read_agent_manifest: command not found
+      
+    assert 127 == 0
+     +  where 127 = CompletedProcess(args=['/bin/bash', '-c', "set -u\n. '/Users/joshschultz/Projects/arc/deploy/lib/agent-manifest.sh'\n_...deploy/lib/agent-manifest.sh: No such file or directory\n/bin/bash: line 2: _read_agent_manifest: command not found\n').returncode
+/Users/joshschultz/Projects/arc/packages/arcui/tests/unit/test_setup_vm_manifest.py:45: AssertionError: /bin/bash: line 1: /Users/joshschultz/Projects/arc/deploy/lib/agent-manifest.sh: No such file or directory
+E   assert 'malformed entry' in '/bin/bash: line 1: /Users/joshschultz/Projects/arc/deploy/lib/agent-manifest.sh: No such file or directory\n/bin/bash: line 2: _read_agent_manifest: command not found\n'
+     +  where '/bin/bash: line 1: /Users/joshschultz/Projects/arc/deploy/lib/agent-manifest.sh: No such file or directory\n/bin/bash: line 2: _read_agent_manifest: command not found\n' = CompletedProcess(args=['/bin/bash', '-c', "set -u\n. '/Users/joshschultz/Projects/arc/deploy/lib/agent-manifest.sh'\n_...deploy/lib/agent-manifest.sh: No such file or directory\n/bin/bash: line 2: _read_agent_manifest: command not found\n').stderr
+/Users/joshschultz/Projects/arc/packages/arcui/tests/unit/test_setup_vm_manifest.py:54: assert 'malformed entry' in '/bin/bash: line 1: /Users/joshschultz/Projects/arc/deploy/lib/agent-manifest.sh: No such file or directory\n/bin/bash: line 2: _read_agent_manifest: command not found\n'
+E   assert 'malformed entry' in '/bin/bash: line 1: /Users/joshschultz/Projects/arc/deploy/lib/agent-manifest.sh: No such file or directory\n/bin/bash: line 2: _read_agent_manifest: command not found\n'
+     +  where '/bin/bash: line 1: /Users/joshschultz/Projects/arc/deploy/lib/agent-manifest.sh: No such file or directory\n/bin/bash: line 2: _read_agent_manifest: command not found\n' = CompletedProcess(args=['/bin/bash', '-c', "set -u\n. '/Users/joshschultz/Projects/arc/deploy/lib/agent-manifest.sh'\n_...deploy/lib/agent-manifest.sh: No such file or directory\n/bin/bash: line 2: _read_agent_manifest: command not found\n').stderr
+/Users/joshschultz/Projects/arc/packages/arcui/tests/unit/test_setup_vm_manifest.py:61: assert 'malformed entry' in '/bin/bash: line 1: /Users/joshschultz/Projects/arc/deploy/lib/agent-manifest.sh: No such file or directory\n/bin/bash: line 2: _read_agent_manifest: command not found\n'
+E   assert 'malformed entry' in '/bin/bash: line 1: /Users/joshschultz/Projects/arc/deploy/lib/agent-manifest.sh: No such file or directory\n/bin/bash: line 2: _read_agent_manifest: command not found\n'
+     +  where '/bin/bash: line 1: /Users/joshschultz/Projects/arc/deploy/lib/agent-manifest.sh: No such file or directory\n/bin/bash: line 2: _read_agent_manifest: command not found\n' = CompletedProcess(args=['/bin/bash', '-c', "set -u\n. '/Users/joshschultz/Projects/arc/deploy/lib/agent-manifest.sh'\n_...deploy/lib/agent-manifest.sh: No such file or directory\n/bin/bash: line 2: _read_agent_manifest: command not found\n').stderr
+/Users/joshschultz/Projects/arc/packages/arcui/tests/unit/test_setup_vm_manifest.py:68: assert 'malformed entry' in '/bin/bash: line 1: /Users/joshschultz/Projects/arc/deploy/lib/agent-manifest.sh: No such file or directory\n/bin/bash: line 2: _read_agent_manifest: command not found\n'
+E   assert 127 == 0
+     +  where 127 = CompletedProcess(args=['/bin/bash', '-c', "set -u\n. '/Users/joshschultz/Projects/arc/deploy/lib/agent-manifest.sh'\n_...deploy/lib/agent-manifest.sh: No such file or directory\n/bin/bash: line 2: _read_agent_manifest: command not found\n').returncode
+/Users/joshschultz/Projects/arc/packages/arcui/tests/unit/test_setup_vm_manifest.py:74: assert 127 == 0
+E   assert 'empty' in '/bin/bash: line 1: /Users/joshschultz/Projects/arc/deploy/lib/agent-manifest.sh: No such file or directory\n/bin/bash: line 2: _read_agent_manifest: command not found\n'
+     +  where '/bin/bash: line 1: /Users/joshschultz/Projects/arc/deploy/lib/agent-manifest.sh: No such file or directory\n/bin/bash: line 2: _read_agent_manifest: command not found\n' = CompletedProcess(args=['/bin/bash', '-c', "set -u\n. '/Users/joshschultz/Projects/arc/deploy/lib/agent-manifest.sh'\n_...deploy/lib/agent-manifest.sh: No such file or directory\n/bin/bash: line 2: _read_agent_manifest: command not found\n').stderr
+/Users/joshschultz/Projects/arc/packages/arcui/tests/unit/test_setup_vm_manifest.py:83: assert 'empty' in '/bin/bash: line 1: /Users/joshschultz/Projects/arc/deploy/lib/agent-manifest.sh: No such file or directory\n/bin/bash: line 2: _read_agent_manifest: command not found\n'
+=========================== short test summary info ============================
+FAILED packages/arcui/tests/integration/test_self_hosted_fonts.py::test_fonts_css_declares_inter_and_jetbrains_mono
+FAILED packages/arcui/tests/unit/test_setup_vm_manifest.py::test_manifest_with_well_formed_entries_passes
+FAILED packages/arcui/tests/unit/test_setup_vm_manifest.py::test_manifest_with_path_traversal_aborts
+FAILED packages/arcui/tests/unit/test_setup_vm_manifest.py::test_manifest_with_uppercase_entry_aborts
+FAILED packages/arcui/tests/unit/test_setup_vm_manifest.py::test_manifest_with_shell_metachar_aborts
+FAILED packages/arcui/tests/unit/test_setup_vm_manifest.py::test_manifest_missing_falls_back_to_default
+FAILED packages/arcui/tests/unit/test_setup_vm_manifest.py::test_manifest_empty_aborts
+7 failed, 675 passed, 7 skipped in 6.87s
+[exit=1]

@@ -1,0 +1,4443 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="The security-first autonomous agent stack — how it works, and where to look.">
+      
+      
+      
+        <link rel="canonical" href="https://joshuamschultz.github.io/Arc/walkthrough/data-flows/">
+      
+      
+        <link rel="prev" href="../12-configuration/">
+      
+      
+        <link rel="next" href="../diagrams/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Data flows - Arc Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/brand.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#data-flow-pathways" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Arc Documentation" class="md-header__button md-logo" aria-label="Arc Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Arc Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Data flows
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/joshuamschultz/Arc" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    joshuamschultz/Arc
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Arc Documentation" class="md-nav__button md-logo" aria-label="Arc Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Arc Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/joshuamschultz/Arc" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    joshuamschultz/Arc
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Walkthrough
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Walkthrough
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../01-what-is-arc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1. What Arc Is
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../02-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2. Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../03-anatomy-of-a-turn/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    3. Anatomy of a Turn
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../04-unified-adapter/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    4. The Unified Adapter
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../05-steering-and-strategies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    5. Steering and Strategies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../06-prompts-tools-skills/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    6. Prompts, Tools, and Skills
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../07-memory-lifecycle/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    7. The Memory Lifecycle
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../08-data-and-storage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    8. Where Data Lives
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../09-workflows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    9. The Workflows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../10-security-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    10. The Security Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../11-extension-points/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    11. Extension Points
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../12-configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    12. Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data flows
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data flows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#architecture-layers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architecture Layers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#single-agent-turn-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Single-Agent Turn Flow
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Single-Agent Turn Flow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#detailed-turn-steps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Detailed Turn Steps
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#capability-loading-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Capability Loading Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#skill-installation-pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Skill Installation Pipeline
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#multi-agent-communication-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multi-Agent Communication Flow
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Multi-Agent Communication Flow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#team-message-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Team Message Flow
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#memory-system-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory System Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#llm-provider-selection-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        LLM Provider Selection Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#turn-flow-from-message-to-response" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Turn Flow — From Message to Response
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Turn Flow — From Message to Response">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#three-entry-surfaces-one-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Three Entry Surfaces, One Path
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tool-execution-pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tool Execution Pipeline
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#memory-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory Lifecycle
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Memory Lifecycle">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#dual-speed-memory-cadence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dual-Speed Memory Cadence
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#four-stores" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Four Stores
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#insight-confidence-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Insight Confidence Lifecycle
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#session-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Session Lifecycle
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tool-execution-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tool Execution Flow
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Tool Execution Flow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#dynamic-tool-creation-pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dynamic Tool Creation Pipeline
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dashboard-data-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dashboard Data Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#gateway-message-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gateway Message Flow
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Gateway Message Flow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#platform-adapter-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Platform Adapter Flow
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#data-storage-layout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data Storage Layout
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Data Storage Layout">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#disk-layout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Disk Layout
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-spool-always-on-operational-telemetry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Spool — Always-On Operational Telemetry
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-worm-audit-chain-compliance-system-of-record" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The WORM Audit Chain — Compliance System of Record
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-sqlite-mirror-queryable-read-plane" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The SQLite Mirror — Queryable Read Plane
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#memory-on-disk-glass-box-markdown-disposable-index" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory on Disk — Glass-Box Markdown + Disposable Index
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#keys-and-secrets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Keys and Secrets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#retention-and-deletion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Retention and Deletion
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#next-steps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Next Steps
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../diagrams/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Diagrams
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Building with Arc
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Building with Arc
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/setup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/implementation-guides/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Implementation guides
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/modules/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Writing modules
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/policy-modules/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Policy modules
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/performance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/package-index/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Package index
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_10" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_10" id="__nav_3_10_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Packages
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_10">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Packages
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcllm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcllm
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcrun/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcrun
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arctrust/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arctrust
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcstore/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcstore
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcprompt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcprompt
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcmodel/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcmodel
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcagent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcagent
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcmemory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcmemory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcskill/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcskill
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcteam/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcteam
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcgateway/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcgateway
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcgateway-telegram/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcgateway-telegram
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcgateway-slack/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcgateway-slack
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcgateway-mattermost/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcgateway-mattermost
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcui
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arctui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arctui
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arccli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arccli
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcmas/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcmas
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration keys
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/tiers-and-presets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tiers and presets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/prompts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Prompts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/glossary/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Glossary
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runbooks
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Runbooks
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_1" id="__nav_5_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Deploy
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/deploy/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/deploy/local/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/deploy/docker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Docker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/deploy/firecracker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Firecracker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/deploy/azure-openai/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Azure OpenAI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/deploy/voice-air-gap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Voice air-gap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_2" id="__nav_5_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operate
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Operate
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/operate/teams/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Teams
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/operate/tasks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/operate/agent-features/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent features
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/operate/policy-and-proactive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Policy and proactive engine
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Security
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/security/hardening/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hardening
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/security/threat-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Threat model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/security/adversarial-tests/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Adversarial tests
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/security/compliance-nist-800-53/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NIST 800-53 mapping
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/security/compliance-owasp-llm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OWASP LLM mapping
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/security/compliance-owasp-agentic/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OWASP Agentic mapping
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Blueprints
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Blueprints
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../blueprints/blueprints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Blueprints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#architecture-layers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architecture Layers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#single-agent-turn-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Single-Agent Turn Flow
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Single-Agent Turn Flow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#detailed-turn-steps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Detailed Turn Steps
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#capability-loading-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Capability Loading Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#skill-installation-pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Skill Installation Pipeline
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#multi-agent-communication-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multi-Agent Communication Flow
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Multi-Agent Communication Flow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#team-message-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Team Message Flow
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#memory-system-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory System Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#llm-provider-selection-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        LLM Provider Selection Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#turn-flow-from-message-to-response" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Turn Flow — From Message to Response
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Turn Flow — From Message to Response">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#three-entry-surfaces-one-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Three Entry Surfaces, One Path
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tool-execution-pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tool Execution Pipeline
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#memory-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory Lifecycle
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Memory Lifecycle">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#dual-speed-memory-cadence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dual-Speed Memory Cadence
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#four-stores" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Four Stores
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#insight-confidence-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Insight Confidence Lifecycle
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#session-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Session Lifecycle
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tool-execution-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tool Execution Flow
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Tool Execution Flow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#dynamic-tool-creation-pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dynamic Tool Creation Pipeline
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dashboard-data-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dashboard Data Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#gateway-message-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gateway Message Flow
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Gateway Message Flow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#platform-adapter-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Platform Adapter Flow
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#data-storage-layout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data Storage Layout
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Data Storage Layout">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#disk-layout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Disk Layout
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-spool-always-on-operational-telemetry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Spool — Always-On Operational Telemetry
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-worm-audit-chain-compliance-system-of-record" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The WORM Audit Chain — Compliance System of Record
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-sqlite-mirror-queryable-read-plane" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The SQLite Mirror — Queryable Read Plane
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#memory-on-disk-glass-box-markdown-disposable-index" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory on Disk — Glass-Box Markdown + Disposable Index
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#keys-and-secrets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Keys and Secrets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#retention-and-deletion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Retention and Deletion
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#next-steps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Next Steps
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/joshuamschultz/Arc/edit/main/docs/walkthrough/data-flows.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="data-flow-pathways">Data Flow Pathways<a class="headerlink" href="#data-flow-pathways" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p><strong>Walkthrough</strong>  ·  Understand  ·  page 13 of 14<br />
+<strong>For</strong> Anyone who needs to understand how Arc works<br />
+<a href="../12-configuration/">← 12. Configuration</a>  ·  <a href="../../">Docs home</a>  ·  <a href="../diagrams/">Diagrams →</a></p>
+</blockquote>
+<hr />
+<h2 id="architecture-layers">Architecture Layers<a class="headerlink" href="#architecture-layers" title="Permanent link">&para;</a></h2>
+<pre class="mermaid"><code>flowchart TB
+    classDef surface fill:#5A9CFF,stroke:#0073FE,color:#002550
+    classDef agent fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef runtime fill:#0055BC,stroke:#003B82,color:#FFFFFF
+    classDef llm fill:#003B82,stroke:#002550,color:#FFFFFF
+    classDef found fill:#002550,stroke:#001A38,color:#FFFFFF
+
+    subgraph "Surface Layer"
+        arcgateway[arcgateway&lt;br/&gt;Chat platforms]:::surface
+        arcui[arcui&lt;br/&gt;Dashboard]:::surface
+    end
+
+    subgraph "Entry Layer"
+        arccli[arccli&lt;br/&gt;CLI commands]:::surface
+    end
+
+    subgraph "Agent Layer"
+        arcagent[arcagent&lt;br/&gt;Agent framework]:::agent
+        arcteam[arcteam&lt;br/&gt;Multi-agent]:::agent
+        arcmemory[arcmemory&lt;br/&gt;Memory system]:::agent
+        arcskill[arcskill&lt;br/&gt;Skill hub]:::agent
+    end
+
+    subgraph "Runtime Layer"
+        arcrun[arcrun&lt;br/&gt;Execution loop]:::runtime
+        arcprompt[arcprompt&lt;br/&gt;Prompt engine]:::runtime
+    end
+
+    subgraph "LLM Layer"
+        arcllm[arcllm&lt;br/&gt;LLM client]:::llm
+    end
+
+    subgraph "Foundation Layer"
+        arctrust[arctrust&lt;br/&gt;Security primitives]:::found
+        arcstore[arcstore&lt;br/&gt;Storage backend]:::found
+    end
+
+    arcgateway --&gt; arcagent
+    arcui --&gt; arcagent
+    arccli --&gt; arcteam
+    arccli --&gt; arcagent
+    arcagent --&gt; arcrun
+    arcagent --&gt; arcteam
+    arcagent --&gt; arcmemory
+    arcagent --&gt; arcskill
+    arcrun --&gt; arcllm
+    arcprompt --&gt; arcllm
+    arcllm --&gt; arctrust
+    arcllm --&gt; arcstore
+    arcteam --&gt; arctrust
+    arcteam --&gt; arcstore
+    arcskill --&gt; arctrust
+    arcagent --&gt; arctrust
+    arcagent --&gt; arcstore</code></pre>
+<hr />
+<h2 id="single-agent-turn-flow">Single-Agent Turn Flow<a class="headerlink" href="#single-agent-turn-flow" title="Permanent link">&para;</a></h2>
+<p>When an agent processes a message, data flows through this pathway:</p>
+<pre class="mermaid"><code>sequenceDiagram
+    participant U as User
+    participant CLI as arccli
+    participant Agent as arcagent
+    participant Run as arcrun
+    participant LLM as arcllm
+    participant Trust as arctrust
+    participant Store as arcstore
+
+    U-&gt;&gt;CLI: "Analyze this data"
+    CLI-&gt;&gt;Agent: load_config()
+    Agent-&gt;&gt;Trust: verify_identity()
+    Agent-&gt;&gt;Store: load_memory()
+    Agent-&gt;&gt;Agent: build_prompt()
+
+    Agent-&gt;&gt;Run: run_turn()
+    Run-&gt;&gt;LLM: chat_completion()
+    LLM-&gt;&gt;LLM: select_provider()
+    LLM-&gt;&gt;Store: record_llm_call()
+    LLM--&gt;&gt;Run: response
+    Run-&gt;&gt;Agent: parse_tool_calls()
+    Agent-&gt;&gt;Trust: authorize_action()
+    Agent-&gt;&gt;Store: execute_tool()
+    Agent-&gt;&gt;Trust: audit_log()
+    Agent--&gt;&gt;CLI: result
+    CLI--&gt;&gt;U: formatted output</code></pre>
+<h3 id="detailed-turn-steps">Detailed Turn Steps<a class="headerlink" href="#detailed-turn-steps" title="Permanent link">&para;</a></h3>
+<pre class="mermaid"><code>flowchart TD
+    classDef step fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef check fill:#002550,stroke:#001A38,color:#FFFFFF
+    classDef store fill:#D6E6FF,stroke:#0073FE,color:#002550
+
+    Start[User Input]:::step --&gt; Prompt[Build Prompt&lt;br/&gt;arcprompt]:::step
+    Prompt --&gt; LLM[LLM Call&lt;br/&gt;arcllm]:::step
+    LLM --&gt; Parse[Parse Response&lt;br/&gt;Tool calls?]:::check
+    Parse --&gt;|No| Return[Return Result]:::step
+    Parse --&gt;|Yes| Auth[Authorize&lt;br/&gt;arctrust]:::check
+    Auth --&gt; Exec[Execute Tool&lt;br/&gt;arcstore]:::step
+    Exec --&gt; Audit[Audit Log&lt;br/&gt;arctrust]:::step
+    Audit --&gt; Prompt</code></pre>
+<hr />
+<h2 id="capability-loading-flow">Capability Loading Flow<a class="headerlink" href="#capability-loading-flow" title="Permanent link">&para;</a></h2>
+<p>Capabilities are loaded from multiple sources with security checks:</p>
+<pre class="mermaid"><code>flowchart TB
+    classDef source fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef scan fill:#002550,stroke:#001A38,color:#FFFFFF
+    classDef active fill:#D6E6FF,stroke:#0073FE,color:#002550
+
+    subgraph "Capability Sources"
+        S1[Builtins&lt;br/&gt;packages/arcagent/tools]:::source
+        S2[Global&lt;br/&gt;~/.arc/capabilities]:::source
+        S3[Agent&lt;br/&gt;agent/capabilities]:::source
+        S4[Workspace&lt;br/&gt;workspace/.capabilities]:::source
+    end
+
+    subgraph "Security Pipeline"
+        Scan[Static Scan&lt;br/&gt;arcskill]:::scan
+        Sign[Signature Verify&lt;br/&gt;arctrust]:::scan
+        CRL[CRL Check&lt;br/&gt;arcskill]:::scan
+    end
+
+    S1 --&gt; Scan
+    S2 --&gt; Scan
+    S3 --&gt; Scan
+    S4 --&gt; Scan
+    Scan --&gt; Sign
+    Sign --&gt; CRL
+    CRL --&gt; Active[Active Capabilities]:::active</code></pre>
+<hr />
+<h2 id="skill-installation-pipeline">Skill Installation Pipeline<a class="headerlink" href="#skill-installation-pipeline" title="Permanent link">&para;</a></h2>
+<p>The 8-gate skill install pipeline:</p>
+<pre class="mermaid"><code>flowchart LR
+    classDef gate fill:#002550,stroke:#001A38,color:#FFFFFF
+    classDef term fill:#D6E6FF,stroke:#0073FE,color:#002550
+    classDef fail fill:#F68D2E,stroke:#C06000,color:#FFFFFF
+
+    A[1. Fetch&lt;br/&gt;to quarantine]:::gate --&gt; B[2. Sigstore&lt;br/&gt;signature]:::gate
+    B --&gt; C[3. Rekor&lt;br/&gt;inclusion proof]:::gate
+    C --&gt; D[4. CRL check]:::gate
+    D --&gt; E[5. Static scan&lt;br/&gt;regex+AST+semgrep+bandit]:::gate
+    E --&gt; F[6. Sandboxed&lt;br/&gt;dry-run]:::gate
+    F --&gt; G[7. Atomic&lt;br/&gt;activation]:::gate
+    G --&gt; H[8. Lock file&lt;br/&gt;entry]:::term
+
+    B -.-&gt; X[SignatureInvalid]:::fail
+    D -.-&gt; Y[CRLUnreachable]:::fail
+    E -.-&gt; Z[ScanVerdictFailed]:::fail</code></pre>
+<hr />
+<h2 id="multi-agent-communication-flow">Multi-Agent Communication Flow<a class="headerlink" href="#multi-agent-communication-flow" title="Permanent link">&para;</a></h2>
+<pre class="mermaid"><code>sequenceDiagram
+    participant A1 as Agent 1
+    participant Team as arcteam
+    participant NATS as NATS Backend
+    participant A2 as Agent 2
+    participant Audit as arctrust
+
+    A1-&gt;&gt;Team: send(sender, to, body, type, priority)
+    Team-&gt;&gt;Audit: sign_message()
+    Team-&gt;&gt;NATS: publish(channel, message)
+    NATS-&gt;&gt;A2: deliver(message)
+    A2-&gt;&gt;Team: ack(message_id)
+    Team-&gt;&gt;Audit: log_ack()</code></pre>
+<h3 id="team-message-flow">Team Message Flow<a class="headerlink" href="#team-message-flow" title="Permanent link">&para;</a></h3>
+<pre class="mermaid"><code>flowchart LR
+    classDef agent fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef msg fill:#002550,stroke:#001A38,color:#FFFFFF
+    classDef backend fill:#D6E6FF,stroke:#0073FE,color:#002550
+
+    A1[Agent 1]:::agent --&gt;|task| Team[arcteam]:::msg
+    Team --&gt;|signed message| NATS[NATS JetStream]:::backend
+    NATS --&gt;|deliver| A2[Agent 2]:::agent
+    A2 --&gt;|ack| Team
+    Team --&gt;|log| Audit[Audit Trail]:::msg</code></pre>
+<hr />
+<h2 id="memory-system-flow">Memory System Flow<a class="headerlink" href="#memory-system-flow" title="Permanent link">&para;</a></h2>
+<pre class="mermaid"><code>flowchart TB
+    classDef mem fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef store fill:#002550,stroke:#001A38,color:#FFFFFF
+    classDef active fill:#D6E6FF,stroke:#0073FE,color:#002550
+
+    subgraph "Memory Types"
+        M1[Episodic&lt;br/&gt;Recent events]:::mem
+        M2[Entity&lt;br/&gt;Facts graph]:::mem
+        M3[Daily Log&lt;br/&gt;Long-term]:::mem
+    end
+
+    subgraph "Storage"
+        S1[workspace/sessions/]:::store
+        S2[workspace/memory/]:::store
+        S3[workspace/daily/]:::store
+    end
+
+    subgraph "Access"
+        Active[Active Memory&lt;br/&gt;in prompt]:::active
+        Query[Memory Query]:::active
+    end
+
+    M1 --&gt; S1
+    M2 --&gt; S2
+    M3 --&gt; S3
+    S1 --&gt; Active
+    S2 --&gt; Query
+    S3 --&gt; Query</code></pre>
+<hr />
+<h2 id="llm-provider-selection-flow">LLM Provider Selection Flow<a class="headerlink" href="#llm-provider-selection-flow" title="Permanent link">&para;</a></h2>
+<pre class="mermaid"><code>flowchart TD
+    classDef req fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef sel fill:#002550,stroke:#001A38,color:#FFFFFF
+    classDef prov fill:#D6E6FF,stroke:#0073FE,color:#002550
+
+    Start[LLM Request]:::req --&gt; Features[Check required&lt;br/&gt;features]:::sel
+    Features --&gt;|tools| ToolCheck[Tool support]:::sel
+    Features --&gt;|vision| VisionCheck[Vision support]:::sel
+    Features --&gt;|json| JSONCheck[JSON mode support]:::sel
+    ToolCheck --&gt; Provider[Select Provider&lt;br/&gt;arcllm]:::prov
+    VisionCheck --&gt; Provider
+    JSONCheck --&gt; Provider
+    Provider --&gt;|HTTP direct| API[LLM API]:::req
+    API --&gt; Provider
+    Provider --&gt; Start</code></pre>
+<hr />
+<h2 id="turn-flow-from-message-to-response">Turn Flow — From Message to Response<a class="headerlink" href="#turn-flow-from-message-to-response" title="Permanent link">&para;</a></h2>
+<p>When an agent processes a message, data flows through this pathway:</p>
+<pre class="mermaid"><code>sequenceDiagram
+    participant U as User
+    participant Entry as Entry Surface
+    participant Agent as ArcAgent.run
+    participant Dispatch as dispatch_stream
+    participant RunStream as arcrun.run_stream
+    participant Loop as react_loop
+    participant LLM as arcllm
+    participant Tool as Tool (policy-wrapped)
+    participant Spool as arcstore spool
+    participant UI as arcui
+
+    U-&gt;&gt;Entry: message (CLI, TUI, or Gateway)
+    Entry-&gt;&gt;Agent: agent.run(input_text, session)
+    Agent-&gt;&gt;Dispatch: build_run_context (prompt, tools, provider)
+    Dispatch-&gt;&gt;RunStream: model, capabilities, actor_did, run_id
+    RunStream-&gt;&gt;Loop: same run_id (mint if None)
+    Loop-&gt;&gt;Loop: registry.freeze() - tool-set lock
+    Loop--&gt;&gt;RunStream: RunState (run_id fixed for the whole run)
+    RunStream--&gt;&gt;Dispatch: AsyncIterator[StreamEvent]
+
+    loop each turn
+        Dispatch-&gt;&gt;LLM: model.invoke(messages, tools)
+        LLM--&gt;&gt;Dispatch: LLMResponse
+        LLM-&gt;&gt;Spool: llm_call record (request_id=run_id)
+        Dispatch-&gt;&gt;Tool: dispatch tool_call
+        Tool-&gt;&gt;Tool: policy.evaluate (DENY short-circuits)
+        Tool--&gt;&gt;Dispatch: tool_result
+        Dispatch-&gt;&gt;Spool: run_event / tool_event (request_id=run_id)
+        Tool-&gt;&gt;Spool: audit tool.executed (WormSink)
+    end
+
+    Dispatch--&gt;&gt;Agent: TokenEvent... TurnEndEvent
+    Agent--&gt;&gt;Entry: StreamEvent stream
+    Entry--&gt;&gt;U: reply
+    UI-&gt;&gt;Spool: query (list_traces / get_trace)</code></pre>
+<h3 id="three-entry-surfaces-one-path">Three Entry Surfaces, One Path<a class="headerlink" href="#three-entry-surfaces-one-path" title="Permanent link">&para;</a></h3>
+<p>The three entry surfaces converge on the same function almost immediately:</p>
+<p><strong><code>arc</code> CLI.</strong> <code>arc agent chat</code> loads the agent's config, opens a session, and drives the streaming entry directly:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">session</span> <span class="o">=</span> <span class="k">await</span> <span class="n">arc_agent</span><span class="o">.</span><span class="n">session</span><span class="p">(</span><span class="n">current_session_id</span><span class="p">)</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">collect</span><span class="p">(</span><span class="n">arc_agent</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">user_input</span><span class="p">,</span> <span class="n">session</span><span class="o">=</span><span class="n">session</span><span class="p">))</span>
+</code></pre></div></p>
+<p><strong>The <code>arctui</code> TUI.</strong> Holds its own <code>ArcAgent</code> instance in-process and calls the identical entry point when the user submits text:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">session</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_agent</span><span class="o">.</span><span class="n">session</span><span class="p">(</span><span class="s2">&quot;tui:main&quot;</span><span class="p">)</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="k">async</span> <span class="k">for</span> <span class="n">event</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_agent</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="n">session</span><span class="o">=</span><span class="n">session</span><span class="p">):</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">event</span><span class="p">,</span> <span class="n">TokenEvent</span><span class="p">):</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_transcript</span><span class="o">.</span><span class="n">append_delta</span><span class="p">(</span><span class="n">event</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>
+</code></pre></div></p>
+<p><strong>A gateway channel.</strong> Telegram/Slack/Mattermost adapters receive platform updates, normalize them into <code>InboundEvent</code>, and route through <code>SessionRouter</code>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>TelegramAdapter → SessionRouter.handle → Executor.run → ArcAgent.run
+</code></pre></div></p>
+<h3 id="tool-execution-pipeline">Tool Execution Pipeline<a class="headerlink" href="#tool-execution-pipeline" title="Permanent link">&para;</a></h3>
+<pre class="mermaid"><code>flowchart LR
+    classDef runtime fill:#0055BC,stroke:#003B82,color:#FFFFFF
+    classDef found   fill:#002550,stroke:#001A38,color:#FFFFFF
+
+    A["0 Schema validate"] --&gt; B["1 Policy pipeline evaluate"]
+    B --&gt;|"DENY"| X["PolicyDenied raised"]
+    B --&gt;|"ALLOW"| C["2 agent:pre_tool event"]
+    C --&gt;|"vetoed"| Y["ToolVetoedError raised"]
+    C --&gt; D["3 Execute handler"]
+    D --&gt; E["4 agent:post_tool event"]
+    E --&gt; F["5 telemetry.audit_event tool.executed"]
+
+    class A,C,D,E runtime
+    class B,F found</code></pre>
+<p><strong>Authorize.</strong> The policy pipeline builds a signed <code>ToolCall</code> (tool_name, arguments, agent_did, session_id, classification) and signs it with the agent's identity key. The pipeline's <code>evaluate()</code> loop calls each configured layer in order and returns on the first <code>DENY</code> (first-DENY-wins, fail-closed). A denied call raises <code>PolicyDenied</code> before the handler runs.</p>
+<p><strong>Audit.</strong> Every successful execute emits <code>tool.executed</code> with <code>actor_did</code>, <code>tier</code>, <code>transport</code>, and duration to <code>WormSink</code> — a hash-chained, append-only JSONL file. The audit system is fail-open by design: it must never interrupt the operation being audited.</p>
+<hr />
+<h2 id="memory-lifecycle">Memory Lifecycle<a class="headerlink" href="#memory-lifecycle" title="Permanent link">&para;</a></h2>
+<p>Dual-speed, four-store, analogical memory: markdown source + SQLite index.</p>
+<pre class="mermaid"><code>flowchart LR
+    classDef entry   fill:#D6E6FF,stroke:#0073FE,color:#002550
+    classDef agent   fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef llm     fill:#003B82,stroke:#002550,color:#FFFFFF
+    classDef runtime fill:#0055BC,stroke:#003B82,color:#FFFFFF
+
+    See["1 See — FastCapture.capture"]:::entry --&gt; Curate["2 Curate — curate_for_distillation"]:::agent
+    Curate --&gt; Distill["3 Distill — extract_facts / mint_insights / extract_procedures"]:::llm
+    Distill --&gt; Consolidate["Consolidator.run — orchestrates 4-7"]:::agent
+    Consolidate --&gt; Dedup["4 Dedup / hygiene — merge_entities, merge_cues, dedup_workspace"]:::agent
+    Dedup --&gt; Index["5 Index — SurfaceIndex + StructuralIndex"]:::runtime
+    Index --&gt; Retrieve["6 Retrieve / fuse — Retriever.retrieve"]:::runtime
+    Retrieve --&gt; Enrich["7 Enrich — spot then enrich"]:::runtime
+    Enrich --&gt; Prompt["boundary-marked memory-result block"]:::entry
+
+    classDef entry   fill:#D6E6FF,stroke:#0073FE,color:#002550
+    classDef surface fill:#5A9CFF,stroke:#003B82,color:#002550
+    classDef agent   fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef runtime fill:#0055BC,stroke:#003B82,color:#002550
+    classDef llm     fill:#003B82,stroke:#002550,color:#FFFFFF
+    classDef found   fill:#002550,stroke:#001A38,color:#FFFFFF</code></pre>
+<h3 id="dual-speed-memory-cadence">Dual-Speed Memory Cadence<a class="headerlink" href="#dual-speed-memory-cadence" title="Permanent link">&para;</a></h3>
+<pre class="mermaid"><code>timeline
+    title Dual-speed memory cadence
+    section Fast path — every turn
+        Capture : sanitize, dedup, tag, Hebbian-bump : zero LLM
+        Retrieve : one bounded fuse-and-gate pass, cached once per turn
+    section Slow path — trigger fires
+        Consolidate light : distill facts/insights/procedures/days : decay edges : cue + entity merge
+    section Slow path — first call after local date rolls
+        Consolidate hygiene : + alias fold : + backlink repair : + workspace file dedup</code></pre>
+<h3 id="four-stores">Four Stores<a class="headerlink" href="#four-stores" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Store</th>
+<th>File</th>
+<th>Holds</th>
+<th>Written by</th>
+<th>Read for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Episodic</td>
+<td><code>stores/episodic.py</code></td>
+<td>Raw event stream (SQLite <code>episodic</code> table)</td>
+<td><code>FastCapture.capture</code></td>
+<td>Consolidation input, enrichment context</td>
+</tr>
+<tr>
+<td>Semantic</td>
+<td><code>stores/semantic.py</code></td>
+<td>Entity cards (<code>memory/entities/&lt;slug&gt;.md</code>)</td>
+<td>Distillation, agentic tools</td>
+<td>Facts, structural enrichment</td>
+</tr>
+<tr>
+<td>Insight</td>
+<td><code>stores/insight.py</code></td>
+<td>Minted abstractions (<code>memory/insights/&lt;id&gt;.md</code>)</td>
+<td><code>mint_insights</code> / agentic tools</td>
+<td>Structural recall</td>
+</tr>
+<tr>
+<td>Procedural</td>
+<td><code>stores/procedural.py</code></td>
+<td>How-to cards (<code>memory/procedures/&lt;slug&gt;.md</code>)</td>
+<td><code>extract_procedures</code> / <code>record_procedure</code></td>
+<td>Recall, skill improvement</td>
+</tr>
+<tr>
+<td>Daily notes</td>
+<td><code>stores/daily.py</code></td>
+<td>Curated per-day rollup</td>
+<td><code>_summarize_days</code></td>
+<td>Human/operator review, surface index source</td>
+</tr>
+</tbody>
+</table>
+<h3 id="insight-confidence-lifecycle">Insight Confidence Lifecycle<a class="headerlink" href="#insight-confidence-lifecycle" title="Permanent link">&para;</a></h3>
+<pre class="mermaid"><code>stateDiagram-v2
+    [*] --&gt; guessed: first mint — hits = 1
+    guessed --&gt; guessed: re-mint, confidence &lt; known_threshold
+    guessed --&gt; known: confidence crosses known_threshold
+    known --&gt; known: further corroboration
+    note right of guessed: surfaced with verify_first = true
+    note right of known: actionable anchor, no verify flag</code></pre>
+<hr />
+<h2 id="session-lifecycle">Session Lifecycle<a class="headerlink" href="#session-lifecycle" title="Permanent link">&para;</a></h2>
+<pre class="mermaid"><code>flowchart LR
+    classDef sess fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef store fill:#002550,stroke:#001A38,color:#FFFFFF
+    classDef replay fill:#D6E6FF,stroke:#0073FE,color:#002550
+
+    Start[New Session]:::sess --&gt; Store[Write to&lt;br/&gt;sessions/*.jsonl]:::store
+    Store --&gt; Next[Next Turn]:::sess
+    Next --&gt; Store
+    Store --&gt; End[Session End]:::sess
+    End --&gt; Replay[Replay by ID&lt;br/&gt;arc agent chat --session]:::replay</code></pre>
+<hr />
+<h2 id="tool-execution-flow">Tool Execution Flow<a class="headerlink" href="#tool-execution-flow" title="Permanent link">&para;</a></h2>
+<pre class="mermaid"><code>sequenceDiagram
+    participant Agent as arcagent
+    participant Validator as arctrust
+    participant Sandbox as arcrun
+    participant Store as arcstore
+    participant Audit as arctrust
+
+    Agent-&gt;&gt;Validator: authorize(tool, params)
+    Validator-&gt;&gt;Validator: check_lethal_trifecta()
+    Validator-&gt;&gt;Validator: check_allowlist()
+    Validator-&gt;&gt;Validator: check_tier_rules()
+    Validator--&gt;&gt;Agent: approved
+
+    Agent-&gt;&gt;Sandbox: execute(tool, params)
+    Sandbox-&gt;&gt;Sandbox: select_sandbox()
+    Sandbox-&gt;&gt;Sandbox: run_in_isolation()
+    Sandbox--&gt;&gt;Agent: result
+
+    Agent-&gt;&gt;Audit: log(tool_execution)</code></pre>
+<h3 id="dynamic-tool-creation-pipeline">Dynamic Tool Creation Pipeline<a class="headerlink" href="#dynamic-tool-creation-pipeline" title="Permanent link">&para;</a></h3>
+<pre class="mermaid"><code>flowchart LR
+    classDef check fill:#002550,stroke:#001A38,color:#FFFFFF
+    classDef exec fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef term fill:#D6E6FF,stroke:#0073FE,color:#002550
+
+    A[Agent Code]:::exec --&gt; B[Encoding Check]:::check
+    B --&gt; C[AST Validate]:::check
+    C --&gt; D[Restricted Builtins]:::check
+    D --&gt; E[Egress Proxy]:::check
+    E --&gt; F[Execute]:::exec
+    F --&gt; G[Result to LLM]:::term</code></pre>
+<hr />
+<h2 id="dashboard-data-flow">Dashboard Data Flow<a class="headerlink" href="#dashboard-data-flow" title="Permanent link">&para;</a></h2>
+<pre class="mermaid"><code>flowchart TB
+    classDef ui fill:#5A9CFF,stroke:#0073FE,color:#002550
+    classDef store fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef agent fill:#003B82,stroke:#002550,color:#FFFFFF
+
+    subgraph "arcui"
+        Observe[Observe Plane&lt;br/&gt;WebSocket]:::ui
+        Interact[Interact Plane&lt;br/&gt;Live chat]:::ui
+        Manage[Manage Plane&lt;br/&gt;Control]:::ui
+    end
+
+    subgraph "Data Source"
+        Store[arcstore&lt;br/&gt;On-demand read]:::store
+    end
+
+    subgraph "Agents"
+        A1[Agent 1]:::agent
+        A2[Agent 2]:::agent
+    end
+
+    A1 --&gt;|writes| Store
+    A2 --&gt;|writes| Store
+    Store --&gt;|reads| Observe
+    Observe --&gt;|displays| UI[Dashboard UI]:::ui
+    UI --&gt;|commands| Manage
+    Manage --&gt;|affects| A1
+    Manage --&gt;|affects| A2</code></pre>
+<hr />
+<h2 id="gateway-message-flow">Gateway Message Flow<a class="headerlink" href="#gateway-message-flow" title="Permanent link">&para;</a></h2>
+<pre class="mermaid"><code>sequenceDiagram
+    participant User as Chat User
+    participant Gateway as arcgateway
+    participant Agent as arcagent
+    participant Platform as Chat Platform
+
+    User-&gt;&gt;Platform: Message
+    Platform-&gt;&gt;Gateway: Webhook
+    Gateway-&gt;&gt;Gateway: verify_signature()
+    Gateway-&gt;&gt;Agent: enqueue(message)
+    Agent-&gt;&gt;Agent: process_turn()
+    Agent--&gt;&gt;Gateway: response
+    Gateway-&gt;&gt;Platform: reply
+    Platform--&gt;&gt;User: Response</code></pre>
+<h3 id="platform-adapter-flow">Platform Adapter Flow<a class="headerlink" href="#platform-adapter-flow" title="Permanent link">&para;</a></h3>
+<pre class="mermaid"><code>flowchart LR
+    classDef plat fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef gw fill:#002550,stroke:#001A38,color:#FFFFFF
+    classDef agent fill:#D6E6FF,stroke:#0073FE,color:#002550
+
+    Telegram[Telegram]:::plat --&gt;|adapter| Gateway[arcgateway]:::gw
+    Slack[Slack]:::plat --&gt;|adapter| Gateway
+    Mattermost[Mattermost]:::plat --&gt;|adapter| Gateway
+    Gateway --&gt;|unified| Agent[arcagent]:::agent</code></pre>
+<hr />
+<h2 id="data-storage-layout">Data Storage Layout<a class="headerlink" href="#data-storage-layout" title="Permanent link">&para;</a></h2>
+<pre class="mermaid"><code>erDiagram
+    LLM_CALLS ||--o{ RUN_EVENTS : "request_id"
+    LLM_CALLS {
+        text record_id PK
+        text kind
+        text actor_did
+        text ts
+        text request_id
+        text model
+        text provider
+        integer prompt_tokens
+        integer completion_tokens
+        real cost_usd
+        real latency_ms
+        text outcome
+    }
+    RUN_EVENTS {
+        text record_id PK
+        text actor_did
+        text ts
+        text request_id
+        text name
+    }
+    AGENT_EVENTS {
+        text record_id PK
+        text actor_did
+        text ts
+        text name
+    }
+    TOOL_EVENTS {
+        text record_id PK
+        text tool_name
+        text phase
+        text args_digest
+        text result_digest
+    }
+    SPAWN_EVENTS {
+        text record_id PK
+        text parent_did
+        text child_did
+        text role
+        integer depth
+    }
+    AUDIT_CHAIN {
+        text record_id PK
+        integer seq
+        text actor_did
+        text action
+        text target
+        text outcome
+        text event_hash
+        text prev_hash
+        text signature
+        integer verified
+    }
+    MUTABLE_RECORDS {
+        text collection PK
+        text key PK
+        text value
+        text updated_at
+    }
+    SKILL_CANDIDATES {
+        text record_id PK
+        text skill_name
+        text candidate_id
+        integer generation
+        text body_hash
+    }
+    SKILL_CANDIDATE_BODIES {
+        text record_id PK
+        text body
+    }</code></pre>
+<h3 id="disk-layout">Disk Layout<a class="headerlink" href="#disk-layout" title="Permanent link">&para;</a></h3>
+<p>Two independent path roots exist:</p>
+<ul>
+<li><strong><code>arc_home()</code></strong> — <code>${ARC_CONFIG_DIR:-~/.arc}</code> — user-wide config root (operator key, trust store, shared config files)</li>
+<li><strong><code>resolve_data_dir()</code></strong> — <code>${ARCSTORE_DATA_DIR:-~/.arc/store}</code> — arcstore data root (spool, WORM mirror, SQLite mirrors)</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>~/.arc/                                  # arc_home() — user-wide config root
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>├── arcllm.toml                          # provider/model defaults (shared layer)
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>├── arcagent.toml                        # agent-runtime defaults (shared layer)
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>├── gateway.toml                         # embedded gateway: platforms, agent_did
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>├── arc.env                              # 0600 — viewer/operator tokens, secrets
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>├── operator/
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>│   ├── operator.key                     # 0600 — Ed25519 seed, the audit authority
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>│   └── operator.key.pub                 # 0644 — anti-erasure/anti-swap sentinel
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>├── trust/
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>│   ├── operators.toml                   # 0600 — pairing-approver pubkeys
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>│   └── issuers.toml                     # 0600 — manifest-signer pubkeys
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>├── team/                                # default team root
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>│   └── &lt;agent&gt;/                         # one dir per agent — see agent-root tree below
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a>└── store/                               # resolve_data_dir() default
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a>    ├── spool/
+<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a>    │   └── operational-YYYY-MM-DD.jsonl # 0600 — always-on telemetry, daily rotation
+<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a>    ├── worm/
+<a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a>    │   ├── audit-chain-&lt;agent&gt;.jsonl    # per-agent WORM chain (single-writer flock)
+<a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a>    │   └── audit-chain-&lt;agent&gt;.&lt;seq&gt;.jsonl  # rotated segments (100k records / 50MB)
+<a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a>    └── store/
+<a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a>        ├── arcui.db                     # arcui&#39;s SQLite mirror (WAL)
+<a id="__codelineno-3-22" name="__codelineno-3-22" href="#__codelineno-3-22"></a>        └── arcstore.db                  # agent process&#39;s SQLite mirror (WAL)
+<a id="__codelineno-3-23" name="__codelineno-3-23" href="#__codelineno-3-23"></a>
+<a id="__codelineno-3-24" name="__codelineno-3-24" href="#__codelineno-3-24"></a>&lt;agent-root&gt;/                            # e.g. ~/.arc/team/&lt;agent&gt;/
+<a id="__codelineno-3-25" name="__codelineno-3-25" href="#__codelineno-3-25"></a>├── arcagent.toml                        # per-agent config
+<a id="__codelineno-3-26" name="__codelineno-3-26" href="#__codelineno-3-26"></a>├── .audit/
+<a id="__codelineno-3-27" name="__codelineno-3-27" href="#__codelineno-3-27"></a>│   └── skills.worm                      # skill-improver&#39;s own WORM chain
+<a id="__codelineno-3-28" name="__codelineno-3-28" href="#__codelineno-3-28"></a>└── workspace/
+<a id="__codelineno-3-29" name="__codelineno-3-29" href="#__codelineno-3-29"></a>    ├── identity.md                      # read-only goal charter
+<a id="__codelineno-3-30" name="__codelineno-3-30" href="#__codelineno-3-30"></a>    ├── context.md                       # sole writer: workpad module
+<a id="__codelineno-3-31" name="__codelineno-3-31" href="#__codelineno-3-31"></a>    ├── policy.md                        # protected — not agent-writable
+<a id="__codelineno-3-32" name="__codelineno-3-32" href="#__codelineno-3-32"></a>    ├── capabilities/                    # workspace-scoped tools/skills
+<a id="__codelineno-3-33" name="__codelineno-3-33" href="#__codelineno-3-33"></a>    ├── skill_traces/&lt;skill&gt;/candidates/ # mutation candidates
+<a id="__codelineno-3-34" name="__codelineno-3-34" href="#__codelineno-3-34"></a>    └── memory/
+<a id="__codelineno-3-35" name="__codelineno-3-35" href="#__codelineno-3-35"></a>        ├── index.db                     # SQLite: episodic + indices
+<a id="__codelineno-3-36" name="__codelineno-3-36" href="#__codelineno-3-36"></a>        ├── entities/*.md                # semantic store
+<a id="__codelineno-3-37" name="__codelineno-3-37" href="#__codelineno-3-37"></a>        ├── procedures/*.md              # procedural store
+<a id="__codelineno-3-38" name="__codelineno-3-38" href="#__codelineno-3-38"></a>        ├── insights/*.md                # insight store
+<a id="__codelineno-3-39" name="__codelineno-3-39" href="#__codelineno-3-39"></a>        └── daily-log/*.md               # curated daily summaries
+</code></pre></div>
+<h3 id="the-spool-always-on-operational-telemetry">The Spool — Always-On Operational Telemetry<a class="headerlink" href="#the-spool-always-on-operational-telemetry" title="Permanent link">&para;</a></h3>
+<p><strong>Design points:</strong>
+- Filename: <code>spool/operational-YYYY-MM-DD.jsonl</code>, daily rotation by UTC date
+- Append-only, single <code>os.write()</code> syscall per record (atomic on local filesystem)
+- Mode <code>0600</code> — set on open and re-asserted
+- No per-record <code>fsync</code> — durability = survives process crash, not OS crash
+- Fail-open — write errors logged and swallowed; telemetry must never break the call
+- <code>request_id</code> — correlation id bound via <code>contextvars.ContextVar</code> for concurrent runs</p>
+<p><strong>SpoolRecord kinds:</strong> <code>llm_call</code>, <code>run_event</code>, <code>agent_event</code>, <code>tool_event</code>, <code>spawn_event</code></p>
+<h3 id="the-worm-audit-chain-compliance-system-of-record">The WORM Audit Chain — Compliance System of Record<a class="headerlink" href="#the-worm-audit-chain-compliance-system-of-record" title="Permanent link">&para;</a></h3>
+<p><strong>Design points:</strong>
+- Two sinks: <code>NullSink</code> (discard) and <code>WormSink</code> (durable, signed, chained)
+- Each record: <code>seq</code>, <code>prev_hash</code>, <code>event_hash</code> (SHA-256 of seq+prev+event), <code>signature</code>
+- Single-writer <code>flock</code> per agent chain file
+- Crash recovery: torn final line truncated, signed <code>audit.worm.recovery</code> appended
+- Rotation: at 100,000 records or 50MB
+- Signature: Ed25519 (personal/enterprise) or ECDSA-P256 (FIPS/federal), by operator key</p>
+<h3 id="the-sqlite-mirror-queryable-read-plane">The SQLite Mirror — Queryable Read Plane<a class="headerlink" href="#the-sqlite-mirror-queryable-read-plane" title="Permanent link">&para;</a></h3>
+<ul>
+<li>WAL mode, <code>busy_timeout=5000</code>, <code>journal_size_limit=64MB</code></li>
+<li><code>INSERT OR IGNORE</code> keyed on content-derived <code>record_id</code> (idempotent ingest)</li>
+<li>Each process owns its own DB file (<code>arcstore.db</code> vs <code>arcui.db</code>)</li>
+<li>Mirrors both spool and WORM files</li>
+</ul>
+<p><strong>Mutable Records:</strong> Tasks, Approvals, Cancellations — overwritten in place, not append logs</p>
+<h3 id="memory-on-disk-glass-box-markdown-disposable-index">Memory on Disk — Glass-Box Markdown + Disposable Index<a class="headerlink" href="#memory-on-disk-glass-box-markdown-disposable-index" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Markdown files are the durable truth; SQLite index is disposable/re-derivable</li>
+<li><code>sqlite-vec</code> optional extension; absence degrades to BM25 + graph (silent unless watched)</li>
+<li>Atomic writes via temp file + <code>os.replace</code></li>
+<li>Insight card format: YAML frontmatter (id, trigger, cues, instances, confidence, status) + markdown body</li>
+</ul>
+<h3 id="keys-and-secrets">Keys and Secrets<a class="headerlink" href="#keys-and-secrets" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Credential</th>
+<th>Location</th>
+<th>Mode</th>
+<th>Custody</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Agent DID keypair</td>
+<td><code>~/.arcagent/keys/&lt;did&gt;.key</code> / <code>.pub</code></td>
+<td><code>0700</code> dir</td>
+<td>Vault resolver seam supports Azure KV, file, env backends</td>
+</tr>
+<tr>
+<td>Operator key</td>
+<td><code>~/.arc/operator/operator.key</code></td>
+<td><code>0600</code>, <code>O_NOFOLLOW</code></td>
+<td>In-process by default; VaultSigner/VaultTransit for external custody</td>
+</tr>
+<tr>
+<td>Trust store</td>
+<td><code>~/.arc/trust/operators.toml</code>, <code>issuers.toml</code></td>
+<td><code>0600</code></td>
+<td>Public keys only</td>
+</tr>
+<tr>
+<td>UI tokens</td>
+<td><code>~/.arc/arc.env</code></td>
+<td><code>0600</code></td>
+<td>Minted once, pinned</td>
+</tr>
+</tbody>
+</table>
+<h3 id="retention-and-deletion">Retention and Deletion<a class="headerlink" href="#retention-and-deletion" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Spool/WORM purge:</strong> Whole rotated files only; oldest files deleted until under <code>max_bytes</code></li>
+<li><strong>No per-record erasure:</strong> Deleting one record breaks hash chain links</li>
+<li><strong>GDPR tombstone:</strong> Separate workflow for user profile data only (<code>user_profile/tombstone.py</code>)</li>
+</ul>
+<hr />
+<h2 id="next-steps">Next Steps<a class="headerlink" href="#next-steps" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../../reference/api/">API Reference</a> - Detailed class and method documentation</li>
+<li><a href="../../building/package-index/">Package Index</a> - Package-specific details</li>
+<li><a href="../../building/implementation-guides/">Implementation Guides</a> - Custom integrations</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/joshuamschultz/Arc" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "navigation.sections", "navigation.indexes", "toc.follow", "content.code.copy", "content.action.edit", "search.suggest", "search.highlight"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

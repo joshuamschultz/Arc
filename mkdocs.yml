@@ -72,51 +72,86 @@ extra_css:
 
 nav:
   - Home: README.md
-  - Orientation:
-      - 1. What Arc Is: 01-what-is-arc.md
-      - 2. Architecture: 02-architecture.md
-      - 3. Anatomy of a Turn: 03-anatomy-of-a-turn.md
-  - The engine:
-      - 4. The Unified Adapter: 04-the-unified-adapter.md
-      - 5. The Agentic Run: 05-steering-and-strategies.md
-      - 6. Prompts, Tools, and Skills: 06-prompts-tools-skills.md
-      - 7. The Memory Lifecycle: 07-memory-lifecycle.md
-  - The record:
-      - 8. Where Data Lives: 08-data-and-storage.md
-      - 9. The Workflows: 09-workflows.md
-      - 10. The Security Model: 10-security-model.md
-  - Building on Arc:
-      - 11. Extension Points: 11-extension-points.md
-      - 12. Configuration: 12-configuration.md
-      - 13. Contributing: 13-contributing.md
-      - 14. Glossary: 14-glossary.md
+
+  - Walkthrough:
+      - 1. What Arc Is: walkthrough/01-what-is-arc.md
+      - 2. Architecture: walkthrough/02-architecture.md
+      - 3. Anatomy of a Turn: walkthrough/03-anatomy-of-a-turn.md
+      - 4. The Unified Adapter: walkthrough/04-unified-adapter.md
+      - 5. Steering and Strategies: walkthrough/05-steering-and-strategies.md
+      - 6. Prompts, Tools, and Skills: walkthrough/06-prompts-tools-skills.md
+      - 7. The Memory Lifecycle: walkthrough/07-memory-lifecycle.md
+      - 8. Where Data Lives: walkthrough/08-data-and-storage.md
+      - 9. The Workflows: walkthrough/09-workflows.md
+      - 10. The Security Model: walkthrough/10-security-model.md
+      - 11. Extension Points: walkthrough/11-extension-points.md
+      - 12. Configuration: walkthrough/12-configuration.md
+      - Data flows: walkthrough/data-flows.md
+      - Diagrams: walkthrough/diagrams.md
+
+  - Building with Arc:
+      - Quickstart: building/quickstart.md
+      - Setup: building/setup.md
+      - Implementation guides: building/implementation-guides.md
+      - Writing modules: building/modules.md
+      - Policy modules: building/policy-modules.md
+      - Testing: building/testing.md
+      - Performance: building/performance.md
+      - Contributing: building/contributing.md
+      - Package index: building/package-index.md
+      - Packages:
+          - arcllm: building/packages/arcllm.md
+          - arcrun: building/packages/arcrun.md
+          - arctrust: building/packages/arctrust.md
+          - arcstore: building/packages/arcstore.md
+          - arcprompt: building/packages/arcprompt.md
+          - arcmodel: building/packages/arcmodel.md
+          - arcagent: building/packages/arcagent.md
+          - arcmemory: building/packages/arcmemory.md
+          - arcskill: building/packages/arcskill.md
+          - arcteam: building/packages/arcteam.md
+          - arcgateway: building/packages/arcgateway.md
+          - arcgateway-telegram: building/packages/arcgateway-telegram.md
+          - arcgateway-slack: building/packages/arcgateway-slack.md
+          - arcgateway-mattermost: building/packages/arcgateway-mattermost.md
+          - arcui: building/packages/arcui.md
+          - arctui: building/packages/arctui.md
+          - arccli: building/packages/arccli.md
+          - arcmas: building/packages/arcmas.md
+
   - Reference:
-      - CLI: cli.md
-      - Config keys: config-reference.md
-      - Prompts: prompts.md
-      - Architecture overview: architecture/ARCH-OVERVIEW.md
-      - Policy modules: architecture/policy-modules.md
-  - Decisions (ADRs):
-      - ADR-018 No MCP, no migration, no ACP: architecture/decisions/ADR-018-no-mcp-no-migration-no-acp.md
-      - ADR-019 Four pillars universal: architecture/decisions/ADR-019-four-pillars-universal.md
-      - ADR-020 arcgateway as data plane: architecture/decisions/ADR-020-arcgateway-as-data-plane.md
-      - ADR-021 Agent self-description via TOML: architecture/decisions/ADR-021-agent-self-description-via-toml-ui-section.md
-      - ADR-022 Storage split — WORM vs operational: architecture/decisions/ADR-022-storage-split-arctrust-worm-arcstore-operational.md
-      - ADR-023 Capability resolution: architecture/decisions/ADR-023-capability-resolution-and-arcrun-provider.md
-      - ADR-024 Unified streaming run entry: architecture/decisions/ADR-024-unified-streaming-run-entry.md
-      - ADR-025 Cache control confined to Anthropic: architecture/decisions/ADR-025-cache-control-confined-to-anthropic-adapter.md
-      - ADR-026 Append-only transform_context: architecture/decisions/ADR-026-transform-context-append-only-with-emergency-valve.md
-      - ADR-027 Per-run tool-set freeze: architecture/decisions/ADR-027-per-run-tool-set-freeze-security-invariant.md
-      - ADR-028 Append-only prefix contract: architecture/decisions/ADR-028-append-only-prefix-contract-debug-gated.md
-      - ADR-029 Workspace vs working_dir: architecture/decisions/ADR-029-workspace-vs-working-dir-and-state-persistence.md
-  - Deploy:
-      - Docker: deploy/docker.md
-      - Single node: deploy/single-node.md
-      - Team building: deploy/team-building.md
-  - Gateway:
-      - Getting started: arcgateway/getting-started.md
-      - Multi-instance: arcgateway/multi-instance.md
-      - Security: arcgateway/security.md
+      - API: reference/api.md
+      - CLI: reference/cli.md
+      - Configuration keys: reference/config.md
+      - Tiers and presets: reference/tiers-and-presets.md
+      - Prompts: reference/prompts.md
+      - Security: reference/security.md
+      - Troubleshooting: reference/troubleshooting.md
+      - Glossary: reference/glossary.md
+
+  - Runbooks:
+      - Deploy:
+          - Overview: runbooks/deploy/overview.md
+          - Local: runbooks/deploy/local.md
+          - Docker: runbooks/deploy/docker.md
+          - Firecracker: runbooks/deploy/firecracker.md
+          - Azure OpenAI: runbooks/deploy/azure-openai.md
+          - Voice air-gap: runbooks/deploy/voice-air-gap.md
+      - Operate:
+          - Teams: runbooks/operate/teams.md
+          - Tasks: runbooks/operate/tasks.md
+          - Agent features: runbooks/operate/agent-features.md
+          - Policy and proactive engine: runbooks/operate/policy-and-proactive.md
+      - Security:
+          - Hardening: runbooks/security/hardening.md
+          - Threat model: runbooks/security/threat-model.md
+          - Adversarial tests: runbooks/security/adversarial-tests.md
+          - NIST 800-53 mapping: runbooks/security/compliance-nist-800-53.md
+          - OWASP LLM mapping: runbooks/security/compliance-owasp-llm.md
+          - OWASP Agentic mapping: runbooks/security/compliance-owasp-agentic.md
+
+  - Blueprints:
+      - Blueprints: blueprints/blueprints.md
 
 extra:
   social:

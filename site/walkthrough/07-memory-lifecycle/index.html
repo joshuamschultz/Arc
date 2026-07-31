@@ -1,0 +1,3875 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="The security-first autonomous agent stack — how it works, and where to look.">
+      
+      
+      
+        <link rel="canonical" href="https://joshuamschultz.github.io/Arc/walkthrough/07-memory-lifecycle/">
+      
+      
+        <link rel="prev" href="../06-prompts-tools-skills/">
+      
+      
+        <link rel="next" href="../08-data-and-storage/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>7. The Memory Lifecycle - Arc Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/brand.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#7-the-memory-lifecycle-how-information-gets-in-and-how-it-comes-back" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Arc Documentation" class="md-header__button md-logo" aria-label="Arc Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Arc Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              7. The Memory Lifecycle
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/joshuamschultz/Arc" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    joshuamschultz/Arc
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Arc Documentation" class="md-nav__button md-logo" aria-label="Arc Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Arc Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/joshuamschultz/Arc" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    joshuamschultz/Arc
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Walkthrough
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Walkthrough
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../01-what-is-arc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1. What Arc Is
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../02-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2. Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../03-anatomy-of-a-turn/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    3. Anatomy of a Turn
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../04-unified-adapter/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    4. The Unified Adapter
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../05-steering-and-strategies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    5. Steering and Strategies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../06-prompts-tools-skills/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    6. Prompts, Tools, and Skills
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    7. The Memory Lifecycle
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    7. The Memory Lifecycle
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#in-one-breath" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        In one breath
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-it-actually-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How it actually works
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="How it actually works">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-structural-invariant-arcagent-is-a-memory-socket-not-a-brain" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The structural invariant: arcagent is a memory socket, not a brain
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dual-speed-per-scope-stores" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dual-speed, per-scope stores
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-information-path-the-centerpiece" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The information path — the centerpiece
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#data-shape-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data-shape reference
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#security-isolation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Security &amp; isolation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#honest-gaps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Honest gaps
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-to-look-in-the-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where to look in the code
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../08-data-and-storage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    8. Where Data Lives
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../09-workflows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    9. The Workflows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../10-security-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    10. The Security Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../11-extension-points/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    11. Extension Points
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../12-configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    12. Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../data-flows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data flows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../diagrams/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Diagrams
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Building with Arc
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Building with Arc
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/setup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/implementation-guides/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Implementation guides
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/modules/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Writing modules
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/policy-modules/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Policy modules
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/performance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/package-index/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Package index
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_10" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_10" id="__nav_3_10_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Packages
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_10">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Packages
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcllm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcllm
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcrun/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcrun
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arctrust/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arctrust
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcstore/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcstore
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcprompt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcprompt
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcmodel/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcmodel
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcagent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcagent
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcmemory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcmemory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcskill/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcskill
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcteam/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcteam
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcgateway/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcgateway
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcgateway-telegram/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcgateway-telegram
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcgateway-slack/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcgateway-slack
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcgateway-mattermost/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcgateway-mattermost
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcui
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arctui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arctui
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arccli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arccli
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcmas/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcmas
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration keys
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/tiers-and-presets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tiers and presets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/prompts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Prompts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/glossary/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Glossary
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runbooks
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Runbooks
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_1" id="__nav_5_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Deploy
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/deploy/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/deploy/local/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/deploy/docker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Docker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/deploy/firecracker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Firecracker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/deploy/azure-openai/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Azure OpenAI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/deploy/voice-air-gap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Voice air-gap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_2" id="__nav_5_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operate
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Operate
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/operate/teams/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Teams
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/operate/tasks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/operate/agent-features/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent features
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/operate/policy-and-proactive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Policy and proactive engine
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Security
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/security/hardening/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hardening
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/security/threat-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Threat model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/security/adversarial-tests/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Adversarial tests
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/security/compliance-nist-800-53/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NIST 800-53 mapping
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/security/compliance-owasp-llm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OWASP LLM mapping
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/security/compliance-owasp-agentic/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OWASP Agentic mapping
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Blueprints
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Blueprints
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../blueprints/blueprints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Blueprints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#in-one-breath" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        In one breath
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-it-actually-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How it actually works
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="How it actually works">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-structural-invariant-arcagent-is-a-memory-socket-not-a-brain" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The structural invariant: arcagent is a memory socket, not a brain
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dual-speed-per-scope-stores" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dual-speed, per-scope stores
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-information-path-the-centerpiece" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The information path — the centerpiece
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#data-shape-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data-shape reference
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#security-isolation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Security &amp; isolation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#honest-gaps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Honest gaps
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-to-look-in-the-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where to look in the code
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/joshuamschultz/Arc/edit/main/docs/walkthrough/07-memory-lifecycle.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="7-the-memory-lifecycle-how-information-gets-in-and-how-it-comes-back">7. The Memory Lifecycle — How Information Gets In, and How It Comes Back<a class="headerlink" href="#7-the-memory-lifecycle-how-information-gets-in-and-how-it-comes-back" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p><strong>Walkthrough</strong>  ·  Understand  ·  page 7 of 14<br />
+<strong>For</strong> Anyone who needs to understand how Arc works<br />
+<a href="../06-prompts-tools-skills/">← 6. Prompts, Tools, and Skills</a>  ·  <a href="../../">Docs home</a>  ·  <a href="../08-data-and-storage/">8. Where Data Lives →</a></p>
+</blockquote>
+<hr />
+<h2 id="in-one-breath">In one breath<a class="headerlink" href="#in-one-breath" title="Permanent link">&para;</a></h2>
+<p>Think of Arc's memory like a person who jots quick notes all day, then — while
+they sleep — rereads those notes, decides what's actually worth remembering,
+writes it into a tidy notebook, and notices patterns across days ("every time a
+vendor stalls, I should escalate by day three"). The next time a similar
+situation comes up, they don't just search the notebook for matching words —
+they recognize the <em>shape</em> of the situation, even if none of the words match.
+In Arc, the "quick notes" step is cheap and instant; the "reread and organize"
+step is the only part that costs an LLM call and it runs on a schedule, not on
+every turn; and the "recognize the shape" step is what makes recall useful
+across genuinely different-sounding conversations. Everything below is the
+mechanics of those three steps, plus who is allowed to read what.</p>
+<p>The memory package is <strong>arcmemory</strong> — a standalone dependency arcagent talks to
+through one narrow interface. arcagent itself remembers nothing.</p>
+<hr />
+<h2 id="how-it-actually-works">How it actually works<a class="headerlink" href="#how-it-actually-works" title="Permanent link">&para;</a></h2>
+<h3 id="the-structural-invariant-arcagent-is-a-memory-socket-not-a-brain">The structural invariant: arcagent is a memory socket, not a brain<a class="headerlink" href="#the-structural-invariant-arcagent-is-a-memory-socket-not-a-brain" title="Permanent link">&para;</a></h3>
+<p>The single rule nobody may break: <strong>all memory cadence, scheduling, and logic
+live in arcmemory. arcagent holds a structural interface and nothing else.</strong></p>
+<p>arcagent defines <code>Brain</code> as a <code>Protocol</code> — four async methods (<code>capture</code>,
+<code>retrieve</code>, <code>consolidate</code>, <code>rebuild_index</code>) speaking only primitives
+(<code>str</code>/<code>int</code>/<code>float</code>) — plus a <code>NullBrain</code> that no-ops every one of them
+(<code>packages/arcagent/src/arcagent/brain/protocol.py:26</code>). With <code>NullBrain</code>
+active (the default — <code>brain = "none"</code> in config), memory is a silent no-op:
+no files, no LLM calls, no capture. arcagent's own source contains <strong>zero</strong>
+memory logic; the thin wiring module
+(<code>packages/arcagent/src/arcagent/modules/memory/capabilities.py</code>) only calls
+whichever <code>Brain</code> is configured and reacts to its <code>authorize</code> verdict.</p>
+<p>arcmemory satisfies that Protocol <em>structurally</em> — <code>ArcMemoryBrain</code>
+(<code>packages/arcmemory/src/arcmemory/brain.py:61</code>) never imports <code>arcagent</code>. This
+isn't a convention, it's enforced:
+<code>packages/arcmemory/tests/architecture/test_no_arcagent_import.py</code>
+statically parses every <code>arcmemory</code> source file and fails the build if any
+module imports <code>arcagent</code>. The same test confines the one exception —
+<code>arcrun</code>, used for the bounded agentic sleep pass — to a single file,
+<code>react_adapter.py</code>, so a future harness (openclaw, Hermes) can add a sibling
+adapter instead of touching the rest of the package.</p>
+<p>The two sides meet at one factory call. arcagent's <code>select_brain</code>
+(<code>packages/arcagent/src/arcagent/brain/select.py:44</code>) resolves the
+<code>[modules.memory] brain</code> config string — <code>"none"</code>, a backend package name, or
+a dotted <code>module:Class</code> BYO path — and, for a named backend, lazily imports it
+and calls its well-known <code>build_brain(context)</code> entrypoint. arcmemory's side of
+that contract is <code>packages/arcmemory/src/arcmemory/provider.py:37</code>, which reads
+an opaque <code>context["backend_config"]</code> dict arcagent never inspects and wires up
+<code>ArcMemoryBrain</code> with an arcllm-backed embedder/distiller. Neither module knows
+the other's internal field names — the seam is genuinely generic.</p>
+<pre class="mermaid"><code>flowchart LR
+    Cfg["[modules.memory] brain = arcmemory"]:::entry --&gt; Select["arcagent.brain.select_brain"]:::agent
+    Select --&gt;|"build_brain(context)"| Provider["arcmemory.provider.build_brain"]:::llm
+    Provider --&gt; Brain["ArcMemoryBrain — satisfies the Brain Protocol structurally"]:::found
+    Select --&gt;|"brain = none"| Null["NullBrain — every call is a no-op"]:::agent
+    Wiring["arcagent.modules.memory — hooks + one tool"]:::agent --&gt;|"capture / retrieve / consolidate"| Brain
+    Wiring --&gt;|"capture / retrieve / consolidate"| Null
+
+    classDef entry   fill:#D6E6FF,stroke:#0073FE,color:#002550
+    classDef surface fill:#5A9CFF,stroke:#003B82,color:#002550
+    classDef agent   fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef runtime fill:#0055BC,stroke:#003B82,color:#FFFFFF
+    classDef llm     fill:#003B82,stroke:#002550,color:#FFFFFF
+    classDef found   fill:#002550,stroke:#001A38,color:#FFFFFF</code></pre>
+<h3 id="dual-speed-per-scope-stores">Dual-speed, per-scope stores<a class="headerlink" href="#dual-speed-per-scope-stores" title="Permanent link">&para;</a></h3>
+<p>Every memory operation is keyed by a <code>Scope</code> — an <code>agent_did</code>, optionally
+narrowed by <code>session_id</code> (<code>packages/arcmemory/src/arcmemory/types.py:43</code>). No
+table or file ever mixes two scopes' content; this is the shared-nothing
+isolation boundary (OWASP LLM08).</p>
+<p>Two speeds, over five on-disk stores (<code>packages/arcmemory/src/arcmemory/stores/</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Speed</th>
+<th>Module</th>
+<th>What it does</th>
+<th>Cost</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Fast</td>
+<td><code>capture.py</code> — <code>FastCapture</code></td>
+<td>sanitize → dedup → tag → Hebbian-bump → append</td>
+<td>zero LLM, zero embedding, constant time</td>
+</tr>
+<tr>
+<td>Fast (read)</td>
+<td><code>retrieve.py</code> — <code>Retriever</code></td>
+<td>one bounded fuse-and-gate pass, no re-query</td>
+<td>zero-to-one embed call, no LLM</td>
+</tr>
+<tr>
+<td>Slow ("sleep")</td>
+<td><code>consolidate.py</code> — <code>Consolidator</code></td>
+<td>distill, decay, dedup, reindex</td>
+<td>one bounded LLM pass (or a ReAct agent), on a cadence</td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th>Store</th>
+<th>File</th>
+<th>Holds</th>
+<th>Written by</th>
+<th>Read for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Episodic</td>
+<td><code>stores/episodic.py</code></td>
+<td>the raw event stream (SQLite <code>episodic</code> table) — every capture, append-only, per-scope monotonic <code>seq</code></td>
+<td><code>FastCapture.capture</code></td>
+<td>consolidation input, enrichment context</td>
+</tr>
+<tr>
+<td>Semantic</td>
+<td><code>stores/semantic.py</code></td>
+<td>entity cards (<code>memory/entities/&lt;slug&gt;.md</code>) — <code>predicate: value</code> fact triplets + wiki-links</td>
+<td>distillation (<code>write_fact</code>), the agentic tools</td>
+<td>facts, structural enrichment</td>
+</tr>
+<tr>
+<td>Insight</td>
+<td><code>stores/insight.py</code></td>
+<td>minted abstractions (<code>memory/insights/&lt;id&gt;.md</code>) — the analogical-retrieval centerpiece</td>
+<td><code>mint_insights</code> / the agentic <code>record_insight</code> tool</td>
+<td>structural recall</td>
+</tr>
+<tr>
+<td>Procedural</td>
+<td><code>stores/procedural.py</code></td>
+<td>how-to cards (<code>memory/procedures/&lt;slug&gt;.md</code>) — reusable methods, not tool sequences</td>
+<td><code>extract_procedures</code> / <code>record_procedure</code></td>
+<td>recall, skill improvement</td>
+</tr>
+<tr>
+<td>Events</td>
+<td><code>stores/events.py</code></td>
+<td>life-event cards (<code>memory/events/&lt;slug&gt;.md</code>) — what happened in the USER's life: when, who was in it (<code>[[participants]]</code> as graph edges), how it came out</td>
+<td><code>extract_events</code> / <code>record_event</code></td>
+<td>recall, timeline queries</td>
+</tr>
+<tr>
+<td>Daily notes</td>
+<td><code>stores/daily.py</code></td>
+<td>curated per-day rollup (<code>memory/daily-log/YYYY-MM-DD.md</code>) — meeting-minutes bullets, <strong>not</strong> a transcript</td>
+<td><code>_summarize_days</code></td>
+<td>human/operator review, surface index source</td>
+</tr>
+</tbody>
+</table>
+<p>The raw episodic stream is the only place a full transcript ever lands; the
+daily-notes file is a distilled <em>summary</em> built from it, never a copy of it —
+<code>capture.py</code>'s own docstring is explicit that "the human-readable curated
+daily-notes are written by the slow consolidation path, not here."</p>
+<h3 id="the-information-path-the-centerpiece">The information path — the centerpiece<a class="headerlink" href="#the-information-path-the-centerpiece" title="Permanent link">&para;</a></h3>
+<p>This is the walk from "the agent said or did something" to "a later, unrelated
+turn recalls the <em>pattern</em> of it."</p>
+<pre class="mermaid"><code>flowchart LR
+    See["1 See — FastCapture.capture"]:::entry --&gt; Curate["2 Curate — curate_for_distillation"]:::agent
+    Curate --&gt; Distill["3 Distill — Distiller extract_facts / mint_insights / extract_procedures"]:::llm
+    Distill --&gt; Consolidate["Consolidator.run — orchestrates 3-7"]:::agent
+    Consolidate --&gt; Dedup["4 Dedup / hygiene — merge_entities, merge_cues, dedup_workspace"]:::agent
+    Dedup --&gt; Index["5 Index — SurfaceIndex + StructuralIndex"]:::runtime
+    Index --&gt; Retrieve["6 Retrieve / fuse — Retriever.retrieve"]:::runtime
+    Retrieve --&gt; Enrich["7 Enrich — spot then enrich"]:::runtime
+    Enrich --&gt; Prompt["boundary-marked memory-result block"]:::surface
+
+    classDef entry   fill:#D6E6FF,stroke:#0073FE,color:#002550
+    classDef surface fill:#5A9CFF,stroke:#003B82,color:#002550
+    classDef agent   fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef runtime fill:#0055BC,stroke:#003B82,color:#FFFFFF
+    classDef llm     fill:#003B82,stroke:#002550,color:#FFFFFF
+    classDef found   fill:#002550,stroke:#001A38,color:#FFFFFF</code></pre>
+<h4 id="1-see-capture">1. See — capture<a class="headerlink" href="#1-see-capture" title="Permanent link">&para;</a></h4>
+<p>Capture hooks fire on <code>agent:post_tool</code>, <code>agent:pre_respond</code> (the user's task
+text), and <code>agent:post_respond</code> (the assistant's reply) —
+<code>packages/arcagent/src/arcagent/modules/memory/capabilities.py:183</code>. Each
+becomes one <code>FastCapture.capture()</code> call
+(<code>packages/arcmemory/src/arcmemory/capture.py:64</code>): <code>sanitize → privacy_filter
+→ dedup</code> (injection-pattern stripping, secret redaction, windowed content-hash
+dedup), a deterministic entity-tag pass, then a Hebbian bump on the weighted
+graph for every co-tagged entity pair. <strong>This step sees only what it's
+handed</strong> — one event's text at a time, zero LLM, zero embedding — never "the
+whole transcript." Low-signal tool results are filtered before they're worth
+capturing at all (<code>_worth_capturing_tool</code>, min 24 chars, excludes
+<code>memory_search</code>'s own output so recall never feeds back into itself).</p>
+<h4 id="2-curate-the-first-filter-before-any-llm-sees-anything">2. Curate — the first filter, before any LLM sees anything<a class="headerlink" href="#2-curate-the-first-filter-before-any-llm-sees-anything" title="Permanent link">&para;</a></h4>
+<p><code>curate_for_distillation</code> (<code>packages/arcmemory/src/arcmemory/curate.py:26</code>) is
+a pure, deterministic kind-based filter run on the whole window <em>before</em>
+distillation. <strong>Verified: distillation learns from the session conversation
+only</strong> — by default it keeps events whose <code>kind</code> is <code>user</code> or <code>respond</code>
+(<code>_DEFAULT_CONVERSATION_KINDS</code>, <code>config.py:29</code>) and drops every <code>tool</code> frame
+and other operational kind. This is not the LLM being told to ignore
+noise — the noise is removed before the call exists, so the model cannot mint
+a fact about the agent's own tool-running mechanics even if it tried.</p>
+<h4 id="3-distill-the-one-llm-path">3. Distill — the one LLM path<a class="headerlink" href="#3-distill-the-one-llm-path" title="Permanent link">&para;</a></h4>
+<p><code>distill.py</code> defines the <code>Distiller</code> Protocol (<code>packages/arcmemory/src/arcmemory/distill.py:145</code>):
+five bounded, single-shot structured completions, no agentic loop —
+<code>extract_facts</code>, <code>mint_insights</code>, <code>extract_procedures</code>, <code>summarize_day</code>,
+<code>confirm_entity_merges</code>/<code>disambiguate_entity</code>. Production wires
+<code>ArcLLMDistiller</code> (<code>arcllm_seam.py:86</code>); each call is one JSON-mode completion
+through <code>arcllm</code>, loaded fresh per call so it rides arcllm's own budget/circuit
+breaker.</p>
+<p>What comes out and where it lands:</p>
+<ul>
+<li><strong>Facts</strong> — semantic triplets applied <em>additively</em>: a changed value never
+ overwrites, it folds the prior into a <code>| was: prior.conf</code> trail
+ (<code>SemanticStore.write_fact</code>), and confidence grows with corroboration
+ (<code>confidence_from_hits</code>, <code>1 - e^(-gamma*hits)</code>).</li>
+<li><strong>Insights</strong> — the centerpiece. Each carries a <code>trigger</code> (the situation
+ stated at the <em>mechanism</em> level, surface stripped), <code>cues[]</code> (abstract tags
+ from the controlled vocabulary — real graph nodes), and <code>instances[]</code>
+ (episode ids it generalizes). A first mint is <code>guessed</code>; re-minting
+ accumulates hits until confidence crosses <code>known_threshold</code>, promoting to
+ <code>known</code>.</li>
+<li><strong>Procedures</strong> — verified: these are LLM-derived reusable <em>methods</em>
+ ("how a stock is analyzed," "how a customer is quoted"), not recorded tool
+ sequences — <code>stores/procedural.py</code>'s own docstring states this explicitly.
+ A card is EDITED across sessions, not rewritten: the distiller is handed the
+ current cards and returns the merged method, and <code>merge_steps</code> folds it in so
+ a step re-enters at its original position. A step leaves a card only via an
+ explicit <code>dropped_steps</code> — omission never deletes, which is what stops a
+ passing mention from truncating an accumulated playbook. Every <code>[[slug]]</code> the
+ card names becomes a graph edge, so the method resurfaces with its entities.</li>
+<li><strong>Day summaries</strong> — meeting-minutes bullets (timeline, discussions,
+ decisions, people, goals, tasks), merged additively into the existing day's
+ file so a later run grows the notes instead of clobbering them. People
+ bullets are wiki-linked to entity cards.</li>
+</ul>
+<p>Every entity write goes through <code>resolve_entity</code> (search-before-write,
+<code>distill.py:198</code>) first: an exact canonical-slug or alias hit wins outright; an
+embedder lets a same-type name at/above <code>entity_merge_threshold</code> fold
+automatically; a distiller lets an <em>ambiguous</em> near match (a narrower band) get
+one bounded disambiguation call. Absent both, the candidate is new.</p>
+<pre class="mermaid"><code>stateDiagram-v2
+    [*] --&gt; guessed: first mint — hits = 1
+    guessed --&gt; guessed: re-mint, confidence &lt; known_threshold
+    guessed --&gt; known: confidence crosses known_threshold
+    known --&gt; known: further corroboration
+    note right of guessed: surfaced with verify_first = true
+    note right of known: actionable anchor, no verify flag</code></pre>
+<h4 id="the-sleep-pass-agentic-by-default-pipeline-as-fallback">The sleep pass — agentic by default, pipeline as fallback<a class="headerlink" href="#the-sleep-pass-agentic-by-default-pipeline-as-fallback" title="Permanent link">&para;</a></h4>
+<p><code>Consolidator.run()</code> (<code>packages/arcmemory/src/arcmemory/consolidate.py:181</code>) is
+the orchestrator. The DISTILL step (facts/insights/procedures) routes through
+one of two engines, controlled by <code>consolidate_engine</code> (default <code>"agentic"</code>):</p>
+<ul>
+<li><strong>Agentic</strong> (default, when a <code>model</code> is wired): a <em>bounded ReAct loop</em> runs
+ over the memory tools (<code>agent_consolidate.py:49</code>) — it reads recent
+ episodes, searches before writing, extracts durable facts/insights/
+ procedures, merges duplicates, links related memories, and stops. Reading
+ before writing is symmetric across card types: <code>search_similar_entity</code> /
+ <code>read_card</code> for entities, <code>list_procedures</code> / <code>read_procedure</code> for methods —
+ the agent cannot deliberately reorder, reword, or drop a step it has not
+ read. Every tool call is individually signed, authorized, and audited (see
+ Security, below), so partial progress is always safe.</li>
+<li><strong>Pipeline</strong> (fallback, or <code>consolidate_engine = "pipeline"</code>): the
+ deterministic single-shot <code>Distiller</code> calls described above, run directly.</li>
+</ul>
+<p>The agentic engine reaches arcrun through exactly one seam,
+<code>react_adapter.run_react_loop</code> (<code>packages/arcmemory/src/arcmemory/react_adapter.py:95</code>)
+— the <em>only</em> file in arcmemory allowed to import <code>arcrun</code> (enforced by the
+architecture test above). A wall-clock timeout, a bounded-loop breach
+(<code>max_turns</code>/<code>max_tokens</code>/<code>runaway_loop</code>/<code>error_cascade</code>), or arcrun simply not
+being installed all collapse to the same <code>degraded=True</code> signal — never a
+crash — and the caller finishes the same window with the pipeline distiller.
+This is also why arcmemory could run under a different harness (openclaw,
+Hermes) some day: only this one adapter would need a sibling.</p>
+<pre class="mermaid"><code>sequenceDiagram
+    participant C as Consolidator.run
+    participant A as run_agentic_consolidation
+    participant L as arcrun ReAct loop
+    participant T as memory tools — sign/authorize/audit
+    participant S as glass-box stores
+
+    C-&gt;&gt;A: episodes window, model, tools, caps
+    A-&gt;&gt;L: run_react_loop(model, tools, system_prompt, task)
+    loop bounded turns
+        L-&gt;&gt;T: write_fact / record_insight / merge_entities / link
+        T-&gt;&gt;T: sign_call -&gt; policy.evaluate -&gt; audit
+        T-&gt;&gt;S: mutate (only on ALLOW)
+        S--&gt;&gt;T: ok
+        T--&gt;&gt;L: concise result string
+    end
+    L--&gt;&gt;A: ReactOutcome(degraded=false)
+    A--&gt;&gt;C: AgenticResult(tool_calls_made)
+    alt breach, timeout, or arcrun absent
+        A--&gt;&gt;C: AgenticResult(degraded=true, reason)
+        C-&gt;&gt;C: finish window with pipeline distiller (no data loss)
+    end</code></pre>
+<p>The cadence is arcmemory's decision, not arcagent's: arcagent's background
+task (<code>memory_consolidate_loop</code>, polling every 300s) calls <code>Brain.consolidate()</code>
+on a trigger (event-count threshold, idle seconds, or a time interval — any
+one fires it), but arcmemory internally decides <em>which</em> pass actually runs —
+the light per-interval pass (<code>due()</code>, gated by a persisted <code>.consolidate-last-run</code>
+stamp, default 60 min) or, on the first call after the local date rolls over,
+the heavier nightly <strong>hygiene</strong> pass.</p>
+<h4 id="4-dedup-hygiene-two-distinct-mechanisms-correctly-separated">4. Dedup / hygiene — two distinct mechanisms, correctly separated<a class="headerlink" href="#4-dedup-hygiene-two-distinct-mechanisms-correctly-separated" title="Permanent link">&para;</a></h4>
+<p>There are two different dedup concerns in this codebase, and it matters to
+keep them apart:</p>
+<ol>
+<li><strong>Same-real-world-entity merge</strong> (<code>consolidate.py</code>'s <code>merge_entities()</code>,
+ run on <em>every</em> consolidation pass, not just nightly hygiene). Same-type
+ entity names are embedded and clustered at a <strong>wide</strong> candidate threshold
+ (<code>entity_merge_candidate_threshold</code>, 0.80 personal / 0.85 federal) into
+ <em>possible</em>-duplicate clusters — never merged on that alone. Each cluster of
+ ≥2 goes to one bounded LLM call (<code>EntityMergeConfirmer.confirm_entity_merges</code>)
+ that conservatively decides which cards are genuinely the same entity; only
+ confirmed sub-groups fold, into the richest survivor (most facts wins), with
+ graph edges repointed. A card with no same-type neighbor above the bar costs
+ no LLM call. <strong>Verified — this degrades loud, not silent:</strong> with no embedder
+ or no confirmer wired, <code>_emit_dedup_skipped</code> logs a <code>WARNING</code> and emits a
+ <code>memory.dedup_skipped</code> audit event rather than quietly merging nothing.
+ <code>_merge_entities_deterministic()</code> separately folds any card whose slug
+ matches a recorded alias — no embedder needed.</li>
+<li><strong>Pre-canonicalization file dedup</strong> (<code>hygiene.py</code>, nightly hygiene only).
+ Before slug canonicalization existed, the distiller sometimes wrote the
+ same real thing under several free-text slugs ("Custom ERP.md",
+ "custom-erp.md"). <code>dedup_workspace()</code> groups files by canonical slug,
+ unions their content (highest-confidence fact per predicate wins), writes
+ one canonical file, deletes the variants — file-level, no LLM, idempotent.
+ <code>repair_backlinks()</code> (also hygiene-only) writes the reciprocal edge into a
+ wiki-link's <em>target</em> card, since <code>[[dst]]</code> only writes <code>links_to</code> source-side.</li>
+</ol>
+<p>Cue merging (<code>consolidate.py</code>'s <code>merge_cues()</code>) is a third, separate routine:
+near-duplicate abstract cues (e.g. two insights independently minting
+"vendor-stall" vs "vendor-delay") are embedding-clustered at a fixed 0.92
+cosine and collapsed to one canonical cue, with every referencing insight and
+graph edge repointed.</p>
+<h4 id="5-index-surface-vs-structural">5. Index — surface vs. structural<a class="headerlink" href="#5-index-surface-vs-structural" title="Permanent link">&para;</a></h4>
+<p>Two channels, over two separate indices, is the differentiator worth
+understanding precisely:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Surface (<code>index/surface.py</code>)</th>
+<th>Structural (<code>index/structural.py</code>)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Question answered</td>
+<td>"what past text <em>looks like</em> this query"</td>
+<td>"what past <em>pattern</em> does this instance, even with zero surface overlap"</td>
+</tr>
+<tr>
+<td>Space</td>
+<td>raw chunk text</td>
+<td>abstraction — an insight's <code>trigger</code> + <code>cues</code></td>
+</tr>
+<tr>
+<td>Channels fused</td>
+<td>vec cosine (<code>vec0</code>) + BM25 (<code>fts_chunks</code>) + graph spreading + recency, all RRF-fused</td>
+<td>(a) trigger-embedding cosine against <code>insight_trigger</code> (kept apart from <code>vec0</code>) + (b) cue-graph spreading activation over the same weighted graph</td>
+</tr>
+<tr>
+<td>Gating</td>
+<td>none — RRF rank alone</td>
+<td><strong>conjunctive</strong>: a candidate must clear <em>both</em> channels before promotion (false-positive control); if the trigger channel is unavailable, cue-graph alone stands in (degrade)</td>
+</tr>
+<tr>
+<td>Cost</td>
+<td>brute-force cosine over tens-of-thousands of chunks, &lt;20ms, no ANN needed</td>
+<td>zero-LLM; embeds only the abstraction text (reused turn summary, no new LLM call — see below)</td>
+</tr>
+</tbody>
+</table>
+<p>The structural channel is the "recognize the shape" step from the opening
+analogy: an insight's <code>cues</code> are graph nodes, so a <em>completely different</em>
+situation whose tagged entities happen to be graph-neighbors of those cues can
+still light the insight through spreading activation — the raw text never has
+to share a token with any instance episode. Once both sides are stated at the
+mechanism level, the trigger-embedding channel closes the surface-distance gap
+that would defeat a raw-text embedding comparison.</p>
+<p>Both indices index the <em>same</em> underlying units — curated markdown files under
+<code>entities/insights/procedures/events/daily-log</code>, then every raw episodic event
+(<code>index/source.py</code>'s <code>iter_source_chunks</code>) — walked identically by the
+incremental indexer and the deterministic rebuilder so the two can never
+drift. Indexing is content-hash-gated: only new/changed chunks are re-embedded.</p>
+<pre class="mermaid"><code>flowchart TD
+    Sit["Situation — text + reused summary + cues"]:::entry
+    Sit --&gt; V["vec cosine — vec0"]:::runtime
+    Sit --&gt; B["BM25 — fts_chunks"]:::runtime
+    Sit --&gt; G["graph spreading — tagged entities"]:::runtime
+    Sit --&gt; R["recency order"]:::runtime
+    V --&gt; RRF1["RRF fuse — surface"]:::agent
+    B --&gt; RRF1
+    G --&gt; RRF1
+    R --&gt; RRF1
+
+    Sit --&gt; T1["trigger-embedding cosine — insight_trigger"]:::llm
+    Sit --&gt; T2["cue-graph spreading — insight cues"]:::llm
+    T1 --&gt; AND{"conjunctive gate — both channels agree"}:::found
+    T2 --&gt; AND
+
+    RRF1 --&gt; FUSE["top-level RRF fuse — retrieve.py"]:::found
+    AND --&gt; FUSE
+    FUSE --&gt; GATE["confidence gate + no-read-up + budget"]:::surface
+
+    classDef entry   fill:#D6E6FF,stroke:#0073FE,color:#002550
+    classDef surface fill:#5A9CFF,stroke:#003B82,color:#002550
+    classDef agent   fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef runtime fill:#0055BC,stroke:#003B82,color:#FFFFFF
+    classDef llm     fill:#003B82,stroke:#002550,color:#FFFFFF
+    classDef found   fill:#002550,stroke:#001A38,color:#FFFFFF</code></pre>
+<p>Degrade, both channels: no <code>sqlite-vec</code> extension loaded, or no embedder
+wired, drops the vec/trigger list and emits a <code>recall.degraded</code> audit event —
+BM25 + graph (surface) or cue-graph alone (structural) still answer. Nothing
+raises.</p>
+<h4 id="6-retrieve-fuse-the-single-bounded-read-path">6. Retrieve / fuse — the single bounded read path<a class="headerlink" href="#6-retrieve-fuse-the-single-bounded-read-path" title="Permanent link">&para;</a></h4>
+<p><code>Retriever.retrieve()</code> (<code>packages/arcmemory/src/arcmemory/retrieve.py:86</code>) is
+deliberately <strong>not</strong> an agentic loop: one pass, top-k + token budget, no
+re-query (bounded consumption, OWASP LLM10). It fuses the surface and
+structural result lists with RRF again at the top level, flags <code>guessed</code>
+insights <code>verify_first</code>, drops anything the caller's clearance doesn't
+dominate (<code>gate_no_read_up</code> — see Security), and truncates to a token budget,
+dropping the lowest-ranked items first. The result is either the injectable
+<code>Bundle.text</code> (a boundary-marked <code>&lt;memory-result&gt;</code> block, framed as data, never
+instructions — LLM01) or, via <code>recall_cards()</code>, structured <code>RecallCard</code>s
+carrying provenance and outbound <code>[[links]]</code> for the agent-facing <code>recall</code>
+surface. <strong><code>memory_search</code> is the one agent-facing tool</strong> — it's the only
+<code>@tool</code> the memory wiring module registers
+(<code>packages/arcagent/src/arcagent/modules/memory/capabilities.py:240</code>), and it
+delegates straight to <code>Brain.retrieve</code>. The dozen <code>recall_surface</code> /
+<code>write_fact</code> / <code>record_insight</code> / etc. tools built by <code>tools.py</code>'s
+<code>build_memory_tools</code> are a <em>separate</em> set, used only internally by the
+agentic sleep-pass ReAct loop — they are never exposed to the main agent's turn.</p>
+<p>Retrieval also reuses the turn's already-computed summary rather than making a
+new LLM call to abstract the query (<code>summary</code> param, threaded from
+<code>ctx.data["summary"]</code> down to <code>Situation.summary</code>) — a design choice that keeps
+the structural channel cheap on every turn.</p>
+<h4 id="7-enrich-spot-then-enrich">7. Enrich — "spot, then enrich"<a class="headerlink" href="#7-enrich-spot-then-enrich" title="Permanent link">&para;</a></h4>
+<p>Once an insight is promoted, <code>StructuralIndex.enrich()</code>
+(<code>packages/arcmemory/src/arcmemory/index/structural.py:242</code>) — called
+automatically inside <code>match()</code>, or directly by a consumer like arcui — bundles
+it with the episodes it generalizes (<code>instances</code>), the entities those episodes
+mention, adjacent insights reachable through its cue nodes (bounded hops), and
+the raw-stream events immediately surrounding each instance
+(<code>enrich_stream_radius</code>). Only neighbors the insight's own classification
+already dominates are folded in, so enrichment can never smuggle a
+higher-classified fact past a caller who was already cleared for less.</p>
+<pre class="mermaid"><code>timeline
+    title Dual-speed memory cadence
+    section Fast path — every turn
+        Capture : sanitize, dedup, tag, Hebbian-bump : zero LLM
+        Retrieve : one bounded fuse-and-gate pass, cached once per turn
+    section Slow path — trigger fires
+        Consolidate light : distill facts/insights/procedures/events/days : decay edges : cue + entity merge
+    section Slow path — first call after local date rolls
+        Consolidate hygiene : + alias fold : + backlink repair : + workspace file dedup</code></pre>
+<h3 id="data-shape-reference">Data-shape reference<a class="headerlink" href="#data-shape-reference" title="Permanent link">&para;</a></h3>
+<pre class="mermaid"><code>erDiagram
+    SCOPE ||--o{ EVENT : owns
+    SCOPE ||--o{ ENTITY : owns
+    EVENT }o--o{ ENTITY : tags
+    ENTITY ||--o{ FACT : "predicate value trail"
+    ENTITY }o--o{ ENTITY : "wiki-link"
+    INSIGHT }o--o{ EVENT : instances
+    INSIGHT ||--o{ CUE : "graph nodes"
+    EVENT ||--o| DAYSUMMARY : "curated into"
+    PROCEDURE ||--o{ STEP : has</code></pre>
+<h2 id="security-isolation">Security &amp; isolation<a class="headerlink" href="#security-isolation" title="Permanent link">&para;</a></h2>
+<p><strong>Cross-agent isolation — the DID guard.</strong> A single process runs many agents
+concurrently (the embedded gateway caches instances). arcagent's memory
+runtime state (<code>packages/arcagent/src/arcagent/modules/memory/_runtime.py</code>)
+holds one agent's private <code>Brain</code>; handing it to a different agent's turn is a
+cross-agent private-data bleed into an LLM prompt (ASI03/LLM02) — a
+<strong>confirmed real defect</strong> (process-global last-writer-wins state). The fix,
+verified in the current code: state lives in a <strong>DID-keyed registry</strong>
+(<code>_registry: dict[str, _State]</code>, never a single clobberable slot), and
+<code>state()</code> resolves against a <code>contextvars.ContextVar</code> bound to the <em>running
+turn's</em> DID. Any missing binding, missing registration, or DID mismatch raises
+<code>MemoryIsolationError</code> and audits the fault — it never falls back to ambient
+state. Every turn-dispatch entry point rebinds this via <code>bind()</code>, since a turn
+runs in a fresh sibling <code>asyncio.Task</code> that doesn't inherit the startup
+binding; the fail-closed check is what actually guarantees isolation even if a
+rebind is ever missed.</p>
+<p><strong>Classification / no-read-up.</strong> <code>arcmemory</code> defines no comparator of its
+own — <code>security.py</code>'s <code>gate_no_read_up</code> imports <code>dominates</code> and
+<code>parse_classification</code> directly from <code>arctrust</code> (the same predicate 
+established elsewhere in Arc), and
+<code>packages/arcmemory/tests/architecture/test_reuses_arctrust_comparator.py</code>
+statically fails the build if any arcmemory module ever redefines them. A
+derived memory (an insight generalizing several episodes) inherits the <em>most
+restrictive</em> known classification of its sources (<code>dominating_classification</code>);
+a genuinely unlabeled memory fails closed at the federal tier (<code>strict=True</code>).
+Every dropped recall emits a <code>recall.dropped</code> audit event carrying a content
+<em>hash</em> only, never plaintext. Every returned recall is also wrapped in a
+<code>&lt;memory-result&gt;</code> block framed as untrusted DATA, never instructions (LLM01),
+with any forged boundary marker inside stored content defanged before render.</p>
+<p><strong>Cross-session ACL.</strong> <code>acl.py</code>'s <code>SessionACL</code> is a separate, narrower
+concern: whether one session's memory is visible to <em>another session of the
+same agent</em> (<code>private</code> / <code>shared-with-agent</code> / <code>shared-with-others-via-agent</code>,
+tier-defaulted — federal defaults <code>private</code>). This is arcmemory's own policy,
+distinct from the DID isolation guard above, which is about never leaking
+between <em>different agents</em>.</p>
+<p><strong>Agentic writes are signed, authorized, and audited.</strong> Every tool the sleep
+pass can call is wrapped by <code>tools.py</code>'s <code>_wrap</code> template
+(<code>packages/arcmemory/src/arcmemory/tools.py:115</code>): build a <code>ToolCall</code>, <code>sign_call</code>
+it with the memory-agent's identity, <code>await policy_pipeline.evaluate(...)</code>
+(first-DENY-wins; any exception denies), and only on ALLOW does the store
+mutation run — one <code>AuditEvent</code> either way. A state-modifying call that cannot
+be signed and authorized under a <em>configured</em> pipeline never mutates;
+read-only calls may run without authorization but still audit. The one
+relaxation is no pipeline configured at all — writes then run, still audited.</p>
+<p><strong><code>operator.py</code> — the read/mutation facade for arcui.</strong> <code>MemoryOperator</code> is
+the single seam arcui's Knowledge view consumes; no consumer runs raw SQL
+against <code>index.db</code>. It projects entries/entities into typed records (a 1–10
+"importance" score that is a faithful projection of stored
+<code>salience</code>/<code>confidence</code>, never invented), delegates search to the same
+production <code>Retriever</code> so operator search ranks identically to runtime recall,
+and every mutation returns an honest <code>applied</code>/<code>error</code> result — no <code>partial</code>
+status, and a no-op (missing entry) is an error, not a silent success.</p>
+<h2 id="honest-gaps">Honest gaps<a class="headerlink" href="#honest-gaps" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>No per-tier structural retrieval threshold (SDD R-9 gap, confirmed).</strong>
+ <code>MemoryConfig.for_tier()</code> overrides <code>alpha</code>/<code>beta</code>/<code>gamma</code>/<code>forget_floor</code>/the
+ entity-merge thresholds/the agentic caps for <code>federal</code> and <code>enterprise</code>, but
+ <code>struct_trigger_min</code>, <code>struct_activation_min</code>, <code>rerank_margin</code>, and
+ <code>enrich_stream_radius</code> are <strong>not</strong> varied by tier anywhere in
+ <code>packages/arcmemory/src/arcmemory/config.py</code> — every tier runs the same
+ structural-match sensitivity. This is a real, unclosed gap, not a design choice.</li>
+<li><strong>The vector channel is layered, and the layering is easy to misdescribe.</strong>
+ <code>sqlite-vec</code> is now a <strong>base dependency</strong> of <code>arcmemory</code> (not an optional
+ extra — <code>pyproject.toml</code>'s <code>[vec]</code> extra is kept only as a no-op alias), so
+ the <code>vec0</code> table is always present. What still gates the channel is whether
+ an <code>Embedder</code> is actually wired (<code>embed_backend != "none"</code>) <em>and</em> that
+ backend can produce vectors — e.g. <code>embed_backend = "local"</code> needs arcllm's
+ separate optional <code>[local]</code> extra (<code>sentence-transformers</code>) installed, or an
+ <code>ArcLLMEmbeddingUnavailableError</code> degrades the whole channel to BM25 + graph.</li>
+<li><strong><code>memory_search</code> is confirmed as the sole agent-facing memory tool.</strong> The
+ dozen read/write tools in <code>tools.py</code> exist only for the internal agentic
+ consolidation loop and are never registered on the main agent's tool surface.</li>
+<li><strong>A brain can be selected with no distiller wired.</strong> If <code>[modules.memory]</code>
+ sets <code>brain</code> but leaves <code>distill_provider</code> empty, <code>provider.py</code>'s
+ <code>build_distiller</code> returns <code>None</code>, <code>ArcMemoryBrain._bundle()</code> builds no
+ <code>Consolidator</code> for that scope, and <code>consolidate()</code> silently returns an empty
+ result forever — capture and recall both keep working, but no fact/insight/
+ procedure is ever mined. This has bitten a live deployment before; the
+ scaffold now sets sane defaults, but a hand-edited TOML can still hit it.</li>
+</ul>
+<h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
+<p>The <code>[modules.memory]</code> config surface (brain selection, tier, <code>top_k</code>/<code>budget</code>,
+the consolidation trigger thresholds, and the <code>backend</code> passthrough for
+<code>embed_backend</code>/<code>distill_provider</code>/<code>dynamics</code>) is documented in full in
+<a href="../12-configuration/"><code>docs/12-configuration.md</code></a>. The two fields worth
+knowing before you read that table: <code>brain</code> picks the implementation
+(<code>"none"</code> | a backend package name | a dotted BYO path), and everything under
+<code>backend</code> is opaque to arcagent — arcmemory's own <code>MemoryConfig.for_tier()</code> +
+<code>provider.build_brain</code> are what actually validate it.</p>
+<h2 id="where-to-look-in-the-code">Where to look in the code<a class="headerlink" href="#where-to-look-in-the-code" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th>What lives there</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>packages/arcagent/src/arcagent/brain/protocol.py</code></td>
+<td>the <code>Brain</code> Protocol + <code>NullBrain</code> — the whole arcagent-side contract</td>
+</tr>
+<tr>
+<td><code>packages/arcagent/src/arcagent/brain/select.py</code></td>
+<td>config-driven Brain selection (<code>select_brain</code>)</td>
+</tr>
+<tr>
+<td><code>packages/arcagent/src/arcagent/modules/memory/</code></td>
+<td>the <em>only</em> memory code in arcagent: hooks, one tool, DID-isolated runtime state</td>
+</tr>
+<tr>
+<td><code>packages/arcmemory/src/arcmemory/provider.py</code></td>
+<td>the <code>build_brain(context)</code> factory arcagent calls</td>
+</tr>
+<tr>
+<td><code>packages/arcmemory/src/arcmemory/brain.py</code></td>
+<td><code>ArcMemoryBrain</code> — wires capture/retrieve/consolidate over the stores</td>
+</tr>
+<tr>
+<td><code>packages/arcmemory/src/arcmemory/capture.py</code></td>
+<td>fast path: sanitize → tag → Hebbian-bump → append</td>
+</tr>
+<tr>
+<td><code>packages/arcmemory/src/arcmemory/curate.py</code></td>
+<td>the conversation-only filter that runs before any LLM call</td>
+</tr>
+<tr>
+<td><code>packages/arcmemory/src/arcmemory/distill.py</code></td>
+<td>the <code>Distiller</code> Protocol + fact/insight/procedure extraction logic</td>
+</tr>
+<tr>
+<td><code>packages/arcmemory/src/arcmemory/consolidate.py</code></td>
+<td>the sleep-pass orchestrator: distill, decay, cue/entity merge, reindex</td>
+</tr>
+<tr>
+<td><code>packages/arcmemory/src/arcmemory/agent_consolidate.py</code> + <code>react_adapter.py</code></td>
+<td>the agentic engine + its sole arcrun seam</td>
+</tr>
+<tr>
+<td><code>packages/arcmemory/src/arcmemory/hygiene.py</code></td>
+<td>file-level dedup + backlink repair (nightly hygiene only)</td>
+</tr>
+<tr>
+<td><code>packages/arcmemory/src/arcmemory/index/surface.py</code></td>
+<td>vec + BM25 + graph + recency, RRF-fused</td>
+</tr>
+<tr>
+<td><code>packages/arcmemory/src/arcmemory/index/structural.py</code></td>
+<td>trigger-embedding + cue-graph, conjunctive-gated, enrich</td>
+</tr>
+<tr>
+<td><code>packages/arcmemory/src/arcmemory/retrieve.py</code> + <code>fusion.py</code></td>
+<td>the single bounded read path + the shared RRF combiner</td>
+</tr>
+<tr>
+<td><code>packages/arcmemory/src/arcmemory/security.py</code></td>
+<td>sanitize, privacy filter, no-read-up gate, boundary marking</td>
+</tr>
+<tr>
+<td><code>packages/arcmemory/src/arcmemory/acl.py</code></td>
+<td>cross-session (not cross-agent) visibility policy</td>
+</tr>
+<tr>
+<td><code>packages/arcmemory/src/arcmemory/tools.py</code></td>
+<td>the sign→authorize→audit wrapped tool set for the agentic sleep pass</td>
+</tr>
+<tr>
+<td><code>packages/arcmemory/src/arcmemory/operator.py</code></td>
+<td>the arcui-facing read/mutation facade</td>
+</tr>
+<tr>
+<td><code>packages/arcmemory/src/arcmemory/stores/</code></td>
+<td>the five glass-box stores (episodic, semantic, insight, procedural, daily)</td>
+</tr>
+<tr>
+<td><code>packages/arcmemory/tests/architecture/</code></td>
+<td>the two static gates: no-arcagent-import, reuses-arctrust-comparator</td>
+</tr>
+</tbody>
+</table>
+<p>If you're changing memory dynamics (decay, confidence growth, merge
+thresholds), start in <code>config.py</code>. If you're changing <em>what</em> gets captured or
+distilled, start in <code>capture.py</code> / <code>curate.py</code> / <code>distill.py</code>. If you're
+changing how recall ranks or gates, start in <code>retrieve.py</code> and the two
+<code>index/</code> modules — but read <code>security.py</code>'s <code>gate_no_read_up</code> first, since it
+is not yours to reimplement.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/joshuamschultz/Arc" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "navigation.sections", "navigation.indexes", "toc.follow", "content.code.copy", "content.action.edit", "search.suggest", "search.highlight"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

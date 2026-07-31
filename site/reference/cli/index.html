@@ -1,0 +1,4289 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="The security-first autonomous agent stack — how it works, and where to look.">
+      
+      
+      
+        <link rel="canonical" href="https://joshuamschultz.github.io/Arc/reference/cli/">
+      
+      
+        <link rel="prev" href="../api/">
+      
+      
+        <link rel="next" href="../config/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>CLI - Arc Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/brand.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#arc-cli-reference" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Arc Documentation" class="md-header__button md-logo" aria-label="Arc Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Arc Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              CLI
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/joshuamschultz/Arc" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    joshuamschultz/Arc
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Arc Documentation" class="md-nav__button md-logo" aria-label="Arc Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Arc Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/joshuamschultz/Arc" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    joshuamschultz/Arc
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Walkthrough
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Walkthrough
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../walkthrough/01-what-is-arc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1. What Arc Is
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../walkthrough/02-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2. Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../walkthrough/03-anatomy-of-a-turn/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    3. Anatomy of a Turn
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../walkthrough/04-unified-adapter/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    4. The Unified Adapter
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../walkthrough/05-steering-and-strategies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    5. Steering and Strategies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../walkthrough/06-prompts-tools-skills/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    6. Prompts, Tools, and Skills
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../walkthrough/07-memory-lifecycle/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    7. The Memory Lifecycle
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../walkthrough/08-data-and-storage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    8. Where Data Lives
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../walkthrough/09-workflows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    9. The Workflows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../walkthrough/10-security-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    10. The Security Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../walkthrough/11-extension-points/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    11. Extension Points
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../walkthrough/12-configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    12. Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../walkthrough/data-flows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data flows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../walkthrough/diagrams/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Diagrams
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Building with Arc
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Building with Arc
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/setup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/implementation-guides/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Implementation guides
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/modules/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Writing modules
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/policy-modules/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Policy modules
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/performance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/package-index/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Package index
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_10" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_10" id="__nav_3_10_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Packages
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_10">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Packages
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcllm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcllm
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcrun/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcrun
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arctrust/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arctrust
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcstore/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcstore
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcprompt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcprompt
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcmodel/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcmodel
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcagent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcagent
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcmemory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcmemory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcskill/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcskill
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcteam/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcteam
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcgateway/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcgateway
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcgateway-telegram/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcgateway-telegram
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcgateway-slack/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcgateway-slack
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcgateway-mattermost/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcgateway-mattermost
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcui
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arctui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arctui
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arccli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arccli
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/packages/arcmas/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arcmas
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#quick-start" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quick start
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#command-groups" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Command groups
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Command groups">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#arc-agent-agent-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        arc agent — Agent lifecycle
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#arc-llm-llm-provider-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        arc llm — LLM provider operations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#arc-run-arcrun-loop-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        arc run — arcrun loop operations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#arc-skill-skill-management" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        arc skill — Skill management
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#arc-ext-capability-extension-point-management" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        arc ext — Capability + extension-point management
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#arc-blueprint-signed-preset-config-bootstrap" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        arc blueprint — Signed preset-config bootstrap
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#arc-team-team-messaging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        arc team — Team messaging
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#arc-ui-multi-agent-dashboard" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        arc ui — Multi-agent dashboard
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#arc-init-first-time-setup-wizard" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        arc init — First-time setup wizard
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#arc-gateway-gateway-control-plane" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        arc gateway — Gateway control plane
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#arc-help-and-arc-version" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        arc help and arc version
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#global-flags" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Global flags
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration keys
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tiers-and-presets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tiers and presets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../prompts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Prompts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../glossary/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Glossary
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runbooks
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Runbooks
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_1" id="__nav_5_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Deploy
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/deploy/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/deploy/local/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/deploy/docker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Docker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/deploy/firecracker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Firecracker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/deploy/azure-openai/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Azure OpenAI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/deploy/voice-air-gap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Voice air-gap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_2" id="__nav_5_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operate
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Operate
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/operate/teams/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Teams
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/operate/tasks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/operate/agent-features/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent features
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/operate/policy-and-proactive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Policy and proactive engine
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Security
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/security/hardening/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hardening
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/security/threat-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Threat model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/security/adversarial-tests/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Adversarial tests
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/security/compliance-nist-800-53/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NIST 800-53 mapping
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/security/compliance-owasp-llm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OWASP LLM mapping
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/security/compliance-owasp-agentic/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OWASP Agentic mapping
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Blueprints
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Blueprints
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../blueprints/blueprints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Blueprints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#quick-start" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quick start
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#command-groups" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Command groups
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Command groups">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#arc-agent-agent-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        arc agent — Agent lifecycle
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#arc-llm-llm-provider-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        arc llm — LLM provider operations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#arc-run-arcrun-loop-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        arc run — arcrun loop operations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#arc-skill-skill-management" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        arc skill — Skill management
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#arc-ext-capability-extension-point-management" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        arc ext — Capability + extension-point management
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#arc-blueprint-signed-preset-config-bootstrap" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        arc blueprint — Signed preset-config bootstrap
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#arc-team-team-messaging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        arc team — Team messaging
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#arc-ui-multi-agent-dashboard" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        arc ui — Multi-agent dashboard
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#arc-init-first-time-setup-wizard" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        arc init — First-time setup wizard
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#arc-gateway-gateway-control-plane" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        arc gateway — Gateway control plane
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#arc-help-and-arc-version" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        arc help and arc version
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#global-flags" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Global flags
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/joshuamschultz/Arc/edit/main/docs/reference/cli.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="arc-cli-reference">Arc CLI Reference<a class="headerlink" href="#arc-cli-reference" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p><strong>Reference</strong>  ·  Look up  ·  page 2 of 8<br />
+<strong>For</strong> Anyone looking something up<br />
+<a href="../api/">← API</a>  ·  <a href="../../">Docs home</a>  ·  <a href="../config/">Configuration keys →</a></p>
+</blockquote>
+<pre class="mermaid"><code>flowchart LR
+    classDef a fill:#D6E6FF,stroke:#0073FE,color:#002550
+    classDef b fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef c fill:#002550,stroke:#001A38,color:#FFFFFF
+    A["arc"]:::a
+    B["agent&lt;br/&gt;build · run · check"]:::b
+    C["surfaces&lt;br/&gt;ui · tui · gateway"]:::b
+    D["operator&lt;br/&gt;approve · stop · trust"]:::c
+    E["content&lt;br/&gt;skill · ext · blueprint · prompt"]:::b
+    F["fleet&lt;br/&gt;team · task · memory · store"]:::b
+    A --&gt; B &amp; C &amp; D &amp; E &amp; F</code></pre>
+<p>All commands available via the <code>arc</code> console script (installed by <code>arcmas</code> or <code>arccli</code>).
+<strong>See also:</strong> <a href="../../building/quickstart/">QUICKSTART.md</a>, <a href="../../building/packages/arccli/">packages/arccli.md</a></p>
+<h2 id="quick-start">Quick start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># Initialize Arc for the first time (tier-based wizard)</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>arc<span class="w"> </span>init
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># Create a new agent</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>arc<span class="w"> </span>agent<span class="w"> </span>create<span class="w"> </span>myagent<span class="w"> </span>--model<span class="w"> </span>anthropic/claude-sonnet-4-5-20250929
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="c1"># Validate the agent setup</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>arc<span class="w"> </span>agent<span class="w"> </span>build<span class="w"> </span>myagent<span class="w"> </span>--check
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="c1"># Run a one-shot task</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>arc<span class="w"> </span>agent<span class="w"> </span>run<span class="w"> </span>myagent<span class="w"> </span><span class="s2">&quot;Summarize workspace/reports/&quot;</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="c1"># Interactive chat session</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>arc<span class="w"> </span>agent<span class="w"> </span>chat<span class="w"> </span>myagent
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="c1"># Start the multi-agent dashboard</span>
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>arc<span class="w"> </span>ui<span class="w"> </span>start<span class="w"> </span>--port<span class="w"> </span><span class="m">8420</span>
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="c1"># Tail live events from a running dashboard</span>
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>arc<span class="w"> </span>ui<span class="w"> </span>tail<span class="w"> </span>--viewer-token<span class="w"> </span>&lt;token&gt;<span class="w"> </span>--layer<span class="w"> </span>llm
+</code></pre></div>
+<hr />
+<h2 id="command-groups">Command groups<a class="headerlink" href="#command-groups" title="Permanent link">&para;</a></h2>
+<h3 id="arc-agent-agent-lifecycle"><code>arc agent</code> — Agent lifecycle<a class="headerlink" href="#arc-agent-agent-lifecycle" title="Permanent link">&para;</a></h3>
+<p>Manage agent directories: scaffold, configure, run, and inspect agents.</p>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>arc agent create &lt;name&gt;</code></td>
+<td>Scaffold a new agent directory with workspace, config, and a calculator extension</td>
+<td><code>arc agent create myagent --model anthropic/claude-sonnet-4-5-20250929</code></td>
+</tr>
+<tr>
+<td><code>arc agent build [path]</code></td>
+<td>Render the full config surface at a tier (<code>--tier personal\|enterprise\|federal</code>, default personal)</td>
+<td><code>arc agent build myagent --tier federal</code></td>
+</tr>
+<tr>
+<td><code>arc agent build [path] --force</code></td>
+<td>Regenerate an existing <code>arcagent.toml</code> — DID and agent name are preserved</td>
+<td><code>arc agent build myagent --force</code></td>
+</tr>
+<tr>
+<td><code>arc agent build [path] --check</code></td>
+<td>Validate config and workspace; writes nothing</td>
+<td><code>arc agent build myagent --check</code></td>
+</tr>
+<tr>
+<td><code>arc agent chat [path]</code></td>
+<td>Start an interactive REPL chat session</td>
+<td><code>arc agent chat myagent</code></td>
+</tr>
+<tr>
+<td><code>arc agent chat [path] --task "&lt;task&gt;"</code></td>
+<td>One-shot task via chat handler</td>
+<td><code>arc agent chat myagent --task "List all files"</code></td>
+</tr>
+<tr>
+<td><code>arc agent run &lt;path&gt; &lt;task&gt;</code></td>
+<td>Run a single task non-interactively</td>
+<td><code>arc agent run myagent "Analyze data.csv"</code></td>
+</tr>
+<tr>
+<td><code>arc agent serve [path]</code></td>
+<td>Start a long-running agent daemon (scheduler active)</td>
+<td><code>arc agent serve myagent --verbose</code></td>
+</tr>
+<tr>
+<td><code>arc agent status [path]</code></td>
+<td>Show agent summary: DID, model, tool/skill/extension/session counts</td>
+<td><code>arc agent status myagent</code></td>
+</tr>
+<tr>
+<td><code>arc agent config [path]</code></td>
+<td>Show parsed <code>arcagent.toml</code></td>
+<td><code>arc agent config myagent --json</code></td>
+</tr>
+<tr>
+<td><code>arc agent tools [path]</code></td>
+<td>List tools available to the agent</td>
+<td><code>arc agent tools myagent --json</code></td>
+</tr>
+<tr>
+<td><code>arc agent skills [path]</code></td>
+<td>List discovered skills</td>
+<td><code>arc agent skills myagent</code></td>
+</tr>
+<tr>
+<td><code>arc agent extensions [path]</code></td>
+<td>List loaded extensions</td>
+<td><code>arc agent extensions myagent</code></td>
+</tr>
+<tr>
+<td><code>arc agent sessions [path]</code></td>
+<td>List session transcripts with timestamps and sizes</td>
+<td><code>arc agent sessions myagent</code></td>
+</tr>
+<tr>
+<td><code>arc agent reload [path]</code></td>
+<td>Hot-reload extensions and skills</td>
+<td><code>arc agent reload myagent</code></td>
+</tr>
+<tr>
+<td><code>arc agent strategies</code></td>
+<td>List available execution strategies (react, code)</td>
+<td><code>arc agent strategies</code></td>
+</tr>
+<tr>
+<td><code>arc agent events</code></td>
+<td>List all event types emitted by arcrun and arcagent</td>
+<td><code>arc agent events</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Notes:</strong>
+- <code>path</code> defaults to <code>.</code> (current directory) for all subcommands that accept it
+- <code>arc agent create</code> accepts <code>--dir &lt;parent&gt;</code> to set the parent directory (default: <code>.</code>)
+- <code>arc agent create</code> accepts <code>--tier personal|enterprise|federal</code> (default: <code>personal</code>), which
+ sets the tier for every subsystem at once — the same flag <code>arc agent build</code> takes. Federal
+ additionally pins the crypto floor (<code>require_fips</code>, <code>vault_transit</code>, <code>ecdsa-p256</code>)
+- <code>arc agent run</code> and <code>arc agent chat</code> accept <code>--model &lt;provider/model&gt;</code> to override the configured model
+- <code>arc agent run</code> accepts <code>--verbose</code> / <code>-v</code> for turn/cost summary and <code>--json</code> for structured output
+- <code>arc agent chat</code> accepts <code>--max-turns &lt;n&gt;</code> (default 10) and <code>--session-id &lt;id&gt;</code> to resume a session</p>
+<p><strong>In-chat REPL commands</strong> (available while inside <code>arc agent chat</code>):
+<code>/quit</code>, <code>/tools</code>, <code>/model</code>, <code>/cost</code>, <code>/reload</code>, <code>/skills</code>, <code>/extensions</code>, <code>/session</code>, <code>/sessions</code>, <code>/switch &lt;id&gt;</code>, <code>/identity</code>, <code>/status</code></p>
+<hr />
+<h3 id="arc-llm-llm-provider-operations"><code>arc llm</code> — LLM provider operations<a class="headerlink" href="#arc-llm-llm-provider-operations" title="Permanent link">&para;</a></h3>
+<p>Inspect arcllm configuration, providers, and models.</p>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>arc llm version</code></td>
+<td>Show arcllm and arccli versions</td>
+<td><code>arc llm version --json</code></td>
+</tr>
+<tr>
+<td><code>arc llm config</code></td>
+<td>Show global arcllm configuration (modules, vault)</td>
+<td><code>arc llm config</code></td>
+</tr>
+<tr>
+<td><code>arc llm config --module &lt;name&gt;</code></td>
+<td>Show a specific module config</td>
+<td><code>arc llm config --module audit</code></td>
+</tr>
+<tr>
+<td><code>arc llm providers</code></td>
+<td>List all configured providers</td>
+<td><code>arc llm providers --json</code></td>
+</tr>
+<tr>
+<td><code>arc llm provider &lt;name&gt;</code></td>
+<td>Show provider details and available models</td>
+<td><code>arc llm provider anthropic</code></td>
+</tr>
+<tr>
+<td><code>arc llm models</code></td>
+<td>List all models across all providers</td>
+<td><code>arc llm models</code></td>
+</tr>
+<tr>
+<td><code>arc llm models --provider &lt;name&gt;</code></td>
+<td>Filter models by provider</td>
+<td><code>arc llm models --provider openai</code></td>
+</tr>
+<tr>
+<td><code>arc llm models --tools</code></td>
+<td>Only models that support tool calling</td>
+<td><code>arc llm models --tools</code></td>
+</tr>
+<tr>
+<td><code>arc llm models --vision</code></td>
+<td>Only models that support vision</td>
+<td><code>arc llm models --vision</code></td>
+</tr>
+<tr>
+<td><code>arc llm validate</code></td>
+<td>Validate provider configs and check API key availability</td>
+<td><code>arc llm validate</code></td>
+</tr>
+<tr>
+<td><code>arc llm validate --provider &lt;name&gt;</code></td>
+<td>Validate a specific provider</td>
+<td><code>arc llm validate --provider anthropic</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Notes:</strong>
+- All subcommands accept <code>--json</code> for structured output
+- <code>arc llm provider</code> shows context window, max output, pricing, tool/vision support per model</p>
+<hr />
+<h3 id="arc-run-arcrun-loop-operations"><code>arc run</code> — arcrun loop operations<a class="headerlink" href="#arc-run-arcrun-loop-operations" title="Permanent link">&para;</a></h3>
+<p>Run tasks directly with arcrun — no agent directory required.</p>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>arc run version</code></td>
+<td>Show arcrun version, strategies, and public API</td>
+<td><code>arc run version --json</code></td>
+</tr>
+<tr>
+<td><code>arc run exec &lt;code&gt;</code></td>
+<td>Execute Python code via arcrun's sandboxed executor</td>
+<td><code>arc run exec "print(2 ** 32)"</code></td>
+</tr>
+<tr>
+<td><code>arc run exec &lt;code&gt; --timeout &lt;s&gt;</code></td>
+<td>Set execution timeout (default 30s)</td>
+<td><code>arc run exec "..." --timeout 60</code></td>
+</tr>
+<tr>
+<td><code>arc run task &lt;prompt&gt;</code></td>
+<td>Run a single task with arcrun (registers <code>spawn_task</code> by default)</td>
+<td><code>arc run task "spawn agents to compute 4+5 and 6+7"</code></td>
+</tr>
+<tr>
+<td><code>arc run task &lt;prompt&gt; --model &lt;m&gt;</code></td>
+<td>Specify provider/model</td>
+<td><code>arc run task "..." --model anthropic/claude-haiku-4-5-20251001</code></td>
+</tr>
+<tr>
+<td><code>arc run task &lt;prompt&gt; --with-calc</code></td>
+<td>Add a safe math calculator tool</td>
+<td><code>arc run task "What is 1234 * 5678?" --with-calc</code></td>
+</tr>
+<tr>
+<td><code>arc run task &lt;prompt&gt; --with-code-exec</code></td>
+<td>Add the sandboxed Python executor tool</td>
+<td><code>arc run task "Compute fibonacci(30)" --with-code-exec</code></td>
+</tr>
+<tr>
+<td><code>arc run task &lt;prompt&gt; --no-spawn</code></td>
+<td>Disable the <code>spawn_task</code> tool (default: registered)</td>
+<td><code>arc run task "..." --no-spawn --with-calc</code></td>
+</tr>
+<tr>
+<td><code>arc run task &lt;prompt&gt; --strategy &lt;s&gt;</code></td>
+<td>Force a specific strategy (react, code)</td>
+<td><code>arc run task "..." --strategy code</code></td>
+</tr>
+<tr>
+<td><code>arc run task &lt;prompt&gt; --verbose</code></td>
+<td>Show per-turn tool and LLM events</td>
+<td><code>arc run task "..." --verbose</code></td>
+</tr>
+<tr>
+<td><code>arc run task &lt;prompt&gt; --show-events</code></td>
+<td>Print full event log after completion</td>
+<td><code>arc run task "..." --show-events</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Notes:</strong>
+- <code>arc run task</code> registers <code>spawn_task</code> by default so the model can fan out work to parallel sub-agents. Pass <code>--no-spawn</code> to disable it.
+- <code>arc run task</code> exits with an error only if no tools are available at all (no <code>--with-calc</code>, no <code>--with-code-exec</code>, AND <code>--no-spawn</code>).
+- <code>arc run exec</code> does not require an LLM; it runs code directly in the sandbox.
+- <code>arc run task</code> accepts <code>--max-turns &lt;n&gt;</code> (default 10) and <code>--tool-timeout &lt;s&gt;</code>.</p>
+<p><strong>Orchestration patterns:</strong></p>
+<p>The agent has two ways to fan out work across multiple <code>arcrun</code> loops:</p>
+<ul>
+<li><strong>LLM-driven decomposition</strong> — the model decides at runtime to split a task into N sub-tasks, calling <code>spawn_task</code> multiple times in one response. The arcrun loop dispatches same-turn tool calls per their <code>classification</code> — <code>read_only</code> calls concurrently via <code>asyncio.gather</code>, everything else serially. This is what <code>arc run task</code> exposes.</li>
+<li><strong>Code-level fan-out</strong> — Python code (an embedding agent) calls <code>arcrun.run()</code> N times via <code>asyncio.gather</code> directly. The model never sees the decomposition; the agent collects results and synthesizes them. Use this when the shape of the work is known ahead of time and the LLM doesn't need to choose.</li>
+</ul>
+<p><code>arcrun</code> itself has zero spawn knowledge — <code>spawn_task</code> is owned by <code>arcagent.orchestration</code> and registered by the CLI on the user's behalf when <code>--no-spawn</code> is not set.</p>
+<hr />
+<h3 id="arc-skill-skill-management"><code>arc skill</code> — Skill management<a class="headerlink" href="#arc-skill-skill-management" title="Permanent link">&para;</a></h3>
+<p>Create, validate, and search agent skills — folders containing a <code>SKILL.md</code> (frontmatter +
+7 required sections: Resources, Contract, Knowledge, Steps, Anti Patterns, Examples,
+Validation) plus optional <code>references/</code>, <code>scripts/</code>, <code>templates/</code>, <code>assets/</code>. The
+unified <code>CapabilityLoader</code> discovers skills from four scan roots: the package builtins,
+<code>~/.arc/capabilities/</code> (global), <code>&lt;agent&gt;/capabilities/</code> (per-agent, trusted), and
+<code>&lt;agent&gt;/workspace/capabilities/</code> (agent-authored, untrusted).</p>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>arc skill list</code></td>
+<td>List all discovered skill folders (global + workspace)</td>
+<td><code>arc skill list</code></td>
+</tr>
+<tr>
+<td><code>arc skill list --agent &lt;path&gt;</code></td>
+<td>Include skills from a specific agent workspace</td>
+<td><code>arc skill list --agent myagent</code></td>
+</tr>
+<tr>
+<td><code>arc skill create &lt;name&gt;</code></td>
+<td>Scaffold a new skill folder (<code>./&lt;name&gt;/SKILL.md</code>)</td>
+<td><code>arc skill create data-analysis</code></td>
+</tr>
+<tr>
+<td><code>arc skill create &lt;name&gt; --dir &lt;dir&gt;</code></td>
+<td>Write to a specific parent directory</td>
+<td><code>arc skill create audit-report --dir myagent/capabilities</code></td>
+</tr>
+<tr>
+<td><code>arc skill create &lt;name&gt; --global</code></td>
+<td>Write to <code>~/.arc/capabilities/&lt;name&gt;/</code></td>
+<td><code>arc skill create shared-tool --global</code></td>
+</tr>
+<tr>
+<td><code>arc skill validate &lt;path&gt;</code></td>
+<td>Validate a skill folder or its <code>SKILL.md</code></td>
+<td><code>arc skill validate ./myskill</code></td>
+</tr>
+<tr>
+<td><code>arc skill search &lt;query&gt;</code></td>
+<td>Search skills by name or description</td>
+<td><code>arc skill search "data analysis"</code></td>
+</tr>
+<tr>
+<td><code>arc skill search &lt;query&gt; --agent &lt;path&gt;</code></td>
+<td>Include agent workspace in search</td>
+<td><code>arc skill search "report" --agent myagent</code></td>
+</tr>
+</tbody>
+</table>
+<p>Adaptation and self-improvement (golden-task-gated code repair, per-turn nudge/usage/retire
+lifecycle) is an <strong>optional supercharger</strong>: arcagent runs skills on its own with a no-op
+<code>NullSkillAdapter</code>; installing <code>arcskill</code> and selecting it in config
+(<code>[skills] adapter = "arcskill"</code>) turns it on. See <a href="https://github.com/joshuamschultz/Arc/blob/main/packages/arcskill/README.md"><code>arcskill</code></a>.</p>
+<hr />
+<h3 id="arc-ext-capability-extension-point-management"><code>arc ext</code> — Capability + extension-point management<a class="headerlink" href="#arc-ext-capability-extension-point-management" title="Permanent link">&para;</a></h3>
+<p>Manage capability <code>.py</code> files — Python modules exposing callables/classes stamped with
+<code>@tool</code>, <code>@hook</code>, <code>@background_task</code>, or <code>@capability</code> — and inspect the four
+generalized extension-point families (<code>brain</code>, <code>skills</code>, <code>tools</code>, <code>hook-builds</code>;).
+Capability files use the same four scan roots as <code>arc skill</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>arc ext list</code></td>
+<td>List all discovered capability files (global + workspace)</td>
+<td><code>arc ext list</code></td>
+</tr>
+<tr>
+<td><code>arc ext list --agent &lt;path&gt;</code></td>
+<td>Include capabilities from a specific agent workspace</td>
+<td><code>arc ext list --agent myagent</code></td>
+</tr>
+<tr>
+<td><code>arc ext create &lt;name&gt;</code></td>
+<td>Scaffold a new <code>.py</code> with a <code>@tool</code> template</td>
+<td><code>arc ext create web-search</code></td>
+</tr>
+<tr>
+<td><code>arc ext create &lt;name&gt; --dir &lt;dir&gt;</code></td>
+<td>Write to a specific directory</td>
+<td><code>arc ext create scraper --dir myagent/capabilities</code></td>
+</tr>
+<tr>
+<td><code>arc ext create &lt;name&gt; --global</code></td>
+<td>Write to <code>~/.arc/capabilities/</code></td>
+<td><code>arc ext create shared-tool --global</code></td>
+</tr>
+<tr>
+<td><code>arc ext install &lt;source&gt;</code></td>
+<td>Install a <code>.py</code> file or directory into <code>~/.arc/capabilities/</code></td>
+<td><code>arc ext install my_capability.py</code></td>
+</tr>
+<tr>
+<td><code>arc ext validate &lt;path&gt;</code></td>
+<td>Validate a capability file</td>
+<td><code>arc ext validate my_capability.py</code></td>
+</tr>
+<tr>
+<td><code>arc ext inspect [--agent &lt;path&gt;]</code></td>
+<td>Show selected/available/signed state for all 4 extension-point families</td>
+<td><code>arc ext inspect --agent myagent</code></td>
+</tr>
+<tr>
+<td><code>arc ext verify [--agent &lt;path&gt;]</code></td>
+<td>Report extension-point selections that would be refused at load; non-zero exit on a refusal</td>
+<td><code>arc ext verify --agent myagent</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="arc-blueprint-signed-preset-config-bootstrap"><code>arc blueprint</code> — Signed preset-config bootstrap<a class="headerlink" href="#arc-blueprint-signed-preset-config-bootstrap" title="Permanent link">&para;</a></h3>
+<p>A blueprint is a versioned, signed TOML preset that bootstraps a deployment in one command
+. <code>apply</code> verifies the signature (fail-closed above <code>personal</code>), deep-merges the
+preset <strong>under</strong> the target's existing config (identity + user keys win — not a
+clobber-write), floors the tier by stringency-max (a blueprint can only raise a floor, never
+weaken federal), and materializes the concrete <code>arcagent.toml</code>. Three packaged presets ship
+provenance-trusted: <code>personal-assistant</code>, <code>enterprise-ops</code>, <code>federal-analyst</code>. User presets
+live in <code>~/.arc/blueprints/</code> and must be signed with <code>arc blueprint sign</code> (pinned to the
+deployment operator key above <code>personal</code>).</p>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>arc blueprint list</code></td>
+<td>List packaged + <code>~/.arc/blueprints</code> presets</td>
+<td><code>arc blueprint list</code></td>
+</tr>
+<tr>
+<td><code>arc blueprint show &lt;name&gt;</code></td>
+<td>Print a blueprint's resolved config overlay</td>
+<td><code>arc blueprint show enterprise-ops</code></td>
+</tr>
+<tr>
+<td><code>arc blueprint apply &lt;name&gt; [--agent &lt;path&gt;]</code></td>
+<td>Verify, deep-merge, and write</td>
+<td><code>arc blueprint apply enterprise-ops --agent myagent</code></td>
+</tr>
+<tr>
+<td><code>arc blueprint apply &lt;name&gt; --dry-run</code></td>
+<td>Print the merged config only — no write, no audit record</td>
+<td><code>arc blueprint apply enterprise-ops --dry-run</code></td>
+</tr>
+<tr>
+<td><code>arc blueprint verify &lt;name&gt;</code></td>
+<td>Report signature validity for the current tier</td>
+<td><code>arc blueprint verify enterprise-ops</code></td>
+</tr>
+<tr>
+<td><code>arc blueprint sign &lt;path&gt;</code></td>
+<td>Operator-sign a user blueprint, writes the <code>.arcsig</code> sidecar</td>
+<td><code>arc blueprint sign ./my-preset.toml</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="arc-team-team-messaging"><code>arc team</code> — Team messaging<a class="headerlink" href="#arc-team-team-messaging" title="Permanent link">&para;</a></h3>
+<p>Manage arcteam entity registries, channels, and messaging.</p>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>arc team status</code></td>
+<td>Show team overview: entity count, channels, messages, audit entries</td>
+<td><code>arc team status</code></td>
+</tr>
+<tr>
+<td><code>arc team config</code></td>
+<td>Show team configuration</td>
+<td><code>arc team config --json</code></td>
+</tr>
+<tr>
+<td><code>arc team init</code></td>
+<td>Initialize team data directory and bootstrap the operator audit key (asymmetric authority)</td>
+<td><code>arc team init</code></td>
+</tr>
+<tr>
+<td><code>arc team init --root &lt;path&gt;</code></td>
+<td>Initialize at a specific root path</td>
+<td><code>arc team init --root /var/arc/team</code></td>
+</tr>
+<tr>
+<td><code>arc team register &lt;id&gt;</code></td>
+<td>Register an agent or user entity</td>
+<td><code>arc team register agent-1 --name "Analyst" --type agent</code></td>
+</tr>
+<tr>
+<td><code>arc team register &lt;id&gt; --roles &lt;r&gt;</code></td>
+<td>Register with comma-separated roles</td>
+<td><code>arc team register agent-1 --name "Lead" --type agent --roles lead,reviewer</code></td>
+</tr>
+<tr>
+<td><code>arc team entities</code></td>
+<td>List all registered entities</td>
+<td><code>arc team entities</code></td>
+</tr>
+<tr>
+<td><code>arc team entities --role &lt;r&gt;</code></td>
+<td>Filter by role</td>
+<td><code>arc team entities --role lead</code></td>
+</tr>
+<tr>
+<td><code>arc team update-entity &lt;ref&gt;</code></td>
+<td>Update an existing entity's name/roles (<code>register</code> is create-only and errors on a duplicate DID/handle)</td>
+<td><code>arc team update-entity agent-1 --name "Lead Analyst" --roles lead,reviewer</code></td>
+</tr>
+<tr>
+<td><code>arc team channels</code></td>
+<td>List available channels</td>
+<td><code>arc team channels</code></td>
+</tr>
+<tr>
+<td><code>arc team create-channel &lt;name&gt;</code></td>
+<td>Create a channel; standalone or <code>--team &lt;id&gt;</code>-scoped (defaults membership to the team's members unless <code>--members</code> is given)</td>
+<td><code>arc team create-channel brand-room --members agent-1,agent-2</code></td>
+</tr>
+<tr>
+<td><code>arc team memory-status</code></td>
+<td>Show team memory index status</td>
+<td><code>arc team memory-status</code></td>
+</tr>
+<tr>
+<td><code>arc team backfill-workspaces</code></td>
+<td>Backfill <code>workspace_path</code> on registered agents from <code>team/*/arcagent.toml</code>. Dry-run unless <code>--apply</code> is passed.</td>
+<td><code>arc team backfill-workspaces --team-dir team --apply</code></td>
+</tr>
+<tr>
+<td><code>arc team create &lt;id&gt; --channel &lt;c&gt;</code></td>
+<td>Create a team with a required default channel and optional members</td>
+<td><code>arc team create mfg --channel ops --members agent-1,agent-2</code></td>
+</tr>
+<tr>
+<td><code>arc team add-member &lt;id&gt; &lt;member&gt;</code></td>
+<td>Add a member to an existing team</td>
+<td><code>arc team add-member mfg agent-3</code></td>
+</tr>
+<tr>
+<td><code>arc team remove-member &lt;id&gt; &lt;member&gt;</code></td>
+<td>Remove a member from a team</td>
+<td><code>arc team remove-member mfg agent-3</code></td>
+</tr>
+<tr>
+<td><code>arc team send</code></td>
+<td>Send a signed message (<code>--sender</code>, <code>--to</code>, <code>--body</code> required; <code>--type</code>, <code>--priority</code>, <code>--action</code>, <code>--refs</code>, <code>--thread-id</code> optional)</td>
+<td><code>arc team send --sender agent://agent-1 --to agent://agent-2 --body "status?"</code></td>
+</tr>
+<tr>
+<td><code>arc team inbox --sender &lt;ref&gt;</code></td>
+<td>Check inbox across subscribed streams</td>
+<td><code>arc team inbox --sender agent://agent-1 --limit 20</code></td>
+</tr>
+<tr>
+<td><code>arc team read --sender &lt;ref&gt;</code></td>
+<td>Read channel or DM history</td>
+<td><code>arc team read --sender agent://agent-1 --channel ops --limit 50</code></td>
+</tr>
+<tr>
+<td><code>arc team thread &lt;id&gt; --stream &lt;s&gt;</code></td>
+<td>View a message thread</td>
+<td><code>arc team thread abc123 --stream ops</code></td>
+</tr>
+<tr>
+<td><code>arc team up &lt;id&gt;</code></td>
+<td>Boot each team member as a supervised <code>arc agent serve</code> daemon</td>
+<td><code>arc team up mfg</code></td>
+</tr>
+<tr>
+<td><code>arc team down &lt;id&gt;</code></td>
+<td>Stop a running team's member daemons</td>
+<td><code>arc team down mfg</code></td>
+</tr>
+<tr>
+<td><code>arc team serve &lt;team_root&gt;</code></td>
+<td>Start NATS + register + serve the dashboard for a folder of agents</td>
+<td><code>arc team serve ./agents --port 8420</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Global options (apply to all <code>arc team</code> subcommands):</strong>
+- <code>--root &lt;path&gt;</code> — override team data root directory
+- <code>--json</code> — JSON output mode</p>
+<hr />
+<h3 id="arc-ui-multi-agent-dashboard"><code>arc ui</code> — Multi-agent dashboard<a class="headerlink" href="#arc-ui-multi-agent-dashboard" title="Permanent link">&para;</a></h3>
+<p>Start and observe the ArcUI real-time dashboard.</p>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>arc ui start</code></td>
+<td>Launch the dashboard (default: <code>127.0.0.1:8420</code>)</td>
+<td><code>arc ui start</code></td>
+</tr>
+<tr>
+<td><code>arc ui start --port &lt;n&gt;</code></td>
+<td>Bind to a specific port</td>
+<td><code>arc ui start --port 9000</code></td>
+</tr>
+<tr>
+<td><code>arc ui start --host &lt;h&gt;</code></td>
+<td>Bind to a specific host</td>
+<td><code>arc ui start --host 0.0.0.0</code></td>
+</tr>
+<tr>
+<td><code>arc ui start --show-tokens</code></td>
+<td>Print full tokens to stdout instead of masked</td>
+<td><code>arc ui start --show-tokens</code></td>
+</tr>
+<tr>
+<td><code>arc ui start --viewer-token &lt;t&gt;</code></td>
+<td>Supply a viewer token (auto-generated if omitted)</td>
+<td><code>arc ui start --viewer-token mytoken</code></td>
+</tr>
+<tr>
+<td><code>arc ui start --operator-token &lt;t&gt;</code></td>
+<td>Supply an operator token</td>
+<td><code>arc ui start --operator-token optoken</code></td>
+</tr>
+<tr>
+<td><code>arc ui start --max-agents &lt;n&gt;</code></td>
+<td>Maximum tracked agents (default: 100)</td>
+<td><code>arc ui start --max-agents 500</code></td>
+</tr>
+<tr>
+<td><code>arc ui start --team-root &lt;dir&gt;</code></td>
+<td>Agent-discovery root ( routes); defaults to <code>./team</code> if it exists</td>
+<td><code>arc ui start --team-root ./team</code></td>
+</tr>
+<tr>
+<td><code>arc ui start --gateway-config &lt;path&gt;</code></td>
+<td>Path to <code>gateway.toml</code>; omitted auto-builds a default with the web platform enabled</td>
+<td><code>arc ui start --gateway-config ./gateway.toml</code></td>
+</tr>
+<tr>
+<td><code>arc ui start --no-browser</code></td>
+<td>Do not auto-open a browser tab on loopback start</td>
+<td><code>arc ui start --no-browser</code></td>
+</tr>
+<tr>
+<td><code>arc ui start --no-chat</code></td>
+<td>Disable the in-process web chat platform even when <code>team_root</code> is set</td>
+<td><code>arc ui start --no-chat</code></td>
+</tr>
+<tr>
+<td><code>arc ui tail</code></td>
+<td>Stream live events to stdout as JSONL (requires <code>--viewer-token</code>)</td>
+<td><code>arc ui tail --viewer-token &lt;t&gt;</code></td>
+</tr>
+<tr>
+<td><code>arc ui tail --host &lt;h&gt; --port &lt;n&gt;</code></td>
+<td>Connect to a non-default dashboard</td>
+<td><code>arc ui tail --host 10.0.0.1 --port 9000 --viewer-token &lt;t&gt;</code></td>
+</tr>
+<tr>
+<td><code>arc ui tail --layer &lt;l&gt;</code></td>
+<td>Filter to a specific layer: <code>llm</code>, <code>run</code>, <code>agent</code>, or <code>team</code></td>
+<td><code>arc ui tail --viewer-token &lt;t&gt; --layer llm</code></td>
+</tr>
+<tr>
+<td><code>arc ui tail --agent &lt;id&gt;</code></td>
+<td>Filter to events from a specific agent (by ID or DID)</td>
+<td><code>arc ui tail --viewer-token &lt;t&gt; --agent did:arc:acme:analyst/abc</code></td>
+</tr>
+<tr>
+<td><code>arc ui tail --group &lt;name&gt;</code></td>
+<td>Filter to events from agents in a specific team/group</td>
+<td><code>arc ui tail --viewer-token &lt;t&gt; --group research-team</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Notes:</strong>
+- <code>arc ui start</code> auto-generates viewer/operator tokens if not supplied and prints them masked (<code>--show-tokens</code> prints them in full). On a loopback bind the browser opens pre-authenticated; there is no <code>--agent-token</code> flag and no on-disk token file — tokens live only in the running process.
+- <code>arc ui tail</code> requires <code>--viewer-token</code> explicitly.
+- <code>arc ui start</code> reads agent activity on demand from the shared <code>arcstore</code> data dir (the
+ Observe plane) — agents don't push events to a running dashboard; there is no
+ <code>--ui</code>/<code>ui_reporter</code> opt-in on <code>arc agent serve</code>. Pass <code>--team-root</code> so <code>arc ui start</code> can
+ discover the agents to read.</p>
+<hr />
+<h3 id="arc-init-first-time-setup-wizard"><code>arc init</code> — First-time setup wizard<a class="headerlink" href="#arc-init-first-time-setup-wizard" title="Permanent link">&para;</a></h3>
+<p>Interactive tier-based configuration wizard.</p>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>arc init</code></td>
+<td>Interactive wizard: select tier (personal/enterprise/federal), provider, API key</td>
+<td><code>arc init</code></td>
+</tr>
+<tr>
+<td><code>arc init --tier &lt;t&gt;</code></td>
+<td>Non-interactive: write config for a specific tier</td>
+<td><code>arc init --tier enterprise</code></td>
+</tr>
+<tr>
+<td><code>arc init --provider &lt;p&gt;</code></td>
+<td>Non-interactive: set provider</td>
+<td><code>arc init --tier personal --provider anthropic</code></td>
+</tr>
+<tr>
+<td><code>arc init --dir &lt;path&gt;</code></td>
+<td>Write config to a specific directory</td>
+<td><code>arc init --tier federal --dir /etc/arc</code></td>
+</tr>
+<tr>
+<td><code>arc init --blueprint &lt;name&gt;</code></td>
+<td>Bootstrap from a signed preset, deep-merged UNDER init defaults</td>
+<td><code>arc init --blueprint enterprise-ops</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Tier presets:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Tier</th>
+<th>Telemetry</th>
+<th>Audit</th>
+<th>Retry</th>
+<th>Fallback</th>
+<th>OTel</th>
+<th>Security (PII + signing)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>personal</code></td>
+<td>off</td>
+<td>off</td>
+<td>off</td>
+<td>off</td>
+<td>off</td>
+<td>off</td>
+</tr>
+<tr>
+<td><code>enterprise</code></td>
+<td>on</td>
+<td>on</td>
+<td>on (3x)</td>
+<td>on</td>
+<td>off</td>
+<td>off</td>
+</tr>
+<tr>
+<td><code>federal</code></td>
+<td>on</td>
+<td>on</td>
+<td>on (3x)</td>
+<td>on</td>
+<td>on (OTLP gRPC)</td>
+<td>on</td>
+</tr>
+</tbody>
+</table>
+<p>Tiers are config-relaxable within limits (<code>arcagent.tiers.RELAXABLE_KNOBS</code>); federal floors are
+never relaxable. See <code>arc blueprint</code> and <code>arc ext</code> below.</p>
+<hr />
+<h3 id="arc-gateway-gateway-control-plane"><code>arc gateway</code> — Gateway control plane<a class="headerlink" href="#arc-gateway-gateway-control-plane" title="Permanent link">&para;</a></h3>
+<p>Operator commands for managing DM pairing codes. Require a running gateway
+— in practice that means <code>arc ui start --team-root &lt;dir&gt; --gateway-config
+&lt;path&gt;</code> (the embedded gateway); the standalone <code>arcgateway start</code> daemon
+unconditionally refuses to start at every tier (see
+<a href="../../building/packages/arcgateway/#embedded-gateway-pattern">packages/arcgateway.md</a>),
+so it is never the "running arcgateway" these commands need.</p>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>arc gateway pair approve &lt;code&gt;</code></td>
+<td>Approve an 8-char DM pairing code; adds user hash to session allowlist; code is consumed</td>
+<td><code>arc gateway pair approve ABCD1234</code></td>
+</tr>
+<tr>
+<td><code>arc gateway pair list</code></td>
+<td>List all pending (unexpired, unconsumed) pairing codes</td>
+<td><code>arc gateway pair list</code></td>
+</tr>
+<tr>
+<td><code>arc gateway pair revoke &lt;code&gt;</code></td>
+<td>Revoke a pending pairing code</td>
+<td><code>arc gateway pair revoke ABCD1234</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Notes:</strong>
+- Pairing codes are exactly 8 characters, uppercase
+- Codes expire automatically; <code>pair list</code> shows remaining TTL in minutes
+- These commands only take effect when the gateway config has <code>[security]
+ require_pairing = true</code> (<code>gateway.toml</code> — NOT <code>gateway.pairing.enabled</code>,
+ which isn't a real field on <code>GatewayConfig</code>)
+- Approving a code requires a registered trust-anchor operator key first —
+ run <code>arc identity init</code> once if you haven't (see DM pairing in
+ <a href="../../building/packages/arcgateway/#pairing-system">packages/arcgateway.md</a>)</p>
+<hr />
+<h3 id="arc-help-and-arc-version"><code>arc help</code> and <code>arc version</code><a class="headerlink" href="#arc-help-and-arc-version" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>arc help</code> (or <code>arc ?</code>)</td>
+<td>Show all available commands grouped by category</td>
+</tr>
+<tr>
+<td><code>arc version</code> (or <code>arc ver</code>)</td>
+<td>Show arccli version</td>
+</tr>
+<tr>
+<td><code>arc quit</code> (or <code>arc exit</code>, <code>arc q</code>, <code>arc bye</code>)</td>
+<td>Exit the Arc REPL</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="global-flags">Global flags<a class="headerlink" href="#global-flags" title="Permanent link">&para;</a></h2>
+<p>There are no global flags that apply to all commands. Per-command flags are documented above. Most data-returning commands accept <code>--json</code> for structured output suitable for CI/CD pipelines.</p>
+<hr />
+<h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
+<p>Agent configuration lives in <code>arcagent.toml</code> in the agent directory. Key sections:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">[agent]</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;myagent&quot;</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">org</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;local&quot;</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;executor&quot;</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">workspace</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;./workspace&quot;</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="k">[llm]</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="n">model</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;anthropic/claude-sonnet-4-5-20250929&quot;</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="n">max_tokens</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">8192</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="n">temperature</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.7</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="k">[identity]</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="n">did</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;&quot;</span><span class="w">                        </span><span class="c1"># minted by arc agent create; preserved by arc agent build</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="n">key_dir</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;~/.arcagent/keys&quot;</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="k">[vault]</span>
+<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="n">backend</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;&quot;</span><span class="w">                    </span><span class="c1"># vault URL, or empty for env-var fallback</span>
+<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a>
+<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="k">[tools.policy]</span>
+<a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a><span class="n">allow</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[]</span><span class="w">                      </span><span class="c1"># explicit tool allowlist</span>
+<a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a><span class="n">deny</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[]</span>
+<a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a><span class="n">timeout_seconds</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">30</span>
+<a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a>
+<a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a><span class="k">[telemetry]</span>
+<a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a><span class="n">enabled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a><span class="n">service_name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;myagent&quot;</span>
+<a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a><span class="n">log_level</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;INFO&quot;</span>
+<a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a><span class="n">export_traces</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
+<a id="__codelineno-1-29" name="__codelineno-1-29" href="#__codelineno-1-29"></a>
+<a id="__codelineno-1-30" name="__codelineno-1-30" href="#__codelineno-1-30"></a><span class="k">[context]</span>
+<a id="__codelineno-1-31" name="__codelineno-1-31" href="#__codelineno-1-31"></a><span class="n">max_tokens</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">128000</span>
+<a id="__codelineno-1-32" name="__codelineno-1-32" href="#__codelineno-1-32"></a>
+<a id="__codelineno-1-33" name="__codelineno-1-33" href="#__codelineno-1-33"></a><span class="k">[session]</span>
+<a id="__codelineno-1-34" name="__codelineno-1-34" href="#__codelineno-1-34"></a><span class="n">retention_count</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">50</span>
+<a id="__codelineno-1-35" name="__codelineno-1-35" href="#__codelineno-1-35"></a><span class="n">retention_days</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">30</span>
+<a id="__codelineno-1-36" name="__codelineno-1-36" href="#__codelineno-1-36"></a>
+<a id="__codelineno-1-37" name="__codelineno-1-37" href="#__codelineno-1-37"></a><span class="k">[modules.memory]</span>
+<a id="__codelineno-1-38" name="__codelineno-1-38" href="#__codelineno-1-38"></a><span class="n">enabled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-1-39" name="__codelineno-1-39" href="#__codelineno-1-39"></a>
+<a id="__codelineno-1-40" name="__codelineno-1-40" href="#__codelineno-1-40"></a><span class="k">[modules.memory.config]</span>
+<a id="__codelineno-1-41" name="__codelineno-1-41" href="#__codelineno-1-41"></a><span class="n">brain</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;arcmemory&quot;</span><span class="w">             </span><span class="c1"># arcmemory (scaffold default) | none | auto | module:Class</span>
+<a id="__codelineno-1-42" name="__codelineno-1-42" href="#__codelineno-1-42"></a>
+<a id="__codelineno-1-43" name="__codelineno-1-43" href="#__codelineno-1-43"></a><span class="k">[modules.policy]</span>
+<a id="__codelineno-1-44" name="__codelineno-1-44" href="#__codelineno-1-44"></a><span class="n">enabled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+</code></pre></div>
+<p><code>arc agent create</code> and <code>arc init</code> scaffold <code>brain = "arcmemory"</code>, so a fresh agent has
+memory ON: zero-LLM capture writes daily-log bullets to <code>workspace/memory/daily-log/YYYY-MM-DD.md</code>,
+the episodic index to <code>workspace/memory/index.db</code>, and the entity graph on every turn.
+Consolidation (entity cards + facts + insights) is opt-in via <code>distill_provider</code>. Set
+<code>brain = "none"</code> for a memory-less agent. (The framework code default — an agent with no
+<code>[modules.memory]</code> config at all — remains <code>none</code>, so federal deployments stay memory-off
+unless a config/blueprint opts in.)</p>
+<p>Skills and capability <code>.py</code> files are discovered from <code>~/.arc/capabilities/</code> (global) plus
+per-agent <code>capabilities/</code> / <code>workspace/capabilities/</code> — there is no separate <code>[extensions]</code>
+config section; see <code>arc skill</code> / <code>arc ext</code> above.</p>
+<p>For the full TOML schema, see <code>arcagent.core.config.ArcAgentConfig</code>.</p>
+<hr />
+<h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-019-four-pillars-universal.md">ADR-019</a> — Four Pillars Universal (Identity, Sign, Authorize, Audit)</li>
+<li><a href="https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-018-no-mcp-no-migration-no-acp.md">ADR-018</a> — No MCP, No Migration, No ACP</li>
+<li>— DID Identity Unification</li>
+<li>— Multi-Agent UI</li>
+<li>— Arc Core Hardening (argparse migration, policy pipeline)</li>
+<li>— Hermes Parity (gateway session guard, skill verification)</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/joshuamschultz/Arc" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "navigation.sections", "navigation.indexes", "toc.follow", "content.code.copy", "content.action.edit", "search.suggest", "search.highlight"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

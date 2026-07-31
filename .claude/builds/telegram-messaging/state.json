@@ -1,0 +1,29 @@
+{
+  "feature": "telegram-messaging",
+  "brainstorm_path": ".claude/brainstorms/2026-02-16-agent-messaging.md",
+  "current_category": "complete",
+  "current_decision": 14,
+  "decisions": {
+    "D-001": "ArcAgent module at arcagent/modules/telegram/",
+    "D-002": "Long polling only for inbound messages",
+    "D-003": "Module owns polling loop via background asyncio task",
+    "D-004": "Deferred binding via set_agent_chat_fn callback",
+    "D-005": "Resume last session by default, /new for fresh start",
+    "D-006": "Single chat model: 1 bot = 1 user = 1 chat",
+    "D-007": "Smart split at paragraph boundaries for long messages",
+    "D-008": "Plain text response formatting",
+    "D-009": "Typing indicator only for processing acknowledgment",
+    "D-010": "Environment variable for bot token",
+    "D-011": "chat_id allowlist in config for authorization",
+    "D-012": "Sequential message processing via asyncio.Queue",
+    "D-013": "Mock bot API + real agent for testing",
+    "D-014": "Auto-start in serve mode when enabled"
+  },
+  "locked_decisions": [],
+  "open_questions": [],
+  "notes": [
+    "All 14 decisions complete. OpenClaw research informed several decisions (polling default, session model, per-chat sequencing).",
+    "Ready for /specify to create formal PRD -> SDD -> PLAN."
+  ],
+  "meta": { "last_updated": "2026-02-16", "sessions": 1 }
+}

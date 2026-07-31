@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="672" viewBox="0 0 960 672" font-family="Verdana, Geneva, sans-serif" role="img" aria-label="Arc layered architecture: each layer depends on the layers below it">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#F4F5F6"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#002550" flood-opacity="0.18"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#54585C"/>
+    </marker>
+  </defs>
+
+  <!-- panel -->
+  <rect x="0" y="0" width="960" height="672" rx="16" fill="url(#bg)"/>
+  <rect x="0.5" y="0.5" width="959" height="671" rx="16" fill="none" stroke="#E9EAEB"/>
+
+  <!-- title -->
+  <text x="40" y="48" font-size="24" font-weight="700" fill="#002550">Arc — a layered, security-first agent stack</text>
+  <text x="40" y="72" font-size="14" fill="#54585C">Each layer depends only on the layers below it. Nothing reaches sideways.</text>
+
+  <!-- depends-on arrow -->
+  <line x1="64" y1="118" x2="64" y2="612" stroke="#54585C" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="40" y="365" font-size="12" fill="#54585C" transform="rotate(-90 40 365)" text-anchor="middle">depends on  &#9660;</text>
+
+  <!-- ENTRY -->
+  <g filter="url(#shadow)">
+    <rect x="110" y="100" width="810" height="76" rx="10" fill="#D6E6FF" stroke="#9CC2FF"/>
+  </g>
+  <text x="130" y="129" font-size="13" font-weight="700" fill="#002550" letter-spacing="1.5">ENTRY &amp; TOOLING</text>
+  <text x="130" y="150" font-size="12" fill="#003B82">Operator surface — one command, the meta-install, the terminal UI</text>
+  <g font-family="Consolas, monospace" font-size="13" font-weight="700" fill="#002550">
+    <rect x="640" y="118" width="78" height="40" rx="8" fill="#FFFFFF" stroke="#9CC2FF"/><text x="679" y="143" text-anchor="middle">arccli</text>
+    <rect x="728" y="118" width="78" height="40" rx="8" fill="#FFFFFF" stroke="#9CC2FF"/><text x="767" y="143" text-anchor="middle">arctui</text>
+    <rect x="816" y="118" width="86" height="40" rx="8" fill="#FFFFFF" stroke="#9CC2FF"/><text x="859" y="143" text-anchor="middle">arcmas</text>
+  </g>
+
+  <!-- SURFACES -->
+  <g filter="url(#shadow)">
+    <rect x="110" y="188" width="810" height="76" rx="10" fill="#5A9CFF" stroke="#0073FE"/>
+  </g>
+  <text x="130" y="217" font-size="13" font-weight="700" fill="#FFFFFF" letter-spacing="1.5">SURFACES</text>
+  <text x="130" y="238" font-size="12" fill="#EAF0F7">Chat-platform gateway · multi-agent messaging · live dashboard</text>
+  <g font-family="Consolas, monospace" font-size="13" font-weight="700" fill="#002550">
+    <rect x="604" y="206" width="100" height="40" rx="8" fill="#FFFFFF" stroke="#003B82"/><text x="654" y="231" text-anchor="middle">arcgateway</text>
+    <rect x="714" y="206" width="84" height="40" rx="8" fill="#FFFFFF" stroke="#003B82"/><text x="756" y="231" text-anchor="middle">arcteam</text>
+    <rect x="808" y="206" width="94" height="40" rx="8" fill="#FFFFFF" stroke="#003B82"/><text x="855" y="231" text-anchor="middle">arcui</text>
+  </g>
+
+  <!-- AGENT -->
+  <g filter="url(#shadow)">
+    <rect x="110" y="276" width="810" height="76" rx="10" fill="#0073FE" stroke="#0055BC"/>
+  </g>
+  <text x="130" y="305" font-size="13" font-weight="700" fill="#FFFFFF" letter-spacing="1.5">AGENT</text>
+  <text x="130" y="326" font-size="12" fill="#D6E6FF">DID identity · sessions · unified capability loader (tools · skills · hooks · tasks)</text>
+  <g font-family="Consolas, monospace" font-size="13" font-weight="700" fill="#0073FE">
+    <rect x="700" y="294" width="100" height="40" rx="8" fill="#FFFFFF" stroke="#FFFFFF"/><text x="750" y="319" text-anchor="middle">arcagent</text>
+    <rect x="810" y="294" width="92" height="40" rx="8" fill="#FFFFFF" stroke="#FFFFFF"/><text x="856" y="319" text-anchor="middle" fill="#0073FE">arcskill</text>
+  </g>
+
+  <!-- RUNTIME -->
+  <g filter="url(#shadow)">
+    <rect x="110" y="364" width="810" height="76" rx="10" fill="#0055BC" stroke="#003B82"/>
+  </g>
+  <text x="130" y="393" font-size="13" font-weight="700" fill="#FFFFFF" letter-spacing="1.5">RUNTIME</text>
+  <text x="130" y="414" font-size="12" fill="#D6E6FF">The think &#8594; act &#8594; observe loop — tool sandbox, streaming, parallel dispatch</text>
+  <g font-family="Consolas, monospace" font-size="13" font-weight="700" fill="#0055BC">
+    <rect x="800" y="382" width="102" height="40" rx="8" fill="#FFFFFF"/><text x="851" y="407" text-anchor="middle">arcrun</text>
+  </g>
+
+  <!-- LLM -->
+  <g filter="url(#shadow)">
+    <rect x="110" y="452" width="810" height="76" rx="10" fill="#003B82" stroke="#002550"/>
+  </g>
+  <text x="130" y="481" font-size="13" font-weight="700" fill="#FFFFFF" letter-spacing="1.5">LLM CLIENT</text>
+  <text x="130" y="502" font-size="12" fill="#C7D6E8">16 providers via direct HTTP — zero vendor SDKs. PII redaction, signing, audit</text>
+  <g font-family="Consolas, monospace" font-size="13" font-weight="700" fill="#003B82">
+    <rect x="800" y="470" width="102" height="40" rx="8" fill="#FFFFFF"/><text x="851" y="495" text-anchor="middle">arcllm</text>
+  </g>
+
+  <!-- FOUNDATION -->
+  <g filter="url(#shadow)">
+    <rect x="110" y="540" width="810" height="76" rx="10" fill="#002550" stroke="#001A38"/>
+  </g>
+  <text x="130" y="569" font-size="13" font-weight="700" fill="#FFFFFF" letter-spacing="1.5">FOUNDATION</text>
+  <text x="130" y="590" font-size="12" fill="#9CC2FF">Identity &#183; Sign &#183; Authorize &#183; Audit  +  operational storage</text>
+  <g font-family="Consolas, monospace" font-size="13" font-weight="700" fill="#002550">
+    <rect x="688" y="558" width="100" height="40" rx="8" fill="#FFFFFF"/><text x="738" y="583" text-anchor="middle">arctrust</text>
+    <rect x="798" y="558" width="104" height="40" rx="8" fill="#FFFFFF"/><text x="850" y="583" text-anchor="middle">arcstore</text>
+  </g>
+
+  <!-- four pillars accent -->
+  <rect x="110" y="630" width="810" height="4" rx="2" fill="#F68D2E"/>
+  <text x="110" y="656" font-size="12" fill="#54585C">Four Pillars enforced at <tspan font-weight="700" fill="#002550">every</tspan> tier — personal &#183; enterprise &#183; federal. Tier changes stringency, never whether verification happens.</text>
+</svg>

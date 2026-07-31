@@ -1,0 +1,23 @@
+{
+  "feature": "azure-openai-provider",
+  "spec_id": "SPEC-010",
+  "status": "complete",
+  "current_category": null,
+  "decisions_made": 20,
+  "categories_completed": [
+    "architecture",
+    "data-model",
+    "api-design",
+    "observability",
+    "audit-compliance",
+    "security",
+    "integration",
+    "performance",
+    "extensibility",
+    "testing",
+    "deployment"
+  ],
+  "started": "2026-02-25",
+  "last_updated": "2026-02-25",
+  "notes": "Thin adapter (~30 LOC). 13 auto-applied decisions, 7 user-decided. Main risk: api-version regression."
+}

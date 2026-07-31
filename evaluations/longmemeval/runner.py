@@ -41,13 +41,13 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict
 
-from evaluations.ingest.agent_factory import build_eval_agent
-from evaluations.ingest.chunker import TurnChunker, TurnExceedsCapError
-from evaluations.ingest.consolidation import ConsolidationWaiter
-from evaluations.ingest.driver import IngestDriver
-from evaluations.ingest.fidelity import GoldEvidenceFilteredError, SanitizeFidelityGate
-from evaluations.ingest.lifecycle import WorkspaceLifecycle, assert_leftovers_under_threshold
-from evaluations.ingest.types import Chunk
+from evaluations.longmemeval.ingest.agent_factory import build_eval_agent
+from evaluations.longmemeval.ingest.chunker import TurnChunker, TurnExceedsCapError
+from evaluations.longmemeval.ingest.consolidation import ConsolidationWaiter
+from evaluations.longmemeval.ingest.driver import IngestDriver
+from evaluations.longmemeval.ingest.fidelity import GoldEvidenceFilteredError, SanitizeFidelityGate
+from evaluations.longmemeval.ingest.lifecycle import WorkspaceLifecycle, assert_leftovers_under_threshold
+from evaluations.longmemeval.ingest.types import Chunk
 from evaluations.longmemeval.adapter import LongMemEvalAdapter, QuestionMeta
 from evaluations.longmemeval.budget import MAX_EVENT_CHARS, BudgetGovernor, QuestionCost
 from evaluations.longmemeval.dataset import Dataset

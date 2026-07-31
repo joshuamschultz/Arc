@@ -1,76 +1,70 @@
-# evaluations/ — the LongMemEval memory harness
+# evaluations/ — benchmark harnesses
 
-SPEC-060. A standalone tree that drives the **unmodified** Arc stack as a black box and
-measures what its memory can recall. Zero framework changes: every requirement is met by
-configuration, by public API already in a package's `__all__`, or by harness-side code.
+Each benchmark lives in its own self-contained directory under `evaluations/`.
+A harness drives the **unmodified** Arc stack as a black box and measures what
+it can do. Zero framework changes: every requirement is met by configuration,
+by public API already in a package's `__all__`, or by harness-side code.
 
-`evaluations/` is a peer of `packages/`, deliberately **not** a uv workspace member.
-Nothing under `packages/` may import it — `tests/architecture/test_no_evaluations_layering_violations.py`
-enforces that, and the same guard keeps `ingest/` from importing `longmemeval/`.
+`evaluations/` is a peer of `packages/`, deliberately **not** a uv workspace
+member. Nothing under `packages/` may import it —
+`tests/architecture/test_no_evaluations_layering_violations.py` enforces that.
 
-## Layout
+## Available harnesses
+
+| Harness | Measures | Docs |
+|---|---|---|
+| [`longmemeval/`](longmemeval/README.md) | Long-term memory recall across many sessions | [README](longmemeval/README.md) |
+
+## Layout convention
+
+Every harness owns its whole tree, so adding a second one never disturbs the
+first:
 
 ```
-ingest/        source-agnostic — the reusable pathway
-               types adapter chunker fidelity agent_factory driver consolidation lifecycle
-longmemeval/   the first and only consumer
-               adapter dataset query judge scoring reference_prompts agreement
-               runner ledger preflight budget manifest hygiene scrub cli
-longmemeval/data/   gitignored — the dataset JSON (manual download)
-runs/          gitignored — throwaway per-question workspaces. NO harness code, ever.
-results/       gitignored — the JSONL ledger + run_manifest.json
+evaluations/
+  <harness>/
+    README.md        how to run this harness
+    cli.py           the entry point: python -m evaluations.<harness>.cli
+    ingest/          how a source corpus becomes agent input
+    config/          *.toml.example templates for the generated agent
+    tests/           the harness's own test suite
+    data/            gitignored — the corpus (manual download)
+    runs/            gitignored — throwaway per-question workspaces
+    results/         gitignored — ledgers and manifests
 ```
 
-`runs/` holds no source because **git cannot re-include a file beneath an ignored
-directory**. A `!` negation cannot rescue it.
+Three directories per harness are generated and gitignored: `data/`, `runs/`
+and `results/`. They hold **no source, ever** — git cannot re-include a file
+beneath an ignored directory, so a `!` negation could never rescue it.
 
-## Running it
+## Running a harness
 
-Always as a module, from the repo root. A bare `python evaluations/longmemeval/cli.py`
-fails with `ModuleNotFoundError: No module named 'evaluations'`, because the script's own
-directory goes on `sys.path` instead of the repo root.
+Always from the repository root, always as a module:
 
 ```bash
-uv run python -m evaluations.longmemeval.cli --help
-uv run python -m evaluations.longmemeval.cli --dry-run --phase oracle   # estimate, no spend
-uv run python -m evaluations.longmemeval.cli --smoke 3                  # gates entry to full-s
-uv run python -m evaluations.longmemeval.cli --phase oracle
+uv run python -m evaluations.<harness>.cli --help
 ```
 
-Before the first run, two things must happen by hand:
+`python evaluations/<harness>/cli.py` does **not** work: Python puts the
+script's own directory on `sys.path` instead of the repository root, so the
+first import fails with `ModuleNotFoundError: No module named 'evaluations'`.
+There is no console-script entry either — `evaluations/` is deliberately
+outside the uv workspace.
 
-1. Download `longmemeval_oracle.json` / `longmemeval_s_cleaned.json` from
-   `xiaowu0162/longmemeval-cleaned` into `evaluations/longmemeval/data/`. The SHA-256 is verified at
-   preflight — the Sept-2025 "cleaned" revision is **not** numerically comparable to the
-   original, which is why the hash and revision are pinned in the manifest.
-2. Export the judge's own API key. It is read from the environment only, never a file.
-
-Two measurement passes are worth running before any scored phase:
+## Testing a harness
 
 ```bash
-uv run python -m evaluations.longmemeval.measure_turn_lengths  # is "never split mid-turn" achievable?
-uv run python -m evaluations.longmemeval.damage_report         # how often do the filters eat gold evidence?
+uv run pytest evaluations/<harness>/tests -q -rs
 ```
 
-The damage report decides whether any score is trustworthy at all. Run it first.
+The `-rs` matters. Tests that need a real corpus or a live judge key skip with
+a reason naming exactly what is missing, so a skip is never mistaken for a pass.
 
-## What the number means
+## Adding a harness
 
-Read `run_manifest.json`, not just the accuracy. `measurement_scope` records that
-`workpad` and `policy` were left **enabled**, so the reported accuracy covers arcmemory
-*plus two additional system-prompt summarizers*. Every figure is `personal`-tier specific.
-
-Three accuracies are reported with three different denominators, and they are not
-interchangeable: task-averaged (macro over the six question types), overall (micro over
-all scored questions), and abstention (separate). Any per-type stratum under n=30 is
-flagged `directional` — at n=13 and 77% observed, the Wilson interval spans roughly
-50% to 92%.
-
-## Tests
-
-```bash
-uv run pytest evaluations/tests/ -q -rs
-```
-
-The `-rs` matters. One test needs the real dataset and a live judge key; it skips with a
-reason naming exactly what is missing, so a skip is never mistaken for a pass.
+1. Create `evaluations/<name>/` with the layout above.
+2. Give it a `cli.py` exposing `python -m evaluations.<name>.cli`.
+3. Add its row to the table above and a `README.md` in its directory.
+4. The gitignore patterns are already generic (`/evaluations/*/data/`,
+   `/evaluations/*/runs/`, `/evaluations/*/results/`) — nothing to add.
+5. Keep the one-way rule: the harness imports Arc, Arc never imports the harness.

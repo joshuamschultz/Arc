@@ -1,0 +1,48 @@
+{
+  "feature": "arcui-llm-telemetry",
+  "description": "ArcUI package — LLM telemetry monitoring, trace storage, config control plane",
+  "phase": "deepen",
+  "status": "complete",
+  "started": "2026-03-01",
+  "completed": "2026-03-01",
+  "total_decisions": 34,
+  "auto_applied": 6,
+  "user_decisions": 28,
+  "categories_covered": [
+    "architecture", "data-model", "api-design", "observability",
+    "audit-compliance", "security", "integration", "performance",
+    "extensibility", "testing", "deployment", "ui-ux"
+  ],
+  "research_agents": 6,
+  "research_topics": [
+    "JSONL hash chain patterns (jcs, orjson, rotation tombstones, AU-9)",
+    "Starlette WebSocket patterns (ConnectionManager, EventBuffer, mTLS, shutdown)",
+    "Rolling window aggregation (BucketedWindow, DDSketch, double-buffer, warm-start)",
+    "Runtime config hot-reload (ConfigStore, atomic swap, propagation strategies)",
+    "Vanilla JS dashboard (RobustWebSocket, DOMBatcher, Store, LogTable, formatters)",
+    "Codebase patterns (EventBus, on_event, TelemetryModule, ModuleBus, bridges)"
+  ],
+  "decisions_log": ".claude/decisions-log.md",
+  "next_steps": ["/specify arcui-llm-telemetry"],
+  "notes_for_next_session": [
+    "Start with ArcLLM changes (TraceStore, on_event, ConfigController, CircuitBreakerModule) before arcUI package",
+    "Decision #8 UPDATED: TraceRecord now includes raw request/response bodies (configurable per tier)",
+    "NEW: CircuitBreakerModule (#30) — ArcLLM has RetryModule but NO circuit breaker today",
+    "NEW: Span sub-phase timing (#29) — TelemetryModule only records total duration_ms today",
+    "NEW: Budget state queryable via ConfigController (#31) — BudgetAccumulator already tracks, just needs API",
+    "NEW: Per-agent cost in rolling windows (#32) — keyed by agent label / budget_scope",
+    "NEW: Telemetry tabs (#28) — Overview / Traces / Replay / Cost (replay is session-level, ArcAgent day 2)",
+    "NEW: Filters + Export on trace table (#34)",
+    "Demo files in demo/ directory — port CSS/JS/HTML directly",
+    "arcui stub already exists at packages/arcui/ — empty __init__.py",
+    "Starlette + uvicorn as server deps",
+    "Two-mode: attach_llm() for standalone, attach_agent() for full stack",
+    "Use jcs (RFC 8785) for canonical JSON instead of json.dumps(sort_keys=True)",
+    "Rotation tombstones > chain-state.json for crash safety",
+    "Per-client asyncio.Queue for WebSocket broadcast (not direct send)",
+    "DDSketch for streaming P50/P95/P99 (~2KB per sketch, ~2MB total for 7d)",
+    "First-message auth pattern for WebSocket (no custom headers in browser API)",
+    "DOMBatcher + requestAnimationFrame — never write DOM in WS message handler",
+    "Node cap 200-300 rows for live log table, deleteRow(0) for oldest"
+  ]
+}

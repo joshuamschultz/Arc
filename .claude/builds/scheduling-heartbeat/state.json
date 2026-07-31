@@ -1,0 +1,20 @@
+{
+  "feature": "scheduling-heartbeat",
+  "started": "2026-02-16",
+  "completed": "2026-02-16",
+  "status": "complete",
+  "decisions_count": 12,
+  "decisions_log": ".claude/decisions-log.md",
+  "context": {
+    "source_design": "packages/arcagent/docs/arcagent-design-v3.md Section 4",
+    "goal": "Full scheduling system - all 3 types, agent self-scheduling, daemon model",
+    "layer": "arcagent module (NOT core, NOT arcrun, NOT arcllm)"
+  },
+  "deepened": "2026-02-16",
+  "research_agents": [
+    "asyncio-patterns: timer loops, croniter DST, asyncio.Queue, daemon shutdown, atomic writes",
+    "codebase-analysis: Module Bus DI, RegisteredTool pattern, agent.run() interface, config pattern, CLI pattern",
+    "security-edge-cases: prompt injection defense, TOCTOU mitigation, resource exhaustion guardrails, NIST AU-2/AU-3 audit"
+  ],
+  "next_steps": ["/specify scheduling-heartbeat"]
+}

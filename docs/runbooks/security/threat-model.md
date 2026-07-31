@@ -1,6 +1,24 @@
 # Threat Model — ArcRun
 
-> **Section:** 3. Reference · **Topic:** Security · **Type:** Runbook
+> **Runbooks**  ·  Operate  ·  page 12 of 16  
+> **For** Operators deploying and running Arc  
+> [← Hardening](hardening.md)  ·  [Docs home](../../README.md)  ·  [Adversarial tests →](adversarial-tests.md)
+
+```mermaid
+flowchart TB
+    classDef a fill:#D6E6FF,stroke:#0073FE,color:#002550
+    classDef b fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef c fill:#002550,stroke:#001A38,color:#FFFFFF
+    A["Untrusted input"]:::a
+    B["Private data"]:::a
+    C["External comms"]:::a
+    T["All three resolved on one call<br/>= the lethal trifecta"]:::c
+    G["Human approval gate fires"]:::b
+    A --> T
+    B --> T
+    C --> T
+    T --> G
+```
 
 **Version**: 1.0
 **Date**: 2026-02-21

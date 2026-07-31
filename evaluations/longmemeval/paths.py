@@ -4,10 +4,10 @@ One definition, because three readers need it — the CLI, the damage report and
 the turn-length measurement — and a path that disagrees between them fails as
 "dataset not present" while the file is sitting right there.
 
-Every one of these is gitignored (REQ-195). ``data/`` sits under this package
-rather than beside it because the corpus is LongMemEval's, not the harness's: a
-second adapter brings its own corpus and its own directory, and neither should
-have to share a namespace with the other.
+Every one of these is gitignored. They all sit under this package rather than
+beside it: the corpus, the run workspaces and the results are LongMemEval's,
+not the harness's. A second eval brings its own directory and its own
+artifacts, and neither has to share a namespace with the other.
 """
 
 from __future__ import annotations
@@ -21,10 +21,10 @@ EVALUATIONS_ROOT: Final = LONGMEMEVAL_ROOT.parent
 DATA_DIR: Final = LONGMEMEVAL_ROOT / "data"
 """Manual, gitignored corpus download — `evaluations/longmemeval/data/`."""
 
-RUNS_ROOT: Final = EVALUATIONS_ROOT / "runs"
+RUNS_ROOT: Final = LONGMEMEVAL_ROOT / "runs"
 """Throwaway per-question agent workspaces. Never holds harness code."""
 
-RESULTS_DIR: Final = EVALUATIONS_ROOT / "results"
+RESULTS_DIR: Final = LONGMEMEVAL_ROOT / "results"
 """The JSONL ledger and `run_manifest.json`."""
 
 ORACLE_FILENAME: Final = "longmemeval_oracle.json"

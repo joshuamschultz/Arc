@@ -1,0 +1,42 @@
+{
+  "feature": "memory-wiring",
+  "brainstorm_path": ".claude/brainstorms/2026-02-14-memory-module.md",
+  "current_category": "complete",
+  "current_decision": 16,
+  "deepened": true,
+  "decisions": {
+    "MW-001": "Eval model lazy init in memory module",
+    "MW-002": "Convention-based module loading with config allowlist",
+    "MW-003": "Memory module owns memory_search tool",
+    "MW-004": "ModuleContext dataclass for startup DI",
+    "MW-005": "System prompt injection only (no extra search)",
+    "MW-006": "Session self-manages compaction at 0.85 threshold",
+    "MW-007": "New module_loader.py in core",
+    "MW-008": "Session owns context (SessionManager holds ContextManager)",
+    "MW-009": "Module injects guidance, identity.md can override",
+    "MW-010": "Memory enabled by default",
+    "MW-011": "memory_search: query + scope + date_from + date_to",
+    "MW-012": "Eval model falls back to agent's LLM config",
+    "MW-013": "Workspace-scoped search, no per-result ACL",
+    "MW-014": "PII handled in ArcLLM, not memory module",
+    "MW-015": "Semaphore-limited background tasks (max_concurrent=2)",
+    "MW-016": "Unit tests for wiring, one integration test for full flow"
+  },
+  "locked_decisions": ["MW-001", "MW-002", "MW-003", "MW-004", "MW-005", "MW-006", "MW-007", "MW-008", "MW-009", "MW-010", "MW-011", "MW-012", "MW-013", "MW-014", "MW-015", "MW-016"],
+  "open_questions_resolved": [
+    "Convention loader error handling → Tiered (fail critical, warn optional)",
+    "Date range filtering → SQLite FTS5 UNINDEXED columns",
+    "Compaction pre-flush → Hybrid fast/slow (MAGMA pattern)"
+  ],
+  "notes": [
+    "Memory system fully built (423 tests, 93.67% coverage) but 5 gaps prevent it from working",
+    "Key architectural insight: session owns context (MW-008) solves compaction orchestration cleanly",
+    "OpenClaw pre-compaction flush pattern adopted for zero information loss",
+    "Convention loader (MW-007) replaces hardcoded _register_modules() in agent.py",
+    "ModuleContext (MW-004) is a breaking change to Module protocol but low blast radius (1 module)",
+    "Deepening resolved all 3 open questions with concrete implementation strategies",
+    "OpenClaw bug #5457 (stale token counts) → asyncio.Lock() on context during compaction",
+    "FTS5 UNINDEXED columns eliminate need for JOINs in date-filtered search (10-30ms)"
+  ],
+  "meta": { "last_updated": "2026-02-15", "sessions": 2 }
+}

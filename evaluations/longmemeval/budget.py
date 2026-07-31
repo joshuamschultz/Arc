@@ -48,11 +48,11 @@ from typing import Final
 
 from pydantic import BaseModel, ConfigDict
 
-from evaluations.ingest.chunker import TurnChunker, TurnExceedsCapError
+from evaluations.longmemeval.ingest.chunker import TurnChunker, TurnExceedsCapError
 
 # Redundant alias: the explicit re-export form, so the modules that already read
 # the cap off this one (the CLI, the runner) keep resolving it under strict mypy.
-from evaluations.ingest.limits import MAX_EVENT_CHARS as MAX_EVENT_CHARS
+from evaluations.longmemeval.ingest.limits import MAX_EVENT_CHARS as MAX_EVENT_CHARS
 from evaluations.longmemeval.adapter import LongMemEvalAdapter
 from evaluations.longmemeval.dataset import Dataset, load_dataset
 
@@ -74,7 +74,7 @@ class UnknownPricingError(Exception):
 class DatasetUnavailableError(Exception):
     """The dataset file is not on disk.
 
-    ``evaluations/data/`` is gitignored and the corpus is a manual download, so
+    ``evaluations/longmemeval/data/`` is gitignored and the corpus is a manual download, so
     the common case is that it is simply absent. The dry run says so and stops;
     it never substitutes sample or synthetic questions, which would produce a
     confident estimate of a corpus nobody is going to run.
@@ -82,7 +82,7 @@ class DatasetUnavailableError(Exception):
 
     def __init__(self, path: Path) -> None:
         super().__init__(
-            f"dataset {path} is not present; download it into evaluations/data/ "
+            f"dataset {path} is not present; download it into evaluations/longmemeval/data/ "
             "before estimating — the dry run will not invent one"
         )
         self.path = path

@@ -1,6 +1,20 @@
 # Adversarial Test Suite — ArcRun
 
-> **Section:** 3. Reference · **Topic:** Security · **Type:** Runbook
+> **Runbooks**  ·  Operate  ·  page 13 of 16  
+> **For** Operators deploying and running Arc  
+> [← Threat model](threat-model.md)  ·  [Docs home](../../README.md)  ·  [NIST 800-53 mapping →](compliance-nist-800-53.md)
+
+```mermaid
+flowchart LR
+    classDef a fill:#D6E6FF,stroke:#0073FE,color:#002550
+    classDef b fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef c fill:#002550,stroke:#001A38,color:#FFFFFF
+    A["attack corpus"]:::a
+    B["run against real stack"]:::b
+    C["assert the control fired<br/>not that output looked safe"]:::b
+    D["regression guard in CI"]:::c
+    A --> B --> C --> D
+```
 
 **Version**: 1.0
 **Date**: 2026-02-21

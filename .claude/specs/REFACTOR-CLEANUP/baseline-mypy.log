@@ -1,0 +1,286 @@
+=== arcagent (project=arc-agent) ===
+packages/arcagent/src/arcagent/builtins/capabilities/skills/create-tool/scripts/validate.py: error: Duplicate module named "validate" (also at "packages/arcagent/src/arcagent/builtins/capabilities/skills/create-skill/scripts/validate.py")
+packages/arcagent/src/arcagent/builtins/capabilities/skills/create-tool/scripts/validate.py: note: See https://mypy.readthedocs.io/en/stable/running_mypy.html#mapping-file-paths-to-modules for more info
+packages/arcagent/src/arcagent/builtins/capabilities/skills/create-tool/scripts/validate.py: note: Common resolutions include: a) using `--exclude` to avoid checking one of them, b) adding `__init__.py` somewhere, c) using `--explicit-package-bases` or adjusting MYPYPATH
+Found 1 error in 1 file (errors prevented further checking)
+[exit=2]
+=== arccli (project=arccmd) ===
+packages/arccli/src/arccli/main.py:65: error: Unused "type: ignore" comment  [unused-ignore]
+packages/arccli/src/arccli/main.py:65: error: Function is missing a return type annotation  [no-untyped-def]
+packages/arccli/src/arccli/main.py:65: note: Error code "no-untyped-def" not covered by "type: ignore" comment
+packages/arccli/src/arccli/main.py:90: error: Call to untyped function "_build_completer" in typed context  [no-untyped-call]
+packages/arccli/src/arccli/__main__.py:3: error: Module "arccli.main" has no attribute "cli"  [attr-defined]
+Found 4 errors in 2 files (checked 19 source files)
+[exit=1]
+=== arcgateway (project=arcgateway) ===
+Success: no issues found in 33 source files
+[exit=0]
+=== arcllm (project=arcllm) ===
+packages/arcllm/src/arcllm/modules/_logging.py:42: error: Returning Any from function declared to return "int"  [no-any-return]
+packages/arcllm/src/arcllm/backends/aws_secrets.py:80: error: Unused "type: ignore" comment  [unused-ignore]
+packages/arcllm/src/arcllm/backends/aws_secrets.py:80: error: Cannot find implementation or library stub for module named "boto3"  [import-not-found]
+packages/arcllm/src/arcllm/backends/aws_secrets.py:80: note: Error code "import-not-found" not covered by "type: ignore" comment
+packages/arcllm/src/arcllm/backends/aws_secrets.py:81: error: Unused "type: ignore" comment  [unused-ignore]
+packages/arcllm/src/arcllm/backends/aws_secrets.py:81: error: Cannot find implementation or library stub for module named "botocore.exceptions"  [import-not-found]
+packages/arcllm/src/arcllm/backends/aws_secrets.py:81: note: Error code "import-not-found" not covered by "type: ignore" comment
+packages/arcllm/src/arcllm/modules/routing.py:62: error: Cannot override writeable attribute with read-only property  [override]
+packages/arcllm/src/arcllm/modules/routing.py:69: error: Returning Any from function declared to return "str"  [no-any-return]
+packages/arcllm/src/arcllm/modules/routing.py:69: error: "LLMProvider" has no attribute "model_name"  [attr-defined]
+packages/arcllm/src/arcllm/modules/routing.py:109: error: "LLMProvider" has no attribute "model_name"  [attr-defined]
+packages/arcllm/src/arcllm/modules/base.py:74: error: Cannot override writeable attribute with read-only property  [override]
+packages/arcllm/src/arcllm/modules/base.py:79: error: Returning Any from function declared to return "str"  [no-any-return]
+packages/arcllm/src/arcllm/modules/base.py:79: error: "LLMProvider" has no attribute "model_name"  [attr-defined]
+packages/arcllm/src/arcllm/adapters/base.py:56: error: Cannot override writeable attribute with read-only property  [override]
+packages/arcllm/src/arcllm/adapters/base.py:72: error: Returning Any from function declared to return "dict[str, Any]"  [no-any-return]
+packages/arcllm/src/arcllm/modules/retry.py:143: error: Returning Any from function declared to return "float"  [no-any-return]
+packages/arcllm/src/arcllm/modules/otel.py:66: error: Cannot find implementation or library stub for module named "opentelemetry.exporter.otlp.proto.grpc.trace_exporter"  [import-not-found]
+packages/arcllm/src/arcllm/modules/otel.py:66: note: See https://mypy.readthedocs.io/en/stable/running_mypy.html#missing-imports
+packages/arcllm/src/arcllm/modules/otel.py:83: error: Cannot find implementation or library stub for module named "opentelemetry.exporter.otlp.proto.http.trace_exporter"  [import-not-found]
+packages/arcllm/src/arcllm/modules/otel.py:213: error: "LLMProvider" has no attribute "model_name"  [attr-defined]
+packages/arcllm/src/arcllm/adapters/openai.py:47: error: Cannot override writeable attribute with read-only property  [override]
+packages/arcllm/src/arcllm/adapters/xai.py:10: error: Cannot override writeable attribute with read-only property  [override]
+packages/arcllm/src/arcllm/adapters/vllm.py:10: error: Cannot override writeable attribute with read-only property  [override]
+packages/arcllm/src/arcllm/adapters/together.py:10: error: Cannot override writeable attribute with read-only property  [override]
+packages/arcllm/src/arcllm/adapters/moonshot.py:10: error: Cannot override writeable attribute with read-only property  [override]
+packages/arcllm/src/arcllm/adapters/huggingface_tgi.py:10: error: Cannot override writeable attribute with read-only property  [override]
+packages/arcllm/src/arcllm/adapters/huggingface.py:10: error: Cannot override writeable attribute with read-only property  [override]
+packages/arcllm/src/arcllm/adapters/fireworks.py:10: error: Cannot override writeable attribute with read-only property  [override]
+packages/arcllm/src/arcllm/adapters/deepseek.py:10: error: Cannot override writeable attribute with read-only property  [override]
+packages/arcllm/src/arcllm/adapters/cohere.py:10: error: Cannot override writeable attribute with read-only property  [override]
+packages/arcllm/src/arcllm/adapters/anthropic.py:35: error: Cannot override writeable attribute with read-only property  [override]
+packages/arcllm/src/arcllm/registry.py:95: error: Returning Any from function declared to return "type[LLMProvider]"  [no-any-return]
+packages/arcllm/src/arcllm/registry.py:104: error: Incompatible types in assignment (expression has type "GlobalConfig", variable has type "dict[str, Any] | None")  [assignment]
+packages/arcllm/src/arcllm/registry.py:105: error: "None" has no attribute "modules"  [attr-defined]
+packages/arcllm/src/arcllm/registry.py:130: error: Item "dict[str, Any]" of "dict[str, Any] | None" has no attribute "modules"  [union-attr]
+packages/arcllm/src/arcllm/registry.py:130: error: Item "None" of "dict[str, Any] | None" has no attribute "modules"  [union-attr]
+packages/arcllm/src/arcllm/registry.py:170: error: Too many arguments for "LLMProvider"  [call-arg]
+packages/arcllm/src/arcllm/registry.py:170: error: Unexpected keyword argument "resolved_api_key" for "LLMProvider"  [call-arg]
+.venv/lib/python3.12/site-packages/mypy/typeshed/stdlib/builtins.pyi: note: "LLMProvider" defined here
+packages/arcllm/src/arcllm/registry.py:257: error: Item "dict[str, Any]" of "dict[str, Any] | None" has no attribute "vault"  [union-attr]
+packages/arcllm/src/arcllm/registry.py:257: error: Item "None" of "dict[str, Any] | None" has no attribute "vault"  [union-attr]
+packages/arcllm/src/arcllm/registry.py:364: error: Item "dict[str, Any]" of "dict[str, Any] | None" has no attribute "defaults"  [union-attr]
+packages/arcllm/src/arcllm/registry.py:364: error: Item "None" of "dict[str, Any] | None" has no attribute "defaults"  [union-attr]
+packages/arcllm/src/arcllm/adapters/ollama.py:10: error: Cannot override writeable attribute with read-only property  [override]
+packages/arcllm/src/arcllm/adapters/mistral.py:28: error: Cannot override writeable attribute with read-only property  [override]
+packages/arcllm/src/arcllm/adapters/groq.py:10: error: Cannot override writeable attribute with read-only property  [override]
+packages/arcllm/src/arcllm/adapters/google.py:18: error: Cannot override writeable attribute with read-only property  [override]
+packages/arcllm/src/arcllm/adapters/azure_openai.py:30: error: Cannot override writeable attribute with read-only property  [override]
+packages/arcllm/src/arcllm/__init__.py:84: error: Function is missing a return type annotation  [no-untyped-def]
+Found 46 errors in 25 files (checked 44 source files)
+[exit=1]
+=== arcmas (project=arcmas) ===
+Success: no issues found in 1 source file
+[exit=0]
+=== arcmodel (project=arcmodel) ===
+Success: no issues found in 1 source file
+[exit=0]
+=== arcprompt (project=arcprompt) ===
+Success: no issues found in 1 source file
+[exit=0]
+=== arcrun (project=arcrun) ===
+packages/arcllm/src/arcllm/modules/_logging.py:42: error: Returning Any from function declared to return "int"  [no-any-return]
+packages/arcllm/src/arcllm/modules/base.py:74: error: Cannot override writeable attribute with read-only property  [override]
+packages/arcllm/src/arcllm/modules/base.py:79: error: Returning Any from function declared to return "str"  [no-any-return]
+packages/arcllm/src/arcllm/modules/base.py:79: error: "LLMProvider" has no attribute "model_name"  [attr-defined]
+packages/arcllm/src/arcllm/modules/routing.py:62: error: Cannot override writeable attribute with read-only property  [override]
+packages/arcllm/src/arcllm/modules/routing.py:69: error: Returning Any from function declared to return "str"  [no-any-return]
+packages/arcllm/src/arcllm/modules/routing.py:69: error: "LLMProvider" has no attribute "model_name"  [attr-defined]
+packages/arcllm/src/arcllm/modules/routing.py:109: error: "LLMProvider" has no attribute "model_name"  [attr-defined]
+packages/arcllm/src/arcllm/modules/retry.py:143: error: Returning Any from function declared to return "float"  [no-any-return]
+packages/arcllm/src/arcllm/modules/otel.py:66: error: Cannot find implementation or library stub for module named "opentelemetry.exporter.otlp.proto.grpc.trace_exporter"  [import-not-found]
+packages/arcllm/src/arcllm/modules/otel.py:66: note: See https://mypy.readthedocs.io/en/stable/running_mypy.html#missing-imports
+packages/arcllm/src/arcllm/modules/otel.py:83: error: Cannot find implementation or library stub for module named "opentelemetry.exporter.otlp.proto.http.trace_exporter"  [import-not-found]
+packages/arcllm/src/arcllm/modules/otel.py:213: error: "LLMProvider" has no attribute "model_name"  [attr-defined]
+packages/arcllm/src/arcllm/registry.py:95: error: Returning Any from function declared to return "type[LLMProvider]"  [no-any-return]
+packages/arcllm/src/arcllm/registry.py:104: error: Incompatible types in assignment (expression has type "GlobalConfig", variable has type "dict[str, Any] | None")  [assignment]
+packages/arcllm/src/arcllm/registry.py:105: error: "None" has no attribute "modules"  [attr-defined]
+packages/arcllm/src/arcllm/registry.py:130: error: Item "dict[str, Any]" of "dict[str, Any] | None" has no attribute "modules"  [union-attr]
+packages/arcllm/src/arcllm/registry.py:130: error: Item "None" of "dict[str, Any] | None" has no attribute "modules"  [union-attr]
+packages/arcllm/src/arcllm/registry.py:170: error: Too many arguments for "LLMProvider"  [call-arg]
+packages/arcllm/src/arcllm/registry.py:170: error: Unexpected keyword argument "resolved_api_key" for "LLMProvider"  [call-arg]
+.venv/lib/python3.12/site-packages/mypy/typeshed/stdlib/builtins.pyi: note: "LLMProvider" defined here
+packages/arcllm/src/arcllm/registry.py:257: error: Item "dict[str, Any]" of "dict[str, Any] | None" has no attribute "vault"  [union-attr]
+packages/arcllm/src/arcllm/registry.py:257: error: Item "None" of "dict[str, Any] | None" has no attribute "vault"  [union-attr]
+packages/arcllm/src/arcllm/registry.py:364: error: Item "dict[str, Any]" of "dict[str, Any] | None" has no attribute "defaults"  [union-attr]
+packages/arcllm/src/arcllm/registry.py:364: error: Item "None" of "dict[str, Any] | None" has no attribute "defaults"  [union-attr]
+packages/arcllm/src/arcllm/__init__.py:84: error: Function is missing a return type annotation  [no-untyped-def]
+packages/arcrun/src/arcrun/builtins/contained_execute.py:105: error: Library stubs not installed for "docker"  [import-untyped]
+packages/arcrun/src/arcrun/builtins/contained_execute.py:105: note: Hint: "python3 -m pip install types-docker"
+packages/arcrun/src/arcrun/builtins/contained_execute.py:105: note: (or run "mypy --install-types" to install all missing stub packages)
+packages/arcrun/src/arcrun/builtins/contained_execute.py:105: note: See https://mypy.readthedocs.io/en/stable/running_mypy.html#missing-imports
+packages/arcrun/src/arcrun/executor.py:9: error: Library stubs not installed for "jsonschema"  [import-untyped]
+packages/arcrun/src/arcrun/executor.py:9: note: Hint: "python3 -m pip install types-jsonschema"
+packages/arcrun/src/arcrun/strategies/__init__.py:125: error: Returning Any from function declared to return "str"  [no-any-return]
+packages/arcrun/src/arcrun/loop.py:109: error: Returning Any from function declared to return "LoopResult"  [no-any-return]
+Found 28 errors in 11 files (checked 25 source files)
+[exit=1]
+=== arcskill (project=arcskill) ===
+packages/arcllm/src/arcllm/modules/_logging.py:42: error: Returning Any from function declared to return "int"  [no-any-return]
+packages/arcrun/src/arcrun/builtins/contained_execute.py:105: error: Library stubs not installed for "docker"  [import-untyped]
+packages/arcrun/src/arcrun/builtins/contained_execute.py:105: note: Hint: "python3 -m pip install types-docker"
+packages/arcrun/src/arcrun/builtins/contained_execute.py:105: note: (or run "mypy --install-types" to install all missing stub packages)
+packages/arcrun/src/arcrun/builtins/contained_execute.py:105: note: See https://mypy.readthedocs.io/en/stable/running_mypy.html#missing-imports
+packages/arcllm/src/arcllm/modules/base.py:74: error: Cannot override writeable attribute with read-only property  [override]
+packages/arcllm/src/arcllm/modules/base.py:79: error: Returning Any from function declared to return "str"  [no-any-return]
+packages/arcllm/src/arcllm/modules/base.py:79: error: "LLMProvider" has no attribute "model_name"  [attr-defined]
+packages/arcllm/src/arcllm/modules/routing.py:62: error: Cannot override writeable attribute with read-only property  [override]
+packages/arcllm/src/arcllm/modules/routing.py:69: error: Returning Any from function declared to return "str"  [no-any-return]
+packages/arcllm/src/arcllm/modules/routing.py:69: error: "LLMProvider" has no attribute "model_name"  [attr-defined]
+packages/arcllm/src/arcllm/modules/routing.py:109: error: "LLMProvider" has no attribute "model_name"  [attr-defined]
+packages/arcllm/src/arcllm/modules/retry.py:143: error: Returning Any from function declared to return "float"  [no-any-return]
+packages/arcllm/src/arcllm/modules/otel.py:66: error: Cannot find implementation or library stub for module named "opentelemetry.exporter.otlp.proto.grpc.trace_exporter"  [import-not-found]
+packages/arcllm/src/arcllm/modules/otel.py:66: note: See https://mypy.readthedocs.io/en/stable/running_mypy.html#missing-imports
+packages/arcllm/src/arcllm/modules/otel.py:83: error: Cannot find implementation or library stub for module named "opentelemetry.exporter.otlp.proto.http.trace_exporter"  [import-not-found]
+packages/arcllm/src/arcllm/modules/otel.py:213: error: "LLMProvider" has no attribute "model_name"  [attr-defined]
+packages/arcllm/src/arcllm/registry.py:95: error: Returning Any from function declared to return "type[LLMProvider]"  [no-any-return]
+packages/arcllm/src/arcllm/registry.py:104: error: Incompatible types in assignment (expression has type "GlobalConfig", variable has type "dict[str, Any] | None")  [assignment]
+packages/arcllm/src/arcllm/registry.py:105: error: "None" has no attribute "modules"  [attr-defined]
+packages/arcllm/src/arcllm/registry.py:130: error: Item "dict[str, Any]" of "dict[str, Any] | None" has no attribute "modules"  [union-attr]
+packages/arcllm/src/arcllm/registry.py:130: error: Item "None" of "dict[str, Any] | None" has no attribute "modules"  [union-attr]
+packages/arcllm/src/arcllm/registry.py:170: error: Too many arguments for "LLMProvider"  [call-arg]
+packages/arcllm/src/arcllm/registry.py:170: error: Unexpected keyword argument "resolved_api_key" for "LLMProvider"  [call-arg]
+.venv/lib/python3.12/site-packages/mypy/typeshed/stdlib/builtins.pyi: note: "LLMProvider" defined here
+packages/arcllm/src/arcllm/registry.py:257: error: Item "dict[str, Any]" of "dict[str, Any] | None" has no attribute "vault"  [union-attr]
+packages/arcllm/src/arcllm/registry.py:257: error: Item "None" of "dict[str, Any] | None" has no attribute "vault"  [union-attr]
+packages/arcllm/src/arcllm/registry.py:364: error: Item "dict[str, Any]" of "dict[str, Any] | None" has no attribute "defaults"  [union-attr]
+packages/arcllm/src/arcllm/registry.py:364: error: Item "None" of "dict[str, Any] | None" has no attribute "defaults"  [union-attr]
+packages/arcrun/src/arcrun/executor.py:9: error: Library stubs not installed for "jsonschema"  [import-untyped]
+packages/arcrun/src/arcrun/executor.py:9: note: Hint: "python3 -m pip install types-jsonschema"
+packages/arcllm/src/arcllm/__init__.py:84: error: Function is missing a return type annotation  [no-untyped-def]
+packages/arcrun/src/arcrun/strategies/__init__.py:125: error: Returning Any from function declared to return "str"  [no-any-return]
+packages/arcrun/src/arcrun/loop.py:109: error: Returning Any from function declared to return "LoopResult"  [no-any-return]
+packages/arcskill/src/arcskill/hub/scanner.py:589: error: Unused "type: ignore" comment  [unused-ignore]
+packages/arcskill/src/arcskill/hub/verify.py:312: error: Cannot find implementation or library stub for module named "sigstore"  [import-not-found]
+packages/arcskill/src/arcskill/hub/verify.py:403: error: Cannot find implementation or library stub for module named "sigstore.errors"  [import-not-found]
+packages/arcskill/src/arcskill/hub/verify.py:404: error: Cannot find implementation or library stub for module named "sigstore.models"  [import-not-found]
+packages/arcskill/src/arcskill/hub/verify.py:405: error: Cannot find implementation or library stub for module named "sigstore.verify"  [import-not-found]
+packages/arcskill/src/arcskill/hub/verify.py:406: error: Cannot find implementation or library stub for module named "sigstore.verify.policy"  [import-not-found]
+packages/arcskill/src/arcskill/hub/verify.py:406: note: See https://mypy.readthedocs.io/en/stable/running_mypy.html#missing-imports
+packages/arcskill/src/arcskill/hub/dry_run.py:885: error: Unused "type: ignore" comment  [unused-ignore]
+Found 35 errors in 14 files (checked 11 source files)
+[exit=1]
+=== arcteam (project=arcteam) ===
+packages/arcteam/src/arcteam/storage.py:206: error: Returning Any from function declared to return "int"  [no-any-return]
+Found 1 error in 1 file (checked 20 source files)
+[exit=1]
+=== arctrust (project=arctrust) ===
+Success: no issues found in 6 source files
+[exit=0]
+=== arctui (project=arctui) ===
+packages/arcllm/src/arcllm/modules/_logging.py:42: error: Returning Any from function declared to return "int"  [no-any-return]
+packages/arcteam/src/arcteam/storage.py:206: error: Returning Any from function declared to return "int"  [no-any-return]
+packages/arcrun/src/arcrun/builtins/contained_execute.py:105: error: Library stubs not installed for "docker"  [import-untyped]
+packages/arcrun/src/arcrun/builtins/contained_execute.py:105: note: Hint: "python3 -m pip install types-docker"
+packages/arcrun/src/arcrun/builtins/contained_execute.py:105: note: (or run "mypy --install-types" to install all missing stub packages)
+packages/arcrun/src/arcrun/builtins/contained_execute.py:105: note: See https://mypy.readthedocs.io/en/stable/running_mypy.html#missing-imports
+packages/arcllm/src/arcllm/modules/base.py:74: error: Cannot override writeable attribute with read-only property  [override]
+packages/arcllm/src/arcllm/modules/base.py:79: error: Returning Any from function declared to return "str"  [no-any-return]
+packages/arcllm/src/arcllm/modules/base.py:79: error: "LLMProvider" has no attribute "model_name"  [attr-defined]
+packages/arcllm/src/arcllm/modules/routing.py:62: error: Cannot override writeable attribute with read-only property  [override]
+packages/arcllm/src/arcllm/modules/routing.py:69: error: Returning Any from function declared to return "str"  [no-any-return]
+packages/arcllm/src/arcllm/modules/routing.py:69: error: "LLMProvider" has no attribute "model_name"  [attr-defined]
+packages/arcllm/src/arcllm/modules/routing.py:109: error: "LLMProvider" has no attribute "model_name"  [attr-defined]
+packages/arcllm/src/arcllm/modules/retry.py:143: error: Returning Any from function declared to return "float"  [no-any-return]
+packages/arcllm/src/arcllm/modules/otel.py:66: error: Cannot find implementation or library stub for module named "opentelemetry.exporter.otlp.proto.grpc.trace_exporter"  [import-not-found]
+packages/arcllm/src/arcllm/modules/otel.py:66: note: See https://mypy.readthedocs.io/en/stable/running_mypy.html#missing-imports
+packages/arcllm/src/arcllm/modules/otel.py:83: error: Cannot find implementation or library stub for module named "opentelemetry.exporter.otlp.proto.http.trace_exporter"  [import-not-found]
+packages/arcllm/src/arcllm/modules/otel.py:213: error: "LLMProvider" has no attribute "model_name"  [attr-defined]
+packages/arcllm/src/arcllm/registry.py:95: error: Returning Any from function declared to return "type[LLMProvider]"  [no-any-return]
+packages/arcllm/src/arcllm/registry.py:104: error: Incompatible types in assignment (expression has type "GlobalConfig", variable has type "dict[str, Any] | None")  [assignment]
+packages/arcllm/src/arcllm/registry.py:105: error: "None" has no attribute "modules"  [attr-defined]
+packages/arcllm/src/arcllm/registry.py:130: error: Item "dict[str, Any]" of "dict[str, Any] | None" has no attribute "modules"  [union-attr]
+packages/arcllm/src/arcllm/registry.py:130: error: Item "None" of "dict[str, Any] | None" has no attribute "modules"  [union-attr]
+packages/arcllm/src/arcllm/registry.py:170: error: Too many arguments for "LLMProvider"  [call-arg]
+packages/arcllm/src/arcllm/registry.py:170: error: Unexpected keyword argument "resolved_api_key" for "LLMProvider"  [call-arg]
+.venv/lib/python3.12/site-packages/mypy/typeshed/stdlib/builtins.pyi: note: "LLMProvider" defined here
+packages/arcllm/src/arcllm/registry.py:257: error: Item "dict[str, Any]" of "dict[str, Any] | None" has no attribute "vault"  [union-attr]
+packages/arcllm/src/arcllm/registry.py:257: error: Item "None" of "dict[str, Any] | None" has no attribute "vault"  [union-attr]
+packages/arcllm/src/arcllm/registry.py:364: error: Item "dict[str, Any]" of "dict[str, Any] | None" has no attribute "defaults"  [union-attr]
+packages/arcllm/src/arcllm/registry.py:364: error: Item "None" of "dict[str, Any] | None" has no attribute "defaults"  [union-attr]
+packages/arcrun/src/arcrun/executor.py:9: error: Library stubs not installed for "jsonschema"  [import-untyped]
+packages/arcrun/src/arcrun/executor.py:9: note: Hint: "python3 -m pip install types-jsonschema"
+packages/arcllm/src/arcllm/__init__.py:84: error: Function is missing a return type annotation  [no-untyped-def]
+packages/arcrun/src/arcrun/strategies/__init__.py:125: error: Returning Any from function declared to return "str"  [no-any-return]
+packages/arcrun/src/arcrun/loop.py:109: error: Returning Any from function declared to return "LoopResult"  [no-any-return]
+packages/arctui/src/arctui/transcript.py:28: error: Cannot find implementation or library stub for module named "textual.app"  [import-not-found]
+packages/arctui/src/arctui/transcript.py:29: error: Cannot find implementation or library stub for module named "textual.widgets"  [import-not-found]
+packages/arctui/src/arctui/transcript.py:89: error: Class cannot subclass "Static" (has type "Any")  [misc]
+packages/arctui/src/arctui/prompts.py:30: error: Cannot find implementation or library stub for module named "textual.app"  [import-not-found]
+packages/arctui/src/arctui/prompts.py:31: error: Cannot find implementation or library stub for module named "textual.binding"  [import-not-found]
+packages/arctui/src/arctui/prompts.py:32: error: Cannot find implementation or library stub for module named "textual.containers"  [import-not-found]
+packages/arctui/src/arctui/prompts.py:33: error: Cannot find implementation or library stub for module named "textual.screen"  [import-not-found]
+packages/arctui/src/arctui/prompts.py:34: error: Cannot find implementation or library stub for module named "textual.widgets"  [import-not-found]
+packages/arctui/src/arctui/prompts.py:37: error: Class cannot subclass value of type "Any"  [misc]
+packages/arctui/src/arctui/prompts.py:84: error: Class cannot subclass value of type "Any"  [misc]
+packages/arctui/src/arctui/prompts.py:125: error: Class cannot subclass value of type "Any"  [misc]
+packages/arctui/src/arctui/prompts.py:172: error: Class cannot subclass value of type "Any"  [misc]
+packages/arctui/src/arctui/activity.py:24: error: Cannot find implementation or library stub for module named "textual.app"  [import-not-found]
+packages/arctui/src/arctui/activity.py:25: error: Cannot find implementation or library stub for module named "textual.widgets"  [import-not-found]
+packages/arctui/src/arctui/activity.py:102: error: Class cannot subclass "Static" (has type "Any")  [misc]
+packages/arctui/src/arctui/tests/unit/test_transcript.py:105: error: Cannot find implementation or library stub for module named "textual.app"  [import-not-found]
+packages/arctui/src/arctui/tests/unit/test_transcript.py:107: error: Class cannot subclass value of type "Any"  [misc]
+packages/arctui/src/arctui/tests/unit/test_transcript.py:124: error: Class cannot subclass value of type "Any"  [misc]
+packages/arctui/src/arctui/tests/unit/test_transcript.py:150: error: Class cannot subclass value of type "Any"  [misc]
+packages/arctui/src/arctui/tests/unit/test_transcript.py:178: error: Class cannot subclass value of type "Any"  [misc]
+packages/arctui/src/arctui/tests/unit/test_transcript.py:199: error: Class cannot subclass value of type "Any"  [misc]
+packages/arctui/src/arctui/tests/unit/test_transcript.py:214: error: Class cannot subclass value of type "Any"  [misc]
+packages/arctui/src/arctui/tests/unit/test_activity.py:102: error: Cannot find implementation or library stub for module named "textual.app"  [import-not-found]
+packages/arctui/src/arctui/tests/unit/test_activity.py:104: error: Class cannot subclass value of type "Any"  [misc]
+packages/arctui/src/arctui/tests/unit/test_activity.py:122: error: Class cannot subclass value of type "Any"  [misc]
+packages/arctui/src/arctui/tests/unit/test_activity.py:140: error: Class cannot subclass value of type "Any"  [misc]
+packages/arctui/src/arctui/input_composer.py:28: error: Cannot find implementation or library stub for module named "textual.app"  [import-not-found]
+packages/arctui/src/arctui/input_composer.py:29: error: Cannot find implementation or library stub for module named "textual.binding"  [import-not-found]
+packages/arctui/src/arctui/input_composer.py:30: error: Cannot find implementation or library stub for module named "textual.message"  [import-not-found]
+packages/arctui/src/arctui/input_composer.py:31: error: Cannot find implementation or library stub for module named "textual.widgets"  [import-not-found]
+packages/arctui/src/arctui/input_composer.py:32: error: Cannot find implementation or library stub for module named "textual.widgets.option_list"  [import-not-found]
+packages/arctui/src/arctui/input_composer.py:42: error: Class cannot subclass "Static" (has type "Any")  [misc]
+packages/arctui/src/arctui/input_composer.py:60: error: Unused "type: ignore" comment  [unused-ignore]
+packages/arctui/src/arctui/input_composer.py:71: error: Class cannot subclass "Message" (has type "Any")  [misc]
+packages/arctui/src/arctui/input_composer.py:84: error: Class cannot subclass "Message" (has type "Any")  [misc]
+packages/arctui/src/arctui/app.py:42: error: Cannot find implementation or library stub for module named "textual"  [import-not-found]
+packages/arctui/src/arctui/app.py:43: error: Cannot find implementation or library stub for module named "textual.app"  [import-not-found]
+packages/arctui/src/arctui/app.py:44: error: Cannot find implementation or library stub for module named "textual.containers"  [import-not-found]
+packages/arctui/src/arctui/app.py:45: error: Cannot find implementation or library stub for module named "textual.widgets"  [import-not-found]
+packages/arctui/src/arctui/app.py:55: error: Class cannot subclass value of type "Any"  [misc]
+packages/arctui/src/arctui/app.py:222: error: Untyped decorator makes function "_send_to_agent" untyped  [untyped-decorator]
+packages/arctui/src/arctui/tests/smoke/test_arctui_launch.py:66: error: Cannot find implementation or library stub for module named "textual.widgets"  [import-not-found]
+packages/arctui/src/arctui/tests/smoke/test_arctui_launch.py:66: note: See https://mypy.readthedocs.io/en/stable/running_mypy.html#missing-imports
+Found 71 errors in 20 files (checked 17 source files)
+[exit=1]
+=== arcui (project=arcui) ===
+packages/arcllm/src/arcllm/modules/_logging.py:42: error: Returning Any from function declared to return "int"  [no-any-return]
+packages/arcrun/src/arcrun/builtins/contained_execute.py:105: error: Library stubs not installed for "docker"  [import-untyped]
+packages/arcrun/src/arcrun/builtins/contained_execute.py:105: note: Hint: "python3 -m pip install types-docker"
+packages/arcrun/src/arcrun/builtins/contained_execute.py:105: note: (or run "mypy --install-types" to install all missing stub packages)
+packages/arcrun/src/arcrun/builtins/contained_execute.py:105: note: See https://mypy.readthedocs.io/en/stable/running_mypy.html#missing-imports
+packages/arcllm/src/arcllm/modules/routing.py:62: error: Cannot override writeable attribute with read-only property  [override]
+packages/arcllm/src/arcllm/modules/routing.py:69: error: Returning Any from function declared to return "str"  [no-any-return]
+packages/arcllm/src/arcllm/modules/routing.py:69: error: "LLMProvider" has no attribute "model_name"  [attr-defined]
+packages/arcllm/src/arcllm/modules/routing.py:109: error: "LLMProvider" has no attribute "model_name"  [attr-defined]
+packages/arcllm/src/arcllm/modules/base.py:74: error: Cannot override writeable attribute with read-only property  [override]
+packages/arcllm/src/arcllm/modules/base.py:79: error: Returning Any from function declared to return "str"  [no-any-return]
+packages/arcllm/src/arcllm/modules/base.py:79: error: "LLMProvider" has no attribute "model_name"  [attr-defined]
+packages/arcllm/src/arcllm/modules/retry.py:143: error: Returning Any from function declared to return "float"  [no-any-return]
+packages/arcllm/src/arcllm/modules/otel.py:66: error: Cannot find implementation or library stub for module named "opentelemetry.exporter.otlp.proto.grpc.trace_exporter"  [import-not-found]
+packages/arcllm/src/arcllm/modules/otel.py:66: note: See https://mypy.readthedocs.io/en/stable/running_mypy.html#missing-imports
+packages/arcllm/src/arcllm/modules/otel.py:83: error: Cannot find implementation or library stub for module named "opentelemetry.exporter.otlp.proto.http.trace_exporter"  [import-not-found]
+packages/arcllm/src/arcllm/modules/otel.py:213: error: "LLMProvider" has no attribute "model_name"  [attr-defined]
+packages/arcrun/src/arcrun/executor.py:9: error: Library stubs not installed for "jsonschema"  [import-untyped]
+packages/arcrun/src/arcrun/executor.py:9: note: Hint: "python3 -m pip install types-jsonschema"
+packages/arcllm/src/arcllm/registry.py:95: error: Returning Any from function declared to return "type[LLMProvider]"  [no-any-return]
+packages/arcllm/src/arcllm/registry.py:104: error: Incompatible types in assignment (expression has type "GlobalConfig", variable has type "dict[str, Any] | None")  [assignment]
+packages/arcllm/src/arcllm/registry.py:105: error: "None" has no attribute "modules"  [attr-defined]
+packages/arcllm/src/arcllm/registry.py:130: error: Item "dict[str, Any]" of "dict[str, Any] | None" has no attribute "modules"  [union-attr]
+packages/arcllm/src/arcllm/registry.py:130: error: Item "None" of "dict[str, Any] | None" has no attribute "modules"  [union-attr]
+packages/arcllm/src/arcllm/registry.py:170: error: Too many arguments for "LLMProvider"  [call-arg]
+packages/arcllm/src/arcllm/registry.py:170: error: Unexpected keyword argument "resolved_api_key" for "LLMProvider"  [call-arg]
+.venv/lib/python3.12/site-packages/mypy/typeshed/stdlib/builtins.pyi: note: "LLMProvider" defined here
+packages/arcllm/src/arcllm/registry.py:257: error: Item "dict[str, Any]" of "dict[str, Any] | None" has no attribute "vault"  [union-attr]
+packages/arcllm/src/arcllm/registry.py:257: error: Item "None" of "dict[str, Any] | None" has no attribute "vault"  [union-attr]
+packages/arcllm/src/arcllm/registry.py:364: error: Item "dict[str, Any]" of "dict[str, Any] | None" has no attribute "defaults"  [union-attr]
+packages/arcllm/src/arcllm/registry.py:364: error: Item "None" of "dict[str, Any] | None" has no attribute "defaults"  [union-attr]
+packages/arcrun/src/arcrun/strategies/__init__.py:125: error: Returning Any from function declared to return "str"  [no-any-return]
+packages/arcllm/src/arcllm/__init__.py:84: error: Function is missing a return type annotation  [no-untyped-def]
+packages/arcrun/src/arcrun/loop.py:109: error: Returning Any from function declared to return "LoopResult"  [no-any-return]
+Found 28 errors in 11 files (checked 35 source files)
+[exit=1]

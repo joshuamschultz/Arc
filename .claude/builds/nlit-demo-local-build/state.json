@@ -1,0 +1,99 @@
+{
+  "feature": "nlit-demo-local-build",
+  "started": "2026-04-27",
+  "completed": "2026-04-27",
+  "status": "decisions complete",
+  "brainstorm": ".claude/brainstorms/2026-04-27-nlit-demo-local-build.md",
+  "prd": ".claude/NLIT2026-Demo-PRD.md",
+  "tier_target": "personal",
+  "principle": "showcase real Arc capability, no fakes",
+  "design_summary": {
+    "agent_1": {
+      "name": "nlit_soc_agent",
+      "role": "SOC threat hunter, conversational, STIG/security focus",
+      "trigger": "served arcagent process, I chat with it live on stage",
+      "writes_to": "workspace/entities/{System,Event,STIG-Reference,Incident,Finding,Person,Vendor,Process,Project}/{name}.md",
+      "skills_needed": ["write_entity (template-driven)"],
+      "templates_needed": ["System", "Event", "STIG-Reference", "Incident", "Finding", "Person", "Vendor", "Process", "Project"],
+      "audience_sees": "arcui dashboard + Obsidian graph filling up with richly-structured entities (full frontmatter populated) in real time"
+    },
+    "agent_2": {
+      "name": "nlit_cora_agent",
+      "role": "CCRI compliance analyst, autonomous",
+      "trigger": "served arcagent process + [modules.scheduler] cron at 23:00",
+      "writes_to": "workspace (gap report, run history)",
+      "skills_needed": ["read_document", "stig_cross_reference", "poam_validator", "draft_gap_report"],
+      "audience_sees": "arcui scheduler history + the Markdown gap report"
+    },
+    "shared": "nothing (no shared vault, skills, or process)"
+  },
+  "decisions": [
+    {
+      "id": "1-project-location",
+      "answer": "Two independent team/ projects: team/nlit_soc_agent/ and team/nlit_cora_agent/. No shared vault, no shared skills.",
+      "principle": "Modularity",
+      "tier_notes": "All tiers identical — location is structural, not policy"
+    },
+    {
+      "id": "2-agent-execution-pattern",
+      "answer": "Both agents are served (long-lived arcagent processes). Agent 1 is chat-driven on stage. Agent 2 is fired by built-in [modules.scheduler] overnight.",
+      "principle": "Simplicity — matches existing arcagent serve pattern; scheduler is built-in"
+    },
+    {
+      "id": "3-skill-packaging",
+      "answer": "Each agent's tools/ holds its own skills. No code sharing. No [extensions] paths config needed.",
+      "principle": "Simplicity — no shared code, no shared bugs"
+    },
+    {
+      "id": "4-agent-1-vault-structure",
+      "answer": "Typed folders + template-driven write_entity. workspace/templates/{System,Event,STIG-Reference,Incident,Finding,Person,Vendor,Process,Project}.md. write_entity takes (entity_type, name, properties), loads the matching template, fills frontmatter, writes the file with [[wikilinks]] inline. Obsidian renders graph from wikilinks. Audience sees richly-structured records, not freeform notes — that's the wow.",
+      "principle": "Simplicity + demo value — templates make structure visible, no scan_and_connect needed"
+    },
+    {
+      "id": "5-agent-2-cron-mechanism",
+      "answer": "Built-in [modules.scheduler] inside arcagent. Croniter syntax. Has circuit breaker, timeout, telemetry. Demo can show schedule store + last-run history + next-run time as part of stage walkthrough.",
+      "principle": "Real Arc capability — cron stays inside Arc, not external unix cron"
+    },
+    {
+      "id": "6-live-reasoning-visibility",
+      "answer": "arcui (web dashboard at localhost:8420) + Obsidian, split screen on projector. Uses existing [modules.ui_reporter] config. Audience sees agent thinking + tool calls + scheduler history + Obsidian graph in real time.",
+      "principle": "Real Arc capability — ui_reporter already wired in arcagent.toml"
+    },
+    {
+      "id": "7-llm-determinism-guards",
+      "answer": "Low temperature (0.2) + strong identity.md per PRD + rehearsal. NO eval pass, NO Pydantic strict-mode demo-only validation, NO pre-recorded fallback. Honest demo — same code a real customer would run.",
+      "principle": "No fakes — demo behavior must match production behavior"
+    },
+    {
+      "id": "8-test-data",
+      "answer": "Agent 2: hand-author 4 PRD files (system_inventory.md, stig_checklist.csv with V-220812 planted, poam_log.csv with reimaging-after-closure date mismatch, org_chart.json). Agent 1: hand-author 5-7 anchor prompts for stage — use as starting points, riff freely between.",
+      "principle": "Simplicity — hand-authored = exact control over the planted finding"
+    }
+  ],
+  "deferred_per_brainstorm": [
+    "Pass 4 (proximity scan) — not needed at all now (no scan_and_connect)",
+    "Backup recordings + offline mode",
+    "Cloud deployment (Azure)",
+    "Custom web brain viewer (Obsidian is the viewer)"
+  ],
+  "next_step_recommended": "/specify nlit-demo-local-build — decisions enriched with research, ready for formal PRD/SDD/PLAN",
+  "deepen_pass": {
+    "completed": "2026-04-27",
+    "agents_spawned": 6,
+    "research_topics": [
+      "arcagent scheduler module usage + hardening",
+      "arcui ui_reporter event format + dashboard maturity",
+      "existing skill/identity patterns in arc codebase",
+      "Obsidian frontmatter + graph view best practices",
+      "DISA STIG XCCDF schema + NIST 800-53 + POA&M fields",
+      "Live LLM demo determinism + Anthropic tool-use best practices"
+    ],
+    "decisions_updated": [
+      "agent name: nlit_ccri_agent → nlit_cora_agent (CCRI renamed to CORA in 2024-03)",
+      "Decision 4: entity templates use real STIG XCCDF + NIST 800-53 Rev 5 + POA&M field names",
+      "Decision 6: + small arcui scheduler card (~2-3hrs frontend work to render schedule history)",
+      "Decision 7: temp=0 (not 0.2), + 3 message-format few-shot examples (LangChain benchmark: 16%→52% tool-call reliability)",
+      "Obsidian: install Refresh Any View plugin on demo machine"
+    ]
+  }
+}

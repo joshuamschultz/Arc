@@ -1,0 +1,60 @@
+{
+  "feature": "nlit-scap-demo",
+  "phase": "build",
+  "status": "complete",
+  "started": "2026-05-04",
+  "completed": "2026-05-04",
+  "source_doc": "/Users/joshschultz/Desktop/arc-openscap-nlit-demo.md",
+  "priority_framework": ["simplicity", "modularity", "security", "scalability"],
+  "summary": "SCAP extension at ~/.arc/capabilities/scap/ with 6 read-only tools wrapping OpenSCAP/SCC/STIG Viewer outputs for ATO evidence assembly. Real federal STIG data, hostnames rebranded. 9-min NLIT pitch demo, ~13 hr build budget.",
+  "decisions": {
+    "user": [
+      {
+        "id": "D-369",
+        "topic": "PDF rendering library",
+        "choice": "WeasyPrint",
+        "rationale": "Output must look like real federal ATO document; macOS+brew handles deps; backup laptop pre-installed."
+      },
+      {
+        "id": "D-370",
+        "topic": "Sanitization mapping persistence",
+        "choice": "Persisted TOML at data/sanitize_map.toml",
+        "rationale": "Federal-grade answer to 'how do we trust the rebranding' — file on disk + audit-event on first ingest."
+      },
+      {
+        "id": "D-371",
+        "topic": "T-30 drift artifact production",
+        "choice": "Programmatic drift generator script",
+        "rationale": "Reproducible, auditable, lives in repo. Flips ~5-10 sshd-hardening rules pass→fail deterministically."
+      }
+    ],
+    "auto_applied_count": 12,
+    "first_id": "D-369",
+    "last_id": "D-383"
+  },
+  "next_step": "/specify nlit-scap-demo",
+  "open_questions": [],
+  "tier_policy": {
+    "demo": "dev-mode install bypasses bundle verification (D-379)",
+    "federal_post_demo": "blocks unsigned bundle (per source doc §11)",
+    "enterprise_post_demo": "warns on missing signature",
+    "personal_post_demo": "info-only"
+  },
+  "build_path": [
+    "1. Sanitizing parsers (stig_csv.py, xccdf_xml.py, scc_html.py) ~2.5h",
+    "2. sanitize.py with TOML map persistence (D-370) ~included above",
+    "3. scripts/synth_drift.py (D-371) ~0.5h",
+    "4. Reference data bundle in data/ ~1.5h",
+    "5. 6 @tool functions ~3h",
+    "6. Skill content (SKILL.md + 4 references) ~2h",
+    "7. WeasyPrint ATO PDF template (D-369) ~2h",
+    "8. Polish + 2 dry runs ~1.5h"
+  ],
+  "out_of_scope": [
+    "scap_run (live scanner invocation)",
+    "scap_remediate (state-modifying)",
+    "scap_tailor (XCCDF profile authoring)",
+    "Bundle distribution / Sigstore / TOFU approval",
+    "Act 0 install moment in pitch"
+  ]
+}

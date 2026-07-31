@@ -9,7 +9,7 @@ SPEC-060 §COMP-001 / REQ-174. Two edges must never appear:
        is not installed with them, and would drag benchmark code into the
        product's dependency DAG (``.claude/steering/structure.md`` Layer Model).
 
-    2. ``evaluations/ingest/`` MUST NOT import ``evaluations/longmemeval/``.
+    2. ``evaluations/longmemeval/ingest/`` MUST NOT import ``evaluations/longmemeval/``.
        ``ingest/`` defines the source-agnostic seam (``SourceAdapter``,
        ``Session``, ``Turn``, ``Chunk``); ``longmemeval/`` is one consumer of
        it. If satisfying the seam required reaching into the LongMemEval
@@ -37,7 +37,7 @@ def _absolute_module(node: ast.ImportFrom, package_parts: tuple[str, ...]) -> st
     """Resolve a ``from ... import`` target to a dotted absolute module name.
 
     Relative imports are resolved against the importing file's own package so
-    that ``from ..longmemeval import x`` inside ``evaluations/ingest/`` is
+    that ``from ..longmemeval import x`` inside ``evaluations/longmemeval/ingest/`` is
     caught as ``evaluations.longmemeval`` rather than slipping through as the
     bare name ``longmemeval``.
     """
@@ -114,20 +114,20 @@ def test_no_packages_import_evaluations() -> None:
 
 
 def test_ingest_does_not_import_longmemeval() -> None:
-    """AST-scan evaluations/ingest/; fail if it reaches into the corpus package.
+    """AST-scan evaluations/longmemeval/ingest/; fail if it reaches into the corpus package.
 
     If this fails, the source-agnostic seam has been coupled to its first
     consumer. Fix by moving the corpus-specific piece into
     ``evaluations/longmemeval/`` and expressing what ``ingest/`` needs as part
     of the ``SourceAdapter`` contract instead.
     """
-    ingest = _REPO_ROOT / "evaluations" / "ingest"
-    assert ingest.exists(), f"evaluations/ingest/ not found at {ingest}"
+    ingest = _REPO_ROOT / "evaluations" / "longmemeval" / "ingest"
+    assert ingest.exists(), f"evaluations/longmemeval/ingest/ not found at {ingest}"
 
     violations = _scan(ingest, forbidden="evaluations.longmemeval", tree_root=_REPO_ROOT)
 
     assert not violations, (
-        "ARCHITECTURE VIOLATION: evaluations/ingest/ imports "
+        "ARCHITECTURE VIOLATION: evaluations/longmemeval/ingest/ imports "
         "evaluations/longmemeval/.\n\n"
         "ingest/ defines the source-agnostic seam; longmemeval/ is one consumer\n"
         "of it (REQ-174). A seam that needs its consumer is not a seam.\n\n"

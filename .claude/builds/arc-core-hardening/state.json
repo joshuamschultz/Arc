@@ -1,0 +1,14 @@
+{
+  "feature": "arc-core-hardening",
+  "status": "deepened",
+  "total_decisions": 22,
+  "auto_applied_mandates": 10,
+  "bug_fixes": 6,
+  "new_files": 11,
+  "modified_files": 12,
+  "research_agents_run": 5,
+  "critical_security_gaps_found": 3,
+  "started": "2026-04-17",
+  "deepened": "2026-04-17",
+  "next_step": "/specify arc-core-hardening"
+}

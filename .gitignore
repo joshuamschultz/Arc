@@ -48,62 +48,6 @@ Thumbs.db
 *.key
 !*.key.pub
 
-# Claude Code
-.claude/
-**/.claude/
-CLAUDE.md
-
-# Private internal overlay repo (arc-internal) — separate git dir sharing
-# this worktree. Its history must never be tracked by the public repo.
-.git-internal/
-
-# Work files
-architecture/
-**/architecture/
-# ...but package architecture TEST suites are real tests (import-graph / DAG
-# guards) and must be tracked — re-include them and their contents (ALL packages).
-!packages/**/tests/architecture/
-!packages/**/tests/architecture/**
-# ...and so is the repo-root suite `make architecture-tests` actually runs
-# (`pytest tests/architecture/`). Without this, a NEW guard added there is
-# silently untracked and ruff skips the whole directory, so its lint errors
-# never surface.
-!/tests/architecture/
-!/tests/architecture/**
-# ...and docs/architecture/ is published documentation (ARCH-OVERVIEW, the
-# policy-module catalogue, and the ADRs the doc set cross-references), not a
-# work file. The glob above was swallowing it.
-!docs/architecture/
-!docs/architecture/**
-
-# Agent playground
-Basic_Agent/
-my_agent/
-team/
-
-# Demo UI / demo extensions / demo data
-demo/
-demo-extensions/
-demo-data/
-
-# Demo-specific scripts
-scripts/rehearse_demo.py
-scripts/sanitize_demo_data.py
-scripts/synth_drift.py
-scripts/verify_demo.py
-scripts/install-scap-extension.sh
-scripts/sync-scap-extension.sh
-scripts/bootstrap-scap-agent.sh
-scripts/playwright_live_audit.py
-scripts/playwright_messaging_test.py
-scripts/demo-tunnel.sh
-
-# Analysis/plan artifacts
-PLAN-*.md
-prompt-injection-*.md
-packages/*/ENTITY*.md
-packages/*/PROMPT_INJECTION*.md
-
 # Code review artifacts
 .code-review-graph/
 .mcp.json
@@ -111,19 +55,17 @@ packages/*/PROMPT_INJECTION*.md
 # Logs
 .arc-logs/
 
-# MkDocs build output
-site/
 
-# SPEC-060 LongMemEval evaluation harness (COMP-014 / REQ-195).
-# The harness downloads a third-party dataset and builds a throwaway agent
-# workspace per question; none of that is repo content. Every pattern here is
-# anchored (leading `/`) and none of them covers a source directory: git cannot
-# re-include a file beneath an ignored directory, so a `!` negation could never
-# rescue harness code that fell under one. That is why evaluations/ingest/ and
-# evaluations/longmemeval/ are peers of these paths and never inside them.
-/evaluations/longmemeval/data/
-/evaluations/runs/
-/evaluations/results/
+# Evaluation harnesses. Each eval owns a directory under evaluations/ and
+# generates its own data, runs and results. None of that is repo content.
+# Every pattern is anchored to a per-eval artifact directory and none covers a
+# source directory: git cannot re-include a file beneath an ignored directory,
+# so a `!` negation could never rescue harness code that fell under one. Source
+# lives at evaluations/<eval>/ and its packages; artifacts live in the three
+# generated directories named here.
+/evaluations/*/data/
+/evaluations/*/runs/
+/evaluations/*/results/
 # Traces and the audit chain the agent writes inside a run workspace.
 /evaluations/**/traces/
 /evaluations/**/.audit/
@@ -157,9 +99,4 @@ deploy/aws/
 deploy/azure/
 deploy/lib/
 
-# Architecture analysis artifacts. These are Claude Code system files, not
-# published documentation — they live under .claude/architecture/ and the
-# `**/.claude/` rule above already covers them. These patterns catch the
-# copies that tooling still drops at a package root.
-tech-debt.json
-packages/**/tech-debt.json
+

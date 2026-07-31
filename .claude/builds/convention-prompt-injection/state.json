@@ -1,0 +1,12 @@
+{
+  "feature": "convention-prompt-injection",
+  "brainstorm": ".claude/brainstorms/2026-02-27-convention-driven-prompt-injection.md",
+  "started": "2026-02-27",
+  "completed": "2026-02-27",
+  "status": "deepened",
+  "decisions_made": 16,
+  "decisions_user": 15,
+  "decisions_auto": 1,
+  "deepened": "2026-02-27",
+  "notes": "Two catalogs: tool catalog (ToolRegistry.format_for_prompt) + team roster (MessagingModule, TTL 60s). Dynamic field rendering. XML format. Section key 'teams' for all team context. Preamble configurable via TOML. Deepened with research on: tool description best practices (Anthropic, Claude Code, ADK, OpenAI), XML prompt injection security (4 risk categories, Elastic/Unit42/OWASP), codebase prompt landscape (7 existing subscribers), and implementation considerations (MCP provenance, negative guidance, budget monitoring)."
+}

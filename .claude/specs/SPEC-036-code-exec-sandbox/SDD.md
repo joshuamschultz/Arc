@@ -1,0 +1,125 @@
+# SDD — SPEC-036 Real Code-Execution Sandbox
+
+## Module boundaries (hard contracts)
+
+| Module | Owns | Contract | MUST NOT |
+|--------|------|----------|----------|
+| **arcrun** | Execution backends + tier-routed `execute_python` | new `VmBackend` (`ExecutorBackend`, `isolation="vm"`); `resolve_execution_backend(tier, config)`; `make_execute_tool` routes via it | source tier itself; import arcllm/arcagent; add isolation logic to `execute.py` |
+| **arccli** | Passing the agent's tier into `make_execute_tool`; exposing the relax config | thin: read tier from agent config, forward it | own routing/isolation logic |
+| **arcagent** | Tier vocabulary (`Tier`) + config; reconcile the dead `os_sandbox` stub | provides the tier value callers forward | define execution backends; drive arcrun's router |
+| **arctrust** | Audit sink for backend-selection + downgrade events | `audit.emit(AuditEvent, sink)` | know about execution mechanics |
+
+**Dependency edges:** arcrun stays a leaf on the execution side (no new import of arcagent/arcllm). arccli already imports both arcrun and the agent config — it is the seam that carries `tier` across. No new cyclic edge.
+
+---
+
+## Current state (from investigation — file:line)
+
+- **`execute_python` is unsandboxed and tier-blind.** `make_execute_tool` (`packages/arcrun/src/arcrun/builtins/execute.py:25-63`) accepts `tier` then discards it — `execute.py:43` `_ = tier  # ... local backend used for all tiers`; `:55-63` `asyncio.create_subprocess_exec(sys.executable, code_path, …, start_new_session=True)` runs on the host. This is the tool built for agents by `arccli/.../commands/agent/tools.py:18-20` and `commands/run.py:122,259` (all `make_execute_tool()` — no tier).
+- **The Protocol already promises VM; no backend delivers it.** `BackendCapabilities.isolation: Literal["none","container","vm","remote"]` (`backends/base.py:70`); `ExecutorBackend` Protocol (`base.py:91-142`, `@runtime_checkable`, methods `run/stream/cancel/close` + `name`/`capabilities`). `load_backend` (`backends/loader.py:75-193`) built-in resolver `_try_builtin` (`:183-193`) returns only `LocalBackend`/`DockerBackend`; passing `"vm"` falls through to the non-builtin path and raises (no manifest).
+- **Two container-grade paths already exist (reuse targets).** Protocol-native `DockerBackend` (`backends/docker.py:51-89`): `isolation="container"`, cap-drop ALL / no-new-privileges / read-only / `network none` / tmpfs, `cold_start_budget_ms=800`. Opt-in tool `make_contained_execute_tool` (`builtins/contained_execute.py:89-201`): non-root `user="65534:65534"`, `cap_drop=["ALL"]`, `security_opt=["no-new-privileges"]`, `network_disabled`, `read_only`, `pids_limit`/`mem_limit`/`cpu_quota`, `tmpfs …,noexec,nosuid`.
+- **`LocalBackend` is the `isolation="none"` host path.** `backends/local.py:64-101` (`isolation="none"`, `cold_start_budget_ms=10`) — the only place a tier-relaxed personal run should be able to reach.
+- **The seccomp sandbox is dead code.** `arcagent/core/os_sandbox.py`: `SeccompSandbox.run` raises `NotImplementedError` (`:180-190`); `make_sandbox` (`:80-98`) returns `None` for personal and a sandbox for enterprise+/federal — but grep finds **zero non-test call sites**. macOS path (`SandboxExecSandbox`, `:104-165`) is real but also uncalled.
+- **Tier vocabulary is ready.** `arcagent/core/tier.py`: `Tier` StrEnum (`FEDERAL`/`ENTERPRISE`/`PERSONAL`) + `PolicyContext`; `make_execute_tool` already takes `tier: str` — it just ignores it.
+
+---
+
+## Component design
+
+### C1 · VM backend — *arcrun* `backends/vm.py` (REQ-001..004, REQ-031)
+- `VmBackend` implements the full `ExecutorBackend` Protocol (`run/stream/cancel/close`, `name="vm"`, `capabilities`) with `isolation="vm"`, mirroring the shape of `DockerBackend`. Default engine: **Firecracker microVM over `/dev/kvm`** (Linux). The engine is isolated behind a tiny internal seam so **gVisor/`runsc`** is a drop-in alternative satisfying the same Protocol (REQ-002).
+- **Fail-closed availability check (REQ-003):** the backend's `run()` fail-closes when the hypervisor is absent (`/dev/kvm` present + Linux) → typed `VmUnavailableError` (subclass of a backend error); **never** substitutes a weaker path. This mirrors `contained_execute._detect_socket()` raising `SandboxUnavailableError`. _Refined by /deepen:_ this run-time check is **defence-in-depth**, not the routing decision — the router (C2) consumes an **injected** `platform_supports_vm` boolean produced by a separate upstream capability probe, so the routing function stays pure/testable and avoids a TOCTOU gap (see Research Insights, stream 2).
+- **Posture reuse (REQ-004):** the guest runs with the same deny-by-default surface as `contained_execute.py` — no network, read-only rootfs, non-root, pid/mem/cpu bounds, hard wall-clock timeout. _Refined by /deepen:_ Firecracker's isolation is only as strong as the **jailer** — the VM backend MUST launch via the jailer (mount/pid/net namespaces, `chroot`/`pivot_root`, cgroups, drop privileges, `mknod` only `/dev/kvm`) with **seccomp level 2** (argument-constrained allowlist), never bare `firecracker`; the one 2026 Firecracker CVE (CVE-2026-1386) was a jailer symlink bug, not a KVM escape. `capabilities.cold_start_budget_ms` set to a realistic VM boot budget — research puts cold Firecracker boot at **~125-200ms** (notably *below* the container backend's 800ms), and a pre-warmed snapshot-restore pool at **~10-30ms** — so callers reason about latency (REQ-031). gVisor/`runsc` (systrap) is the documented no-KVM alternative but is userspace-kernel isolation, **not** hardware-VM class; it satisfies the Protocol shape, not the federal hardware-isolation floor.
+- Registered as a **built-in** in `_try_builtin` (`loader.py:183-193`): `if name == "vm": return VmBackend()`. Built-ins are trusted at all tiers (no manifest) exactly like `local`/`docker`.
+- **Pillar:** Modularity (Protocol-native, engine swappable) + Security (fail-closed) + Simplicity (very-few-LOC, reuses container posture).
+
+### C2 · Tier→backend router — *arcrun* `builtins/execute.py` (REQ-010..012, REQ-020/021, REQ-030)
+- New `resolve_execution_backend(tier: str, *, relax: str | None, platform_supports_vm: bool) -> str` — the **single** routing function. _Refined by /deepen:_ this function stays **pure and side-effect-free** — it does **not** probe the host and does **not** call `audit.emit`. `platform_supports_vm` is an injected fact from an upstream capability probe (avoids a TOCTOU gap and keeps the decision unit-testable); audit is emitted once by the *caller* on every resolution (C5). A below-floor `relax` at enterprise/federal raises immediately (typed error) rather than being silently clamped — `relax` is only meaningful when `tier == personal`. Mapping:
+  - `federal` → `"vm"` (hard floor; if `platform_supports_vm` is False → **refuse**, typed error — no downgrade).
+  - `enterprise` → `"container"` (floor; relax below is rejected, REQ-021).
+  - `personal` → `"container"` default; `relax in {"container","local"}` honoured (REQ-020); no relax config → container.
+  - Non-Linux/no-KVM guard (REQ-030): for `federal` → refuse; for `enterprise`/`personal` → `"container"` with an audited downgrade notice.
+- `make_execute_tool` (currently `execute.py:25-63`) calls the router, then obtains the backend via `load_backend(name, tier=tier, audit_sink=…)` and delegates code execution to it instead of inlining `create_subprocess_exec`. The `_ = tier` no-op (`:43`) and the inline host-subprocess block (`:50-88`) are removed in the same edit (REQ-070). The tool's public surface (`name="execute_python"`, input schema, JSON stdout/stderr/exit_code/duration result) is unchanged — only the execution substrate changes.
+- **Backend delegation shape:** `LocalBackend`/`DockerBackend`/`VmBackend` already expose `run()`+`stream()` (merged) and Local/Docker expose `run_separated()` for distinct stdout/stderr. `execute.py`'s JSON result (separate stdout/stderr/exit_code) maps onto `run_separated()` where available; the VM backend provides the same separated result. No new streaming machinery.
+- **Pillar:** Security (tier-enforced, fail-closed) + Simplicity (one router, no scattered branching).
+
+### C3 · Config relaxation — *arcrun* router + *arccli*/*arcagent* config (REQ-020, REQ-021, REQ-050)
+- The relax knob is an **explicit** config field (e.g. `execution.relax_isolation = "container"|"local"`, default unset) read from the agent config by the caller and passed into `make_execute_tool`/the router. arcrun does not read config files — it receives the resolved `(tier, relax)` from arccli (REQ-040).
+- Enforcement lives entirely in `resolve_execution_backend`: relax is honoured **only** when `tier == personal`; at enterprise/federal a non-None relax below the floor raises a typed error (REQ-021). Never an implicit fallback — the absence of config yields the tier default, not `local`.
+- **Pillar:** Security (downgrade is explicit + bounded) + Modularity (config lives with the caller, policy with the router).
+
+### C4 · Caller wiring — *arccli* `commands/agent/tools.py`, `commands/run.py` (REQ-050)
+- `agent/tools.py:18-20`: `make_execute_tool(tier=<agent tier>, relax=<agent relax>)` instead of `make_execute_tool()`. Tier comes from the agent config already resolved in the CLI.
+- `commands/run.py:122` (`arc run exec` manual path) and `:259` (the run agent tool list): forward the run's tier (default `personal` for the ad-hoc `arc run exec`, the agent's tier for a configured agent).
+- **Pillar:** Modularity — arccli is the seam that carries tier from config into arcrun; no isolation logic added here.
+
+### C5 · Audit — *arcrun* router → *arctrust* (REQ-060)
+- Every `make_execute_tool` build emits `code_exec.backend.selected` (tier, chosen isolation, engine) via the existing backend-load audit path (`backends/_audit.py:53-65` already emits `executor.backend.loaded`; add the selection event alongside). A tier-permitted downgrade (personal relax, non-Linux container fallback) emits a distinct `code_exec.isolation.downgraded` notice with the reason. Sink is the arctrust audit sink already threaded through `load_backend(audit_sink=…)`.
+- _Refined by /deepen:_ emit the selection event on **every** resolution, not only downgrades — a successful `federal→vm` selection is itself a security-relevant event under NIST AU-2. For AU-3-quality record content the event carries: `caller_did` (identity), `tier`, `requested`/`resolved` backend, `relax` value **and its reason**, `platform_supports_vm`, and `outcome` (allow/refuse). Refusals (fail-closed) are audited too. This keeps a single emission point (the caller), consistent with Arc's single-audit-path rule.
+- **Pillar:** Security — selection and downgrade are attributable, non-repudiable events.
+
+### C6 · Dead-code reconciliation — *arcagent* `core/os_sandbox.py` (REQ-070)
+- `os_sandbox.py`'s `SeccompSandbox.run` `NotImplementedError` + zero call sites is a claimed-but-absent control. This spec routes execution through arcrun backends, so the arcagent stub is **not** the enforcement point. Reconcile: either delete the un-called stub (clean-code rule: no vestigial `NotImplementedError` masquerading as coverage) or leave a single explicit note that arcrun's VM/container backends are the ASI05 enforcement surface. Decision recorded in review; default is delete per Arc's no-legacy rule.
+- **Pillar:** Simplicity — one enforcement surface, no dead second one.
+
+---
+
+## Isolation tier matrix
+
+```
+tier         default backend   relaxable to        no-KVM / non-Linux
+-----------  ----------------  ------------------  --------------------------
+federal      vm (hard)         — (never)           REFUSE (fail closed)
+enterprise   container         — (never below)     container (audited)  [vm N/A off-Linux]
+personal     container         container | local   container (audited)
+             (explicit config only, always audited)
+```
+Backend posture: `vm` (Firecracker/KVM; gVisor alt) ⊐ `container` (`DockerBackend`/`contained_execute`: cap-drop ALL, no-new-priv, no-net, read-only, non-root, limits) ⊐ `local` (`LocalBackend`, `isolation="none"`, personal-relax only).
+
+## Security posture
+Default-deny-weak-isolation: no bare host subprocess at enterprise/federal (REQ-011); required-isolation-unavailable ⇒ refuse (REQ-003, REQ-030 federal); downgrades explicit + audited only (REQ-020, REQ-060). Direct ASI05 (Unexpected Code Execution) mitigation — the "Firecracker microVM isolation" CLAUDE.md claim becomes real for federal on Linux. VM backend reuses the container deny-by-default network/FS/privilege surface (REQ-004). LLM05/LLM06: agent-generated code never executes on the host by default; least-isolation is opt-in and bounded by tier.
+
+## Scalability posture
+Backends are shared-nothing per execution (each `run()` is independent — matches `LocalBackend`/`DockerBackend` design notes). `capabilities.cold_start_budget_ms` makes VM boot cost explicit (REQ-031) so a fleet can reason about latency; container reuse (long-lived per-agent container in `DockerBackend`) amortises cold start after first call; hard timeouts + pid/mem/cpu limits cap runaway consumption (LLM10). No singleton — the router is a pure function of `(tier, config, platform)`.
+
+---
+
+## Research Insights (from /deepen)
+
+Three parallel research streams (2025-2026 sources) confirmed the core design and surfaced concrete refinements. Each finding is tagged to a component and carries a principled-coder verdict.
+
+### Stream 1 · Firecracker vs gVisor for agent code-exec → **C1 (VM backend)**
+
+**Verdict: keep Firecracker/KVM as the default `vm` engine; gVisor/`runsc` is the documented Protocol-satisfying alternative — not the reverse.** The field consensus is unambiguous: for untrusted, agent-generated code, every serious platform (AWS Lambda/Fargate, Fly.io, Modal, E2B, Google GKE "Agent Sandbox") reaches for a microVM or userspace-kernel, never a bare container — and Firecracker's hardware-enforced KVM boundary (separate guest kernel, ~50k LOC memory-safe Rust) is categorically stronger against escape than gVisor's syscall interception.
+- **Isolation strength (Security pillar — governs this call):** Firecracker > gVisor. CVE record backs it — gVisor has a true historical host-escape (CVE-2018-16359) plus several host-leak-class CVEs; Firecracker's only 2026 CVE (CVE-2026-1386) was a **jailer** symlink priv-esc, *not* a KVM/guest escape. **Design impact:** the VM backend MUST launch via the **jailer** (namespaces, `chroot`/`pivot_root`, cgroups, privilege drop, `mknod` only `/dev/kvm`) with **seccomp level 2**, never bare `firecracker` — the security depends on the jailer, and that is exactly where the one CVE landed. *(SDD C1 updated.)*
+  - Sources: [Your Container Is Not a Sandbox — MicroVM Isolation in 2026](https://emirb.github.io/blog/microvm-2026/); [Firecracker vs gVisor — Northflank](https://northflank.com/blog/firecracker-vs-gvisor); [AI Code Sandboxes: A Comparative Security Study — arXiv 2606.08433](https://arxiv.org/pdf/2606.08433); [CVE-2026-1386 — NVD](https://nvd.nist.gov/vuln/detail/CVE-2026-1386); [Firecracker jailer docs](https://github.com/firecracker-microvm/firecracker/blob/main/docs/jailer.md).
+- **Cold-start / `cold_start_budget_ms` (Scalability pillar — REQ-031):** cold Firecracker boot is **~125-200ms** — *below* the current container backend's 800ms budget, so "VM = slowest" is a false assumption; the honest ordering is `local(~10) < vm(~150-200 cold) < container(800)`. Snapshot-restore (Firecracker snapshotting / AWS Lambda SnapStart / "DeltaBox"-style demand-paging) drops a *pooled* start to **~10-30ms**. **Design impact:** set `cold_start_budget_ms` to the realistic cold figure (~200ms); note the pooled-snapshot path as the fleet-scale optimization (out of scope for this spec but the reason VM-default carries no latency penalty argument). *(SDD C1 updated.)*
+  - Sources: [E2B: Firecracker vs QEMU](https://e2b.dev/blog/firecracker-vs-qemu); [Firecracker snapshot-support.md](https://github.com/firecracker-microvm/firecracker/blob/main/docs/snapshotting/snapshot-support.md); [Sandboxes that boot in 28ms](https://dev.to/adwitiya/how-i-built-sandboxes-that-boot-in-28ms-using-firecracker-snapshots-i0k); [Lambda SnapStart — Marc Brooker](https://brooker.co.za/blog/2022/11/29/snapstart.html).
+- **KVM deployability (the single biggest federal risk):** Firecracker hard-requires `/dev/kvm` (bare-metal or nested-virt); gVisor's **systrap** platform runs with **no** hardware virtualization. For DOE/SCIF/locked-down-VDI targets that may not expose `/dev/kvm`, this is a real constraint. **Design verdict:** do **not** paper over it with a silent gVisor swap — gVisor is *not* hardware-VM class and does not satisfy the federal hardware-isolation floor (SC-39(1)). Federal deployment must **provision KVM-capable Linux as a prerequisite**; where a specific enclave genuinely cannot, an explicitly-configured, org-policy-approved, audited gVisor engine is a *break-glass* decision, never an automatic fallback. The fail-closed `federal → refuse` on no-KVM (REQ-003/030) is correct and stays.
+  - Sources: [gVisor Platform Guide](https://gvisor.dev/docs/architecture_guide/platforms/); [Systrap release](https://gvisor.dev/blog/2023/04/28/systrap-release/); [AWS EC2 Nested Virtualization 2026 — InfoQ](https://www.infoq.com/news/2026/03/aws-ec2-nested-virtualization/).
+- **Module boundary:** both engines already satisfy the same posture contract (read-only rootfs, no-network, cgroup/seccomp limits) — Firecracker via jailer+TAP, gVisor via netstack + overlay-by-default — so the `ExecutorBackend` Protocol seam is clean and swap-safe (REQ-002 holds). Open gap: **gVisor aarch64** support could not be conclusively verified; confirm against `gvisor.dev` before committing an ARM-edge gVisor fallback.
+
+### Stream 2 · Tiered isolation + fail-closed → **C2 (router), C3 (relax), C5 (audit)**
+
+**Verdict: the pure-function router shape `resolve_execution_backend(tier, relax, platform_supports_vm)` is correct — federal→vm (refuse if unavailable), enterprise→container (no relax below floor), personal→container default (audited explicit relax only).** It is the textbook application of Saltzer & Schroeder "fail-safe defaults" / OWASP "fail securely," and mirrors production prior art (Kubernetes `RuntimeClass`, GKE Sandbox opt-in, Pod Security Standards' named privileged/baseline/restricted tiers). Four refinements adopted:
+1. **`platform_supports_vm` is an injected fact, not self-probed** — keeps the function pure/testable and avoids a TOCTOU window; the backend's own run-time KVM check is defence-in-depth, not the routing decision. *(SDD C1 + C2 updated.)*
+2. **Audit emitted on every resolution, not only downgrade** — a successful `federal→vm` is itself an AU-2 security-relevant event; the pure router does not emit, the caller does (single emission point). *(SDD C5 updated.)*
+3. **AU-3-quality event content** — record `caller_did`, `tier`, requested/resolved backend, `relax` **+ reason**, `platform_supports_vm`, `outcome`. A bare `relax` bool loses the "why" AU-2/AU-3 require. *(SDD C5 updated.)*
+4. **Enterprise/federal reject a below-floor `relax` immediately (typed error)**, and the refusal path is a **distinct type**, never a fourth "none" backend value — forces every call site to handle refusal explicitly. *(SDD C2 updated.)*
+- **NIST alignment:** federal→vm implements **SC-39(1) hardware separation** (why silent container fallback is unacceptable); enterprise "no relax below floor" is **AC-6 least-privilege** at the tier boundary; refuse-on-unavailable is **SC-7 boundary protection** (never an unenforced boundary in prod); untrusted-code-as-presumptively-hostile is **SI-3**; the router itself as a small isolated security function is **SC-3**. Audit maps to **AU-2/AU-3/AU-12** (non-repudiation).
+- **Break-glass framing for C3:** personal relax = the named, logged, reviewable "break glass" pattern — default stays at `container` (not `local`), and only a *present* explicit config value triggers the weaker path; its absence fails safe to the tier default.
+  - Sources: [Saltzer & Schroeder — Protection of Information (Wikipedia)](https://en.wikipedia.org/wiki/The_Protection_of_Information_in_Computer_Systems); [OWASP Error Handling Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Error_Handling_Cheat_Sheet.html); [Kubernetes RuntimeClass — gVisor/Kata](https://www.systemshardening.com/articles/kubernetes/runtimeclass-gvisor-kata/); [GKE Sandbox](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/sandbox-pods); [K8s Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/); [CSF Tools — SC-39(1)](https://csf.tools/reference/nist-sp-800-53/r5/sc/sc-39/sc-39-1/), [SC-7](https://csf.tools/reference/nist-sp-800-53/r4/sc/sc-7/), [AC-6](https://csf.tools/reference/nist-sp-800-53/r5/ac/ac-6/), [SI-3](https://csf.tools/reference/nist-sp-800-53/r5/si/si-3/), [AU-3](https://csf.tools/reference/nist-sp-800-53/r5/au/au-3/); [Break-glass audit best practice — hoop.dev](https://hoop.dev/blog/compliance-requirements-and-best-practices-for-secure-break-glass-access/).
+
+### Stream 3 · Dev-machine story (macOS/Windows) → **C2/C4 (dev fallback, REQ-030)**
+
+**Verdict: macOS/Windows dev degrades to the `container` backend — explicit, audited, federal hard-refuses — as the design already states. Do not make Lima/Colima-hosted-Firecracker or a remote sandbox the primary dev path.** Firecracker cannot run natively on macOS (no `/dev/kvm`; Apple uses Virtualization.framework), so the only local-VM option is nested-KVM-in-Lima — a fragile community recipe, not a vendor-supported path. Container fallback is the fewest moving parts and reuses infra devs already have (Docker Desktop/Colima).
+- **Strongest prior art — OpenCode's dispatcher:** a restrictiveness lattice `firecracker(4) > gvisor(3) > bwrap(2) > namespace(1) > none(0)` that picks the *most restrictive available* backend, **throws** (never silently degrades) when an explicitly-requested backend is absent, and lets agent config only *escalate*, never lower below the global floor. Rationale quoted: *"a system that silently downgrades to none is worse than a system without a sandbox, because the operator believes they're protected."* This directly validates REQ-021 (escalate-only for agent config) and the fail-closed default.
+- **"Dev degrades loudly, prod stays strict":** federal tier's refusal must be a config-time literal deny, not a runtime probability — the federal code path never reaches the `container` branch. Emit an `AuditEvent` every time the resolved backend is not `vm` (the "audible" requirement). Matches gVisor's own production guidance (bare-metal first, VM-nesting is the named fallback) and Twelve-Factor dev/prod-parity (keep the same policy/audit/tool surface; only the backend underneath differs).
+- **macOS "container-in-a-VM" nuance:** Docker Desktop/Colima already run containers inside a LinuxKit/Colima Linux VM, so the container fallback protects the Darwin host "for free" — but container-to-container isolation inside that VM is exactly as soft as bare-metal Docker. So it is a genuine **downgrade** to label and audit, *not* a security-equivalent stand-in for the microVM. `remote` sandbox (E2B/Modal-style) is a legitimate *future opt-in* backend, not the default (adds standing network dependency + remote trust boundary) — consistent with it being out of scope here.
+  - Sources: [OpenCode OS-Level Sandboxing](https://dev.to/uenyioha/os-level-sandboxing-kernel-isolation-for-ai-agents-3fdg); [Firecracker dev-machine-setup.md](https://github.com/firecracker-microvm/firecracker/blob/main/docs/dev-machine-setup.md); [Lima](https://github.com/lima-vm/lima) / [Colima](https://github.com/abiosoft/colima); [gVisor production guide](https://gvisor.dev/docs/user_guide/production/); [Unit42 — Making Containers More Isolated](https://unit42.paloaltonetworks.com/making-containers-more-isolated-an-overview-of-sandboxed-container-technologies/); [12factor — Dev/Prod Parity](https://12factor.net/dev-prod-parity).
+
+### Net design refinements (all additive, no requirement removed)
+- **C1:** jailer + seccomp-L2 mandated for the Firecracker engine; `cold_start_budget_ms` set to realistic ~200ms cold (note pooled-snapshot ~10-30ms); gVisor explicitly noted as non-hardware-VM class (Protocol-satisfying, not federal-floor-satisfying).
+- **C2:** router is a pure function; `platform_supports_vm` injected (backend KVM check is defence-in-depth); below-floor relax raises immediately; refusal is a distinct type.
+- **C5:** audit on every resolution (not just downgrade), AU-3 field set including relax reason + caller DID.
+- **Open items for /implement:** (a) verify gVisor aarch64 before offering an ARM gVisor fallback; (b) federal deployment doc must state KVM provisioning as a hard prerequisite; (c) pooled-snapshot warm pool is the fleet-scale follow-up, deliberately out of this spec's scope.
