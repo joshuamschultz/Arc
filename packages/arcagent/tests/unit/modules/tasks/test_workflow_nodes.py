@@ -32,17 +32,36 @@ _SCHEMA: dict[str, Any] = {
 
 
 def _node_block(**overrides: Any) -> dict[str, Any]:
+    """A task row's metadata EXACTLY as ``arcteam.workflow.runner`` stamps it.
+
+    Flat, with the runner's own key names — ``workflow`` is the id string, the
+    run is ``flow_run_id``, the attempt is ``iteration``. Mirroring the real
+    producer here is load-bearing: an adapter that reads a shape the runner does
+    not write is invisible on the happy path and silently disables every gate
+    beneath it.
+    """
     block: dict[str, Any] = {
-        "workflow_id": "onboarding",
-        "run_id": "run_1",
+        "workflow": "onboarding",
+        "workflow_version": 1,
+        "flow_run_id": "run_1",
         "node_id": "verify",
-        "attempt": 1,
-        "kind": "agent",
-        "instructions": "Assess the record and report a risk level.",
+        "node_kind": "agent",
+        "iteration": 1,
+        "idempotency_key": "run_1::verify::1",
+        "upstream": {},
+        "strategy": [],
         "output_schema": _SCHEMA,
+        "artifacts": [],
     }
     block.update(overrides)
     return block
+
+
+def _run_root(workspace: Path, run_id: str = "run_1") -> Path:
+    """Where a run's declared artifacts live for a solo agent (D-539)."""
+    root = workspace / "runs" / run_id
+    root.mkdir(parents=True, exist_ok=True)
+    return root
 
 
 @pytest.fixture
@@ -67,7 +86,6 @@ async def _make_node_task(state: Any, **block_overrides: Any) -> Any:
     """Create a real in_progress task row carrying a workflow node block."""
     from arcagent.modules.tasks.capabilities import _state
     from arcagent.modules.tasks.models import Task
-    from arcagent.modules.tasks.node_execution import WORKFLOW_META
 
     st = await _state()
     task = Task(
@@ -78,7 +96,7 @@ async def _make_node_task(state: Any, **block_overrides: Any) -> Any:
         creator_did=st.identity.did,
         attempts=1,
         max_attempts=3,
-        metadata={WORKFLOW_META: _node_block(**block_overrides)},
+        metadata=_node_block(**block_overrides),
     )
     await st.store.create(task)
     del state
@@ -186,7 +204,7 @@ class TestArtifactEnforcement:
     async def test_present_artifact_completes(self, node_state: Any, tmp_path: Path) -> None:
         from arcagent.modules.tasks.capabilities import _state, complete_task
 
-        (tmp_path / "report.md").write_text("done", encoding="utf-8")
+        (_run_root(tmp_path) / "report.md").write_text("done", encoding="utf-8")
         await _make_node_task(node_state, output_schema=None, artifacts=["report.md"])
         await complete_task(id="task_node_1", resolution="done")
         st = await _state()
@@ -237,6 +255,8 @@ class TestArtifactPathConfinement:
 
         # Make the escape target genuinely exist, so an unguarded check would
         # happily pass and report the node complete.
+        _run_root(tmp_path)
+        (tmp_path / "escaped.txt").write_text("victim", encoding="utf-8")
         (tmp_path.parent / "escaped.txt").write_text("victim", encoding="utf-8")
 
         await _make_node_task(node_state, output_schema=None, artifacts=[artifact])
@@ -265,14 +285,47 @@ class TestArtifactPathConfinement:
         """The guard must not break the ordinary case it sits in front of."""
         from arcagent.modules.tasks.capabilities import _state, complete_task
 
-        (tmp_path / "nested").mkdir()
-        (tmp_path / "nested" / "report.md").write_text("done", encoding="utf-8")
+        root = _run_root(tmp_path)
+        (root / "nested").mkdir()
+        (root / "nested" / "report.md").write_text("done", encoding="utf-8")
         await _make_node_task(node_state, output_schema=None, artifacts=["nested/report.md"])
         await complete_task(id="task_node_1", resolution="done")
         st = await _state()
         stored = await st.store.get("task_node_1")
         assert stored is not None
         assert stored.status == "done"
+
+
+class TestMetadataShapeMatchesTheRunner:
+    """The one mismatch that silently disables every gate below it.
+
+    ``node_from_task`` returning None on a real runner-materialised row is
+    invisible: the task runs, nothing errors, and schema validation, artifact
+    enforcement, strategy pinning, and leg threading are all simply never
+    reached. So the key names are asserted against the producer's own source
+    rather than against this test's idea of them.
+    """
+
+    def test_the_keys_this_adapter_reads_are_the_keys_the_runner_writes(self) -> None:
+        from arcteam.workflow import runner
+
+        source = Path(runner.__file__).read_text(encoding="utf-8")
+        _, _, build_task = source.partition("def _build_task")
+        assert build_task, "arcteam runner no longer has _build_task"
+        for key in ("workflow", "flow_run_id", "node_id", "node_kind", "iteration"):
+            assert f'"{key}"' in build_task, f"runner no longer stamps {key!r}"
+
+    def test_a_real_runner_shaped_row_is_recognised(self) -> None:
+        from arcagent.modules.tasks.node_execution import node_from_task
+
+        node = node_from_task(MagicMock(metadata=_node_block()))
+        assert node is not None, "the adapter does not recognise the runner's own shape"
+
+    def test_a_nested_block_is_not_mistaken_for_a_node(self) -> None:
+        """The shape this adapter originally assumed must not half-work."""
+        from arcagent.modules.tasks.node_execution import node_from_task
+
+        assert node_from_task(MagicMock(metadata={"workflow": _node_block()})) is None
 
 
 class TestArtifactGuardIsShared:
@@ -306,14 +359,8 @@ class TestPromptSectionSeam:
     def test_instructions_and_schema_are_included(self) -> None:
         from arcagent.modules.tasks.node_execution import WorkflowNode, render_node_section
 
-        node = WorkflowNode(
-            workflow_id="w",
-            run_id="r",
-            node_id="verify",
-            instructions="Do the thing.",
-            output_schema=_SCHEMA,
-        )
-        section = render_node_section(node)
+        node = WorkflowNode(workflow_id="w", run_id="r", node_id="verify", output_schema=_SCHEMA)
+        section = render_node_section(node, None, "Do the thing.")
         assert "Do the thing." in section
         assert "Required output shape" in section
 
@@ -409,15 +456,19 @@ class TestNodeParsing:
         assert node_from_task(MagicMock(metadata={})) is None
 
     def test_malformed_block_degrades_to_not_a_node(self) -> None:
-        from arcagent.modules.tasks.node_execution import WORKFLOW_META, node_from_task
+        from arcagent.modules.tasks.node_execution import node_from_task
 
-        task = MagicMock(metadata={WORKFLOW_META: {"run_id": "r"}})
+        # A row naming a workflow but no run/node is not a node row.
+        task = MagicMock(metadata={"workflow": "w"})
         assert node_from_task(task) is None
 
     def test_valid_block_parses(self) -> None:
-        from arcagent.modules.tasks.node_execution import WORKFLOW_META, node_from_task
+        from arcagent.modules.tasks.node_execution import node_from_task
 
-        task = MagicMock(metadata={WORKFLOW_META: _node_block()})
+        task = MagicMock(metadata=_node_block())
         node = node_from_task(task)
         assert node is not None
         assert node.node_id == "verify"
+        assert node.run_id == "run_1"
+        assert node.workflow_id == "onboarding"
+        assert node.idempotency_key == "run_1::verify::1"

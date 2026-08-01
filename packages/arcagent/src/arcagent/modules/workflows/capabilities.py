@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, is_dataclass
 from typing import Any
@@ -184,6 +185,30 @@ def _text(value: str, field: str) -> str:
         raise ValueError(f"{field}: {exc}") from exc
 
 
+# A workflow id is a BARE NAME because it becomes a directory. arcteam's store
+# raises ``InvalidWorkflowIdError`` on anything else — but its guard is a
+# backstop, and a backstop firing in normal operation means the boundary check
+# is missing. This is the boundary.
+_LEGAL_WORKFLOW_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+
+
+def _bad_workflow_id(workflow_id: str) -> dict[str, Any] | None:
+    """The typed refusal for an id that is not a bare name, or None."""
+    if not workflow_id:
+        return issue(field="workflow_id", error="a workflow needs a stable id")
+    if _LEGAL_WORKFLOW_ID.match(workflow_id) and ".." not in workflow_id:
+        return None
+    return issue(
+        field="workflow_id",
+        error=(
+            "a workflow id is a bare name and may never contain a path separator "
+            "or '..' — it becomes a directory under the agent's workspace"
+        ),
+        observed=workflow_id,
+        admissible=("lowercase letters, digits, '.', '_', '-'; 1-64 characters",),
+    )
+
+
 def _version_required(expected_version: int | None) -> dict[str, Any] | None:
     """The typed refusal for a missing ``expected_version``, or None if present."""
     if expected_version is not None:
@@ -215,8 +240,9 @@ async def workflow_create(
 ) -> str:
     """Create version 1 of a workflow as an unsigned draft."""
     st = _runtime.state()
-    if not workflow_id:
-        return _errors(issue(field="workflow_id", error="a workflow needs a stable id"))
+    bad_id = _bad_workflow_id(workflow_id)
+    if bad_id is not None:
+        return _errors(bad_id)
     node_list = nodes or []
     quota = _node_quota(len(node_list))
     if quota is not None:
@@ -518,8 +544,14 @@ def _workflow_count(st: _runtime._State) -> int:
 
 
 def _load(st: _runtime._State, workflow_id: str) -> Any:
-    """Load a bundle, or None when it does not exist / cannot be read."""
-    if st.definitions is None:
+    """Load a bundle, or None when the id is illegal / it cannot be read.
+
+    The id is re-checked here so EVERY read path is guarded, including the ones
+    that reach the store without a mutation's up-front validation. arcteam's own
+    guard raises rather than returning False from ``exists()``, so an unchecked
+    id would surface as a crash rather than a typed refusal.
+    """
+    if st.definitions is None or _bad_workflow_id(workflow_id) is not None:
         return None
     try:
         return st.definitions.load(workflow_id)
@@ -553,6 +585,9 @@ async def _edit_document(
     the file and dashboard surfaces get.
     """
     st = _runtime.state()
+    bad_id = _bad_workflow_id(workflow_id)
+    if bad_id is not None:
+        return _errors(bad_id)
     stale = _version_required(expected_version)
     if stale is not None:
         return _errors(stale)

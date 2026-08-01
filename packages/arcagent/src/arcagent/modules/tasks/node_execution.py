@@ -40,8 +40,14 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# The metadata key the runner stamps a workflow node under.
+# The metadata keys the runner stamps on a materialised node row
+# (arcteam.workflow.runner._build_task). They are FLAT on ``task.metadata``, not
+# nested — ``workflow`` is the workflow id string, not a block. Reading them
+# wrongly is silent: the adapter simply never recognises a node and every gate
+# below it goes dark on the happy path.
 WORKFLOW_META = "workflow"
+RUN_ID_META = "flow_run_id"
+NODE_ID_META = "node_id"
 
 # Bound on a node output threaded into a downstream prompt. An uncapped output
 # is both a token blowout and an injection surface (DESIGN §4 performance note).
@@ -62,13 +68,20 @@ class WorkflowNode(BaseModel):
     node_id: str
     attempt: int = 1
     kind: str = "agent"
-    # Resolved node instructions (the signed ``prompt`` file's content), not a
-    # path — see the module docstring on why this module never re-reads files.
-    instructions: str = ""
+    # The node's ``prompt`` file reference from the signed bundle. Named as a
+    # REFERENCE, not content: the runner stamps the path, and the bytes are only
+    # trustworthy read out of the bundle whose manifest was verified.
+    prompt_ref: str | None = None
     skill: str | None = None
     strategy: list[str] = Field(default_factory=list)
-    output_schema: dict[str, Any] | None = None
+    # Either the resolved schema object or the bundle-relative path to it. The
+    # runner currently stamps the path; accepting both means the gate fires
+    # either way rather than going quietly dark on the shape it did not expect.
+    output_schema: dict[str, Any] | str | None = None
     artifacts: list[str] = Field(default_factory=list)
+    # The runner's deterministic row id, which IS the per-attempt idempotency
+    # anchor (``node_task_id``). Derived locally only when absent.
+    idempotency_key: str = ""
     # Validated outputs of the upstream nodes this one needs, keyed by node id.
     upstream: dict[str, Any] = Field(default_factory=dict)
     # The run's accumulated lethal-trifecta legs at the moment this node was
@@ -124,24 +137,65 @@ def idempotency_key() -> str | None:
     node = _current_node.get()
     if node is None:
         return None
+    if node.idempotency_key:
+        # The runner's derived row id, preferred: two runners deciding the same
+        # frontier compute the same key, and a locally-derived one would not.
+        return node.idempotency_key
     return NodeAttempt(node.run_id, node.node_id, node.attempt).idempotency_key
 
 
 def node_from_task(task: Any) -> WorkflowNode | None:
-    """Parse the workflow node off a task row, or None for an ordinary task."""
+    """Parse the workflow node off a task row, or None for an ordinary task.
+
+    The runner's metadata is flat and uses its own names (``workflow`` for the
+    id, ``flow_run_id`` for the run, ``iteration`` for the attempt), so the
+    mapping is spelled out here rather than assumed. A row missing any of the
+    three identifying keys is an ordinary task.
+    """
     metadata = getattr(task, "metadata", None) or {}
-    block = metadata.get(WORKFLOW_META)
-    if not isinstance(block, dict):
+    workflow_id = metadata.get(WORKFLOW_META)
+    run_id = metadata.get(RUN_ID_META)
+    node_id = metadata.get(NODE_ID_META)
+    if not (isinstance(workflow_id, str) and isinstance(run_id, str) and isinstance(node_id, str)):
         return None
     try:
-        return WorkflowNode.model_validate(block)
-    except ValueError:
-        # A malformed block is a corrupt row, not a node: treat it as an
-        # ordinary task rather than crashing the whole dispatch loop.
+        return WorkflowNode(
+            workflow_id=workflow_id,
+            run_id=run_id,
+            node_id=node_id,
+            attempt=int(metadata.get("iteration", 1)),
+            kind=str(metadata.get("node_kind", "agent")),
+            prompt_ref=metadata.get("prompt"),
+            skill=metadata.get("skill"),
+            strategy=list(metadata.get("strategy") or ()),
+            output_schema=metadata.get("output_schema"),
+            artifacts=list(metadata.get("artifacts") or ()),
+            upstream=dict(metadata.get("upstream") or {}),
+            accumulated_legs=list(metadata.get("accumulated_legs") or ()),
+            idempotency_key=str(metadata.get("idempotency_key") or ""),
+        )
+    except (TypeError, ValueError):
+        # A malformed row is a corrupt row, not a node: treat it as an ordinary
+        # task rather than crashing the whole dispatch loop.
         return None
 
 
-def render_node_section(node: WorkflowNode, skill_body: str | None = None) -> str:
+def run_workspace(team_root: Path | None, agent_workspace: Path, run_id: str) -> Path:
+    """The directory a run's declared artifacts are relative to (D-539).
+
+    Every run gets a shared workspace at ``<team_root>/shared/runs/<run_id>/``,
+    which is what makes artifact containment structural rather than a rule:
+    resolve against it and anything landing outside is refused by construction.
+    A solo agent with no team root falls back to its own workspace — still a
+    containment boundary, just a per-agent one.
+    """
+    base = team_root / "shared" / "runs" if team_root is not None else agent_workspace / "runs"
+    return (base / run_id).resolve()
+
+
+def render_node_section(
+    node: WorkflowNode, skill_body: str | None = None, instructions: str = ""
+) -> str:
     """The prompt section carrying node instructions and upstream outputs.
 
     Upstream values are rendered as a typed JSON block under an explicit,
@@ -150,14 +204,15 @@ def render_node_section(node: WorkflowNode, skill_body: str | None = None) -> st
     handed, with the producing node named, so a value can always be traced back.
     """
     lines = [f"## Workflow node `{node.node_id}` (run {node.run_id}, attempt {node.attempt})"]
-    if node.instructions:
-        lines.extend(["", "### Instructions", node.instructions])
+    if instructions:
+        lines.extend(["", "### Instructions", instructions])
     if node.upstream:
         lines.extend(["", "### Upstream outputs (typed, validated)"])
         for upstream_id, value in sorted(node.upstream.items()):
             rendered = json.dumps(value, indent=2, default=str)[:MAX_OUTPUT_CHARS]
             lines.extend([f"`{upstream_id}`:", "```json", rendered, "```"])
-    if node.output_schema is not None:
+    schema = node.output_schema if isinstance(node.output_schema, dict) else None
+    if schema is not None:
         lines.extend(
             [
                 "",
@@ -165,7 +220,7 @@ def render_node_section(node: WorkflowNode, skill_body: str | None = None) -> st
                 "Call `complete_task` with an `output` matching this JSON Schema. "
                 "An output that does not match is a retryable failure, not a result.",
                 "```json",
-                json.dumps(node.output_schema, indent=2)[:MAX_OUTPUT_CHARS],
+                json.dumps(schema, indent=2)[:MAX_OUTPUT_CHARS],
                 "```",
             ]
         )
@@ -179,21 +234,52 @@ def render_node_section(node: WorkflowNode, skill_body: str | None = None) -> st
     return "\n".join(lines)
 
 
-def validate_output(node: WorkflowNode, output: dict[str, Any] | None) -> str | None:
+def resolve_schema(node: WorkflowNode, bundle_root: Path | None) -> dict[str, Any] | str | None:
+    """The node's schema object, or a message explaining why it is unusable.
+
+    The runner stamps ``output_schema`` as a bundle-relative path, so it must be
+    read out of the bundle whose manifest was verified. An unreadable or escaping
+    reference returns a MESSAGE, never None: a node that declared a schema and
+    whose schema cannot be loaded must fail, because silently skipping the gate
+    is exactly the pass-forward the requirement exists to prevent.
+    """
+    reference = node.output_schema
+    if reference is None or isinstance(reference, dict):
+        return reference
+    if bundle_root is None:
+        return f"node declares output_schema {reference!r} but its bundle is not reachable here"
+    target = _confined(bundle_root, reference)
+    if target is None:
+        return f"output_schema {reference!r} escapes the workflow bundle"
+    try:
+        loaded = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return f"output_schema {reference!r} could not be read: {exc}"
+    if not isinstance(loaded, dict):
+        return f"output_schema {reference!r} is not a JSON Schema object"
+    return loaded
+
+
+def validate_output(
+    node: WorkflowNode, output: dict[str, Any] | None, schema: dict[str, Any] | None = None
+) -> str | None:
     """Validate a node's output against its declared schema (REQ-237).
 
     Returns None when the output is acceptable, or a message describing the
     violation. The caller treats a message as a RETRYABLE node failure — the
     value is never recorded, so it can never be visible downstream.
     """
-    if node.output_schema is None:
+    effective = schema if schema is not None else node.output_schema
+    if effective is None:
         return None
+    if not isinstance(effective, dict):
+        return f"node declares output_schema {effective!r} but it was never resolved"
     if output is None:
         return "node declares an output_schema but completed with no output"
     import jsonschema
 
     try:
-        jsonschema.validate(instance=output, schema=node.output_schema)
+        jsonschema.validate(instance=output, schema=effective)
     except jsonschema.ValidationError as exc:
         path = "/".join(str(part) for part in exc.absolute_path) or "<root>"
         return f"output does not satisfy output_schema at '{path}': {exc.message}"

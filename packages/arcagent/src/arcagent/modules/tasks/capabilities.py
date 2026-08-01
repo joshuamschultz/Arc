@@ -57,6 +57,7 @@ from arcagent.modules.tasks.models import Priority, Task
 from arcagent.modules.tasks.node_execution import (
     WORKFLOW_META,
     WorkflowNode,
+    _confined,
     allowed_strategies,
     artifact_escape_failure,
     artifact_failure,
@@ -67,6 +68,8 @@ from arcagent.modules.tasks.node_execution import (
     node_from_task,
     render_node_section,
     reset_node,
+    resolve_schema,
+    run_workspace,
     validate_output,
 )
 from arcagent.tools._decorator import background_task, hook, tool
@@ -493,18 +496,43 @@ def _node_completion_refusal(
     node = node_from_task(task)
     if node is None:
         return None
-    violation = validate_output(node, output)
+    schema = resolve_schema(node, _bundle_root(st, node))
+    if isinstance(schema, str):
+        # The schema was declared but could not be resolved. Fail the node —
+        # skipping the gate because its schema is unreadable is the very
+        # pass-forward the requirement exists to prevent.
+        return schema
+    violation = validate_output(node, output, schema)
     if violation is not None:
         return violation
     if not check_artifacts:
         return None
     # Confinement first: an escaping path is an attack, not an incomplete node,
     # and must be refused before anything stats the filesystem.
-    escaping = escaping_artifacts(node, st.workspace)
+    root = run_workspace(_team_root(st), st.workspace, node.run_id)
+    escaping = escaping_artifacts(node, root)
     if escaping:
         return artifact_escape_failure(escaping)
-    missing = missing_artifacts(node, st.workspace)
+    missing = missing_artifacts(node, root)
     return artifact_failure(missing) if missing else None
+
+
+def _team_root(st: _runtime._State) -> Path | None:
+    """The shared team root, or None for a solo agent."""
+    return Path(st.team_root) if st.team_root else None
+
+
+def _bundle_root(st: _runtime._State, node: WorkflowNode) -> Path | None:
+    """This agent's local bundle directory for the node's workflow, if present.
+
+    A workflow id is a bare name by construction (arcteam's store proves it), so
+    joining it here cannot traverse — but the check is repeated rather than
+    assumed, because a caller-controlled name becoming a path is the shape both
+    live traversal defects in this feature took.
+    """
+    root = st.workspace / "workflows"
+    bundle = _confined(root, node.workflow_id)
+    return bundle if bundle is not None and bundle.is_dir() else None
 
 
 async def _fail_node_attempt(st: _runtime._State, task: Task, reason: str) -> str:
@@ -995,7 +1023,33 @@ async def inject_workflow_node_section(ctx: Any) -> None:
     node = current_node()
     if node is None:
         return
-    sections["workflow_node"] = render_node_section(node, _skill_body(node))
+    st = _runtime.state()
+    sections["workflow_node"] = render_node_section(
+        node, _skill_body(node), _node_instructions(st, node)
+    )
+
+
+def _node_instructions(st: _runtime._State, node: WorkflowNode) -> str:
+    """The node's prompt file content, read out of the verified bundle.
+
+    The runner stamps a bundle-relative REFERENCE, not the bytes, so the bytes
+    are only trustworthy read from the bundle whose manifest was verified — and
+    only through ``_confined``, because a reference is a caller-controlled name
+    becoming a path. Unreadable degrades to no instructions: the node still runs
+    under its schema and artifact gates, which is where correctness is enforced.
+    """
+    root = _bundle_root(st, node)
+    if node.prompt_ref is None or root is None:
+        return ""
+    target = _confined(root, node.prompt_ref)
+    if target is None:
+        _logger.warning("Node %s prompt %r escapes its bundle", node.node_id, node.prompt_ref)
+        return ""
+    try:
+        return target.read_text(encoding="utf-8")
+    except OSError:
+        _logger.warning("Node %s could not read prompt %r", node.node_id, node.prompt_ref)
+        return ""
 
 
 def _skill_body(node: WorkflowNode) -> str | None:

@@ -81,6 +81,11 @@ class _State:
     # None outside a fully-wired agent (bare/test construction).
     capability_ledger: Any = None
     skill_registry: Any = None
+    # The shared team root. A workflow run's declared artifacts are relative to
+    # ``<team_root>/shared/runs/<run_id>/`` (D-539), which is what makes artifact
+    # containment structural rather than a rule. Empty for a solo agent, which
+    # then contains against its own workspace.
+    team_root: str = ""
     # Serialises the lazy first-use build in ``ensure_store`` so two concurrent
     # first tool calls can't both open the backend + a live NATS connection
     # (REL-F4 check-then-act race -> one orphaned connection).
@@ -116,6 +121,7 @@ def configure(
     operator_signer: Any = None,
     registry: Any = None,
     messenger: Any = None,
+    team_root: str = "",
 ) -> None:
     """Bind module state for the CURRENT asyncio task. Called once at agent startup.
 
@@ -138,6 +144,7 @@ def configure(
             operator_signer=operator_signer,
             registry=registry,
             messenger=messenger,
+            team_root=team_root,
         )
     )
 
