@@ -10,7 +10,16 @@ from typing import Any
 
 from arcteam.workflow.runner_budget import RunBudget
 
-from .conftest import OPS_DID, SALES_DID, Budget, Definition, Node, complete_node, fail_node
+from .conftest import (
+    OPS_DID,
+    SALES_DID,
+    Budget,
+    Definition,
+    Node,
+    complete_node,
+    fail_node,
+    task_id,
+)
 from .test_runner_frontier import build
 
 CHAIN = Definition(
@@ -70,7 +79,7 @@ async def test_run_terminates_when_the_token_budget_is_exhausted(
     runner = build(stores, registry, CHAIN)
     run = await runner.start_run("budgeted", input={}, initiator_did="did:arc:x/1")
 
-    await complete_node(tasks, f"wf-{run.run_id}-first-0", SALES_DID, {"ok": True}, tokens=140)
+    await complete_node(tasks, task_id(run.run_id, "first", 0), SALES_DID, {"ok": True}, tokens=140)
     record = await runner.advance(run.run_id)
 
     assert record.status == "failed"
@@ -85,7 +94,7 @@ async def test_spend_is_settled_once_per_node_not_once_per_tick(
     runner = build(stores, registry, CHAIN)
     run = await runner.start_run("budgeted", input={}, initiator_did="did:arc:x/1")
 
-    await complete_node(tasks, f"wf-{run.run_id}-first-0", SALES_DID, {"ok": True}, tokens=20)
+    await complete_node(tasks, task_id(run.run_id, "first", 0), SALES_DID, {"ok": True}, tokens=20)
     for _ in range(3):
         await runner.advance(run.run_id)
 
@@ -118,7 +127,7 @@ async def test_a_failed_node_rolls_the_run_into_failed(stores: Any, registry: An
     runner = build(stores, registry, CHAIN)
     run = await runner.start_run("budgeted", input={}, initiator_did="did:arc:x/1")
 
-    await fail_node(tasks, f"wf-{run.run_id}-first-0", SALES_DID, "tool exploded")
+    await fail_node(tasks, task_id(run.run_id, "first", 0), SALES_DID, "tool exploded")
     record = await runner.advance(run.run_id)
 
     assert record.status == "failed"
@@ -130,9 +139,9 @@ async def test_all_nodes_done_rolls_the_run_into_done(stores: Any, registry: Any
     runner = build(stores, registry, CHAIN)
     run = await runner.start_run("budgeted", input={}, initiator_did="did:arc:x/1")
 
-    await complete_node(tasks, f"wf-{run.run_id}-first-0", SALES_DID, {"ok": True})
+    await complete_node(tasks, task_id(run.run_id, "first", 0), SALES_DID, {"ok": True})
     await runner.advance(run.run_id)
-    await complete_node(tasks, f"wf-{run.run_id}-second-0", OPS_DID, {"ok": True})
+    await complete_node(tasks, task_id(run.run_id, "second", 0), OPS_DID, {"ok": True})
     record = await runner.advance(run.run_id)
 
     assert record.status == "done"
@@ -154,7 +163,7 @@ async def test_a_stalled_run_is_escalated_rather_than_sitting_silent(
     async def swallow(tasks_: Any, *, idempotency_keys: Any) -> list[Any]:
         return []
 
-    await complete_node(tasks, f"wf-{run.run_id}-first-0", SALES_DID, {"ok": True})
+    await complete_node(tasks, task_id(run.run_id, "first", 0), SALES_DID, {"ok": True})
     flow_tasks.create_batch = swallow  # type: ignore[method-assign]
     record = await runner.advance(run.run_id)
 

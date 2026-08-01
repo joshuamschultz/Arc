@@ -24,6 +24,7 @@ from .conftest import (
     DroppingSender,
     Node,
     complete_node,
+    task_id,
 )
 from .test_runner_frontier import build
 
@@ -55,12 +56,12 @@ async def test_a_run_completes_with_every_outbound_message_dropped(
 
     run = await runner.start_run("handoff", input={}, initiator_did="did:arc:x/1")
     await complete_node(
-        tasks, f"wf-{run.run_id}-collect-0", SALES_DID, {"company_domain": "acme.example"}
+        tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"company_domain": "acme.example"}
     )
     await runner.advance(run.run_id)
-    await complete_node(tasks, f"wf-{run.run_id}-build-0", OPS_DID, {"record_id": 17})
+    await complete_node(tasks, task_id(run.run_id, "build", 0), OPS_DID, {"record_id": 17})
     await runner.advance(run.run_id)
-    await complete_node(tasks, f"wf-{run.run_id}-review-0", REVIEWER_DID, {"verdict": "ok"})
+    await complete_node(tasks, task_id(run.run_id, "review", 0), REVIEWER_DID, {"verdict": "ok"})
     record = await runner.advance(run.run_id)
 
     assert sender.attempts > 0, "narration was genuinely attempted and genuinely dropped"
@@ -75,10 +76,10 @@ async def test_every_row_carries_exactly_the_owner_named_by_the_definition(
     run = await runner.start_run("handoff", input={}, initiator_did="did:arc:x/1")
 
     await complete_node(
-        tasks, f"wf-{run.run_id}-collect-0", SALES_DID, {"company_domain": "acme.example"}
+        tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"company_domain": "acme.example"}
     )
     await runner.advance(run.run_id)
-    await complete_node(tasks, f"wf-{run.run_id}-build-0", OPS_DID, {"record_id": 17})
+    await complete_node(tasks, task_id(run.run_id, "build", 0), OPS_DID, {"record_id": 17})
     await runner.advance(run.run_id)
 
     owners = {
@@ -93,16 +94,16 @@ async def test_two_agents_racing_one_row_produce_exactly_one_claim(
     _, _, tasks = stores
     runner = build(stores, registry, THREE_AGENTS)
     run = await runner.start_run("handoff", input={}, initiator_did="did:arc:x/1")
-    task_id = f"wf-{run.run_id}-collect-0"
+    collect_id = task_id(run.run_id, "collect", 0)
 
     # The row names one owner, so a foreign agent cannot take it at all.
-    _, foreign = await tasks.start_task(task_id, OPS_DID)
+    _, foreign = await tasks.start_task(collect_id, OPS_DID)
     assert foreign == "no_tasks_available"
 
     # Two dispatch loops of the OWNING agent racing the same row: one claim.
     first, second = await asyncio.gather(
-        tasks.start_task(task_id, SALES_DID),
-        tasks.start_task(task_id, SALES_DID),
+        tasks.start_task(collect_id, SALES_DID),
+        tasks.start_task(collect_id, SALES_DID),
     )
     winners = [outcome for _, outcome in (first, second) if outcome == "assigned"]
     assert len(winners) == 1, f"exactly one claim must win, got {first} / {second}"
@@ -117,7 +118,7 @@ async def test_a_nodes_inputs_come_from_task_rows_never_from_a_message_body(
     run = await runner.start_run("handoff", input={}, initiator_did="did:arc:x/1")
 
     await complete_node(
-        tasks, f"wf-{run.run_id}-collect-0", SALES_DID, {"company_domain": "acme.example"}
+        tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"company_domain": "acme.example"}
     )
     await runner.advance(run.run_id)
 

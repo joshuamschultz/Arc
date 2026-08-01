@@ -132,6 +132,8 @@ import pytest
 from arcstore.backends.sqlite import SqliteBackend
 from arcstore.tasks import Task, TaskStore
 
+from arcteam.workflow.runner import node_task_id
+
 # ---------------------------------------------------------------------------
 # Definition doubles (COMP-001)
 # ---------------------------------------------------------------------------
@@ -564,3 +566,8 @@ async def fail_node(tasks: TaskStore, task_id: str, agent_did: str, error: str) 
 
 def path_kinds(run: Any) -> list[str]:
     return [entry["kind"] for entry in run.path_taken]
+
+
+def task_id(run_id: str, node_id: str, iteration: int = 0) -> str:
+    """The row id a node instance gets — via the real derivation, not a copy."""
+    return node_task_id(run_id, node_id, iteration)

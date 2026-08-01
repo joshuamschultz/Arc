@@ -30,6 +30,7 @@ event the runner emits names the deployment's true posture.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -83,13 +84,36 @@ class NodeDecisionError(WorkflowRunError):
         self.detail = detail
 
 
+_SAFE_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def _assert_safe_name(kind: str, value: str) -> None:
+    """A run id and a node id are NAMES. Refuse anything shaped like a path.
+
+    Fail-closed rather than sanitizing: a definition that names a node
+    ``../../etc/passwd`` is not a definition to quietly repair, and the runner
+    is the last checkpoint before these strings become durable keys and are
+    handed to a node adapter that does touch the filesystem.
+    """
+    if not value or value in (".", "..") or not _SAFE_NAME.match(value):
+        raise ValueError(f"unsafe {kind} {value!r}: a {kind} is a name, never a path")
+
+
 def node_task_id(run_id: str, node_id: str, iteration: int) -> str:
     """The deterministic row id for one node instance — the idempotency anchor.
 
     Derived, never generated: two runners deciding the same frontier compute the
     same id, so a double-create is impossible even before the store dedupes.
+
+    The separator is one both components are forbidden to contain, because the
+    derivation must be UNAMBIGUOUS. Joining on a character the parts may also
+    hold lets two different (run, node) pairs collide on one key — and since
+    creation is idempotent on that key, a colliding run would adopt another
+    run's row and read its output as its own upstream.
     """
-    return f"wf-{run_id}-{node_id}-{iteration}"
+    _assert_safe_name("run id", run_id)
+    _assert_safe_name("node id", node_id)
+    return f"wf/{run_id}/{node_id}/{iteration}"
 
 
 @dataclass(frozen=True)
@@ -161,6 +185,9 @@ class WorkflowRunner:
         assert_channel_binding(definition.channel)
         budget = definition.budget
         run_id = run_id or f"run-{uuid4().hex[:12]}"
+        # A caller-supplied run id becomes part of every task key this run
+        # writes. Check it before the Run row exists, not after.
+        _assert_safe_name("run id", run_id)
         run = await self._runs.create_run(
             run_id=run_id,
             workflow_id=definition.id,
@@ -395,8 +422,11 @@ class WorkflowRunner:
                 # No headroom right now: defer, never fail. A settling node
                 # releases its reservation and a later tick admits this one.
                 continue
-            rows.append(await self._build_task(run, definition, node, iteration, state, scope))
-            keys.append(f"{run.run_id}:{node.id}:{iteration}")
+            task = await self._build_task(run, definition, node, iteration, state, scope)
+            rows.append(task)
+            # The row id IS the identity pair, already unambiguous — deriving a
+            # second key by another rule would be a second thing to get wrong.
+            keys.append(task.id)
         if not rows:
             return False
         created = await self._tasks.create_batch(rows, idempotency_keys=keys)
@@ -415,6 +445,11 @@ class WorkflowRunner:
         scope: Mapping[str, Any],
     ) -> Task:
         """One node instance as a durable row, owned by exactly one agent."""
+        try:
+            task_id = node_task_id(run.run_id, node.id, iteration)
+        except ValueError as exc:
+            raise NodeDecisionError(node.id, str(exc)) from exc
+        self._assert_contained_artifacts(node)
         owner_did = await self._owner_for(node, definition)
         outputs = state.outputs()
         upstream = {need: outputs[need] for need in node.needs if need in outputs}
@@ -430,7 +465,7 @@ class WorkflowRunner:
             "node_id": node.id,
             "node_kind": node.kind,
             "iteration": iteration,
-            "idempotency_key": f"{run.run_id}:{node.id}:{iteration}",
+            "idempotency_key": task_id,
             "upstream": upstream,
             "strategy": list(node.strategy),
             "output_schema": node.output_schema,
@@ -450,7 +485,7 @@ class WorkflowRunner:
         if node.kind == "router":
             metadata["routes"] = [route.to for route in cast(RouterNodeSpec, node).routes]
         return Task(
-            id=node_task_id(run.run_id, node.id, iteration),
+            id=task_id,
             title=f"{definition.id}: {node.id}",
             status="review" if node.kind == "gate" else ("todo" if owner_did else "backlog"),
             owner_did=owner_did,
@@ -846,6 +881,22 @@ class WorkflowRunner:
         return (self._clock() - started).total_seconds() > run.budget_wall_clock_s
 
     # -- small helpers -------------------------------------------------------
+
+    def _assert_contained_artifacts(self, node: NodeSpec) -> None:
+        """A declared artifact is workspace-relative or the node does not run.
+
+        The validator refuses these at authoring time, but a bundle can reach
+        dispatch without ever having been validated — loaded straight off disk,
+        or signed before a rule existed. The runner is the last checkpoint
+        before the node adapter resolves these against a real directory
+        (ADR-029 containment, ASI04).
+        """
+        for artifact in node.artifacts:
+            parts = artifact.replace("\\", "/").split("/")
+            if not artifact or artifact.startswith("/") or ".." in parts:
+                raise NodeDecisionError(
+                    node.id, f"artifact {artifact!r} escapes the workspace"
+                )
 
     async def _owner_for(self, node: NodeSpec, definition: WorkflowSpec) -> str | None:
         handle = node.agent or definition.owner
