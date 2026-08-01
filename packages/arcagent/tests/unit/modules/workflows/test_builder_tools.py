@@ -405,11 +405,10 @@ class TestTheStoreIsBuiltWithItsSecurityContext:
 
     def test_an_agent_signed_workflow_is_refused_above_personal(self, tmp_path: Any) -> None:
         """The behavioural proof: a rogue key must not produce a verified bundle."""
-        from nacl.signing import SigningKey
-
         from arcteam.workflow import parse_definition
         from arcteam.workflow.errors import WorkflowError
         from arcteam.workflow.store import DefinitionStore, sign_definition
+        from nacl.signing import SigningKey
 
         store = DefinitionStore(root=tmp_path / "wf", tier="federal", operator_public_key=None)
         doc = {
