@@ -11,6 +11,7 @@ which is why a delivery failure is swallowed here rather than raised (D-538).
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
 from arcteam.types import Message, MsgType, Priority, parse_uri
@@ -27,9 +28,17 @@ class NarrationSender(Protocol):
 class RunNarrator:
     """Posts run transitions to the workflow's bound group channel."""
 
-    def __init__(self, sender: NarrationSender | None, *, sender_did: str) -> None:
+    def __init__(
+        self,
+        sender: NarrationSender | None,
+        *,
+        sender_did: str,
+        ensure_channel: Callable[[str], Awaitable[None]] | None = None,
+    ) -> None:
         self._sender = sender
         self._sender_did = sender_did
+        self._ensure_channel = ensure_channel
+        self._admitted: set[str] = set()
 
     async def run_started(
         self, *, channel: str | None, run_id: str, workflow_id: str, version: int
@@ -120,9 +129,15 @@ class RunNarrator:
         """
         if channel is None or self._sender is None:
             return
-        scheme, _ = parse_uri(channel)
+        scheme, name = parse_uri(channel)
         if scheme != "channel":
             raise ValueError(f"narration binds to a channel, not {channel!r}")
+        if self._ensure_channel is not None and name not in self._admitted:
+            # The messenger refuses a sender that is not a registered member of
+            # the target channel, so admission has to happen before the first
+            # post or every one is silently dropped. Once per channel.
+            self._admitted.add(name)
+            await self._ensure_channel(name)
         message = Message(
             sender=self._sender_did,
             to=[channel],
