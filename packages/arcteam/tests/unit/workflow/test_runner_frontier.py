@@ -470,6 +470,52 @@ async def test_a_node_that_would_need_interpolation_fails_closed(
     assert materialized == {"collect"}
 
 
+async def test_an_embedded_run_input_is_refused_too(
+    stores: Any, registry: Any
+) -> None:
+    """The refusal covers `$input.` embedding, not just `$nodes.` embedding.
+
+    This case is the reason these tests wire the REAL resolver: the stand-in
+    they used to run against checked only for "$nodes." in the string, so it
+    accepted exactly this. The assertion read as a security guarantee while
+    testing a resolver that did not make it.
+    """
+    definition = Definition(
+        id="wired",
+        nodes=(
+            Node(
+                id="collect",
+                kind="agent",
+                agent="@sales",
+                tool="crm_lookup",
+            ),
+            Node(
+                id="verify",
+                kind="tool",
+                agent="@sales",
+                needs=("collect",),
+                tool="crm_lookup",
+                args={"query": "greet $input.customer now"},
+            ),
+        ),
+    )
+    flow_tasks, _, tasks = stores
+    runner = build(stores, registry, definition)
+    run = await runner.start_run(
+        "wired", input={"customer": "acme"}, initiator_did="did:arc:x/1"
+    )
+
+    await complete_node(tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"ok": True})
+    record = await runner.advance(run.run_id)
+
+    assert record.status == "failed"
+    assert "verify" in (record.resolution or "")
+    materialized = {
+        r.metadata["node_id"] for r in await flow_tasks.query_by_flow_run(run.run_id)
+    }
+    assert materialized == {"collect"}
+
+
 async def test_a_router_whose_predicate_cannot_be_evaluated_fails_closed(
     stores: Any, registry: Any
 ) -> None:
