@@ -4,7 +4,7 @@ import {
   useQueryClient,
   type UseQueryResult,
 } from '@tanstack/react-query'
-import { apiGet, apiPut } from './api'
+import { apiGet, apiPatch, apiPost, apiPut } from './api'
 import type {
   PromptWriteResponse,
   RubricResponse,
@@ -47,6 +47,10 @@ import type {
   ToolsResponse,
   Trace,
   TracesResponse,
+  WorkflowDetail,
+  WorkflowRunDetail,
+  WorkflowRunsResponse,
+  WorkflowsListResponse,
 } from './types'
 
 // Shared react-query helpers for every page. Keys are arrays so live updates
@@ -555,3 +559,117 @@ export const useSpawnTree = (root: string | null) =>
 
 export const useIdentityCost = (window = '24h') =>
   useApiQuery<IdentityCostResponse>(['stats', 'by-identity', window], `/api/stats/by-identity?window=${window}`)
+
+// --- SPEC-061 ArcFlow (COMP-020/023) — thin client over the workflow routes.
+//
+// Every mutation here is a direct 1:1 call to the COMP-023 route layer,
+// which itself only relays to the (not-yet-merged) arcteam control plane —
+// this file adds no business logic, only react-query plumbing.
+
+export const useWorkflows = () =>
+  useApiQuery<WorkflowsListResponse>(['workflows'], '/api/workflows')
+
+export const useWorkflow = (id: string | null) =>
+  useQuery<WorkflowDetail>({
+    queryKey: ['workflow', id],
+    queryFn: ({ signal }) => apiGet(`/api/workflows/${encodeURIComponent(id!)}`, signal),
+    enabled: !!id,
+  })
+
+export const useWorkflowRuns = (id: string | null) =>
+  useQuery<WorkflowRunsResponse>({
+    queryKey: ['workflow', id, 'runs'],
+    queryFn: ({ signal }) => apiGet(`/api/workflows/${encodeURIComponent(id!)}/runs`, signal),
+    enabled: !!id,
+  })
+
+// Polling fallback only — the live view prefers the workflow's channel stream
+// (`useWorkflowRunLiveStatus`) per DESIGN.md §8; this backfills the initial
+// snapshot and covers a channel-less deployment.
+export const useWorkflowRun = (runId: string | null, refetchIntervalMs?: number) =>
+  useQuery<WorkflowRunDetail>({
+    queryKey: ['workflow-run', runId],
+    queryFn: ({ signal }) => apiGet(`/api/workflow-runs/${encodeURIComponent(runId!)}`, signal),
+    enabled: !!runId,
+    refetchInterval: refetchIntervalMs,
+  })
+
+export const useCreateWorkflow = () => {
+  const queryClient = useQueryClient()
+  return useMutation<WorkflowDetail, Error, Dict>({
+    mutationFn: (definition) => apiPost('/api/workflows', definition),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['workflows'] }),
+  })
+}
+
+// `patch` carries whichever top-level keys changed — `nodes`/`edges` always
+// replace the WHOLE array (one consistent contract for every node/edge
+// mutation), `trigger`/`channel` replace that one field. Never the whole
+// definition in one call. `expected_version` is the optimistic-concurrency
+// token the control plane checks, not this hook.
+export const usePatchWorkflow = (id: string) => {
+  const queryClient = useQueryClient()
+  return useMutation<WorkflowDetail, Error, { patch: Dict; expectedVersion: number }>({
+    mutationFn: ({ patch, expectedVersion }) =>
+      apiPatch(`/api/workflows/${encodeURIComponent(id)}`, {
+        ...patch,
+        expected_version: expectedVersion,
+      }),
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['workflow', id] }),
+        queryClient.invalidateQueries({ queryKey: ['workflows'] }),
+      ]),
+  })
+}
+
+export const useArchiveWorkflow = (id: string) => {
+  const queryClient = useQueryClient()
+  return useMutation<WorkflowDetail, Error, void>({
+    mutationFn: () => apiPost(`/api/workflows/${encodeURIComponent(id)}/archive`),
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['workflow', id] }),
+        queryClient.invalidateQueries({ queryKey: ['workflows'] }),
+      ]),
+  })
+}
+
+export const useUnarchiveWorkflow = (id: string) => {
+  const queryClient = useQueryClient()
+  return useMutation<WorkflowDetail, Error, void>({
+    mutationFn: () => apiPost(`/api/workflows/${encodeURIComponent(id)}/unarchive`),
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['workflow', id] }),
+        queryClient.invalidateQueries({ queryKey: ['workflows'] }),
+      ]),
+  })
+}
+
+export const useRunWorkflow = (id: string) => {
+  const queryClient = useQueryClient()
+  return useMutation<{ run_id: string }, Error, Dict | undefined>({
+    mutationFn: (input) => apiPost(`/api/workflows/${encodeURIComponent(id)}/run`, input ?? {}),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['workflow', id, 'runs'] }),
+  })
+}
+
+export const useCancelWorkflowRun = (runId: string) => {
+  const queryClient = useQueryClient()
+  return useMutation<WorkflowRunDetail, Error, void>({
+    mutationFn: () => apiPost(`/api/workflow-runs/${encodeURIComponent(runId)}/cancel`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['workflow-run', runId] }),
+  })
+}
+
+// COMP-018: gate resolution. `notes` matters only for `return_for_revision`
+// (REQ-247) — the control plane, not this hook, enforces that.
+export const useResolveGate = (taskId: string) => {
+  const queryClient = useQueryClient()
+  return useMutation<Dict, Error, { decision: string; notes?: string }>({
+    mutationFn: ({ decision, notes }) =>
+      apiPost(`/api/workflow-tasks/${encodeURIComponent(taskId)}/gate`, { decision, notes }),
+    onSuccess: () => queryClient.invalidateQueries({ predicate: (q) => q.queryKey[0] === 'workflow-run' }),
+  })
+}

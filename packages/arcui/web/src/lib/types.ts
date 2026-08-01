@@ -616,3 +616,144 @@ export interface ToolDetail {
   write_root: 'workspace' | 'agent' | null
   write_path: string | null // relative to write_root
 }
+
+// --- SPEC-061 ArcFlow (COMP-020/023) -----------------------------------------
+//
+// The arcteam control plane (COMP-021) that owns these shapes is a concurrent,
+// not-yet-merged workstream — like the Python route module's Protocol, these
+// are permissive "passthrough" interfaces (known fields typed, rest flows
+// through) rather than a tight contract, so this dashboard degrades gracefully
+// if the real shape adds fields rather than 500ing on an unrecognized key.
+
+export type WorkflowStatus = 'draft' | 'signed' | 'archived'
+export type WorkflowNodeKind = 'agent' | 'tool' | 'script' | 'router' | 'gate'
+export type WorkflowRunStatus =
+  | 'pending'
+  | 'running'
+  | 'waiting_gate'
+  | 'done'
+  | 'failed'
+  | 'cancelled'
+// Per-node run status. `skipped` = an untaken branch; `looping` = an
+// in-progress loop iteration. Both are sourced from the Run's path taken —
+// with lazy materialization there are no task rows for unreached nodes, so
+// this status is NEVER read from a task row for those two states.
+export type WorkflowNodeStatus =
+  | 'pending'
+  | 'running'
+  | 'waiting_gate'
+  | 'done'
+  | 'failed'
+  | 'skipped'
+  | 'looping'
+
+export interface WorkflowNode {
+  [key: string]: unknown
+  id: string
+  kind: WorkflowNodeKind
+  needs?: string[]
+  join?: string | null
+  when?: string | null
+  loop_back_to?: string | null
+  max_iterations?: number | null
+  agent?: string | null
+}
+
+export interface WorkflowEdge {
+  [key: string]: unknown
+  from: string
+  to: string
+}
+
+export interface WorkflowVersion {
+  [key: string]: unknown
+  version: number
+  signer?: string | null
+  reason?: string | null
+  created_at?: string
+}
+
+export interface WorkflowLastRun {
+  [key: string]: unknown
+  run_id: string
+  status: WorkflowRunStatus
+  ended_at?: string | null
+}
+
+export interface WorkflowSummary {
+  [key: string]: unknown
+  id: string
+  name: string
+  version: number
+  status: WorkflowStatus
+  trigger?: Dict | null
+  last_run?: WorkflowLastRun | null
+}
+
+export interface WorkflowDetail extends WorkflowSummary {
+  nodes: WorkflowNode[]
+  edges: WorkflowEdge[]
+  channel?: string | null
+  versions?: WorkflowVersion[]
+}
+
+export interface WorkflowsListResponse {
+  workflows: WorkflowSummary[]
+}
+
+// Exact wire shape SDD COMP-002 specifies — also modelled server-side as
+// `arcui.routes.workflows.WorkflowFieldError` (Pydantic, `extra="forbid"`).
+export interface WorkflowFieldError {
+  node_id: string
+  field: string
+  error: string
+  observed?: unknown
+  admissible?: unknown[] | null
+}
+
+export interface WorkflowErrorsResponse {
+  errors: WorkflowFieldError[]
+}
+
+export interface WorkflowRunSummary {
+  [key: string]: unknown
+  run_id: string
+  status: WorkflowRunStatus
+  started_at?: string
+  ended_at?: string | null
+}
+
+export interface WorkflowRunsResponse {
+  runs: WorkflowRunSummary[]
+}
+
+export interface WorkflowRunNodeStatus {
+  [key: string]: unknown
+  node_id: string
+  status: WorkflowNodeStatus
+  iteration?: number | null
+  max_iterations?: number | null
+  // Joins the EXISTING `/api/runs/{run_id}/timeline` (observe_run.py) — a
+  // node's OWN per-dispatch execution trace, distinct from the workflow
+  // run_id itself. See routes/workflows.py's naming note.
+  task_run_id?: string | null
+}
+
+export interface WorkflowRunDetail {
+  [key: string]: unknown
+  run_id: string
+  workflow_id: string
+  version: number
+  status: WorkflowRunStatus
+  path_taken: string[]
+  nodes: WorkflowRunNodeStatus[]
+}
+
+export type GateDecision = 'approve' | 'fail_run' | 'return_for_revision'
+
+/** `ApiError.errors` arrives as untyped `Record<string, unknown>[]` (the
+ * shared HTTP client has no workflow-specific knowledge); this is the one
+ * place that casts it back to the typed wire contract for rendering. */
+export function asWorkflowFieldErrors(errors?: Array<Record<string, unknown>>): WorkflowFieldError[] {
+  return (errors ?? []) as unknown as WorkflowFieldError[]
+}
