@@ -130,56 +130,56 @@
     },
     "T-844": {
       "description": "(red) Node execution adapter tests: schema validation and artifact checks actually fire",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-845": {
       "description": "(green) Node execution adapter: prompt injection seam, skill activation, strategy, schema, artifacts, idempotency key",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-846": {
       "description": "(red) Capability-leg threading test: accumulation survives a fresh node session",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-847": {
       "description": "(green) Capability-leg threader with bounded accumulation",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-848": {
       "description": "(green) Activation approval for capability-spanning definitions",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-849": {
       "description": "(red) Builder tool tests: allowlists, quotas, ordering, typed repairable errors",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-850": {
       "description": "(green) Workflow builder tools in the agent module",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-851": {
       "description": "(green) workflow-builder skill",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
@@ -200,14 +200,14 @@
     },
     "T-862": {
       "description": "(green) Node adapter: output-schema enforcement, artifact checks, idempotency key",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-863": {
       "description": "(green) Builder tools: versioned editing with optimistic concurrency",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
@@ -277,7 +277,7 @@
     },
     "T-856": {
       "description": "(green) Typed schedule trigger, tested through the real firing path",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
@@ -339,6 +339,9 @@
       "depends_on": []
     },
     "T-875": {
+      "status": "done"
+    },
+    "T-876": {
       "status": "done"
     }
   },

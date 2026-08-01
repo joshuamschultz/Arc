@@ -102,42 +102,42 @@
   - Components: COMP-008
   - Requirements: REQ-218, REQ-220, REQ-229
   - Acceptance: Deterministic code with no LLM call; receives tier at construction; queries scoped by run rather than listing and filtering. The runner frontier tests pass.
-- [ ] **T-844**: (red) Node execution adapter tests: schema validation and artifact checks actually fire
+- [x] **T-844**: (red) Node execution adapter tests: schema validation and artifact checks actually fire
   - domain: test
   - Components: COMP-014
   - Requirements: REQ-237, REQ-238
   - Acceptance: A node completing with output violating its schema is a retryable failure, not a pass-forward; a node whose declared artifacts are absent fails with a message naming the producing tool. Exercised through the real completion path, not a unit stub.
-- [ ] **T-845**: (green) Node execution adapter: prompt injection seam, skill activation, strategy, schema, artifacts, idempotency key
+- [x] **T-845**: (green) Node execution adapter: prompt injection seam, skill activation, strategy, schema, artifacts, idempotency key
   - domain: ai-workflow
   - Components: COMP-014
   - Requirements: REQ-233, REQ-243
   - Acceptance: Upstream outputs reach the node through the assemble-prompt seam rather than direct context mutation; a declared skill activates deterministically; a declared strategy list reaches the loop and an absent one pins the reactive strategy.
-- [ ] **T-846**: (red) Capability-leg threading test: accumulation survives a fresh node session
+- [x] **T-846**: (red) Capability-leg threading test: accumulation survives a fresh node session
   - domain: test
   - Components: COMP-015
   - Requirements: REQ-240
   - Acceptance: A run whose first node touches private data and whose second node attempts external communication is denied at the second node, proving accumulated legs reach the policy context across session boundaries. Uses the real policy pipeline, not a mock.
-- [ ] **T-847**: (green) Capability-leg threader with bounded accumulation
+- [x] **T-847**: (green) Capability-leg threader with bounded accumulation
   - domain: auth
   - Components: COMP-015
   - Requirements: REQ-240
   - Acceptance: T-846 passes. The accumulated set is bounded and its growth is observable.
-- [ ] **T-848**: (green) Activation approval for capability-spanning definitions
+- [x] **T-848**: (green) Activation approval for capability-spanning definitions
   - domain: auth
   - Components: COMP-016
   - Requirements: REQ-241
   - Acceptance: A definition whose nodes jointly span a forbidden composition requires an operator-signed grant bound to its content hash at first activation and after any widening edit; a narrowing edit does not re-prompt.
-- [ ] **T-849**: (red) Builder tool tests: allowlists, quotas, ordering, typed repairable errors
+- [x] **T-849**: (red) Builder tool tests: allowlists, quotas, ordering, typed repairable errors
   - domain: test
   - Components: COMP-012
   - Requirements: REQ-221, REQ-222
   - Acceptance: Each mutating tool ignores fields outside its allowlist; quotas are checked before validation work; the whole graph validates in memory and cycles are checked before any write; a stale expected version is refused rather than merged; errors carry node id, field, observed value, and admissible alternatives.
-- [ ] **T-850**: (green) Workflow builder tools in the agent module
+- [x] **T-850**: (green) Workflow builder tools in the agent module
   - domain: api
   - Components: COMP-012
   - Requirements: REQ-221, REQ-223
   - Acceptance: Create, node, trigger, channel, run, cancel, and read-only inspection tools; every mutation produces a draft; inline free text is normalized before any injection check. The builder tool tests and the draft-status invariant test pass.
-- [ ] **T-851**: (green) workflow-builder skill
+- [x] **T-851**: (green) workflow-builder skill
   - domain: ai-workflow
   - Components: COMP-013
   - Requirements: REQ-221
@@ -152,12 +152,12 @@
   - Components: COMP-006, COMP-008
   - Requirements: REQ-228, REQ-236
   - Acceptance: Token and wall-clock budget is enforced across all nodes of a run with reserve-then-settle accounting and terminates the run on exhaustion; a run with no progress and nothing in flight is escalated rather than sitting silent; node terminal states roll into the Run record.
-- [ ] **T-862**: (green) Node adapter: output-schema enforcement, artifact checks, idempotency key
+- [x] **T-862**: (green) Node adapter: output-schema enforcement, artifact checks, idempotency key
   - domain: ai-workflow
   - Components: COMP-014
   - Requirements: REQ-237, REQ-238, REQ-242
   - Acceptance: Output violating a declared schema is a retryable node failure rather than a pass-forward; missing declared artifacts fail with a message naming the producing tool; the per-attempt idempotency key reaches tool dispatch so a retry cannot repeat an external side effect.
-- [ ] **T-863**: (green) Builder tools: versioned editing with optimistic concurrency
+- [x] **T-863**: (green) Builder tools: versioned editing with optimistic concurrency
   - domain: api
   - Components: COMP-005, COMP-012
   - Requirements: REQ-222, REQ-248
@@ -192,7 +192,7 @@
   - Components: COMP-024
   - Requirements: REQ-258
   - Acceptance: Each run gets <team_root>/shared/runs/<run_id>/; every node's agent works there for its node; an agent's private workspace is never touched; the folder is created once and reused across nodes and resumes.
-- [ ] **T-876**: (red) Artifact paths resolve inside the run workspace by construction
+- [x] **T-876**: (red) Artifact paths resolve inside the run workspace by construction
   - domain: test
   - Components: COMP-024, COMP-014
   - Requirements: REQ-258, REQ-259
@@ -220,7 +220,7 @@
   - Components: COMP-018
   - Requirements: REQ-245, REQ-246, REQ-247
   - Acceptance: An answerable card renders in the bound channel; resolution records the deciding human's authenticated identity; the reviewer chooses failing the run or returning it for revision with notes; no agent-callable tool can resolve a gate, asserted by test.
-- [ ] **T-856**: (green) Typed schedule trigger, tested through the real firing path
+- [x] **T-856**: (green) Typed schedule trigger, tested through the real firing path
   - domain: backend
   - Components: COMP-017
   - Requirements: REQ-249
