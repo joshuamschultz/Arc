@@ -94,6 +94,19 @@ class WorkflowBundle(BaseModel):
     signer_did: str | None = None
 
     @property
+    def is_verified(self) -> bool:
+        """Whether the pinned operator signature verified over this bundle.
+
+        Ask this, not ``status``, whenever the question is *trust*. ``status``
+        answers a different question — it folds lifecycle and trust into one
+        render value, so an archived bundle reads ``"archived"`` even when its
+        signature is perfectly good. Reading trust off ``status`` has already
+        produced two defects in this feature, both in security checks, so the
+        safe read is the named one.
+        """
+        return self.signer_did is not None
+
+    @property
     def effective_trigger(self) -> Trigger | None:
         """The trigger the scheduler should honour — ``None`` while archived."""
         return None if self.status == "archived" else self.definition.trigger
@@ -185,7 +198,7 @@ class DefinitionStore:
         """
         bundle = self.load(workflow_id)
         self._assert_no_drift(bundle)
-        if bundle.signer_did is not None:
+        if bundle.is_verified:
             return bundle
         if _TIER_RANK.get(self.tier, 0) > 0:
             raise UnsignedWorkflowError(
