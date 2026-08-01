@@ -17,6 +17,7 @@ from arcteam.workflow import (
     TextualInterpolationError,
     UnresolvableReferenceError,
     is_reference,
+    malformed_reference_strings,
     parse_reference,
     references_in,
     resolve_args,
@@ -194,6 +195,47 @@ def test_an_unknown_field_is_unresolvable() -> None:
 def test_a_declared_null_output_resolves_rather_than_failing() -> None:
     """A field present but null is a value, not an absence."""
     assert resolve_value("$nodes.collect.output.missing_value", SCOPE) is None
+
+
+REFERENCE_SHAPED = [
+    "$nodes.a.output.x",
+    "$nodes.a",
+    "$nodes.a.b",
+    "$input.x",
+    "$input.",
+    "$nodes.a.output",
+    "$nodes.a.result.x",
+    "$nodes.a.output.x/path",
+    "$input.a.b.c",
+    "$5.00",
+    "plain",
+]
+
+
+@pytest.mark.parametrize("candidate", REFERENCE_SHAPED)
+def test_anything_that_makes_references_in_raise_is_also_reported(candidate: str) -> None:
+    """Couple the raising path to the reporting path so a swallow stays safe.
+
+    The validator walks tool arguments with ``references_in`` inside a handler
+    that returns nothing on failure. That is only harmless while every input
+    capable of triggering it is separately reported by
+    ``malformed_reference_strings`` — a relationship resting on three regexes
+    agreeing, with nothing structural keeping them in step. Asserting it
+    directly means changing one turns this red, rather than silently restoring
+    a validator that calls a broken reference valid.
+    """
+    args = {"v": candidate}
+    try:
+        references_in(args)
+        raised = False
+    except UnresolvableReferenceError:
+        raised = True
+
+    if raised:
+        assert malformed_reference_strings(args), (
+            f"{candidate!r} makes references_in raise but nothing reports it — "
+            f"the validator would swallow it and call the graph valid"
+        )
 
 
 def test_a_malformed_reference_is_refused() -> None:
