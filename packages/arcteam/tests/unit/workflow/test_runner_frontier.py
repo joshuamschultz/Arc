@@ -146,6 +146,14 @@ async def test_untaken_branch_never_becomes_a_task_row(stores: Any, registry: An
 
 
 async def test_router_choice_is_recorded_in_the_path_taken(stores: Any, registry: Any) -> None:
+    """One choice, one journal entry, one skipped branch.
+
+    Equivalence note: neutering ``RunState.record_route`` (the in-memory half of
+    this decision) passes every test here, and that is correct rather than a
+    gap. The durable path is re-read at the top of each pass, so the only cost
+    is one extra pass to the same outcome. The journal, not the in-memory view,
+    is what makes a decision stick.
+    """
     _, runs, tasks = stores
     runner = build(stores, registry, onboarding())
     run = await runner.start_run("customer-onboarding", input={}, initiator_did="did:arc:x/1")
@@ -156,10 +164,21 @@ async def test_router_choice_is_recorded_in_the_path_taken(stores: Any, registry
     await runner.advance(run.run_id)
 
     record = await runs.get(run.run_id)
-    route = next(e for e in record.path_taken if e["kind"] == "route")
-    assert route["node_id"] == "risk_router"
-    assert route["chosen"] == "manual_review"
-    assert route["skipped"] == ["provision"]
+    routes = [e for e in record.path_taken if e["kind"] == "route"]
+    # Exactly one: a router that forgets its own choice re-decides on the next
+    # pass, and the branch is recorded twice as if it were taken twice.
+    assert len(routes) == 1
+    assert routes[0]["node_id"] == "risk_router"
+    assert routes[0]["chosen"] == "manual_review"
+    assert routes[0]["skipped"] == ["provision"]
+    assert [e for e in record.path_taken if e["kind"] == "skipped"] == [
+        {
+            "kind": "skipped",
+            "node_id": "provision",
+            "iteration": 0,
+            "reason": "branch not taken",
+        }
+    ]
     assert "materialized" in path_kinds(record)
 
 
@@ -255,6 +274,61 @@ async def test_llm_router_undeclared_choice_fails_the_run(stores: Any, registry:
     record = await runs.get(run.run_id)
     assert record.status == "failed"
     assert "undeclared route" in (record.resolution or "")
+
+
+async def test_a_definition_edited_mid_run_stops_the_run(
+    stores: Any, registry: Any
+) -> None:
+    """A run is pinned to the bytes it started on — never a hybrid of two versions.
+
+    This is the ONLY thing that catches a mid-run edit of a DRAFT: an edited
+    draft has no sidecar, so the store's drift check has nothing to compare and
+    would hand back the NEW definition. The pinned hash is the backstop.
+    """
+    flow_tasks, runs, tasks = stores
+    definitions = FakeDefinitions(Bundle(onboarding()))
+    runner = build(stores, registry, onboarding(), definitions=definitions)
+    run = await runner.start_run("customer-onboarding", input={}, initiator_did="did:arc:x/1")
+
+    await complete_node(tasks, f"wf-{run.run_id}-collect-0", SALES_DID, {"company_domain": "a.io"})
+    edited = Definition(
+        id="customer-onboarding",
+        version=5,
+        channel="channel://onboarding",
+        nodes=(Node(id="collect", kind="agent", agent="@sales"),),
+    )
+    definitions._bundle = Bundle(edited, status="draft", signer_did=None, content_hash="sha256:v5")
+    record = await runner.advance(run.run_id)
+
+    assert record.status == "failed"
+    assert "definition changed" in (record.resolution or "")
+    materialized = {
+        r.metadata["node_id"] for r in await flow_tasks.query_by_flow_run(run.run_id)
+    }
+    assert materialized == {"collect"}, "the edited graph must not be executed"
+
+
+async def test_a_run_waiting_on_a_human_gate_says_so(stores: Any, registry: Any) -> None:
+    """A gate nobody can see is a gate nobody answers."""
+    _, runs, tasks = stores
+    runner = build(stores, registry, onboarding())
+    run = await runner.start_run("customer-onboarding", input={}, initiator_did="did:arc:x/1")
+
+    await complete_node(tasks, f"wf-{run.run_id}-collect-0", SALES_DID, {"company_domain": "a.io"})
+    await runner.advance(run.run_id)
+    await complete_node(tasks, f"wf-{run.run_id}-verify-0", SALES_DID, {"risk": "high"})
+    record = await runner.advance(run.run_id)
+
+    assert record.status == "waiting_gate"
+
+    await tasks.approve_review(
+        f"wf-{run.run_id}-manual_review-0", actor_did="did:arc:local:user/9"
+    )
+    record = await runner.advance(run.run_id)
+
+    assert record.status == "running", "the run resumes once the human answers"
+    gate = next(e for e in record.path_taken if e["kind"] == "gate")
+    assert gate["decision"] == "approved"
 
 
 async def test_a_node_that_would_need_interpolation_fails_closed(

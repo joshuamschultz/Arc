@@ -150,6 +150,13 @@ class RunState:
         }
 
     # -- in-tick mutation, mirroring what is appended to the path ----------
+    #
+    # These keep the derived view consistent with the journal entry written in
+    # the same breath, so a decision made early in a pass is visible to the
+    # nodes decided later in it. They are a convergence speed-up, not a
+    # correctness guard: the durable path is re-read at the top of every pass,
+    # so dropping one of these costs an extra pass and changes no outcome.
+    # Verified by mutation — see the equivalence note in the test suite.
 
     def record_skip(self, node_id: str, iteration: int) -> None:
         self.skips.add((node_id, iteration))
