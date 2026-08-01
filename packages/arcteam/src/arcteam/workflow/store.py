@@ -427,11 +427,18 @@ class DefinitionStore:
     def _pinned_signature(
         self, bundle_root: Path, definition: WorkflowDefinition, manifest: Mapping[str, str]
     ) -> ArtifactSignature | None:
-        """The sidecar, but only when it verifies against the pinned operator key."""
+        """The sidecar, but only when it verifies against the pinned operator key.
+
+        With no key pinned there is nothing to verify *against*, so the answer
+        is "unsigned" at every tier — never "signed by whoever happened to sign
+        it". Accepting the sidecar's own embedded key would be trust-on-first-
+        use (LLM03) and would let an agent self-sign the workflow it authored,
+        which is the precise composition the draft-then-operator-sign lifecycle
+        exists to prevent (LLM06/ASI04). Personal tier still runs the definition
+        — it simply runs it as the draft it is.
+        """
         sidecar = load_sidecar(bundle_root)
-        if sidecar is None:
-            return None
-        if self._operator_public_key is None and _TIER_RANK.get(self.tier, 0) > 0:
+        if sidecar is None or self._operator_public_key is None:
             return None
         content = canonical_bytes(definition, manifest)
         verified = verify_artifact(content, sidecar, trusted_public_key=self._operator_public_key)
