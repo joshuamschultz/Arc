@@ -422,6 +422,63 @@ def test_an_embedded_reference_in_args_is_rejected_at_validation_time() -> None:
     assert ("b", "args") in _fields(document)
 
 
+def _tool_args_document(args: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "workflow": {"id": "argcheck", "owner": "@a"},
+        "node": [
+            {"id": "collect", "kind": "agent", "agent": "@a"},
+            {
+                "id": "b",
+                "kind": "tool",
+                "tool": "t",
+                "agent": "@a",
+                "needs": ["collect"],
+                "args": args,
+            },
+        ],
+    }
+
+
+def test_a_malformed_reference_in_args_is_reported_not_silently_accepted() -> None:
+    """``$nodes.x.y`` omits ``.output`` — it must be caught at authoring time.
+
+    It looks like a reference and is plainly meant as one, but it does not
+    parse. Swallowing it let a builder tool be told the graph was valid, sign
+    it, and only discover the mistake when the node failed at run time — which
+    defeats the whole point of returning repairable errors.
+    """
+    issues = _issues(_tool_args_document({"v": "$nodes.collect.company_domain"}))
+
+    assert ("b", "args") in {(i.node_id, i.field) for i in issues}
+    offender = next(i for i in issues if i.field == "args")
+    assert offender.observed == "$nodes.collect.company_domain"
+    assert any("output" in option for option in offender.admissible)
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    ["$nodes.collect", "$nodes.collect.result.value", "$input.", "$nodes.collect.output"],
+)
+def test_reference_shaped_strings_that_do_not_parse_are_reported(malformed: str) -> None:
+    issues = _issues(_tool_args_document({"v": malformed}))
+
+    assert ("b", "args") in {(i.node_id, i.field) for i in issues}
+
+
+def test_a_well_formed_reference_is_not_reported_as_malformed() -> None:
+    assert _issues(_tool_args_document({"v": "$nodes.collect.output.domain"})) == ()
+
+
+def test_a_plain_string_starting_with_a_dollar_is_not_a_reference() -> None:
+    assert _issues(_tool_args_document({"price": "$5.00", "note": "cost $ per unit"})) == ()
+
+
+def test_an_embedded_reference_is_reported_once_not_twice() -> None:
+    issues = _issues(_tool_args_document({"cmd": "curl https://$nodes.collect.output.host"}))
+
+    assert len([i for i in issues if i.field == "args"]) == 1
+
+
 def test_a_reference_to_an_ancestor_is_accepted() -> None:
     document = {
         "workflow": {"id": "good", "owner": "@a"},
