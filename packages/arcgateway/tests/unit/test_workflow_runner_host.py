@@ -1,0 +1,178 @@
+"""RunnerHost — SPEC-061 COMP-009: lifecycle + singleton enforcement (REQ-231).
+
+``arcteam.workflows.runner`` (COMP-008) is being built concurrently on a
+sibling branch and does not exist in this checkout — several tests below
+exercise that REAL absence (the default factory's clean, fail-open
+degradation) rather than mocking it away, alongside tests that inject a fake
+runner implementing :class:`WorkflowRunnerProtocol` to exercise the
+lifecycle/singleton machinery this package owns.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from arcgateway.workflow_runner_host import (
+    RunnerAlreadyActiveError,
+    RunnerHost,
+    start_runner_host,
+)
+
+
+@pytest.fixture(autouse=True)
+def _reset_singleton() -> Any:
+    """Every test starts with a clean process-wide slot and leaves one behind."""
+    RunnerHost._active = None
+    yield
+    RunnerHost._active = None
+
+
+class _FakeRunner:
+    """A minimal stand-in for arcteam's WorkflowRunner (COMP-008)."""
+
+    def __init__(self) -> None:
+        self.ticks = 0
+        self.closed = False
+        self._stop = asyncio.Event()
+
+    async def run_forever(self) -> None:
+        while not self._stop.is_set():
+            self.ticks += 1
+            await asyncio.sleep(0.01)
+
+    async def aclose(self) -> None:
+        self.closed = True
+        self._stop.set()
+
+
+# ---------------------------------------------------------------------------
+# RunnerHost lifecycle
+# ---------------------------------------------------------------------------
+
+
+async def test_start_runs_the_runner_and_registers_the_singleton() -> None:
+    runner = _FakeRunner()
+
+    host = await RunnerHost.start(runner)
+
+    assert RunnerHost.active() is host
+    await asyncio.sleep(0.03)
+    assert runner.ticks > 0
+
+    await host.stop()
+    assert RunnerHost.active() is None
+    assert runner.closed is True
+
+
+async def test_second_start_refuses_rather_than_racing_the_frontier() -> None:
+    """REQ-231: two runners must never advance the same frontier."""
+    first = await RunnerHost.start(_FakeRunner())
+
+    with pytest.raises(RunnerAlreadyActiveError):
+        await RunnerHost.start(_FakeRunner())
+
+    # The first host is still the one and only active runner.
+    assert RunnerHost.active() is first
+    await first.stop()
+
+
+async def test_stop_survives_a_runner_that_raises_on_close() -> None:
+    """Shutdown must clear the singleton slot even if aclose() itself errors."""
+
+    class _BrokenRunner(_FakeRunner):
+        async def aclose(self) -> None:
+            raise RuntimeError("boom")
+
+    host = await RunnerHost.start(_BrokenRunner())
+    await host.stop()
+
+    assert RunnerHost.active() is None
+
+
+# ---------------------------------------------------------------------------
+# start_runner_host — the bootstrap-facing entry point
+# ---------------------------------------------------------------------------
+
+
+async def test_start_runner_host_returns_none_when_arcteam_workflows_absent() -> None:
+    """Real behavior today: arcteam.workflows.runner does not exist yet.
+
+    Proves the fail-open contract (REQ-230's spirit for this seam): a
+    checkout missing SPEC-061's arcteam half still returns cleanly (None)
+    instead of raising and aborting gateway boot.
+    """
+    host = await start_runner_host(tier="personal")
+
+    assert host is None
+    assert RunnerHost.active() is None
+
+
+async def test_start_runner_host_uses_an_injected_factory() -> None:
+    fake = _FakeRunner()
+    seen: dict[str, Any] = {}
+
+    async def _factory(*, tier: str, key_path: Path) -> _FakeRunner:
+        seen["tier"] = tier
+        seen["key_path"] = key_path
+        return fake
+
+    host = await start_runner_host(tier="federal", runner_factory=_factory)
+
+    assert host is not None
+    assert RunnerHost.active() is host
+    assert seen["tier"] == "federal"
+    assert isinstance(seen["key_path"], Path)
+    await host.stop()
+
+
+async def test_start_runner_host_is_idempotent_within_a_process() -> None:
+    """A second call in the same process returns the existing host, never a race."""
+    fake = _FakeRunner()
+
+    async def _factory(*, tier: str, key_path: Path) -> _FakeRunner:
+        return fake
+
+    first = await start_runner_host(tier="personal", runner_factory=_factory)
+    second = await start_runner_host(tier="personal", runner_factory=_factory)
+
+    assert first is second
+    assert first is not None
+    await first.stop()
+
+
+# ---------------------------------------------------------------------------
+# Removability (REQ-230/REQ-257 contribution from this package)
+# ---------------------------------------------------------------------------
+
+
+def test_runner_host_module_has_no_arcui_dependency() -> None:
+    """The runner-hosting code must not import arcui.
+
+    AST-scans actual import statements (not a docstring substring match, and
+    not ``sys.modules`` — arcui may already be imported by an unrelated test
+    in the same pytest process) proving the runner works whether or not
+    arcui is installed — the whole point of hosting it in
+    arcgateway.bootstrap rather than arcui's lifespan.
+    """
+    import ast
+
+    import arcgateway.bootstrap as bootstrap_mod
+    import arcgateway.workflow_runner_host as host_mod
+
+    for mod in (bootstrap_mod, host_mod):
+        assert mod.__file__ is not None
+        tree = ast.parse(Path(mod.__file__).read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = [node.module or ""]
+            else:
+                continue
+            assert not any(n.split(".")[0] == "arcui" for n in names), (
+                f"{mod.__name__} imports arcui at line {node.lineno}"
+            )

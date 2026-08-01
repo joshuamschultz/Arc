@@ -171,6 +171,13 @@ def _trust_handler(args: list[str]) -> None:
     trust_handler(args)
 
 
+def _workflow_handler(args: list[str]) -> None:
+    """Dispatch wrapper."""
+    from arccli.commands.workflow import workflow_handler
+
+    workflow_handler(args)
+
+
 def _identity_handler(args: list[str]) -> None:
     """Dispatch wrapper."""
     from arccli.commands.identity import identity_handler
@@ -592,6 +599,17 @@ COMMAND_REGISTRY: list[CommandDef] = [
         args_hint="<subcommand>",
         cli_only=True,
         handler=_trust_handler,
+    ),
+    CommandDef(
+        name="workflow",
+        description=(
+            "ArcFlow — list, show, create, edit, archive, unarchive, purge, run, "
+            "cancel, sign, verify"
+        ),
+        category="Tools & Skills",
+        args_hint="<subcommand>",
+        cli_only=True,
+        handler=_workflow_handler,
     ),
     # --- Gateway pair commands (T1.8.2) ---
     # gateway_only=True: these commands only make sense on a running gateway.
