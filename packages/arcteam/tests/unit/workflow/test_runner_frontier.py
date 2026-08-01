@@ -307,6 +307,21 @@ async def test_two_runs_can_never_derive_the_same_task_row(
     assert left[0].id != right[0].id, "two runs must never share a row"
 
 
+async def test_a_workflow_id_shaped_like_a_path_never_reaches_the_store(
+    stores: Any, registry: Any
+) -> None:
+    """The store resolves this id against a directory. Stop it one layer earlier."""
+    definitions = FakeDefinitions(Bundle(onboarding()))
+    runner = build(stores, registry, onboarding(), definitions=definitions)
+
+    with pytest.raises(ValueError, match="workflow id"):
+        await runner.start_run(
+            "../../bob/workflows/secretflow", input={}, initiator_did="did:arc:x/1"
+        )
+
+    assert definitions.dispatch_calls == 0
+
+
 async def test_a_node_id_shaped_like_a_path_is_refused(
     stores: Any, registry: Any
 ) -> None:

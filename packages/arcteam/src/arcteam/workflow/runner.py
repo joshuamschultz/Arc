@@ -172,6 +172,10 @@ class WorkflowRunner:
         run_id: str | None = None,
     ) -> RunRecord:
         """Create the Run record, then materialize the first frontier."""
+        # Check the id before it reaches the store, which resolves it against a
+        # directory. The store refuses a traversal id itself — this is the
+        # boundary check that means that backstop is never the thing that fires.
+        _assert_safe_name("workflow id", workflow_id)
         bundle = self._definitions.load_for_run(workflow_id)
         # Trust is `is_verified`, never `status`: status carries lifecycle, and
         # an archived bundle can be validly signed. Keying the gate off status
