@@ -115,6 +115,21 @@ def _ensure_global_config() -> GlobalConfig:
     return cached
 
 
+#: Modules that are ON unless a config explicitly disables them.
+#:
+#: A transient provider failure — a 429, a 503, a dropped connection — is the
+#: normal weather of calling an LLM over a network, not an exceptional event.
+#: Requiring an opt-in to survive it means every deployment that never edited
+#: its config fails a call that would have succeeded on the next attempt. The
+#: RetryModule is exponential backoff with jitter over transient failures only,
+#: and an LLM request is idempotent, so retrying it is safe.
+#:
+#: Everything else stays opt-in. This set is deliberately tiny: a module that
+#: changes what the model SEES or what the caller is ALLOWED to do (security,
+#: guardrails, injection) must be a deliberate choice, never a default.
+DEFAULT_ON_MODULES: frozenset[str] = frozenset({"retry"})
+
+
 def _resolve_module_config(
     module_name: str,
     kwarg_value: bool | dict[str, Any] | None,
@@ -132,7 +147,9 @@ def _resolve_module_config(
     """
     # Get config.toml settings for this module
     module_cfg = _ensure_global_config().modules.get(module_name)
-    config_enabled = module_cfg.enabled if module_cfg else False
+    config_enabled = (
+        module_cfg.enabled if module_cfg is not None else module_name in DEFAULT_ON_MODULES
+    )
     config_settings = _module_settings_cache.get(module_name, {})
 
     # Resolve based on kwarg
