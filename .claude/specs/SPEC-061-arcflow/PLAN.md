@@ -9,47 +9,47 @@
 
 ## Phase 1: Foundation
 
-- [ ] **T-826**: (red) WorkflowDefinition model tests: five node kinds, needs, join, loops, schema_version
+- [x] **T-826**: (red) WorkflowDefinition model tests: five node kinds, needs, join, loops, schema_version
   - domain: test
   - Components: COMP-001
   - Requirements: REQ-217, REQ-218
   - Acceptance: Tests assert every node kind parses with its required fields; an unknown schema_version major is refused; frozen models reject mutation. Tests fail against no implementation.
-- [ ] **T-827**: (green) WorkflowDefinition models
+- [x] **T-827**: (green) WorkflowDefinition models
   - domain: backend
   - Components: COMP-001
   - Requirements: REQ-217, REQ-218
   - Acceptance: Models are frozen, typed, and carry no LLM wire-control fields (no model or temperature). The model tests pass.
-- [ ] **T-828**: (red) PredicateEvaluator tests: whitelisted AST only, no calls or attribute access
+- [x] **T-828**: (red) PredicateEvaluator tests: whitelisted AST only, no calls or attribute access
   - domain: test
   - Components: COMP-003
   - Requirements: REQ-219
   - Acceptance: Comparisons and boolean combinations over node outputs and run input evaluate correctly; a function call, attribute access, import, or environment read is a parse error, not an evaluation.
-- [ ] **T-829**: (green) PredicateEvaluator
+- [x] **T-829**: (green) PredicateEvaluator
   - domain: backend
   - Components: COMP-003
   - Requirements: REQ-219
   - Acceptance: Recursive-descent parser produces a whitelisted AST behind one evaluate seam; no eval anywhere. The predicate tests pass.
-- [ ] **T-830**: (red) GraphValidator tests: the join deadlock, cycles, dangling refs, unsatisfiable outputs, quotas
+- [x] **T-830**: (red) GraphValidator tests: the join deadlock, cycles, dangling refs, unsatisfiable outputs, quotas
   - domain: test
   - Components: COMP-002
   - Requirements: REQ-219, REQ-220
   - Acceptance: A node whose needs span exclusive router routes without join=any is rejected; an undeclared cycle is rejected; a loop without max_iterations is rejected; an output reference from a node that cannot co-occur with its source is rejected; definition and node-count quotas are enforced. Errors carry node id, field, observed value, and admissible alternatives.
-- [ ] **T-831**: (green) GraphValidator with SCC analysis and typed error list
+- [x] **T-831**: (green) GraphValidator with SCC analysis and typed error list
   - domain: backend
   - Components: COMP-002
   - Requirements: REQ-219, REQ-220
   - Acceptance: Every SCC larger than one node is entered by exactly one declared back-edge sharing one counter; nested and overlapping loops are refused. The validator tests pass.
-- [ ] **T-832**: (red) Canonical hashing and manifest tests: reformat-stable, file-drift detected
+- [x] **T-832**: (red) Canonical hashing and manifest tests: reformat-stable, file-drift detected
   - domain: test
   - Components: COMP-005
   - Requirements: REQ-226, REQ-227
   - Acceptance: Two byte-different but semantically identical documents hash identically; changing any referenced schema, prompt, or script file changes the manifest hash and fails verification closed.
-- [ ] **T-833**: (green) DefinitionStore: canonical hash, file manifest, operator-pinned verification, tier gate
+- [x] **T-833**: (green) DefinitionStore: canonical hash, file manifest, operator-pinned verification, tier gate
   - domain: auth
   - Components: COMP-005
   - Requirements: REQ-225, REQ-226, REQ-227
   - Acceptance: Verification pins the operator key rather than trusting any valid signature; unsigned or foreign-signed definitions are refused above personal tier and warn at personal tier. The hashing and manifest tests pass.
-- [ ] **T-834**: (red) Draft-status invariant test: validation success never confers signed status
+- [x] **T-834**: (red) Draft-status invariant test: validation success never confers signed status
   - domain: test
   - Components: COMP-005, COMP-012
   - Requirements: REQ-223
@@ -82,12 +82,12 @@
 
 ## Phase 2: Core
 
-- [ ] **T-840**: (red) ValueResolver tests: typed binding, never textual interpolation
+- [x] **T-840**: (red) ValueResolver tests: typed binding, never textual interpolation
   - domain: test
   - Components: COMP-004
   - Requirements: REQ-239
   - Acceptance: References bind as typed values into tool arguments and prompt sections; a payload containing command or prompt metacharacters is passed as data and never concatenated into a command string.
-- [ ] **T-841**: (green) ValueResolver
+- [x] **T-841**: (green) ValueResolver
   - domain: backend
   - Components: COMP-004
   - Requirements: REQ-239
@@ -177,12 +177,12 @@
   - Components: COMP-021
   - Requirements: REQ-252, REQ-253
   - Acceptance: Create, edit, archive, unarchive, run, and cancel exist once, owning validation, versioning, draft lifecycle, and audit emission; the agent builder tools, the command line, and the dashboard all invoke these same operations with no surface-specific logic.
-- [ ] **T-870**: (green) Archive semantics: hide and disable without erasing history
+- [x] **T-870**: (green) Archive semantics: hide and disable without erasing history
   - domain: backend
   - Components: COMP-022
   - Requirements: REQ-255
   - Acceptance: Archiving hides a workflow from the active list, disables its trigger, and refuses new runs while retaining the bundle, every prior version, and all run history so past runs stay renderable; unarchive restores it as a draft.
-- [ ] **T-871**: (green) Purge guard: refuse while runs reference the definition
+- [x] **T-871**: (green) Purge guard: refuse while runs reference the definition
   - domain: backend
   - Components: COMP-022
   - Requirements: REQ-256
@@ -190,12 +190,12 @@
 
 ## Phase 3: Integration
 
-- [ ] **T-852**: (green) Runner host in the fleet service with singleton enforcement
+- [x] **T-852**: (green) Runner host in the fleet service with singleton enforcement
   - domain: infra
   - Components: COMP-009
   - Requirements: REQ-230, REQ-231
   - Acceptance: The runner starts on the agent side of the fleet service; a second instance refuses to start rather than racing the frontier; a headless deployment with no dashboard still progresses runs to completion.
-- [ ] **T-853**: (refactor) Layer model and dependency declarations updated
+- [x] **T-853**: (refactor) Layer model and dependency declarations updated
   - domain: infra
   - Components: COMP-009
   - Requirements: REQ-230
@@ -215,7 +215,7 @@
   - Components: COMP-017
   - Requirements: REQ-249
   - Acceptance: A due schedule with a workflow action starts a real run with no model in the decision path; an overlapping firing skips while one is in flight; repeated failures trip the existing breaker; quiet hours suppress firing. Test drives the scheduler tick, not the action handler directly.
-- [ ] **T-857**: (green) Operator signing and workflow CLI
+- [x] **T-857**: (green) Operator signing and workflow CLI
   - domain: api
   - Components: COMP-019
   - Requirements: REQ-224
