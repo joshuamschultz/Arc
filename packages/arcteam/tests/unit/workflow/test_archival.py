@@ -8,6 +8,7 @@ renderable and the audit chain stays whole.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -207,10 +208,34 @@ def test_a_forced_purge_records_that_history_is_unrenderable(tmp_path: Path) -> 
     assert not store.exists("retired")
 
 
-def test_a_forced_purge_without_an_audit_hook_is_refused(store: DefinitionStore) -> None:
-    """History may not be destroyed unrecorded."""
-    with pytest.raises(PurgeRefusedError):
+def test_a_forced_purge_proceeds_when_the_caller_owns_audit(
+    store: DefinitionStore, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The store cannot know whether its caller records the event.
+
+    Requiring a hook on the store looked like it enforced "never destroy
+    history unrecorded", but it cannot: the control plane owns audit for every
+    mutation and emits the event itself, without wiring this hook. Neither
+    production construction site passes one, so the requirement made a declared
+    capability (REQ-256) impossible everywhere rather than safe anywhere. It was
+    also inconsistent with this store's own model — every other lifecycle event
+    flows through the same optional hook with no such demand.
+
+    The enforceable guard is the run-reference check, which stays.
+    """
+    with caplog.at_level(logging.WARNING, logger="arcteam.workflow.store"):
         store.purge("retired", actor_did=ACTOR, runs_referencing=_two_runs, force=True)
+
+    assert not store.exists("retired")
+    assert "no audit hook" in caplog.text
+
+
+def test_a_purge_is_still_refused_by_the_run_guard_without_force(
+    store: DefinitionStore,
+) -> None:
+    """The check the store CAN enforce is unchanged."""
+    with pytest.raises(PurgeRefusedError):
+        store.purge("retired", actor_did=ACTOR, runs_referencing=_two_runs)
 
     assert store.exists("retired")
 

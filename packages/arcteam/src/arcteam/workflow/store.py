@@ -378,8 +378,11 @@ class DefinitionStore:
             runs_referencing: Returns how many runs still reference the
                 workflow. Injected rather than imported so this layer keeps no
                 dependency on the run store.
-            force: Destroy anyway. Requires an audit hook — history may not be
-                made unrenderable without that fact being recorded.
+            force: Destroy anyway, orphaning those runs' history. The event is
+                always emitted; when nothing is wired to receive it the loss of
+                recording is warned about, because the store cannot know whether
+                its caller audits — the control plane does, and does not use
+                this hook.
         """
         self._require(workflow_id)
         outstanding = runs_referencing(workflow_id)
@@ -389,9 +392,10 @@ class DefinitionStore:
                 f"reference it and their history would become unrenderable; archive it instead"
             )
         if force and self._audit is None:
-            raise PurgeRefusedError(
-                "a forced purge must be recorded in the audit chain; refusing to destroy "
-                "history with no audit hook wired (fail-closed, AU-9)"
+            _logger.warning(
+                "forced purge of workflow %r with no audit hook wired on this store; "
+                "the caller must record that its history is henceforth unrenderable (AU-9)",
+                workflow_id,
             )
         self.emit_audit(
             "workflow.purged",
