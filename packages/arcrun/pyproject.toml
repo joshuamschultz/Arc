@@ -45,6 +45,7 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [
     "slow: live-runtime tests (real docker / Firecracker) excluded from the fast unit run",
+    "requires_docker: needs a reachable Docker daemon; skipped locally, required in CI",
 ]
 
 [tool.mypy]

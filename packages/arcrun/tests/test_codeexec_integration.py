@@ -1,6 +1,5 @@
 """Integration tests for CodeExec: strategy selection + ExecuteTool + CodeExecStrategy."""
 
-import shutil
 
 import pytest
 from conftest import LLMResponse, MockModel, ToolCall
@@ -10,10 +9,8 @@ from arcrun.builtins import make_execute_tool
 from arcrun.types import SandboxConfig, Tool
 
 # The default (personal-tier) execute tool routes to the container backend, so
-# tests that actually run code need a Docker CLI; skip where absent (macOS CI).
-_requires_docker = pytest.mark.skipif(
-    shutil.which("docker") is None, reason="no docker CLI — container cannot run here"
-)
+# tests that actually run code need a reachable Docker daemon.
+_requires_docker = pytest.mark.requires_docker
 
 
 async def _echo(params: dict, ctx: object) -> str:

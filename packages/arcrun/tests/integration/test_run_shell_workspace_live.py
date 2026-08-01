@@ -2,7 +2,7 @@
 
 Double-guarded like the other live tests:
 - @pytest.mark.slow so it is excluded from the fast unit run.
-- @pytest.mark.skipif on the absence of the ``docker`` CLI.
+- @pytest.mark.skipif on the absence of a reachable Docker daemon.
 
 Proves the enterprise container path:
 1. writes made to /workspace appear on the HOST workspace (rw bind mount),
@@ -13,19 +13,13 @@ Proves the enterprise container path:
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 
 import pytest
 
 from arcrun import run_shell
 
-_HAS_DOCKER = shutil.which("docker") is not None
-
-pytestmark = [
-    pytest.mark.slow,
-    pytest.mark.skipif(not _HAS_DOCKER, reason="no docker CLI — container cannot run here"),
-]
+pytestmark = [pytest.mark.slow, pytest.mark.requires_docker]
 
 
 @pytest.mark.asyncio

@@ -67,6 +67,16 @@ class _State:
     # The operator human-approval gate (COMP-016 activation approval). Threaded
     # by agent_lifecycle to any module whose configure() asks for it.
     human_gate: Any = None
+    # The deployment operator ``Signer`` — the ONE authority a workflow signature
+    # may carry. Its public key is what the definition store pins against, so a
+    # definition signed by any other key is not merely unverified, it is refused
+    # above personal tier (REQ-225). The agent never gets the private half.
+    operator_signer: Any = None
+    # ``(event, payload)`` sink for the definition store's own audit events.
+    # ``workflow.signed`` and ``workflow.unsigned_run_permitted`` can be emitted
+    # by NOTHING else, so an unwired hook means an unsigned or self-signed
+    # workflow leaves no record anywhere.
+    audit_hook: Any = None
     # Serialises the lazy first-use build so two concurrent first tool calls
     # cannot both construct a control plane (REL-F4 check-then-act race).
     init_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -74,17 +84,6 @@ class _State:
     # (COMP-016). A narrowing edit whose leg union is a subset of an already
     # approved union must not re-prompt, so the approved UNIONS are kept too.
     approved_leg_unions: list[frozenset[str]] = field(default_factory=list)
-
-
-#: The process's workflow runner, published by the gateway's RunnerHost.
-#:
-#: A PROCESS global rather than a contextvar, and deliberately so: the runner is
-#: a fleet singleton shared by every agent in this process (REQ-231), unlike the
-#: per-agent state below. It also decouples publish order from configure order —
-#: the gateway may start the runner before or after any agent configures its
-#: module, and either way the runner is found. Getting that ordering wrong is
-#: silent: the gateway hosts a live runner and every tool still refuses to run.
-_process_runner: Any = None
 
 
 _state_var: contextvars.ContextVar[_State | None] = contextvars.ContextVar(
@@ -99,6 +98,7 @@ def configure(
     workspace: Path = Path("."),
     identity: AgentIdentity,
     human_gate: Any = None,
+    operator_signer: Any = None,
     control_plane: Any = None,
     definitions: Any = None,
     tier: str = "personal",
@@ -111,6 +111,7 @@ def configure(
     :func:`ensure_control_plane` builds it on first use.
     """
     cfg = config if isinstance(config, WorkflowsConfig) else WorkflowsConfig(**(config or {}))
+    audit = getattr(telemetry, "audit_event", None)
     _state_var.set(
         _State(
             config=cfg,
@@ -118,13 +119,11 @@ def configure(
             identity=identity,
             telemetry=telemetry,
             human_gate=human_gate,
+            operator_signer=operator_signer,
+            audit_hook=audit,
             control_plane=control_plane,
             definitions=definitions,
             tier=tier,
-            # Pick up a runner the gateway already published. Without this, an
-            # agent configured AFTER the gateway started the runner would report
-            # "no runner hosted here" on a deployment that has one running.
-            runner=_process_runner,
         )
     )
 
@@ -146,9 +145,9 @@ async def ensure_control_plane() -> None:
         if st.control_plane is not None or st.build_attempted:
             return
         st.build_attempted = True
-        # The run store is opened HERE, in the async seam, because the control
-        # plane needs it for purge's orphan guard and opening a backend is I/O —
-        # which must never happen in the sync configure() (see module docstring).
+        # Opened HERE, in the async seam: the control plane needs the run store
+        # for purge's orphan guard, and backend I/O must never happen in the
+        # sync configure().
         from arcagent.modules.workflows.run_store import open_run_store
 
         runs = await open_run_store(str(st.config.data_dir or ""))
@@ -164,15 +163,7 @@ def set_runner(runner: Any) -> None:
     ``workflow_run`` reports that no runner is hosted here — which is the honest
     state of a deployment whose gateway has not started one.
     """
-    global _process_runner
-    _process_runner = runner
-    st = _state_var.get()
-    if st is None:
-        # Published before any agent configured its module — legitimate ordering,
-        # and configure() will pick it up. Refusing here would drop the runner on
-        # the floor with only a warning, which is the silent-failure shape this
-        # whole seam keeps producing.
-        return
+    st = state()
     st.runner = runner
     # Force a rebuild so the control plane picks up the live runner.
     st.control_plane = None
@@ -194,19 +185,27 @@ class _NoRunner:
         raise RuntimeError(self._MESSAGE)
 
 
-def _operator_public_key() -> bytes | None:
-    """The deployment operator's verify key, or None when absent.
+def _operator_public_key(st: _State) -> bytes | None:
+    """The deployment operator pubkey every workflow signature is pinned against.
 
-    None is fail-closed at enterprise/federal (the store refuses to run an
-    unsigned or foreign-signed definition) and audit-warn at personal, which is
-    the same posture arcprompt uses for overlays.
+    Taken from the operator ``Signer`` the agent already resolved, rather than
+    re-read from disk: that is the same authority the human gate pins approvals
+    to, and a second resolution is a second chance to pin a different key.
+
+    Returns None only when no operator signer exists at all. That is not a
+    fallback — with no pinned key the store refuses fail-closed above personal
+    tier, which is the correct outcome and far better than the silent pass that
+    an unpinned verification gives.
     """
-    try:
-        from arctrust import OperatorKey, default_operator_key_path
-
-        return OperatorKey.load(default_operator_key_path(), generate_if_absent=False).public_key
-    except (OSError, ValueError, RuntimeError):
+    signer = st.operator_signer
+    if signer is None:
+        _logger.warning(
+            "no operator signer available; workflow signatures cannot be pinned and "
+            "definitions will be refused above personal tier (fail-closed)"
+        )
         return None
+    key: bytes = signer.public_key
+    return key
 
 
 def _build_control_plane(st: _State, runs: Any) -> None:
@@ -230,20 +229,21 @@ def _build_control_plane(st: _State, runs: Any) -> None:
 
     root = st.workspace / st.config.workflows_dir
     root.mkdir(parents=True, exist_ok=True)
-    # tier and the pinned operator key are LOAD-BEARING, not optional polish.
-    # Omitting them made this store believe every deployment was personal-tier
-    # with no pinned key — so an unsigned draft ran at federal, and worse, an
-    # agent could sign a workflow with its OWN key and the store reported it
-    # verified. That is exactly the attack the draft-then-operator-sign
-    # lifecycle exists to prevent: with no pin, verification falls back to
-    # trusting the key embedded in the sidecar (trust-on-first-use, the LLM03
-    # hole SPEC-047 already closed for blueprints). REQ-225 requires refusal
-    # above personal tier. The tier was already in scope — it is passed to the
-    # control plane fifteen lines below.
+    # Every argument here is load-bearing, and every default is dangerous.
+    # Omitting ``tier`` makes the store believe it is a personal deployment at
+    # EVERY tier, so REQ-225's refusal of an unsigned definition never fires.
+    # Omitting ``operator_public_key`` makes ``verify_artifact`` fall back to
+    # trusting the key embedded in the sidecar — trust-on-first-use — so a
+    # definition signed by ANY key an agent holds reports as signed and
+    # verified, which is precisely the self-blessing the draft-then-operator-sign
+    # lifecycle exists to prevent (LLM03/LLM06/ASI04). Neither omission is
+    # visible on the happy path: a correctly signed workflow at personal tier
+    # behaves identically either way.
     st.definitions = DefinitionStore(
         root=root,
         tier=st.tier,
-        operator_public_key=_operator_public_key(),
+        operator_public_key=_operator_public_key(st),
+        audit=st.audit_hook,
     )
 
     def parse(document: Mapping[str, Any]) -> Any:
@@ -281,13 +281,7 @@ def bind(state_obj: _State) -> None:
 
 
 def reset() -> None:
-    """Test-only: clear runtime state AND the process runner.
-
-    Both, or a runner published by one test leaks into the next and a genuinely
-    unwired case would pass.
-    """
-    global _process_runner
-    _process_runner = None
+    """Test-only: clear runtime state."""
     _state_var.set(None)
 
 
