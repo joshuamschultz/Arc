@@ -98,14 +98,29 @@ async def test_stop_survives_a_runner_that_raises_on_close() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_start_runner_host_returns_none_when_arcteam_workflows_absent() -> None:
-    """Real behavior today: arcteam.workflows.runner does not exist yet.
+async def test_start_runner_host_starts_a_real_runner() -> None:
+    """The default path builds arcteam's real engine and starts it.
 
-    Proves the fail-open contract (REQ-230's spirit for this seam): a
-    checkout missing SPEC-061's arcteam half still returns cleanly (None)
-    instead of raising and aborting gateway boot.
+    This test previously asserted ``host is None`` — the fail-open behaviour of
+    a checkout whose arcteam half had not landed. That half has landed, so
+    asserting None would now be asserting the dead wiring: everything boots,
+    nothing errors, and no runner ever advances a frontier. The fail-open
+    contract is still covered, by the test below that makes construction raise.
     """
     host = await start_runner_host(tier="personal")
+
+    assert host is not None, "the gateway booted with no runner — dead wiring"
+    assert RunnerHost.active() is host
+    await host.stop()
+
+
+async def test_start_runner_host_still_fails_open_when_construction_raises() -> None:
+    """A genuine construction error degrades the gateway; it never aborts boot."""
+
+    async def _explodes(*, tier: str, key_path: Path) -> Any:
+        raise RuntimeError("arcteam engine unavailable")
+
+    host = await start_runner_host(tier="personal", runner_factory=_explodes)
 
     assert host is None
     assert RunnerHost.active() is None

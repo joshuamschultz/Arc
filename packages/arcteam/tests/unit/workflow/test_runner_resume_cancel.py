@@ -49,10 +49,8 @@ async def test_restart_mid_materialization_re_derives_instead_of_duplicating(
     runner = build(stores, registry, FANOUT)
     original = flow_tasks.create_batch
 
-    async def crash_after_first(
-        tasks: list[Task], *, idempotency_keys: list[str]
-    ) -> list[Task]:
-        await original(tasks[:1], idempotency_keys=idempotency_keys[:1])
+    async def crash_after_first(tasks: list[Task], *, actor_did: str) -> list[Task]:
+        await original(tasks[:1], actor_did=actor_did)
         raise RuntimeError("crashed mid-materialization")
 
     flow_tasks.create_batch = crash_after_first  # type: ignore[method-assign]

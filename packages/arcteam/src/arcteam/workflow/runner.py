@@ -29,11 +29,13 @@ event the runner emits names the deployment's true posture.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Literal, cast
 from uuid import uuid4
 
@@ -146,6 +148,8 @@ class WorkflowRunner:
         node_max_tokens: int | None = None,
         node_max_cost_usd: float | None = None,
         clock: Callable[[], datetime] | None = None,
+        run_workspace_root: Path | None = None,
+        on_close: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self._tasks = tasks
         self._runs = runs
@@ -160,6 +164,8 @@ class WorkflowRunner:
         self._node_max_tokens = node_max_tokens
         self._node_max_cost_usd = node_max_cost_usd
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._run_workspace_root = run_workspace_root
+        self._on_close = on_close
 
     # -- public surface ----------------------------------------------------
 
@@ -204,6 +210,7 @@ class WorkflowRunner:
             budget_cost_usd=None,
             budget_wall_clock_s=None if budget is None else budget.wall_clock_s,
         )
+        self._open_run_workspace(run_id)
         self._audit(
             "workflow.run.started",
             target=f"{definition.id}/{run_id}",
@@ -256,6 +263,39 @@ class WorkflowRunner:
             if not changed:
                 break
         return await self._finalize(run, definition)
+
+    async def run_forever(self, *, interval: float = 5.0) -> None:
+        """Tick until cancelled — the host's entry point (COMP-009).
+
+        One tick advances every non-terminal run. A tick that raises is logged
+        and the loop continues: one poisoned run must not stop the engine for
+        every other run in the fleet (the scheduler's store-poison lesson).
+        """
+        while True:
+            try:
+                await self.tick()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # reason: one bad tick must not stop the engine
+                logger.exception("workflow runner tick failed")
+            await asyncio.sleep(interval)
+
+    async def tick(self) -> int:
+        """Advance every active run once. Returns how many were advanced."""
+        advanced = 0
+        for run in await self._runs.active_runs():
+            try:
+                await self.advance(run.run_id)
+            except Exception:  # reason: one poisoned run must not stall the rest
+                logger.exception("advancing run %s failed", run.run_id)
+            advanced += 1
+        return advanced
+
+    async def aclose(self) -> None:
+        """Release what this runner owns. Idempotent — shutdown may retry."""
+        if self._on_close is not None:
+            closer, self._on_close = self._on_close, None
+            await closer()
 
     async def cancel(
         self, run_id: str, *, actor_did: str, reason: str = "cancelled by operator"
@@ -417,7 +457,6 @@ class WorkflowRunner:
             return False
         budget = await self._budget_for(run, state)
         rows: list[Task] = []
-        keys: list[str] = []
         for node, iteration in pending:
             grant = await budget.reserve(
                 per_node_tokens=self._node_max_tokens, per_node_cost=self._node_max_cost_usd
@@ -426,14 +465,12 @@ class WorkflowRunner:
                 # No headroom right now: defer, never fail. A settling node
                 # releases its reservation and a later tick admits this one.
                 continue
-            task = await self._build_task(run, definition, node, iteration, state, scope)
-            rows.append(task)
-            # The row id IS the identity pair, already unambiguous — deriving a
-            # second key by another rule would be a second thing to get wrong.
-            keys.append(task.id)
+            # The row id IS the identity pair, already unambiguous, and the
+            # store dedupes on it — there is no second key to get wrong.
+            rows.append(await self._build_task(run, definition, node, iteration, state, scope))
         if not rows:
             return False
-        created = await self._tasks.create_batch(rows, idempotency_keys=keys)
+        created = await self._tasks.create_batch(rows, actor_did=self._runner_did)
         changed = False
         for task in created:
             changed |= await self._record_materialization(run, state, task)
@@ -886,6 +923,21 @@ class WorkflowRunner:
 
     # -- small helpers -------------------------------------------------------
 
+    def _open_run_workspace(self, run_id: str) -> Path | None:
+        """Create the run's shared desk: ``<root>/runs/<run_id>/`` (D-539).
+
+        Work product is files here; typed output carries only what the graph
+        consumes. Because every declared artifact is relative to this directory
+        and the runner already refuses a path that escapes it, containment is
+        structural rather than a rule someone has to remember.
+        """
+        if self._run_workspace_root is None:
+            return None
+        _assert_safe_name("run id", run_id)
+        workspace = self._run_workspace_root / "runs" / run_id
+        workspace.mkdir(parents=True, exist_ok=True)
+        return workspace
+
     def _assert_contained_artifacts(self, node: NodeSpec) -> None:
         """A declared artifact is workspace-relative or the node does not run.
 
@@ -944,11 +996,88 @@ class WorkflowRunner:
         )
 
 
+def build_workflow_runner(
+    *,
+    tier: str,
+    task_store_backend: Any,
+    runner_key_path: Path,
+    workspace_root: Path | None = None,
+    registry: Any = None,
+    operator_public_key: bytes | None = None,
+    narrator: RunNarrator | None = None,
+    audit_sink: AuditSink | None = None,
+    on_close: Callable[[], Awaitable[None]] | None = None,
+) -> WorkflowRunner:
+    """Assemble a production runner (COMP-009's construction seam).
+
+    Called by ``arcgateway.workflow_runner_host`` on the agent side of the fleet
+    service. Every dependency is resolved here rather than in the host, so the
+    host stays a lifecycle owner and there is exactly one place that knows how a
+    real runner is wired.
+
+    Tier is handed in and flows to BOTH the definition store's gate and the
+    runner's audit context — the same value, so enforcement and the audit trail
+    can never disagree about the deployment's posture.
+
+    Raises:
+        RunnerIdentityUnavailableError: no operator key on disk. A runner with
+            no identity must not start: every row it wrote would be
+            unattributable, which is worse than not running.
+    """
+    from .identity import RunnerIdentity
+    from .predicates import evaluate as evaluate_predicate
+    from .resolver import resolve_args as resolve_node_args
+    from .store import DefinitionStore
+    from .stores import RegistryOwnerResolver, WorkflowRunStore, WorkflowTaskStore
+
+    identity = RunnerIdentity.load(runner_key_path)
+    root = workspace_root or runner_key_path.parent.parent
+    definitions = DefinitionStore(
+        root / "workflows", tier=tier, operator_public_key=operator_public_key
+    )
+    return WorkflowRunner(
+        tasks=WorkflowTaskStore(task_store_backend, actor_did=identity.did),
+        runs=WorkflowRunStore(task_store_backend),
+        definitions=definitions,
+        owners=RegistryOwnerResolver(registry) if registry is not None else _no_registry(),
+        runner_did=identity.did,
+        tier=cast(Tier, tier),
+        evaluate=evaluate_predicate,
+        resolve_args=resolve_node_args,
+        narrator=narrator,
+        audit_sink=audit_sink,
+        run_workspace_root=root / "shared",
+        on_close=on_close,
+    )
+
+
+def _no_registry() -> _NoRegistry:
+    """Warn loudly: this runner will start and then fail every run it touches."""
+    logger.warning(
+        "workflow runner built with no entity registry: no node owner can be "
+        "resolved, so every run will fail at its first node. Pass registry= to "
+        "build_workflow_runner()."
+    )
+    return _NoRegistry()
+
+
+class _NoRegistry:
+    """Owner resolution with no registry wired: refuse, never guess.
+
+    A node whose owner cannot be resolved fails the run closed. Returning some
+    default DID would hand another agent's identity a task row.
+    """
+
+    async def resolve_owner(self, handle: str) -> str | None:
+        return None
+
+
 __all__ = [
     "NodeDecisionError",
     "UnsignedWorkflowRefusedError",
     "WorkflowRunError",
     "WorkflowRunNotFoundError",
     "WorkflowRunner",
+    "build_workflow_runner",
     "node_task_id",
 ]

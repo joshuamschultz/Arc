@@ -340,6 +340,10 @@ class RunStoreLike(Protocol):
         self, run_id: str, *, tokens: int, cost_usd: float, actor_did: str
     ) -> None: ...
 
+    async def active_runs(self) -> Sequence[RunRecord]:
+        """Every non-terminal run, for the tick to advance."""
+        ...
+
 
 class WorkflowTaskStoreLike(Protocol):
     """The task-row half: batch materialization plus RUN-SCOPED reads.
@@ -348,10 +352,13 @@ class WorkflowTaskStoreLike(Protocol):
     filters in Python — the tick cost must not grow with the board.
     """
 
-    async def create_batch(
-        self, tasks: Sequence[Task], *, idempotency_keys: Sequence[str]
-    ) -> Sequence[Task]:
-        """Create rows, returning the EXISTING row for any key already present."""
+    async def create_batch(self, tasks: Sequence[Task], *, actor_did: str) -> Sequence[Task]:
+        """Create rows atomically, returning the EXISTING row for any id present.
+
+        Idempotent on each task's own id, which is why the runner derives that
+        id deterministically from the (run, node, iteration) triple: a crashed
+        runner re-invoking this gets back the rows it already created.
+        """
         ...
 
     async def query_by_flow_run(self, flow_run_id: str) -> Sequence[Task]: ...

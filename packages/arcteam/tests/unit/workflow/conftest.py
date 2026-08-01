@@ -340,6 +340,16 @@ class FlowRunStore:
         )
         return row
 
+    async def active_runs(self) -> list[RunRow]:
+        rows = await self._backend.mutable_query(self._COLLECTION, where={})
+        runs = []
+        for raw in rows:
+            raw.pop("updated_at", None)
+            run = RunRow(**raw)
+            if run.status not in ("done", "failed", "cancelled"):
+                runs.append(run)
+        return runs
+
     async def get(self, run_id: str) -> RunRow | None:
         raw = await self._backend.mutable_read(self._COLLECTION, run_id)
         if raw is None:
@@ -416,17 +426,15 @@ class FlowTaskStore:
         self.run_status_at_cancel: list[str | None] = []
         self.observe_run_status: Any = None
 
-    async def create_batch(
-        self, tasks: Sequence[Task], *, idempotency_keys: Sequence[str]
-    ) -> Sequence[Task]:
+    async def create_batch(self, tasks: Sequence[Task], *, actor_did: str) -> Sequence[Task]:
         out: list[Task] = []
-        self.requested_keys.extend(idempotency_keys)
-        for task, key in zip(tasks, idempotency_keys, strict=True):
+        self.requested_keys.extend(task.id for task in tasks)
+        for task in tasks:
             existing = await self._tasks.get(task.id)
             if existing is not None:
                 out.append(existing)
                 continue
-            self.created_keys.append(key)
+            self.created_keys.append(task.id)
             out.append(await self._tasks.create(task))
         return out
 
