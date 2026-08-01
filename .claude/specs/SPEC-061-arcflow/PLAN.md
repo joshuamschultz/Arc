@@ -74,7 +74,7 @@
   - Components: COMP-007
   - Requirements: REQ-229, REQ-234
   - Acceptance: New store capability, additive to the existing task model. The batch creation tests pass.
-- [ ] **T-839**: (green) Runner identity resolution
+- [x] **T-839**: (green) Runner identity resolution
   - domain: auth
   - Components: COMP-011
   - Requirements: REQ-232
@@ -187,7 +187,7 @@
   - Components: COMP-022
   - Requirements: REQ-256
   - Acceptance: A purge is refused while any run still references the workflow; a forced purge records in the audit chain that history for that workflow is henceforth unrenderable.
-- [ ] **T-875**: (green) Run workspace: the shared desk for one run
+- [x] **T-875**: (green) Run workspace: the shared desk for one run
   - domain: backend
   - Components: COMP-024
   - Requirements: REQ-258

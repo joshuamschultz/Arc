@@ -95,7 +95,7 @@
     },
     "T-839": {
       "description": "(green) Runner identity resolution",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
@@ -337,6 +337,9 @@
       "history": [],
       "blockers": [],
       "depends_on": []
+    },
+    "T-875": {
+      "status": "done"
     }
   },
   "task_order": [
