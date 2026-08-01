@@ -149,10 +149,10 @@ class WorkflowRunner:
     ) -> RunRecord:
         """Create the Run record, then materialize the first frontier."""
         bundle = self._definitions.load_for_run(workflow_id)
-        # Trust is `signer_did`, never `status`: status carries lifecycle, and an
-        # archived bundle can be validly signed. Keying the gate off status would
-        # refuse a definition that is in fact trusted.
-        if self._tier != "personal" and bundle.signer_did is None:
+        # Trust is `is_verified`, never `status`: status carries lifecycle, and
+        # an archived bundle can be validly signed. Keying the gate off status
+        # would refuse a definition that is in fact trusted.
+        if self._tier != "personal" and not bundle.is_verified:
             raise UnsignedWorkflowRefusedError(
                 f"workflow {workflow_id!r} carries no verified operator signature; "
                 f"refused at {self._tier} tier"
@@ -178,7 +178,14 @@ class WorkflowRunner:
             target=f"{definition.id}/{run_id}",
             outcome="started",
             actor_did=initiator_did,
-            extra={"version": definition.version, "content_hash": bundle.content_hash},
+            extra={
+                "version": definition.version,
+                "content_hash": bundle.content_hash,
+                # Who authorized what ran. Without it the chain records that a
+                # run started, but not under whose signature — and "who signed
+                # the definition behind run 17" stops being reconstructible.
+                "signer_did": bundle.signer_did,
+            },
         )
         if self._narrator is not None:
             await self._narrator.run_started(
