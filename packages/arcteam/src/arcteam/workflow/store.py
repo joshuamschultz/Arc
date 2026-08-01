@@ -287,8 +287,7 @@ class DefinitionStore:
         """
         bundle_root = self.path_for(definition.id)
         version = self._next_version(definition.id, expected_version)
-        bundle_root.mkdir(parents=True, exist_ok=True)
-        self._write_files(bundle_root, files or {})
+        incoming = self._resolve_files(bundle_root, files or {})
 
         pending = definition.model_copy(update={"version": version})
         text = dump_toml(pending.to_document())
@@ -297,10 +296,13 @@ class DefinitionStore:
             known=known,
             bundle_root=bundle_root,
             raw_size_bytes=len(text.encode("utf-8")),
+            pending_files=frozenset(files or ()),
         )
         if issues:
             raise WorkflowValidationError(issues)
 
+        for target, body in incoming.items():
+            _atomic_write(target, body)
         self._retain_current(bundle_root)
         _atomic_write(bundle_root / DEFINITION_FILE, text.encode("utf-8"))
         (bundle_root / SIDECAR_FILE).unlink(missing_ok=True)
@@ -453,14 +455,22 @@ class DefinitionStore:
             )
         return current + 1
 
-    def _write_files(self, bundle_root: Path, files: Mapping[str, bytes]) -> None:
-        """Write bundle-relative companion files, refusing any path that escapes."""
+    def _resolve_files(self, bundle_root: Path, files: Mapping[str, bytes]) -> dict[Path, bytes]:
+        """Confine every companion-file path, writing nothing.
+
+        Resolution is separated from writing so that a save which is going to
+        be refused touches no bytes at all. Writing first and validating after
+        meant a *rejected* edit still moved a signed bundle's manifest hash,
+        breaking the operator's signature and taking a live workflow out of
+        service — a failed call must never be able to do that.
+        """
+        resolved: dict[Path, bytes] = {}
         for reference, body in files.items():
             target = confine(bundle_root.resolve(), reference)
             if target is None:
                 raise WorkflowValidationError((_escape_issue(reference),))
-            target.parent.mkdir(parents=True, exist_ok=True)
-            _atomic_write(target, body)
+            resolved[target] = body
+        return resolved
 
     def _retain_current(self, bundle_root: Path) -> None:
         """Copy the current definition into ``versions/`` before overwriting it."""
