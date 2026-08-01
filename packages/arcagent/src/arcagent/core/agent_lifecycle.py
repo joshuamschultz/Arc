@@ -256,6 +256,11 @@ def configure_module_runtimes(
             "bus": agent._bus,
             "agent_did": identity.did if identity else "",
             "identity": identity,
+            # The deployment tier, from the SAME [security] setting the tool
+            # registry and policy pipeline read. A module that gates on tier must
+            # never carry its own copy in module config — two sources of truth
+            # for stringency means one of them is silently wrong.
+            "tier": str(agent._config.security.tier),
             "policy_pipeline": agent._policy_pipeline,
             "egress_proxy": egress_proxy,
             "human_gate": agent._human_gate,

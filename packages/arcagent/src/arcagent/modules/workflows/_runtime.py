@@ -67,6 +67,16 @@ class _State:
     # The operator human-approval gate (COMP-016 activation approval). Threaded
     # by agent_lifecycle to any module whose configure() asks for it.
     human_gate: Any = None
+    # The deployment operator ``Signer`` — the ONE authority a workflow signature
+    # may carry. Its public key is what the definition store pins against, so a
+    # definition signed by any other key is not merely unverified, it is refused
+    # above personal tier (REQ-225). The agent never gets the private half.
+    operator_signer: Any = None
+    # ``(event, payload)`` sink for the definition store's own audit events.
+    # ``workflow.signed`` and ``workflow.unsigned_run_permitted`` can be emitted
+    # by NOTHING else, so an unwired hook means an unsigned or self-signed
+    # workflow leaves no record anywhere.
+    audit_hook: Any = None
     # Serialises the lazy first-use build so two concurrent first tool calls
     # cannot both construct a control plane (REL-F4 check-then-act race).
     init_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -88,6 +98,7 @@ def configure(
     workspace: Path = Path("."),
     identity: AgentIdentity,
     human_gate: Any = None,
+    operator_signer: Any = None,
     control_plane: Any = None,
     definitions: Any = None,
     tier: str = "personal",
@@ -100,6 +111,7 @@ def configure(
     :func:`ensure_control_plane` builds it on first use.
     """
     cfg = config if isinstance(config, WorkflowsConfig) else WorkflowsConfig(**(config or {}))
+    audit = getattr(telemetry, "audit_event", None)
     _state_var.set(
         _State(
             config=cfg,
@@ -107,6 +119,8 @@ def configure(
             identity=identity,
             telemetry=telemetry,
             human_gate=human_gate,
+            operator_signer=operator_signer,
+            audit_hook=audit,
             control_plane=control_plane,
             definitions=definitions,
             tier=tier,
@@ -165,6 +179,29 @@ class _NoRunner:
         raise RuntimeError(self._MESSAGE)
 
 
+def _operator_public_key(st: _State) -> bytes | None:
+    """The deployment operator pubkey every workflow signature is pinned against.
+
+    Taken from the operator ``Signer`` the agent already resolved, rather than
+    re-read from disk: that is the same authority the human gate pins approvals
+    to, and a second resolution is a second chance to pin a different key.
+
+    Returns None only when no operator signer exists at all. That is not a
+    fallback — with no pinned key the store refuses fail-closed above personal
+    tier, which is the correct outcome and far better than the silent pass that
+    an unpinned verification gives.
+    """
+    signer = st.operator_signer
+    if signer is None:
+        _logger.warning(
+            "no operator signer available; workflow signatures cannot be pinned and "
+            "definitions will be refused above personal tier (fail-closed)"
+        )
+        return None
+    key: bytes = signer.public_key
+    return key
+
+
 def _build_control_plane(st: _State) -> None:
     """Construct the control plane and definition store over the bundle root.
 
@@ -186,7 +223,22 @@ def _build_control_plane(st: _State) -> None:
 
     root = st.workspace / st.config.workflows_dir
     root.mkdir(parents=True, exist_ok=True)
-    st.definitions = DefinitionStore(root=root)
+    # Every argument here is load-bearing, and every default is dangerous.
+    # Omitting ``tier`` makes the store believe it is a personal deployment at
+    # EVERY tier, so REQ-225's refusal of an unsigned definition never fires.
+    # Omitting ``operator_public_key`` makes ``verify_artifact`` fall back to
+    # trusting the key embedded in the sidecar — trust-on-first-use — so a
+    # definition signed by ANY key an agent holds reports as signed and
+    # verified, which is precisely the self-blessing the draft-then-operator-sign
+    # lifecycle exists to prevent (LLM03/LLM06/ASI04). Neither omission is
+    # visible on the happy path: a correctly signed workflow at personal tier
+    # behaves identically either way.
+    st.definitions = DefinitionStore(
+        root=root,
+        tier=st.tier,
+        operator_public_key=_operator_public_key(st),
+        audit=st.audit_hook,
+    )
 
     def parse(document: Mapping[str, Any]) -> Any:
         return parse_definition(dict(document))
