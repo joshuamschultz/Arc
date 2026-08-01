@@ -73,6 +73,14 @@ class _State:
     # idle agent. The dispatch loop calls it to actually run an assigned task.
     # None until agent:ready fires (or in test paths that never dispatch).
     agent_run_fn: Any = None
+    # The agent's per-session lethal-trifecta ledger and capability registry,
+    # both bound at ``agent:ready``. The ledger is how a workflow node's fresh
+    # session inherits the RUN's accumulated legs (COMP-015) instead of resetting
+    # them; the registry is how a node's declared skill is activated
+    # deterministically rather than by hoping the model calls ``use_skill``.
+    # None outside a fully-wired agent (bare/test construction).
+    capability_ledger: Any = None
+    skill_registry: Any = None
     # Serialises the lazy first-use build in ``ensure_store`` so two concurrent
     # first tool calls can't both open the backend + a live NATS connection
     # (REL-F4 check-then-act race -> one orphaned connection).

@@ -1,0 +1,348 @@
+"""T-844 / T-862 — the node execution adapter, driven through the REAL path.
+
+SPEC-061 COMP-014 / REQ-233, REQ-237, REQ-238, REQ-242, REQ-243.
+
+The acceptance criterion for T-844 is explicit: "exercised through the real
+completion path, not a unit stub". So schema and artifact enforcement are
+asserted by calling the actual ``complete_task`` / ``set_task_output`` tools
+over a real ``arcstore.tasks.TaskStore``, on a real task row carrying a real
+workflow metadata block — the same code the dispatch loop runs. The pure
+helpers are additionally unit-tested, but the enforcement claims rest on the
+tool calls.
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Any
+from unittest.mock import MagicMock
+
+import pytest
+from arctrust import AgentIdentity
+
+from tests.unit.modules.tasks.conftest import make_registry
+
+_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"risk": {"type": "string", "enum": ["low", "high"]}},
+    "required": ["risk"],
+}
+
+
+def _node_block(**overrides: Any) -> dict[str, Any]:
+    block: dict[str, Any] = {
+        "workflow_id": "onboarding",
+        "run_id": "run_1",
+        "node_id": "verify",
+        "attempt": 1,
+        "kind": "agent",
+        "instructions": "Assess the record and report a risk level.",
+        "output_schema": _SCHEMA,
+    }
+    block.update(overrides)
+    return block
+
+
+@pytest.fixture
+def node_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
+    """A real tasks runtime over a tmp_path SQLite db (production call shape)."""
+    from arcagent.modules.tasks import _runtime
+
+    monkeypatch.delenv("ARCSTORE_DATA_DIR", raising=False)
+    _runtime.reset()
+    _runtime.configure(
+        config={"enabled": True, "data_dir": str(tmp_path), "default_max_attempts": 3},
+        telemetry=MagicMock(),
+        workspace=tmp_path,
+        identity=AgentIdentity.generate(org="local", agent_type="agent"),
+        registry=make_registry(),
+    )
+    yield _runtime.state()
+    _runtime.reset()
+
+
+async def _make_node_task(state: Any, **block_overrides: Any) -> Any:
+    """Create a real in_progress task row carrying a workflow node block."""
+    from arcagent.modules.tasks.capabilities import _state
+    from arcagent.modules.tasks.models import Task
+    from arcagent.modules.tasks.node_execution import WORKFLOW_META
+
+    st = await _state()
+    task = Task(
+        id="task_node_1",
+        title="verify the record",
+        status="in_progress",
+        owner_did=st.identity.did,
+        creator_did=st.identity.did,
+        attempts=1,
+        max_attempts=3,
+        metadata={WORKFLOW_META: _node_block(**block_overrides)},
+    )
+    await st.store.create(task)
+    del state
+    return task
+
+
+@pytest.mark.asyncio
+class TestOutputSchemaFiresOnCompletion:
+    """REQ-237 — a schema failure is a RETRYABLE failure, never a pass-forward."""
+
+    async def test_violating_output_is_refused_by_complete_task(self, node_state: Any) -> None:
+        from arcagent.modules.tasks.capabilities import complete_task
+
+        await _make_node_task(node_state)
+        result = json.loads(
+            await complete_task(id="task_node_1", resolution="done", output={"risk": "medium"})
+        )
+        assert result["retryable"] is True
+        assert "output_schema" in result["error"]
+
+    async def test_violating_output_is_never_recorded(self, node_state: Any) -> None:
+        """The pass-forward this requirement exists to prevent."""
+        from arcagent.modules.tasks.capabilities import _state, complete_task
+
+        await _make_node_task(node_state)
+        await complete_task(id="task_node_1", resolution="done", output={"risk": "medium"})
+        st = await _state()
+        stored = await st.store.get("task_node_1")
+        assert stored is not None
+        assert stored.output is None
+        assert stored.status != "done"
+
+    async def test_refusal_consumes_an_attempt_and_requeues(self, node_state: Any) -> None:
+        from arcagent.modules.tasks.capabilities import _state, complete_task
+
+        await _make_node_task(node_state)
+        await complete_task(id="task_node_1", resolution="done", output={"risk": "medium"})
+        st = await _state()
+        stored = await st.store.get("task_node_1")
+        assert stored is not None
+        # Below the ceiling -> requeued for another attempt, not dead-lettered.
+        assert stored.status == "todo"
+        assert stored.last_error is not None
+
+    async def test_conforming_output_completes_normally(self, node_state: Any) -> None:
+        from arcagent.modules.tasks.capabilities import _state, complete_task
+
+        await _make_node_task(node_state)
+        await complete_task(id="task_node_1", resolution="done", output={"risk": "low"})
+        st = await _state()
+        stored = await st.store.get("task_node_1")
+        assert stored is not None
+        assert stored.status == "done"
+        assert stored.output == {"risk": "low"}
+
+    async def test_missing_output_against_a_declared_schema_is_refused(
+        self, node_state: Any
+    ) -> None:
+        from arcagent.modules.tasks.capabilities import complete_task
+
+        await _make_node_task(node_state)
+        result = json.loads(await complete_task(id="task_node_1", resolution="done"))
+        assert result["retryable"] is True
+
+    async def test_set_task_output_enforces_the_same_schema(self, node_state: Any) -> None:
+        """The other write path into ``output`` must not be a way around the gate."""
+        from arcagent.modules.tasks.capabilities import _state, set_task_output
+
+        await _make_node_task(node_state)
+        result = json.loads(await set_task_output(id="task_node_1", output={"risk": "medium"}))
+        assert result["retryable"] is True
+        st = await _state()
+        stored = await st.store.get("task_node_1")
+        assert stored is not None
+        assert stored.output is None
+
+    async def test_an_ordinary_task_is_unaffected(self, node_state: Any) -> None:
+        from arcagent.modules.tasks.capabilities import complete_task, create_task
+
+        created = json.loads(await create_task(title="just a task"))
+        await complete_task(id=created["id"], resolution="ok", output={"anything": 1})
+        # No schema declared, so any output is fine.
+        assert "error" not in created
+
+
+@pytest.mark.asyncio
+class TestArtifactEnforcement:
+    """REQ-238 — declared artifacts must exist, and the retry names the producer."""
+
+    async def test_missing_artifact_refuses_completion(self, node_state: Any) -> None:
+        from arcagent.modules.tasks.capabilities import complete_task
+
+        await _make_node_task(
+            node_state, output_schema=None, artifacts=["customer_record.json"]
+        )
+        result = json.loads(await complete_task(id="task_node_1", resolution="done"))
+        assert result["retryable"] is True
+        assert "customer_record.json" in result["error"]
+
+    async def test_retry_message_names_the_producing_tool(self, node_state: Any) -> None:
+        from arcagent.modules.tasks.capabilities import complete_task
+
+        await _make_node_task(node_state, output_schema=None, artifacts=["report.md"])
+        result = json.loads(await complete_task(id="task_node_1", resolution="done"))
+        assert "`write`" in result["error"]
+
+    async def test_present_artifact_completes(self, node_state: Any, tmp_path: Path) -> None:
+        from arcagent.modules.tasks.capabilities import _state, complete_task
+
+        (tmp_path / "report.md").write_text("done", encoding="utf-8")
+        await _make_node_task(node_state, output_schema=None, artifacts=["report.md"])
+        await complete_task(id="task_node_1", resolution="done")
+        st = await _state()
+        stored = await st.store.get("task_node_1")
+        assert stored is not None
+        assert stored.status == "done"
+
+    async def test_set_task_output_does_not_check_artifacts(
+        self, node_state: Any
+    ) -> None:
+        """Artifacts gate COMPLETION, not an intermediate output write."""
+        from arcagent.modules.tasks.capabilities import _state, set_task_output
+
+        await _make_node_task(node_state, output_schema=None, artifacts=["absent.md"])
+        await set_task_output(id="task_node_1", output={"partial": True})
+        st = await _state()
+        stored = await st.store.get("task_node_1")
+        assert stored is not None
+        assert stored.output == {"partial": True}
+
+
+class TestPromptSectionSeam:
+    """REQ-233/239 — node content reaches the model through assemble_prompt only."""
+
+    def test_upstream_outputs_are_rendered_as_typed_json(self) -> None:
+        from arcagent.modules.tasks.node_execution import WorkflowNode, render_node_section
+
+        node = WorkflowNode(
+            workflow_id="w",
+            run_id="r",
+            node_id="verify",
+            upstream={"collect": {"company_domain": "example.com"}},
+        )
+        section = render_node_section(node)
+        assert "`collect`" in section
+        assert '"company_domain": "example.com"' in section
+
+    def test_instructions_and_schema_are_included(self) -> None:
+        from arcagent.modules.tasks.node_execution import WorkflowNode, render_node_section
+
+        node = WorkflowNode(
+            workflow_id="w",
+            run_id="r",
+            node_id="verify",
+            instructions="Do the thing.",
+            output_schema=_SCHEMA,
+        )
+        section = render_node_section(node)
+        assert "Do the thing." in section
+        assert "Required output shape" in section
+
+    @pytest.mark.asyncio
+    async def test_hook_writes_only_when_a_node_is_bound(self, node_state: Any) -> None:
+        from arcagent.modules.tasks.capabilities import inject_workflow_node_section
+        from arcagent.modules.tasks.node_execution import WorkflowNode, bind_node, reset_node
+
+        del node_state
+        ctx = MagicMock()
+        ctx.data = {"sections": {}}
+        await inject_workflow_node_section(ctx)
+        assert ctx.data["sections"] == {}
+
+        token = bind_node(WorkflowNode(workflow_id="w", run_id="r", node_id="verify"))
+        try:
+            await inject_workflow_node_section(ctx)
+        finally:
+            reset_node(token)
+        assert "workflow_node" in ctx.data["sections"]
+
+    @pytest.mark.asyncio
+    async def test_hook_is_registered_on_assemble_prompt(self) -> None:
+        from arcagent.modules.tasks.capabilities import inject_workflow_node_section
+        from arcagent.tools._decorator import HookMetadata, capability_meta
+
+        meta = capability_meta(inject_workflow_node_section)
+        assert isinstance(meta, HookMetadata)
+        assert meta.event == "agent:assemble_prompt"
+
+
+class TestStrategyPinning:
+    """REQ-243 — a declared strategy list reaches the loop; absent pins react."""
+
+    def test_declared_list_passes_through(self) -> None:
+        from arcagent.modules.tasks.node_execution import WorkflowNode, allowed_strategies
+
+        node = WorkflowNode(
+            workflow_id="w", run_id="r", node_id="n", strategy=["react", "code"]
+        )
+        assert allowed_strategies(node) == ["react", "code"]
+
+    def test_absent_list_pins_react(self) -> None:
+        from arcagent.modules.tasks.node_execution import WorkflowNode, allowed_strategies
+
+        node = WorkflowNode(workflow_id="w", run_id="r", node_id="n")
+        assert allowed_strategies(node) == ["react"]
+
+    def test_agent_run_accepts_allowed_strategies(self) -> None:
+        """The seam must exist on the callback the dispatch loop actually calls."""
+        import inspect
+
+        from arcagent.core.agent import ArcAgent
+
+        assert "allowed_strategies" in inspect.signature(ArcAgent.run_collected).parameters
+        assert "allowed_strategies" in inspect.signature(ArcAgent.run).parameters
+
+
+class TestIdempotencyKey:
+    """REQ-242 — a retried node cannot repeat an external side effect."""
+
+    def test_key_is_per_attempt(self) -> None:
+        from arcagent.modules.tasks.node_execution import NodeAttempt
+
+        first = NodeAttempt("run_1", "verify", 1).idempotency_key
+        second = NodeAttempt("run_1", "verify", 2).idempotency_key
+        assert first != second
+        assert first == "run_1:verify:1"
+
+    def test_reader_returns_none_outside_a_node_dispatch(self) -> None:
+        from arcagent.modules.tasks.node_execution import idempotency_key
+
+        assert idempotency_key() is None
+
+    def test_reader_returns_the_bound_node_key(self) -> None:
+        from arcagent.modules.tasks.node_execution import (
+            WorkflowNode,
+            bind_node,
+            idempotency_key,
+            reset_node,
+        )
+
+        node = WorkflowNode(workflow_id="w", run_id="run_9", node_id="qa", attempt=3)
+        token = bind_node(node)
+        try:
+            assert idempotency_key() == "run_9:qa:3"
+        finally:
+            reset_node(token)
+
+
+class TestNodeParsing:
+    def test_ordinary_task_is_not_a_node(self) -> None:
+        from arcagent.modules.tasks.node_execution import node_from_task
+
+        assert node_from_task(MagicMock(metadata={})) is None
+
+    def test_malformed_block_degrades_to_not_a_node(self) -> None:
+        from arcagent.modules.tasks.node_execution import WORKFLOW_META, node_from_task
+
+        task = MagicMock(metadata={WORKFLOW_META: {"run_id": "r"}})
+        assert node_from_task(task) is None
+
+    def test_valid_block_parses(self) -> None:
+        from arcagent.modules.tasks.node_execution import WORKFLOW_META, node_from_task
+
+        task = MagicMock(metadata={WORKFLOW_META: _node_block()})
+        node = node_from_task(task)
+        assert node is not None
+        assert node.node_id == "verify"

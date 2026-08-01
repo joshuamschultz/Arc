@@ -38,14 +38,35 @@ import json
 import logging
 import sqlite3
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from arcteam.registry import resolve
 from arcteam.types import Entity, EntityStatus, EntityType, Message, MsgType
 
+from arcagent.core.session_internal.capability_ledger import (
+    CarriedLegs,
+    bind_carried_legs,
+    reset_carried_legs,
+)
 from arcagent.modules.tasks import _runtime
 from arcagent.modules.tasks.models import Priority, Task
+from arcagent.modules.tasks.node_execution import (
+    WORKFLOW_META,
+    WorkflowNode,
+    allowed_strategies,
+    artifact_failure,
+    bind_node,
+    current_node,
+    missing_artifacts,
+    node_from_task,
+    render_node_section,
+    reset_node,
+    validate_output,
+)
 from arcagent.tools._decorator import background_task, hook, tool
 from arcagent.utils.sanitizer import sanitize_text
 
@@ -214,6 +235,9 @@ async def complete_task(
         _require_owner(current, st)
         if not await st.store.deps_met(current):
             return json.dumps({"error": f"Task '{id}' is blocked by unfinished dependencies"})
+        refusal = _node_completion_refusal(st, current, output)
+        if refusal is not None:
+            return await _fail_node_attempt(st, current, refusal)
         if current.requires_review:
             # Opt-in human gate (P3): land in ``review``, not ``done`` — an
             # operator approves/rejects before it is terminal (LLM06/ASI09).
@@ -436,12 +460,56 @@ async def set_task_output(
         if current is None:
             return json.dumps({"error": f"Task '{id}' not found"})
         _require_owner(current, st)
+        # A workflow node's output is only recorded once it satisfies the node's
+        # declared schema (REQ-237). Writing an unvalidated value here would make
+        # it visible downstream, which is precisely the pass-forward typed
+        # handoff exists to prevent.
+        refusal = _node_completion_refusal(st, current, output, check_artifacts=False)
+        if refusal is not None:
+            return await _fail_node_attempt(st, current, refusal)
         updated = await st.store.update(id, {"output": output or {}}, actor_did=st.identity.did)
         if updated is None:
             return json.dumps({"error": f"Task '{id}' not found"})
         return str(updated.model_dump_json())
     except _TOOL_ERRORS as exc:
         return json.dumps({"error": str(exc)})
+
+
+def _node_completion_refusal(
+    st: _runtime._State,
+    task: Task,
+    output: dict[str, Any] | None,
+    *,
+    check_artifacts: bool = True,
+) -> str | None:
+    """Why this workflow node may NOT be considered complete, or None.
+
+    Two gates, both from the node's own declaration: the output must satisfy the
+    declared ``output_schema`` (REQ-237) and every declared artifact must exist
+    on disk (REQ-238). An ordinary task has neither and passes straight through.
+    """
+    node = node_from_task(task)
+    if node is None:
+        return None
+    violation = validate_output(node, output)
+    if violation is not None:
+        return violation
+    if not check_artifacts:
+        return None
+    missing = missing_artifacts(node, st.workspace)
+    return artifact_failure(missing) if missing else None
+
+
+async def _fail_node_attempt(st: _runtime._State, task: Task, reason: str) -> str:
+    """Record a node completion refusal as a RETRYABLE attempt failure.
+
+    Never a pass-forward and never a terminal failure by itself: the refusal
+    feeds the existing retry engine, so the node gets its declared attempts to
+    produce a conforming result and only then dead-letters.
+    """
+    _logger.warning("Workflow node task %s refused completion: %s", task.id, reason)
+    await _handle_attempt_failure(st, task.id, st.identity.did, reason)
+    return json.dumps({"error": reason, "retryable": True})
 
 
 # ---------------------------------------------------------------------------
@@ -569,14 +637,86 @@ async def _run_task(st: _runtime._State, task: Task, run_id: str, self_did: str)
     terminal dead-letter — process shutdown re-raises instead.
     """
     timeout = _resolve_timeout(task, st.config)
-    run = asyncio.ensure_future(
-        st.agent_run_fn(
-            _format_task_prompt(task),
-            session_key=f"{_TASK_SESSION}:{task.id}",
-            run_id=run_id,
+    node = node_from_task(task)
+    run_kwargs: dict[str, Any] = {}
+    if node is not None:
+        run_kwargs["allowed_strategies"] = allowed_strategies(node)
+    # A workflow node runs in a FRESH session, which would reset the run's
+    # trifecta accumulation and let a composition no single session could
+    # complete be reached by splitting it across two nodes (COMP-015). Binding
+    # the run's legs into this dispatch closes that: the ledger unions them into
+    # every policy evaluation inside, and records back what this node lit.
+    with _node_dispatch(st, node) as carrier:
+        run = asyncio.ensure_future(
+            st.agent_run_fn(
+                _format_task_prompt(task),
+                session_key=f"{_TASK_SESSION}:{task.id}",
+                run_id=run_id,
+                **run_kwargs,
+            )
         )
+        st.running[task.id] = run
+        try:
+            await _await_run(st, task, run, timeout, self_did)
+        finally:
+            st.running.pop(task.id, None)
+    if node is not None and carrier is not None:
+        await _persist_run_legs(st, task, node, carrier.snapshot(), self_did)
+
+
+@contextmanager
+def _node_dispatch(st: _runtime._State, node: WorkflowNode | None) -> Iterator[CarriedLegs | None]:
+    """Bind a workflow node's identity and carried legs for the duration of a run.
+
+    Both are ContextVars, so the loop's tool dispatches inherit them: the node
+    supplies the assemble-prompt section and the per-attempt idempotency key
+    (REQ-242), the carrier supplies the run's accumulated trifecta legs.
+    """
+    if node is None:
+        yield None
+        return
+    carrier = CarriedLegs(
+        legs=set(node.accumulated_legs), max_legs=st.config.max_run_capability_legs
     )
-    st.running[task.id] = run
+    node_token = bind_node(node)
+    legs_token = bind_carried_legs(carrier)
+    try:
+        yield carrier
+    finally:
+        reset_carried_legs(legs_token)
+        reset_node(node_token)
+
+
+async def _persist_run_legs(
+    st: _runtime._State,
+    task: Task,
+    node: WorkflowNode,
+    legs: frozenset[str],
+    self_did: str,
+) -> None:
+    """Write this node's accumulated legs back onto the row for the runner.
+
+    The task row is the handoff (D-538), so the accumulation travels the same
+    durable path the work does: the runner reads it off the completed node and
+    stamps it onto the next node it materialises. A message would be lossy; a
+    row is not.
+    """
+    if set(legs) == set(node.accumulated_legs):
+        return
+    metadata = dict(task.metadata or {})
+    block = dict(metadata.get(WORKFLOW_META, {}))
+    block["accumulated_legs"] = sorted(legs)
+    metadata[WORKFLOW_META] = block
+    try:
+        await st.store.update(task.id, {"metadata": metadata}, actor_did=self_did)
+    except _TOOL_ERRORS:
+        _logger.warning("Could not persist accumulated legs for node %s", node.node_id)
+
+
+async def _await_run(
+    st: _runtime._State, task: Task, run: asyncio.Task[Any], timeout: float | None, self_did: str
+) -> None:
+    """Await one dispatched run, routing every outcome to the retry engine."""
     try:
         await asyncio.wait_for(run, timeout)
     except TimeoutError:
@@ -591,8 +731,6 @@ async def _run_task(st: _runtime._State, task: Task, run_id: str, self_did: str)
             raise  # genuine shutdown — never swallow the loop's own cancellation
     except Exception as exc:  # reason: any run failure feeds the retry engine (LLM10/ASI08)
         await _handle_attempt_failure(st, task.id, self_did, f"{type(exc).__name__}: {exc}")
-    finally:
-        st.running.pop(task.id, None)
 
 
 async def _handle_attempt_failure(
@@ -824,9 +962,59 @@ async def tasks_bind_run_fn(ctx: Any) -> None:
     payload; the dispatch loop needs it to actually run an assigned task.
     """
     data = ctx.data if hasattr(ctx, "data") else {}
+    st = _runtime.state()
     run_fn = data.get("run_fn")
     if run_fn is not None:
-        _runtime.state().agent_run_fn = run_fn
+        st.agent_run_fn = run_fn
+    # Both are needed by the workflow node adapter (COMP-014/015) and arrive on
+    # the same payload: the ledger carries a run's accumulated trifecta legs into
+    # each node's fresh session, the registry activates a node's declared skill.
+    st.capability_ledger = data.get("capability_ledger") or st.capability_ledger
+    st.skill_registry = data.get("skill_registry") or st.skill_registry
+
+
+@hook(event="agent:assemble_prompt", priority=60)
+async def inject_workflow_node_section(ctx: Any) -> None:
+    """Inject the running node's instructions and upstream outputs (REQ-233/239).
+
+    The assemble-prompt sections seam is the ONLY way node content reaches the
+    model: context mutation is a single discrete path (compaction owns it) and a
+    second writer breaks it. Upstream values are bound as typed JSON under a
+    labelled section, never interpolated into a command or spliced into prose.
+    """
+    sections = ctx.data.get("sections") if hasattr(ctx, "data") else None
+    if not isinstance(sections, dict):
+        return
+    node = current_node()
+    if node is None:
+        return
+    sections["workflow_node"] = render_node_section(node, _skill_body(node))
+
+
+def _skill_body(node: WorkflowNode) -> str | None:
+    """Load a node's declared skill body from the capability registry.
+
+    Deterministic activation (REQ-233): the body is read from the registry entry
+    and placed in the prompt as part of dispatching the node — the model is never
+    asked to call ``use_skill`` first, because a node that only *sometimes*
+    activates its skill does not run the same way twice.
+    """
+    if node.skill is None:
+        return None
+    try:
+        registry = _runtime.state().skill_registry
+    except RuntimeError:
+        return None
+    entry = getattr(registry, "_skills", {}).get(node.skill) if registry is not None else None
+    location = getattr(entry, "location", None)
+    if location is None:
+        _logger.warning("Node %s declares unknown skill %r", node.node_id, node.skill)
+        return None
+    try:
+        return str(Path(location).read_text(encoding="utf-8"))
+    except OSError:
+        _logger.warning("Node %s could not read skill %r", node.node_id, node.skill)
+        return None
 
 
 @background_task(name="tasks_dispatch_loop", interval=_DISPATCH_TICK)
@@ -878,6 +1066,7 @@ __all__ = [
     "create_task",
     "decompose_task",
     "fail_task",
+    "inject_workflow_node_section",
     "list_tasks",
     "set_task_output",
     "start_task",

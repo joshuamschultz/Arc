@@ -517,6 +517,7 @@ class ArcAgent:
                 "channel_deliver_fn": self._channel_deliver_fn,
                 "classify_fn": self.quick_classify,
                 "skill_registry": self._capability_registry,
+                "capability_ledger": self._capability_ledger,
             },
         )
 
@@ -620,6 +621,7 @@ class ArcAgent:
         run_id: str | None = None,
         reply_target: str | None = None,
         reply_label: str | None = None,
+        allowed_strategies: list[str] | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """Drive one agent turn. The only execution entry — always
         session-bound, always streaming.
@@ -644,6 +646,10 @@ class ArcAgent:
         passes it so a task links its run before the loop starts); when omitted
         arcrun mints one.
 
+        ``allowed_strategies`` pins the loop's strategy allowlist for this turn
+        (arcrun owns strategies; the agent only forwards the caller's choice).
+        None leaves arcrun's own default selection in place.
+
         ``reply_target`` is the channel this turn arrived on ("platform:chat_id"),
         supplied by the gateway executor for interactive channel turns. It is
         recorded in the per-turn context so a capability like the scheduler can
@@ -663,6 +669,7 @@ class ArcAgent:
             run_id=run_id,
             reply_target=reply_target,
             reply_label=reply_label,
+            allowed_strategies=allowed_strategies,
         ):
             yield event
 
@@ -675,6 +682,7 @@ class ArcAgent:
         max_tokens: int | None = None,
         max_cost_usd: float | None = None,
         run_id: str | None = None,
+        allowed_strategies: list[str] | None = None,
     ) -> Any:
         """Run a turn on the ``session_key`` session and collect to a result.
 
@@ -695,6 +703,7 @@ class ArcAgent:
                 max_tokens=max_tokens,
                 max_cost_usd=max_cost_usd,
                 run_id=run_id,
+                allowed_strategies=allowed_strategies,
             )
         )
 
