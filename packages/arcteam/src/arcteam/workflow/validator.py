@@ -231,7 +231,7 @@ def _check_routes(
                 field="routes",
                 error="every route of a rules router needs a when predicate or default = true",
                 observed=route.to,
-                admissible=("when = \"...\"", "default = true"),
+                admissible=('when = "..."', "default = true"),
             )
 
 
@@ -322,8 +322,9 @@ def _check_known(
             yield _unknown(node.id, "agent", node.agent, known.agents)
         if isinstance(node, ToolNode) and node.tool not in known.tools:
             yield _unknown(node.id, "tool", node.tool, known.tools)
-        if isinstance(node, AgentNode) and node.skill is not None and node.skill not in known.skills:
-            yield _unknown(node.id, "skill", node.skill, known.skills)
+        if isinstance(node, AgentNode) and node.skill is not None:
+            if node.skill not in known.skills:
+                yield _unknown(node.id, "skill", node.skill, known.skills)
 
 
 def _unknown(node_id: str, field: str, observed: str, roster: frozenset[str]) -> ValidationIssue:

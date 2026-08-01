@@ -126,9 +126,10 @@ def embedded_reference_strings(value: Any) -> tuple[str, ...]:
     if isinstance(value, str):
         return () if is_reference(value) or not _EMBEDDED.search(value) else (value,)
     if isinstance(value, Mapping):
-        return tuple(found for item in value.values() for found in embedded_reference_strings(item))
+        values = value.values()
+        return tuple(f for item in values for f in embedded_reference_strings(item))
     if isinstance(value, Sequence) and not isinstance(value, str | bytes):
-        return tuple(found for item in value for found in embedded_reference_strings(item))
+        return tuple(f for item in value for f in embedded_reference_strings(item))
     return ()
 
 

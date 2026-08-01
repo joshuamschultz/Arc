@@ -36,7 +36,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Literal, Union
+from typing import Any, Literal
 
 from arcteam.workflow.errors import PredicateEvaluationError, PredicateParseError
 
@@ -100,7 +100,7 @@ class BoolOp:
     operands: tuple[Predicate, ...]
 
 
-Predicate = Union[PathRef, LiteralValue, Compare, Not, BoolOp]
+Predicate = PathRef | LiteralValue | Compare | Not | BoolOp
 
 
 # --- tokenizer ---------------------------------------------------------------
@@ -436,7 +436,7 @@ def _resolve_path(path: PathRef, scope: Mapping[str, Any]) -> Any:
     object graph reachable through them — are invisible to the grammar.
     """
     current: Any = scope.get(path.root)
-    walked = [path.root]
+    walked: list[str] = [path.root]
     for segment in path.segments:
         if not isinstance(current, Mapping) or segment not in current:
             raise PredicateEvaluationError(

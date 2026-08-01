@@ -79,7 +79,10 @@ def test_needs_from_one_branch_only_does_not_require_join_any() -> None:
                 "id": "r",
                 "kind": "router",
                 "needs": ["start"],
-                "routes": [{"to": "left", "when": "$input.x == 1"}, {"to": "right", "default": True}],
+                "routes": [
+                    {"to": "left", "when": "$input.x == 1"},
+                    {"to": "right", "default": True},
+                ],
             },
             {"id": "left", "kind": "agent", "agent": "@a", "needs": ["r"]},
             {"id": "left2", "kind": "agent", "agent": "@a", "needs": ["left"]},
@@ -244,7 +247,12 @@ def test_a_route_to_an_unknown_node_is_rejected() -> None:
         "workflow": {"id": "badroute", "owner": "@a"},
         "node": [
             {"id": "a", "kind": "agent", "agent": "@a"},
-            {"id": "r", "kind": "router", "needs": ["a"], "routes": [{"to": "ghost", "default": True}]},
+            {
+                "id": "r",
+                "kind": "router",
+                "needs": ["a"],
+                "routes": [{"to": "ghost", "default": True}],
+            },
         ],
     }
 
@@ -256,7 +264,12 @@ def test_a_route_target_must_declare_the_router_in_its_needs() -> None:
         "workflow": {"id": "unwired", "owner": "@a"},
         "node": [
             {"id": "a", "kind": "agent", "agent": "@a"},
-            {"id": "r", "kind": "router", "needs": ["a"], "routes": [{"to": "b", "default": True}]},
+            {
+                "id": "r",
+                "kind": "router",
+                "needs": ["a"],
+                "routes": [{"to": "b", "default": True}],
+            },
             {"id": "b", "kind": "agent", "agent": "@a", "needs": ["a"]},
         ],
     }
@@ -346,7 +359,10 @@ def test_referencing_a_node_on_a_mutually_exclusive_branch_is_rejected() -> None
                 "id": "r",
                 "kind": "router",
                 "needs": ["a"],
-                "routes": [{"to": "left", "when": "$input.x == 1"}, {"to": "right", "default": True}],
+                "routes": [
+                    {"to": "left", "when": "$input.x == 1"},
+                    {"to": "right", "default": True},
+                ],
             },
             {"id": "left", "kind": "agent", "agent": "@a", "needs": ["r"]},
             {
@@ -363,7 +379,9 @@ def test_referencing_a_node_on_a_mutually_exclusive_branch_is_rejected() -> None
     issues = _issues(document)
 
     assert ("right", "args") in {(i.node_id, i.field) for i in issues}
-    assert any("cannot co-occur" in issue.error or "not a dependency" in issue.error for issue in issues)
+    assert any(
+        "cannot co-occur" in issue.error or "not a dependency" in issue.error for issue in issues
+    )
 
 
 def test_referencing_an_unknown_node_in_args_is_rejected() -> None:
@@ -536,9 +554,7 @@ def test_an_artifact_path_escaping_the_workspace_is_rejected(tmp_path: Path) -> 
 
 
 def test_the_definition_size_quota_is_enforced() -> None:
-    issues = validate_definition(
-        parse_definition(minimal_document()), raw_size_bytes=1024 * 1024
-    )
+    issues = validate_definition(parse_definition(minimal_document()), raw_size_bytes=1024 * 1024)
 
     assert (None, "size") in {(i.node_id, i.field) for i in issues}
 

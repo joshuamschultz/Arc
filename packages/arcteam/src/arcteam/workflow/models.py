@@ -23,9 +23,10 @@ agent; a node may force the loop ``strategy`` but never the model.
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic_core import ErrorDetails
 
 from arcteam.workflow.errors import ValidationIssue, WorkflowParseError
 
@@ -171,7 +172,7 @@ class GateNode(NodeBase):
 
 
 WorkflowNode = Annotated[
-    Union[AgentNode, ToolNode, ScriptNode, RouterNode, GateNode],
+    AgentNode | ToolNode | ScriptNode | RouterNode | GateNode,
     Field(discriminator="kind"),
 ]
 
@@ -358,7 +359,7 @@ def _node_id_for(location: list[Any], nodes: list[Any]) -> str | None:
     return str(entry.get("id")) if isinstance(entry, dict) and "id" in entry else None
 
 
-def _admissible_for(field: str, error: dict[str, Any]) -> tuple[str, ...]:
+def _admissible_for(field: str, error: ErrorDetails) -> tuple[str, ...]:
     """Name what would have been accepted, which is what drives repair."""
     if field.endswith("kind") or error["type"] == "union_tag_invalid":
         return NODE_KINDS

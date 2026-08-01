@@ -47,6 +47,15 @@ class WorkflowParseError(WorkflowError):
         super().__init__(f"workflow definition could not be parsed — {summary}")
 
 
+class WorkflowValidationError(WorkflowError):
+    """A definition parsed but its graph did not validate; nothing was written."""
+
+    def __init__(self, issues: tuple[ValidationIssue, ...]) -> None:
+        self.issues = issues
+        summary = "; ".join(f"{i.node_id or 'workflow'}.{i.field}: {i.error}" for i in issues[:5])
+        super().__init__(f"workflow definition is not valid — {summary}")
+
+
 class PredicateError(WorkflowError):
     """Base class for predicate grammar failures."""
 
@@ -121,4 +130,5 @@ __all__ = [
     "WorkflowNotFoundError",
     "WorkflowParseError",
     "WorkflowReferenceError",
+    "WorkflowValidationError",
 ]
