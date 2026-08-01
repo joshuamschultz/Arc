@@ -1044,8 +1044,12 @@ def build_workflow_runner(
 
     identity = RunnerIdentity.load(runner_key_path)
     root = workspace_root or runner_key_path.parent.parent
+    sink: AuditSink = audit_sink or NullSink()
     definitions = DefinitionStore(
-        root / "workflows", tier=tier, operator_public_key=operator_public_key
+        root / "workflows",
+        tier=tier,
+        operator_public_key=operator_public_key,
+        audit=_definition_audit_hook(sink, tier),
     )
     return WorkflowRunner(
         tasks=WorkflowTaskStore(task_store_backend, actor_did=identity.did),
@@ -1057,7 +1061,7 @@ def build_workflow_runner(
         evaluate=evaluate_predicate,
         resolve_args=resolve_node_args,
         narrator=narrator,
-        audit_sink=audit_sink,
+        audit_sink=sink,
         run_workspace_root=root / "shared",
         on_close=on_close,
     )
@@ -1071,6 +1075,36 @@ def _no_registry() -> _NoRegistry:
         "build_workflow_runner()."
     )
     return _NoRegistry()
+
+
+def _definition_audit_hook(
+    sink: AuditSink, tier: str
+) -> Callable[[str, dict[str, Any]], None]:
+    """Route the definition store's lifecycle events into the audit chain.
+
+    The store takes this as an optional hook and stays silent without one. Two
+    of its events have no equivalent anywhere else: ``workflow.signed``, which
+    the control plane cannot emit because signing happens out-of-band with a key
+    that never enters this process, and ``workflow.unsigned_run_permitted``,
+    which fires on the dispatch path this runner drives every tick. Unwired,
+    a personal-tier deployment runs unsigned definitions and no record of that
+    fact exists anywhere (DESIGN section 5, invariant 5).
+    """
+
+    def hook(event: str, payload: dict[str, Any]) -> None:
+        emit(
+            AuditEvent(
+                actor_did=str(payload.get("actor_did") or "did:arc:system:definition-store"),
+                action=event,
+                target=str(payload.get("workflow_id") or ""),
+                outcome="ok",
+                tier=tier,
+                extra=dict(payload),
+            ),
+            sink,
+        )
+
+    return hook
 
 
 class _NoRegistry:

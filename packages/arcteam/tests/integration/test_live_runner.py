@@ -367,3 +367,44 @@ async def test_a_lost_journal_row_raises_instead_of_mis_accounting(
             {"kind": "settled", "node_id": "a", "iteration": 0, "tokens": 10},
             actor_did="did:arc:local:user/9",
         )
+
+
+async def test_the_definition_stores_events_reach_the_audit_chain(
+    deployment: Any,
+) -> None:
+    """An unsigned run at personal tier must leave a record that it happened.
+
+    The store emits `workflow.unsigned_run_permitted` on the dispatch path this
+    runner drives every tick, and it emits nothing at all unless an audit hook
+    is wired at construction. The composition root is the only place that can
+    wire it, and nothing did — so a deployment ran unsigned definitions and no
+    record of that fact existed anywhere.
+
+    Asserting the event LANDS, not that the hook is present: presence is what
+    let every other dead wire in this feature hide.
+    """
+    root, key_path, backend = deployment
+    events: list[Any] = []
+
+    class Sink:
+        def write(self, event: Any) -> None:
+            events.append(event)
+
+    runner = build_workflow_runner(
+        tier="personal",
+        task_store_backend=backend,
+        runner_key_path=key_path,
+        workspace_root=root,
+        registry=Registry({"sales": SALES_DID, "ops": OPS_DID}),
+        audit_sink=Sink(),
+    )
+
+    await runner.start_run("onboarding", input={}, initiator_did="did:arc:local:user/9")
+
+    actions = [e.action for e in events]
+    assert "workflow.unsigned_run_permitted" in actions, (
+        "an unsigned run left no trace — the store's audit hook is unwired"
+    )
+    recorded = next(e for e in events if e.action == "workflow.unsigned_run_permitted")
+    assert recorded.tier == "personal"
+    assert recorded.target == "onboarding"
