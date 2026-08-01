@@ -54,22 +54,22 @@
   - Components: COMP-005, COMP-012
   - Requirements: REQ-223
   - Acceptance: A fully valid definition produced through every authoring path is status=draft; no code path sets signed status outside the operator signing command. This test is the security gate for the whole feature.
-- [ ] **T-835**: (red) Run store tests: lifecycle, path taken, conditional transitions
+- [x] **T-835**: (red) Run store tests: lifecycle, path taken, conditional transitions
   - domain: test
   - Components: COMP-006
   - Requirements: REQ-228
   - Acceptance: Run records persist workflow id, version, content hash, initiator, budget, and an ordered path taken; status transitions are conditional so two writers cannot both advance the same run.
-- [ ] **T-836**: (green) Run store on the shared mutable plane
+- [x] **T-836**: (green) Run store on the shared mutable plane
   - domain: db
   - Components: COMP-006
   - Requirements: REQ-228, REQ-236
   - Acceptance: Its own collection, using the existing conditional-update primitive; no change to the closed spool kind set. The run store tests pass.
-- [ ] **T-837**: (red) Batch task creation tests: cross-owner atomicity and idempotency
+- [x] **T-837**: (red) Batch task creation tests: cross-owner atomicity and idempotency
   - domain: test
   - Components: COMP-007
   - Requirements: REQ-229, REQ-234
   - Acceptance: A frontier batch spanning several owning agents commits atomically; replaying the same batch after a simulated crash returns existing rows rather than creating duplicates.
-- [ ] **T-838**: (green) Batch task creation keyed on run and node identity
+- [x] **T-838**: (green) Batch task creation keyed on run and node identity
   - domain: db
   - Components: COMP-007
   - Requirements: REQ-229, REQ-234

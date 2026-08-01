@@ -67,28 +67,28 @@
     },
     "T-835": {
       "description": "(red) Run store tests: lifecycle, path taken, conditional transitions",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-836": {
       "description": "(green) Run store on the shared mutable plane",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-837": {
       "description": "(red) Batch task creation tests: cross-owner atomicity and idempotency",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-838": {
       "description": "(green) Batch task creation keyed on run and node identity",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
