@@ -474,3 +474,48 @@ async def test_the_definition_stores_events_reach_the_audit_chain(
     recorded = next(e for e in events if e.action == "workflow.unsigned_run_permitted")
     assert recorded.tier == "personal"
     assert recorded.target == "onboarding"
+
+
+async def test_the_runner_records_the_tier_it_actually_enforces(
+    deployment: Any,
+) -> None:
+    """Posture must be a matter of record, not something you read code to learn.
+
+    The runner's tier arrives from the gateway's config while every agent's
+    stringency comes from a different setting, and nothing reconciles them. That
+    may be legitimate, but a fleet hardened to federal whose dispatch component
+    is still personal would otherwise be invisible: the store permits unsigned
+    definitions with a warning and everything looks healthy.
+    """
+    root, key_path, backend = deployment
+    events: list[Any] = []
+
+    class Sink:
+        def write(self, event: Any) -> None:
+            events.append(event)
+
+    build_workflow_runner(
+        tier="federal",
+        task_store_backend=backend,
+        runner_key_path=key_path,
+        workspace_root=root,
+        registry=Registry({"sales": SALES_DID, "ops": OPS_DID}),
+        audit_sink=Sink(),
+    )
+
+    recorded = next(e for e in events if e.action == "workflow.runner.constructed")
+    assert recorded.tier == "federal"
+    assert recorded.extra["signed_definitions_required"] is True
+
+    events.clear()
+    build_workflow_runner(
+        tier="personal",
+        task_store_backend=backend,
+        runner_key_path=key_path,
+        workspace_root=root,
+        registry=Registry({"sales": SALES_DID, "ops": OPS_DID}),
+        audit_sink=Sink(),
+    )
+    weaker = next(e for e in events if e.action == "workflow.runner.constructed")
+    assert weaker.tier == "personal"
+    assert weaker.extra["signed_definitions_required"] is False
