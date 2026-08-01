@@ -220,3 +220,43 @@ async def test_one_poisoned_run_does_not_stop_the_tick_for_the_others(
     assert [r.metadata["node_id"] for r in beta_rows] == ["b"], (
         "beta was starved by alpha's failure"
     )
+
+
+async def test_an_unreadable_start_time_stops_the_run_rather_than_unbounding_it(
+    stores: Any, registry: Any, backend: Any
+) -> None:
+    """A budget guard that cannot evaluate must refuse, not wave the run through.
+
+    The old code caught the parse error and returned "not exceeded", which is
+    invisible on every well-formed run and silently removes the ONLY bound on
+    how long a run may burn (REQ-236). The question a swallow always raises is
+    what the swallowed case should have produced — here, a stop.
+    """
+    _, runs, _ = stores
+    runner = build(stores, registry, CHAIN)
+    run = await runner.start_run("budgeted", input={}, initiator_did="did:arc:x/1")
+
+    await backend.mutable_merge(
+        "runs", run.run_id, {"started_at": "not-a-timestamp"}, actor_did="did:arc:x/1"
+    )
+    record = await runner.advance(run.run_id)
+
+    assert record.status == "failed"
+    assert "unreadable start time" in (record.resolution or "")
+
+
+async def test_a_missing_start_time_stops_the_run_too(
+    stores: Any, registry: Any, backend: Any
+) -> None:
+    """Same guard, the other unevaluable case."""
+    _, runs, _ = stores
+    runner = build(stores, registry, CHAIN)
+    run = await runner.start_run("budgeted", input={}, initiator_did="did:arc:x/1")
+
+    await backend.mutable_merge(
+        "runs", run.run_id, {"started_at": None}, actor_did="did:arc:x/1"
+    )
+    record = await runner.advance(run.run_id)
+
+    assert record.status == "failed"
+    assert "cannot be bounded" in (record.resolution or "")

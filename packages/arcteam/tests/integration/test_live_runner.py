@@ -397,3 +397,39 @@ async def test_two_runs_of_one_workflow_take_the_identical_path(deployment: Any)
     assert (first_version, first_hash) == (second_version, second_hash), (
         "both runs must pin the same definition version and content hash"
     )
+
+
+async def test_a_lost_journal_row_raises_instead_of_mis_accounting(
+    deployment: Any,
+) -> None:
+    """The companion row carries settle/skip/route bookkeeping, not just a trace.
+
+    Dropping an append silently would double-count spend and re-decide branches
+    on the next tick, so the store raises and the tick fails THIS run loudly.
+    """
+    from arcteam.workflow.stores import RunStateMissingError, WorkflowRunStore
+
+    root, key_path, backend = deployment
+    runs = WorkflowRunStore(backend)
+    await runs.create_run(
+        run_id="run-orphan",
+        workflow_id="onboarding",
+        version=1,
+        content_hash="sha256:x",
+        initiator_did="did:arc:local:user/9",
+        channel=None,
+        input={},
+        budget_tokens=None,
+        budget_cost_usd=None,
+        budget_wall_clock_s=None,
+    )
+    await backend.mutable_delete(
+        "workflow_run_state", "run-orphan", actor_did="did:arc:local:user/9"
+    )
+
+    with pytest.raises(RunStateMissingError):
+        await runs.append_path(
+            "run-orphan",
+            {"kind": "settled", "node_id": "a", "iteration": 0, "tokens": 10},
+            actor_did="did:arc:local:user/9",
+        )

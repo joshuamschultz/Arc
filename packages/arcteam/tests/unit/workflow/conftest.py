@@ -292,7 +292,7 @@ class RunRow:
     budget_wall_clock_s: float | None
     tokens_spent: int
     cost_spent: float
-    started_at: str | None
+    started_at: str | None = None
     resolution: str | None = None
 
 
