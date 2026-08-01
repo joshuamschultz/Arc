@@ -11,6 +11,16 @@ export interface TeamFrame {
   ts: string
   id: string
   action_required?: boolean
+  // SPEC-061 ArcFlow (COMP-010 narration, not yet merged — reconciliation
+  // note): present on a `team_message` frame that narrates a workflow gate
+  // node waiting for a human decision. Keys the in-channel gate card
+  // (`components/gate-card.tsx`) to `POST /api/workflow-tasks/{task_id}/gate`
+  // (COMP-018) — never a status flip on the generic task approve/reject.
+  gate?: {
+    task_id: string
+    workflow_id?: string
+    node_id?: string
+  }
 }
 
 export type TeamStreamStatus = 'connecting' | 'ready' | 'closed'
