@@ -51,7 +51,11 @@ from arcteam.workflow.models import (
     WorkflowNode,
 )
 from arcteam.workflow.predicates import PathRef, parse_predicate, paths_in
-from arcteam.workflow.resolver import embedded_reference_strings, references_in
+from arcteam.workflow.resolver import (
+    embedded_reference_strings,
+    malformed_reference_strings,
+    references_in,
+)
 
 
 class KnownReferences(BaseModel):
@@ -621,7 +625,7 @@ def _check_output_references(
         for field, referenced in _referenced_node_ids(node):
             yield from _check_reference(node, field, referenced, ancestors, ids, exclusive)
         if isinstance(node, ToolNode):
-            yield from _check_embedded(node)
+            yield from _check_arg_strings(node)
 
 
 def _referenced_node_ids(node: WorkflowNode) -> Iterable[tuple[str, str]]:
@@ -701,9 +705,14 @@ def _unreachable_reason(
     )
 
 
-def _check_embedded(node: ToolNode) -> Iterable[ValidationIssue]:
-    """Refuse a reference spliced into a string before it can ever be run."""
-    for offender in embedded_reference_strings(node.args):
+def _check_arg_strings(node: ToolNode) -> Iterable[ValidationIssue]:
+    """Report every argument string that is reference-shaped but unusable.
+
+    Two distinct mistakes, each reported once: a reference spliced into a
+    string, and a string that means to be a reference but does not parse.
+    """
+    embedded = embedded_reference_strings(node.args)
+    for offender in embedded:
         yield ValidationIssue(
             node_id=node.id,
             field="args",
@@ -713,6 +722,19 @@ def _check_embedded(node: ToolNode) -> Iterable[ValidationIssue]:
             ),
             observed=offender,
             admissible=("the reference as the whole argument value",),
+        )
+    for offender in malformed_reference_strings(node.args):
+        if offender in embedded:
+            continue
+        yield ValidationIssue(
+            node_id=node.id,
+            field="args",
+            error="the argument looks like a reference but is not a well-formed one",
+            observed=offender,
+            admissible=(
+                "$nodes.<node_id>.output.<field>",
+                "$input.<field>",
+            ),
         )
 
 

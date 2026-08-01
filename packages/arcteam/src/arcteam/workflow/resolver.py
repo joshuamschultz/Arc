@@ -32,6 +32,7 @@ _REFERENCE = re.compile(
     r"^\$(?P<root>nodes|input)((?:\.[A-Za-z][A-Za-z0-9_-]*)+)$",
 )
 _EMBEDDED = re.compile(r"\$(?:nodes|input)\.[A-Za-z]")
+_INTENT = re.compile(r"^\$(?:nodes|input)\.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,6 +134,30 @@ def embedded_reference_strings(value: Any) -> tuple[str, ...]:
     return ()
 
 
+def malformed_reference_strings(value: Any) -> tuple[str, ...]:
+    """Strings that plainly intend to be a reference but do not parse.
+
+    ``$nodes.collect.company_domain`` omits ``.output``: it is unmistakably
+    meant as a reference, yet it is not one. Reporting it at authoring time is
+    the difference between a repairable error and a workflow that validates,
+    gets signed, and then fails mid-run.
+    """
+    if isinstance(value, str):
+        if not _INTENT.match(value):
+            return ()
+        try:
+            parse_reference(value)
+        except UnresolvableReferenceError:
+            return (value,)
+        return ()
+    if isinstance(value, Mapping):
+        values = value.values()
+        return tuple(f for item in values for f in malformed_reference_strings(item))
+    if isinstance(value, Sequence) and not isinstance(value, str | bytes):
+        return tuple(f for item in value for f in malformed_reference_strings(item))
+    return ()
+
+
 def _resolve_any(value: Any, scope: Mapping[str, Any]) -> Any:
     if isinstance(value, str):
         if is_reference(value):
@@ -187,6 +212,7 @@ __all__ = [
     "Reference",
     "embedded_reference_strings",
     "is_reference",
+    "malformed_reference_strings",
     "parse_reference",
     "references_in",
     "resolve_args",
