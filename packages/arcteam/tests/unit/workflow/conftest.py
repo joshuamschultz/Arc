@@ -197,8 +197,11 @@ class Definition:
 
 @dataclass(frozen=True)
 class Bundle:
+    """``status`` is lifecycle; ``signer_did`` is trust. They move independently."""
+
     definition: Definition
     status: str = "signed"
+    signer_did: str | None = "did:arc:local:operator/0f0f0f0f"
     content_hash: str = "sha256:test"
 
 

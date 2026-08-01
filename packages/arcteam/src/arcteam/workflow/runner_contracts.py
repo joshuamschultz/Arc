@@ -139,14 +139,22 @@ class WorkflowSpec(Protocol):
 class BundleSpec(Protocol):
     """A definition plus the on-disk facts about it.
 
-    ``status`` and ``content_hash`` are bundle properties, not definition
-    properties: no parse or validation path can confer signed status (REQ-223).
+    These are bundle properties, not definition properties: no parse or
+    validation path can confer trust (REQ-223).
+
+    ``status`` is the LIFECYCLE value and is what a surface renders. ``signer_did``
+    is the TRUST value — set only when the pinned operator signature verified —
+    and is the only thing a gate may key off. They are deliberately separate: an
+    archived bundle reads ``status="archived"`` while still being validly signed,
+    so ``status == "signed"`` would refuse a definition that is in fact trusted.
     """
 
     @property
     def definition(self) -> WorkflowSpec: ...
     @property
     def status(self) -> BundleStatus: ...
+    @property
+    def signer_did(self) -> str | None: ...
     @property
     def content_hash(self) -> str: ...
 
@@ -159,15 +167,24 @@ class BundleSpec(Protocol):
 class DefinitionStoreLike(Protocol):
     """The definition half of the control plane's world.
 
-    ``load_for_run`` is the gated read: it applies the tier gate and the
-    integrity check and raises rather than returning an unverified bundle —
-    archived, drifted-since-signing, and unsigned-above-personal all fail
-    closed there, which is why every dispatch re-reads through it.
+    Two gated reads, deliberately split, because admission and dispatch are not
+    the same question:
+
+    * ``load_for_run`` — ADMISSION. Signature integrity, tier gate, AND the
+      archived refusal. Called once, when a run starts.
+    * ``load_for_dispatch`` — every node tick. Signature integrity and the tier
+      gate only. Archiving refuses NEW runs (REQ-255); it does not reach in and
+      break work already in flight, which is a louder decision than archiving.
+
+    ``load`` applies neither gate and is for rendering only — the runner never
+    touches it, or the live path would quietly leave the security gate.
     """
 
     def load(self, workflow_id: str) -> BundleSpec: ...
 
     def load_for_run(self, workflow_id: str) -> BundleSpec: ...
+
+    def load_for_dispatch(self, workflow_id: str) -> BundleSpec: ...
 
     def save_draft(
         self,

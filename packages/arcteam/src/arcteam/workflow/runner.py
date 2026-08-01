@@ -149,10 +149,13 @@ class WorkflowRunner:
     ) -> RunRecord:
         """Create the Run record, then materialize the first frontier."""
         bundle = self._definitions.load_for_run(workflow_id)
-        if self._tier != "personal" and bundle.status != "signed":
+        # Trust is `signer_did`, never `status`: status carries lifecycle, and an
+        # archived bundle can be validly signed. Keying the gate off status would
+        # refuse a definition that is in fact trusted.
+        if self._tier != "personal" and bundle.signer_did is None:
             raise UnsignedWorkflowRefusedError(
-                f"workflow {workflow_id!r} is {bundle.status}, not signed; refused at "
-                f"{self._tier} tier"
+                f"workflow {workflow_id!r} carries no verified operator signature; "
+                f"refused at {self._tier} tier"
             )
         definition = bundle.definition
         assert_channel_binding(definition.channel)
@@ -191,7 +194,10 @@ class WorkflowRunner:
         run = await self._require_run(run_id)
         if run.status in TERMINAL_RUN_STATUSES:
             return run
-        bundle = self._definitions.load_for_run(run.workflow_id)
+        # Dispatch re-reads through the integrity + tier gate on every tick, but
+        # NOT the archived refusal: archiving a workflow must not break the runs
+        # already moving through it.
+        bundle = self._definitions.load_for_dispatch(run.workflow_id)
         if bundle.content_hash != run.content_hash:
             return await self._terminate(
                 run_id, "failed", "definition changed under a live run"
