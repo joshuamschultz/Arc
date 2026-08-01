@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 from arcstore.tasks import Task
 
-from .conftest import OPS_DID, SALES_DID, Definition, Node, complete_node
+from .conftest import OPS_DID, SALES_DID, Definition, Node, complete_node, task_id
 from .test_runner_frontier import build
 
 FANOUT = Definition(
@@ -69,6 +69,16 @@ async def test_restart_mid_materialization_re_derives_instead_of_duplicating(
     assert node_ids == ["left", "right"], "the half-written frontier is completed, not doubled"
     assert len(flow_tasks.created_keys) == len(set(flow_tasks.created_keys))
 
+    # The row written just before the crash was never journalled by the pass that
+    # died. If resume doesn't back-fill it, the Run's path silently under-reports
+    # what actually exists — and the path is supposed to BE the honest record.
+    _, runs, _ = stores
+    record = await runs.get("run-resume")
+    journalled = sorted(
+        entry["node_id"] for entry in record.path_taken if entry["kind"] == "materialized"
+    )
+    assert journalled == ["left", "right"]
+
 
 async def test_materialization_is_idempotent_across_repeated_ticks(
     stores: Any, registry: Any
@@ -100,7 +110,7 @@ async def test_the_path_taken_records_each_node_instance_exactly_once(
     for _ in range(3):
         await runner.advance(run.run_id)
     await complete_node(
-        tasks, f"wf-{run.run_id}-first-0", SALES_DID, {"company_domain": "acme.example"}
+        tasks, task_id(run.run_id, "first", 0), SALES_DID, {"company_domain": "acme.example"}
     )
     for _ in range(3):
         await runner.advance(run.run_id)
@@ -121,7 +131,7 @@ async def test_completed_node_is_replayed_never_re_executed(
     runner = build(stores, registry, CHAIN)
     run = await runner.start_run("chain", input={}, initiator_did="did:arc:x/1")
 
-    first_id = f"wf-{run.run_id}-first-0"
+    first_id = task_id(run.run_id, "first", 0)
     await complete_node(tasks, first_id, SALES_DID, {"company_domain": "acme.example"})
     await runner.advance(run.run_id)
     completed_at = (await tasks.get(first_id)).completed_at
@@ -132,7 +142,7 @@ async def test_completed_node_is_replayed_never_re_executed(
     replayed = await tasks.get(first_id)
     assert replayed.status == "done"
     assert replayed.completed_at == completed_at, "a done node is never touched again"
-    assert flow_tasks.created_keys.count(f"{run.run_id}:first:0") == 1
+    assert flow_tasks.created_keys.count(first_id) == 1
 
     rows = {r.metadata["node_id"]: r for r in await flow_tasks.query_by_flow_run(run.run_id)}
     assert rows["second"].metadata["args"] == {"domain": "acme.example"}
@@ -169,7 +179,7 @@ async def test_a_node_completing_during_the_sweep_cannot_extend_the_frontier(
 
     await runner.cancel(run.run_id, actor_did="did:arc:local:user/9", reason="operator stop")
     await complete_node(
-        tasks, f"wf-{run.run_id}-first-0", SALES_DID, {"company_domain": "acme.example"}
+        tasks, task_id(run.run_id, "first", 0), SALES_DID, {"company_domain": "acme.example"}
     )
     record = await runner.advance(run.run_id)
 
@@ -183,15 +193,65 @@ async def test_cancel_of_a_terminal_run_is_refused(stores: Any, registry: Any) -
     runner = build(stores, registry, CHAIN)
     run = await runner.start_run("chain", input={}, initiator_did="did:arc:x/1")
     await complete_node(
-        tasks, f"wf-{run.run_id}-first-0", SALES_DID, {"company_domain": "acme.example"}
+        tasks, task_id(run.run_id, "first", 0), SALES_DID, {"company_domain": "acme.example"}
     )
     await runner.advance(run.run_id)
-    await complete_node(tasks, f"wf-{run.run_id}-second-0", OPS_DID, {"ok": True})
+    await complete_node(tasks, task_id(run.run_id, "second", 0), OPS_DID, {"ok": True})
     record = await runner.advance(run.run_id)
     assert record.status == "done"
 
     after = await runner.cancel(run.run_id, actor_did="did:arc:local:user/9", reason="too late")
     assert after.status == "done"
+
+
+async def test_a_terminating_tick_loses_a_race_with_a_cancel(
+    stores: Any, registry: Any
+) -> None:
+    """The roll-up write is conditional, so a cancel landing first is not undone.
+
+    Same invariant as the cancel ordering, at the other seam: the tick is holding
+    a run it read as `running`, and an operator cancels in the window before its
+    write lands. An unconditional write would flip a cancelled run to `done`.
+    """
+    flow_tasks, runs, tasks = stores
+    runner = build(stores, registry, CHAIN)
+    run = await runner.start_run("chain", input={}, initiator_did="did:arc:x/1")
+    await complete_node(
+        tasks, task_id(run.run_id, "first", 0), SALES_DID, {"company_domain": "acme.example"}
+    )
+    await runner.advance(run.run_id)
+    await complete_node(tasks, task_id(run.run_id, "second", 0), OPS_DID, {"ok": True})
+
+    original = runs.set_status
+
+    async def operator_cancels_first(
+        run_id: str,
+        status: str,
+        *,
+        actor_did: str,
+        expected_status: str | None = None,
+        resolution: str | None = None,
+    ) -> bool:
+        if status == "done":
+            await original(
+                run_id,
+                "cancelled",
+                actor_did="did:arc:local:user/9",
+                resolution="operator stop",
+            )
+        return await original(
+            run_id,
+            status,
+            actor_did=actor_did,
+            expected_status=expected_status,
+            resolution=resolution,
+        )
+
+    runs.set_status = operator_cancels_first  # type: ignore[method-assign]
+    record = await runner.advance(run.run_id)
+
+    assert record.status == "cancelled", "a completed tick must not resurrect a cancelled run"
+    assert record.resolution == "operator stop"
 
 
 async def test_one_failing_node_cancel_does_not_abort_the_sweep(

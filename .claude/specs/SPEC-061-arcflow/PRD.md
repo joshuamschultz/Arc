@@ -70,6 +70,8 @@ See `.claude/steering/product.md#user-personas`. Primary: the operator who owns 
 - **REQ-250** (story US-7, Could): The system SHALL render a workflow definition and each run's live per-node status as a graph in the dashboard, sourcing untaken branches and loop iterations from the Run record's path taken.
 - **REQ-251** (story US-4, Must): The system SHALL carry every handoff between nodes as a task-row write that names the receiving agent as owner, SHALL NOT carry work in any message body, and SHALL advance a run to completion even when every outbound message is dropped.
 - **REQ-252** (story US-6, Must): The system SHALL let an operator create, view, edit, archive, and run a workflow entirely from the dashboard, without editing a file or issuing a command.
+- **REQ-258** (story US-4, Must): The system SHALL provide each run a shared workspace that every participating node's agent works in, SHALL treat declared artifact paths as relative to that workspace, and SHALL keep each agent's own memory and identity in its private workspace.
+- **REQ-259** (story US-4, Should): The system SHALL carry bulk work product as files in the run workspace rather than through task metadata or message payloads, reserving a node's typed output for the values the graph itself consumes.
 - **REQ-257** (story US-6, Must): The system SHALL make every workflow capability — create, view, edit, archive, purge, run, and cancel — reachable from the command line and from conversation with an agent, and SHALL remain fully functional with the dashboard uninstalled.
 - **REQ-253** (story US-6, Must): WHEN the dashboard submits a create or edit THEN the system SHALL apply the identical validator, versioning, and draft lifecycle used by the conversational and file surfaces, and SHALL return the same typed error list.
 - **REQ-254** (story US-6, Must): The system SHALL NOT provide any dashboard path that signs a definition, and SHALL restrict every workflow mutation route to an authenticated operator with an audit event recording that person's identity and the outcome.
@@ -80,8 +82,8 @@ See `.claude/steering/product.md#user-personas`. Primary: the operator who owns 
 
 | Priority | Requirements |
 |---|---|
-| Must | REQ-217, REQ-218, REQ-219, REQ-220, REQ-221, REQ-222, REQ-223, REQ-224, REQ-225, REQ-226, REQ-227, REQ-228, REQ-229, REQ-230, REQ-231, REQ-232, REQ-233, REQ-234, REQ-235, REQ-236, REQ-237, REQ-238, REQ-239, REQ-240, REQ-241, REQ-242, REQ-246, REQ-251, REQ-252, REQ-253, REQ-254, REQ-257 |
-| Should | REQ-243, REQ-244, REQ-245, REQ-247, REQ-248, REQ-249, REQ-255, REQ-256 |
+| Must | REQ-217, REQ-218, REQ-219, REQ-220, REQ-221, REQ-222, REQ-223, REQ-224, REQ-225, REQ-226, REQ-227, REQ-228, REQ-229, REQ-230, REQ-231, REQ-232, REQ-233, REQ-234, REQ-235, REQ-236, REQ-237, REQ-238, REQ-239, REQ-240, REQ-241, REQ-242, REQ-246, REQ-251, REQ-252, REQ-253, REQ-254, REQ-257, REQ-258 |
+| Should | REQ-243, REQ-244, REQ-245, REQ-247, REQ-248, REQ-249, REQ-255, REQ-256, REQ-259 |
 | Could | REQ-250 |
 | Won't | _(none)_ |
 

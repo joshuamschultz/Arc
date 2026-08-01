@@ -187,6 +187,16 @@
   - Components: COMP-022
   - Requirements: REQ-256
   - Acceptance: A purge is refused while any run still references the workflow; a forced purge records in the audit chain that history for that workflow is henceforth unrenderable.
+- [ ] **T-875**: (green) Run workspace: the shared desk for one run
+  - domain: backend
+  - Components: COMP-024
+  - Requirements: REQ-258
+  - Acceptance: Each run gets <team_root>/shared/runs/<run_id>/; every node's agent works there for its node; an agent's private workspace is never touched; the folder is created once and reused across nodes and resumes.
+- [ ] **T-876**: (red) Artifact paths resolve inside the run workspace by construction
+  - domain: test
+  - Components: COMP-024, COMP-014
+  - Requirements: REQ-258, REQ-259
+  - Acceptance: A declared artifact resolves relative to the run workspace; a path that would resolve outside it is refused; the refusal holds for a hand-edited bundle that never passed the authoring validator. Mutation-verified: deleting the check must turn a test red.
 
 ## Phase 3: Integration
 
@@ -205,7 +215,7 @@
   - Components: COMP-010
   - Requirements: REQ-244
   - Acceptance: Node start, completion, handoff, gate waiting, gate resolution, and run outcome post to the bound channel as narration that is recorded and displayed but never activates an agent.
-- [ ] **T-855**: (green) Gate resolution: control-plane only, in-channel, reviewer chooses outcome
+- [x] **T-855**: (green) Gate resolution: control-plane only, in-channel, reviewer chooses outcome
   - domain: ui
   - Components: COMP-018
   - Requirements: REQ-245, REQ-246, REQ-247
@@ -235,17 +245,17 @@
   - Components: COMP-019, COMP-021
   - Requirements: REQ-257
   - Acceptance: With arcui absent, create, view, edit, archive, purge, run, and cancel all succeed from the command line and from agent tools, and a run completes end to end. Proves the dashboard shows actions that exist anyway rather than owning any of them.
-- [ ] **T-872**: (green) Dashboard workflow routes: thin delegating adapter
+- [x] **T-872**: (green) Dashboard workflow routes: thin delegating adapter
   - domain: api
   - Components: COMP-023
   - Requirements: REQ-253, REQ-254
   - Acceptance: Routes authenticate the operator, translate HTTP to a control-plane operation, and return its result verbatim with a boundary audit record; a test asserts the route layer contains no validation, versioning, sequencing, signing, or execution logic of its own.
-- [ ] **T-873**: (green) Dashboard management surface: list, create, edit, archive, run
+- [x] **T-873**: (green) Dashboard management surface: list, create, edit, archive, run
   - domain: ui
   - Components: COMP-020
   - Requirements: REQ-252
   - Acceptance: An operator creates a workflow, edits its nodes and trigger, archives it, and starts a run entirely from the dashboard without touching a file or a command; validation errors render against the offending node and field; the surface offers no way to sign.
-- [ ] **T-874**: (green) Definition graph and live run status views
+- [x] **T-874**: (green) Definition graph and live run status views
   - domain: ui
   - Components: COMP-020
   - Requirements: REQ-250
@@ -304,6 +314,8 @@
 | REQ-255 | T-870 |
 | REQ-256 | T-871 |
 | REQ-257 | T-869 |
+| REQ-258 | T-875, T-876 |
+| REQ-259 | T-876 |
 
 ## Open Questions
 

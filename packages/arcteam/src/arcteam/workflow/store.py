@@ -35,6 +35,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import tempfile
 import tomllib
@@ -47,6 +48,7 @@ from arctrust import ArtifactSignature, sign_artifact, verify_artifact
 from pydantic import BaseModel, ConfigDict
 
 from arcteam.workflow.errors import (
+    InvalidWorkflowIdError,
     PurgeRefusedError,
     StaleEditError,
     UnsignedWorkflowError,
@@ -56,7 +58,12 @@ from arcteam.workflow.errors import (
     WorkflowNotFoundError,
     WorkflowValidationError,
 )
-from arcteam.workflow.models import Trigger, WorkflowDefinition, parse_definition
+from arcteam.workflow.models import (
+    WORKFLOW_ID_PATTERN,
+    Trigger,
+    WorkflowDefinition,
+    parse_definition,
+)
 from arcteam.workflow.serialize import canonical_bytes, content_hash, dump_toml, file_manifest
 from arcteam.workflow.validator import KnownReferences, confine, validate_definition
 
@@ -75,6 +82,8 @@ store never owns a sink, it only guarantees an event per operation."""
 
 _TIER_RANK: dict[str, int] = {"personal": 0, "enterprise": 1, "federal": 2}
 
+_LEGAL_ID = re.compile(WORKFLOW_ID_PATTERN)
+
 
 class WorkflowBundle(BaseModel):
     """A definition as it exists on disk, with its trust status attached.
@@ -92,6 +101,19 @@ class WorkflowBundle(BaseModel):
     manifest: dict[str, str]
     root: Path
     signer_did: str | None = None
+
+    @property
+    def is_verified(self) -> bool:
+        """Whether the pinned operator signature verified over this bundle.
+
+        Ask this, not ``status``, whenever the question is *trust*. ``status``
+        answers a different question — it folds lifecycle and trust into one
+        render value, so an archived bundle reads ``"archived"`` even when its
+        signature is perfectly good. Reading trust off ``status`` has already
+        produced two defects in this feature, both in security checks, so the
+        safe read is the named one.
+        """
+        return self.signer_did is not None
 
     @property
     def effective_trigger(self) -> Trigger | None:
@@ -128,7 +150,18 @@ class DefinitionStore:
     # -- reading --
 
     def path_for(self, workflow_id: str) -> Path:
-        """The bundle directory for ``workflow_id``."""
+        """The bundle directory for ``workflow_id``.
+
+        Every read and lifecycle method routes through here, which makes this
+        the one place a caller-supplied id becomes a path — and therefore the
+        one place it must be proved to be a bare name.
+        """
+        if not _LEGAL_ID.match(workflow_id):
+            raise InvalidWorkflowIdError(
+                f"{workflow_id!r} is not a workflow id; an id is a bare name matching "
+                f"{WORKFLOW_ID_PATTERN} and may never contain a path separator or '..' "
+                f"(fail-closed — an id becomes a directory under the agent's workspace)"
+            )
         return self.root / workflow_id
 
     def exists(self, workflow_id: str) -> bool:
@@ -185,7 +218,7 @@ class DefinitionStore:
         """
         bundle = self.load(workflow_id)
         self._assert_no_drift(bundle)
-        if bundle.signer_did is not None:
+        if bundle.is_verified:
             return bundle
         if _TIER_RANK.get(self.tier, 0) > 0:
             raise UnsignedWorkflowError(
@@ -254,8 +287,7 @@ class DefinitionStore:
         """
         bundle_root = self.path_for(definition.id)
         version = self._next_version(definition.id, expected_version)
-        bundle_root.mkdir(parents=True, exist_ok=True)
-        self._write_files(bundle_root, files or {})
+        incoming = self._resolve_files(bundle_root, files or {})
 
         pending = definition.model_copy(update={"version": version})
         text = dump_toml(pending.to_document())
@@ -264,10 +296,13 @@ class DefinitionStore:
             known=known,
             bundle_root=bundle_root,
             raw_size_bytes=len(text.encode("utf-8")),
+            pending_files=frozenset(files or ()),
         )
         if issues:
             raise WorkflowValidationError(issues)
 
+        for target, body in incoming.items():
+            _atomic_write(target, body)
         self._retain_current(bundle_root)
         _atomic_write(bundle_root / DEFINITION_FILE, text.encode("utf-8"))
         (bundle_root / SIDECAR_FILE).unlink(missing_ok=True)
@@ -420,14 +455,22 @@ class DefinitionStore:
             )
         return current + 1
 
-    def _write_files(self, bundle_root: Path, files: Mapping[str, bytes]) -> None:
-        """Write bundle-relative companion files, refusing any path that escapes."""
+    def _resolve_files(self, bundle_root: Path, files: Mapping[str, bytes]) -> dict[Path, bytes]:
+        """Confine every companion-file path, writing nothing.
+
+        Resolution is separated from writing so that a save which is going to
+        be refused touches no bytes at all. Writing first and validating after
+        meant a *rejected* edit still moved a signed bundle's manifest hash,
+        breaking the operator's signature and taking a live workflow out of
+        service — a failed call must never be able to do that.
+        """
+        resolved: dict[Path, bytes] = {}
         for reference, body in files.items():
             target = confine(bundle_root.resolve(), reference)
             if target is None:
                 raise WorkflowValidationError((_escape_issue(reference),))
-            target.parent.mkdir(parents=True, exist_ok=True)
-            _atomic_write(target, body)
+            resolved[target] = body
+        return resolved
 
     def _retain_current(self, bundle_root: Path) -> None:
         """Copy the current definition into ``versions/`` before overwriting it."""

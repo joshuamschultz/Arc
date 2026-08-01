@@ -270,7 +270,7 @@
     },
     "T-855": {
       "description": "(green) Gate resolution: control-plane only, in-channel, reviewer chooses outcome",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
@@ -312,21 +312,21 @@
     },
     "T-872": {
       "description": "(green) Dashboard workflow routes: thin delegating adapter",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-873": {
       "description": "(green) Dashboard management surface: list, create, edit, archive, run",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-874": {
       "description": "(green) Definition graph and live run status views",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []

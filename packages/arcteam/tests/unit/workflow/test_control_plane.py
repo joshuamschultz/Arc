@@ -48,6 +48,9 @@ class FakeDefinitionStore:
             raise WorkflowArchivedError(workflow_id)
         return self.bundles[workflow_id]
 
+    def load_for_dispatch(self, workflow_id: str) -> Bundle:
+        return self.bundles[workflow_id]
+
     def save_draft(
         self,
         definition: Definition,
@@ -308,6 +311,44 @@ async def test_three_surfaces_invoking_the_same_operation_cannot_drift(
     assert {o.ok for o in outcomes} == {False}
     assert len({tuple((i.node_id, i.field, i.error) for i in o.errors) for o in outcomes}) == 1
     assert [e.action for e in sink.events] == ["workflow.created"] * 3
+
+
+async def test_a_traversal_workflow_id_is_a_typed_refusal_not_a_crash(
+    stores: Any, registry: Any
+) -> None:
+    """The store refuses a non-name id; every surface must see a 400, not a 500.
+
+    Ids reach these operations from HTTP path parameters and tool arguments, so
+    the control plane is where that refusal becomes an answer a caller can act
+    on rather than an unhandled exception.
+    """
+
+    class TraversalRefusingStore(FakeDefinitionStore):
+        def load_for_run(self, workflow_id: str) -> Bundle:
+            raise InvalidWorkflowIdError(f"{workflow_id!r} is not a bare name")
+
+        def archive(self, workflow_id: str, *, actor_did: str) -> Bundle:
+            raise InvalidWorkflowIdError(f"{workflow_id!r} is not a bare name")
+
+    control, _, sink = plane(stores, registry, definitions=TraversalRefusingStore())
+
+    started = await control.run(
+        "../../bob/workflows/secretflow", input={}, actor_did=OPERATOR
+    )
+    archived = await control.archive("../../bob/workflows/secretflow", actor_did=OPERATOR)
+
+    assert not started.ok and not archived.ok
+    assert {e.outcome for e in sink.events} <= {"refused", "error"}
+    # `run` goes through the runner, which checks the id at its own boundary, so
+    # the refusal is ours and the store is never asked.
+    assert "never a path" in started.errors[0].error
+    # `archive` delegates straight to the store, so the refusal is the store's.
+    # Either way a caller gets an answer it can act on, never an unhandled raise.
+    assert "bare name" in archived.errors[0].error
+
+
+class InvalidWorkflowIdError(RuntimeError):
+    """Stands in for the definition store's id refusal."""
 
 
 async def test_the_stores_own_validation_issues_reach_the_caller(

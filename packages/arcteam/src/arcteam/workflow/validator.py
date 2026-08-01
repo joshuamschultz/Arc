@@ -75,6 +75,7 @@ def validate_definition(
     known: KnownReferences | None = None,
     bundle_root: Path | None = None,
     raw_size_bytes: int | None = None,
+    pending_files: frozenset[str] = frozenset(),
 ) -> tuple[ValidationIssue, ...]:
     """Validate the whole graph. An empty tuple means the definition is sound.
 
@@ -84,6 +85,10 @@ def validate_definition(
         bundle_root: Bundle directory, so schema/prompt/script references can
             be resolved and confined. ``None`` skips file resolution.
         raw_size_bytes: Serialized size, for the definition quota.
+        pending_files: Bundle-relative paths that are about to be written and
+            so count as present. This is what lets a caller validate *before*
+            touching the disk, which is the only way a refused save can leave
+            the bundle untouched.
 
     Returns:
         Every problem found, each naming node, field, observed value, and
@@ -99,7 +104,7 @@ def validate_definition(
     issues += _check_predicates(definition)
     issues += _check_node_options(definition)
     issues += _check_known(definition, known)
-    issues += _check_files(definition, bundle_root)
+    issues += _check_files(definition, bundle_root, pending_files)
     if structural:
         return tuple(issues)
 
@@ -338,26 +343,32 @@ def _unknown(node_id: str, field: str, observed: str, roster: frozenset[str]) ->
 
 
 def _check_files(
-    definition: WorkflowDefinition, bundle_root: Path | None
+    definition: WorkflowDefinition, bundle_root: Path | None, pending: frozenset[str]
 ) -> Iterable[ValidationIssue]:
     if bundle_root is None:
         return
     root = bundle_root.resolve()
     if definition.input_spec is not None:
-        yield from _check_file(None, "input.schema", definition.input_spec.schema_ref, root)
+        yield from _check_file(
+            None, "input.schema", definition.input_spec.schema_ref, root, pending
+        )
     for node in definition.nodes:
         if node.output_schema is not None:
-            yield from _check_file(node.id, "output_schema", node.output_schema, root)
+            yield from _check_file(node.id, "output_schema", node.output_schema, root, pending)
         if isinstance(node, AgentNode) and node.prompt is not None:
-            yield from _check_file(node.id, "prompt", node.prompt, root)
+            yield from _check_file(node.id, "prompt", node.prompt, root, pending)
         if isinstance(node, ScriptNode):
-            yield from _check_file(node.id, "script", node.script, root)
+            yield from _check_file(node.id, "script", node.script, root, pending)
 
 
 def _check_file(
-    node_id: str | None, field: str, reference: str, root: Path
+    node_id: str | None, field: str, reference: str, root: Path, pending: frozenset[str]
 ) -> Iterable[ValidationIssue]:
-    """A referenced file must resolve inside the bundle and actually be there."""
+    """A referenced file must resolve inside the bundle and actually be there.
+
+    A path in ``pending`` is about to be written by the same transaction and
+    counts as present; it is still confinement-checked.
+    """
     resolved = confine(root, reference)
     if resolved is None:
         yield ValidationIssue(
@@ -367,7 +378,7 @@ def _check_file(
             observed=reference,
             admissible=("a relative path inside the workflow bundle",),
         )
-    elif not resolved.is_file():
+    elif not resolved.is_file() and reference not in pending:
         yield ValidationIssue(
             node_id=node_id,
             field=field,

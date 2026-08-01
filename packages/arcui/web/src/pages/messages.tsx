@@ -16,6 +16,7 @@ import {
 } from '@/components/channel-management'
 import { useChatSession, type ChatMessage } from '@/hooks/use-chat'
 import { useTeamStream, type TeamFrame } from '@/hooks/use-team-stream'
+import { GateCard } from '@/components/gate-card'
 import { useOperatorMode } from '@/hooks/use-operator-mode'
 import { useRoster, useTeamChannels, useChannelMessages } from '@/lib/queries'
 import { apiPost, ApiError } from '@/lib/api'
@@ -150,6 +151,10 @@ interface ChannelRow {
   body: string
   mentions: string[]
   ts: string
+  // SPEC-061 ArcFlow (T-855): present when this row narrates a workflow gate
+  // node waiting on a human decision — renders a GateCard instead of a
+  // normal chat bubble.
+  gate?: { task_id: string; node_id?: string }
 }
 
 function handleOf(ref: string): string {
@@ -192,6 +197,7 @@ function ChannelPanel({
     for (const m of history.data?.messages ?? []) {
       const d = m as Dict
       const seq = Number(d.seq ?? 0)
+      const gate = d.gate as { task_id?: string; node_id?: string } | undefined
       bySeq.set(seq, {
         key: `h${seq}`,
         seq,
@@ -199,6 +205,7 @@ function ChannelPanel({
         body: String(d.body ?? d.text ?? d.content ?? ''),
         mentions: Array.isArray(d.mentions) ? (d.mentions as string[]).map(handleOf) : [],
         ts: String(d.ts ?? d.timestamp ?? ''),
+        gate: gate?.task_id ? { task_id: gate.task_id, node_id: gate.node_id } : undefined,
       })
     }
     for (const f of frames as TeamFrame[]) {
@@ -209,6 +216,7 @@ function ChannelPanel({
         body: f.body,
         mentions: (f.mentions ?? []).map(handleOf),
         ts: f.ts,
+        gate: f.gate ? { task_id: f.gate.task_id, node_id: f.gate.node_id } : undefined,
       })
     }
     return [...bySeq.values()].sort((a, b) => a.seq - b.seq)
@@ -240,34 +248,42 @@ function ChannelPanel({
         {rows.length === 0 ? (
           <EmptyState icon={<Hash className="size-7" />} title="No messages in this channel" />
         ) : (
-          rows.map((m) => (
-            <div
-              key={m.key}
-              className="-mx-1.5 flex items-start gap-3 rounded-lg px-1.5 py-2 transition-colors hover:bg-muted/40"
-            >
-              <span
-                className="flex size-7 shrink-0 items-center justify-center rounded-md text-[11px] font-semibold text-primary-foreground"
-                style={{ background: handleColor.get(m.from) || 'var(--primary)' }}
-              >
-                {initials(m.from)}
-              </span>
-              <div className="min-w-0 flex-1 text-sm">
-                <div className="mb-0.5 flex flex-wrap items-center gap-2 text-xs">
-                  <span className="font-semibold text-foreground">@{m.from}</span>
-                  {m.mentions.map((h) => (
-                    <span
-                      key={h}
-                      className="rounded-sm border border-primary/20 bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary"
-                    >
-                      @{h}
-                    </span>
-                  ))}
-                  <span className="ml-auto shrink-0 text-[10px] tabular-nums text-muted-foreground">{m.ts}</span>
-                </div>
-                <Markdown>{m.body}</Markdown>
+          rows.map((m) =>
+            m.gate ? (
+              <div key={m.key} className="-mx-1.5 px-1.5 py-2">
+                <GateCard taskId={m.gate.task_id} nodeId={m.gate.node_id} body={m.body} />
               </div>
-            </div>
-          ))
+            ) : (
+              <div
+                key={m.key}
+                className="-mx-1.5 flex items-start gap-3 rounded-lg px-1.5 py-2 transition-colors hover:bg-muted/40"
+              >
+                <span
+                  className="flex size-7 shrink-0 items-center justify-center rounded-md text-[11px] font-semibold text-primary-foreground"
+                  style={{ background: handleColor.get(m.from) || 'var(--primary)' }}
+                >
+                  {initials(m.from)}
+                </span>
+                <div className="min-w-0 flex-1 text-sm">
+                  <div className="mb-0.5 flex flex-wrap items-center gap-2 text-xs">
+                    <span className="font-semibold text-foreground">@{m.from}</span>
+                    {m.mentions.map((h) => (
+                      <span
+                        key={h}
+                        className="rounded-sm border border-primary/20 bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary"
+                      >
+                        @{h}
+                      </span>
+                    ))}
+                    <span className="ml-auto shrink-0 text-[10px] tabular-nums text-muted-foreground">
+                      {m.ts}
+                    </span>
+                  </div>
+                  <Markdown>{m.body}</Markdown>
+                </div>
+              </div>
+            ),
+          )
         )}
         <div ref={endRef} />
       </div>

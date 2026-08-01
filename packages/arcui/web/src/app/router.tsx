@@ -13,6 +13,8 @@ import { MessagesPage } from '@/pages/messages'
 import { ApprovalsPage } from '@/pages/approvals'
 import { GatedCapabilitiesPage } from '@/pages/gated-capabilities'
 import { SettingsPage } from '@/pages/settings'
+import { WorkflowsPage } from '@/pages/workflows'
+import { LazyWorkflowDetailPage } from './lazy-workflow-detail'
 import { DEFAULT_PATH } from './nav'
 
 export const router = createBrowserRouter([
@@ -41,6 +43,10 @@ export const router = createBrowserRouter([
       // Phase 7 — Messages + Settings.
       { path: 'messages', element: <MessagesPage /> },
       { path: 'settings', element: <SettingsPage /> },
+
+      // SPEC-061 ArcFlow — workflow management surface (COMP-020).
+      { path: 'workflows', element: <WorkflowsPage /> },
+      { path: 'workflows/:id', element: <LazyWorkflowDetailPage /> },
 
       { path: '*', element: <Navigate to={`/${DEFAULT_PATH}`} replace /> },
     ],
