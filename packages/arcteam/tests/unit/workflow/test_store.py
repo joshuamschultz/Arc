@@ -449,3 +449,57 @@ def test_the_sidecar_is_a_detached_arctrust_signature(tmp_path: Path) -> None:
     assert sidecar.signer_did == OPERATOR_DID
     assert sidecar.artifact_sha256 == store.load("onboarding").content_hash
     assert json.loads(canonical_bytes(bundle.definition, store.load("onboarding").manifest))
+
+
+# --- trust is not lifecycle --------------------------------------------------
+
+
+def test_is_verified_is_the_trust_question_and_status_is_the_render_value(
+    tmp_path: Path,
+) -> None:
+    """``status`` carries lifecycle AND trust; ``is_verified`` carries only trust.
+
+    Reading trust off ``status`` is a mistake that has now been made twice in
+    this feature, both times in a security check, so the safe read is named.
+    """
+    keypair = generate_keypair()
+    store = DefinitionStore(
+        tmp_path / "workflows", tier="federal", operator_public_key=keypair.public_key
+    )
+    _seed(store)
+    assert store.load("onboarding").is_verified is False
+
+    sign_definition(store, "onboarding", signer_did=OPERATOR_DID, private_key=keypair.private_key)
+
+    assert store.load("onboarding").is_verified is True
+
+
+def test_an_archived_but_signed_bundle_is_still_verified(tmp_path: Path) -> None:
+    """The trap: status reads "archived", but the signature is still good."""
+    keypair = generate_keypair()
+    store = DefinitionStore(
+        tmp_path / "workflows", tier="federal", operator_public_key=keypair.public_key
+    )
+    _seed(store)
+    sign_definition(store, "onboarding", signer_did=OPERATOR_DID, private_key=keypair.private_key)
+    store.archive("onboarding", actor_did="did:arc:ui:operator")
+
+    bundle = store.load("onboarding")
+
+    assert bundle.status == "archived"
+    assert bundle.is_verified is True
+    assert store.load_for_dispatch("onboarding").is_verified is True
+
+
+def test_a_foreign_signed_bundle_is_not_verified(tmp_path: Path) -> None:
+    operator = generate_keypair()
+    impostor = generate_keypair()
+    store = DefinitionStore(
+        tmp_path / "workflows", tier="federal", operator_public_key=operator.public_key
+    )
+    _seed(store)
+    sign_definition(
+        store, "onboarding", signer_did="did:arc:agent:rogue", private_key=impostor.private_key
+    )
+
+    assert store.load("onboarding").is_verified is False
