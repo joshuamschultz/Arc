@@ -168,22 +168,24 @@ class DefinitionStore:
             signer_did=signature.signer_did if signature is not None else None,
         )
 
-    def load_for_run(self, workflow_id: str) -> WorkflowBundle:
-        """Load a bundle for execution, applying the archive, integrity and tier gates.
+    def load_for_dispatch(self, workflow_id: str) -> WorkflowBundle:
+        """Load a bundle to execute one node of an already-admitted run.
+
+        Applies the two gates that must hold on every single dispatch: the
+        bundle still matches its signature, and its trust level clears the
+        tier. It deliberately does **not** ask whether the workflow is
+        archived — that is an admission question, answered once when a run
+        starts (:meth:`load_for_run`). Archiving refuses new runs; it does not
+        reach into runs already in flight and strand them mid-graph.
 
         Raises:
-            WorkflowArchivedError: the definition is archived and accepts no runs.
             WorkflowIntegrityError: a signature exists but the bundle has drifted
                 under it — refuse rather than execute a hybrid of two versions.
             UnsignedWorkflowError: unsigned or foreign-signed above personal tier.
         """
         bundle = self.load(workflow_id)
-        if bundle.status == "archived":
-            raise WorkflowArchivedError(
-                f"workflow {workflow_id!r} is archived; unarchive it before running it"
-            )
         self._assert_no_drift(bundle)
-        if bundle.status == "signed":
+        if bundle.signer_did is not None:
             return bundle
         if _TIER_RANK.get(self.tier, 0) > 0:
             raise UnsignedWorkflowError(
@@ -197,6 +199,21 @@ class DefinitionStore:
             {"workflow_id": workflow_id, "tier": self.tier, "version": bundle.definition.version},
         )
         return bundle
+
+    def load_for_run(self, workflow_id: str) -> WorkflowBundle:
+        """Load a bundle to **start** a run: admission, then the dispatch gates.
+
+        Raises:
+            WorkflowArchivedError: the definition is archived and accepts no new runs.
+            WorkflowIntegrityError: see :meth:`load_for_dispatch`.
+            UnsignedWorkflowError: see :meth:`load_for_dispatch`.
+        """
+        if self._is_archived(self._require(workflow_id)):
+            raise WorkflowArchivedError(
+                f"workflow {workflow_id!r} is archived and accepts no new runs; unarchive it "
+                f"first (runs already in flight are unaffected and keep dispatching)"
+            )
+        return self.load_for_dispatch(workflow_id)
 
     def versions(self, workflow_id: str) -> tuple[int, ...]:
         """Retained prior version numbers, ascending."""
