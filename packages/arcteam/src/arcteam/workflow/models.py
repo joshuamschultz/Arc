@@ -45,6 +45,11 @@ MAX_DEFINITION_BYTES = 256 * 1024
 
 NODE_KINDS: tuple[str, ...] = ("agent", "tool", "script", "router", "gate")
 
+WORKFLOW_ID_PATTERN = r"^[a-zA-Z][a-zA-Z0-9_-]*$"
+"""What a workflow id may be. A workflow id also names a directory inside the
+owning agent's workspace, so this is the one rule keeping an id from being a
+path — it is shared with the store rather than restated there (ADR-029)."""
+
 JoinMode = Literal["all", "any"]
 RouterMode = Literal["rules", "llm"]
 TriggerType = Literal["cron", "interval", "manual"]
@@ -188,7 +193,7 @@ class WorkflowDefinition(BaseModel):
     model_config = _FROZEN
 
     schema_version: str = SCHEMA_VERSION
-    id: str = Field(min_length=1, max_length=64, pattern=r"^[a-zA-Z][a-zA-Z0-9_-]*$")
+    id: str = Field(min_length=1, max_length=64, pattern=WORKFLOW_ID_PATTERN)
     version: int = Field(default=1, ge=1)
     description: str = ""
     owner: str

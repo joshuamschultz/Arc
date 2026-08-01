@@ -110,11 +110,22 @@ class PurgeRefusedError(WorkflowError):
     """A purge would orphan live runs, or would destroy history unrecorded."""
 
 
+class InvalidWorkflowIdError(WorkflowError):
+    """A workflow id was not a bare name, so it could have named a path.
+
+    A workflow id also names a directory in the owning agent's workspace. An id
+    carrying a separator or a parent reference would let a caller read, archive,
+    or destroy a bundle outside that workspace — including another agent's
+    (ASI03, and a breach of workspace containment, ADR-029). Refused fail-closed.
+    """
+
+
 class WorkflowNotFoundError(WorkflowError):
     """No bundle exists for the requested workflow id."""
 
 
 __all__ = [
+    "InvalidWorkflowIdError",
     "PredicateError",
     "PredicateEvaluationError",
     "PredicateParseError",
