@@ -216,60 +216,14 @@ class Bundle:
 # ---------------------------------------------------------------------------
 
 
-class TextualInterpolationError(ValueError):
-    """Raised when a string merely embeds a reference instead of being one."""
-
-
-def _lookup(path: str, scope: Mapping[str, Any]) -> Any:
-    """Walk ``$nodes.a.output.b`` / ``$input.c``. A missing path RAISES."""
-    parts = path.lstrip("$").split(".")
-    cursor: Any = scope
-    for part in parts:
-        if not isinstance(cursor, Mapping) or part not in cursor:
-            raise KeyError(f"unresolvable path: {path}")
-        cursor = cursor[part]
-    return cursor
-
-
-def _literal(token: str) -> Any:
-    if token.startswith(("'", '"')):
-        return token[1:-1]
-    if token in ("true", "false"):
-        return token == "true"
-    try:
-        return int(token)
-    except ValueError:
-        return float(token)
-
-
-def evaluate(expression: str, scope: Mapping[str, Any]) -> bool:
-    """A four-operator stand-in for COMP-003 — enough shape, no eval."""
-    for op in ("==", "!=", ">=", "<="):
-        if op in expression:
-            left, right = (part.strip() for part in expression.split(op, 1))
-            lhs = _lookup(left, scope) if left.startswith("$") else _literal(left)
-            rhs = _lookup(right, scope) if right.startswith("$") else _literal(right)
-            return {
-                "==": lhs == rhs,
-                "!=": lhs != rhs,
-                ">=": lhs >= rhs,
-                "<=": lhs <= rhs,
-            }[op]
-    raise ValueError(f"unparseable predicate: {expression}")
-
-
-def resolve_args(args: Mapping[str, Any], scope: Mapping[str, Any]) -> dict[str, Any]:
-    """Bind references BY VALUE; refuse a string that embeds one."""
-    out: dict[str, Any] = {}
-    for key, value in args.items():
-        if isinstance(value, str) and value.startswith("$"):
-            out[key] = _lookup(value, scope)
-        elif isinstance(value, str) and "$nodes." in value:
-            raise TextualInterpolationError(value)
-        else:
-            out[key] = value
-    return out
-
+# The REAL predicate evaluator and resolver (COMP-003/COMP-004), not stand-ins.
+# The runner takes both as injected seams, so tests that wire the real ones are
+# the only tests whose "interpolation is refused" assertion means anything —
+# a permissive double would accept exactly the strings the real one exists to
+# reject.
+from arcteam.workflow.errors import TextualInterpolationError  # noqa: F401
+from arcteam.workflow.predicates import evaluate  # noqa: F401
+from arcteam.workflow.resolver import resolve_args  # noqa: F401
 
 # ---------------------------------------------------------------------------
 # Durable plane (COMP-006, COMP-007) over a REAL arcstore backend
