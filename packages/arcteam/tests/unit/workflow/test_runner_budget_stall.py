@@ -169,3 +169,54 @@ async def test_a_stalled_run_is_escalated_rather_than_sitting_silent(
 
     assert record.status == "failed"
     assert "stall" in (record.resolution or "")
+
+
+class _TwoWorkflows:
+    """A definition store serving two workflows, one of which is poisoned."""
+
+    def __init__(self, bundles: dict, poisoned: str | None = None) -> None:
+        self._bundles = bundles
+        self.poisoned = poisoned
+
+    def load(self, workflow_id: str):
+        return self._bundles[workflow_id]
+
+    def load_for_run(self, workflow_id: str):
+        return self._bundles[workflow_id]
+
+    def load_for_dispatch(self, workflow_id: str):
+        if workflow_id == self.poisoned:
+            raise RuntimeError("this run's bundle is unreadable")
+        return self._bundles[workflow_id]
+
+
+async def test_one_poisoned_run_does_not_stop_the_tick_for_the_others(
+    stores: Any, registry: Any
+) -> None:
+    """A single bad run must not stall every other run in the fleet.
+
+    This repo has shipped this failure before: one unreadable row in a
+    scheduler's store silently killed every schedule that agent had. The tick
+    isolates per run for exactly that reason, and nothing exercised it — the
+    happy path never has a poisoned run, so the guard was invisible.
+    """
+    from .conftest import Bundle
+
+    alpha = Definition(id="alpha", nodes=(Node(id="a", kind="agent", agent="@sales"),))
+    beta = Definition(id="beta", nodes=(Node(id="b", kind="agent", agent="@ops"),))
+    definitions = _TwoWorkflows({"alpha": Bundle(alpha), "beta": Bundle(beta)})
+    flow_tasks, _, _ = stores
+    runner = build(stores, registry, alpha, definitions=definitions)
+
+    await runner.start_run("alpha", input={}, initiator_did="did:arc:x/1", run_id="run-alpha")
+    await runner.start_run("beta", input={}, initiator_did="did:arc:x/1", run_id="run-beta")
+
+    # Alpha's definition becomes unreadable between ticks.
+    definitions.poisoned = "alpha"
+    advanced = await runner.tick()
+
+    assert advanced == 2, "the tick must visit every active run, not stop at the first"
+    beta_rows = await flow_tasks.query_by_flow_run("run-beta")
+    assert [r.metadata["node_id"] for r in beta_rows] == ["b"], (
+        "beta was starved by alpha's failure"
+    )
