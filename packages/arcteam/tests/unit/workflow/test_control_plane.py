@@ -40,6 +40,7 @@ class FakeDefinitionStore:
         self.archived: set[str] = set()
         self.saved: list[tuple[str, int | None, str]] = []
         self.files_seen: dict[str, bytes] = {}
+        self.purged: list[tuple[str, bool, int]] = []
 
     def load(self, workflow_id: str) -> Bundle:
         return self.bundles[workflow_id]
@@ -90,6 +91,25 @@ class FakeDefinitionStore:
         self.archived.add(workflow_id)
         return self.bundles[workflow_id]
 
+    def purge(
+        self,
+        workflow_id: str,
+        *,
+        actor_did: str,
+        runs_referencing: Any,
+        force: bool = False,
+        reason: str = "",
+    ) -> None:
+        if workflow_id not in self.bundles:
+            raise KeyError(workflow_id)
+        outstanding = runs_referencing(workflow_id)
+        if outstanding and not force:
+            raise PurgeRefusedError(
+                f"{outstanding} run(s) still reference {workflow_id!r}"
+            )
+        self.purged.append((workflow_id, force, outstanding))
+        del self.bundles[workflow_id]
+
     def unarchive(self, workflow_id: str, *, actor_did: str) -> Bundle:
         self.archived.discard(workflow_id)
         bundle = Bundle(self.bundles[workflow_id].definition, status="draft")
@@ -98,6 +118,10 @@ class FakeDefinitionStore:
 
 
 class StaleEditError(RuntimeError):
+    pass
+
+
+class PurgeRefusedError(RuntimeError):
     pass
 
 
@@ -158,6 +182,7 @@ def plane(stores: Any, registry: Any, **kwargs: Any) -> tuple[WorkflowControlPla
         parse=parse,
         validate=validate,
         runner=runner,
+        runs=stores[1],
         tier=kwargs.pop("tier", "personal"),
         audit_sink=sink,
         **kwargs,
@@ -427,10 +452,101 @@ async def test_an_unknown_workflow_is_a_typed_refusal(stores: Any, registry: Any
     assert not result.ok
 
 
-def test_the_operation_set_is_exactly_six(stores: Any) -> None:
+def test_the_operation_set_is_exactly_seven(stores: Any) -> None:
+    """Purge belongs here: it is the one component holding BOTH stores.
+
+    The definition store deliberately takes the run count as an injected
+    callable rather than importing the run store, so somebody has to supply it,
+    and the answer must be the same place that owns audit for every other
+    mutation — otherwise a surface purges by calling the store directly and the
+    single-operation-set guarantee is gone.
+    """
     operations = {
         name
         for name in dir(WorkflowControlPlane)
         if not name.startswith("_") and callable(getattr(WorkflowControlPlane, name))
     }
-    assert operations == {"create", "edit", "archive", "unarchive", "run", "cancel"}
+    assert operations == {
+        "create",
+        "edit",
+        "archive",
+        "unarchive",
+        "purge",
+        "run",
+        "cancel",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Purge (REQ-256, T-871) — destroy, but never orphan history silently
+# ---------------------------------------------------------------------------
+
+
+async def test_purge_is_refused_while_a_run_references_the_workflow(
+    stores: Any, registry: Any
+) -> None:
+    control, definitions, sink = plane(stores, registry)
+    definitions.bundles["customer-onboarding"] = Bundle(
+        Definition(
+            id="customer-onboarding",
+            channel="channel://onboarding",
+            nodes=(Node(id="collect", kind="agent", agent="@sales"),),
+        )
+    )
+    await control.run("customer-onboarding", input={}, actor_did=OPERATOR)
+
+    result = await control.purge("customer-onboarding", actor_did=OPERATOR)
+
+    assert not result.ok
+    assert "still reference" in result.errors[0].error
+    assert definitions.purged == [], "a refused purge destroys nothing"
+    assert sink.events[-1].outcome == "refused"
+
+
+async def test_a_forced_purge_records_that_history_is_now_unrenderable(
+    stores: Any, registry: Any
+) -> None:
+    """Destroying history is allowed; doing it unrecorded is not."""
+    control, definitions, sink = plane(stores, registry)
+    definitions.bundles["customer-onboarding"] = Bundle(
+        Definition(
+            id="customer-onboarding",
+            channel="channel://onboarding",
+            nodes=(Node(id="collect", kind="agent", agent="@sales"),),
+        )
+    )
+    await control.run("customer-onboarding", input={}, actor_did=OPERATOR)
+
+    result = await control.purge(
+        "customer-onboarding", actor_did=OPERATOR, force=True, reason="GDPR request"
+    )
+
+    assert result.ok
+    event = sink.events[-1]
+    assert event.action == "workflow.purged"
+    assert event.extra["forced"] is True
+    assert event.extra["runs_orphaned"] == 1, "the chain must name what was orphaned"
+    assert event.extra["reason"] == "GDPR request"
+
+
+async def test_purge_of_an_unreferenced_workflow_succeeds(
+    stores: Any, registry: Any
+) -> None:
+    control, definitions, sink = plane(stores, registry)
+    await control.create(VALID, actor_did=OPERATOR)
+
+    result = await control.purge("customer-onboarding", actor_did=OPERATOR)
+
+    assert result.ok
+    assert definitions.purged == [("customer-onboarding", False, 0)]
+    assert sink.events[-1].extra["runs_orphaned"] == 0
+
+
+async def test_purging_an_unknown_workflow_is_a_typed_refusal(
+    stores: Any, registry: Any
+) -> None:
+    control, _, _ = plane(stores, registry)
+
+    result = await control.purge("nope", actor_did=OPERATOR)
+
+    assert not result.ok

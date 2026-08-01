@@ -166,6 +166,9 @@ class WorkflowRunStore:
                     active.append(loaded)
         return active
 
+    async def count_runs_for_workflow(self, workflow_id: str) -> int:
+        return len(await self._runs.list(workflow_id=workflow_id))
+
     async def set_status(
         self,
         run_id: str,

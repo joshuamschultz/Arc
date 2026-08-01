@@ -33,6 +33,7 @@ from .runner_contracts import (
     DefinitionStoreLike,
     DefinitionValidator,
     RunRecord,
+    RunStoreLike,
     Tier,
     ValidationIssueLike,
 )
@@ -72,7 +73,7 @@ class _Operation:
 
 
 class WorkflowControlPlane:
-    """The six operations every workflow surface delegates to."""
+    """The seven operations every workflow surface delegates to."""
 
     def __init__(
         self,
@@ -81,6 +82,7 @@ class WorkflowControlPlane:
         parse: DefinitionParser,
         validate: DefinitionValidator,
         runner: WorkflowRunner,
+        runs: RunStoreLike,
         tier: Tier,
         audit_sink: AuditSink | None = None,
     ) -> None:
@@ -88,6 +90,9 @@ class WorkflowControlPlane:
         self._parse = parse
         self._validate = validate
         self._runner = runner
+        # The purge guard needs a run count, and this is the one component that
+        # holds both the definition store and the run store.
+        self._runs = runs
         self._tier: Tier = tier
         self._sink: AuditSink = audit_sink or NullSink()
 
@@ -159,6 +164,64 @@ class WorkflowControlPlane:
             target=workflow_id,
             actor_did=actor_did,
         )
+
+    async def purge(
+        self,
+        workflow_id: str,
+        *,
+        actor_did: str,
+        force: bool = False,
+        reason: str = "",
+    ) -> ControlPlaneResult:
+        """Destroy a definition permanently. Refused while any run references it.
+
+        Archive is the ordinary path and it erases nothing; this is the separate
+        operator-only action (REQ-256). The definition store deliberately holds
+        no dependency on the run store, so the count comes from here — this is
+        the one place that holds both halves, which is why the operation lives
+        here rather than in either store.
+
+        A forced purge is permitted but never quiet: past runs of this workflow
+        become unrenderable, and that fact is what the audit chain must carry.
+        """
+        try:
+            outstanding = await self._runs.count_runs_for_workflow(workflow_id)
+        except Exception as exc:
+            self._emit(
+                _Operation("workflow.purged", workflow_id, "error", {"error": str(exc)}),
+                actor_did,
+            )
+            return ControlPlaneResult(ok=False, errors=(OperationIssue(None, None, str(exc)),))
+
+        try:
+            self._definitions.purge(
+                workflow_id,
+                actor_did=actor_did,
+                runs_referencing=lambda _: outstanding,
+                force=force,
+                reason=reason,
+            )
+        except Exception as exc:
+            self._emit(
+                _Operation("workflow.purged", workflow_id, "refused", {"error": str(exc)}),
+                actor_did,
+            )
+            return ControlPlaneResult(ok=False, errors=(OperationIssue(None, None, str(exc)),))
+
+        self._emit(
+            _Operation(
+                "workflow.purged",
+                workflow_id,
+                "ok",
+                {
+                    "forced": force,
+                    "runs_orphaned": outstanding if force else 0,
+                    "reason": reason,
+                },
+            ),
+            actor_did,
+        )
+        return ControlPlaneResult(ok=True)
 
     # -- initiation ---------------------------------------------------------
 
