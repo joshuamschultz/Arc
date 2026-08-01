@@ -381,3 +381,46 @@ class TestNoGateResolutionTool:
         for name in capabilities.__all__:
             assert "gate" not in name
             assert "approve" not in name
+
+
+class TestTheStoreIsBuiltWithItsSecurityContext:
+    """`DefinitionStore(root=root)` omitted tier AND the pinned operator key.
+
+    The store then believed every deployment was personal-tier with no pin, so
+    an agent could sign a workflow with its OWN key and the store reported it
+    verified — exactly the attack the draft-then-operator-sign lifecycle exists
+    to prevent. With no pin, verification falls back to trusting the key in the
+    sidecar: trust-on-first-use, the LLM03 hole SPEC-047 already closed for
+    blueprints. Pure omission, and the tier was already in scope.
+    """
+
+    def test_the_store_receives_the_real_tier_and_the_pinned_key(self) -> None:
+        import inspect
+
+        from arcagent.modules.workflows import _runtime
+
+        src = inspect.getsource(_runtime._build_control_plane)
+        assert "tier=st.tier" in src, "the store must be told the real tier"
+        assert "operator_public_key=" in src, "the store must be given the pinned key"
+
+    def test_an_agent_signed_workflow_is_refused_above_personal(self, tmp_path: Any) -> None:
+        """The behavioural proof: a rogue key must not produce a verified bundle."""
+        from nacl.signing import SigningKey
+
+        from arcteam.workflow import parse_definition
+        from arcteam.workflow.errors import WorkflowError
+        from arcteam.workflow.store import DefinitionStore, sign_definition
+
+        store = DefinitionStore(root=tmp_path / "wf", tier="federal", operator_public_key=None)
+        doc = {
+            "workflow": {"id": "x", "version": 1, "owner": "@me"},
+            "node": [{"id": "a", "kind": "agent", "agent": "@me"}],
+        }
+        store.save_draft(parse_definition(doc), actor_did="did:arc:agent:rogue", expected_version=None)
+        sign_definition(
+            store, "x", signer_did="did:arc:agent:rogue", private_key=bytes(SigningKey.generate())
+        )
+
+        assert store.load("x").is_verified is False, "a rogue key must never read as verified"
+        with pytest.raises(WorkflowError):
+            store.load_for_run("x")

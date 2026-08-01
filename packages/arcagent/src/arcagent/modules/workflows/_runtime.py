@@ -146,7 +146,13 @@ async def ensure_control_plane() -> None:
         if st.control_plane is not None or st.build_attempted:
             return
         st.build_attempted = True
-        _build_control_plane(st)
+        # The run store is opened HERE, in the async seam, because the control
+        # plane needs it for purge's orphan guard and opening a backend is I/O —
+        # which must never happen in the sync configure() (see module docstring).
+        from arcagent.modules.workflows.run_store import open_run_store
+
+        runs = await open_run_store(str(st.config.data_dir or ""))
+        _build_control_plane(st, runs)
 
 
 def set_runner(runner: Any) -> None:
@@ -188,7 +194,22 @@ class _NoRunner:
         raise RuntimeError(self._MESSAGE)
 
 
-def _build_control_plane(st: _State) -> None:
+def _operator_public_key() -> bytes | None:
+    """The deployment operator's verify key, or None when absent.
+
+    None is fail-closed at enterprise/federal (the store refuses to run an
+    unsigned or foreign-signed definition) and audit-warn at personal, which is
+    the same posture arcprompt uses for overlays.
+    """
+    try:
+        from arctrust import OperatorKey, default_operator_key_path
+
+        return OperatorKey.load(default_operator_key_path(), generate_if_absent=False).public_key
+    except (OSError, ValueError, RuntimeError):
+        return None
+
+
+def _build_control_plane(st: _State, runs: Any) -> None:
     """Construct the control plane and definition store over the bundle root.
 
     Leaves both None when the workflow engine is absent. An ImportError must not
@@ -209,7 +230,21 @@ def _build_control_plane(st: _State) -> None:
 
     root = st.workspace / st.config.workflows_dir
     root.mkdir(parents=True, exist_ok=True)
-    st.definitions = DefinitionStore(root=root)
+    # tier and the pinned operator key are LOAD-BEARING, not optional polish.
+    # Omitting them made this store believe every deployment was personal-tier
+    # with no pinned key — so an unsigned draft ran at federal, and worse, an
+    # agent could sign a workflow with its OWN key and the store reported it
+    # verified. That is exactly the attack the draft-then-operator-sign
+    # lifecycle exists to prevent: with no pin, verification falls back to
+    # trusting the key embedded in the sidecar (trust-on-first-use, the LLM03
+    # hole SPEC-047 already closed for blueprints). REQ-225 requires refusal
+    # above personal tier. The tier was already in scope — it is passed to the
+    # control plane fifteen lines below.
+    st.definitions = DefinitionStore(
+        root=root,
+        tier=st.tier,
+        operator_public_key=_operator_public_key(),
+    )
 
     def parse(document: Mapping[str, Any]) -> Any:
         return parse_definition(dict(document))
@@ -224,6 +259,7 @@ def _build_control_plane(st: _State) -> None:
         parse=parse,
         validate=validate_definition,
         runner=cast(Any, st.runner if st.runner is not None else _NoRunner()),
+        runs=cast(Any, runs),
         tier=cast(Any, st.tier),
     )
 
