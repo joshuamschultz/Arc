@@ -205,7 +205,7 @@
   - Components: COMP-010
   - Requirements: REQ-244
   - Acceptance: Node start, completion, handoff, gate waiting, gate resolution, and run outcome post to the bound channel as narration that is recorded and displayed but never activates an agent.
-- [ ] **T-855**: (green) Gate resolution: control-plane only, in-channel, reviewer chooses outcome
+- [x] **T-855**: (green) Gate resolution: control-plane only, in-channel, reviewer chooses outcome
   - domain: ui
   - Components: COMP-018
   - Requirements: REQ-245, REQ-246, REQ-247
@@ -235,17 +235,17 @@
   - Components: COMP-019, COMP-021
   - Requirements: REQ-257
   - Acceptance: With arcui absent, create, view, edit, archive, purge, run, and cancel all succeed from the command line and from agent tools, and a run completes end to end. Proves the dashboard shows actions that exist anyway rather than owning any of them.
-- [ ] **T-872**: (green) Dashboard workflow routes: thin delegating adapter
+- [x] **T-872**: (green) Dashboard workflow routes: thin delegating adapter
   - domain: api
   - Components: COMP-023
   - Requirements: REQ-253, REQ-254
   - Acceptance: Routes authenticate the operator, translate HTTP to a control-plane operation, and return its result verbatim with a boundary audit record; a test asserts the route layer contains no validation, versioning, sequencing, signing, or execution logic of its own.
-- [ ] **T-873**: (green) Dashboard management surface: list, create, edit, archive, run
+- [x] **T-873**: (green) Dashboard management surface: list, create, edit, archive, run
   - domain: ui
   - Components: COMP-020
   - Requirements: REQ-252
   - Acceptance: An operator creates a workflow, edits its nodes and trigger, archives it, and starts a run entirely from the dashboard without touching a file or a command; validation errors render against the offending node and field; the surface offers no way to sign.
-- [ ] **T-874**: (green) Definition graph and live run status views
+- [x] **T-874**: (green) Definition graph and live run status views
   - domain: ui
   - Components: COMP-020
   - Requirements: REQ-250
