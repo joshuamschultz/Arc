@@ -169,13 +169,20 @@ class DefinitionStore:
         return (self.path_for(workflow_id) / DEFINITION_FILE).is_file()
 
     def list_ids(self, *, include_archived: bool = False) -> tuple[str, ...]:
-        """Every workflow id under the root; archived ones are hidden by default."""
+        """Every workflow id under the root; archived ones are hidden by default.
+
+        A directory is not automatically an id: a name this store could not
+        resolve is skipped rather than listed, so everything returned here is
+        loadable. Otherwise a stray directory becomes a row a dashboard renders
+        and then fails to open.
+        """
         if not self.root.is_dir():
             return ()
         found = [
             path.name
             for path in sorted(self.root.iterdir())
-            if (path / DEFINITION_FILE).is_file()
+            if _LEGAL_ID.match(path.name)
+            and (path / DEFINITION_FILE).is_file()
             and (include_archived or not (path / ARCHIVE_MARKER).exists())
         ]
         return tuple(found)

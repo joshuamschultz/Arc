@@ -576,6 +576,26 @@ def test_a_legal_workflow_id_still_resolves(store: DefinitionStore) -> None:
     assert store.path_for("onboarding").name == "onboarding"
 
 
+def test_list_ids_never_reports_an_id_that_cannot_be_loaded(store: DefinitionStore) -> None:
+    """Everything listed must resolve. A directory is not automatically an id.
+
+    ``list_ids`` reads names off the filesystem while ``load`` requires a legal
+    id, so a stray directory would be listed and then raise when opened —
+    an entry a dashboard renders and 500s on. Normal names make the two agree,
+    which is what hid the disagreement.
+    """
+    _seed(store)
+    stray = store.root / "not a legal id"
+    stray.mkdir(parents=True)
+    (stray / "workflow.toml").write_text("")
+
+    listed = store.list_ids()
+
+    assert listed == ("onboarding",)
+    for workflow_id in listed:
+        assert store.load(workflow_id).definition.id == workflow_id
+
+
 def test_list_ids_reports_saved_workflows(store: DefinitionStore) -> None:
     _seed(store)
 
