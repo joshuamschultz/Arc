@@ -28,6 +28,7 @@ from .conftest import (
     evaluate,
     path_kinds,
     resolve_args,
+    task_id,
 )
 
 
@@ -130,9 +131,9 @@ async def test_untaken_branch_never_becomes_a_task_row(stores: Any, registry: An
     runner = build(stores, registry, onboarding())
     run = await runner.start_run("customer-onboarding", input={}, initiator_did="did:arc:x/1")
 
-    await complete_node(tasks, f"wf-{run.run_id}-collect-0", SALES_DID, {"company_domain": "a.io"})
+    await complete_node(tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"company_domain": "a.io"})
     await runner.advance(run.run_id)
-    await complete_node(tasks, f"wf-{run.run_id}-verify-0", SALES_DID, {"risk": "low"})
+    await complete_node(tasks, task_id(run.run_id, "verify", 0), SALES_DID, {"risk": "low"})
     await runner.advance(run.run_id)
 
     rows = await flow_tasks.query_by_flow_run(run.run_id)
@@ -158,9 +159,9 @@ async def test_router_choice_is_recorded_in_the_path_taken(stores: Any, registry
     runner = build(stores, registry, onboarding())
     run = await runner.start_run("customer-onboarding", input={}, initiator_did="did:arc:x/1")
 
-    await complete_node(tasks, f"wf-{run.run_id}-collect-0", SALES_DID, {"company_domain": "a.io"})
+    await complete_node(tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"company_domain": "a.io"})
     await runner.advance(run.run_id)
-    await complete_node(tasks, f"wf-{run.run_id}-verify-0", SALES_DID, {"risk": "high"})
+    await complete_node(tasks, task_id(run.run_id, "verify", 0), SALES_DID, {"risk": "high"})
     await runner.advance(run.run_id)
 
     record = await runs.get(run.run_id)
@@ -187,9 +188,9 @@ async def test_gate_node_materializes_as_a_review_task(stores: Any, registry: An
     runner = build(stores, registry, onboarding())
     run = await runner.start_run("customer-onboarding", input={}, initiator_did="did:arc:x/1")
 
-    await complete_node(tasks, f"wf-{run.run_id}-collect-0", SALES_DID, {"company_domain": "a.io"})
+    await complete_node(tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"company_domain": "a.io"})
     await runner.advance(run.run_id)
-    await complete_node(tasks, f"wf-{run.run_id}-verify-0", SALES_DID, {"risk": "high"})
+    await complete_node(tasks, task_id(run.run_id, "verify", 0), SALES_DID, {"risk": "high"})
     await runner.advance(run.run_id)
 
     rows = {r.metadata["node_id"]: r for r in await flow_tasks.query_by_flow_run(run.run_id)}
@@ -204,7 +205,7 @@ async def test_tool_node_args_resolve_by_value_from_upstream_output(
     run = await runner.start_run("customer-onboarding", input={}, initiator_did="did:arc:x/1")
 
     await complete_node(
-        tasks, f"wf-{run.run_id}-collect-0", SALES_DID, {"company_domain": "acme.example"}
+        tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"company_domain": "acme.example"}
     )
     await runner.advance(run.run_id)
 
@@ -238,7 +239,7 @@ async def test_llm_router_records_only_a_declared_choice(stores: Any, registry: 
     rows = await flow_tasks.query_by_flow_run(run.run_id)
     assert [r.metadata["node_id"] for r in rows] == ["pick"], "an llm router runs as a node"
 
-    await complete_node(tasks, f"wf-{run.run_id}-pick-0", SALES_DID, {"route": "fast"})
+    await complete_node(tasks, task_id(run.run_id, "pick", 0), SALES_DID, {"route": "fast"})
     await runner.advance(run.run_id)
 
     materialized = {
@@ -268,12 +269,102 @@ async def test_llm_router_undeclared_choice_fails_the_run(stores: Any, registry:
     runner = build(stores, registry, definition)
     run = await runner.start_run("triage", input={}, initiator_did="did:arc:x/1")
 
-    await complete_node(tasks, f"wf-{run.run_id}-pick-0", SALES_DID, {"route": "sideways"})
+    await complete_node(tasks, task_id(run.run_id, "pick", 0), SALES_DID, {"route": "sideways"})
     await runner.advance(run.run_id)
 
     record = await runs.get(run.run_id)
     assert record.status == "failed"
     assert "undeclared route" in (record.resolution or "")
+
+
+async def test_two_runs_can_never_derive_the_same_task_row(
+    stores: Any, registry: Any
+) -> None:
+    """The row id is an identity pair, so it must be UNAMBIGUOUS.
+
+    Joining on a character the components may also contain lets two different
+    (run, node) pairs land on one key. Because creation is idempotent on that
+    key, the colliding run would adopt the other run's row and read its output
+    as its own upstream — silent cross-run contamination, no error anywhere.
+    """
+    definition = Definition(
+        id="collide",
+        nodes=(Node(id="review-0", kind="agent", agent="@sales"),),
+    )
+    other = Definition(id="collide", nodes=(Node(id="0", kind="agent", agent="@sales"),))
+    flow_tasks, _, _ = stores
+
+    first = await build(stores, registry, definition).start_run(
+        "collide", input={}, initiator_did="did:arc:x/1", run_id="run-alpha"
+    )
+    second = await build(stores, registry, other).start_run(
+        "collide", input={}, initiator_did="did:arc:x/1", run_id="run-alpha-review"
+    )
+
+    left = await flow_tasks.query_by_flow_run(first.run_id)
+    right = await flow_tasks.query_by_flow_run(second.run_id)
+    assert len(left) == 1 and len(right) == 1
+    assert left[0].id != right[0].id, "two runs must never share a row"
+
+
+async def test_a_node_id_shaped_like_a_path_is_refused(
+    stores: Any, registry: Any
+) -> None:
+    """A node id is a NAME. It becomes a durable key and reaches an adapter."""
+    definition = Definition(
+        id="traversal",
+        nodes=(Node(id="../../etc/passwd", kind="agent", agent="@sales"),),
+    )
+    flow_tasks, runs, _ = stores
+    runner = build(stores, registry, definition)
+
+    record = await runner.start_run("traversal", input={}, initiator_did="did:arc:x/1")
+
+    assert record.status == "failed"
+    assert "never a path" in (record.resolution or "")
+    assert await flow_tasks.query_by_flow_run(record.run_id) == []
+
+
+async def test_a_caller_supplied_run_id_is_checked_before_anything_is_written(
+    stores: Any, registry: Any
+) -> None:
+    runner = build(stores, registry, onboarding())
+
+    with pytest.raises(ValueError, match="run id"):
+        await runner.start_run(
+            "customer-onboarding",
+            input={},
+            initiator_did="did:arc:x/1",
+            run_id="../../../escape",
+        )
+
+    _, runs, _ = stores
+    assert await runs.get("../../../escape") is None, "no Run row for a refused id"
+
+
+async def test_an_artifact_that_escapes_the_workspace_fails_the_node_closed(
+    stores: Any, registry: Any
+) -> None:
+    """The validator refuses these at authoring time — but only if it ever ran."""
+    definition = Definition(
+        id="artifacts",
+        nodes=(
+            Node(
+                id="collect",
+                kind="agent",
+                agent="@sales",
+                artifacts=("../../../etc/crontab",),
+            ),
+        ),
+    )
+    flow_tasks, _, _ = stores
+    runner = build(stores, registry, definition)
+
+    record = await runner.start_run("artifacts", input={}, initiator_did="did:arc:x/1")
+
+    assert record.status == "failed"
+    assert "escapes the workspace" in (record.resolution or "")
+    assert await flow_tasks.query_by_flow_run(record.run_id) == []
 
 
 async def test_a_definition_edited_mid_run_stops_the_run(
@@ -290,7 +381,7 @@ async def test_a_definition_edited_mid_run_stops_the_run(
     runner = build(stores, registry, onboarding(), definitions=definitions)
     run = await runner.start_run("customer-onboarding", input={}, initiator_did="did:arc:x/1")
 
-    await complete_node(tasks, f"wf-{run.run_id}-collect-0", SALES_DID, {"company_domain": "a.io"})
+    await complete_node(tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"company_domain": "a.io"})
     edited = Definition(
         id="customer-onboarding",
         version=5,
@@ -314,15 +405,15 @@ async def test_a_run_waiting_on_a_human_gate_says_so(stores: Any, registry: Any)
     runner = build(stores, registry, onboarding())
     run = await runner.start_run("customer-onboarding", input={}, initiator_did="did:arc:x/1")
 
-    await complete_node(tasks, f"wf-{run.run_id}-collect-0", SALES_DID, {"company_domain": "a.io"})
+    await complete_node(tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"company_domain": "a.io"})
     await runner.advance(run.run_id)
-    await complete_node(tasks, f"wf-{run.run_id}-verify-0", SALES_DID, {"risk": "high"})
+    await complete_node(tasks, task_id(run.run_id, "verify", 0), SALES_DID, {"risk": "high"})
     record = await runner.advance(run.run_id)
 
     assert record.status == "waiting_gate"
 
     await tasks.approve_review(
-        f"wf-{run.run_id}-manual_review-0", actor_did="did:arc:local:user/9"
+        task_id(run.run_id, "manual_review", 0), actor_did="did:arc:local:user/9"
     )
     record = await runner.advance(run.run_id)
 
@@ -353,7 +444,7 @@ async def test_a_node_that_would_need_interpolation_fails_closed(
     runner = build(stores, registry, definition)
     run = await runner.start_run("wired", input={}, initiator_did="did:arc:x/1")
 
-    await complete_node(tasks, f"wf-{run.run_id}-collect-0", SALES_DID, {"company_domain": "a.io"})
+    await complete_node(tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"company_domain": "a.io"})
     record = await runner.advance(run.run_id)
 
     assert record.status == "failed"
@@ -372,10 +463,10 @@ async def test_a_router_whose_predicate_cannot_be_evaluated_fails_closed(
     runner = build(stores, registry, onboarding())
     run = await runner.start_run("customer-onboarding", input={}, initiator_did="did:arc:x/1")
 
-    await complete_node(tasks, f"wf-{run.run_id}-collect-0", SALES_DID, {"company_domain": "a.io"})
+    await complete_node(tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"company_domain": "a.io"})
     await runner.advance(run.run_id)
     # The node completes without the `risk` field its router routes on.
-    await complete_node(tasks, f"wf-{run.run_id}-verify-0", SALES_DID, {"unrelated": 1})
+    await complete_node(tasks, task_id(run.run_id, "verify", 0), SALES_DID, {"unrelated": 1})
     record = await runner.advance(run.run_id)
 
     assert record.status == "failed"
@@ -410,13 +501,13 @@ async def test_loop_mints_iteration_stamped_rows_then_fails_on_exhaustion(
     run = await runner.start_run("qa-loop", input={}, initiator_did="did:arc:x/1")
 
     for iteration in range(3):
-        await complete_node(tasks, f"wf-{run.run_id}-draft-{iteration}", OPS_DID, {"draft": "x"})
+        await complete_node(tasks, task_id(run.run_id, "draft", iteration), OPS_DID, {"draft": "x"})
         await runner.advance(run.run_id)
         await complete_node(
-            tasks, f"wf-{run.run_id}-check-{iteration}", REVIEWER_DID, {"verdict": "revise"}
+            tasks, task_id(run.run_id, "check", iteration), REVIEWER_DID, {"verdict": "revise"}
         )
         await runner.advance(run.run_id)
-        await complete_node(tasks, f"wf-{run.run_id}-revise-{iteration}", OPS_DID, {"done": True})
+        await complete_node(tasks, task_id(run.run_id, "revise", iteration), OPS_DID, {"done": True})
         await runner.advance(run.run_id)
 
     rows = await flow_tasks.query_by_flow_run(run.run_id)
@@ -452,10 +543,10 @@ async def test_when_false_skips_the_node_and_the_run_completes(
     runner = build(stores, registry, definition)
     run = await runner.start_run("qa-loop", input={}, initiator_did="did:arc:x/1")
 
-    await complete_node(tasks, f"wf-{run.run_id}-draft-0", OPS_DID, {"draft": "x"})
+    await complete_node(tasks, task_id(run.run_id, "draft", 0), OPS_DID, {"draft": "x"})
     await runner.advance(run.run_id)
     await complete_node(
-        tasks, f"wf-{run.run_id}-check-0", REVIEWER_DID, {"verdict": "approve"}
+        tasks, task_id(run.run_id, "check", 0), REVIEWER_DID, {"verdict": "approve"}
     )
     record = await runner.advance(run.run_id)
 
@@ -469,7 +560,7 @@ async def test_queries_are_scoped_by_run_not_list_then_filter(
     flow_tasks, _, tasks = stores
     runner = build(stores, registry, onboarding())
     run = await runner.start_run("customer-onboarding", input={}, initiator_did="did:arc:x/1")
-    await complete_node(tasks, f"wf-{run.run_id}-collect-0", SALES_DID, {"company_domain": "a.io"})
+    await complete_node(tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"company_domain": "a.io"})
     await runner.advance(run.run_id)
 
     assert flow_tasks.scoped_queries, "the tick must read through the run-scoped query"
@@ -547,7 +638,7 @@ async def test_archiving_a_workflow_does_not_break_its_live_runs(
     run = await runner.start_run("customer-onboarding", input={}, initiator_did="did:arc:x/1")
 
     definitions.archived = True  # an operator archives it mid-run
-    await complete_node(tasks, f"wf-{run.run_id}-collect-0", SALES_DID, {"company_domain": "a.io"})
+    await complete_node(tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"company_domain": "a.io"})
     record = await runner.advance(run.run_id)
 
     assert record.status == "running"
