@@ -23,8 +23,10 @@
 | Layer | Package(s) | Responsibility |
 |-------|------------|----------------|
 | Trust foundation | `arctrust` | DID, Ed25519, signing, policy primitives, audit emission, sinks |
+| Prompt plane | `arcprompt` | Leaf (arctrust only) — editable, signed, inspectable system prompts; consumed by `arcrun`, `arcagent`, `arcmemory`, `arcskill` |
 | Provider abstraction | `arcllm` | LLM HTTP transport, request signing, PII redaction, OTel spans |
 | Loop | `arcrun` | Async ReAct, tool dispatch protocol, sandbox |
+| Data plane | `arcstore` | Operational/observability data plane — always-on spool + pluggable backend (tasks, approvals, cancellations, and — SPEC-061 — runs) |
 | Agent nucleus | `arcagent` | Orchestration, capability loading, module bus, sessions, scheduling |
 | Surface / adapters | `arccli`, `arcui`, `arcgateway`, `arcteam`, `arcskill` | CLI, dashboard, chat platforms, multi-agent, skill install |
 
@@ -36,12 +38,20 @@ graph TB
         AT[arctrust<br/>identity • sign • policy • audit]
     end
 
+    subgraph "Prompt plane"
+        AP[arcprompt<br/>signed editable prompts]
+    end
+
     subgraph "Provider abstraction"
         AL[arcllm<br/>16 providers via httpx]
     end
 
     subgraph "Loop"
         AR[arcrun<br/>ReAct + sandbox]
+    end
+
+    subgraph "Data plane"
+        ASTORE[arcstore<br/>spool • tasks • runs • approvals]
     end
 
     subgraph "Agent nucleus"
@@ -53,23 +63,43 @@ graph TB
         AU[arcui dashboard]
         AG[arcgateway daemon]
         ATM[arcteam messaging]
-        AS[arcskill installer]
+        ASK[arcskill installer]
     end
 
+    AP --> AT
     AL --> AT
     AR --> AT
     AR --> AL
+    ASTORE --> AT
     AA --> AR
     AA --> AL
     AA --> AT
-    AS --> AT
+    AA --> ASTORE
+    ASK --> AT
     AC --> AA
     AU --> AA
     AU --> AT
     AG --> AA
     AG --> AT
+    AG --> ASTORE
+    AG --> ATM
     ATM --> AT
+    ATM --> ASTORE
 ```
+
+`ATM --> ASTORE` is the new downward edge SPEC-061 (ArcFlow) adds: the workflow
+engine lives in `arcteam` (a narrowed multi-agent-coordination layer) and reuses
+`arcstore.tasks` + a new `arcstore.runs` collection as its execution substrate —
+a legal edge, since `arcstore` depends on nothing but `arctrust`
+(`tests/architecture/test_no_arcstore_arcteam_upward_imports.py` already omits
+`arcstore` from arcteam's forbidden-upward-import list). `AG --> ASTORE` and
+`AG --> ATM` are the same spec's COMP-009 (`RunnerHost`, added to
+`arcgateway/pyproject.toml`'s dependencies): it constructs and owns the ArcFlow
+runner's lifecycle inside the fleet-service bootstrap, on the agent side —
+never inside arcui's lifespan — so execution never requires the dashboard.
+`AA --> ASTORE` reflects existing, already-real usage (`arcagent.modules.tasks`,
+`orchestration.spawn`, `tools.approval_store`) that predates this spec and was
+previously undocumented here.
 
 ---
 
@@ -77,10 +107,12 @@ graph TB
 
 ```
 arc/  (monorepo root)
-├── packages/                      # 13 packages, layered dependency DAG
+├── packages/                      # 14 packages, layered dependency DAG
 │   ├── arctrust/                  # LEAF — Identity, Sign, Authorize, Audit primitives
+│   ├── arcprompt/                 # LEAF (arctrust only) — signed, editable system prompts
 │   ├── arcllm/                    # 16 LLM providers via direct httpx
 │   ├── arcrun/                    # Pure async ReAct loop + tool sandbox
+│   ├── arcstore/                  # Operational data plane — spool + pluggable store (tasks/runs/approvals)
 │   ├── arcagent/                  # Agent nucleus — orchestrator
 │   ├── arcskill/                  # Verified skill install (Sigstore+Rekor, AST scan)
 │   ├── arcteam/                   # Multi-agent messaging + HMAC audit
@@ -89,7 +121,6 @@ arc/  (monorepo root)
 │   ├── arccli/                    # `arc` CLI tool
 │   ├── arcmas/                    # Meta-package (installs everything)
 │   ├── arcmodel/                  # Model routing scaffolding (early)
-│   ├── arcprompt/                 # Strategy prompts scaffolding (early)
 │   └── arctui/                    # Terminal UI scaffolding (early)
 │
 ├── demo-extensions/               # Reference implementations
@@ -225,19 +256,23 @@ packages/arcagent/src/arcagent/
 ```
                            arctrust  (LEAF — no Arc imports)
                               ▲
-              ┌───────────────┼───────────────┐
-              │               │               │
-           arcllm          arcrun          arcskill
-              ▲               ▲               ▲
-              │               │               │
-              └────┬──────────┘               │
-                   │                          │
+              ┌───────────────┼───────────────┬───────────────┐
+              │               │               │               │
+           arcllm          arcrun          arcskill        arcstore
+              ▲               ▲               ▲               ▲   ▲
+              │               │               │               │   │
+              └────┬──────────┘               │               │   └── arcteam (SPEC-061, new edge)
+                   │                          │               │
                 arcagent  ◀────────────  arcteam, arcui, arcgateway
-                   ▲
-              ┌────┴────┐
+                   ▲                          │               │
+              ┌────┴────┐                     └── (arcgateway → arcstore, SPEC-061 COMP-009)
               │         │
            arccli     arcmas
                      (meta-pkg)
+
+arcprompt (LEAF, arctrust-only) — consumed by arcrun/arcagent/arcmemory/arcskill,
+not shown as a DAG edge above because no package in this diagram's chain
+re-exports it; each consumer imports arcprompt directly.
 ```
 
 Rules:
@@ -245,6 +280,8 @@ Rules:
 1. **`arctrust` is a leaf.** It depends only on PyNaCl, Pydantic, OpenTelemetry. Never imports any other Arc package.
 2. **No circular imports** — enforced by `make architecture-tests` (TX.1).
 3. **Each package is independently installable** from PyPI.
+4. **`arcstore` is a data-plane leaf.** It depends only on `arctrust` + Pydantic and must never import upward (`arcagent`, `arcui`, `arccli`, `arcrun`, `arcgateway`) — enforced by `tests/architecture/test_no_arcstore_arcteam_upward_imports.py`. `arcteam → arcstore` (SPEC-061: the ArcFlow workflow engine reuses `arcstore.tasks` + a new `runs` collection as its execution substrate) and `arcgateway → arcstore` (SPEC-061 COMP-009: `RunnerHost` owns the workflow runner's lifecycle on the agent side of the fleet service) are both legal downward edges onto this same leaf.
+5. **`arcprompt` is a prompt-plane leaf.** It depends only on `arctrust` + Pydantic/PyYAML and must never import upward — enforced by `tests/architecture/test_no_arcprompt_imports_upward.py`.
 4. **Concern separation is sacred** (per `CLAUDE.md`):
    - `arcllm` — all LLM calls.
    - `arcrun` — loop execution.
@@ -454,7 +491,7 @@ Legend: `# NEW:` create, `# MODIFY:` change, `# DELETE:` remove (rare).
 ## Open Questions (Architecture)
 
 - [ ] ADR-004 and ADR-019 are referenced from `CLAUDE.md` but not present as files in `.claude/adrs/`. Author them as records, or are they considered settled defaults that don't need ADRs?
-- [ ] `arctui`, `arcmodel`, `arcprompt` are scaffolding-stage (0.0.x). Stay in tree, or move to a separate experimental area until they reach 0.1?
+- [ ] `arctui` and `arcmodel` are scaffolding-stage (0.0.x). Stay in tree, or move to a separate experimental area until they reach 0.1? (`arcprompt` has since shipped at 0.1.0 with four real consumers — no longer scaffolding.)
 
 ---
 

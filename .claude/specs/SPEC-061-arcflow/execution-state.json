@@ -4,91 +4,91 @@
   "tasks": {
     "T-826": {
       "description": "(red) WorkflowDefinition model tests: five node kinds, needs, join, loops, schema_version",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-827": {
       "description": "(green) WorkflowDefinition models",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-828": {
       "description": "(red) PredicateEvaluator tests: whitelisted AST only, no calls or attribute access",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-829": {
       "description": "(green) PredicateEvaluator",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-830": {
       "description": "(red) GraphValidator tests: the join deadlock, cycles, dangling refs, unsatisfiable outputs, quotas",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-831": {
       "description": "(green) GraphValidator with SCC analysis and typed error list",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-832": {
       "description": "(red) Canonical hashing and manifest tests: reformat-stable, file-drift detected",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-833": {
       "description": "(green) DefinitionStore: canonical hash, file manifest, operator-pinned verification, tier gate",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-834": {
       "description": "(red) Draft-status invariant test: validation success never confers signed status",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-835": {
       "description": "(red) Run store tests: lifecycle, path taken, conditional transitions",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-836": {
       "description": "(green) Run store on the shared mutable plane",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-837": {
       "description": "(red) Batch task creation tests: cross-owner atomicity and idempotency",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-838": {
       "description": "(green) Batch task creation keyed on run and node identity",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
@@ -102,28 +102,28 @@
     },
     "T-840": {
       "description": "(red) ValueResolver tests: typed binding, never textual interpolation",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-841": {
       "description": "(green) ValueResolver",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-842": {
       "description": "(red) Runner tests: lazy materialization, routers, loops, path taken, cancel ordering",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-843": {
       "description": "(green) WorkflowRunner: frontier advancement, routing, loops, wiring, budget",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
@@ -186,14 +186,14 @@
     },
     "T-860": {
       "description": "(green) Runner: resume without re-execution, and ordered cancellation",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-861": {
       "description": "(green) Runner: run-level budget, stall detection, and terminal roll-up",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
@@ -214,56 +214,56 @@
     },
     "T-866": {
       "description": "(red) Handoff invariant: a run completes with every outbound message dropped",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-867": {
       "description": "(green) Handoff writes name exactly one owner and are atomically claimed",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-868": {
       "description": "(green) WorkflowControlPlane: one shared operation set for every surface",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-870": {
       "description": "(green) Archive semantics: hide and disable without erasing history",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-871": {
       "description": "(green) Purge guard: refuse while runs reference the definition",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-852": {
       "description": "(green) Runner host in the fleet service with singleton enforcement",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-853": {
       "description": "(refactor) Layer model and dependency declarations updated",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-854": {
       "description": "(green) Channel binding and run narration",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
@@ -284,7 +284,7 @@
     },
     "T-857": {
       "description": "(green) Operator signing and workflow CLI",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
