@@ -92,12 +92,12 @@
   - Components: COMP-004
   - Requirements: REQ-239
   - Acceptance: Resolution reads only validated upstream outputs recorded on task rows. The resolver tests pass.
-- [ ] **T-842**: (red) Runner tests: lazy materialization, routers, loops, path taken, cancel ordering
+- [x] **T-842**: (red) Runner tests: lazy materialization, routers, loops, path taken, cancel ordering
   - domain: test
   - Components: COMP-008
   - Requirements: REQ-220, REQ-229, REQ-233
   - Acceptance: Only reachable nodes materialize; untaken branches produce no task rows; a loop mints iteration-stamped rows up to its bound then fails the node; a completed node is never re-executed on resume.
-- [ ] **T-843**: (green) WorkflowRunner: frontier advancement, routing, loops, wiring, budget
+- [x] **T-843**: (green) WorkflowRunner: frontier advancement, routing, loops, wiring, budget
   - domain: backend
   - Components: COMP-008
   - Requirements: REQ-218, REQ-220, REQ-229
@@ -142,12 +142,12 @@
   - Components: COMP-013
   - Requirements: REQ-221
   - Acceptance: Follows the repository's seven-section skill format with no filler sections; covers what to elicit, node-kind selection, the named coordination patterns, and the anti-patterns to refuse including building a workflow for something that runs once.
-- [ ] **T-860**: (green) Runner: resume without re-execution, and ordered cancellation
+- [x] **T-860**: (green) Runner: resume without re-execution, and ordered cancellation
   - domain: backend
   - Components: COMP-008
   - Requirements: REQ-233, REQ-234, REQ-235
   - Acceptance: A restart mid-materialization re-derives already-materialized nodes rather than duplicating them; a completed node's recorded output is replayed rather than recomputed; a cancel marks the run before fanning out so a node completing during the sweep cannot extend the frontier.
-- [ ] **T-861**: (green) Runner: run-level budget, stall detection, and terminal roll-up
+- [x] **T-861**: (green) Runner: run-level budget, stall detection, and terminal roll-up
   - domain: backend
   - Components: COMP-006, COMP-008
   - Requirements: REQ-228, REQ-236
@@ -162,17 +162,17 @@
   - Components: COMP-005, COMP-012
   - Requirements: REQ-222, REQ-248
   - Acceptance: An edit requires the editor's expected version, refuses a stale edit rather than merging it, increments the version, returns the definition to draft, and audits the actor and reason; rejection errors carry node id, field, observed value, and admissible alternatives.
-- [ ] **T-866**: (red) Handoff invariant: a run completes with every outbound message dropped
+- [x] **T-866**: (red) Handoff invariant: a run completes with every outbound message dropped
   - domain: test
   - Components: COMP-008, COMP-010
   - Requirements: REQ-251
   - Acceptance: With the messenger stubbed to drop every send, a multi-agent run still advances node to node and reaches a terminal state, proving no progress depends on message delivery. A companion assertion proves no node's work content is read from a message body: task rows and validated upstream outputs are the only inputs to a node's prompt.
-- [ ] **T-867**: (green) Handoff writes name exactly one owner and are atomically claimed
+- [x] **T-867**: (green) Handoff writes name exactly one owner and are atomically claimed
   - domain: backend
   - Components: COMP-007, COMP-008
   - Requirements: REQ-251
   - Acceptance: Each materialized node row carries the owner named by the definition; two agents racing the same row produce exactly one claim; an undelivered wake signal costs only latency because the owning agent's dispatch loop finds the row on its next tick.
-- [ ] **T-868**: (green) WorkflowControlPlane: one shared operation set for every surface
+- [x] **T-868**: (green) WorkflowControlPlane: one shared operation set for every surface
   - domain: backend
   - Components: COMP-021
   - Requirements: REQ-252, REQ-253
@@ -200,7 +200,7 @@
   - Components: COMP-009
   - Requirements: REQ-230
   - Acceptance: The structure steering document shows the store package and the new downward edge; the gateway package declares its new dependencies; the agent package's dependency posture is decided and recorded; architecture tests pass.
-- [ ] **T-854**: (green) Channel binding and run narration
+- [x] **T-854**: (green) Channel binding and run narration
   - domain: backend
   - Components: COMP-010
   - Requirements: REQ-244
