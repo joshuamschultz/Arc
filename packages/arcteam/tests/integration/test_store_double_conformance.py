@@ -170,3 +170,13 @@ async def test_the_one_documented_divergence_is_the_missing_state_row(
         await real_runs.append_path("gone", {"kind": "settled"}, actor_did=RUNNER)
 
     await double_runs.append_path("gone", {"kind": "settled"}, actor_did=RUNNER)
+
+
+async def test_the_run_reference_count_agrees_in_both(pair: Any) -> None:
+    """The purge guard reads this number; destroying history depends on it."""
+    for _, runs in pair:
+        await _create(runs, "r1")
+        await _create(runs, "r2")
+
+        assert await runs.count_runs_for_workflow("conformance") == 2
+        assert await runs.count_runs_for_workflow("other") == 0

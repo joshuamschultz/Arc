@@ -311,6 +311,12 @@ class FlowRunStore:
         raw.pop("updated_at", None)
         return RunRow(**raw)
 
+    async def count_runs_for_workflow(self, workflow_id: str) -> int:
+        rows = await self._backend.mutable_query(
+            self._COLLECTION, where={"workflow_id": workflow_id}
+        )
+        return len(rows)
+
     async def set_status(
         self,
         run_id: str,

@@ -213,6 +213,19 @@ class DefinitionStoreLike(Protocol):
 
     def unarchive(self, workflow_id: str, *, actor_did: str) -> BundleSpec: ...
 
+    def purge(
+        self,
+        workflow_id: str,
+        *,
+        actor_did: str,
+        runs_referencing: Callable[[str], int],
+        force: bool = False,
+        reason: str = "",
+    ) -> None:
+        """Destroy a bundle. ``runs_referencing`` is injected so this layer
+        keeps no dependency on the run store; the control plane supplies it."""
+        ...
+
 
 class ValidationIssueLike(Protocol):
     """One repairable validation failure, addressed to a field of a node."""
@@ -342,6 +355,15 @@ class RunStoreLike(Protocol):
 
     async def active_runs(self) -> Sequence[RunRecord]:
         """Every non-terminal run, for the tick to advance."""
+        ...
+
+    async def count_runs_for_workflow(self, workflow_id: str) -> int:
+        """How many runs reference this workflow — the purge guard's input.
+
+        Counts EVERY run, not just live ones: a finished run's history stops
+        being renderable the moment its definition is destroyed, and that is
+        what the guard exists to protect (REQ-256).
+        """
         ...
 
 
