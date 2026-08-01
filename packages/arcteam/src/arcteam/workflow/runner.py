@@ -249,8 +249,9 @@ class WorkflowRunner:
             )
         definition = bundle.definition
 
-        if self._wall_clock_exceeded(run):
-            return await self._terminate(run_id, "failed", "budget exhausted: wall clock")
+        wall_clock = self._wall_clock_failure(run)
+        if wall_clock is not None:
+            return await self._terminate(run_id, "failed", f"budget exhausted: {wall_clock}")
         run = await self._settle_spend(run)
         dimension = self._spent_dimension(run)
         if dimension is not None:
@@ -912,14 +913,25 @@ class WorkflowRunner:
             return "cost"
         return None
 
-    def _wall_clock_exceeded(self, run: RunRecord) -> bool:
-        if run.budget_wall_clock_s is None or run.started_at is None:
-            return False
+    def _wall_clock_failure(self, run: RunRecord) -> str | None:
+        """Why the wall-clock budget must stop this run, or ``None`` to continue.
+
+        Fail CLOSED on an unreadable start time. Returning "not exceeded" there
+        would silently disable the only bound on how long a run may burn — a
+        resource control that turns itself off on bad input is worse than one
+        that refuses, because nothing ever reports it (REQ-236).
+        """
+        if run.budget_wall_clock_s is None:
+            return None
+        if run.started_at is None:
+            return "wall clock: run has no start time, so it cannot be bounded"
         try:
             started = datetime.fromisoformat(run.started_at)
         except ValueError:
-            return False
-        return (self._clock() - started).total_seconds() > run.budget_wall_clock_s
+            return f"wall clock: unreadable start time {run.started_at!r}, so it cannot be bounded"
+        if (self._clock() - started).total_seconds() > run.budget_wall_clock_s:
+            return "wall clock"
+        return None
 
     # -- small helpers -------------------------------------------------------
 

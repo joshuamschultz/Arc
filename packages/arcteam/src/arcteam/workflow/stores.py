@@ -37,6 +37,10 @@ from .runner_contracts import RunStatus
 
 logger = logging.getLogger(__name__)
 
+
+class RunStateMissingError(RuntimeError):
+    """The runner's companion state row for a run is gone."""
+
 _STATE_COLLECTION = "workflow_run_state"
 _TASK_COLLECTION = "tasks"
 
@@ -196,7 +200,13 @@ class WorkflowRunStore:
         """Journal the entry, and mirror it onto the Run when it is a real outcome."""
         state = await self._backend.mutable_read(_STATE_COLLECTION, run_id)
         if state is None:
-            return
+            # Not a trace line that can be shrugged off: this row carries the
+            # settled/skipped/route bookkeeping, so dropping an entry silently
+            # double-counts spend and re-decides branches on the next tick.
+            # Raise and let the tick fail THIS run loudly rather than mis-account it.
+            raise RunStateMissingError(
+                f"run {run_id} has no workflow state row; its journal cannot be appended to"
+            )
         path = [*(state.get("path") or []), dict(entry)]
         await self._backend.mutable_merge(
             _STATE_COLLECTION, run_id, {"path": path}, actor_did=actor_did, sink=self._sink
@@ -341,6 +351,7 @@ def _channel_admitter(registry: Any, messenger: Any, identity: Any) -> Any:
 __all__ = [
     "FlowRun",
     "RegistryOwnerResolver",
+    "RunStateMissingError",
     "WorkflowRunStore",
     "WorkflowTaskStore",
     "build_team_bindings",
