@@ -226,3 +226,108 @@ async def test_a_runner_without_an_identity_refuses_to_build(tmp_path: Path) -> 
             )
     finally:
         await backend.stop()
+
+
+# ---------------------------------------------------------------------------
+# The two dead wires: owner resolution and narration (D-511, D-536)
+# ---------------------------------------------------------------------------
+
+CHANNEL_WORKFLOW = """
+[workflow]
+id = "narrated"
+version = 1
+description = "One node, bound to a channel."
+owner = "@sales"
+channel = "channel://onboarding"
+
+[[node]]
+id = "collect"
+kind = "agent"
+agent = "@sales"
+"""
+
+
+@pytest.fixture
+async def wired(tmp_path: Path, monkeypatch: Any) -> Any:
+    """A deployment wired the way the gateway wires one, on tmp paths.
+
+    Only the path resolvers and the bus factory are redirected. Everything else
+    — the default factory, the team bindings, the registry, the messenger — is
+    the real production path, because the bug being guarded lives exactly there.
+    """
+    from arctrust import OperatorKey
+
+    from arcteam.audit import AuditLogger
+    from arcteam.registry import EntityRegistry
+    from arcteam.storage import MemoryBackend
+    from arcteam.types import Entity, EntityType
+
+    key_path = tmp_path / "operator" / "operator.key"
+    key = OperatorKey.generate()
+    key.save(key_path)
+
+    bundle = tmp_path / "workflows" / "narrated"
+    bundle.mkdir(parents=True)
+    (bundle / "workflow.toml").write_text(CHANNEL_WORKFLOW)
+
+    team_backend = MemoryBackend()
+    audit = AuditLogger(team_backend, key.into_signer())
+    await audit.initialize()
+    registry = EntityRegistry(team_backend, audit)
+    await registry.register(
+        Entity(
+            did=SALES_DID,
+            handle="sales",
+            id="agent://sales",
+            name="Sales",
+            type=EntityType.AGENT,
+            public_key="00" * 32,
+        )
+    )
+
+    import arcgateway.workflow_runner_host as host_mod
+
+    async def _shared_backend(url: str) -> Any:
+        return team_backend
+
+    monkeypatch.setattr(host_mod, "_resolve_runner_key_path", lambda: key_path)
+    monkeypatch.setattr(host_mod, "_nats_url", lambda: "")
+    monkeypatch.setattr(
+        "arcagent.core.arcteam_bootstrap.make_backend", _shared_backend, raising=False
+    )
+    monkeypatch.setattr("arcstore.config.store_db_path", lambda _: tmp_path / "store.db")
+
+    yield tmp_path, key_path, team_backend, registry
+
+
+async def test_the_default_factory_resolves_a_node_owner(wired: Any) -> None:
+    """A runner from the REAL default path must own its rows to a real agent."""
+    host = await start_runner_host(tier="personal")
+    assert host is not None
+
+    owners = host._runner._owners
+    assert await owners.resolve_owner("@sales") == SALES_DID, (
+        "the default factory wired no registry — every run fails at node 1"
+    )
+    await host.stop()
+
+
+async def test_the_default_factory_narrates_to_the_bound_channel(wired: Any) -> None:
+    """A run through the real path must actually post to its channel."""
+    host = await start_runner_host(tier="personal")
+    assert host is not None
+    runner = host._runner
+
+    run = await runner.start_run(
+        "narrated", input={}, initiator_did="did:arc:local:user/9999"
+    )
+
+    messenger = runner._narrator._sender
+    posted = await messenger.list_channel_messages("onboarding")
+    bodies = [m.body for m in posted]
+    assert bodies, "narration was wired but nothing reached the channel"
+    assert any("Run started" in b for b in bodies)
+    assert any("collect" in b for b in bodies), "the handoff was not narrated"
+    assert all(m.action_required is False and m.mentions == [] for m in posted)
+    assert run.status == "running"
+    await host.stop()

@@ -175,12 +175,63 @@ async def _default_runner_factory(*, tier: str, key_path: Path) -> WorkflowRunne
 
     backend = SqliteBackend(store_db_path(None))
     await backend.start()
+    owners, narrator = await _team_bindings(key_path)
     runner = build_workflow_runner(
         tier=tier,
         task_store_backend=backend,
         runner_key_path=key_path,
+        registry=owners,
+        narrator=narrator,
     )
     return cast(WorkflowRunnerProtocol, runner)
+
+
+async def _team_bindings(key_path: Path) -> tuple[Any, Any]:
+    """Owner resolution and narration, on the SAME bus the agents use.
+
+    Without these two a runner starts healthy and is useless: it resolves no
+    node owner, so every run fails at its first node, and it narrates nowhere,
+    so the channel half of the design is silently absent. Both are the same
+    dead-wiring failure as never starting at all, one layer in.
+
+    Degrades to ``(None, None)`` with a warning rather than refusing to start —
+    a runner that resolves owners from a stale connection would be worse than
+    one that says plainly it cannot.
+    """
+    try:
+        from arcagent.core.arcteam_bootstrap import make_backend
+        from arcteam.workflow.identity import RunnerIdentity
+        from arcteam.workflow.stores import build_team_bindings
+
+        identity = RunnerIdentity.load(key_path)
+        team_backend = await make_backend(_nats_url())
+        owners, narrator = await build_team_bindings(
+            backend=team_backend,
+            operator_signer=_operator_signer(key_path),
+            identity=identity,
+        )
+    except Exception:
+        _logger.warning(
+            "workflow runner: team bindings unavailable — node owners cannot be "
+            "resolved and runs will not be narrated",
+            exc_info=True,
+        )
+        return None, None
+    return owners, narrator
+
+
+def _nats_url() -> str:
+    """The messaging substrate url, or empty for the in-process bus."""
+    import os
+
+    return os.environ.get("ARC_NATS_URL", "")
+
+
+def _operator_signer(key_path: Path) -> Any:
+    """The deployment authority that signs the messaging audit chain (AU-9/10)."""
+    from arctrust import OperatorKey
+
+    return OperatorKey.load(key_path, generate_if_absent=False).into_signer()
 
 
 async def start_runner_host(

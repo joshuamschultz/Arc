@@ -32,6 +32,7 @@ from arcstore.runs import PathEntry, Run, RunStore
 from arcstore.tasks import Task, TaskStore
 from arctrust.audit import AuditSink
 
+from .narrator import RunNarrator
 from .runner_contracts import RunStatus
 
 logger = logging.getLogger(__name__)
@@ -270,9 +271,77 @@ class RegistryOwnerResolver:
         return None if entity is None else str(entity.did)
 
 
+async def build_team_bindings(
+    *, backend: Any, operator_signer: Any, identity: Any
+) -> tuple[Any, RunNarrator]:
+    """The two team-side dependencies a production runner needs.
+
+    Owner resolution and narration both ride the SAME arcteam backend, registry,
+    and audit chain the agents use — a runner resolving handles against a
+    different registry than the one agents register in would resolve nothing.
+
+    The runner narrates under its OWN key-bound DID (COMP-011), so subscribing
+    agents can verify the envelope instead of quarantining it. The audit chain
+    is signed by the deployment operator authority, never an ephemeral key, or
+    the ``message.sent`` records would be repudiable.
+    """
+    from arcteam.audit import AuditLogger
+    from arcteam.messenger import MessagingService
+    from arcteam.registry import EntityRegistry
+
+    audit = AuditLogger(backend, operator_signer)
+    await audit.initialize()
+    registry = EntityRegistry(backend, audit)
+    messenger = MessagingService(backend, registry, audit, signer=identity.message_signer())
+    narrator = RunNarrator(
+        messenger,
+        sender_did=identity.did,
+        ensure_channel=_channel_admitter(registry, messenger, identity),
+    )
+    # The raw registry, not a resolver: build_workflow_runner owns the wrapping,
+    # and returning a pre-wrapped one double-wraps it.
+    return registry, narrator
+
+
+def _channel_admitter(registry: Any, messenger: Any, identity: Any) -> Any:
+    """Register the runner and join a bound channel before narrating to it.
+
+    ``MessagingService.send`` refuses a sender that is not a registered entity
+    and a member of the target channel. Without this the narrator would be
+    fully wired and every post would still be dropped — the same silent
+    failure as not wiring it at all, one layer deeper. Auto-join is correct
+    here for the same reason it is for the operator: the runner is a trusted
+    deployment component, not a participant asking for access.
+    """
+
+    async def admit(channel_name: str) -> None:
+        from arcteam.types import Channel, Entity, EntityType
+
+        if await registry.get(identity.did) is None:
+            await registry.register(
+                Entity(
+                    did=identity.did,
+                    handle="workflow-runner",
+                    id="agent://workflow-runner",
+                    name="Workflow Runner",
+                    type=EntityType.AGENT,
+                    public_key=identity.public_key_hex,
+                )
+            )
+        channels = await messenger.list_channels()
+        existing = next((c for c in channels if c.name == channel_name), None)
+        if existing is None:
+            await messenger.create_channel(Channel(name=channel_name, members=[identity.did]))
+        elif identity.did not in existing.members:
+            await messenger.join_channel(channel_name, identity.did)
+
+    return admit
+
+
 __all__ = [
     "FlowRun",
     "RegistryOwnerResolver",
     "WorkflowRunStore",
     "WorkflowTaskStore",
+    "build_team_bindings",
 ]
