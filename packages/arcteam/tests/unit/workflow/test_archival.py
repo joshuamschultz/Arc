@@ -17,7 +17,9 @@ from arctrust import generate_keypair
 from arcteam.workflow import (
     DefinitionStore,
     PurgeRefusedError,
+    UnsignedWorkflowError,
     WorkflowArchivedError,
+    WorkflowIntegrityError,
     WorkflowNotFoundError,
     parse_definition,
     sign_definition,
@@ -221,3 +223,66 @@ def test_purging_an_absent_workflow_raises(store: DefinitionStore) -> None:
 def test_archiving_an_absent_workflow_raises(store: DefinitionStore) -> None:
     with pytest.raises(WorkflowNotFoundError):
         store.archive("ghost", actor_did=ACTOR)
+
+
+# --- archive vs. in-flight runs ---------------------------------------------
+
+
+def test_archiving_does_not_break_dispatch_for_an_already_admitted_run(
+    store: DefinitionStore,
+) -> None:
+    """Archiving refuses NEW runs; it does not terminate live ones.
+
+    The admission question ("may a run start?") and the integrity question
+    ("are these still the bytes that were signed?") are different gates. A run
+    already in flight has passed admission, so its per-node dispatch must keep
+    resolving the definition while still being integrity-checked.
+    """
+    store.archive("retired", actor_did=ACTOR)
+
+    bundle = store.load_for_dispatch("retired")
+
+    assert bundle.status == "archived"
+    assert bundle.definition.id == "retired"
+
+
+def test_dispatch_still_fails_closed_on_drift_under_a_signature(tmp_path: Path) -> None:
+    """Relaxing the archive check must not relax the integrity check."""
+    keypair = generate_keypair()
+    store = DefinitionStore(tmp_path / "workflows", operator_public_key=keypair.public_key)
+    bundle = store.save_draft(
+        parse_definition(DOCUMENT), actor_did="did:arc:agent:sales", expected_version=None
+    )
+    sign_definition(
+        store, "retired", signer_did="did:arc:operator:x", private_key=keypair.private_key
+    )
+    store.archive("retired", actor_did=ACTOR)
+
+    text = (bundle.root / "workflow.toml").read_text().replace('"@sales"', '"@attacker"')
+    (bundle.root / "workflow.toml").write_text(text)
+
+    with pytest.raises(WorkflowIntegrityError):
+        store.load_for_dispatch("retired")
+
+
+def test_dispatch_still_refuses_an_unsigned_definition_above_personal(tmp_path: Path) -> None:
+    """Relaxing the archive check must not relax the tier gate either."""
+    keypair = generate_keypair()
+    store = DefinitionStore(
+        tmp_path / "workflows", tier="federal", operator_public_key=keypair.public_key
+    )
+    store.save_draft(
+        parse_definition(DOCUMENT), actor_did="did:arc:agent:sales", expected_version=None
+    )
+
+    with pytest.raises(UnsignedWorkflowError):
+        store.load_for_dispatch("retired")
+
+
+def test_load_for_run_is_the_admission_gate_and_still_refuses_an_archived_workflow(
+    store: DefinitionStore,
+) -> None:
+    store.archive("retired", actor_did=ACTOR)
+
+    with pytest.raises(WorkflowArchivedError):
+        store.load_for_run("retired")
