@@ -230,12 +230,12 @@
   - Components: COMP-019
   - Requirements: REQ-224
   - Acceptance: Sign, verify, list, show, run, and cancel work from the operator surface; the signing key is resolved only here and never inside an agent process, asserted by test.
-- [ ] **T-858**: (green) End-to-end: describe, sign, run twice, identical path
+- [x] **T-858**: (green) End-to-end: describe, sign, run twice, identical path
   - domain: test
   - Components: COMP-005, COMP-006, COMP-008, COMP-012, COMP-014, COMP-019
   - Requirements: REQ-217, REQ-224, REQ-228
   - Acceptance: A three-node multi-agent workflow is authored through builder tools, signed out-of-band, and run; version, path taken, signer, and gate approvers are reconstructible from durable signed records.
-- [ ] **T-864**: (green) End-to-end: two runs of one signed workflow produce identical paths
+- [x] **T-864**: (green) End-to-end: two runs of one signed workflow produce identical paths
   - domain: test
   - Components: COMP-008, COMP-014
   - Requirements: REQ-233, REQ-237

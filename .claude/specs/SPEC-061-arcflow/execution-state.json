@@ -291,14 +291,14 @@
     },
     "T-858": {
       "description": "(green) End-to-end: describe, sign, run twice, identical path",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-864": {
       "description": "(green) End-to-end: two runs of one signed workflow produce identical paths",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []

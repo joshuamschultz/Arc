@@ -331,3 +331,69 @@ async def test_the_default_factory_narrates_to_the_bound_channel(wired: Any) -> 
     assert all(m.action_required is False and m.mentions == [] for m in posted)
     assert run.status == "running"
     await host.stop()
+
+
+async def test_two_runs_of_one_workflow_take_the_identical_path(deployment: Any) -> None:
+    """T-864 — the whole point of the feature: the same process, the same way, twice.
+
+    A workflow that improvises is a workflow you cannot audit or hold a process
+    to. Both runs must materialize the same nodes, to the same owners, in the
+    same order, against the same definition version and content hash.
+
+    Deliberately drives the real machinery: real store, real bundle, real
+    operator key, real runner, advanced through the same ``tick`` the gateway
+    host runs.
+    """
+    root, key_path, backend = deployment
+    runner = build_workflow_runner(
+        tier="personal",
+        task_store_backend=backend,
+        runner_key_path=key_path,
+        workspace_root=root,
+        registry=Registry({"sales": SALES_DID, "ops": OPS_DID}),
+    )
+    tasks = TaskStore(backend)
+
+    async def drive_one_run() -> tuple[list[tuple[str, str | None]], int, str]:
+        run = await runner.start_run(
+            "onboarding", input={}, initiator_did="did:arc:local:user/9999"
+        )
+        # Node rows are keyed wf/<run>/<node>/<iteration>; Task.run_id is the
+        # arcrun correlation id, a different thing from the flow run id.
+        prefix = f"wf/{run.run_id}/"
+        for _ in range(6):
+            rows = [t for t in await tasks.list() if t.id.startswith(prefix)]
+            pending = [t for t in rows if t.status not in {"done", "failed"}]
+            if not pending:
+                break
+            for row in pending:
+                await tasks.start_task(row.id, row.owner_did or "")
+                await tasks.finish(
+                    row.id,
+                    status="done",
+                    resolution="ok",
+                    actor_did=row.owner_did or "",
+                    output={"ok": True},
+                )
+            await runner.tick()
+        final = await runner._runs.get(run.run_id)
+        rows = sorted(
+            (t for t in await tasks.list() if t.id.startswith(prefix)),
+            key=lambda t: t.created_at or "",
+        )
+        order = [(t.metadata.get("node_id", "?"), t.owner_did) for t in rows]
+        return order, final.version, final.content_hash
+
+    first_order, first_version, first_hash = await drive_one_run()
+    second_order, second_version, second_hash = await drive_one_run()
+
+    assert first_order, "the first run materialized no nodes at all"
+    assert first_order == second_order, (
+        f"the same workflow took different paths: {first_order} then {second_order}"
+    )
+    assert [n for n, _ in first_order] == ["collect", "verify"], (
+        f"nodes ran out of declared order: {first_order}"
+    )
+    assert (first_version, first_hash) == (second_version, second_hash), (
+        "both runs must pin the same definition version and content hash"
+    )
