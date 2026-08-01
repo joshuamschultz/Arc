@@ -19,16 +19,16 @@ guard widened.
 
 Merge-reconciliation note (SPEC-061 concurrent build)
 ------------------------------------------------------
-``arcteam.workflows.runner`` (COMP-008) and its construction helper are being
+``arcteam.workflow.runner`` (COMP-008) and its construction helper are being
 implemented concurrently on a sibling branch. This module codes against the
 SDD's documented contract (SDD.md COMP-008/COMP-011) via
 :class:`WorkflowRunnerProtocol` and resolves the real implementation lazily
-by name (``importlib``, never a static ``from arcteam.workflows... import
+by name (``importlib``, never a static ``from arcteam.workflow... import
 ...``) so mypy --strict does not fail resolving a submodule that does not
 exist yet in this checkout, and this module degrades to a clear, logged
 no-op (fail-open — the rest of the gateway still boots) until arcteam's half
 lands. At merge, reconcile ``_default_runner_factory`` against the real
-``arcteam.workflows.runner.build_workflow_runner`` signature.
+``arcteam.workflow.runner.build_workflow_runner`` signature.
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ _logger = logging.getLogger("arcgateway.workflow_runner_host")
 
 @runtime_checkable
 class WorkflowRunnerProtocol(Protocol):
-    """Structural contract for ``arcteam.workflows.runner.WorkflowRunner`` (COMP-008).
+    """Structural contract for ``arcteam.workflow.runner.WorkflowRunner`` (COMP-008).
 
     "Holds no model and makes no LLM call" (SDD.md COMP-008) — deterministic
     module code, a background loop analogous to the existing 5s reliability
@@ -147,17 +147,17 @@ def _resolve_runner_key_path() -> Path:
 async def _default_runner_factory(*, tier: str, key_path: Path) -> WorkflowRunnerProtocol:
     """Build the real arcteam WorkflowRunner (COMP-008), resolved lazily.
 
-    Only constructs an arcstore backend once ``arcteam.workflows.runner`` is
+    Only constructs an arcstore backend once ``arcteam.workflow.runner`` is
     confirmed present — a checkout without SPEC-061's arcteam half pays no
     extra cost. Raises :class:`RuntimeError` (never a bare ``ImportError``)
     so callers can fail open with a clear log line rather than crash the
     gateway boot.
     """
     try:
-        module = importlib.import_module("arcteam.workflows.runner")
+        module = importlib.import_module("arcteam.workflow.runner")
     except ImportError as exc:
         raise RuntimeError(
-            "arcteam.workflows.runner.build_workflow_runner is not available — "
+            "arcteam.workflow.runner.build_workflow_runner is not available — "
             "SPEC-061's arcteam engine (COMP-008/COMP-011) has not landed in "
             "this checkout. RunnerHost cannot start (see "
             "arcgateway.workflow_runner_host merge-reconciliation note)."
@@ -165,7 +165,7 @@ async def _default_runner_factory(*, tier: str, key_path: Path) -> WorkflowRunne
     build_workflow_runner = getattr(module, "build_workflow_runner", None)
     if build_workflow_runner is None:
         raise RuntimeError(
-            "arc gateway: arcteam.workflows.runner has no build_workflow_runner() "
+            "arc gateway: arcteam.workflow.runner has no build_workflow_runner() "
             "— reconcile arcgateway.workflow_runner_host against the landed "
             "arcteam API."
         )

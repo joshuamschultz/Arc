@@ -176,3 +176,64 @@ def test_runner_host_module_has_no_arcui_dependency() -> None:
             assert not any(n.split(".")[0] == "arcui" for n in names), (
                 f"{mod.__name__} imports arcui at line {node.lineno}"
             )
+
+
+# ---------------------------------------------------------------------------
+# Anti-fail-open (SPEC-061 REQ-230/231)
+#
+# This feature's stated top risk is "producers unwired": correct predicates
+# shipped with dead activating wiring. Fail-open is its worst form — the
+# gateway boots, nothing errors, and every gate the feature builds is bypassed
+# by simply never running. These tests exist so that state cannot be silent.
+# ---------------------------------------------------------------------------
+
+
+def test_the_host_names_the_module_that_actually_exists() -> None:
+    """The host resolves arcteam's runner by name, so a typo is invisible.
+
+    It shipped importing `arcteam.workflows.runner` (plural) — a module that
+    exists in no checkout — and failed open, so no runner ever started and
+    nothing said so. Importing the real module here is what makes that class
+    of typo a red test instead of a silent no-op.
+    """
+    import importlib
+    import inspect
+
+    from arcgateway import workflow_runner_host
+
+    source = inspect.getsource(workflow_runner_host)
+    assert "arcteam.workflows" not in source, (
+        "the host names arcteam.workflows (plural); the package is arcteam.workflow"
+    )
+    importlib.import_module("arcteam.workflow.runner")
+
+
+async def test_a_runner_that_cannot_be_built_is_reported_not_swallowed() -> None:
+    """Fail-open is allowed; failing SILENTLY is not.
+
+    A checkout without the engine may still boot the gateway — but the operator
+    has to be able to tell that no workflow will ever progress. The host must
+    surface the reason rather than returning None with an empty log.
+    """
+    import logging
+
+    from arcgateway.workflow_runner_host import start_runner_host
+
+    def _explodes(**_: object) -> object:
+        raise RuntimeError("engine absent in this checkout")
+
+    logger = logging.getLogger("arcgateway.workflow_runner_host")
+    records: list[logging.LogRecord] = []
+    handler = logging.Handler()
+    handler.emit = records.append  # type: ignore[method-assign]
+    logger.addHandler(handler)
+    try:
+        host = await start_runner_host(tier="personal", runner_factory=_explodes)
+    finally:
+        logger.removeHandler(handler)
+
+    assert host is None, "an unbuildable runner must not yield a live host"
+    assert records, "a gateway with no workflow runner must say so in the log"
+    assert any("engine absent" in r.getMessage() or r.exc_info for r in records), (
+        "the log line must carry the reason, not just note an absence"
+    )
