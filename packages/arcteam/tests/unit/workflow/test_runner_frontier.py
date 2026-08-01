@@ -412,6 +412,10 @@ async def test_tier_is_taken_at_construction_and_stamped_on_every_audit_event(
     assert sink.events, "starting a run is an audited operation"
     assert {e.tier for e in sink.events} == {"federal"}
     assert "workflow.run.started" in sink.actions()
+    started = next(e for e in sink.events if e.action == "workflow.run.started")
+    assert started.extra["signer_did"] == "did:arc:local:operator/0f0f0f0f", (
+        "the chain must record who authorized what ran"
+    )
     assert "tier" not in inspect.signature(runner.start_run).parameters
     assert "tier" not in inspect.signature(runner.advance).parameters
 

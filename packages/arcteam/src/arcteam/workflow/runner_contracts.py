@@ -142,17 +142,23 @@ class BundleSpec(Protocol):
     These are bundle properties, not definition properties: no parse or
     validation path can confer trust (REQ-223).
 
-    ``status`` is the LIFECYCLE value and is what a surface renders. ``signer_did``
-    is the TRUST value — set only when the pinned operator signature verified —
-    and is the only thing a gate may key off. They are deliberately separate: an
-    archived bundle reads ``status="archived"`` while still being validly signed,
-    so ``status == "signed"`` would refuse a definition that is in fact trusted.
+    ``status`` is the LIFECYCLE value and is what a surface renders.
+    ``is_verified`` is the TRUST value — true only when the pinned operator
+    signature verified — and is the only thing a gate may key off. They are
+    deliberately separate: an archived bundle reads ``status="archived"`` while
+    still being validly signed, so ``status == "signed"`` would refuse a
+    definition that is in fact trusted. Read trust here, never off ``status``.
+
+    ``signer_did`` answers a different question — *who* authorized it — and is
+    for the audit record, not for the gate.
     """
 
     @property
     def definition(self) -> WorkflowSpec: ...
     @property
     def status(self) -> BundleStatus: ...
+    @property
+    def is_verified(self) -> bool: ...
     @property
     def signer_did(self) -> str | None: ...
     @property
