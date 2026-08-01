@@ -1045,10 +1045,18 @@ def build_workflow_runner(
     identity = RunnerIdentity.load(runner_key_path)
     root = workspace_root or runner_key_path.parent.parent
     sink: AuditSink = audit_sink or NullSink()
+    # Pin the operator key the runner's own identity was derived from. Without
+    # a pin the store has no authority to verify against, and "signed" degrades
+    # to "carries some signature" — which is the whole composition the
+    # draft-then-operator-sign lifecycle exists to prevent (LLM06/ASI04).
+    # The key is already on disk and already loaded; not passing it here was
+    # the security parameter absent AT CONSTRUCTION, one layer up from the
+    # component that enforces it.
+    pinned = operator_public_key or bytes.fromhex(identity.public_key_hex)
     definitions = DefinitionStore(
         root / "workflows",
         tier=tier,
-        operator_public_key=operator_public_key,
+        operator_public_key=pinned,
         audit=_definition_audit_hook(sink, tier),
     )
     # Record the posture this runner will actually enforce. Tier is handed in by

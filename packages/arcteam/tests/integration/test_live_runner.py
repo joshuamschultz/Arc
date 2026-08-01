@@ -453,3 +453,82 @@ async def test_the_runner_records_the_tier_it_actually_enforces(
     weaker = next(e for e in events if e.action == "workflow.runner.constructed")
     assert weaker.tier == "personal"
     assert weaker.extra["signed_definitions_required"] is False
+
+
+# ---------------------------------------------------------------------------
+# The composition root supplies the real security parameter (not just honours it)
+# ---------------------------------------------------------------------------
+
+
+def _sign_with(key: Any, root: Path, tier: str, workflow_id: str) -> Any:
+    """Sign the bundle with an arbitrary key, the way the operator CLI would."""
+    from arcteam.workflow.store import DefinitionStore, sign_definition
+
+    store = DefinitionStore(root / "workflows", tier=tier)
+    return sign_definition(
+        store,
+        workflow_id,
+        signer_did="did:arc:local:operator/test",
+        private_key=key.seed,
+    )
+
+
+async def test_the_root_pins_the_operator_key_so_signed_means_operator_signed(
+    deployment: Any,
+) -> None:
+    """A bundle signed by the DEPLOYMENT key verifies through the real factory.
+
+    The component correctly honours whatever key it is given; nothing proved the
+    right key arrives. That gap is structural to construction-time injection —
+    the failure moves out of the component and into whoever composes it, where
+    the component's own tests can never see it. This is that missing test.
+    """
+    from arctrust import OperatorKey
+
+    root, key_path, backend = deployment
+    _sign_with(OperatorKey.load(key_path, generate_if_absent=False), root, "personal", "onboarding")
+
+    runner = build_workflow_runner(
+        tier="federal",
+        task_store_backend=backend,
+        runner_key_path=key_path,
+        workspace_root=root,
+        registry=Registry({"sales": SALES_DID, "ops": OPS_DID}),
+    )
+    bundle = runner._definitions.load("onboarding")
+
+    assert bundle.is_verified, "the deployment key's own signature must verify"
+    assert bundle.status == "signed"
+
+
+async def test_a_foreign_signature_is_not_trusted_through_the_real_factory(
+    deployment: Any,
+) -> None:
+    """An agent self-signing its own workflow must not produce a trusted bundle.
+
+    With no key pinned this passed as verified — trust-on-first-use at the
+    composition root. The pin is what makes 'signed' mean 'signed BY THE
+    OPERATOR' rather than 'carries some signature'.
+    """
+    from arctrust import OperatorKey
+
+    root, key_path, backend = deployment
+    _sign_with(OperatorKey.generate(), root, "personal", "onboarding")
+
+    runner = build_workflow_runner(
+        tier="federal",
+        task_store_backend=backend,
+        runner_key_path=key_path,
+        workspace_root=root,
+        registry=Registry({"sales": SALES_DID, "ops": OPS_DID}),
+    )
+    bundle = runner._definitions.load("onboarding")
+
+    assert not bundle.is_verified, "a foreign key must never read as verified"
+
+    # Fail-closed at the store's own gate, before the runner's tier check even
+    # runs — two independent refusals, and the foreign key clears neither.
+    with pytest.raises(Exception, match="not signed by the deployment operator key"):
+        await runner.start_run(
+            "onboarding", input={}, initiator_did="did:arc:local:user/9"
+        )
