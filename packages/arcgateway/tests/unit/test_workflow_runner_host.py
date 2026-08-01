@@ -301,3 +301,25 @@ async def test_a_started_runner_reaches_the_agent_tool_surface() -> None:
         if host is not None:
             await host.stop()
         _runtime.reset()
+
+
+def test_the_runner_and_the_agents_resolve_the_same_bus() -> None:
+    """A runner on a different bus than the agents is a silent island.
+
+    It would resolve no node owner (the team registry lives on the bus), fail
+    every run at its first node, and narrate to a channel nobody receives —
+    while looking completely healthy. The two halves previously read DIFFERENT
+    environment variables with different defaults, so on a real deployment they
+    could not have met.
+    """
+    from arcui import messaging as ui_messaging
+
+    from arcgateway import workflow_runner_host as host
+
+    assert host._NATS_URL_ENV == "ARCTEAM_NATS_URL"
+    assert host._DEFAULT_NATS_URL == ui_messaging._DEFAULT_NATS_URL, (
+        "the runner and the agents must default to the same broker"
+    )
+    assert host._nats_url() == ui_messaging._nats_url(), (
+        "same environment, different bus — the runner would be an island"
+    )
