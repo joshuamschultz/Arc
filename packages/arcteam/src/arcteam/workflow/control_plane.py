@@ -94,15 +94,27 @@ class WorkflowControlPlane:
     # -- authoring ----------------------------------------------------------
 
     async def create(
-        self, document: Mapping[str, Any], *, actor_did: str
+        self,
+        document: Mapping[str, Any],
+        *,
+        actor_did: str,
+        files: Mapping[str, bytes] | None = None,
     ) -> ControlPlaneResult:
-        """Parse, validate, and write a new definition as a draft."""
+        """Parse, validate, and write a new definition as a draft.
+
+        ``files`` carries the companion prompts and schemas a node references.
+        They travel WITH the definition rather than being written by the caller
+        beforehand, so a surface never has to reach past this operation to
+        author a complete workflow — the moment one does, the single-operation-
+        set guarantee is gone.
+        """
         return await self._write(
             document,
             actor_did=actor_did,
             expected_version=None,
             action="workflow.created",
             reason="created",
+            files=files,
         )
 
     async def edit(
@@ -113,6 +125,7 @@ class WorkflowControlPlane:
         expected_version: int,
         actor_did: str,
         reason: str,
+        files: Mapping[str, bytes] | None = None,
     ) -> ControlPlaneResult:
         """Revise a definition against the version the editor actually saw.
 
@@ -126,6 +139,7 @@ class WorkflowControlPlane:
             action="workflow.edited",
             reason=reason,
             workflow_id=workflow_id,
+            files=files,
         )
 
     async def archive(self, workflow_id: str, *, actor_did: str) -> ControlPlaneResult:
@@ -210,6 +224,7 @@ class WorkflowControlPlane:
         action: str,
         reason: str,
         workflow_id: str | None = None,
+        files: Mapping[str, bytes] | None = None,
     ) -> ControlPlaneResult:
         """The one path a definition takes to disk: parse, validate, save draft."""
         target = workflow_id or str(document.get("id", "<unnamed>"))
@@ -220,7 +235,12 @@ class WorkflowControlPlane:
             self._emit(_Operation(action, target, "invalid", {"errors": 1}), actor_did)
             return ControlPlaneResult(ok=False, errors=issues)
 
-        problems = tuple(self._validate(definition))
+        # Files arriving with the edit count as present for validation, so a
+        # node referencing a prompt written in this same call validates — and
+        # still validates BEFORE the store commits any of those bytes.
+        problems = tuple(
+            self._validate(definition, pending_files=frozenset(files or ()))
+        )
         if problems:
             self._emit(
                 _Operation(action, target, "invalid", {"errors": len(problems)}), actor_did
@@ -229,7 +249,10 @@ class WorkflowControlPlane:
 
         try:
             bundle = self._definitions.save_draft(
-                definition, actor_did=actor_did, expected_version=expected_version
+                definition,
+                actor_did=actor_did,
+                expected_version=expected_version,
+                files=files,
             )
         except Exception as exc:
             # The store validates again on its own and refuses a stale expected

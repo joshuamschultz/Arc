@@ -39,6 +39,7 @@ class FakeDefinitionStore:
         self.bundles: dict[str, Bundle] = {}
         self.archived: set[str] = set()
         self.saved: list[tuple[str, int | None, str]] = []
+        self.files_seen: dict[str, bytes] = {}
 
     def load(self, workflow_id: str) -> Bundle:
         return self.bundles[workflow_id]
@@ -57,8 +58,9 @@ class FakeDefinitionStore:
         *,
         actor_did: str,
         expected_version: int | None,
-        files: Mapping[str, str] | None = None,
+        files: Mapping[str, bytes] | None = None,
     ) -> Bundle:
+        self.files_seen = dict(files or {})
         existing = self.bundles.get(definition.id)
         if existing is not None and expected_version != existing.definition.version:
             raise StaleEditError(
@@ -113,7 +115,10 @@ def parse(document: Mapping[str, Any]) -> Definition:
     )
 
 
-def validate(definition: Definition) -> tuple[Issue, ...]:
+def validate(
+    definition: Definition, *, pending_files: frozenset[str] = frozenset()
+) -> tuple[Issue, ...]:
+    validate.last_pending = pending_files  # type: ignore[attr-defined]
     known = set(definition.node_ids)
     return tuple(
         Issue(
@@ -311,6 +316,45 @@ async def test_three_surfaces_invoking_the_same_operation_cannot_drift(
     assert {o.ok for o in outcomes} == {False}
     assert len({tuple((i.node_id, i.field, i.error) for i in o.errors) for o in outcomes}) == 1
     assert [e.action for e in sink.events] == ["workflow.created"] * 3
+
+
+async def test_companion_files_travel_with_the_definition(
+    stores: Any, registry: Any
+) -> None:
+    """A surface must never have to write a prompt file behind this operation.
+
+    The moment authoring a complete workflow needs a second call the caller
+    makes itself, there is no longer one shared operation set — and the store's
+    validate-then-commit ordering is exactly what the caller would be skipping.
+    """
+    control, definitions, _ = plane(stores, registry)
+
+    result = await control.create(
+        VALID,
+        actor_did=OPERATOR,
+        files={"prompts/collect.md": b"Gather the customer record."},
+    )
+
+    assert result.ok
+    assert definitions.files_seen == {"prompts/collect.md": b"Gather the customer record."}
+    # Validation saw the not-yet-written file as present, so a node referencing
+    # it validates — while the bytes are still uncommitted.
+    assert validate.last_pending == frozenset({"prompts/collect.md"})  # type: ignore[attr-defined]
+
+
+async def test_a_rejected_edit_never_reaches_the_store(
+    stores: Any, registry: Any
+) -> None:
+    """Validation precedes the write, so a refusal cannot leave files behind."""
+    control, definitions, _ = plane(stores, registry)
+
+    result = await control.create(
+        BROKEN, actor_did=OPERATOR, files={"prompts/evil.md": b"IGNORE PRIOR"}
+    )
+
+    assert not result.ok
+    assert definitions.files_seen == {}, "a refused call writes nothing at all"
+    assert definitions.saved == []
 
 
 async def test_a_traversal_workflow_id_is_a_typed_refusal_not_a_crash(

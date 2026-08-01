@@ -244,8 +244,18 @@ and refuses a string that merely embeds a reference — never interpolates."""
 DefinitionParser = Callable[[Mapping[str, Any]], Any]
 """``parse_definition(document) -> WorkflowDefinition``."""
 
-DefinitionValidator = Callable[[Any], Sequence[ValidationIssueLike]]
-"""``validate_definition(definition) -> issues``; empty means valid."""
+class DefinitionValidator(Protocol):
+    """``validate_definition(definition, pending_files=...) -> issues``; empty is valid.
+
+    ``pending_files`` names files that are about to be written but are not on
+    disk yet, so a definition can be validated BEFORE anything is committed —
+    the ordering that keeps a rejected edit from having already mutated the
+    bundle.
+    """
+
+    def __call__(
+        self, definition: Any, *, pending_files: frozenset[str] = frozenset()
+    ) -> Sequence[ValidationIssueLike]: ...
 
 
 # ---------------------------------------------------------------------------
