@@ -136,13 +136,7 @@ class SchedulerEngine:
         timeout = entry.timeout_seconds
 
         try:
-            result = await asyncio.wait_for(
-                self._agent_run_fn(
-                    entry.prompt,
-                    session_key=f"scheduler:{entry.id}",
-                ),
-                timeout=timeout,
-            )
+            result = await asyncio.wait_for(self._dispatch(entry), timeout=timeout)
             elapsed = time.monotonic() - start_time
             self._on_execution_complete(entry, result, elapsed)
             await self._deliver_to_channel(entry, result)
@@ -166,6 +160,25 @@ class SchedulerEngine:
             )
             self.on_execution_failed(entry, exc)
             return None
+
+    async def _dispatch(self, entry: ScheduleEntry) -> Any:
+        """Perform the entry's declared action (SPEC-061 COMP-017).
+
+        ``workflow_run`` calls the workflows module's run entry DIRECTLY — the
+        decision to start a named workflow is made by the schedule, never by a
+        model reading free text and choosing a tool. The import is lazy so the
+        scheduler still works on a deployment with no workflows module.
+
+        Everything around this branch is unchanged and action-agnostic: the
+        active-hours gate, the ``_in_flight`` dedup (which is why an overlapping
+        firing SKIPS), the timeout, and the consecutive-failure circuit breaker
+        all apply identically to both actions.
+        """
+        if entry.action == "workflow_run":
+            from arcagent.modules.workflows.run_entry import start_workflow_run
+
+            return await start_workflow_run(str(entry.workflow_id), entry.workflow_input)
+        return await self._agent_run_fn(entry.prompt, session_key=f"scheduler:{entry.id}")
 
     # --- Evaluation ---
 
@@ -253,7 +266,7 @@ class SchedulerEngine:
                 "schedule:failed",
                 {
                     "schedule_id": entry.id,
-                    "schedule_name": entry.prompt[:80],
+                    "schedule_name": entry.label,
                     "error": str(error),
                     "consecutive_failures": new_failures,
                 },
@@ -402,7 +415,7 @@ class SchedulerEngine:
                 "schedule:completed",
                 {
                     "schedule_id": entry.id,
-                    "schedule_name": entry.prompt[:80],
+                    "schedule_name": entry.label,
                     "result": content,
                     "elapsed": elapsed,
                 },

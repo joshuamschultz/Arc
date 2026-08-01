@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from arctrust.classification import Classification
@@ -175,6 +175,60 @@ _current_session_id: contextvars.ContextVar[str] = contextvars.ContextVar(
 )
 
 
+@dataclass
+class CarriedLegs:
+    """Legs an OUTER scope carries into a nested dispatch, and back out again.
+
+    A session is the natural accumulation boundary, but some work spans several
+    sessions on purpose: a workflow run executes each node in a fresh session,
+    and a fresh session would otherwise reset the trifecta accumulation — so a
+    composition no single session could complete becomes reachable by splitting
+    it across two. Binding a ``CarriedLegs`` around the nested dispatch closes
+    that hole in both directions: :meth:`SessionCapabilityLedger.snapshot`
+    unions ``legs`` in (the inner session starts pre-charged), and
+    :meth:`SessionCapabilityLedger.record` writes back into it (the outer scope
+    reads what the inner session lit).
+
+    ``max_legs`` bounds the collection — an accumulation that grows without a
+    ceiling is the SPEC-009 lesson, and the outer scope here is a whole run.
+    """
+
+    legs: set[str] = field(default_factory=set)
+    max_legs: int = 16
+
+    def absorb(self, legs: frozenset[str]) -> None:
+        """Union ``legs`` in, keeping the set within its bound (deterministically)."""
+        self.legs |= set(legs)
+        if len(self.legs) > self.max_legs:
+            self.legs = set(sorted(self.legs)[: self.max_legs])
+
+    def snapshot(self) -> frozenset[str]:
+        return frozenset(self.legs)
+
+
+# The carried-legs accumulator of the running dispatch, if any. A ContextVar so
+# a nested dispatch inherits it exactly like the session id above, and so
+# concurrent runs never share one accumulator.
+_carried_legs: contextvars.ContextVar[CarriedLegs | None] = contextvars.ContextVar(
+    "arc_carried_legs", default=None
+)
+
+
+def carried_legs() -> CarriedLegs | None:
+    """The accumulator bound to the running dispatch, or None."""
+    return _carried_legs.get()
+
+
+def bind_carried_legs(carrier: CarriedLegs) -> contextvars.Token[CarriedLegs | None]:
+    """Bind a cross-session leg accumulator; returns a token for the reset."""
+    return _carried_legs.set(carrier)
+
+
+def reset_carried_legs(token: contextvars.Token[CarriedLegs | None]) -> None:
+    """Restore the previous carried-legs binding."""
+    _carried_legs.reset(token)
+
+
 def current_session_id() -> str:
     """Return the session id bound to the running dispatch (empty outside a run)."""
     return _current_session_id.get()
@@ -220,8 +274,15 @@ class SessionCapabilityLedger:
         return self._locks.setdefault(session_id, asyncio.Lock())
 
     def snapshot(self, session_id: str) -> frozenset[str]:
-        """Return the accumulated legs for a session (empty if none yet)."""
-        return frozenset(self._by_session.get(session_id, set()))
+        """Return the accumulated legs for a session, plus any carried in.
+
+        The carried set is unioned in rather than copied into the session bucket
+        so the session stays the honest record of what IT lit, while policy sees
+        the composition that actually exists across the whole enclosing scope.
+        """
+        own = frozenset(self._by_session.get(session_id, set()))
+        carrier = _carried_legs.get()
+        return own if carrier is None else own | carrier.snapshot()
 
     def record(
         self,
@@ -241,6 +302,9 @@ class SessionCapabilityLedger:
         if not legs:
             return
         self._by_session.setdefault(session_id, set()).update(legs)
+        carrier = _carried_legs.get()
+        if carrier is not None:
+            carrier.absorb(legs)
         self._provenance_by_session.setdefault(session_id, []).append(
             ProvenanceEntry(
                 legs=tuple(sorted(legs)),
@@ -282,11 +346,15 @@ __all__ = [
     "PRIVATE_DATA",
     "TAG_TO_LEGS",
     "UNTRUSTED_INPUT",
+    "CarriedLegs",
     "ProvenanceEntry",
     "SessionCapabilityLedger",
+    "bind_carried_legs",
     "bind_session_id",
+    "carried_legs",
     "current_session_id",
     "legs_for_call",
     "legs_for_tags",
+    "reset_carried_legs",
     "reset_session_id",
 ]

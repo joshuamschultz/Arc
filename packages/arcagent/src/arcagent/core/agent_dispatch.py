@@ -31,7 +31,7 @@ from arcagent.core.session_internal import AssembledPrompt, SessionManager, wire
 from arcagent.core.session_internal.capability_ledger import bind_session_id, reset_session_id
 from arcagent.core.telemetry import AgentTelemetry
 from arcagent.tools._policy_fill import resolve_run_budget
-from arcagent.tools.approval_policy import build_loop_controls
+from arcagent.tools.approval_policy import build_loop_controls, narrowed_loop_controls
 
 if TYPE_CHECKING:
     from arcagent.core.agent import ArcAgent
@@ -242,6 +242,7 @@ async def dispatch_stream(
     run_id: str | None = None,
     reply_target: str | None = None,
     reply_label: str | None = None,
+    allowed_strategies: list[str] | None = None,
 ) -> AsyncIterator[StreamEvent]:
     """The single execution path: stream one agent turn into a session.
 
@@ -309,7 +310,7 @@ async def dispatch_stream(
                 max_cost_usd=run_max_cost_usd,
                 run_id=run_id,
                 on_handle=on_handle,
-                **build_loop_controls(agent, session),
+                **narrowed_loop_controls(agent, session, allowed_strategies),
             )
             async for event in raw_stream:
                 if isinstance(event, TurnEndEvent):
