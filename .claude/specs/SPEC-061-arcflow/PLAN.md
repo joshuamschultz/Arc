@@ -187,6 +187,16 @@
   - Components: COMP-022
   - Requirements: REQ-256
   - Acceptance: A purge is refused while any run still references the workflow; a forced purge records in the audit chain that history for that workflow is henceforth unrenderable.
+- [ ] **T-875**: (green) Run workspace: the shared desk for one run
+  - domain: backend
+  - Components: COMP-024
+  - Requirements: REQ-258
+  - Acceptance: Each run gets <team_root>/shared/runs/<run_id>/; every node's agent works there for its node; an agent's private workspace is never touched; the folder is created once and reused across nodes and resumes.
+- [ ] **T-876**: (red) Artifact paths resolve inside the run workspace by construction
+  - domain: test
+  - Components: COMP-024, COMP-014
+  - Requirements: REQ-258, REQ-259
+  - Acceptance: A declared artifact resolves relative to the run workspace; a path that would resolve outside it is refused; the refusal holds for a hand-edited bundle that never passed the authoring validator. Mutation-verified: deleting the check must turn a test red.
 
 ## Phase 3: Integration
 
@@ -304,6 +314,8 @@
 | REQ-255 | T-870 |
 | REQ-256 | T-871 |
 | REQ-257 | T-869 |
+| REQ-258 | T-875, T-876 |
+| REQ-259 | T-876 |
 
 ## Open Questions
 

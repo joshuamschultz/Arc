@@ -144,6 +144,12 @@ Layering per `.claude/steering/structure.md#layer-model`, with one new downward 
 **Inputs:** a typed operation request plus the acting identity
 **Outputs:** the resulting definition or run, or a typed error list; an audit event per operation
 
+### COMP-024: RunWorkspace (arcteam)
+**Responsibility:** Creates and hands out the shared per-run folder at `<team_root>/shared/runs/<run_id>/`, the desk every node's agent works at for the duration of its node. Resolves declared artifact paths relative to it, which makes containment structural — the workspace is the boundary, so there is no path to confine. Never touches an agent's private workspace, where memory and identity stay.
+**Dependencies:** arcteam files area
+**Inputs:** run id; a node's declared artifact paths
+**Outputs:** the run workspace path; resolved artifact paths; refusal of anything that would resolve outside it
+
 ### COMP-023: Workflow routes (arcui server) — thin initiator
 **Responsibility:** A delegating adapter and nothing more. It authenticates the operator, translates HTTP to a control-plane operation, and returns the result. It holds no operational work: no validation logic, no versioning rules, no sequencing, no signing, no node execution, and no gate resolution of its own. The dashboard initiates real work through the real mechanism; if these routes were deleted the same operations would remain fully reachable from the command line.
 **Dependencies:** COMP-021
@@ -210,6 +216,8 @@ No external services. Internal seams only: `arcstore` task and run persistence; 
 | REQ-255 | COMP-022 |
 | REQ-256 | COMP-022 |
 | REQ-257 | COMP-019, COMP-021, COMP-012 |
+| REQ-258 | COMP-024, COMP-008, COMP-014 |
+| REQ-259 | COMP-024, COMP-014 |
 
 ## Alternatives Considered
 

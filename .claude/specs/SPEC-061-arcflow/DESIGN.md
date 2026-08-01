@@ -340,7 +340,23 @@ Per node kind:
 - **`router` nodes**: `mode="rules"` is pure predicate evaluation by the runner; `mode="llm"` is a minimal Infer step whose output enum is the declared routes. Un-taken branches' tasks are marked `skipped`.
 - **`gate` nodes** are `review`-status tasks resolved **only** by the control plane (arcui/arccli with the human's identity). Agents can read pending gates; no agent tool can resolve one (D-025). Gate events are narrated to the channel and answerable in arcui.
 
-**Wiring** (`$nodes.x.output.y`) resolves by deterministic code from schema-validated outputs on the task rows — journaled once, reused on resume; a completed node is never re-executed (Restate/Inngest memoization, not Temporal replay).
+### The run workspace: a shared desk, not a data bus
+
+The framing that keeps this feature small (Josh, 2026-08-01): **this is an office, not a message-passing system.** People working a process either collaborate on shared files or keep their own; agents already do work; a workflow only decides *who goes next and what they're asked to do*. ArcFlow should not invent a transport for work product.
+
+So every run gets a **shared run workspace** — `<team_root>/shared/runs/<run_id>/` — alongside the shared team files area that already exists (`arcteam/files.py`). Each node's agent works there for the duration of its node, and keeps its own private workspace for its own state exactly as it does today (ADR-029: an agent's brain stays home; the work goes where the work is).
+
+That splits cleanly into three things, each with an obvious home:
+
+| What | Where it lives | Why |
+|---|---|---|
+| **Work product** — documents, exports, generated files, anything with heft | files in the shared run workspace | It's how people actually hand work over. No marshalling, no size limit, no encoding decisions. |
+| **Facts the graph needs** — a risk score, a verdict, an id a router branches on | the node's typed `output`, journaled on the task row | Routers and `when` predicates need typed values, and a schema is the contract that says the node did what it promised. Small by nature. |
+| **An agent's own state** — memory, sessions, identity | the agent's private workspace | Unchanged. A workflow never drags an agent's brain into shared space. |
+
+`artifacts = [...]` are therefore paths **relative to the run workspace**, and that resolves the path-confinement problem structurally rather than by vigilance: the workspace *is* the boundary, so there is no path to confine and no guard to forget. It also means the "trust the filesystem, not the report" check from BlastForge is just looking in the shared folder, which is what a person would do.
+
+**Wiring** (`$nodes.x.output.y`) stays, with its job narrowed to the middle row: deterministic resolution of schema-validated *facts* from the task rows — journaled once, reused on resume, a completed node never re-executed (Restate/Inngest memoization, not Temporal replay). Bulk output belongs in the workspace; the wiring carries the summary and the decision inputs.
 
 **Run budget** lifts `RootTokenBudget` to the Run and reuses planning's reserve-then-settle grants (`planning/executor.py:212-238`) verbatim for concurrent nodes. The runner also enforces run-level stall/livelock detection and cancel fan-out (ARC-5).
 
