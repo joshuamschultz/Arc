@@ -48,6 +48,9 @@ class FakeDefinitionStore:
             raise WorkflowArchivedError(workflow_id)
         return self.bundles[workflow_id]
 
+    def load_for_dispatch(self, workflow_id: str) -> Bundle:
+        return self.bundles[workflow_id]
+
     def save_draft(
         self,
         definition: Definition,

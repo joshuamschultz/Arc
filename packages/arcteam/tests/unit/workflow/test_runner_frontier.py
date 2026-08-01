@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from arcteam.workflow.runner import WorkflowRunner
+from arcteam.workflow.runner import UnsignedWorkflowRefusedError, WorkflowRunner
 
 from .conftest import (
     OPS_DID,
@@ -32,16 +32,28 @@ from .conftest import (
 
 
 class FakeDefinitions:
-    def __init__(self, bundle: Bundle) -> None:
+    """The split gate: admission refuses an archived workflow, dispatch does not."""
+
+    def __init__(self, bundle: Bundle, *, archived: bool = False) -> None:
         self._bundle = bundle
-        self.load_for_run_calls = 0
+        self.archived = archived
+        self.dispatch_calls = 0
 
     def load(self, workflow_id: str) -> Bundle:
         return self._bundle
 
     def load_for_run(self, workflow_id: str) -> Bundle:
-        self.load_for_run_calls += 1
+        if self.archived:
+            raise ArchivedError(workflow_id)
         return self._bundle
+
+    def load_for_dispatch(self, workflow_id: str) -> Bundle:
+        self.dispatch_calls += 1
+        return self._bundle
+
+
+class ArchivedError(RuntimeError):
+    """Stands in for the store's archived refusal."""
 
 
 def onboarding() -> Definition:
@@ -416,17 +428,56 @@ def test_runner_holds_no_model_and_makes_no_llm_call() -> None:
 async def test_unsigned_definition_is_refused_above_personal_tier(
     stores: Any, registry: Any
 ) -> None:
-    flow_tasks, runs, _ = stores
-    runner = WorkflowRunner(
-        tasks=flow_tasks,
-        runs=runs,
-        definitions=FakeDefinitions(Bundle(onboarding(), status="draft")),
-        owners=registry,
-        runner_did=RUNNER_DID,
-        tier="federal",
-        evaluate=evaluate,
-        resolve_args=resolve_args,
+    unsigned = Bundle(onboarding(), status="draft", signer_did=None)
+    runner = build(
+        stores, registry, onboarding(), tier="federal", definitions=FakeDefinitions(unsigned)
     )
-    with pytest.raises(Exception) as excinfo:
+
+    with pytest.raises(UnsignedWorkflowRefusedError):
         await runner.start_run("customer-onboarding", input={}, initiator_did="did:arc:x/1")
-    assert "signed" in str(excinfo.value)
+
+
+async def test_trust_is_read_from_the_signature_not_the_lifecycle_status(
+    stores: Any, registry: Any
+) -> None:
+    """An archived bundle can still be validly signed — `status` is not the gate."""
+    archived_but_signed = Bundle(
+        onboarding(), status="archived", signer_did="did:arc:local:operator/0f0f0f0f"
+    )
+    runner = build(
+        stores,
+        registry,
+        onboarding(),
+        tier="federal",
+        definitions=FakeDefinitions(archived_but_signed),
+    )
+
+    run = await runner.start_run(
+        "customer-onboarding", input={}, initiator_did="did:arc:x/1"
+    )
+
+    assert run.status == "running"
+
+
+async def test_archiving_a_workflow_does_not_break_its_live_runs(
+    stores: Any, registry: Any
+) -> None:
+    """Archiving refuses NEW runs; in-flight work keeps dispatching (REQ-255)."""
+    flow_tasks, _, tasks = stores
+    definitions = FakeDefinitions(Bundle(onboarding()))
+    runner = build(stores, registry, onboarding(), definitions=definitions)
+    run = await runner.start_run("customer-onboarding", input={}, initiator_did="did:arc:x/1")
+
+    definitions.archived = True  # an operator archives it mid-run
+    await complete_node(tasks, f"wf-{run.run_id}-collect-0", SALES_DID, {"company_domain": "a.io"})
+    record = await runner.advance(run.run_id)
+
+    assert record.status == "running"
+    assert definitions.dispatch_calls > 0, "the tick reads through the dispatch gate"
+    materialized = {
+        r.metadata["node_id"] for r in await flow_tasks.query_by_flow_run(run.run_id)
+    }
+    assert "verify" in materialized, "the live frontier kept advancing"
+
+    with pytest.raises(ArchivedError):
+        await runner.start_run("customer-onboarding", input={}, initiator_did="did:arc:x/1")
