@@ -696,6 +696,36 @@ def test_an_archived_but_signed_bundle_is_still_verified(tmp_path: Path) -> None
     assert store.load_for_dispatch("onboarding").is_verified is True
 
 
+def test_a_self_signed_bundle_is_not_verified_when_no_operator_key_is_pinned(
+    tmp_path: Path,
+) -> None:
+    """With nothing to pin against, "signed" would be a claim about nothing.
+
+    ``operator_public_key=None`` is the turnkey default, and at personal rank
+    the pin check in ``verify_artifact`` is skipped — so any key that signed the
+    bundle verifies against itself. An agent holding any key could self-sign and
+    the store would report ``signed`` / ``is_verified``. That is trust-on-first-
+    use (LLM03), and it is exactly the composition the draft-then-operator-sign
+    lifecycle exists to prevent (LLM06/ASI04).
+
+    Personal tier still RUNS the definition — REQ-225 says so — it simply stops
+    calling it verified.
+    """
+    agent_key = generate_keypair()
+    store = DefinitionStore(tmp_path / "workflows", tier="personal", operator_public_key=None)
+    _seed(store)
+
+    sign_definition(
+        store, "onboarding", signer_did="did:arc:agent:self", private_key=agent_key.private_key
+    )
+
+    bundle = store.load("onboarding")
+    assert bundle.status == "draft"
+    assert bundle.is_verified is False
+    assert bundle.signer_did is None
+    assert store.load_for_run("onboarding").status == "draft"
+
+
 def test_a_foreign_signed_bundle_is_not_verified(tmp_path: Path) -> None:
     operator = generate_keypair()
     impostor = generate_keypair()
