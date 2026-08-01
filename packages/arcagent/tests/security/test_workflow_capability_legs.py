@@ -137,9 +137,7 @@ class TestLegsCrossTheNodeSessionBoundary:
         with pytest.raises(PolicyDenied):
             await _run_node(registry, "send_summary", "node-2", carrier)
 
-    async def test_without_threading_the_same_second_node_is_allowed(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_without_threading_the_same_second_node_is_allowed(self, tmp_path: Path) -> None:
         """The control: this is exactly the hole, so the test above cannot pass vacuously.
 
         If leg threading were dead wiring, the assertion above would still fail

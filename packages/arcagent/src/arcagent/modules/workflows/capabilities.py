@@ -31,6 +31,8 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Awaitable, Callable
+from dataclasses import asdict, is_dataclass
 from typing import Any
 
 from arcagent.modules.workflows import _runtime
@@ -80,21 +82,43 @@ def _unavailable() -> str:
     )
 
 
-def _from_exception(exc: Exception) -> str:
-    """Convert a control-plane refusal into the one typed error shape.
+def _issues(raw: Any) -> str:
+    """Render arcteam's issue objects into the one typed error shape.
 
-    arcteam returns graph issues as ``ValidationIssue`` and raises parse and
-    concurrency failures; both carry ``.issues`` in the same five-key shape, so
-    an agent repairing a rejection never branches on where it came from.
+    ``ValidationIssue`` is a pydantic model and ``OperationIssue`` a dataclass;
+    both carry the same five fields, and an agent repairing a rejection must
+    never have to branch on which one it got.
     """
+    return json.dumps(
+        {
+            "errors": [_issue_dict(item) for item in raw],
+            "max_repair_attempts": _runtime.state().config.max_repair_attempts,
+        }
+    )
+
+
+def _issue_dict(item: Any) -> dict[str, Any]:
+    """One issue in the canonical five-key shape, whatever its class."""
+    if hasattr(item, "model_dump"):
+        raw = item.model_dump(mode="json")
+    elif is_dataclass(item) and not isinstance(item, type):
+        raw = asdict(item)
+    else:
+        return issue(field="workflow", error=str(item))
+    return issue(
+        node_id=raw.get("node_id"),
+        field=str(raw.get("field") or "workflow"),
+        error=str(raw.get("error", "")),
+        observed=raw.get("observed"),
+        admissible=tuple(raw.get("admissible") or ()),
+    )
+
+
+def _from_exception(exc: Exception) -> str:
+    """Convert a control-plane refusal into the one typed error shape."""
     raw = getattr(exc, "issues", None)
     if raw:
-        return json.dumps(
-            {
-                "errors": [item.model_dump() for item in raw],
-                "max_repair_attempts": _runtime.state().config.max_repair_attempts,
-            }
-        )
+        return _issues(raw)
     # A stale edit is refused, never merged (REQ-248). Recognised by the
     # committed arcteam exception name rather than by message text.
     names = {klass.__name__ for klass in type(exc).__mro__}
@@ -194,18 +218,13 @@ async def workflow_create(
     if not workflow_id:
         return _errors(issue(field="workflow_id", error="a workflow needs a stable id"))
     node_list = nodes or []
-    if len(node_list) > st.config.max_nodes:
-        return _errors(
-            issue(
-                field="nodes",
-                error=f"node quota exceeded (max {st.config.max_nodes})",
-                observed=len(node_list),
-            )
-        )
+    quota = _node_quota(len(node_list))
+    if quota is not None:
+        return _errors(quota)
     plane = await _plane()
     if plane is None:
         return _unavailable()
-    if len(await plane.list()) >= st.config.max_workflows:
+    if _workflow_count(st) >= st.config.max_workflows:
         return _errors(
             issue(
                 field="workflow_id",
@@ -213,21 +232,15 @@ async def workflow_create(
             )
         )
     try:
-        clean_description = _text(description, "description")
+        header = {"id": workflow_id, "description": _text(description, "description")}
     except ValueError as exc:
         return _errors(issue(field="description", error=str(exc), observed=description))
-    try:
-        result = await plane.create(
-            workflow_id=workflow_id,
-            description=clean_description,
-            owner=owner,
-            channel=channel,
-            nodes=_clean_nodes(node_list),
-            actor_did=st.identity.did,
-        )
-    except Exception as exc:  # reason: a tool returns JSON, it never crashes the loop
-        return _from_exception(exc)
-    return _mutation(result)
+    if owner:
+        header["owner"] = owner
+    if channel:
+        header["channel"] = channel
+    document: dict[str, Any] = {"workflow": header, "node": _clean_nodes(node_list)}
+    return await _mutate(lambda: plane.create(document, actor_did=st.identity.did))
 
 
 @tool(
@@ -243,41 +256,13 @@ async def workflow_add_node(
     expected_version: int | None = None,
 ) -> str:
     """Add a node and re-validate the whole graph."""
-    st = _runtime.state()
-    stale = _version_required(expected_version)
-    if stale is not None:
-        return _errors(stale)
-    plane = await _plane()
-    if plane is None:
-        return _unavailable()
-    quota = await _node_quota_issue(plane, workflow_id, adding=1)
-    if quota is not None:
-        return _errors(quota)
-    try:
-        result = await plane.add_node(
-            workflow_id=workflow_id,
-            node=project(node or {}, NODE_FIELDS),
-            expected_version=expected_version,
-            actor_did=st.identity.did,
-        )
-    except Exception as exc:  # reason: a tool returns JSON, it never crashes the loop
-        return _from_exception(exc)
-    return _mutation(result)
-
-
-async def _node_quota_issue(plane: Any, workflow_id: str, *, adding: int) -> dict[str, Any] | None:
-    """Refuse a node addition that would breach the node quota, before validation."""
-    max_nodes = _runtime.state().config.max_nodes
-    current = await plane.inspect(workflow_id=workflow_id)
-    definition = getattr(current, "definition", None)
-    existing = len(getattr(definition, "nodes", ()) or ())
-    if existing + adding > max_nodes:
-        return issue(
-            field="nodes",
-            error=f"node quota exceeded (max {max_nodes})",
-            observed=existing + adding,
-        )
-    return None
+    return await _edit_document(
+        workflow_id,
+        expected_version,
+        reason="added a node",
+        change=lambda doc: doc["node"].append(project(node or {}, NODE_FIELDS)),
+        added_nodes=1,
+    )
 
 
 @tool(
@@ -294,7 +279,6 @@ async def workflow_edit_node(
     expected_version: int | None = None,
 ) -> str:
     """Edit a node in place. A node id is immutable — a rename is remove + add."""
-    st = _runtime.state()
     stale = _version_required(expected_version)
     if stale is not None:
         return _errors(stale)
@@ -312,20 +296,17 @@ async def workflow_edit_node(
                 admissible=tuple(sorted(allowed)),
             )
         )
-    plane = await _plane()
-    if plane is None:
-        return _unavailable()
-    try:
-        result = await plane.edit_node(
-            workflow_id=workflow_id,
-            node_id=node_id,
-            updates=clean,
-            expected_version=expected_version,
-            actor_did=st.identity.did,
-        )
-    except Exception as exc:  # reason: a tool returns JSON, it never crashes the loop
-        return _from_exception(exc)
-    return _mutation(result)
+
+    def change(document: dict[str, Any]) -> None:
+        for entry in document["node"]:
+            if entry.get("id") == node_id:
+                entry.update(clean)
+                return
+        raise KeyError(node_id)
+
+    return await _edit_document(
+        workflow_id, expected_version, reason="edited a node", change=change
+    )
 
 
 @tool(
@@ -341,23 +322,16 @@ async def workflow_remove_node(
     expected_version: int | None = None,
 ) -> str:
     """Remove a node and re-validate the whole graph (dangling needs surface here)."""
-    st = _runtime.state()
-    stale = _version_required(expected_version)
-    if stale is not None:
-        return _errors(stale)
-    plane = await _plane()
-    if plane is None:
-        return _unavailable()
-    try:
-        result = await plane.remove_node(
-            workflow_id=workflow_id,
-            node_id=node_id,
-            expected_version=expected_version,
-            actor_did=st.identity.did,
-        )
-    except Exception as exc:  # reason: a tool returns JSON, it never crashes the loop
-        return _from_exception(exc)
-    return _mutation(result)
+
+    def change(document: dict[str, Any]) -> None:
+        remaining = [n for n in document["node"] if n.get("id") != node_id]
+        if len(remaining) == len(document["node"]):
+            raise KeyError(node_id)
+        document["node"] = remaining
+
+    return await _edit_document(
+        workflow_id, expected_version, reason="removed a node", change=change
+    )
 
 
 @tool(
@@ -373,23 +347,16 @@ async def workflow_set_trigger(
     expected_version: int | None = None,
 ) -> str:
     """Declare when a workflow fires. Dispatch is typed — never a free-text prompt."""
-    st = _runtime.state()
-    stale = _version_required(expected_version)
-    if stale is not None:
-        return _errors(stale)
-    plane = await _plane()
-    if plane is None:
-        return _unavailable()
-    try:
-        result = await plane.set_trigger(
-            workflow_id=workflow_id,
-            trigger=project(trigger, TRIGGER_FIELDS) if trigger else None,
-            expected_version=expected_version,
-            actor_did=st.identity.did,
-        )
-    except Exception as exc:  # reason: a tool returns JSON, it never crashes the loop
-        return _from_exception(exc)
-    return _mutation(result)
+
+    def change(document: dict[str, Any]) -> None:
+        if trigger:
+            document["trigger"] = project(trigger, TRIGGER_FIELDS)
+        else:
+            document.pop("trigger", None)
+
+    return await _edit_document(
+        workflow_id, expected_version, reason="set the trigger", change=change
+    )
 
 
 @tool(
@@ -405,23 +372,13 @@ async def workflow_set_channel(
     expected_version: int | None = None,
 ) -> str:
     """Bind the channel where node transitions, handoffs, and gates are narrated."""
-    st = _runtime.state()
-    stale = _version_required(expected_version)
-    if stale is not None:
-        return _errors(stale)
-    plane = await _plane()
-    if plane is None:
-        return _unavailable()
-    try:
-        result = await plane.set_channel(
-            workflow_id=workflow_id,
-            channel=channel,
-            expected_version=expected_version,
-            actor_did=st.identity.did,
-        )
-    except Exception as exc:  # reason: a tool returns JSON, it never crashes the loop
-        return _from_exception(exc)
-    return _mutation(result)
+
+    def change(document: dict[str, Any]) -> None:
+        document["workflow"]["channel"] = channel
+
+    return await _edit_document(
+        workflow_id, expected_version, reason="set the channel", change=change
+    )
 
 
 @tool(
@@ -437,37 +394,17 @@ async def workflow_run(workflow_id: str = "", input: dict[str, Any] | None = Non
     plane = await _plane()
     if plane is None:
         return _unavailable()
-    bundle = await plane.inspect(workflow_id=workflow_id)
+    bundle = _load(st, workflow_id)
     if bundle is None:
         return _errors(issue(field="workflow_id", error=f"workflow '{workflow_id}' not found"))
     refusal = await _activation_refusal(bundle, workflow_id)
     if refusal is not None:
         return _errors(issue(field="workflow_id", error=refusal))
     try:
-        result = await plane.run(
-            workflow_id=workflow_id, input=input or {}, actor_did=st.identity.did
-        )
+        result = await plane.run(workflow_id, input=input or {}, actor_did=st.identity.did)
     except Exception as exc:  # reason: a tool returns JSON, it never crashes the loop
         return _from_exception(exc)
-    return json.dumps(_dump(result))
-
-
-async def _activation_refusal(bundle: Any, workflow_id: str) -> str | None:
-    """COMP-016 — operator approval for a definition spanning a forbidden set."""
-    from arcagent.modules.workflows.activation import require_activation_grant, union_of_legs
-
-    st = _runtime.state()
-    definition = getattr(bundle, "definition", None)
-    nodes = [_dump(node) for node in getattr(definition, "nodes", ()) or ()]
-    union = union_of_legs(nodes, _tool_tags())
-    return await require_activation_grant(
-        human_gate=st.human_gate,
-        root=st.workspace / st.config.workflows_dir,
-        workflow_id=workflow_id,
-        content_hash=str(getattr(bundle, "content_hash", "")),
-        agent_did=st.identity.did,
-        union=union,
-    )
+    return _result(result, "run")
 
 
 @tool(
@@ -483,10 +420,10 @@ async def workflow_cancel_run(run_id: str = "") -> str:
     if plane is None:
         return _unavailable()
     try:
-        result = await plane.cancel_run(run_id=run_id, actor_did=st.identity.did)
+        result = await plane.cancel(run_id, actor_did=st.identity.did)
     except Exception as exc:  # reason: a tool returns JSON, it never crashes the loop
         return _from_exception(exc)
-    return json.dumps(_dump(result))
+    return _result(result, "run")
 
 
 # --- Read-only tools -------------------------------------------------------
@@ -500,10 +437,12 @@ async def workflow_cancel_run(run_id: str = "") -> str:
 )
 async def workflow_list() -> str:
     """List workflows so the agent can talk about what it owns."""
-    plane = await _plane()
-    if plane is None:
+    st = _runtime.state()
+    await _runtime.ensure_control_plane()
+    if st.definitions is None:
         return _unavailable()
-    return json.dumps([_dump(bundle) for bundle in await plane.list()])
+    bundles = [_load(st, workflow_id) for workflow_id in st.definitions.list_ids()]
+    return json.dumps([_dump(b) for b in bundles if b is not None])
 
 
 @tool(
@@ -514,10 +453,17 @@ async def workflow_list() -> str:
 )
 async def workflow_inspect(workflow_id: str = "", version: int | None = None) -> str:
     """Render one workflow, optionally at a retained prior version."""
-    plane = await _plane()
-    if plane is None:
+    st = _runtime.state()
+    await _runtime.ensure_control_plane()
+    if st.definitions is None:
         return _unavailable()
-    bundle = await plane.inspect(workflow_id=workflow_id, version=version)
+    if version is not None:
+        try:
+            definition = st.definitions.load_version(workflow_id, version)
+        except Exception as exc:  # reason: a tool returns JSON, never a crash
+            return _from_exception(exc)
+        return json.dumps(_dump(definition))
+    bundle = _load(st, workflow_id)
     if bundle is None:
         return _errors(issue(field="workflow_id", error=f"workflow '{workflow_id}' not found"))
     return json.dumps(_dump(bundle))
@@ -531,10 +477,12 @@ async def workflow_inspect(workflow_id: str = "", version: int | None = None) ->
 )
 async def workflow_runs(workflow_id: str = "") -> str:
     """List runs of one workflow, newest first."""
-    plane = await _plane()
-    if plane is None:
-        return _unavailable()
-    return json.dumps([_dump(run) for run in await plane.runs(workflow_id=workflow_id)])
+    st = _runtime.state()
+    await _runtime.ensure_control_plane()
+    runs = getattr(st.runner, "runs_for", None)
+    if runs is None:
+        return _no_runner()
+    return json.dumps([_dump(record) for record in await runs(workflow_id)])
 
 
 @tool(
@@ -545,10 +493,156 @@ async def workflow_runs(workflow_id: str = "") -> str:
 )
 async def workflow_run_status(run_id: str = "") -> str:
     """Report a single run's live state, including the path actually taken."""
+    st = _runtime.state()
+    await _runtime.ensure_control_plane()
+    status = getattr(st.runner, "run_status", None)
+    if status is None:
+        return _no_runner()
+    return json.dumps(_dump(await status(run_id)))
+
+
+# --- Delegation helpers ----------------------------------------------------
+
+
+def _node_quota(count: int) -> dict[str, Any] | None:
+    """Refuse a node count over the ceiling, before any validation work."""
+    limit = _runtime.state().config.max_nodes
+    if count <= limit:
+        return None
+    return issue(field="nodes", error=f"node quota exceeded (max {limit})", observed=count)
+
+
+def _workflow_count(st: _runtime._State) -> int:
+    """How many workflows this agent already owns (0 when the store is absent)."""
+    return len(st.definitions.list_ids()) if st.definitions is not None else 0
+
+
+def _load(st: _runtime._State, workflow_id: str) -> Any:
+    """Load a bundle, or None when it does not exist / cannot be read."""
+    if st.definitions is None:
+        return None
+    try:
+        return st.definitions.load(workflow_id)
+    except Exception:  # reason: a missing or unreadable bundle is "not found" here
+        return None
+
+
+async def _mutate(operation: Callable[[], Awaitable[Any]]) -> str:
+    """Run one control-plane mutation and render its result as a draft."""
+    try:
+        result = await operation()
+    except Exception as exc:  # reason: a tool returns JSON, it never crashes the loop
+        return _from_exception(exc)
+    return _result(result, "bundle")
+
+
+async def _edit_document(
+    workflow_id: str,
+    expected_version: int | None,
+    *,
+    reason: str,
+    change: Callable[[dict[str, Any]], None],
+    added_nodes: int = 0,
+) -> str:
+    """Load, mutate in memory, then submit the WHOLE document once.
+
+    The ordering is the point (``decompose_task``'s lesson): everything is built
+    and checked in memory and only then written, so a rejected edit leaves no
+    half-applied graph behind. The control plane re-parses and re-validates the
+    submitted document, so a targeted edit gets the identical whole-graph check
+    the file and dashboard surfaces get.
+    """
+    st = _runtime.state()
+    stale = _version_required(expected_version)
+    if stale is not None:
+        return _errors(stale)
     plane = await _plane()
     if plane is None:
         return _unavailable()
-    return json.dumps(_dump(await plane.run_status(run_id=run_id)))
+    bundle = _load(st, workflow_id)
+    if bundle is None:
+        return _errors(issue(field="workflow_id", error=f"workflow '{workflow_id}' not found"))
+    document = _document(bundle)
+    quota = _node_quota(len(document["node"]) + added_nodes)
+    if quota is not None:
+        return _errors(quota)
+    try:
+        change(document)
+    except KeyError as exc:
+        return _errors(
+            issue(
+                node_id=str(exc.args[0]),
+                field="node_id",
+                error="no such node in this workflow",
+                observed=str(exc.args[0]),
+                admissible=tuple(str(n.get("id")) for n in document["node"]),
+            )
+        )
+    return await _mutate(
+        lambda: plane.edit(
+            workflow_id,
+            document,
+            expected_version=expected_version,
+            actor_did=st.identity.did,
+            reason=reason,
+        )
+    )
+
+
+def _document(bundle: Any) -> dict[str, Any]:
+    """Turn a loaded bundle back into the authoring document shape.
+
+    ``{workflow: {...}, node: [...], trigger: {...}, input: {...}}`` — the same
+    shape ``parse_definition`` consumes, so a round-trip through a targeted edit
+    is byte-for-byte a document the validator already accepts.
+    """
+    definition = getattr(bundle, "definition", bundle)
+    dumped = definition.model_dump(mode="json", exclude_none=True)
+    nodes = dumped.pop("nodes", [])
+    trigger = dumped.pop("trigger", None)
+    input_spec = dumped.pop("input_spec", None)
+    document: dict[str, Any] = {"workflow": dumped, "node": list(nodes)}
+    if trigger is not None:
+        document["trigger"] = trigger
+    if input_spec is not None:
+        document["input"] = input_spec
+    return document
+
+
+def _result(result: Any, field_name: str) -> str:
+    """Render a ``ControlPlaneResult``: the payload, or its typed error list."""
+    if not getattr(result, "ok", False):
+        return _issues(getattr(result, "errors", ()))
+    payload = getattr(result, field_name, None)
+    return _mutation(payload) if field_name == "bundle" else json.dumps(_dump(payload))
+
+
+async def _activation_refusal(bundle: Any, workflow_id: str) -> str | None:
+    """COMP-016 — operator approval for a definition spanning a forbidden set."""
+    from arcagent.modules.workflows.activation import require_activation_grant, union_of_legs
+
+    st = _runtime.state()
+    nodes = _document(bundle)["node"]
+    return await require_activation_grant(
+        human_gate=st.human_gate,
+        root=st.workspace / st.config.workflows_dir,
+        workflow_id=workflow_id,
+        content_hash=str(getattr(bundle, "content_hash", "")),
+        agent_did=st.identity.did,
+        union=union_of_legs(nodes, _tool_tags()),
+    )
+
+
+def _no_runner() -> str:
+    return _errors(
+        issue(
+            field="run_id",
+            error=(
+                "no workflow runner is hosted in this process — run history is "
+                "served by the fleet service that hosts the runner (COMP-009)"
+            ),
+        )
+    )
 
 
 # --- Hooks -----------------------------------------------------------------

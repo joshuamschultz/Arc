@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -38,13 +39,14 @@ class _RecordingPlane:
         self.hold = False
         self.fail = False
 
-    async def run(self, **kwargs: Any) -> dict[str, Any]:
+    async def run(self, workflow_id: str, **kwargs: Any) -> SimpleNamespace:
         if self.fail:
             raise RuntimeError("workflow engine is down")
-        self.started.append((str(kwargs.get("workflow_id")), dict(kwargs.get("input") or {})))
+        self.started.append((workflow_id, dict(kwargs.get("input") or {})))
         if self.hold:
             await self.gate.wait()
-        return {"run_id": f"run_{len(self.started)}", "status": "running"}
+        record = SimpleNamespace(run_id=f"run_{len(self.started)}", status="running")
+        return SimpleNamespace(ok=True, run=record, errors=(), bundle=None)
 
 
 @pytest.fixture
@@ -144,9 +146,7 @@ class TestTypedTriggerThroughTheRealTick:
         engine, _prompts, store = _engine(tmp_path)
         # A one-minute window in the far past of the day, so "now" is outside it.
         store.add(
-            _workflow_entry(
-                active_hours=ActiveHours(start="00:00", end="00:01", timezone="UTC")
-            )
+            _workflow_entry(active_hours=ActiveHours(start="00:00", end="00:01", timezone="UTC"))
         )
 
         await _tick_until(lambda: False, engine, timeout=0.2)
@@ -197,7 +197,12 @@ class TestCircuitBreaker:
         assert store.load()[0].enabled is False
 
     async def test_a_refusal_is_raised_not_swallowed(self, tmp_path: Path) -> None:
-        """A swallowed refusal would let a broken trigger fire forever."""
+        """A swallowed refusal would let a broken trigger fire forever.
+
+        Drives the REAL control plane (no double): with no runner hosted in this
+        process it refuses, and the run entry must turn that returned refusal
+        into a raise so the scheduler's breaker can count it.
+        """
         from arcagent.modules.workflows import _runtime
         from arcagent.modules.workflows.run_entry import start_workflow_run
 
@@ -207,8 +212,7 @@ class TestCircuitBreaker:
             workspace=tmp_path,
             identity=AgentIdentity.generate(org="local", agent_type="agent"),
         )
-        # No arcteam installed in this configuration -> build fails -> raise.
-        with pytest.raises(RuntimeError, match="control plane unavailable"):
+        with pytest.raises(RuntimeError, match="refused to start"):
             await start_workflow_run("nope")
         _runtime.reset()
 

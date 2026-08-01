@@ -16,7 +16,6 @@ import pytest
 
 from tests.unit.modules.workflows.conftest import (
     FakeIssue,
-    FakeValidationError,
     RecordingControlPlane,
     StaleEditError,
 )
@@ -37,34 +36,37 @@ class TestFieldAllowlist:
     async def test_add_node_drops_undeclared_fields(
         self, workflows_state: RecordingControlPlane
     ) -> None:
-        from arcagent.modules.workflows.capabilities import workflow_add_node
+        from arcagent.modules.workflows.capabilities import workflow_add_node, workflow_create
 
+        await workflow_create(workflow_id="wf", nodes=[_node()])
         await workflow_add_node(
             workflow_id="wf",
-            node=_node(model="gpt-4", temperature=0.9, status="signed", signature="x"),
+            node=_node(id="verify", model="gpt-4", temperature=0.9, status="signed"),
             expected_version=1,
         )
-        sent = workflows_state.calls[-1][1]["node"]
+        sent = workflows_state.last("edit")["document"]["node"][-1]
         assert "model" not in sent
         assert "temperature" not in sent
         assert "status" not in sent
-        assert "signature" not in sent
-        assert sent["id"] == "collect"
+        assert sent["id"] == "verify"
 
     @pytest.mark.asyncio
     async def test_edit_node_drops_undeclared_fields(
         self, workflows_state: RecordingControlPlane
     ) -> None:
-        from arcagent.modules.workflows.capabilities import workflow_edit_node
+        from arcagent.modules.workflows.capabilities import workflow_create, workflow_edit_node
 
+        await workflow_create(workflow_id="wf", nodes=[_node()])
         await workflow_edit_node(
             workflow_id="wf",
             node_id="collect",
             updates={"prompt": "prompts/x.md", "id": "renamed", "owner_did": "did:evil"},
             expected_version=1,
         )
-        sent = workflows_state.calls[-1][1]["updates"]
-        assert sent == {"prompt": "prompts/x.md"}
+        sent = workflows_state.last("edit")["document"]["node"][0]
+        assert sent["prompt"] == "prompts/x.md"
+        assert sent["id"] == "collect"  # the id is immutable
+        assert "owner_did" not in sent
 
     @pytest.mark.asyncio
     async def test_edit_node_with_no_allowlisted_field_is_refused(self) -> None:
@@ -85,10 +87,10 @@ class TestFieldAllowlist:
         from arcagent.modules.workflows.capabilities import workflow_create
 
         await workflow_create(workflow_id="wf", description="d", nodes=[_node()])
-        sent = workflows_state.calls[-1][1]
-        assert "status" not in sent
-        assert "content_hash" not in sent
-        assert "version" not in sent
+        header = workflows_state.last("create")["document"]["workflow"]
+        assert "status" not in header
+        assert "content_hash" not in header
+        assert "version" not in header
 
 
 class TestQuotasBeforeValidation:
@@ -162,7 +164,8 @@ class TestInlineTextNormalization:
         await workflow_create(
             workflow_id="wf", description="Onboard\u200b new customers", nodes=[_node()]
         )
-        assert workflows_state.calls[-1][1]["description"] == "Onboard new customers"
+        header = workflows_state.last("create")["document"]["workflow"]
+        assert header["description"] == "Onboard new customers"
 
 
 class TestTypedErrors:
@@ -174,9 +177,7 @@ class TestTypedErrors:
     ) -> None:
         from arcagent.modules.workflows.capabilities import workflow_create
 
-        workflows_state.raise_on["create"] = FakeValidationError(
-            [FakeIssue("verify", "needs", "unknown node 'collct'")]
-        )
+        workflows_state.refuse_with = (FakeIssue("verify", "needs", "unknown node 'collct'"),)
         result = json.loads(await workflow_create(workflow_id="wf", nodes=[_node()]))
 
         assert result["errors"] == [
@@ -213,10 +214,11 @@ class TestOptimisticConcurrency:
     async def test_expected_version_is_forwarded(
         self, workflows_state: RecordingControlPlane
     ) -> None:
-        from arcagent.modules.workflows.capabilities import workflow_set_channel
+        from arcagent.modules.workflows.capabilities import workflow_create, workflow_set_channel
 
+        await workflow_create(workflow_id="wf", nodes=[_node()])
         await workflow_set_channel(workflow_id="wf", channel="channel://x", expected_version=7)
-        assert workflows_state.calls[-1][1]["expected_version"] == 7
+        assert workflows_state.last("edit_meta")["expected_version"] == 7
 
     @pytest.mark.asyncio
     async def test_missing_expected_version_is_refused_before_the_control_plane(
@@ -233,9 +235,10 @@ class TestOptimisticConcurrency:
     async def test_stale_edit_is_returned_as_a_typed_error_not_merged(
         self, workflows_state: RecordingControlPlane
     ) -> None:
-        from arcagent.modules.workflows.capabilities import workflow_edit_node
+        from arcagent.modules.workflows.capabilities import workflow_create, workflow_edit_node
 
-        workflows_state.raise_on["edit_node"] = StaleEditError("expected version 2, found 5")
+        await workflow_create(workflow_id="wf", nodes=[_node()])
+        workflows_state.raise_on["edit"] = StaleEditError("expected version 2, found 5")
         result = json.loads(
             await workflow_edit_node(
                 workflow_id="wf",

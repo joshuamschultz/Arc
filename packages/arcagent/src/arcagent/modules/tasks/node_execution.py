@@ -202,9 +202,54 @@ def validate_output(node: WorkflowNode, output: dict[str, Any] | None) -> str | 
     return None
 
 
+def escaping_artifacts(node: WorkflowNode, root: Path) -> list[str]:
+    """Declared artifact paths that resolve outside ``root``.
+
+    The definition validator refuses absolute and ``..`` artifact paths at
+    authoring time — but a hand-edited bundle loaded straight off disk never
+    went through it, and the runner passes ``artifacts`` into the task row as
+    opaque strings. This adapter is the first place they become real filesystem
+    operations, so it must not rely on an upstream check it cannot prove
+    happened: an unconfined ``../../etc/passwd`` would let a node report itself
+    complete by pointing at a file it never produced, and leak whether arbitrary
+    paths exist. ``confine`` is the same guard the definition store uses, reused
+    rather than re-implemented — one escape check, one place to get it right.
+    """
+    return [name for name in node.artifacts if _confined(root, name) is None]
+
+
+def _confined(root: Path, reference: str) -> Path | None:
+    """Resolve ``reference`` under ``root``, or None if it escapes.
+
+    Falls back to a local check when ``arcteam.workflow`` is absent — an
+    escaping path must be refused on every deployment, including one with no
+    workflow engine installed, because refusing is the safe direction.
+    """
+    try:
+        from arcteam.workflow import confine
+    except ImportError:
+        candidate = Path(reference)
+        if candidate.is_absolute():
+            return None
+        resolved = (root / candidate).resolve()
+        return resolved if resolved == root or root in resolved.parents else None
+    confined: Path | None = confine(root, reference)
+    return confined
+
+
 def missing_artifacts(node: WorkflowNode, root: Path) -> list[str]:
-    """Declared artifacts that do not exist under ``root`` (REQ-238)."""
-    return [name for name in node.artifacts if not (root / name).exists()]
+    """Declared artifacts that do not exist under ``root`` (REQ-238).
+
+    Only confined paths are stat-ed. An escaping path is reported by
+    :func:`escaping_artifacts` and refused there — never resolved, never
+    touched.
+    """
+    missing = []
+    for name in node.artifacts:
+        target = _confined(root, name)
+        if target is not None and not target.exists():
+            missing.append(name)
+    return missing
 
 
 def artifact_failure(missing: list[str]) -> str:
@@ -213,6 +258,15 @@ def artifact_failure(missing: list[str]) -> str:
         f"'{name}' (produce it with the `{_ARTIFACT_PRODUCER}` tool)" for name in missing
     )
     return f"node is not complete — declared artifacts are missing: {named}"
+
+
+def artifact_escape_failure(escaping: list[str]) -> str:
+    """The refusal for artifact paths that leave the node's working root."""
+    named = ", ".join(f"'{name}'" for name in escaping)
+    return (
+        f"node declares artifacts outside its working root and is refused: {named} — "
+        "an artifact path must be relative and must stay inside the workspace"
+    )
 
 
 def allowed_strategies(node: WorkflowNode) -> list[str]:
@@ -231,9 +285,11 @@ __all__ = [
     "NodeAttempt",
     "WorkflowNode",
     "allowed_strategies",
+    "artifact_escape_failure",
     "artifact_failure",
     "bind_node",
     "current_node",
+    "escaping_artifacts",
     "idempotency_key",
     "missing_artifacts",
     "node_from_task",

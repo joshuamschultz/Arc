@@ -142,6 +142,7 @@ async def require_activation_grant(
         arguments={"workflow_id": workflow_id, "content_hash": content_hash},
         agent_did=agent_did,
         session_id=f"workflow:{workflow_id}",
+        classification="unclassified",
         capability_tags=frozenset(union),
     )
     grant = await human_gate.request(call, legs=union)

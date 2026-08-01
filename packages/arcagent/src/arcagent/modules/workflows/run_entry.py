@@ -37,12 +37,23 @@ async def start_workflow_run(
             f"workflow control plane unavailable — cannot start a run for '{workflow_id}'"
         )
     result = await st.control_plane.run(
-        workflow_id=workflow_id,
+        workflow_id,
         input=workflow_input or {},
         actor_did=st.identity.did,
     )
+    if not result.ok:
+        # The control plane RETURNS refusals; the scheduler's breaker counts
+        # raised failures. Translating here is what keeps a permanently broken
+        # trigger from firing forever without ever tripping it.
+        detail = "; ".join(str(getattr(e, "error", e)) for e in result.errors)
+        raise RuntimeError(f"workflow '{workflow_id}' refused to start: {detail}")
     _logger.info("Started workflow run for %s", workflow_id)
-    return result if isinstance(result, dict) else {"run": str(result)}
+    record = result.run
+    return {
+        "run_id": getattr(record, "run_id", ""),
+        "workflow_id": workflow_id,
+        "status": str(getattr(record, "status", "")),
+    }
 
 
 __all__ = ["start_workflow_run"]

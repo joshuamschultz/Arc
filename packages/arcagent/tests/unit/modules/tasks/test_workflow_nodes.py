@@ -171,9 +171,7 @@ class TestArtifactEnforcement:
     async def test_missing_artifact_refuses_completion(self, node_state: Any) -> None:
         from arcagent.modules.tasks.capabilities import complete_task
 
-        await _make_node_task(
-            node_state, output_schema=None, artifacts=["customer_record.json"]
-        )
+        await _make_node_task(node_state, output_schema=None, artifacts=["customer_record.json"])
         result = json.loads(await complete_task(id="task_node_1", resolution="done"))
         assert result["retryable"] is True
         assert "customer_record.json" in result["error"]
@@ -196,9 +194,7 @@ class TestArtifactEnforcement:
         assert stored is not None
         assert stored.status == "done"
 
-    async def test_set_task_output_does_not_check_artifacts(
-        self, node_state: Any
-    ) -> None:
+    async def test_set_task_output_does_not_check_artifacts(self, node_state: Any) -> None:
         """Artifacts gate COMPLETION, not an intermediate output write."""
         from arcagent.modules.tasks.capabilities import _state, set_task_output
 
@@ -208,6 +204,87 @@ class TestArtifactEnforcement:
         stored = await st.store.get("task_node_1")
         assert stored is not None
         assert stored.output == {"partial": True}
+
+
+@pytest.mark.asyncio
+class TestArtifactPathConfinement:
+    """An artifact path must never escape the node's working root.
+
+    The definition validator refuses absolute and ``..`` artifact paths at
+    authoring time, but a hand-edited bundle loaded straight off disk never went
+    through it, and the runner passes ``artifacts`` into the task row as opaque
+    strings. This adapter is where they become real filesystem operations, so it
+    must refuse on its own evidence.
+
+    Every case here is adversarial on purpose: a benign relative path lands
+    correctly whether or not the guard exists, so only an escaping path tells
+    the guarded code apart from the unguarded code.
+    """
+
+    @pytest.mark.parametrize(
+        "artifact",
+        [
+            "../escaped.txt",
+            "../../escaped.txt",
+            "nested/../../escaped.txt",
+            "/etc/passwd",
+        ],
+    )
+    async def test_escaping_artifact_path_refuses_completion(
+        self, node_state: Any, tmp_path: Path, artifact: str
+    ) -> None:
+        from arcagent.modules.tasks.capabilities import _state, complete_task
+
+        # Make the escape target genuinely exist, so an unguarded check would
+        # happily pass and report the node complete.
+        (tmp_path.parent / "escaped.txt").write_text("victim", encoding="utf-8")
+
+        await _make_node_task(node_state, output_schema=None, artifacts=[artifact])
+        result = json.loads(await complete_task(id="task_node_1", resolution="done"))
+
+        assert result["retryable"] is True
+        assert "outside its working root" in result["error"]
+        st = await _state()
+        stored = await st.store.get("task_node_1")
+        assert stored is not None
+        assert stored.status != "done"
+
+    async def test_escape_is_refused_before_any_filesystem_stat(
+        self, node_state: Any, tmp_path: Path
+    ) -> None:
+        """The escaping path is never resolved — not even to ask if it exists."""
+        from arcagent.modules.tasks.node_execution import WorkflowNode, missing_artifacts
+
+        del node_state
+        node = WorkflowNode(workflow_id="w", run_id="r", node_id="n", artifacts=["../outside.txt"])
+        # An escaping path is absent from the MISSING list — it is not a missing
+        # artifact, it is a refused one, and the two must not be conflated.
+        assert missing_artifacts(node, tmp_path) == []
+
+    async def test_a_confined_path_still_works(self, node_state: Any, tmp_path: Path) -> None:
+        """The guard must not break the ordinary case it sits in front of."""
+        from arcagent.modules.tasks.capabilities import _state, complete_task
+
+        (tmp_path / "nested").mkdir()
+        (tmp_path / "nested" / "report.md").write_text("done", encoding="utf-8")
+        await _make_node_task(node_state, output_schema=None, artifacts=["nested/report.md"])
+        await complete_task(id="task_node_1", resolution="done")
+        st = await _state()
+        stored = await st.store.get("task_node_1")
+        assert stored is not None
+        assert stored.status == "done"
+
+
+class TestArtifactGuardIsShared:
+    def test_escaping_artifacts_reuses_arcteams_confine(self) -> None:
+        """One escape check, shared with the definition store — not a second one."""
+        from arcteam.workflow import confine
+
+        from arcagent.modules.tasks import node_execution
+
+        source = Path(node_execution.__file__).read_text(encoding="utf-8")
+        assert "from arcteam.workflow import confine" in source
+        assert confine(Path("/tmp"), "../x") is None
 
 
 class TestPromptSectionSeam:
@@ -274,9 +351,7 @@ class TestStrategyPinning:
     def test_declared_list_passes_through(self) -> None:
         from arcagent.modules.tasks.node_execution import WorkflowNode, allowed_strategies
 
-        node = WorkflowNode(
-            workflow_id="w", run_id="r", node_id="n", strategy=["react", "code"]
-        )
+        node = WorkflowNode(workflow_id="w", run_id="r", node_id="n", strategy=["react", "code"])
         assert allowed_strategies(node) == ["react", "code"]
 
     def test_absent_list_pins_react(self) -> None:

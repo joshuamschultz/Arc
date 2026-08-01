@@ -58,9 +58,11 @@ from arcagent.modules.tasks.node_execution import (
     WORKFLOW_META,
     WorkflowNode,
     allowed_strategies,
+    artifact_escape_failure,
     artifact_failure,
     bind_node,
     current_node,
+    escaping_artifacts,
     missing_artifacts,
     node_from_task,
     render_node_section,
@@ -496,6 +498,11 @@ def _node_completion_refusal(
         return violation
     if not check_artifacts:
         return None
+    # Confinement first: an escaping path is an attack, not an incomplete node,
+    # and must be refused before anything stats the filesystem.
+    escaping = escaping_artifacts(node, st.workspace)
+    if escaping:
+        return artifact_escape_failure(escaping)
     missing = missing_artifacts(node, st.workspace)
     return artifact_failure(missing) if missing else None
 

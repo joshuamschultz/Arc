@@ -31,7 +31,7 @@ from arcagent.core.session_internal import AssembledPrompt, SessionManager, wire
 from arcagent.core.session_internal.capability_ledger import bind_session_id, reset_session_id
 from arcagent.core.telemetry import AgentTelemetry
 from arcagent.tools._policy_fill import resolve_run_budget
-from arcagent.tools.approval_policy import build_loop_controls
+from arcagent.tools.approval_policy import build_loop_controls, narrowed_loop_controls
 
 if TYPE_CHECKING:
     from arcagent.core.agent import ArcAgent
@@ -131,26 +131,6 @@ async def build_run_context(
 
     await bus.emit("agent:pre_respond", {"task": task})
     return telemetry, bus, model, provider, prompt, bridge
-
-
-def _loop_controls(
-    agent: ArcAgent, session: SessionManager, requested: list[str] | None
-) -> dict[str, Any]:
-    """Loop-control kwargs, narrowed by a caller-requested strategy allowlist.
-
-    A caller (a workflow node) may pin which strategies its turn may use, but it
-    may never WIDEN what the operator allowed in ``arcrun.toml``: the request is
-    intersected with a configured allowlist, so the tighter set always wins —
-    the same rule the per-run token/cost budget follows.
-    """
-    controls = build_loop_controls(agent, session)
-    if requested is None:
-        return controls
-    configured = controls.get("allowed_strategies")
-    controls["allowed_strategies"] = (
-        requested if not configured else [s for s in requested if s in configured]
-    )
-    return controls
 
 
 def _run_prompt_resolve(agent: ArcAgent, telemetry: AgentTelemetry) -> Callable[[str, str], str]:
@@ -330,7 +310,7 @@ async def dispatch_stream(
                 max_cost_usd=run_max_cost_usd,
                 run_id=run_id,
                 on_handle=on_handle,
-                **_loop_controls(agent, session, allowed_strategies),
+                **narrowed_loop_controls(agent, session, allowed_strategies),
             )
             async for event in raw_stream:
                 if isinstance(event, TurnEndEvent):
