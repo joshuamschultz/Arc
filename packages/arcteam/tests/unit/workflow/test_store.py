@@ -401,6 +401,42 @@ def test_referenced_files_are_written_into_the_bundle(store: DefinitionStore) ->
         assert (bundle.root / name).read_bytes() == body
 
 
+@pytest.mark.parametrize(
+    "escape",
+    ["../../victim.txt", "../victim.txt", "schemas/../../../victim.txt", "/tmp/victim.txt"],
+)
+def test_a_bundle_file_escaping_the_bundle_is_refused_and_never_written(
+    tmp_path: Path, escape: str
+) -> None:
+    """``files`` is an authoring input, so it is an arbitrary-write primitive.
+
+    A builder tool driven by a model supplies this mapping. Without the
+    confinement check a definition could write any bytes to any path the
+    process can reach — straight out of the agent's workspace, which is both an
+    agent-controlled arbitrary write (ASI04/LLM06) and a direct breach of the
+    workspace-containment invariant (ADR-029).
+
+    The happy path cannot see this: writing benign relative paths succeeds
+    whether or not the guard is present. Only an escaping path distinguishes
+    them.
+    """
+    victim = tmp_path / "victim.txt"
+    victim.write_text("original trusted content")
+    store = DefinitionStore(tmp_path / "workflows")
+
+    with pytest.raises(WorkflowValidationError) as excinfo:
+        store.save_draft(
+            parse_definition(DOCUMENT),
+            actor_did="did:arc:agent:untrusted",
+            expected_version=None,
+            files={escape: b"OVERWRITTEN"},
+        )
+
+    assert victim.read_text() == "original trusted content"
+    assert not store.exists("onboarding")
+    assert excinfo.value.issues[0].observed == escape
+
+
 def test_an_invalid_graph_is_never_written(store: DefinitionStore) -> None:
     broken = {
         **DOCUMENT,
