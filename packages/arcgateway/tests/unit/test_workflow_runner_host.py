@@ -252,3 +252,52 @@ async def test_a_runner_that_cannot_be_built_is_reported_not_swallowed() -> None
     assert any("engine absent" in r.getMessage() or r.exc_info for r in records), (
         "the log line must carry the reason, not just note an absence"
     )
+
+
+async def test_a_started_runner_reaches_the_agent_tool_surface() -> None:
+    """The gateway hosting a runner is not enough — the tool must be able to use it.
+
+    Both halves can be individually healthy while the feature does nothing: a
+    live runner in the gateway, and `workflow_run` reporting that no runner is
+    hosted here. `set_runner` existed and was never called, which is the same
+    silent shape as the plural-module-name bug this suite already guards.
+    """
+    from pathlib import Path
+
+    from arcagent.modules.workflows import _runtime
+    from arctrust import AgentIdentity
+
+    from arcgateway.workflow_runner_host import start_runner_host
+
+    class _Runner:
+        async def run_forever(self) -> None:
+            import asyncio
+
+            await asyncio.sleep(3600)
+
+        async def aclose(self) -> None:
+            return None
+
+    runner = _Runner()
+
+    async def _factory(**_: object) -> _Runner:
+        return runner
+
+    _runtime.reset()
+    host = await start_runner_host(tier="personal", runner_factory=_factory)
+    try:
+        assert host is not None
+        # Publish-then-configure: the gateway starts the runner before this
+        # agent binds its module. The runner must survive that ordering.
+        _runtime.configure(
+            identity=AgentIdentity.generate(org="local", agent_type="agent"),
+            workspace=Path("."),
+        )
+        assert _runtime.state().runner is runner, (
+            "the gateway started a runner but never published it to the agent tools; "
+            "workflow_run would refuse every run on a deployment that looks healthy"
+        )
+    finally:
+        if host is not None:
+            await host.stop()
+        _runtime.reset()

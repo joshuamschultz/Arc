@@ -215,7 +215,41 @@ async def start_runner_host(
             exc_info=True,
         )
         return None
-    return await RunnerHost.start(runner)
+    host = await RunnerHost.start(runner)
+    _publish_to_agent_tools(runner)
+    return host
+
+
+def _publish_to_agent_tools(runner: Any) -> None:
+    """Hand the started runner to the agent-side ``workflow_run`` tool.
+
+    Without this the two halves both look healthy and the feature still does
+    nothing: the gateway hosts a live runner, the agent's tool reports that no
+    runner is hosted here, and nothing errors. That is the same silent shape as
+    the plural-module-name bug — a seam where each side is individually correct
+    and the connection between them was never made.
+
+    Best-effort by design: arcagent's workflows module is optional and may be
+    disabled, so an absent module is a debug line, not a boot failure. A runner
+    that started but could not be published is a WARNING, because that
+    combination means runs will be refused by a deployment that looks fine.
+    """
+    try:
+        from arcagent.modules.workflows import _runtime
+    except ImportError:
+        _logger.debug(
+            "workflow runner started but arcagent's workflows module is absent; "
+            "nothing to publish to"
+        )
+        return
+    try:
+        _runtime.set_runner(runner)
+    except Exception:  # reason: publishing must not take down a healthy gateway
+        _logger.warning(
+            "workflow runner started but could not be published to the agent tool "
+            "surface; workflow_run will report no runner despite one running",
+            exc_info=True,
+        )
 
 
 __all__ = [

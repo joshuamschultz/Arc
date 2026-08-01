@@ -76,6 +76,17 @@ class _State:
     approved_leg_unions: list[frozenset[str]] = field(default_factory=list)
 
 
+#: The process's workflow runner, published by the gateway's RunnerHost.
+#:
+#: A PROCESS global rather than a contextvar, and deliberately so: the runner is
+#: a fleet singleton shared by every agent in this process (REQ-231), unlike the
+#: per-agent state below. It also decouples publish order from configure order —
+#: the gateway may start the runner before or after any agent configures its
+#: module, and either way the runner is found. Getting that ordering wrong is
+#: silent: the gateway hosts a live runner and every tool still refuses to run.
+_process_runner: Any = None
+
+
 _state_var: contextvars.ContextVar[_State | None] = contextvars.ContextVar(
     "arcagent_workflows_state", default=None
 )
@@ -110,6 +121,10 @@ def configure(
             control_plane=control_plane,
             definitions=definitions,
             tier=tier,
+            # Pick up a runner the gateway already published. Without this, an
+            # agent configured AFTER the gateway started the runner would report
+            # "no runner hosted here" on a deployment that has one running.
+            runner=_process_runner,
         )
     )
 
@@ -143,7 +158,15 @@ def set_runner(runner: Any) -> None:
     ``workflow_run`` reports that no runner is hosted here — which is the honest
     state of a deployment whose gateway has not started one.
     """
-    st = state()
+    global _process_runner
+    _process_runner = runner
+    st = _state_var.get()
+    if st is None:
+        # Published before any agent configured its module — legitimate ordering,
+        # and configure() will pick it up. Refusing here would drop the runner on
+        # the floor with only a warning, which is the silent-failure shape this
+        # whole seam keeps producing.
+        return
     st.runner = runner
     # Force a rebuild so the control plane picks up the live runner.
     st.control_plane = None
@@ -222,7 +245,13 @@ def bind(state_obj: _State) -> None:
 
 
 def reset() -> None:
-    """Test-only: clear runtime state."""
+    """Test-only: clear runtime state AND the process runner.
+
+    Both, or a runner published by one test leaks into the next and a genuinely
+    unwired case would pass.
+    """
+    global _process_runner
+    _process_runner = None
     _state_var.set(None)
 
 
