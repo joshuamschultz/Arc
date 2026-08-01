@@ -25,6 +25,7 @@ private key that never enters an agent process, produces a signature.
 from __future__ import annotations
 
 from arcteam.workflow.errors import (
+    InvalidWorkflowIdError,
     PredicateError,
     PredicateEvaluationError,
     PredicateParseError,
@@ -47,6 +48,7 @@ from arcteam.workflow.models import (
     MAX_NODES,
     NODE_KINDS,
     SCHEMA_VERSION,
+    WORKFLOW_ID_PATTERN,
     ActiveHours,
     AgentNode,
     Budget,
@@ -108,6 +110,7 @@ __all__ = [
     "MAX_NODES",
     "NODE_KINDS",
     "SCHEMA_VERSION",
+    "WORKFLOW_ID_PATTERN",
     "ActiveHours",
     "AgentNode",
     "BoolOp",
@@ -117,6 +120,7 @@ __all__ = [
     "DefinitionStore",
     "GateNode",
     "InputSpec",
+    "InvalidWorkflowIdError",
     "JoinMode",
     "KnownReferences",
     "LiteralValue",

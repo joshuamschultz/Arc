@@ -35,6 +35,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import tempfile
 import tomllib
@@ -47,6 +48,7 @@ from arctrust import ArtifactSignature, sign_artifact, verify_artifact
 from pydantic import BaseModel, ConfigDict
 
 from arcteam.workflow.errors import (
+    InvalidWorkflowIdError,
     PurgeRefusedError,
     StaleEditError,
     UnsignedWorkflowError,
@@ -56,7 +58,12 @@ from arcteam.workflow.errors import (
     WorkflowNotFoundError,
     WorkflowValidationError,
 )
-from arcteam.workflow.models import Trigger, WorkflowDefinition, parse_definition
+from arcteam.workflow.models import (
+    WORKFLOW_ID_PATTERN,
+    Trigger,
+    WorkflowDefinition,
+    parse_definition,
+)
 from arcteam.workflow.serialize import canonical_bytes, content_hash, dump_toml, file_manifest
 from arcteam.workflow.validator import KnownReferences, confine, validate_definition
 
@@ -74,6 +81,8 @@ WorkflowAuditHook = Callable[[str, dict[str, Any]], None]
 store never owns a sink, it only guarantees an event per operation."""
 
 _TIER_RANK: dict[str, int] = {"personal": 0, "enterprise": 1, "federal": 2}
+
+_LEGAL_ID = re.compile(WORKFLOW_ID_PATTERN)
 
 
 class WorkflowBundle(BaseModel):
@@ -141,7 +150,18 @@ class DefinitionStore:
     # -- reading --
 
     def path_for(self, workflow_id: str) -> Path:
-        """The bundle directory for ``workflow_id``."""
+        """The bundle directory for ``workflow_id``.
+
+        Every read and lifecycle method routes through here, which makes this
+        the one place a caller-supplied id becomes a path — and therefore the
+        one place it must be proved to be a bare name.
+        """
+        if not _LEGAL_ID.match(workflow_id):
+            raise InvalidWorkflowIdError(
+                f"{workflow_id!r} is not a workflow id; an id is a bare name matching "
+                f"{WORKFLOW_ID_PATTERN} and may never contain a path separator or '..' "
+                f"(fail-closed — an id becomes a directory under the agent's workspace)"
+            )
         return self.root / workflow_id
 
     def exists(self, workflow_id: str) -> bool:

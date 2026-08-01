@@ -22,6 +22,7 @@ from arctrust import ArtifactSignature, generate_keypair
 
 from arcteam.workflow import (
     DefinitionStore,
+    InvalidWorkflowIdError,
     StaleEditError,
     UnsignedWorkflowError,
     WorkflowIntegrityError,
@@ -450,6 +451,75 @@ def test_an_invalid_graph_is_never_written(store: DefinitionStore) -> None:
 
     assert excinfo.value.issues
     assert not (store.root / "onboarding" / "workflow.toml").exists()
+
+
+ESCAPING_IDS = ["../../bob/workflows/secret", "..", "a/b", "/etc/passwd", ".", "", "foo/../bar"]
+
+
+@pytest.mark.parametrize("bad_id", ESCAPING_IDS)
+def test_every_store_method_refuses_a_workflow_id_that_is_not_a_name(
+    store: DefinitionStore, bad_id: str
+) -> None:
+    """A workflow id names a directory, so an unchecked one is a traversal.
+
+    Only ``save_draft`` gets its id from the validated model; every read and
+    lifecycle method takes a caller-supplied string that reaches the filesystem
+    — from an HTTP path parameter, a tool argument, or a task row. A well-formed
+    id like "onboarding" behaves identically with the check deleted, which is
+    what hid this.
+    """
+    for call in (
+        store.path_for,
+        store.exists,
+        store.load,
+        store.load_for_run,
+        store.load_for_dispatch,
+        store.versions,
+    ):
+        with pytest.raises(InvalidWorkflowIdError):
+            call(bad_id)
+
+    with pytest.raises(InvalidWorkflowIdError):
+        store.load_version(bad_id, 1)
+    with pytest.raises(InvalidWorkflowIdError):
+        store.archive(bad_id, actor_did="did:arc:ui:operator")
+    with pytest.raises(InvalidWorkflowIdError):
+        store.unarchive(bad_id, actor_did="did:arc:ui:operator")
+    with pytest.raises(InvalidWorkflowIdError):
+        store.purge(bad_id, actor_did="did:arc:ui:operator", runs_referencing=lambda _: 0)
+
+
+def test_one_store_cannot_read_another_agents_bundle(tmp_path: Path) -> None:
+    """Each agent's workspace is its own; a store must not reach out of it."""
+    bob = DefinitionStore(tmp_path / "bob" / "workflows")
+    _seed(bob)
+    alice = DefinitionStore(tmp_path / "alice" / "workflows")
+
+    with pytest.raises(InvalidWorkflowIdError):
+        alice.load("../../bob/workflows/onboarding")
+
+
+def test_one_store_cannot_purge_another_agents_bundle(tmp_path: Path) -> None:
+    """purge calls rmtree, so an unconfined id is a cross-agent destroy."""
+    bob = DefinitionStore(tmp_path / "bob" / "workflows")
+    _seed(bob)
+    alice = DefinitionStore(tmp_path / "alice" / "workflows")
+
+    with pytest.raises(InvalidWorkflowIdError):
+        alice.purge(
+            "../../bob/workflows/onboarding",
+            actor_did="did:arc:agent:alice",
+            runs_referencing=lambda _: 0,
+        )
+
+    assert bob.exists("onboarding")
+
+
+def test_a_legal_workflow_id_still_resolves(store: DefinitionStore) -> None:
+    _seed(store)
+
+    assert store.exists("onboarding")
+    assert store.path_for("onboarding").name == "onboarding"
 
 
 def test_list_ids_reports_saved_workflows(store: DefinitionStore) -> None:
