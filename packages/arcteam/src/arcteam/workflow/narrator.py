@@ -120,6 +120,23 @@ class RunNarrator:
             event="run.outcome",
         )
 
+    async def runner_degraded(
+        self, *, channel: str | None, consecutive_failures: int, last_error: str
+    ) -> None:
+        """The engine itself is failing repeatedly — not scoped to one run.
+
+        Posted to every channel a run was bound to as of the last tick that
+        could actually list active runs, since a whole-tick failure means
+        that listing is exactly what broke and there is no fresher channel to
+        resolve.
+        """
+        await self._post(
+            channel,
+            f"Workflow engine degraded: {consecutive_failures} consecutive tick "
+            f"failures (last error: {last_error})",
+            event="runner.degraded",
+        )
+
     async def _post(self, channel: str | None, body: str, **meta: Any) -> None:
         """Build and send one narration message; a failed delivery is not an error.
 

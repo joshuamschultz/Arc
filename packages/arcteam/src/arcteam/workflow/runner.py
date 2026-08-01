@@ -150,6 +150,7 @@ class WorkflowRunner:
         clock: Callable[[], datetime] | None = None,
         run_workspace_root: Path | None = None,
         on_close: Callable[[], Awaitable[None]] | None = None,
+        tick_failure_threshold: int = 3,
     ) -> None:
         self._tasks = tasks
         self._runs = runs
@@ -166,6 +167,12 @@ class WorkflowRunner:
         self._clock = clock or (lambda: datetime.now(UTC))
         self._run_workspace_root = run_workspace_root
         self._on_close = on_close
+        # Whole-tick failure escalation (REQ mirrors the scheduler's
+        # consecutive_failures + circuit_breaker_threshold, default 3). See
+        # ``run_forever`` for why this counts and escalates but never stops.
+        self._tick_failure_threshold = tick_failure_threshold
+        self._consecutive_tick_failures = 0
+        self._last_known_channels: list[str] = []
 
     # -- public surface ----------------------------------------------------
 
@@ -271,26 +278,74 @@ class WorkflowRunner:
         One tick advances every non-terminal run. A tick that raises is logged
         and the loop continues: one poisoned run must not stop the engine for
         every other run in the fleet (the scheduler's store-poison lesson).
+
+        That per-run isolation lives inside ``tick()`` and stays exactly as
+        is. What this loop adds is a check ONE LEVEL UP: ``tick()`` itself can
+        still raise (its own call to list active runs is not inside that
+        per-run guard), and a tick that NEVER stops raising means the engine
+        makes zero progress while looking exactly as busy from the outside as
+        a healthy one — a log line every ``interval`` seconds is not a signal
+        anyone is watching. Consecutive whole-tick failures are counted and,
+        at ``_tick_failure_threshold`` (mirrors the task scheduler module's own
+        consecutive-failure circuit breaker, default 3), escalated loudly via
+        an audit event and, if a narrator is wired, a channel post.
+
+        Deliberately does NOT stop the loop at the threshold. Stopping would
+        trade one silent-failure shape for another: the process stays alive
+        (nothing signals its death), yet every run in the fleet — including
+        ones that were healthy — now never ticks again until an operator
+        notices the log and restarts it by hand. Continuing to retry means a
+        transient cause (a flaky store connection) self-heals on its own the
+        moment a tick succeeds, while the loud escalation is what makes the
+        non-transient case visible instead of merely logged.
         """
         while True:
             try:
                 await self.tick()
             except asyncio.CancelledError:
                 raise
-            except Exception:  # reason: one bad tick must not stop the engine
+            except Exception as exc:  # reason: one bad tick must not stop the engine
                 logger.exception("workflow runner tick failed")
+                await self._on_tick_failure(exc)
+            else:
+                self._consecutive_tick_failures = 0
             await asyncio.sleep(interval)
 
     async def tick(self) -> int:
         """Advance every active run once. Returns how many were advanced."""
         advanced = 0
-        for run in await self._runs.active_runs():
+        runs = await self._runs.active_runs()
+        self._last_known_channels = sorted({r.channel for r in runs if r.channel is not None})
+        for run in runs:
             try:
                 await self.advance(run.run_id)
             except Exception:  # reason: one poisoned run must not stall the rest
                 logger.exception("advancing run %s failed", run.run_id)
             advanced += 1
         return advanced
+
+    async def _on_tick_failure(self, exc: Exception) -> None:
+        """Count a whole-tick failure; escalate at the threshold and every
+        multiple after, so a long outage re-pages rather than going quiet
+        again after the first alert.
+        """
+        self._consecutive_tick_failures += 1
+        count = self._consecutive_tick_failures
+        if count < self._tick_failure_threshold or count % self._tick_failure_threshold != 0:
+            return
+        last_error = str(exc)
+        self._audit(
+            "workflow.runner.degraded",
+            target=f"runner/{self._runner_did}",
+            outcome="degraded",
+            extra={"consecutive_failures": count, "last_error": last_error},
+        )
+        if self._narrator is None:
+            return
+        for channel in self._last_known_channels:
+            await self._narrator.runner_degraded(
+                channel=channel, consecutive_failures=count, last_error=last_error
+            )
 
     async def aclose(self) -> None:
         """Release what this runner owns. Idempotent — shutdown may retry."""
@@ -1019,6 +1074,7 @@ def build_workflow_runner(
     narrator: RunNarrator | None = None,
     audit_sink: AuditSink | None = None,
     on_close: Callable[[], Awaitable[None]] | None = None,
+    tick_failure_threshold: int = 3,
 ) -> WorkflowRunner:
     """Assemble a production runner (COMP-009's construction seam).
 
@@ -1060,6 +1116,7 @@ def build_workflow_runner(
         audit_sink=audit_sink,
         run_workspace_root=root / "shared",
         on_close=on_close,
+        tick_failure_threshold=tick_failure_threshold,
     )
 
 
