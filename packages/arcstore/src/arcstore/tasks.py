@@ -216,6 +216,15 @@ class MutableTaskBackend(Protocol):
         absent_where: dict[str, Any] | None = None,
     ) -> bool: ...
 
+    async def mutable_create_batch(
+        self,
+        collection: str,
+        entries: Sequence[tuple[str, dict[str, Any]]],
+        *,
+        actor_did: str,
+        sink: Any | None = None,
+    ) -> list[dict[str, Any]]: ...
+
 
 def _is_chain_relative(active: Task, target: Task) -> bool:
     """True if ``target`` is a dependency-chain relative of ``active`` (FR-5).
@@ -267,6 +276,35 @@ class TaskStore:
             sink=self._sink,
         )
         return task
+
+    async def create_batch(self, tasks: Sequence[Task], *, actor_did: str) -> list[Task]:
+        """Create many task rows across owners in one backend transaction.
+
+        SPEC-061 COMP-007 — frontier materialization writes one task per
+        reachable node, potentially owned by several different agents, and
+        must land atomically: either every node in the batch materializes or
+        none does. Idempotent on each task's own ``id`` — the caller (the
+        workflow runner) is expected to derive every id deterministically
+        from its ``(run_id, node_id)`` pair, so a crashed caller re-invoking
+        this with the same batch gets back the rows already created instead
+        of duplicating them. A task that already existed is returned as its
+        current stored state, unmodified by this call; a new task is stamped
+        with ``created_at``/``updated_at`` exactly like :meth:`create`.
+        """
+        now = datetime.now(UTC).isoformat()
+        prepared: list[Task] = []
+        for task in tasks:
+            t = task
+            if "status" not in t.model_fields_set:
+                derived: TaskStatus = "todo" if t.owner_did is not None else "backlog"
+                t = t.model_copy(update={"status": derived})
+            t = t.model_copy(update={"created_at": now, "updated_at": now})
+            prepared.append(t)
+        entries = [(t.id, t.model_dump(mode="json")) for t in prepared]
+        rows = await self._backend.mutable_create_batch(
+            self._COLLECTION, entries, actor_did=actor_did, sink=self._sink
+        )
+        return [self._load(row) for row in rows]
 
     async def get(self, task_id: str) -> Task | None:
         raw = await self._backend.mutable_read(self._COLLECTION, task_id)
