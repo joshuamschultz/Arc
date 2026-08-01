@@ -438,6 +438,31 @@ def test_audit_events_carry_the_actor_and_version(tmp_path: Path) -> None:
     assert events[1][1]["version"] == 2
 
 
+def test_an_edited_signed_workflow_is_runnable_as_a_draft(tmp_path: Path) -> None:
+    """Editing must CLEAR the old signature, not merely out-date it.
+
+    Asserting that an edit yields ``status="draft"`` does not prove this: the
+    edit changes the content hash, so a stale sidecar stops verifying and the
+    status reads ``"draft"`` either way. What a leftover sidecar actually does
+    is trip the drift check on the next run, making every edited draft
+    permanently unrunnable — a self-inflicted denial of service on any workflow
+    that was ever signed. Only exercising the run path separates the two.
+    """
+    keypair = generate_keypair()
+    store = DefinitionStore(
+        tmp_path / "workflows", tier="personal", operator_public_key=keypair.public_key
+    )
+    bundle = _seed(store)
+    sign_definition(store, "onboarding", signer_did=OPERATOR_DID, private_key=keypair.private_key)
+
+    edited = {**DOCUMENT, "workflow": {**DOCUMENT["workflow"], "description": "edited"}}
+    store.save_draft(parse_definition(edited), actor_did="did:arc:agent:sales", expected_version=1)
+
+    assert not (bundle.root / "workflow.toml.arcsig").exists()
+    assert store.load_for_run("onboarding").status == "draft"
+    assert store.load_for_dispatch("onboarding").status == "draft"
+
+
 def test_the_sidecar_is_a_detached_arctrust_signature(tmp_path: Path) -> None:
     keypair = generate_keypair()
     store = DefinitionStore(tmp_path / "workflows", operator_public_key=keypair.public_key)
