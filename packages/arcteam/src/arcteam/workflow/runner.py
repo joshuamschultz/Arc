@@ -1051,6 +1051,31 @@ def build_workflow_runner(
         operator_public_key=operator_public_key,
         audit=_definition_audit_hook(sink, tier),
     )
+    # Record the posture this runner will actually enforce. Tier is handed in by
+    # the host from ITS config, while every agent's stringency comes from a
+    # different setting, and nothing reconciles the two. Whether they may
+    # legitimately differ is a deployment decision — but a runner dispatching at
+    # a weaker tier than the fleet believes it has must never be discoverable
+    # only by reading code (AU-2: records reflect actual posture, not intended).
+    emit(
+        AuditEvent(
+            actor_did=identity.did,
+            action="workflow.runner.constructed",
+            target=str(root),
+            outcome="ok",
+            tier=tier,
+            extra={
+                "tier_source": "host-supplied",
+                "signed_definitions_required": tier != "personal",
+            },
+        ),
+        sink,
+    )
+    logger.info(
+        "workflow runner constructed at tier=%s (signed definitions %s)",
+        tier,
+        "required" if tier != "personal" else "NOT required",
+    )
     return WorkflowRunner(
         tasks=WorkflowTaskStore(task_store_backend, actor_did=identity.did),
         runs=WorkflowRunStore(task_store_backend),
