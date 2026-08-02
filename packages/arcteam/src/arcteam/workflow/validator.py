@@ -61,9 +61,12 @@ from arcteam.workflow.resolver import (
 class KnownReferences(BaseModel):
     """The roster a definition's references are checked against.
 
-    An empty set means "nothing known of this kind", which is why the caller
-    passes ``known=None`` to skip roster checking entirely rather than passing
-    empty sets and getting everything rejected.
+    An empty set for one kind means "this deployment has no roster of that
+    kind" and skips it. Partial knowledge is the normal case — a caller can
+    name every registered agent long before anything can enumerate every tool
+    in the fleet — and rejecting every tool node because nobody could list the
+    tools would make the check unusable exactly where it is most wanted.
+    ``known=None`` skips all three.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -319,7 +322,7 @@ def _check_known(
 ) -> Iterable[ValidationIssue]:
     if known is None:
         return
-    if definition.owner not in known.agents:
+    if known.agents and definition.owner not in known.agents:
         yield ValidationIssue(
             field="owner",
             error="the workflow owner is not a registered agent",
@@ -327,11 +330,11 @@ def _check_known(
             admissible=tuple(sorted(known.agents)),
         )
     for node in definition.nodes:
-        if node.agent is not None and node.agent not in known.agents:
+        if known.agents and node.agent is not None and node.agent not in known.agents:
             yield _unknown(node.id, "agent", node.agent, known.agents)
-        if isinstance(node, ToolNode) and node.tool not in known.tools:
+        if known.tools and isinstance(node, ToolNode) and node.tool not in known.tools:
             yield _unknown(node.id, "tool", node.tool, known.tools)
-        if isinstance(node, AgentNode) and node.skill is not None:
+        if known.skills and isinstance(node, AgentNode) and node.skill is not None:
             if node.skill not in known.skills:
                 yield _unknown(node.id, "skill", node.skill, known.skills)
 

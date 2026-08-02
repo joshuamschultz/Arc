@@ -421,7 +421,8 @@ priority = 100
 # ArcFlow (SPEC-061): named, signed workflow definitions this agent can author
 # from conversation and run. Declared here because an undeclared module sits
 # dead fleet-wide — the builder tools never register and nothing says why.
-workflows_dir = "workflows"  # bundle root, relative to the agent's workspace
+workflows_dir = "workflows"  # bundle root, relative to the deployment config dir
+nats_url = "nats://127.0.0.1:4222"  # team bus; gives authoring a real agent roster
 data_dir = ""                # empty defers to arcstore.resolve_data_dir (shared store)
 max_workflows = 50           # quota, checked before any validation work (LLM10)
 max_nodes = 200              # per-definition node ceiling

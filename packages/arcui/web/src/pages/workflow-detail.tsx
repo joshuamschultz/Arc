@@ -5,11 +5,19 @@ import { PageHeader } from '@/components/page-header'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { QueryState, EmptyState } from '@/components/states'
 import { StatusText } from '@/components/status-badge'
+import { GateCard } from '@/components/gate-card'
 import { RunDetailDrawer } from '@/components/run-detail-drawer'
 import { WorkflowGraph, type NodeStatusUpdate } from '@/components/workflow-graph'
 import {
@@ -225,6 +233,33 @@ function GraphTab({ workflow }: { workflow: WorkflowDetail }) {
     }
   }
 
+  /** Drawing an edge is editing the TARGET's `needs` — the graph has no edge
+   *  list of its own, so this is the only thing an edge can mean. */
+  const setNeeds = async (target: string, needs: string[]) => {
+    setActionError(null)
+    const nodes = workflow.nodes.map((n) => (n.id === target ? { ...n, needs } : n))
+    try {
+      await patchWorkflow.mutateAsync({ patch: { nodes }, expectedVersion: workflow.version })
+      setFieldErrors([])
+    } catch (e) {
+      const { message, fieldErrors: errs } = describeError(e)
+      setActionError(message)
+      setFieldErrors(errs)
+    }
+  }
+
+  const connectNodes = (source: string, target: string) => {
+    const node = workflow.nodes.find((n) => n.id === target)
+    const needs = node?.needs ?? []
+    if (needs.includes(source)) return
+    void setNeeds(target, [...needs, source])
+  }
+
+  const disconnectNodes = (source: string, target: string) => {
+    const node = workflow.nodes.find((n) => n.id === target)
+    void setNeeds(target, (node?.needs ?? []).filter((n) => n !== source))
+  }
+
   const deleteSelectedNode = async () => {
     if (!selectedNodeId) return
     setActionError(null)
@@ -244,7 +279,14 @@ function GraphTab({ workflow }: { workflow: WorkflowDetail }) {
   return (
     <div className="flex h-full flex-col gap-3">
       <div className="flex items-center justify-between">
-        {actionError && <span className="text-xs text-destructive">{actionError}</span>}
+        {actionError ? (
+          <span className="text-xs text-destructive">{actionError}</span>
+        ) : (
+          <span className="text-[11px] text-muted-foreground">
+            Drag from a node's right edge to another's left to order them. Click a node to edit it.
+            Select an edge and press delete to unlink.
+          </span>
+        )}
         <Button size="sm" variant="ghost" className="ml-auto" onClick={addNode} disabled={patchWorkflow.isPending}>
           <Plus className="size-3.5" /> Add node
         </Button>
@@ -260,6 +302,8 @@ function GraphTab({ workflow }: { workflow: WorkflowDetail }) {
             edges={workflow.edges}
             errorNodeIds={errorNodeIds}
             onNodeClick={setSelectedNodeId}
+            onConnectNodes={connectNodes}
+            onDisconnectNodes={disconnectNodes}
           />
         )}
       </div>
@@ -281,18 +325,31 @@ function GraphTab({ workflow }: { workflow: WorkflowDetail }) {
 
 function TriggerChannelTab({ workflow }: { workflow: WorkflowDetail }) {
   const patchWorkflow = usePatchWorkflow(workflow.id)
-  const [triggerText, setTriggerText] = useState(() => JSON.stringify(workflow.trigger ?? {}, null, 2))
+  const current = (workflow.trigger ?? {}) as Record<string, string | undefined>
+  const hours = (current.active_hours ?? {}) as unknown as Record<string, string | undefined>
+  const [type, setType] = useState<string>(current.type ?? 'manual')
+  const [expression, setExpression] = useState(current.expression ?? '')
+  const [intervalS, setIntervalS] = useState(
+    current.interval_s === undefined ? '' : String(current.interval_s),
+  )
+  const [start, setStart] = useState(hours.start ?? '')
+  const [end, setEnd] = useState(hours.end ?? '')
+  const [timezone, setTimezone] = useState(hours.timezone ?? '')
   const [channel, setChannel] = useState(workflow.channel ?? '')
   const [error, setError] = useState<string | null>(null)
 
   const saveTrigger = async () => {
     setError(null)
-    let trigger: Record<string, unknown>
-    try {
-      trigger = JSON.parse(triggerText) as Record<string, unknown>
-    } catch {
-      setError('Trigger is not valid JSON')
-      return
+    // `manual` is the absence of a trigger, not a kind of one: the runner reads
+    // "no trigger" as "a person starts it", so clearing is the honest write.
+    const trigger: Record<string, unknown> | null =
+      type === 'manual' ? null : { type }
+    if (trigger) {
+      if (type === 'cron' && expression.trim()) trigger.expression = expression.trim()
+      if (type === 'interval' && intervalS.trim()) trigger.interval_s = Number(intervalS)
+      if (start.trim() && end.trim()) {
+        trigger.active_hours = { start: start.trim(), end: end.trim(), timezone: timezone.trim() }
+      }
     }
     try {
       await patchWorkflow.mutateAsync({ patch: { trigger }, expectedVersion: workflow.version })
@@ -317,16 +374,77 @@ function TriggerChannelTab({ workflow }: { workflow: WorkflowDetail }) {
           {error}
         </div>
       )}
-      <div className="space-y-1.5">
-        <label className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-          Trigger (JSON)
-        </label>
-        <Textarea
-          rows={8}
-          value={triggerText}
-          onChange={(e) => setTriggerText(e.target.value)}
-          className="font-mono text-xs"
-        />
+      <div className="space-y-3">
+        <div className="space-y-1.5">
+          <label className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+            Starts
+          </label>
+          <Select value={type} onValueChange={setType}>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="manual">when someone runs it</SelectItem>
+              <SelectItem value="cron">on a schedule (cron)</SelectItem>
+              <SelectItem value="interval">every N seconds</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        {type === 'cron' && (
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+              Cron expression
+            </label>
+            <Input
+              value={expression}
+              placeholder="0 9 * * MON"
+              className="font-mono text-xs"
+              onChange={(e) => setExpression(e.target.value)}
+            />
+            <p className="text-[11px] text-muted-foreground">
+              minute hour day month weekday — `0 9 * * MON` is 9am every Monday.
+            </p>
+          </div>
+        )}
+        {type === 'interval' && (
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+              Every (seconds)
+            </label>
+            <Input
+              value={intervalS}
+              inputMode="numeric"
+              placeholder="3600"
+              onChange={(e) => setIntervalS(e.target.value)}
+            />
+          </div>
+        )}
+        {type !== 'manual' && (
+          <div className="grid grid-cols-3 gap-2">
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                Not before
+              </label>
+              <Input value={start} placeholder="08:00" onChange={(e) => setStart(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                Not after
+              </label>
+              <Input value={end} placeholder="18:00" onChange={(e) => setEnd(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                Timezone
+              </label>
+              <Input
+                value={timezone}
+                placeholder="America/Chicago"
+                onChange={(e) => setTimezone(e.target.value)}
+              />
+            </div>
+          </div>
+        )}
         <Button size="sm" onClick={saveTrigger} disabled={patchWorkflow.isPending}>
           Save trigger
         </Button>
@@ -336,6 +454,9 @@ function TriggerChannelTab({ workflow }: { workflow: WorkflowDetail }) {
           Bound channel
         </label>
         <Input value={channel} onChange={(e) => setChannel(e.target.value)} placeholder="workflow-onboarding" />
+        <p className="text-[11px] text-muted-foreground">
+          Where runs narrate: node starts, gate decisions, and the outcome. Leave empty for none.
+        </p>
         <Button size="sm" onClick={saveChannel} disabled={patchWorkflow.isPending}>
           Save channel
         </Button>
@@ -418,8 +539,20 @@ function RunGraph({ workflow, runId }: { workflow: WorkflowDetail; runId: string
     })
   }
 
+  const waitingGates = (run.data?.nodes ?? []).filter(
+    (n) => n.status === 'waiting_gate' && n.task_id,
+  )
+
   return (
     <>
+      {waitingGates.map((gate) => (
+        <GateCard
+          key={gate.task_id}
+          taskId={gate.task_id!}
+          nodeId={gate.node_id}
+          body={`This run is waiting on ${gate.node_id}.`}
+        />
+      ))}
       <div className="min-h-[380px] overflow-hidden rounded-lg border border-border">
         <WorkflowGraph
           workflowId={workflow.id}
@@ -555,7 +688,14 @@ export function WorkflowDetailPage() {
         }
         actions={
           <div className="flex items-center gap-2">
-            {actionError && <span className="text-xs text-destructive">{actionError}</span>}
+            {actionError ? (
+          <span className="text-xs text-destructive">{actionError}</span>
+        ) : (
+          <span className="text-[11px] text-muted-foreground">
+            Drag from a node's right edge to another's left to order them. Click a node to edit it.
+            Select an edge and press delete to unlink.
+          </span>
+        )}
             <Button
               size="sm"
               onClick={runNow}

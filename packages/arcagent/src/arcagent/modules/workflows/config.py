@@ -34,6 +34,11 @@ class WorkflowsConfig(ModuleConfig):
     # plane — empty defers to that function's env > default precedence so this
     # module, the tasks module, and arcui always agree on one SQLite file.
     data_dir: str = ""
+    # The team bus this deployment's agents are on. Set (mirroring the tasks
+    # module) it gives the authoring check a real roster, so a node naming an
+    # agent nobody registered is refused while it can still be repaired. Empty
+    # means no roster — the check is skipped, never guessed.
+    nats_url: str = ""
     # --- Quotas (LLM10), checked BEFORE any validation work ----------------
     # A whole-graph validation over a 200-node definition is real CPU; an agent
     # that can author unboundedly can spend it unboundedly. Both ceilings are

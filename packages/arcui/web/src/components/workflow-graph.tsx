@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useMemo } from 'react'
 import {
   Background,
   Controls,
+  Handle,
   MarkerType,
   Position,
   ReactFlow,
@@ -9,6 +10,7 @@ import {
   useEdgesState,
   useNodesState,
   useReactFlow,
+  type Connection,
   type Edge,
   type Node,
   type NodeProps,
@@ -64,6 +66,7 @@ const WorkflowGraphNode = memo(function WorkflowGraphNode({
         data.hasError && 'border-destructive',
       )}
     >
+      <Handle type="target" position={Position.Left} className="!size-2 !bg-muted-foreground" />
       <div className="font-mono text-[10px] uppercase tracking-wide opacity-70">{data.kind}</div>
       <div className="truncate font-semibold text-foreground">{data.label}</div>
       {data.status === 'looping' ? (
@@ -73,6 +76,7 @@ const WorkflowGraphNode = memo(function WorkflowGraphNode({
       ) : data.status ? (
         <div className="mt-1 text-[10px] capitalize">{data.status.replace(/_/g, ' ')}</div>
       ) : null}
+      <Handle type="source" position={Position.Right} className="!size-2 !bg-muted-foreground" />
     </div>
   )
 })
@@ -114,6 +118,10 @@ interface WorkflowGraphProps {
   version: number
   nodes: WfNode[]
   edges: WfEdge[]
+  /** Drag from one node's right handle to another's left: the target now
+   *  `needs` the source. Absent on a run view, where the graph is a record. */
+  onConnectNodes?: (source: string, target: string) => void
+  onDisconnectNodes?: (source: string, target: string) => void
   /** Per-node live/final status. Absent nodes render with no status pill. */
   nodeStatus?: Record<string, NodeStatusUpdate>
   /** node_id -> true for nodes a validation error is against (REQ-253). */
@@ -129,6 +137,8 @@ function WorkflowGraphInner({
   nodeStatus,
   errorNodeIds,
   onNodeClick,
+  onConnectNodes,
+  onDisconnectNodes,
 }: WorkflowGraphProps) {
   const cacheKey = `${workflowId}:${version}`
   const positions = useMemo(() => layoutPositions(cacheKey, nodes, edges), [cacheKey, nodes, edges])
@@ -198,12 +208,32 @@ function WorkflowGraphInner({
     [onNodeClick],
   )
 
+  const handleConnect = useCallback(
+    (connection: Connection) => {
+      if (!connection.source || !connection.target) return
+      onConnectNodes?.(connection.source, connection.target)
+    },
+    [onConnectNodes],
+  )
+
+  const handleEdgesDelete = useCallback(
+    (deleted: Edge[]) => {
+      for (const edge of deleted) onDisconnectNodes?.(edge.source, edge.target)
+    },
+    [onDisconnectNodes],
+  )
+
   return (
     <ReactFlow
       nodes={rfNodes}
       edges={rfEdges}
       onNodesChange={onNodesChange}
       onEdgesChange={onEdgesChange}
+      onConnect={handleConnect}
+      onEdgesDelete={handleEdgesDelete}
+      nodesConnectable={onConnectNodes !== undefined}
+      edgesReconnectable={false}
+      deleteKeyCode={onDisconnectNodes ? ['Backspace', 'Delete'] : null}
       nodeTypes={nodeTypes}
       onNodeClick={handleNodeClick}
       fitView
