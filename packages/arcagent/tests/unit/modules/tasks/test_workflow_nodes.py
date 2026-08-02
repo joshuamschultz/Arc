@@ -585,7 +585,6 @@ class TestTheSessionKeyIsAFilename:
 
         from arcagent.core.config import ContextConfig, SessionConfig
         from arcagent.core.session_internal.manager import SessionManager
-
         from arcagent.modules.tasks.capabilities import _session_key
 
         manager = SessionManager(SessionConfig(), ContextConfig(), MagicMock(), tmp_path)
