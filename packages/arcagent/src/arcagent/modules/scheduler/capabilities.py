@@ -70,6 +70,9 @@ class Scheduler:
         )
         # If a real run_fn was provided at configure time, mark the
         # engine ready so the timer loop doesn't block waiting for one.
+        engine.label = getattr(getattr(st, "identity", None), "did", "") or str(
+            getattr(st, "workspace", "")
+        )
         if st.agent_run_fn is not None:
             engine.set_agent_run_fn(st.agent_run_fn)
 

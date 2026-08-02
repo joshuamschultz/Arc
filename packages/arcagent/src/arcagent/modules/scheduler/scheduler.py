@@ -70,6 +70,9 @@ class SchedulerEngine:
         self._running = False
         self._timer_consecutive_errors = 0
         self._ready = asyncio.Event()  # Set when agent_run_fn is bound
+        # Which agent this engine belongs to. A fleet runs one engine per
+        # agent, so an unlabelled warning names a problem nobody can locate.
+        self.label: str = ""
         # Test seam: the configured interval is whole seconds, which makes a
         # loop test take whole seconds. Overridden only by tests.
         self._tick_seconds: float = 0.0
@@ -474,8 +477,9 @@ class SchedulerEngine:
                 pending = self._pending_count()
                 if pending and waited % _UNREADY_WARN_SECONDS < interval:
                     _logger.warning(
-                        "Scheduler has %d enabled schedule(s) but no agent run callback "
-                        "after %.0fs — nothing will fire until one is bound",
+                        "Scheduler for %s has %d enabled schedule(s) but no agent run "
+                        "callback after %.0fs — nothing will fire until one is bound",
+                        self.label or "an unnamed agent",
                         pending,
                         waited,
                     )
