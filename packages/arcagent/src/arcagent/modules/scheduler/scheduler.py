@@ -51,25 +51,26 @@ class SchedulerEngine:
         store: ScheduleStore,
         config: SchedulerConfig,
         telemetry: AgentTelemetry,
-        agent_run_fn: AgentRunFn,
+        # ``None`` until the agent binds one. Not a placeholder callable: a
+        # noop that "succeeds" marks a reminder run and disables it, losing the
+        # reminder silently. Absent is a state the engine reports.
+        agent_run_fn: AgentRunFn | None,
         bus: ModuleBus | None = None,
         channel_deliver_fn: ChannelDeliverFn | None = None,
     ) -> None:
         self._store = store
         self._config = config
         self._telemetry = telemetry
-        self._agent_run_fn = agent_run_fn
+        self._agent_run_fn: AgentRunFn | None = agent_run_fn
         self._bus = bus
         self._channel_deliver_fn = channel_deliver_fn
 
-        self._queue: asyncio.Queue[ScheduleEntry] = asyncio.Queue(maxsize=100)
         self._in_flight: set[str] = set()
         self._fire_and_forget: set[asyncio.Task[Any]] = set()
         self._timer_task: asyncio.Task[None] | None = None
-        self._worker_task: asyncio.Task[None] | None = None
         self._running = False
         self._timer_consecutive_errors = 0
-        self._ready = asyncio.Event()  # Set when agent_run_fn is bound
+        self._unready_ticks = 0
         # Which agent this engine belongs to. A fleet runs one engine per
         # agent, so an unlabelled warning names a problem nobody can locate.
         self.label: str = ""
@@ -82,9 +83,15 @@ class SchedulerEngine:
         return self._running
 
     def set_agent_run_fn(self, fn: AgentRunFn) -> None:
-        """Bind or rebind the agent.run() callback."""
+        """Bind or rebind the agent.run() callback.
+
+        Binding is no longer a handshake the loop waits on. The loop asks for a
+        callback each time something is due, so a callback bound before the
+        engine exists, after it starts, or from a different task all work the
+        same — the previous design blocked forever on any of those and said
+        nothing.
+        """
         self._agent_run_fn = fn
-        self._ready.set()
 
     def set_channel_deliver_fn(self, fn: ChannelDeliverFn | None) -> None:
         """Bind the channel-delivery callback (embedded gateway supplies it)."""
@@ -93,48 +100,23 @@ class SchedulerEngine:
     # --- Public API ---
 
     async def start(self) -> None:
-        """Start the timer loop and worker task."""
+        """Start the one loop this engine has."""
         self._running = True
         self._timer_task = asyncio.create_task(self._timer_loop())
-        self._worker_task = asyncio.create_task(self._worker())
         _logger.info("Scheduler engine started")
 
     async def stop(self, timeout: float = 10.0) -> None:
-        """Stop the engine, draining the queue before shutdown."""
+        """Stop the loop. Nothing to drain — a firing runs inline."""
+        del timeout
         self._running = False
-        self._ready.set()  # Unblock timer loop if still waiting for readiness.
-
         if self._timer_task is not None:
             self._timer_task.cancel()
             try:
                 await self._timer_task
             except asyncio.CancelledError:
                 pass
-
-        # Drain remaining queue items.
-        if not self._queue.empty():
-            try:
-                await asyncio.wait_for(self._queue.join(), timeout=timeout)
-            except TimeoutError:
-                _logger.warning("Queue drain timed out after %.1fs", timeout)
-
-        if self._worker_task is not None:
-            self._worker_task.cancel()
-            try:
-                await self._worker_task
-            except asyncio.CancelledError:
-                pass
-
         self._in_flight.clear()
         _logger.info("Scheduler engine stopped")
-
-    async def enqueue(self, entry: ScheduleEntry) -> None:
-        """Put a schedule entry into the execution queue (with dedup)."""
-        if entry.id in self._in_flight:
-            _logger.debug("Skipping duplicate enqueue for %s", entry.id)
-            return
-        self._in_flight.add(entry.id)
-        await self._queue.put(entry)
 
     async def execute(self, entry: ScheduleEntry) -> Any:
         """Execute a single schedule entry via agent_run_fn.
@@ -187,7 +169,13 @@ class SchedulerEngine:
             from arcagent.modules.workflows.run_entry import start_workflow_run
 
             return await start_workflow_run(str(entry.workflow_id), entry.workflow_input)
-        return await self._agent_run_fn(entry.prompt, session_key=f"scheduler:{entry.id}")
+        run_fn = self._agent_run_fn
+        if run_fn is None:
+            # The tick refuses to run a due entry without a callback, so this is
+            # only reachable by calling execute() directly. Refuse loudly rather
+            # than record a firing that never happened.
+            raise RuntimeError("no agent run callback is bound")
+        return await run_fn(entry.prompt, session_key=f"scheduler:{entry.id}")
 
     # --- Evaluation ---
 
@@ -431,80 +419,74 @@ class SchedulerEngine:
             )
 
     async def _timer_loop(self) -> None:
-        """Periodically evaluate all schedules and enqueue those that fire.
+        """The whole engine: every tick, run what is due.
 
-        The readiness wait is BOUNDED. It used to be a bare
-        ``await self._ready.wait()``: if ``agent:ready`` never bound a run
-        callback — a hook that did not fire, an ordering that put configure
-        after ready — the loop parked forever and every stored schedule sat
-        enabled, due, and silent. A reminder that will never fire has to say so:
-        this warns on every tick it spends unready with work waiting, and starts
-        ticking the moment a callback arrives.
+        No queue, no worker, no readiness handshake. Those existed to decouple
+        deciding from running, and what they actually produced was a loop that
+        could park forever on an event nobody set, with a stored reminder that
+        looked pending and could never fire. A tick that finds due work runs it
+        inline, one at a time, and asks for the agent callback at that moment —
+        so a callback bound late, early, or from another task all work.
         """
         interval = self._tick_seconds or self._config.check_interval_seconds
-        await self._await_readiness(interval)
         while self._running:
             try:
-                entries = self._store.load()
-                for entry in entries:
-                    if self.should_fire(entry) and self.is_within_active_hours(entry):
-                        await self.enqueue(entry)
+                await self._tick()
                 self._timer_consecutive_errors = 0
-            except Exception:  # reason: fail-open — log + continue
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # reason: one bad tick must not stop the engine
                 self._timer_consecutive_errors += 1
                 _logger.exception(
-                    "Error in timer loop (consecutive: %d)",
+                    "Error in scheduler tick (consecutive: %d)",
                     self._timer_consecutive_errors,
                 )
                 if self._timer_consecutive_errors >= 5:
                     _logger.critical(
-                        "Timer loop hit %d consecutive errors, stopping engine",
+                        "Scheduler stopping after %d consecutive tick errors",
                         self._timer_consecutive_errors,
                     )
                     self._running = False
                     return
             await asyncio.sleep(interval)
 
-    async def _await_readiness(self, interval: float) -> None:
-        """Block until a run callback is bound, saying so while it waits."""
-        waited = 0.0
-        while self._running and not self._ready.is_set():
-            try:
-                await asyncio.wait_for(self._ready.wait(), timeout=interval)
-                return
-            except TimeoutError:
-                waited += interval
-                pending = self._pending_count()
-                if pending and waited % _UNREADY_WARN_SECONDS < interval:
-                    _logger.warning(
-                        "Scheduler for %s has %d enabled schedule(s) but no agent run "
-                        "callback after %.0fs — nothing will fire until one is bound",
-                        self.label or "an unnamed agent",
-                        pending,
-                        waited,
-                    )
-
-    def _pending_count(self) -> int:
-        """Enabled schedules, or 0 if the store cannot be read right now."""
-        try:
-            return sum(1 for entry in self._store.load() if entry.enabled)
-        except Exception:  # reason: a readiness warning must not raise
-            return 0
-
-    async def _worker(self) -> None:
-        """Sequential execution worker — drains queue one item at a time."""
-        while True:
-            try:
-                entry = await asyncio.wait_for(self._queue.get(), timeout=1.0)
-            except TimeoutError:
-                if not self._running and self._queue.empty():
-                    break
-                continue
-            except asyncio.CancelledError:
-                break
-
+    async def _tick(self) -> None:
+        """Run every schedule that is due, sequentially."""
+        due = [
+            entry
+            for entry in self._store.load()
+            if self.should_fire(entry)
+            and self.is_within_active_hours(entry)
+            and entry.id not in self._in_flight
+        ]
+        if not due:
+            self._unready_ticks = 0
+            return
+        if self._agent_run_fn is None:
+            self._warn_unready(len(due))
+            return
+        self._unready_ticks = 0
+        for entry in due:
+            self._in_flight.add(entry.id)
             try:
                 await self.execute(entry)
             finally:
                 self._in_flight.discard(entry.id)
-                self._queue.task_done()
+
+    def _warn_unready(self, pending: int) -> None:
+        """Say, repeatedly, that due work cannot run — and consume nothing.
+
+        A schedule that has not fired is still pending, never spent: the row is
+        left exactly as it was, so it fires the moment a callback exists.
+        """
+        self._unready_ticks += 1
+        interval = self._tick_seconds or self._config.check_interval_seconds
+        every = max(1, int(_UNREADY_WARN_SECONDS / max(interval, 0.001)))
+        if self._unready_ticks % every != 1 % every:
+            return
+        _logger.warning(
+            "Scheduler for %s has %d schedule(s) due but no agent run callback — "
+            "nothing will fire until one is bound",
+            self.label or "an unnamed agent",
+            pending,
+        )

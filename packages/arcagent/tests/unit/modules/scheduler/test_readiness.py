@@ -32,16 +32,13 @@ def _due_store(tmp_path: Path) -> ScheduleStore:
 
 
 def _engine(store: ScheduleStore, run_fn: Any = None) -> SchedulerEngine:
-    async def _noop(prompt: str, **kwargs: Any) -> str:
-        return ""
-
     engine = SchedulerEngine(
         store=store,
         # The interval is whole seconds by config; the loop is driven fast here
         # by patching the engine's own sleep, not by an invalid config.
         config=SchedulerConfig(check_interval_seconds=1),
         telemetry=MagicMock(),
-        agent_run_fn=run_fn or _noop,
+        agent_run_fn=run_fn,
         bus=None,
     )
     # The configured interval is whole seconds; drive the loop at test speed.

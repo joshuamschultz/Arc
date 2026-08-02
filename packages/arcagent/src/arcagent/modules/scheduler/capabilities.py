@@ -59,12 +59,15 @@ class Scheduler:
         if st.engine is not None:
             return  # Idempotent: already set up.
 
-        run_fn = st.agent_run_fn or _noop_run_fn
+        # No placeholder callback. A noop that "succeeds" would mark a
+        # reminder run and disable it — the reminder would be gone and nobody
+        # told. None means "not bound yet", which the engine reports and leaves
+        # the row pending for.
         engine = SchedulerEngine(
             store=st.store,
             config=st.config,
             telemetry=st.telemetry,
-            agent_run_fn=run_fn,
+            agent_run_fn=st.agent_run_fn,
             bus=st.bus,
             channel_deliver_fn=st.channel_deliver_fn,
         )
@@ -73,8 +76,6 @@ class Scheduler:
         engine.label = getattr(getattr(st, "identity", None), "did", "") or str(
             getattr(st, "workspace", "")
         )
-        if st.agent_run_fn is not None:
-            engine.set_agent_run_fn(st.agent_run_fn)
 
         await engine.start()
         st.engine = engine
@@ -106,10 +107,13 @@ async def bind_agent_run_fn(ctx: Any) -> None:
     st = _runtime.state()
     st.agent_run_fn = run_fn
     st.channel_deliver_fn = data.get("channel_deliver_fn")
-    if st.engine is not None:
-        st.engine.set_agent_run_fn(run_fn)
-        st.engine.set_channel_deliver_fn(st.channel_deliver_fn)
-        _logger.info("Bound agent_run_fn via agent:ready hook")
+    if st.engine is None:
+        # Ready arrived before setup. Nothing to do and nothing lost: setup
+        # reads the callback off this state when it builds the engine.
+        return
+    st.engine.set_agent_run_fn(run_fn)
+    st.engine.set_channel_deliver_fn(st.channel_deliver_fn)
+    _logger.info("Bound agent_run_fn via agent:ready hook")
 
 
 # --- CRUD tools -----------------------------------------------------------
@@ -249,19 +253,6 @@ async def schedule_cancel(
 
 
 # --- Helpers --------------------------------------------------------------
-
-
-async def _noop_run_fn(prompt: str, **kwargs: Any) -> str:
-    """Placeholder until ``agent:ready`` binds the real callback.
-
-    The engine's timer loop is gated on a readiness :class:`asyncio.Event`
-    until the real ``run_fn`` is bound, so this should never fire in
-    practice. It exists as a defensive fallback so the engine can be
-    constructed before the agent is fully wired.
-    """
-    del kwargs
-    _logger.warning("Scheduler fired before agent_run_fn bound; prompt=%r", prompt)
-    return ""
 
 
 __all__ = [
