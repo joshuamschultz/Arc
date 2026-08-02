@@ -526,15 +526,24 @@ def _team_root(st: _runtime._State) -> Path | None:
 
 
 def _bundle_root(st: _runtime._State, node: WorkflowNode) -> Path | None:
-    """This agent's local bundle directory for the node's workflow, if present.
+    """The bundle directory this node's prompt and schema files live in.
 
-    A workflow id is a bare name by construction (arcteam's store proves it), so
-    joining it here cannot traverse — but the check is repeated rather than
-    assumed, because a caller-controlled name becoming a path is the shape both
-    live traversal defects in this feature took.
+    The runner stamps it, because the runner is the only component that knows
+    which store it dispatched from. Looking under the agent's OWN workspace
+    instead — the previous behaviour — made every declared schema unreadable on
+    a fleet, since bundles live in the deployment directory the operator signs
+    into, not in five separate agent workspaces.
+
+    The stamped value is runner-authored, never model-authored, and the
+    reference read out of it is still confined to the bundle.
     """
-    root = st.workspace / "workflows"
-    bundle = _confined(root, node.workflow_id)
+    del st
+    if node.bundle_root:
+        stamped = Path(node.bundle_root)
+        return stamped if stamped.is_dir() else None
+    from arcteam.config import default_config_dir
+
+    bundle = _confined(default_config_dir() / "workflows", node.workflow_id)
     return bundle if bundle is not None and bundle.is_dir() else None
 
 
@@ -1060,8 +1069,16 @@ async def inject_workflow_node_section(ctx: Any) -> None:
     if node is None:
         return
     st = _runtime.state()
+    # The SAME resolution the completion gate uses (``_node_completion_refusal``
+    # -> ``resolve_schema``). One source, so the shape the model is shown and
+    # the shape it is judged against cannot drift — they were drifting, and a
+    # node that did its work correctly failed a gate it was never told about.
+    schema = resolve_schema(node, _bundle_root(st, node))
     sections["workflow_node"] = render_node_section(
-        node, _skill_body(node), _node_instructions(st, node)
+        node,
+        _skill_body(node),
+        _node_instructions(st, node),
+        schema=schema if isinstance(schema, dict) else None,
     )
 
 

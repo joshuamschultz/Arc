@@ -209,6 +209,7 @@ def control_plane(definitions: FakeDefinitionStore) -> RecordingControlPlane:
 @pytest.fixture
 def workflows_state(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     control_plane: RecordingControlPlane,
     definitions: FakeDefinitionStore,
 ) -> Iterator[RecordingControlPlane]:
@@ -216,9 +217,14 @@ def workflows_state(
 
     ``configure()`` is called SYNCHRONOUSLY — the exact shape
     ``core.agent_lifecycle.configure_module_runtimes`` uses in production.
+
+    ``ARC_CONFIG_DIR`` is pinned to the tmp path: bundles live in the ONE
+    deployment directory, so a test that left it unset would author into the
+    developer's real ``~/.arc``.
     """
     from arcagent.modules.workflows import _runtime
 
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
     _runtime.reset()
     _runtime.configure(
         config={"enabled": True, "max_workflows": 2, "max_nodes": 3},

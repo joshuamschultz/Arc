@@ -611,6 +611,11 @@ class WorkflowRunner:
             "strategy": list(node.strategy),
             "output_schema": node.output_schema,
             "artifacts": list(node.artifacts),
+            # Where the node's prompt and schema files actually live. The
+            # runner knows; the executing agent would otherwise have to guess,
+            # and a guess that lands in its own workspace makes every declared
+            # schema unreadable and every node fail.
+            "bundle_root": self._bundle_root(definition.id),
             # What the run has already lit (COMP-015). The node's fresh session
             # starts pre-charged with this, so a composition no single session
             # could complete stays unreachable by splitting it across nodes.
@@ -645,6 +650,11 @@ class WorkflowRunner:
             max_attempts=node.max_attempts or 3,
             timeout_seconds=node.timeout_s,
         )
+
+    def _bundle_root(self, workflow_id: str) -> str:
+        """The directory this run's definition was loaded from, as a string."""
+        root = getattr(self._definitions, "root", None)
+        return "" if root is None else str(Path(root) / workflow_id)
 
     def _legs_for(self, run: RunRecord, state: RunState) -> list[str]:
         """The run's carried legs, bounded — the value stamped on every new node.
