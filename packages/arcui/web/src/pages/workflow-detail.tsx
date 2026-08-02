@@ -12,6 +12,12 @@ import { QueryState, EmptyState } from '@/components/states'
 import { StatusText } from '@/components/status-badge'
 import { RunDetailDrawer } from '@/components/run-detail-drawer'
 import { WorkflowGraph, type NodeStatusUpdate } from '@/components/workflow-graph'
+import {
+  WorkflowNodeForm,
+  fromDraft,
+  toDraft,
+  type NodeDraft,
+} from '@/components/workflow-node-form'
 import { useWorkflowRunLiveStatus } from '@/hooks/use-workflow-run-live-status'
 import {
   useArchiveWorkflow,
@@ -55,12 +61,14 @@ function describeError(e: unknown): { message: string; fieldErrors: WorkflowFiel
 }
 
 /**
- * Raw-JSON node editor. Deliberately schema-agnostic — arcui does not know
- * (and must not encode) which fields a node kind admits; that is the
- * control plane's (COMP-002) job. This panel edits whatever JSON object
- * the operator supplies and relays it verbatim through `usePatchWorkflow`;
- * a rejected shape comes back as a typed error this panel renders against
- * this exact node (REQ-253).
+ * Node editor: a form over the fields each kind admits, with the raw JSON
+ * underneath for anything the form does not cover.
+ *
+ * arcui is still not a validator — every value is relayed verbatim and the
+ * control plane decides whether the node is admissible, returning a typed
+ * error this panel renders against this exact node (REQ-253). The form exists
+ * for discoverability: a JSON blob never told an operator that a tool node
+ * needs a tool name, that a router needs routes, or that an edge is `needs`.
  */
 function NodeInspector({
   node,
@@ -82,8 +90,8 @@ function NodeInspector({
   onDelete: () => void
 }) {
   const patchWorkflow = usePatchWorkflow(workflowId)
-  const { id: _nodeId, ...rest } = node
-  const [text, setText] = useState(() => JSON.stringify(rest, null, 2))
+  const [draft, setDraft] = useState<NodeDraft>(() => toDraft(node))
+  const [raw, setRaw] = useState<string | null>(null)
   const [parseError, setParseError] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
 
@@ -92,23 +100,19 @@ function NodeInspector({
   const save = async () => {
     setParseError(null)
     setSaveError(null)
-    let fields: Record<string, unknown>
+    let next: Record<string, unknown>
     try {
-      fields = JSON.parse(text) as Record<string, unknown>
+      next = raw === null ? fromDraft(draft) : { id: node.id, ...(JSON.parse(raw) as object) }
     } catch {
-      setParseError('Not valid JSON')
+      setParseError('Arguments or raw JSON is not valid JSON')
       return
     }
     // `nodes` always replaces the WHOLE array (same contract addNode/delete
     // use) — one consistent patch shape for every node mutation, never a
-    // singular per-node merge, so there is exactly one meaning of "patch
-    // nodes" for the (not-yet-built) control plane to implement.
-    const nodes = allNodes.map((n) => (n.id === node.id ? { id: node.id, ...fields } : n))
+    // singular per-node merge.
+    const nodes = allNodes.map((n) => (n.id === node.id ? next : n)) as WorkflowNode[]
     try {
-      await patchWorkflow.mutateAsync({
-        patch: { nodes },
-        expectedVersion: version,
-      })
+      await patchWorkflow.mutateAsync({ patch: { nodes }, expectedVersion: version })
       onValidationErrors([])
       onClose()
     } catch (e) {
@@ -123,7 +127,7 @@ function NodeInspector({
       <SheetContent side="right" className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-md">
         <SheetHeader className="border-b border-border px-5 py-4">
           <SheetTitle className="font-mono text-sm">{node.id}</SheetTitle>
-          <SheetDescription>kind: {node.kind}</SheetDescription>
+          <SheetDescription>kind: {draft.kind}</SheetDescription>
         </SheetHeader>
         <div className="flex-1 space-y-3 overflow-auto p-5">
           {nodeErrors.map((e, i) => (
@@ -149,12 +153,30 @@ function NodeInspector({
               {saveError}
             </div>
           )}
-          <Textarea
-            rows={16}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            className="font-mono text-xs"
-          />
+          {raw === null ? (
+            <WorkflowNodeForm draft={draft} siblings={allNodes} onChange={setDraft} />
+          ) : (
+            <Textarea
+              rows={16}
+              value={raw}
+              onChange={(e) => setRaw(e.target.value)}
+              className="font-mono text-xs"
+            />
+          )}
+          <button
+            type="button"
+            className="text-[11px] text-muted-foreground underline"
+            onClick={() => {
+              if (raw === null) {
+                const { id: _id, ...rest } = fromDraft(draft)
+                setRaw(JSON.stringify(rest, null, 2))
+              } else {
+                setRaw(null)
+              }
+            }}
+          >
+            {raw === null ? 'Edit as JSON' : 'Back to the form'}
+          </button>
           <div className="flex items-center gap-2">
             <Button className="flex-1" disabled={patchWorkflow.isPending} onClick={save}>
               {patchWorkflow.isPending ? 'Saving…' : 'Save node'}
@@ -187,8 +209,11 @@ function GraphTab({ workflow }: { workflow: WorkflowDetail }) {
     setActionError(null)
     const id = `node_${workflow.nodes.length + 1}`
     try {
+      // An agent node is the only kind that validates with nothing but an id;
+      // every other kind needs a field the operator has not typed yet, so
+      // starting there would refuse the click that created it.
       await patchWorkflow.mutateAsync({
-        patch: { nodes: [...workflow.nodes, { id, kind: 'tool' }] },
+        patch: { nodes: [...workflow.nodes, { id, kind: 'agent' }] },
         expectedVersion: workflow.version,
       })
       setFieldErrors([])

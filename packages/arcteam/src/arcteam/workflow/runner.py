@@ -60,7 +60,7 @@ from .runner_contracts import (
     WorkflowSpec,
     WorkflowTaskStoreLike,
 )
-from .runner_state import RunState
+from .runner_state import NodeInstance, RunState
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +129,20 @@ class _Decision:
 _WAIT = _Decision("wait")
 
 
+def _gate_decision(task: Task) -> str:
+    """What the reviewer chose, read from the row the control plane wrote.
+
+    Falls back to the row's status so a gate resolved through the ordinary
+    task-review surface still reads correctly: ``done`` is an approval and
+    ``failed`` is a rejection. The recorded decision wins because it carries
+    the third outcome — returned for revision — which no status can express.
+    """
+    recorded = str(task.metadata.get("gate_decision") or "")
+    if recorded in ("approved", "rejected", "returned_for_revision"):
+        return recorded
+    return "approved" if task.status == "done" else "rejected"
+
+
 class WorkflowRunner:
     """Starts runs, advances the frontier, and rolls terminal state into the Run."""
 
@@ -190,6 +204,11 @@ class WorkflowRunner:
         enforces, instead of constructing a second set that could disagree.
         """
         return self._definitions
+
+    @property
+    def tasks(self) -> WorkflowTaskStoreLike:
+        """The task plane node rows live on."""
+        return self._tasks
 
     @property
     def runs(self) -> RunStoreLike:
@@ -428,7 +447,8 @@ class WorkflowRunner:
         state = RunState(rows, run.path_taken)
         scope = state.scope(run.input)
         changed = await self._reconcile_materializations(run, state)
-        changed |= await self._resolve_gates(run, definition, state)
+        revisions, gates_changed = await self._resolve_gates(run, definition, state)
+        changed |= gates_changed
 
         routed = await self._follow_llm_routers(run, definition, state)
         if routed is None:
@@ -439,6 +459,7 @@ class WorkflowRunner:
         if looped is None:
             return await self._require_run(run.run_id), True
         pending, loop_changed = looped
+        pending.extend(revisions)
         changed |= loop_changed
 
         try:
@@ -595,6 +616,9 @@ class WorkflowRunner:
             # could complete stays unreachable by splitting it across nodes.
             "accumulated_legs": list(legs),
         }
+        revision_notes = state.revisions.get((node.id, iteration))
+        if revision_notes:
+            metadata["revision_notes"] = revision_notes
         for field in ("prompt", "skill", "script", "gate"):
             value = getattr(node, field, None)
             if value is not None:
@@ -846,8 +870,15 @@ class WorkflowRunner:
 
     async def _resolve_gates(
         self, run: RunRecord, definition: WorkflowSpec, state: RunState
-    ) -> bool:
-        """Record a gate that an operator has since decided, once."""
+    ) -> tuple[list[tuple[NodeSpec, int]], bool]:
+        """Record a gate an operator has since decided, once.
+
+        Returns the node instances a ``return_for_revision`` decision puts back
+        on the frontier (REQ-247): the reviewer sends the work back to whoever
+        produced it, with notes, and the run keeps going — which is a different
+        outcome from failing the run, and the only one that needs new work.
+        """
+        revisions: list[tuple[NodeSpec, int]] = []
         changed = False
         for node in definition.nodes:
             if node.kind != "gate":
@@ -857,8 +888,17 @@ class WorkflowRunner:
                 continue
             if (node.id, instance.iteration) in state.gates:
                 continue
-            decision = "approved" if instance.task.status == "done" else "rejected"
+            decision = _gate_decision(instance.task)
             state.gates.add((node.id, instance.iteration))
+            if decision == "returned_for_revision":
+                # Mark it superseded IN THIS PASS: the durable path is only
+                # re-read next tick, and a downstream node decided in between
+                # would read the settled gate as an approval and release the
+                # very work the reviewer sent back.
+                state.superseded.add((node.id, instance.iteration))
+                revisions.extend(
+                    await self._request_revision(run, definition, node, instance, state)
+                )
             await self._append(
                 run.run_id,
                 {
@@ -882,7 +922,41 @@ class WorkflowRunner:
                     decision=decision,
                 )
             changed = True
-        return changed
+        return revisions, changed
+
+    async def _request_revision(
+        self,
+        run: RunRecord,
+        definition: WorkflowSpec,
+        node: NodeSpec,
+        instance: NodeInstance,
+        state: RunState,
+    ) -> list[tuple[NodeSpec, int]]:
+        """Put each node this gate reviewed back on the frontier, with notes.
+
+        The next iteration is minted exactly the way a declared loop mints one,
+        so a revision is an ordinary new node instance: it materializes, the
+        gate re-materializes behind it, and the path taken records both. The
+        notes travel on the Run's journal rather than in a message, so the
+        agent doing the rework reads what the reviewer actually said.
+        """
+        notes = str(instance.task.metadata.get("gate_notes") or "")
+        pending: list[tuple[NodeSpec, int]] = []
+        for need in node.needs:
+            iteration = state.materialized_count(need)
+            state.revisions[(need, iteration)] = notes
+            await self._append(
+                run.run_id,
+                {"kind": "revision", "node_id": need, "iteration": iteration, "notes": notes},
+            )
+            pending.append((definition.node_by_id(need), iteration))
+        self._audit(
+            "workflow.gate.revision_requested",
+            target=f"{run.workflow_id}/{node.id}",
+            outcome="returned_for_revision",
+            extra={"run_id": run.run_id, "nodes": list(node.needs), "notes": notes},
+        )
+        return pending
 
     async def _fail_node(self, run: RunRecord, node_id: str, state: RunState, reason: str) -> None:
         instance = state.latest(node_id)

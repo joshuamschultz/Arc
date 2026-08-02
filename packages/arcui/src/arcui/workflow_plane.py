@@ -45,7 +45,12 @@ def slugify(name: str) -> str:
 
 
 class DashboardWorkflowPlane:
-    """Implements ``routes.workflows.WorkflowControlPlane`` over arcteam."""
+    """Implements both route-layer Protocols over arcteam's one operation set.
+
+    Workflow operations and gate resolution land on the same object because
+    they land on the same control plane — splitting them here would suggest two
+    authorities where the requirement (REQ-246) insists on one.
+    """
 
     def __init__(
         self,
@@ -171,6 +176,22 @@ class DashboardWorkflowPlane:
         if not result.ok or result.run is None:
             return _errors(result)
         return ControlPlaneResult(value=_run_summary(result.run))
+
+    async def resolve_gate(
+        self,
+        task_id: str,
+        *,
+        decision: str,
+        notes: str,
+        actor: OperatorActor,
+    ) -> ControlPlaneResult:
+        """Relay the reviewer's choice. The plane decides what it means (REQ-246)."""
+        result = await self._plane.resolve_gate(
+            task_id, decision=decision, notes=notes, actor_did=actor.did
+        )
+        if not result.ok:
+            return _errors(result)
+        return ControlPlaneResult(value={} if result.run is None else _run_summary(result.run))
 
     # -- internals -----------------------------------------------------------
 

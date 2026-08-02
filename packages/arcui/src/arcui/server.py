@@ -529,7 +529,11 @@ def _attach_workflow_plane(app: Starlette, embedded_gateway: Any) -> None:
     try:
         from arcui.workflow_plane import build_dashboard_plane
 
-        app.state.workflow_control_plane = build_dashboard_plane(runner=runner)
+        plane = build_dashboard_plane(runner=runner)
+        app.state.workflow_control_plane = plane
+        # The same object answers both Protocols: one control plane, one
+        # authority — a gate resolved anywhere lands on the same operation.
+        app.state.gate_control_plane = plane
     except Exception:  # reason: fail-open — the rest of the dashboard must serve
         logger.exception("workflow control plane could not be composed; screens stay 503")
 

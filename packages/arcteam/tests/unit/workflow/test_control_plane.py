@@ -442,8 +442,13 @@ async def test_an_unknown_workflow_is_a_typed_refusal(stores: Any, registry: Any
     assert not result.ok
 
 
-def test_the_operation_set_is_exactly_seven(stores: Any) -> None:
+def test_the_operation_set_is_the_shared_eight(stores: Any) -> None:
     """Purge belongs here: it is the one component holding BOTH stores.
+
+    Gate resolution belongs here too, and for a stricter reason: REQ-246 says a
+    gate is resolvable ONLY through the control plane, so the dashboard route,
+    the CLI, and the channel card must all be callers of this one method rather
+    than each writing the row their own way.
 
     The definition store deliberately takes the run count as an injected
     callable rather than importing the run store, so somebody has to supply it,
@@ -464,6 +469,7 @@ def test_the_operation_set_is_exactly_seven(stores: Any) -> None:
         "purge",
         "run",
         "cancel",
+        "resolve_gate",
     }
 
 
