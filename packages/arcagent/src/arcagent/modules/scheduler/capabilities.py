@@ -73,9 +73,12 @@ class Scheduler:
         )
         # If a real run_fn was provided at configure time, mark the
         # engine ready so the timer loop doesn't block waiting for one.
-        engine.label = getattr(getattr(st, "identity", None), "did", "") or str(
-            getattr(st, "workspace", "")
-        )
+        engine.label = str(st.workspace)
+        # Bound before this engine existed, bound after it started, or bound in
+        # a different asyncio task: all the same to the engine, which asks for a
+        # callback when it has work and none in hand.
+        workspace = st.workspace
+        engine.run_fn_resolver = lambda: _runtime.recall_run_fn(workspace)
 
         await engine.start()
         st.engine = engine
@@ -107,6 +110,9 @@ async def bind_agent_run_fn(ctx: Any) -> None:
     st = _runtime.state()
     st.agent_run_fn = run_fn
     st.channel_deliver_fn = data.get("channel_deliver_fn")
+    # Remember it against the agent's workspace as well: the engine may live in
+    # a different asyncio task, where this state object is not the one it reads.
+    _runtime.remember_run_fn(st.workspace, run_fn)
     if st.engine is None:
         # Ready arrived before setup. Nothing to do and nothing lost: setup
         # reads the callback off this state when it builds the engine.

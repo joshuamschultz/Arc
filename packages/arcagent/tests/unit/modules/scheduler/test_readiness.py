@@ -111,3 +111,52 @@ async def test_binding_late_starts_the_ticking(tmp_path: Path) -> None:
         await engine.stop()
 
     assert fired == ["remind me"]
+
+
+@pytest.mark.asyncio
+async def test_a_callback_bound_in_another_task_still_reaches_the_engine(
+    tmp_path: Path,
+) -> None:
+    """The live failure: the two halves of the binding met in different tasks.
+
+    The capability builds the engine in the task that configured the module;
+    `agent:ready` fires wherever the agent started. When those differ, the hook
+    set a callback on a state object the engine never reads, and the engine
+    waited forever for one that had already arrived — one agent's reminders sat
+    enabled and due for days.
+    """
+    from arcagent.modules.scheduler import _runtime
+
+    fired: list[str] = []
+
+    async def run_fn(prompt: str, **kwargs: Any) -> str:
+        fired.append(prompt)
+        return "ok"
+
+    _runtime.forget_run_fns()
+    store = _due_store(tmp_path)
+    engine = _engine(store)
+    engine.label = str(tmp_path)
+    engine.run_fn_resolver = lambda: _runtime.recall_run_fn(tmp_path)
+
+    await engine.start()
+    try:
+        await asyncio.sleep(0.15)
+        assert fired == [], "nothing may fire before a callback exists"
+
+        # Bound from somewhere else entirely — a different task, no engine in
+        # sight — exactly as the agent:ready hook does it.
+        await asyncio.create_task(_bind_elsewhere(tmp_path, run_fn))
+
+        await asyncio.sleep(0.4)
+    finally:
+        await engine.stop()
+        _runtime.forget_run_fns()
+
+    assert fired == ["remind me"]
+
+
+async def _bind_elsewhere(workspace: Path, fn: Any) -> None:
+    from arcagent.modules.scheduler import _runtime
+
+    _runtime.remember_run_fn(workspace, fn)
