@@ -72,7 +72,12 @@ async def test_every_row_carries_exactly_the_owner_named_by_the_definition(
     stores: Any, registry: Any
 ) -> None:
     flow_tasks, _, tasks = stores
-    runner = build(stores, registry, THREE_AGENTS, narrator=RunNarrator(DroppingSender(), sender_did=RUNNER_DID))
+    runner = build(
+        stores,
+        registry,
+        THREE_AGENTS,
+        narrator=RunNarrator(DroppingSender(), sender_did=RUNNER_DID),
+    )
     run = await runner.start_run("handoff", input={}, initiator_did="did:arc:x/1")
 
     await complete_node(
@@ -114,7 +119,12 @@ async def test_a_nodes_inputs_come_from_task_rows_never_from_a_message_body(
 ) -> None:
     """The wiring the next node executes on is written INTO its row."""
     flow_tasks, _, tasks = stores
-    runner = build(stores, registry, THREE_AGENTS, narrator=RunNarrator(DroppingSender(), sender_did=RUNNER_DID))
+    runner = build(
+        stores,
+        registry,
+        THREE_AGENTS,
+        narrator=RunNarrator(DroppingSender(), sender_did=RUNNER_DID),
+    )
     run = await runner.start_run("handoff", input={}, initiator_did="did:arc:x/1")
 
     await complete_node(
@@ -124,9 +134,7 @@ async def test_a_nodes_inputs_come_from_task_rows_never_from_a_message_body(
 
     rows = {r.metadata["node_id"]: r for r in await flow_tasks.query_by_flow_run(run.run_id)}
     assert rows["build"].metadata["args"] == {"domain": "acme.example"}
-    assert rows["build"].metadata["upstream"] == {
-        "collect": {"company_domain": "acme.example"}
-    }
+    assert rows["build"].metadata["upstream"] == {"collect": {"company_domain": "acme.example"}}
 
 
 def test_the_runner_has_no_inbound_message_path_at_all() -> None:

@@ -92,9 +92,7 @@ async def test_create_batch_is_idempotent_on_the_row_id_in_both(pair: Any) -> No
 async def test_query_by_flow_run_is_scoped_in_both(pair: Any) -> None:
     """A tick must see its own run's rows and nobody else's."""
     for tasks, _ in pair:
-        await tasks.create_batch(
-            [_row("r1", "a"), _row("r2", "b")], actor_did=RUNNER
-        )
+        await tasks.create_batch([_row("r1", "a"), _row("r2", "b")], actor_did=RUNNER)
 
         scoped = await tasks.query_by_flow_run("r1")
 
@@ -109,9 +107,7 @@ async def test_set_status_is_conditional_in_both(pair: Any) -> None:
         lost = await runs.set_status(
             "r1", "done", actor_did=RUNNER, expected_status="waiting_gate"
         )
-        won = await runs.set_status(
-            "r1", "done", actor_did=RUNNER, expected_status="running"
-        )
+        won = await runs.set_status("r1", "done", actor_did=RUNNER, expected_status="running")
 
         assert lost is False, "a stale expectation must not win"
         assert won is True

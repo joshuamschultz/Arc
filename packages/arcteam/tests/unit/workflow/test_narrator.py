@@ -51,9 +51,7 @@ async def test_narration_addresses_a_channel_only() -> None:
     narrator = RunNarrator(sender, sender_did=RUNNER_DID)
 
     with pytest.raises(ValueError, match="channel"):
-        await narrator.run_outcome(
-            channel="agent://sales", run_id="r1", status="done", detail=""
-        )
+        await narrator.run_outcome(channel="agent://sales", run_id="r1", status="done", detail="")
     assert sender.sent == []
 
 

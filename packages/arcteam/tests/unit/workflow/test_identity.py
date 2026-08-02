@@ -49,9 +49,7 @@ def test_the_runner_identity_is_not_the_dashboard_operator(tmp_path: Path) -> No
     identity = RunnerIdentity.load(tmp_path / "operator" / "operator.key")
 
     assert identity.did != "did:arc:ui:operator"
-    assert identity.did != did_from_public_key(
-        key.public_key, org="local", agent_type="operator"
-    )
+    assert identity.did != did_from_public_key(key.public_key, org="local", agent_type="operator")
     assert "workflow-runner" in identity.did
 
 

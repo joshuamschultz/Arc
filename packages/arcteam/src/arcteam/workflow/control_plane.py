@@ -242,9 +242,7 @@ class WorkflowControlPlane:
                 _Operation("workflow.run.started", workflow_id, "refused", {"error": str(exc)}),
                 actor_did,
             )
-            return ControlPlaneResult(
-                ok=False, errors=(OperationIssue(None, None, str(exc)),)
-            )
+            return ControlPlaneResult(ok=False, errors=(OperationIssue(None, None, str(exc)),))
         self._emit(
             _Operation(
                 "workflow.run.started",
@@ -267,9 +265,7 @@ class WorkflowControlPlane:
                 _Operation("workflow.run.cancelled", run_id, "error", {"error": str(exc)}),
                 actor_did,
             )
-            return ControlPlaneResult(
-                ok=False, errors=(OperationIssue(None, None, str(exc)),)
-            )
+            return ControlPlaneResult(ok=False, errors=(OperationIssue(None, None, str(exc)),))
         self._emit(
             _Operation("workflow.run.cancelled", run_id, record.status, {"reason": reason}),
             actor_did,
@@ -301,13 +297,9 @@ class WorkflowControlPlane:
         # Files arriving with the edit count as present for validation, so a
         # node referencing a prompt written in this same call validates — and
         # still validates BEFORE the store commits any of those bytes.
-        problems = tuple(
-            self._validate(definition, pending_files=frozenset(files or ()))
-        )
+        problems = tuple(self._validate(definition, pending_files=frozenset(files or ())))
         if problems:
-            self._emit(
-                _Operation(action, target, "invalid", {"errors": len(problems)}), actor_did
-            )
+            self._emit(_Operation(action, target, "invalid", {"errors": len(problems)}), actor_did)
             return ControlPlaneResult(ok=False, errors=problems)
 
         try:
@@ -358,9 +350,7 @@ class WorkflowControlPlane:
             bundle: BundleSpec = operation()
         except Exception as exc:
             self._emit(_Operation(action, target, "error", {"error": str(exc)}), actor_did)
-            return ControlPlaneResult(
-                ok=False, errors=(OperationIssue(None, None, str(exc)),)
-            )
+            return ControlPlaneResult(ok=False, errors=(OperationIssue(None, None, str(exc)),))
         self._emit(_Operation(action, target, "ok", {"status": bundle.status}), actor_did)
         return ControlPlaneResult(ok=True, bundle=bundle)
 

@@ -1,6 +1,5 @@
 """Integration tests for CodeExec: strategy selection + ExecuteTool + CodeExecStrategy."""
 
-
 import pytest
 from conftest import LLMResponse, MockModel, ToolCall
 

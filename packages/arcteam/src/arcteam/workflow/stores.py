@@ -41,6 +41,7 @@ logger = logging.getLogger(__name__)
 class RunStateMissingError(RuntimeError):
     """The runner's companion state row for a run is gone."""
 
+
 _STATE_COLLECTION = "workflow_run_state"
 _TASK_COLLECTION = "tasks"
 
@@ -197,9 +198,7 @@ class WorkflowRunStore:
             )
         return True
 
-    async def append_path(
-        self, run_id: str, entry: Mapping[str, Any], *, actor_did: str
-    ) -> None:
+    async def append_path(self, run_id: str, entry: Mapping[str, Any], *, actor_did: str) -> None:
         """Journal the entry, and mirror it onto the Run when it is a real outcome."""
         state = await self._backend.mutable_read(_STATE_COLLECTION, run_id)
         if state is None:
@@ -257,16 +256,12 @@ class WorkflowTaskStore:
         rows = await self._backend.mutable_query(
             _TASK_COLLECTION, where={"metadata.flow_run_id": flow_run_id}
         )
-        return [
-            Task.model_validate(row, context={"allow_external_refs": True}) for row in rows
-        ]
+        return [Task.model_validate(row, context={"allow_external_refs": True}) for row in rows]
 
     async def get(self, task_id: str) -> Task | None:
         return await self._tasks.get(task_id)
 
-    async def update(
-        self, task_id: str, patch: dict[str, Any], *, actor_did: str
-    ) -> Task | None:
+    async def update(self, task_id: str, patch: dict[str, Any], *, actor_did: str) -> Task | None:
         return await self._tasks.update(task_id, patch, actor_did=actor_did)
 
     async def request_cancel(self, task_id: str, *, actor_did: str) -> Task | None:

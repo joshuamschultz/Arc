@@ -79,7 +79,9 @@ async def test_run_terminates_when_the_token_budget_is_exhausted(
     runner = build(stores, registry, CHAIN)
     run = await runner.start_run("budgeted", input={}, initiator_did="did:arc:x/1")
 
-    await complete_node(tasks, task_id(run.run_id, "first", 0), SALES_DID, {"ok": True}, tokens=140)
+    await complete_node(
+        tasks, task_id(run.run_id, "first", 0), SALES_DID, {"ok": True}, tokens=140
+    )
     record = await runner.advance(run.run_id)
 
     assert record.status == "failed"
@@ -253,9 +255,7 @@ async def test_a_missing_start_time_stops_the_run_too(
     runner = build(stores, registry, CHAIN)
     run = await runner.start_run("budgeted", input={}, initiator_did="did:arc:x/1")
 
-    await backend.mutable_merge(
-        "runs", run.run_id, {"started_at": None}, actor_did="did:arc:x/1"
-    )
+    await backend.mutable_merge("runs", run.run_id, {"started_at": None}, actor_did="did:arc:x/1")
     record = await runner.advance(run.run_id)
 
     assert record.status == "failed"

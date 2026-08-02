@@ -134,9 +134,7 @@ async def test_a_live_runner_progresses_a_real_run_end_to_end(deployment: Any) -
     )
     tasks = TaskStore(backend)
 
-    run = await runner.start_run(
-        "onboarding", input={}, initiator_did="did:arc:local:user/9999"
-    )
+    run = await runner.start_run("onboarding", input={}, initiator_did="did:arc:local:user/9999")
     assert run.status == "running"
 
     # The first node materialized as a real task row owned by the named agent.
@@ -318,9 +316,7 @@ async def test_the_default_factory_narrates_to_the_bound_channel(wired: Any) -> 
     assert host is not None
     runner = host._runner
 
-    run = await runner.start_run(
-        "narrated", input={}, initiator_did="did:arc:local:user/9999"
-    )
+    run = await runner.start_run("narrated", input={}, initiator_did="did:arc:local:user/9999")
 
     messenger = runner._narrator._sender
     posted = await messenger.list_channel_messages("onboarding")
@@ -552,7 +548,9 @@ async def test_the_root_pins_the_operator_key_so_signed_means_operator_signed(
     from arctrust import OperatorKey
 
     root, key_path, backend = deployment
-    _sign_with(OperatorKey.load(key_path, generate_if_absent=False), root, "personal", "onboarding")
+    _sign_with(
+        OperatorKey.load(key_path, generate_if_absent=False), root, "personal", "onboarding"
+    )
 
     runner = build_workflow_runner(
         tier="federal",
@@ -595,6 +593,4 @@ async def test_a_foreign_signature_is_not_trusted_through_the_real_factory(
     # Fail-closed at the store's own gate, before the runner's tier check even
     # runs — two independent refusals, and the foreign key clears neither.
     with pytest.raises(Exception, match="not signed by the deployment operator key"):
-        await runner.start_run(
-            "onboarding", input={}, initiator_did="did:arc:local:user/9"
-        )
+        await runner.start_run("onboarding", input={}, initiator_did="did:arc:local:user/9")

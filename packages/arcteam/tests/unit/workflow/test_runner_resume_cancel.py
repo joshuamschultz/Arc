@@ -122,9 +122,7 @@ async def test_the_path_taken_records_each_node_instance_exactly_once(
     assert materialized == [("first", 0), ("second", 0)]
 
 
-async def test_completed_node_is_replayed_never_re_executed(
-    stores: Any, registry: Any
-) -> None:
+async def test_completed_node_is_replayed_never_re_executed(stores: Any, registry: Any) -> None:
     flow_tasks, _, tasks = stores
     runner = build(stores, registry, CHAIN)
     run = await runner.start_run("chain", input={}, initiator_did="did:arc:x/1")
@@ -202,9 +200,7 @@ async def test_cancel_of_a_terminal_run_is_refused(stores: Any, registry: Any) -
     assert after.status == "done"
 
 
-async def test_a_terminating_tick_loses_a_race_with_a_cancel(
-    stores: Any, registry: Any
-) -> None:
+async def test_a_terminating_tick_loses_a_race_with_a_cancel(stores: Any, registry: Any) -> None:
     """The roll-up write is conditional, so a cancel landing first is not undone.
 
     Same invariant as the cancel ordering, at the other seam: the tick is holding

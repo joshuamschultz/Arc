@@ -94,9 +94,7 @@ class RunBudget:
             self.reserved_cost += grant_cost or 0.0
             return (grant_tokens, grant_cost)
 
-    async def settle(
-        self, grant: BudgetGrant, *, tokens_used: int, cost_usd: float
-    ) -> None:
+    async def settle(self, grant: BudgetGrant, *, tokens_used: int, cost_usd: float) -> None:
         """Accrue actual spend and release the reservation."""
         async with self._lock:
             self.tokens_spent += tokens_used

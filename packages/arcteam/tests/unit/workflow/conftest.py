@@ -341,9 +341,7 @@ class FlowRunStore:
             actor_did=actor_did,
         )
 
-    async def append_path(
-        self, run_id: str, entry: Mapping[str, Any], *, actor_did: str
-    ) -> None:
+    async def append_path(self, run_id: str, entry: Mapping[str, Any], *, actor_did: str) -> None:
         current = await self.get(run_id)
         if current is None:
             return
@@ -408,9 +406,7 @@ class FlowTaskStore:
     async def get(self, task_id: str) -> Task | None:
         return await self._tasks.get(task_id)
 
-    async def update(
-        self, task_id: str, patch: dict[str, Any], *, actor_did: str
-    ) -> Task | None:
+    async def update(self, task_id: str, patch: dict[str, Any], *, actor_did: str) -> Task | None:
         return await self._tasks.update(task_id, patch, actor_did=actor_did)
 
     async def request_cancel(self, task_id: str, *, actor_did: str) -> Task | None:

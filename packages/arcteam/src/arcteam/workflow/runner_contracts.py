@@ -257,6 +257,7 @@ and refuses a string that merely embeds a reference — never interpolates."""
 DefinitionParser = Callable[[Mapping[str, Any]], Any]
 """``parse_definition(document) -> WorkflowDefinition``."""
 
+
 class DefinitionValidator(Protocol):
     """``validate_definition(definition, pending_files=...) -> issues``; empty is valid.
 

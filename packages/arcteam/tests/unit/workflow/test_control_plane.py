@@ -104,9 +104,7 @@ class FakeDefinitionStore:
             raise KeyError(workflow_id)
         outstanding = runs_referencing(workflow_id)
         if outstanding and not force:
-            raise PurgeRefusedError(
-                f"{outstanding} run(s) still reference {workflow_id!r}"
-            )
+            raise PurgeRefusedError(f"{outstanding} run(s) still reference {workflow_id!r}")
         self.purged.append((workflow_id, force, outstanding))
         del self.bundles[workflow_id]
 
@@ -334,18 +332,14 @@ async def test_three_surfaces_invoking_the_same_operation_cannot_drift(
     async def dashboard_route(doc: Mapping[str, Any]) -> Any:
         return await control.create(doc, actor_did=OPERATOR)
 
-    outcomes = [
-        await surface(BROKEN) for surface in (builder_tool, cli_command, dashboard_route)
-    ]
+    outcomes = [await surface(BROKEN) for surface in (builder_tool, cli_command, dashboard_route)]
 
     assert {o.ok for o in outcomes} == {False}
     assert len({tuple((i.node_id, i.field, i.error) for i in o.errors) for o in outcomes}) == 1
     assert [e.action for e in sink.events] == ["workflow.created"] * 3
 
 
-async def test_companion_files_travel_with_the_definition(
-    stores: Any, registry: Any
-) -> None:
+async def test_companion_files_travel_with_the_definition(stores: Any, registry: Any) -> None:
     """A surface must never have to write a prompt file behind this operation.
 
     The moment authoring a complete workflow needs a second call the caller
@@ -367,9 +361,7 @@ async def test_companion_files_travel_with_the_definition(
     assert validate.last_pending == frozenset({"prompts/collect.md"})  # type: ignore[attr-defined]
 
 
-async def test_a_rejected_edit_never_reaches_the_store(
-    stores: Any, registry: Any
-) -> None:
+async def test_a_rejected_edit_never_reaches_the_store(stores: Any, registry: Any) -> None:
     """Validation precedes the write, so a refusal cannot leave files behind."""
     control, definitions, _ = plane(stores, registry)
 
@@ -401,9 +393,7 @@ async def test_a_traversal_workflow_id_is_a_typed_refusal_not_a_crash(
 
     control, _, sink = plane(stores, registry, definitions=TraversalRefusingStore())
 
-    started = await control.run(
-        "../../bob/workflows/secretflow", input={}, actor_did=OPERATOR
-    )
+    started = await control.run("../../bob/workflows/secretflow", input={}, actor_did=OPERATOR)
     archived = await control.archive("../../bob/workflows/secretflow", actor_did=OPERATOR)
 
     assert not started.ok and not archived.ok
@@ -529,9 +519,7 @@ async def test_a_forced_purge_records_that_history_is_now_unrenderable(
     assert event.extra["reason"] == "GDPR request"
 
 
-async def test_purge_of_an_unreferenced_workflow_succeeds(
-    stores: Any, registry: Any
-) -> None:
+async def test_purge_of_an_unreferenced_workflow_succeeds(stores: Any, registry: Any) -> None:
     control, definitions, sink = plane(stores, registry)
     await control.create(VALID, actor_did=OPERATOR)
 
@@ -542,9 +530,7 @@ async def test_purge_of_an_unreferenced_workflow_succeeds(
     assert sink.events[-1].extra["runs_orphaned"] == 0
 
 
-async def test_purging_an_unknown_workflow_is_a_typed_refusal(
-    stores: Any, registry: Any
-) -> None:
+async def test_purging_an_unknown_workflow_is_a_typed_refusal(stores: Any, registry: Any) -> None:
     control, _, _ = plane(stores, registry)
 
     result = await control.purge("nope", actor_did=OPERATOR)

@@ -415,7 +415,9 @@ class TestTheStoreIsBuiltWithItsSecurityContext:
             "workflow": {"id": "x", "version": 1, "owner": "@me"},
             "node": [{"id": "a", "kind": "agent", "agent": "@me"}],
         }
-        store.save_draft(parse_definition(doc), actor_did="did:arc:agent:rogue", expected_version=None)
+        store.save_draft(
+            parse_definition(doc), actor_did="did:arc:agent:rogue", expected_version=None
+        )
         sign_definition(
             store, "x", signer_did="did:arc:agent:rogue", private_key=bytes(SigningKey.generate())
         )

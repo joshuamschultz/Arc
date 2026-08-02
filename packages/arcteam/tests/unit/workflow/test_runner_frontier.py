@@ -131,7 +131,9 @@ async def test_untaken_branch_never_becomes_a_task_row(stores: Any, registry: An
     runner = build(stores, registry, onboarding())
     run = await runner.start_run("customer-onboarding", input={}, initiator_did="did:arc:x/1")
 
-    await complete_node(tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"company_domain": "a.io"})
+    await complete_node(
+        tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"company_domain": "a.io"}
+    )
     await runner.advance(run.run_id)
     await complete_node(tasks, task_id(run.run_id, "verify", 0), SALES_DID, {"risk": "low"})
     await runner.advance(run.run_id)
@@ -159,7 +161,9 @@ async def test_router_choice_is_recorded_in_the_path_taken(stores: Any, registry
     runner = build(stores, registry, onboarding())
     run = await runner.start_run("customer-onboarding", input={}, initiator_did="did:arc:x/1")
 
-    await complete_node(tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"company_domain": "a.io"})
+    await complete_node(
+        tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"company_domain": "a.io"}
+    )
     await runner.advance(run.run_id)
     await complete_node(tasks, task_id(run.run_id, "verify", 0), SALES_DID, {"risk": "high"})
     await runner.advance(run.run_id)
@@ -188,7 +192,9 @@ async def test_gate_node_materializes_as_a_review_task(stores: Any, registry: An
     runner = build(stores, registry, onboarding())
     run = await runner.start_run("customer-onboarding", input={}, initiator_did="did:arc:x/1")
 
-    await complete_node(tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"company_domain": "a.io"})
+    await complete_node(
+        tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"company_domain": "a.io"}
+    )
     await runner.advance(run.run_id)
     await complete_node(tasks, task_id(run.run_id, "verify", 0), SALES_DID, {"risk": "high"})
     await runner.advance(run.run_id)
@@ -242,9 +248,7 @@ async def test_llm_router_records_only_a_declared_choice(stores: Any, registry: 
     await complete_node(tasks, task_id(run.run_id, "pick", 0), SALES_DID, {"route": "fast"})
     await runner.advance(run.run_id)
 
-    materialized = {
-        r.metadata["node_id"] for r in await flow_tasks.query_by_flow_run(run.run_id)
-    }
+    materialized = {r.metadata["node_id"] for r in await flow_tasks.query_by_flow_run(run.run_id)}
     assert "fast" in materialized and "slow" not in materialized
     record = await runs.get(run.run_id)
     assert next(e for e in record.path_taken if e["kind"] == "route")["chosen"] == "fast"
@@ -277,9 +281,7 @@ async def test_llm_router_undeclared_choice_fails_the_run(stores: Any, registry:
     assert "undeclared route" in (record.resolution or "")
 
 
-async def test_two_runs_can_never_derive_the_same_task_row(
-    stores: Any, registry: Any
-) -> None:
+async def test_two_runs_can_never_derive_the_same_task_row(stores: Any, registry: Any) -> None:
     """The row id is an identity pair, so it must be UNAMBIGUOUS.
 
     Joining on a character the components may also contain lets two different
@@ -322,9 +324,7 @@ async def test_a_workflow_id_shaped_like_a_path_never_reaches_the_store(
     assert definitions.dispatch_calls == 0
 
 
-async def test_a_node_id_shaped_like_a_path_is_refused(
-    stores: Any, registry: Any
-) -> None:
+async def test_a_node_id_shaped_like_a_path_is_refused(stores: Any, registry: Any) -> None:
     """A node id is a NAME. It becomes a durable key and reaches an adapter."""
     definition = Definition(
         id="traversal",
@@ -382,9 +382,7 @@ async def test_an_artifact_that_escapes_the_workspace_fails_the_node_closed(
     assert await flow_tasks.query_by_flow_run(record.run_id) == []
 
 
-async def test_a_definition_edited_mid_run_stops_the_run(
-    stores: Any, registry: Any
-) -> None:
+async def test_a_definition_edited_mid_run_stops_the_run(stores: Any, registry: Any) -> None:
     """A run is pinned to the bytes it started on — never a hybrid of two versions.
 
     This is the ONLY thing that catches a mid-run edit of a DRAFT: an edited
@@ -396,7 +394,9 @@ async def test_a_definition_edited_mid_run_stops_the_run(
     runner = build(stores, registry, onboarding(), definitions=definitions)
     run = await runner.start_run("customer-onboarding", input={}, initiator_did="did:arc:x/1")
 
-    await complete_node(tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"company_domain": "a.io"})
+    await complete_node(
+        tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"company_domain": "a.io"}
+    )
     edited = Definition(
         id="customer-onboarding",
         version=5,
@@ -408,9 +408,7 @@ async def test_a_definition_edited_mid_run_stops_the_run(
 
     assert record.status == "failed"
     assert "definition changed" in (record.resolution or "")
-    materialized = {
-        r.metadata["node_id"] for r in await flow_tasks.query_by_flow_run(run.run_id)
-    }
+    materialized = {r.metadata["node_id"] for r in await flow_tasks.query_by_flow_run(run.run_id)}
     assert materialized == {"collect"}, "the edited graph must not be executed"
 
 
@@ -420,7 +418,9 @@ async def test_a_run_waiting_on_a_human_gate_says_so(stores: Any, registry: Any)
     runner = build(stores, registry, onboarding())
     run = await runner.start_run("customer-onboarding", input={}, initiator_did="did:arc:x/1")
 
-    await complete_node(tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"company_domain": "a.io"})
+    await complete_node(
+        tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"company_domain": "a.io"}
+    )
     await runner.advance(run.run_id)
     await complete_node(tasks, task_id(run.run_id, "verify", 0), SALES_DID, {"risk": "high"})
     record = await runner.advance(run.run_id)
@@ -459,20 +459,18 @@ async def test_a_node_that_would_need_interpolation_fails_closed(
     runner = build(stores, registry, definition)
     run = await runner.start_run("wired", input={}, initiator_did="did:arc:x/1")
 
-    await complete_node(tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"company_domain": "a.io"})
+    await complete_node(
+        tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"company_domain": "a.io"}
+    )
     record = await runner.advance(run.run_id)
 
     assert record.status == "failed"
     assert "verify" in (record.resolution or "")
-    materialized = {
-        r.metadata["node_id"] for r in await flow_tasks.query_by_flow_run(run.run_id)
-    }
+    materialized = {r.metadata["node_id"] for r in await flow_tasks.query_by_flow_run(run.run_id)}
     assert materialized == {"collect"}
 
 
-async def test_an_embedded_run_input_is_refused_too(
-    stores: Any, registry: Any
-) -> None:
+async def test_an_embedded_run_input_is_refused_too(stores: Any, registry: Any) -> None:
     """The refusal covers `$input.` embedding, not just `$nodes.` embedding.
 
     This case is the reason these tests wire the REAL resolver: the stand-in
@@ -501,18 +499,14 @@ async def test_an_embedded_run_input_is_refused_too(
     )
     flow_tasks, _, tasks = stores
     runner = build(stores, registry, definition)
-    run = await runner.start_run(
-        "wired", input={"customer": "acme"}, initiator_did="did:arc:x/1"
-    )
+    run = await runner.start_run("wired", input={"customer": "acme"}, initiator_did="did:arc:x/1")
 
     await complete_node(tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"ok": True})
     record = await runner.advance(run.run_id)
 
     assert record.status == "failed"
     assert "verify" in (record.resolution or "")
-    materialized = {
-        r.metadata["node_id"] for r in await flow_tasks.query_by_flow_run(run.run_id)
-    }
+    materialized = {r.metadata["node_id"] for r in await flow_tasks.query_by_flow_run(run.run_id)}
     assert materialized == {"collect"}
 
 
@@ -524,7 +518,9 @@ async def test_a_router_whose_predicate_cannot_be_evaluated_fails_closed(
     runner = build(stores, registry, onboarding())
     run = await runner.start_run("customer-onboarding", input={}, initiator_did="did:arc:x/1")
 
-    await complete_node(tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"company_domain": "a.io"})
+    await complete_node(
+        tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"company_domain": "a.io"}
+    )
     await runner.advance(run.run_id)
     # The node completes without the `risk` field its router routes on.
     await complete_node(tasks, task_id(run.run_id, "verify", 0), SALES_DID, {"unrelated": 1})
@@ -532,9 +528,7 @@ async def test_a_router_whose_predicate_cannot_be_evaluated_fails_closed(
 
     assert record.status == "failed"
     assert "risk_router" in (record.resolution or "")
-    materialized = {
-        r.metadata["node_id"] for r in await flow_tasks.query_by_flow_run(run.run_id)
-    }
+    materialized = {r.metadata["node_id"] for r in await flow_tasks.query_by_flow_run(run.run_id)}
     assert materialized == {"collect", "verify"}, "no branch may be taken on a failed predicate"
 
 
@@ -562,13 +556,17 @@ async def test_loop_mints_iteration_stamped_rows_then_fails_on_exhaustion(
     run = await runner.start_run("qa-loop", input={}, initiator_did="did:arc:x/1")
 
     for iteration in range(3):
-        await complete_node(tasks, task_id(run.run_id, "draft", iteration), OPS_DID, {"draft": "x"})
+        await complete_node(
+            tasks, task_id(run.run_id, "draft", iteration), OPS_DID, {"draft": "x"}
+        )
         await runner.advance(run.run_id)
         await complete_node(
             tasks, task_id(run.run_id, "check", iteration), REVIEWER_DID, {"verdict": "revise"}
         )
         await runner.advance(run.run_id)
-        await complete_node(tasks, task_id(run.run_id, "revise", iteration), OPS_DID, {"done": True})
+        await complete_node(
+            tasks, task_id(run.run_id, "revise", iteration), OPS_DID, {"done": True}
+        )
         await runner.advance(run.run_id)
 
     rows = await flow_tasks.query_by_flow_run(run.run_id)
@@ -581,9 +579,7 @@ async def test_loop_mints_iteration_stamped_rows_then_fails_on_exhaustion(
     assert [e for e in record.path_taken if e["kind"] == "loop"]
 
 
-async def test_when_false_skips_the_node_and_the_run_completes(
-    stores: Any, registry: Any
-) -> None:
+async def test_when_false_skips_the_node_and_the_run_completes(stores: Any, registry: Any) -> None:
     definition = Definition(
         id="qa-loop",
         nodes=(
@@ -612,16 +608,20 @@ async def test_when_false_skips_the_node_and_the_run_completes(
     record = await runner.advance(run.run_id)
 
     assert record.status == "done"
-    assert not [r for r in await flow_tasks.query_by_flow_run(run.run_id) if r.metadata["node_id"] == "revise"]
+    assert not [
+        r
+        for r in await flow_tasks.query_by_flow_run(run.run_id)
+        if r.metadata["node_id"] == "revise"
+    ]
 
 
-async def test_queries_are_scoped_by_run_not_list_then_filter(
-    stores: Any, registry: Any
-) -> None:
+async def test_queries_are_scoped_by_run_not_list_then_filter(stores: Any, registry: Any) -> None:
     flow_tasks, _, tasks = stores
     runner = build(stores, registry, onboarding())
     run = await runner.start_run("customer-onboarding", input={}, initiator_did="did:arc:x/1")
-    await complete_node(tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"company_domain": "a.io"})
+    await complete_node(
+        tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"company_domain": "a.io"}
+    )
     await runner.advance(run.run_id)
 
     assert flow_tasks.scoped_queries, "the tick must read through the run-scoped query"
@@ -682,9 +682,7 @@ async def test_trust_is_read_from_the_signature_not_the_lifecycle_status(
         definitions=FakeDefinitions(archived_but_signed),
     )
 
-    run = await runner.start_run(
-        "customer-onboarding", input={}, initiator_did="did:arc:x/1"
-    )
+    run = await runner.start_run("customer-onboarding", input={}, initiator_did="did:arc:x/1")
 
     assert run.status == "running"
 
@@ -699,14 +697,14 @@ async def test_archiving_a_workflow_does_not_break_its_live_runs(
     run = await runner.start_run("customer-onboarding", input={}, initiator_did="did:arc:x/1")
 
     definitions.archived = True  # an operator archives it mid-run
-    await complete_node(tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"company_domain": "a.io"})
+    await complete_node(
+        tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"company_domain": "a.io"}
+    )
     record = await runner.advance(run.run_id)
 
     assert record.status == "running"
     assert definitions.dispatch_calls > 0, "the tick reads through the dispatch gate"
-    materialized = {
-        r.metadata["node_id"] for r in await flow_tasks.query_by_flow_run(run.run_id)
-    }
+    materialized = {r.metadata["node_id"] for r in await flow_tasks.query_by_flow_run(run.run_id)}
     assert "verify" in materialized, "the live frontier kept advancing"
 
     with pytest.raises(ArchivedError):
