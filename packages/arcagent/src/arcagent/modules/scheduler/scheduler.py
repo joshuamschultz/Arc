@@ -74,6 +74,10 @@ class SchedulerEngine:
         # Which agent this engine belongs to. A fleet runs one engine per
         # agent, so an unlabelled warning names a problem nobody can locate.
         self.label: str = ""
+        # Asked for a callback when one is needed and none is bound. This is the
+        # whole reason a binding can no longer be missed: the two halves of it
+        # do not have to meet in the same asyncio task at the same moment.
+        self.run_fn_resolver: Callable[[], AgentRunFn | None] | None = None
         # Test seam: the configured interval is whole seconds, which makes a
         # loop test take whole seconds. Overridden only by tests.
         self._tick_seconds: float = 0.0
@@ -463,6 +467,8 @@ class SchedulerEngine:
             self._unready_ticks = 0
             return
         if self._agent_run_fn is None:
+            self._agent_run_fn = self._resolve_run_fn()
+        if self._agent_run_fn is None:
             self._warn_unready(len(due))
             return
         self._unready_ticks = 0
@@ -472,6 +478,16 @@ class SchedulerEngine:
                 await self.execute(entry)
             finally:
                 self._in_flight.discard(entry.id)
+
+    def _resolve_run_fn(self) -> AgentRunFn | None:
+        """Late-bound callback lookup, or None if nothing has bound one yet."""
+        if self.run_fn_resolver is None:
+            return None
+        try:
+            return self.run_fn_resolver()
+        except Exception:  # reason: a lookup must never break the tick
+            _logger.warning("Scheduler run-callback lookup failed", exc_info=True)
+            return None
 
     def _warn_unready(self, pending: int) -> None:
         """Say, repeatedly, that due work cannot run — and consume nothing.

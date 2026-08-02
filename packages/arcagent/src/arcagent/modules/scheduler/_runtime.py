@@ -55,6 +55,29 @@ _state_var: contextvars.ContextVar[_State | None] = contextvars.ContextVar(
     "arcagent_scheduler_state", default=None
 )
 
+# Run callbacks bound by ``agent:ready``, keyed by the agent's workspace.
+#
+# The state above is per-ASYNCIO-TASK, and the two halves of this binding do not
+# always run in the same one: the capability builds the engine in the task that
+# configured the module, while ``agent:ready`` fires wherever the agent started.
+# When they differ, the hook set a callback on a state the engine could not see
+# and the engine waited forever for a callback that had already arrived.
+#
+# The workspace path is the agent's identity for this purpose: both halves know
+# it, it is stable across restarts, and it is per-agent — a fleet keeps one
+# entry per agent rather than one for the process.
+_bound_run_fns: dict[str, AgentRunFn] = {}
+
+
+def remember_run_fn(workspace: Path | str, fn: AgentRunFn) -> None:
+    """Record a callback so an engine in another task can still find it."""
+    _bound_run_fns[str(workspace)] = fn
+
+
+def recall_run_fn(workspace: Path | str) -> AgentRunFn | None:
+    """The callback bound for this agent, whichever task bound it."""
+    return _bound_run_fns.get(str(workspace))
+
 
 def configure(
     *,
@@ -104,9 +127,23 @@ def bind(state_obj: _State) -> None:
     _state_var.set(state_obj)
 
 
+def forget_run_fns() -> None:
+    """Test-only: drop every remembered callback."""
+    _bound_run_fns.clear()
+
+
 def reset() -> None:
     """Test-only: clear runtime state."""
     _state_var.set(None)
 
 
-__all__ = ["AgentRunFn", "bind", "configure", "reset", "state"]
+__all__ = [
+    "AgentRunFn",
+    "bind",
+    "configure",
+    "forget_run_fns",
+    "recall_run_fn",
+    "remember_run_fn",
+    "reset",
+    "state",
+]
