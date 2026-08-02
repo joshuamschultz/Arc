@@ -594,6 +594,35 @@ export const useWorkflowRun = (runId: string | null, refetchIntervalMs?: number)
     refetchInterval: refetchIntervalMs,
   })
 
+// The prompt a node actually runs. Fetched only when a panel opens it — a
+// bundle's bodies are not part of the definition payload.
+export const useWorkflowFile = (workflowId: string, path: string | null) =>
+  useQuery<{ path: string; content: string }>({
+    queryKey: ['workflow-file', workflowId, path],
+    queryFn: ({ signal }) =>
+      apiGet(
+        `/api/workflows/${encodeURIComponent(workflowId)}/file?path=${encodeURIComponent(path!)}`,
+        signal,
+      ),
+    enabled: !!path,
+  })
+
+export const useWriteWorkflowFile = (workflowId: string) => {
+  const queryClient = useQueryClient()
+  return useMutation<Dict, Error, { path: string; content: string; expectedVersion: number }>({
+    mutationFn: ({ path, content, expectedVersion }) =>
+      apiPut(`/api/workflows/${encodeURIComponent(workflowId)}/file`, {
+        path,
+        content,
+        expected_version: expectedVersion,
+      }),
+    onSuccess: (_d, vars) => {
+      queryClient.invalidateQueries({ queryKey: ['workflow', workflowId] })
+      queryClient.invalidateQueries({ queryKey: ['workflow-file', workflowId, vars.path] })
+    },
+  })
+}
+
 export const useCreateWorkflow = () => {
   const queryClient = useQueryClient()
   return useMutation<WorkflowDetail, Error, Dict>({

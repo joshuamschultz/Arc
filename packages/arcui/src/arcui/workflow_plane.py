@@ -77,6 +77,11 @@ class DashboardWorkflowPlane:
         self._tasks = tasks
         self._default_owner = default_owner
 
+    @property
+    def definitions(self) -> Any:
+        """The definition store — what the operator-authenticated sign path signs."""
+        return self._definitions
+
     # -- reads ---------------------------------------------------------------
 
     async def list_workflows(self, *, actor: OperatorActor) -> list[dict[str, Any]]:
@@ -150,6 +155,32 @@ class DashboardWorkflowPlane:
         detail["nodes"] = list(nodes.values())
         return detail
 
+    async def read_file(self, workflow_id: str, path: str) -> dict[str, Any] | None:
+        """One companion file's text — the prompt a node actually runs.
+
+        A node names `prompts/x.md`; without this the dashboard can show the
+        path and never the instruction, which is the part a human needs to read
+        before signing anything.
+        """
+        from arcteam.workflow import confine
+
+        bundle = self._load(workflow_id)
+        if bundle is None:
+            return None
+        target = confine(bundle.root, path)
+        if target is None or not target.is_file():
+            return None
+        return {"path": path, "content": target.read_text(encoding="utf-8")}
+
+    async def list_files(self, workflow_id: str) -> list[str]:
+        """Every companion path the definition references, present or not."""
+        from arcteam.workflow import referenced_files
+
+        bundle = self._load(workflow_id)
+        if bundle is None:
+            return []
+        return sorted(referenced_files(bundle.definition))
+
     # -- mutations -----------------------------------------------------------
 
     async def create_workflow(
@@ -178,6 +209,34 @@ class DashboardWorkflowPlane:
             expected_version=expected_version,
             actor_did=actor.did,
             reason=str(patch.get("reason") or "edited from the dashboard"),
+        )
+        return await self._relay(result, workflow_id=workflow_id)
+
+    async def write_file(
+        self,
+        workflow_id: str,
+        path: str,
+        content: str,
+        *,
+        expected_version: int,
+        actor: OperatorActor,
+    ) -> ControlPlaneResult:
+        """Rewrite one companion file through the same versioned edit path.
+
+        Not a direct disk write: the bundle is what gets signed, so changing a
+        prompt is a definition edit — it bumps the version, drops any signature,
+        and lands atomically or not at all.
+        """
+        bundle = self._load(workflow_id)
+        if bundle is None:
+            return ControlPlaneResult(not_found=True)
+        result = await self._plane.edit(
+            workflow_id,
+            bundle.definition.to_document(),
+            expected_version=expected_version,
+            actor_did=actor.did,
+            reason=f"edited {path}",
+            files={path: content.encode("utf-8")},
         )
         return await self._relay(result, workflow_id=workflow_id)
 

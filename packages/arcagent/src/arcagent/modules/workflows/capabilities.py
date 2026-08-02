@@ -32,6 +32,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, is_dataclass
 from typing import Any
@@ -55,6 +56,9 @@ _logger = logging.getLogger("arcagent.modules.workflows.capabilities")
 # (REQ-223/REQ-224), so a mutation that came back as anything else means a lower
 # layer regressed — and this surface fails closed rather than reporting it.
 _DRAFT = "draft"
+
+# What a tool catches and reports instead of crashing the loop.
+_TOOL_ERRORS = (ValueError, TypeError, OSError)
 
 # Ceiling on companion files per call — a bundle is a handful of prompts and
 # schemas, not a directory tree.
@@ -513,6 +517,62 @@ async def workflow_set_channel(
 
     return await _edit_document(
         workflow_id, expected_version, reason="set the channel", change=change
+    )
+
+
+@tool(
+    name="workflow_request_signature",
+    description="Ask the operator to sign a draft; it appears in their approvals queue",
+    classification="state_modifying",
+    capability_tags=("workflows",),
+    when_to_use="When a draft is finished and the person needs to authorize it.",
+    requires_skill="workflow-builder",
+)
+async def workflow_request_signature(workflow_id: str = "", reason: str = "") -> str:
+    """Raise an operator approval that, once granted, signs this draft.
+
+    The agent can never sign — this writes a REQUEST, and the signature happens
+    in the operator-authenticated path that mints the grant (REQ-224). The
+    request is bound to the definition's content hash, so a draft edited after
+    the ask no longer matches and the approval is refused rather than signing
+    something the operator did not read.
+    """
+    st = _runtime.state()
+    await _runtime.ensure_control_plane()
+    bundle = _load(st, workflow_id)
+    if bundle is None:
+        return _errors(issue(field="workflow_id", error=f"workflow '{workflow_id}' not found"))
+    try:
+        from arcstore.approvals import ApprovalStore, PendingApproval
+        from arcstore.backends.sqlite import SqliteBackend
+        from arcstore.config import store_db_path
+
+        backend = SqliteBackend(store_db_path(st.config.data_dir or None))
+        await backend.start()
+        approval = await ApprovalStore(backend).create(
+            PendingApproval(
+                id=f"wfsign_{uuid.uuid4().hex[:12]}",
+                agent_did=st.identity.did,
+                agent_label=workflow_id,
+                tool="workflow_sign",
+                legs=[],
+                call_hash=bundle.content_hash,
+                arguments={
+                    "workflow_id": workflow_id,
+                    "version": str(bundle.definition.version),
+                    "reason": _text(reason, "reason")[:200],
+                },
+            )
+        )
+    except _TOOL_ERRORS as exc:
+        return _errors(issue(field="workflow_id", error=f"could not raise the request: {exc}"))
+    return json.dumps(
+        {
+            "approval_id": approval.id,
+            "workflow_id": workflow_id,
+            "status": "pending_operator_approval",
+            "note": "Approving it in the operator's approvals queue signs this exact draft.",
+        }
     )
 
 

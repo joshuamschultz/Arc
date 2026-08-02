@@ -34,8 +34,10 @@ import {
   useRunWorkflow,
   useUnarchiveWorkflow,
   useWorkflow,
+  useWorkflowFile,
   useWorkflowRun,
   useWorkflowRuns,
+  useWriteWorkflowFile,
 } from '@/lib/queries'
 import { ApiError } from '@/lib/api'
 import { fmtTime, shortId } from '@/lib/format'
@@ -66,6 +68,66 @@ function describeError(e: unknown): { message: string; fieldErrors: WorkflowFiel
     return { message: e.message, fieldErrors: asWorkflowFieldErrors(e.errors) }
   }
   return { message: 'Request failed', fieldErrors: [] }
+}
+
+/** The instruction a node actually runs, editable in place.
+ *
+ * A node names `prompts/x.md`; the definition payload carries the path and not
+ * the body, so without this the dashboard can show what a node is called and
+ * never what it says — which is the part a human has to read before approving
+ * a signature. Saving is a versioned definition edit: the bundle is the signed
+ * unit, so changing an instruction drops the signature exactly as changing the
+ * graph does.
+ */
+function PromptEditor({
+  workflowId,
+  version,
+  path,
+}: {
+  workflowId: string
+  version: number
+  path: string
+}) {
+  const file = useWorkflowFile(workflowId, path)
+  const write = useWriteWorkflowFile(workflowId)
+  const [draft, setDraft] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const content = draft ?? file.data?.content ?? ''
+
+  const save = async () => {
+    setError(null)
+    try {
+      await write.mutateAsync({ path, content, expectedVersion: version })
+      setDraft(null)
+    } catch (e) {
+      setError(describeError(e).message)
+    }
+  }
+
+  return (
+    <div className="space-y-1.5 rounded-lg border border-border p-2">
+      <div className="flex items-center gap-2">
+        <span className="font-mono text-[11px] text-muted-foreground">{path}</span>
+        {file.isLoading && <span className="text-[11px] text-muted-foreground">loading…</span>}
+        {file.isError && (
+          <span className="text-[11px] text-muted-foreground">
+            not written yet — type it and save
+          </span>
+        )}
+      </div>
+      {error && <div className="text-[11px] text-destructive">{error}</div>}
+      <Textarea
+        rows={10}
+        value={content}
+        placeholder="What this step should do, in plain language."
+        onChange={(e) => setDraft(e.target.value)}
+        className="text-xs"
+      />
+      <Button size="sm" variant="outline" disabled={write.isPending} onClick={save}>
+        {write.isPending ? 'Saving…' : 'Save prompt'}
+      </Button>
+    </div>
+  )
 }
 
 /**
@@ -162,7 +224,21 @@ function NodeInspector({
             </div>
           )}
           {raw === null ? (
-            <WorkflowNodeForm draft={draft} siblings={allNodes} onChange={setDraft} />
+            <>
+              <WorkflowNodeForm draft={draft} siblings={allNodes} onChange={setDraft} />
+              {draft.kind === 'agent' && draft.prompt.trim() && (
+                <div className="space-y-1">
+                  <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                    Prompt
+                  </span>
+                  <PromptEditor
+                    workflowId={workflowId}
+                    version={version}
+                    path={draft.prompt.trim()}
+                  />
+                </div>
+              )}
+            </>
           ) : (
             <Textarea
               rows={16}
