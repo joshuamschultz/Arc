@@ -138,7 +138,11 @@ jobs:
 
       - name: Refresh CycloneDX SBOM
         run: |
-          uv export --frozen --no-emit-project --no-hashes --all-packages \
+          # Use the exact same shipped-runtime closure as the vulnerability gate.
+          # Dev/test/tutorial dependencies (pytest, pip-audit, Jupyter, etc.) are
+          # build tooling, not Arc components, and do not belong in the product SBOM.
+          uv export --frozen --no-emit-workspace --no-hashes \
+            --all-packages --all-extras --no-default-groups \
             --format requirements-txt > sbom/requirements-nohash.txt
           uv tool run --from cyclonedx-bom cyclonedx-py requirements \
             sbom/requirements-nohash.txt --of JSON -o sbom/arc-python.cdx.json
