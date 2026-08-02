@@ -135,8 +135,8 @@ class TestCapabilityLifecycle:
         finally:
             await cap.teardown()
 
-    async def test_teardown_drains_in_flight_worker(self, configured: Path) -> None:
-        """Engine.stop() cancels worker without orphaning the task."""
+    async def test_teardown_stops_the_loop_without_orphaning_it(self, configured: Path) -> None:
+        """One loop, stopped cleanly — there is no worker task any more."""
         from arcagent.modules.scheduler.capabilities import Scheduler
 
         st = _runtime.state()
@@ -146,15 +146,11 @@ class TestCapabilityLifecycle:
         await cap.setup(None)
         engine = st.engine
         assert engine is not None
-        worker = engine._worker_task
         timer = engine._timer_task
-        assert worker is not None
         assert timer is not None
 
         await cap.teardown()
 
-        # Both background tasks should be done after teardown.
-        assert worker.done()
         assert timer.done()
 
 

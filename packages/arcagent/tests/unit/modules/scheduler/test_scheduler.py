@@ -326,31 +326,88 @@ class TestCircuitBreaker:
 # --- Queue dedup ---
 
 
-class TestQueueDedup:
-    @pytest.mark.asyncio
-    async def test_duplicate_enqueue_skipped(self) -> None:
-        engine = SchedulerEngine(
-            store=MagicMock(),
-            config=make_config(),
-            telemetry=MagicMock(),
-            agent_run_fn=AsyncMock(),
-        )
-        entry = make_entry(id="sched_dedup")
-        await engine.enqueue(entry)
-        await engine.enqueue(entry)  # duplicate
-        assert engine._queue.qsize() == 1
+class TestOverlapSkips:
+    """A firing whose prior run is still going must skip, not stack.
+
+    Tested through the tick, which is the only thing that fires now — the queue
+    and worker this used to assert against are gone, and with them the loop that
+    could park forever waiting on a readiness event.
+    """
 
     @pytest.mark.asyncio
-    async def test_different_ids_both_enqueued(self) -> None:
+    async def test_a_second_tick_does_not_start_a_running_entry_again(self) -> None:
+        entry = make_entry(id="sched_dedup")
+        store = MagicMock()
+        store.load.return_value = [entry]
+        started = asyncio.Event()
+        release = asyncio.Event()
+        calls = 0
+
+        async def run_fn(prompt: str, **kwargs: Any) -> str:
+            nonlocal calls
+            calls += 1
+            started.set()
+            await release.wait()
+            return "ok"
+
         engine = SchedulerEngine(
-            store=MagicMock(),
+            store=store,
             config=make_config(),
             telemetry=MagicMock(),
-            agent_run_fn=AsyncMock(),
+            agent_run_fn=run_fn,
         )
-        await engine.enqueue(make_entry(id="sched_a"))
-        await engine.enqueue(make_entry(id="sched_b"))
-        assert engine._queue.qsize() == 2
+        engine.should_fire = lambda e: True  # type: ignore[method-assign]
+
+        first = asyncio.create_task(engine._tick())
+        await asyncio.wait_for(started.wait(), timeout=1)
+        await engine._tick()  # while the first is still running
+
+        release.set()
+        await first
+        assert calls == 1
+
+    @pytest.mark.asyncio
+    async def test_two_different_entries_both_run(self) -> None:
+        store = MagicMock()
+        store.load.return_value = [make_entry(id="sched_a"), make_entry(id="sched_b")]
+        ran: list[str] = []
+
+        async def run_fn(prompt: str, **kwargs: Any) -> str:
+            ran.append(kwargs.get("session_key", ""))
+            return "ok"
+
+        engine = SchedulerEngine(
+            store=store,
+            config=make_config(),
+            telemetry=MagicMock(),
+            agent_run_fn=run_fn,
+        )
+        engine.should_fire = lambda e: True  # type: ignore[method-assign]
+
+        await engine._tick()
+
+        assert ran == ["scheduler:sched_a", "scheduler:sched_b"]
+
+
+class TestNothingFiresWithoutACallback:
+    """A due entry with no agent callback stays pending — never consumed."""
+
+    @pytest.mark.asyncio
+    async def test_the_row_is_left_untouched(self) -> None:
+        entry = make_entry(id="sched_pending")
+        store = MagicMock()
+        store.load.return_value = [entry]
+        engine = SchedulerEngine(
+            store=store,
+            config=make_config(),
+            telemetry=MagicMock(),
+            agent_run_fn=None,
+        )
+        engine.should_fire = lambda e: True  # type: ignore[method-assign]
+
+        await engine._tick()
+
+        store.update.assert_not_called()
 
 
 # --- Once auto-disable ---
@@ -605,7 +662,7 @@ class TestLifecycle:
         assert engine.running is False
 
     @pytest.mark.asyncio
-    async def test_stop_drains_queue(self) -> None:
+    async def test_a_due_entry_runs_and_stop_is_clean(self) -> None:
         """Queue should drain before stop completes."""
         results: list[str] = []
 
@@ -622,14 +679,13 @@ class TestLifecycle:
             telemetry=MagicMock(),
             agent_run_fn=mock_run,
         )
+        # A due entry runs inline on the tick — there is no queue to drain,
+        # which is the point: nothing can be left sitting in one.
+        store.load.return_value = [make_entry(prompt="drain test")]
+        engine.should_fire = lambda e: True  # type: ignore[method-assign]
         await engine.start()
-
-        # Enqueue work directly
-        entry = make_entry(prompt="drain test")
-        await engine.enqueue(entry)
-
-        # Give worker a moment to process
         await asyncio.sleep(0.1)
+        await engine._tick()
         await engine.stop()
         assert "drain test" in results
 

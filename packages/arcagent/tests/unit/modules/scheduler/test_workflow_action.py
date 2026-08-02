@@ -172,16 +172,18 @@ class TestOverlapSkips:
     async def test_a_firing_whose_prior_run_is_in_flight_skips(
         self, tmp_path: Path, plane: _RecordingPlane
     ) -> None:
-        """REQ-249 — the existing ``_in_flight`` dedup is the overlap policy."""
-        engine, _prompts, _store = _engine(tmp_path)
-        entry = _workflow_entry()
+        """REQ-249 — the ``_in_flight`` guard is the overlap policy."""
+        engine, _prompts, store = _engine(tmp_path)
+        store.add(_workflow_entry())
         plane.hold = True
 
-        await engine.enqueue(entry)
-        await engine.enqueue(entry)  # overlapping firing while the first is queued
+        first = asyncio.create_task(engine._tick())
+        await asyncio.sleep(0.05)
+        await engine._tick()  # overlapping firing while the first still runs
 
-        assert engine._queue.qsize() == 1
         plane.gate.set()
+        await first
+        assert len(plane.started) == 1
 
 
 @pytest.mark.asyncio
