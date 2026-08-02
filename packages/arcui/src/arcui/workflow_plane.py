@@ -37,6 +37,16 @@ _SLUG = re.compile(r"[^a-z0-9._-]+")
 # one placeholder node to edit rather than a validation error on the way in.
 _STARTER_NODE = "start"
 
+#: A task row's status as the dashboard's per-node vocabulary.
+_NODE_STATUS: dict[str, str] = {
+    "backlog": "pending",
+    "todo": "pending",
+    "in_progress": "running",
+    "review": "waiting_gate",
+    "done": "done",
+    "failed": "failed",
+}
+
 
 def slugify(name: str) -> str:
     """A workflow id from a human name. Ids are names, never paths."""
@@ -58,11 +68,13 @@ class DashboardWorkflowPlane:
         plane: TeamControlPlane,
         definitions: Any,
         runs: Any,
+        tasks: Any,
         default_owner: str = "@operator",
     ) -> None:
         self._plane = plane
         self._definitions = definitions
         self._runs = runs
+        self._tasks = tasks
         self._default_owner = default_owner
 
     # -- reads ---------------------------------------------------------------
@@ -108,14 +120,34 @@ class DashboardWorkflowPlane:
         detail["workflow_id"] = run.workflow_id
         detail["version"] = run.workflow_version
         detail["path_taken"] = [entry.node_id for entry in run.path_taken]
-        detail["nodes"] = [
-            {
-                "node_id": entry.node_id,
-                "status": entry.outcome,
-                "iteration": entry.loop_iteration,
+        # Per-node state comes from the task rows — they carry the live status,
+        # the row id a gate is resolved by, and the per-node run id that opens
+        # the existing execution timeline. The Run's trace adds what has no row
+        # at all: a branch that was considered and not taken.
+        nodes: dict[str, dict[str, Any]] = {}
+        for task in await self._tasks.query_by_flow_run(run_id):
+            node_id = str(task.metadata.get("node_id", ""))
+            if not node_id:
+                continue
+            nodes[node_id] = {
+                "node_id": node_id,
+                "status": _NODE_STATUS.get(task.status, "running"),
+                "iteration": task.metadata.get("iteration"),
+                "task_id": task.id,
+                "task_run_id": task.metadata.get("run_id") or task.run_id,
+                "kind": task.metadata.get("node_kind"),
             }
-            for entry in run.path_taken
-        ]
+        for entry in run.path_taken:
+            if entry.outcome == "skipped":
+                nodes.setdefault(
+                    entry.node_id,
+                    {
+                        "node_id": entry.node_id,
+                        "status": "skipped",
+                        "iteration": entry.loop_iteration,
+                    },
+                )
+        detail["nodes"] = list(nodes.values())
         return detail
 
     # -- mutations -----------------------------------------------------------
@@ -344,6 +376,7 @@ def build_dashboard_plane(
         plane=plane,
         definitions=definitions,
         runs=runner.runs,
+        tasks=runner.tasks,
         default_owner=default_owner,
     )
 

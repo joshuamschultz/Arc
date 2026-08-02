@@ -62,8 +62,14 @@ _MAX_FILES = 20
 
 
 async def _plane() -> Any:
-    """Return the control plane, finishing lazy async wiring first, or None."""
+    """Return the control plane, finishing lazy async wiring first, or None.
+
+    The team roster is refreshed on the way through: an agent that joined since
+    this process started must be nameable in a node, and one that never existed
+    must be refused at authoring time rather than at its first dispatch.
+    """
     await _runtime.ensure_control_plane()
+    await _runtime.refresh_roster()
     return _runtime.state().control_plane
 
 
@@ -609,13 +615,19 @@ async def workflow_inspect(workflow_id: str = "", version: int | None = None) ->
     capability_tags=("workflows",),
 )
 async def workflow_runs(workflow_id: str = "") -> str:
-    """List runs of one workflow, newest first."""
+    """List runs of one workflow, newest first.
+
+    Read from the run store the runner writes to, not from the runner object:
+    an agent can ask how a workflow has been going on a box where the runner is
+    hosted in the fleet service and this process has none.
+    """
     st = _runtime.state()
     await _runtime.ensure_control_plane()
-    runs = getattr(st.runner, "runs_for", None)
+    runs = await _run_store(st)
     if runs is None:
         return _no_runner()
-    return json.dumps([_dump(record) for record in await runs(workflow_id)])
+    records = await runs.list_for_workflow(workflow_id)
+    return json.dumps([_dump(record) for record in records])
 
 
 @tool(
@@ -628,10 +640,27 @@ async def workflow_run_status(run_id: str = "") -> str:
     """Report a single run's live state, including the path actually taken."""
     st = _runtime.state()
     await _runtime.ensure_control_plane()
-    status = getattr(st.runner, "run_status", None)
-    if status is None:
+    runs = await _run_store(st)
+    if runs is None:
         return _no_runner()
-    return json.dumps(_dump(await status(run_id)))
+    record = await runs.record(run_id)
+    if record is None:
+        return _errors(issue(field="run_id", error=f"run '{run_id}' not found"))
+    return json.dumps(_dump(record))
+
+
+async def _run_store(st: _runtime._State) -> Any:
+    """The durable run plane, from the hosted runner or opened directly."""
+    runner_runs = getattr(st.runner, "runs", None)
+    if runner_runs is not None:
+        return runner_runs
+    from arcagent.modules.workflows.run_store import open_run_store
+
+    try:
+        return await open_run_store(str(st.config.data_dir or ""))
+    except Exception:  # reason: a read tool reports absence, never crashes
+        _logger.warning("workflow run store unavailable", exc_info=True)
+        return None
 
 
 # --- Delegation helpers ----------------------------------------------------

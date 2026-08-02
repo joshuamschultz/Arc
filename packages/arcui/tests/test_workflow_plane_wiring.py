@@ -17,7 +17,7 @@ from arcstore.backends.sqlite import SqliteBackend
 from arcteam.workflow.runner import build_workflow_runner
 from arctrust import OperatorKey
 
-from arcui.routes.workflows import OperatorActor, WorkflowControlPlane
+from arcui.routes.workflows import GateControlPlane, OperatorActor, WorkflowControlPlane
 from arcui.server import _attach_workflow_plane
 from arcui.workflow_plane import DashboardWorkflowPlane, build_dashboard_plane, slugify
 
@@ -57,10 +57,14 @@ async def plane(tmp_path: Path) -> Any:
 
 def test_the_adapter_satisfies_the_route_layers_contract() -> None:
     """A missing method here is a 500 on a screen, found only in production."""
-    assert isinstance(
-        DashboardWorkflowPlane(plane=None, definitions=None, runs=None),  # type: ignore[arg-type]
-        WorkflowControlPlane,
+    plane = DashboardWorkflowPlane(
+        plane=None,  # type: ignore[arg-type]
+        definitions=None,
+        runs=None,
+        tasks=None,
     )
+    assert isinstance(plane, GateControlPlane), "gate resolution has no implementation"
+    assert isinstance(plane, WorkflowControlPlane)
 
 
 def test_the_server_composes_the_plane_from_a_hosted_runner() -> None:

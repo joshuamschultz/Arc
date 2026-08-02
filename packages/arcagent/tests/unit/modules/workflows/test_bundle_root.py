@@ -72,3 +72,47 @@ def test_an_absolute_root_is_used_as_given(
         assert _runtime._bundle_root(state) == elsewhere
     finally:
         _runtime.reset()
+
+
+def test_a_node_naming_an_unregistered_agent_is_refused_while_repairable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The roster check exists so "unknown agent" is an authoring error.
+
+    Unchecked, a definition naming `@nobody` validates, signs, runs, and dies
+    at its first node — long after the person who could fix it walked away.
+    """
+    from arcteam.workflow import parse_definition, validate_definition
+    from arcteam.workflow.validator import KnownReferences
+
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "config"))
+    definition = parse_definition(
+        {
+            "workflow": {"id": "wf", "owner": "@sales"},
+            "node": [{"id": "a", "kind": "agent", "agent": "@nobody"}],
+        }
+    )
+
+    issues = validate_definition(
+        definition, known=KnownReferences(agents=frozenset({"@sales", "@ops"}))
+    )
+
+    assert [(i.node_id, i.field) for i in issues] == [("a", "agent")]
+    assert "@ops" in issues[0].admissible
+
+
+def test_an_empty_roster_kind_is_skipped_not_rejected() -> None:
+    """Partial knowledge is normal: agents are enumerable, every tool is not."""
+    from arcteam.workflow import parse_definition, validate_definition
+    from arcteam.workflow.validator import KnownReferences
+
+    definition = parse_definition(
+        {
+            "workflow": {"id": "wf", "owner": "@sales"},
+            "node": [{"id": "a", "kind": "tool", "tool": "crm_lookup", "agent": "@sales"}],
+        }
+    )
+
+    issues = validate_definition(definition, known=KnownReferences(agents=frozenset({"@sales"})))
+
+    assert issues == ()

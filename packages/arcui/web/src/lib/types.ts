@@ -737,6 +737,9 @@ export interface WorkflowRunNodeStatus {
   // node's OWN per-dispatch execution trace, distinct from the workflow
   // run_id itself. See routes/workflows.py's naming note.
   task_run_id?: string | null
+  /** The row a gate is resolved by — present on a node that has one. */
+  task_id?: string | null
+  kind?: string | null
 }
 
 export interface WorkflowRunDetail {

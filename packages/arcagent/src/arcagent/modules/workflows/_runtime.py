@@ -80,6 +80,17 @@ class _State:
     # Serialises the lazy first-use build so two concurrent first tool calls
     # cannot both construct a control plane (REL-F4 check-then-act race).
     init_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # Handles the team registry knows, refreshed before each authoring call.
+    # A definition naming an agent that does not exist validates fine and then
+    # dies at its first node with "unknown agent" — the roster is what turns
+    # that into a repairable authoring error (REQ-219).
+    known_agents: frozenset[str] = frozenset()
+    # arcteam ``EntityRegistry``, built lazily over the shared bus. None means
+    # no roster is available, and the check is skipped rather than guessed.
+    registry: Any = None
+    # True once a registry build was attempted. A box with no team bus pays the
+    # connect timeout ONCE, not on every authoring call.
+    roster_attempted: bool = False
     # Content hashes this agent has already obtained an activation grant for
     # (COMP-016). A narrowing edit whose leg union is a subset of an already
     # approved union must not re-prompt, so the approved UNIONS are kept too.
@@ -176,6 +187,38 @@ async def ensure_control_plane() -> None:
 
         runs = await open_run_store(str(st.config.data_dir or ""))
         _build_control_plane(st, runs)
+
+
+async def refresh_roster(nats_url: str = "") -> None:
+    """Refresh the handles the authoring check validates against.
+
+    Best-effort by design: a deployment with no team bus has no roster, and the
+    validator skips a kind it has no roster for rather than rejecting every
+    node. What must not happen is the opposite — a definition naming an agent
+    nobody has ever registered passing validation and dying at its first node.
+    """
+    st = state()
+    url = nats_url or st.config.nats_url
+    if st.registry is None and (not url or st.roster_attempted):
+        return
+    try:
+        if st.registry is None:
+            st.roster_attempted = True
+            from arcteam.audit import AuditLogger
+            from arcteam.registry import EntityRegistry
+
+            from arcagent.core.arcteam_bootstrap import make_backend
+
+            backend = await make_backend(url)
+            audit = AuditLogger(backend, st.operator_signer)
+            await audit.initialize()
+            st.registry = EntityRegistry(backend, audit)
+        entities = await st.registry.list_entities()
+    except Exception:  # reason: no roster is a skipped check, never a failure
+        _logger.debug("workflow roster unavailable; agent references go unchecked", exc_info=True)
+        return
+    handles = {f"@{e.handle}" for e in entities if getattr(e, "handle", "")}
+    st.known_agents = frozenset(handles)
 
 
 def set_runner(runner: Any) -> None:
@@ -297,6 +340,16 @@ def _build_control_plane(st: _State, runs: Any) -> None:
     def parse(document: Mapping[str, Any]) -> Any:
         return parse_definition(dict(document))
 
+    def validate(definition: Any, *, pending_files: frozenset[str] = frozenset()) -> Any:
+        from arcteam.workflow.validator import KnownReferences
+
+        return validate_definition(
+            definition,
+            known=KnownReferences(agents=st.known_agents),
+            bundle_root=root,
+            pending_files=pending_files,
+        )
+
     # The control plane's constructor is nominally typed against arcteam's own
     # runner and tier literal. The runner here is either the injected fleet
     # singleton (structurally identical) or the local no-runner stand-in, and the
@@ -305,7 +358,7 @@ def _build_control_plane(st: _State, runs: Any) -> None:
     st.control_plane = WorkflowControlPlane(
         definitions=st.definitions,
         parse=parse,
-        validate=validate_definition,
+        validate=validate,
         runner=cast(Any, st.runner if st.runner is not None else _NoRunner()),
         runs=cast(Any, runs),
         tier=cast(Any, st.tier),
@@ -334,4 +387,12 @@ def reset() -> None:
     _state_var.set(None)
 
 
-__all__ = ["bind", "configure", "ensure_control_plane", "reset", "set_runner", "state"]
+__all__ = [
+    "bind",
+    "configure",
+    "ensure_control_plane",
+    "refresh_roster",
+    "reset",
+    "set_runner",
+    "state",
+]
