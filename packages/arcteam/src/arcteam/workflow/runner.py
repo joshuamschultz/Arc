@@ -181,6 +181,26 @@ class WorkflowRunner:
 
     # -- public surface ----------------------------------------------------
 
+    @property
+    def definitions(self) -> DefinitionStoreLike:
+        """The definition store this runner dispatches from.
+
+        Exposed so another surface in this process (the dashboard's control
+        plane) composes onto the SAME store, tier, and run plane the engine
+        enforces, instead of constructing a second set that could disagree.
+        """
+        return self._definitions
+
+    @property
+    def runs(self) -> RunStoreLike:
+        """The run plane this runner writes to."""
+        return self._runs
+
+    @property
+    def tier(self) -> Tier:
+        """The deployment posture this runner enforces."""
+        return self._tier
+
     async def start_run(
         self,
         workflow_id: str,

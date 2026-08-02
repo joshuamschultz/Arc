@@ -170,6 +170,20 @@ class WorkflowRunStore:
     async def count_runs_for_workflow(self, workflow_id: str) -> int:
         return len(await self._runs.list(workflow_id=workflow_id))
 
+    async def list_for_workflow(self, workflow_id: str) -> Sequence[Run]:
+        """The canonical Run rows for one workflow — what a reader renders.
+
+        The durable ``Run`` (with its ``PathEntry`` trace), not the runner's
+        companion bookkeeping row: a dashboard shows what happened, and the
+        companion row carries idempotency state nobody outside the runner
+        should read.
+        """
+        return await self._runs.list(workflow_id=workflow_id)
+
+    async def record(self, run_id: str) -> Run | None:
+        """One canonical Run row, or None."""
+        return await self._runs.get(run_id)
+
     async def set_status(
         self,
         run_id: str,
