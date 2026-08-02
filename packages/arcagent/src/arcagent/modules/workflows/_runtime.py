@@ -91,6 +91,27 @@ _state_var: contextvars.ContextVar[_State | None] = contextvars.ContextVar(
 )
 
 
+@dataclass
+class _HostedRunner:
+    """Process-wide slot for the fleet's single runner (REQ-231).
+
+    Deliberately NOT per-agent and deliberately not a ContextVar: one runner
+    serves every agent in this process (the same process fact
+    ``RunnerHost._active`` records), and the gateway publishes it during
+    bootstrap — before, and from a different asyncio task than, the agents that
+    later configure this module. A ContextVar handoff would drop it silently and
+    every ``workflow_run`` would refuse on a deployment that is running one.
+
+    Mutated in place rather than rebound, so per-AGENT state here stays where it
+    belongs: on the ContextVar-held ``_State``.
+    """
+
+    runner: Any = None
+
+
+_hosted = _HostedRunner()
+
+
 def configure(
     *,
     config: dict[str, Any] | WorkflowsConfig | None = None,
@@ -124,6 +145,9 @@ def configure(
             control_plane=control_plane,
             definitions=definitions,
             tier=tier,
+            # Adopt a runner the gateway already published: an agent that binds
+            # its module after bootstrap must still reach the live runner.
+            runner=_hosted.runner,
         )
     )
 
@@ -162,12 +186,20 @@ def set_runner(runner: Any) -> None:
     the same frontier (REQ-231). Until one is injected, authoring works fully and
     ``workflow_run`` reports that no runner is hosted here — which is the honest
     state of a deployment whose gateway has not started one.
+
+    Publishing survives BOTH orderings. The gateway may publish before any agent
+    has configured this module (bootstrap starts the runner first), so the
+    runner is recorded process-wide either way and adopted by every later
+    ``configure``.
     """
-    st = state()
-    st.runner = runner
+    _hosted.runner = runner
+    current = _state_var.get()
+    if current is None:
+        return
+    current.runner = runner
     # Force a rebuild so the control plane picks up the live runner.
-    st.control_plane = None
-    st.build_attempted = False
+    current.control_plane = None
+    current.build_attempted = False
 
 
 class _NoRunner:
@@ -281,7 +313,8 @@ def bind(state_obj: _State) -> None:
 
 
 def reset() -> None:
-    """Test-only: clear runtime state."""
+    """Test-only: clear runtime state, including the process-hosted runner."""
+    _hosted.runner = None
     _state_var.set(None)
 
 
