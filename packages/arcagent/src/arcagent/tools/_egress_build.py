@@ -24,11 +24,19 @@ from arcagent.core.session_internal.capability_ledger import (
 from arcagent.tools._egress import EgressProxy
 
 
-async def _httpx_send(url: str, method: str, **kwargs: Any) -> Any:
+async def _httpx_send(
+    url: str,
+    method: str,
+    *,
+    timeout_seconds: int = 30,
+    **kwargs: Any,
+) -> Any:
     """Default egress transport — a real async HTTP request via httpx."""
     import httpx
 
-    async with httpx.AsyncClient() as client:
+    default_timeout = httpx.Timeout(timeout_seconds, connect=min(10, timeout_seconds))
+    timeout = kwargs.pop("timeout", default_timeout)
+    async with httpx.AsyncClient(timeout=timeout, max_redirects=3) as client:
         return await client.request(method, url, **kwargs)
 
 
@@ -55,9 +63,17 @@ def build_egress_proxy(
             return "UNCLASSIFIED"
         return ledger.max_read_classification(current_session_id()).name
 
+    async def _send(url: str, method: str, **kwargs: Any) -> Any:
+        return await _httpx_send(
+            url,
+            method,
+            timeout_seconds=config.tools.policy.timeout_seconds,
+            **kwargs,
+        )
+
     return EgressProxy(
         allowlist=set(config.tools.policy.egress_allowlist),
-        send_fn=_httpx_send,
+        send_fn=_send,
         audit_sink=_egress_audit,
         origin_clearances=dict(config.tools.policy.egress_clearances),
         data_classifier=_session_data_classification,

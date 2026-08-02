@@ -26,16 +26,14 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from arccli.commands._shared import err
 from arccli.commands._shared import print_table as _print_table
 from arccli.commands._shared import write as _write
 
 if TYPE_CHECKING:
-    from arcskill.improver.models import (  # type: ignore[import-untyped]  # reason: arcskill ships no py.typed marker
-        EvalCase,
-    )
+    from arcskill.improver.models import EvalCase
 
 _MIN_GOLDEN_CASES = 3
 
@@ -63,13 +61,11 @@ def evals_handler(args: argparse.Namespace) -> None:
 def _load_cases(skill_dir: Path) -> list[EvalCase]:
     """Discover golden cases via arcskill's static AST scan."""
     try:
-        from arcskill.improver.evalgate import (  # type: ignore[import-untyped]  # reason: arcskill ships no py.typed marker
-            load_suite,
-        )
+        from arcskill.improver.evalgate import load_suite
     except ImportError:
         err("Error: arcskill is not installed; install it to manage eval suites.")
         sys.exit(1)
-    return cast("list[EvalCase]", load_suite(skill_dir))
+    return load_suite(skill_dir)
 
 
 def _list_cases(skill_dir: Path) -> None:

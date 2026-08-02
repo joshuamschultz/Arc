@@ -131,7 +131,7 @@ class ToolConfig(BaseModel):
 
     allow: list[str] = []
     deny: list[str] = []
-    timeout_seconds: int = 30
+    timeout_seconds: int = Field(default=30, ge=1, le=300)
     allowed_paths: list[str] = []
     # SPEC-035 REQ-002 — operator-declared paths that are read-only to the
     # agent's mutating tools, unioned with the goal-file defaults. Resolved once
