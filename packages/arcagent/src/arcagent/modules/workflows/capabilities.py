@@ -343,18 +343,31 @@ async def workflow_add_node(
     workflow_id: str = "",
     node: dict[str, Any] | None = None,
     expected_version: int | None = None,
+    files: dict[str, str] | None = None,
 ) -> str:
-    """Add a node and re-validate the whole graph."""
+    """Add a node and re-validate the whole graph.
+
+    ``files`` carries the bodies this node references. A node that names a
+    prompt the bundle does not have yet is refused — correctly, since a
+    dangling reference cannot run — so declaring the reference and writing the
+    file are ONE call, not a two-step dance an agent has to discover.
+    """
+    st = _runtime.state()
     try:
         fields = project(as_object(node or {}, "node"), NODE_FIELDS)
     except ValueError as exc:
         return _errors(issue(field="node", error=str(exc), observed=node))
+    try:
+        payload = _clean_files(files, st)
+    except ValueError as exc:
+        return _errors(issue(field="files", error=str(exc)))
     return await _edit_document(
         workflow_id,
         expected_version,
         reason="added a node",
         change=lambda doc: doc["node"].append(fields),
         added_nodes=1,
+        files=payload,
     )
 
 
@@ -371,11 +384,21 @@ async def workflow_edit_node(
     node_id: str = "",
     updates: dict[str, Any] | None = None,
     expected_version: int | None = None,
+    files: dict[str, str] | None = None,
 ) -> str:
-    """Edit a node in place. A node id is immutable — a rename is remove + add."""
+    """Edit a node in place. A node id is immutable — a rename is remove + add.
+
+    ``files`` carries any body the edit newly references, so pointing a node at
+    a prompt and writing that prompt is one call.
+    """
+    st = _runtime.state()
     stale = _version_required(expected_version)
     if stale is not None:
         return _errors(stale)
+    try:
+        payload = _clean_files(files, st)
+    except ValueError as exc:
+        return _errors(issue(node_id=node_id, field="files", error=str(exc)))
     # ``id`` is deliberately excluded: node ids are immutable once signed, so an
     # in-flight run pinned by hash and every historical audit row stay valid.
     allowed = NODE_FIELDS - {"id"}
@@ -402,7 +425,11 @@ async def workflow_edit_node(
         raise KeyError(node_id)
 
     return await _edit_document(
-        workflow_id, expected_version, reason="edited a node", change=change
+        workflow_id,
+        expected_version,
+        reason="edited a node",
+        change=change,
+        files=payload,
     )
 
 

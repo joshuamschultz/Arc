@@ -346,7 +346,13 @@ def _build_control_plane(st: _State, runs: Any) -> None:
         return validate_definition(
             definition,
             known=KnownReferences(agents=st.known_agents),
-            bundle_root=root,
+            # THE definition's own bundle, not the directory that holds every
+            # bundle. Resolving one level too high made every file reference
+            # read as missing, so an edit that added no files — add a node,
+            # change an agent — was rejected for prompts and schemas that were
+            # sitting right there. Only a call that happened to carry its files
+            # as pending got through.
+            bundle_root=root / definition.id,
             pending_files=pending_files,
         )
 
