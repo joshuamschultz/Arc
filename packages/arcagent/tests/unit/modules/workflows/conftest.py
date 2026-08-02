@@ -123,6 +123,8 @@ class RecordingControlPlane:
 
     def __init__(self, definitions: FakeDefinitionStore) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        # Companion bodies the last mutation carried (path -> bytes).
+        self.files: dict[str, bytes] = {}
         self.definitions = definitions
         self.raise_on: dict[str, Exception] = {}
         self.refuse_with: tuple[FakeIssue, ...] = ()
@@ -143,8 +145,15 @@ class RecordingControlPlane:
         self.definitions.bundles[workflow_id] = bundle
         return FakeResult(ok=True, bundle=bundle)
 
-    async def create(self, document: dict[str, Any], *, actor_did: str) -> FakeResult:
+    async def create(
+        self,
+        document: dict[str, Any],
+        *,
+        actor_did: str,
+        files: dict[str, bytes] | None = None,
+    ) -> FakeResult:
         del actor_did
+        self.files = dict(files or {})
         return self._write("create", str(document["workflow"]["id"]), document)
 
     async def edit(
@@ -155,8 +164,10 @@ class RecordingControlPlane:
         expected_version: int,
         actor_did: str,
         reason: str,
+        files: dict[str, bytes] | None = None,
     ) -> FakeResult:
         del actor_did, reason
+        self.files = dict(files or {})
         self.calls.append(("edit_meta", {"expected_version": expected_version}))
         return self._write("edit", workflow_id, document)
 
