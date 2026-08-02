@@ -338,9 +338,12 @@ def _issues_from_pydantic(exc: ValidationError, nodes: list[Any]) -> tuple[Valid
     """Translate pydantic errors into the repair-oriented issue shape."""
     issues: list[ValidationIssue] = []
     for error in exc.errors():
-        location = [part for part in error["loc"] if part not in NODE_KINDS]
+        location = _strip_union_tag(list(error["loc"]))
         node_id = _node_id_for(location, nodes)
-        field = ".".join(str(part) for part in location if not isinstance(part, int))
+        # A node-scoped error names the node's OWN field, not "nodes.<field>":
+        # the dashboard and the builder tools key their repair hint on it.
+        scoped = location[2:] if node_id is not None else location
+        field = ".".join(str(part) for part in scoped if not isinstance(part, int))
         issues.append(
             ValidationIssue(
                 node_id=node_id,
@@ -351,6 +354,21 @@ def _issues_from_pydantic(exc: ValidationError, nodes: list[Any]) -> tuple[Valid
             )
         )
     return tuple(issues)
+
+
+def _strip_union_tag(location: list[Any]) -> list[Any]:
+    """Drop the discriminated union's kind tag, and ONLY the tag.
+
+    Pydantic reports a node error as ``("nodes", <index>, "<kind>", "<field>")``.
+    Dropping every element that merely *looks* like a kind name also erased the
+    field of a tool node called ``tool``, so "the tool node needs a tool name"
+    was reported as "nodes: Field required" — an error naming a field the author
+    cannot act on. The tag is positional: it is the element after the index.
+    """
+    if len(location) >= 3 and location[0] == "nodes" and isinstance(location[1], int):
+        if location[2] in NODE_KINDS:
+            return [*location[:2], *location[3:]]
+    return location
 
 
 def _node_id_for(location: list[Any], nodes: list[Any]) -> str | None:

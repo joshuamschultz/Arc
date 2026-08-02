@@ -40,6 +40,13 @@ from .runner_contracts import (
 
 logger = logging.getLogger(__name__)
 
+#: What a reviewer may choose, mapped to what the runner reads off the row.
+_GATE_DECISIONS: dict[str, str] = {
+    "approve": "approved",
+    "fail_run": "rejected",
+    "return_for_revision": "returned_for_revision",
+}
+
 
 @dataclass(frozen=True)
 class OperationIssue:
@@ -252,6 +259,78 @@ class WorkflowControlPlane:
             ),
             actor_did,
         )
+        return ControlPlaneResult(ok=True, run=record)
+
+    async def resolve_gate(
+        self,
+        task_id: str,
+        *,
+        decision: str,
+        notes: str = "",
+        actor_did: str,
+    ) -> ControlPlaneResult:
+        """Resolve a waiting gate: approve, fail the run, or return for revision.
+
+        The reviewer's three outcomes are not a task approve/reject (REQ-247):
+        returning for revision sends the reviewed work back to whoever produced
+        it and the run continues, which no task status can express. So the
+        decision is WRITTEN ON THE ROW and the runner acts on it — the row's
+        status carries only whether the gate is settled.
+
+        Gate resolution exists only here (REQ-246). No agent-callable tool
+        reaches it; the dashboard route, the CLI, and the channel card are all
+        callers of this one method, and each one names the deciding human.
+        """
+        if decision not in _GATE_DECISIONS:
+            return ControlPlaneResult(
+                ok=False,
+                errors=(
+                    OperationIssue(
+                        None,
+                        "decision",
+                        f"unknown gate decision {decision!r}",
+                        decision,
+                        tuple(_GATE_DECISIONS),
+                    ),
+                ),
+            )
+        tasks = self._runner.tasks
+        task = await tasks.get(task_id)
+        if task is None or str(task.metadata.get("node_kind", "")) != "gate":
+            self._emit(_Operation("workflow.gate.resolved", task_id, "refused"), actor_did)
+            return ControlPlaneResult(
+                ok=False,
+                errors=(OperationIssue(None, None, f"task {task_id!r} is not a workflow gate"),),
+            )
+        recorded = _GATE_DECISIONS[decision]
+        metadata = {
+            **dict(task.metadata),
+            "gate_decision": recorded,
+            "gate_notes": notes,
+            "gate_actor_did": actor_did,
+        }
+        # ``failed`` only for the outcome that really does fail the run; the
+        # other two settle the gate and let the runner take it from there.
+        status = "failed" if recorded == "rejected" else "done"
+        await tasks.update(
+            task_id,
+            {"status": status, "metadata": metadata, "resolution": notes or recorded},
+            actor_did=actor_did,
+        )
+        self._emit(
+            _Operation(
+                "workflow.gate.resolved",
+                task_id,
+                recorded,
+                {"run_id": str(task.metadata.get("flow_run_id", "")), "notes": notes},
+            ),
+            actor_did,
+        )
+        run_id = str(task.metadata.get("flow_run_id", ""))
+        if not run_id:
+            return ControlPlaneResult(ok=True)
+        # Advance now rather than on the next tick: the reviewer is watching.
+        record = await self._runner.advance(run_id)
         return ControlPlaneResult(ok=True, run=record)
 
     async def cancel(

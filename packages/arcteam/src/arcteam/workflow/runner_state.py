@@ -62,6 +62,13 @@ class RunState:
         self.gates: set[tuple[str, int]] = set()
         self.loops: set[tuple[str, int]] = set()
         self.materialized: set[tuple[str, int]] = set()
+        # Reviewer notes addressed to one upcoming node instance (REQ-247).
+        self.revisions: dict[tuple[str, int], str] = {}
+        # Gate instances a reviewer sent back for revision. They are settled
+        # rows, but they are NOT an answer: nothing downstream may proceed on
+        # them, or "return for revision" would release the very work the
+        # reviewer just rejected.
+        self.superseded: set[tuple[str, int]] = set()
         for entry in path:
             key = (str(entry.get("node_id", "")), int(entry.get("iteration", 0)))
             kind = entry.get("kind")
@@ -75,8 +82,12 @@ class RunState:
                 self.settled.add(key)
             elif kind == "gate":
                 self.gates.add(key)
+                if entry.get("decision") == "returned_for_revision":
+                    self.superseded.add(key)
             elif kind == "loop":
                 self.loops.add(key)
+            elif kind == "revision":
+                self.revisions[key] = str(entry.get("notes", ""))
 
     # -- reads ------------------------------------------------------------
 
@@ -97,6 +108,10 @@ class RunState:
 
     def status_at(self, node_id: str, iteration: int) -> NodeStatus:
         """The node's state at one iteration. A router is done once it has chosen."""
+        if (node_id, iteration) in self.superseded:
+            # Settled, but not an answer — the rework it asked for is what the
+            # graph is waiting on now.
+            return "in_flight"
         if (node_id, iteration) in self.routes:
             return "done"
         if (node_id, iteration) in self.skips:
