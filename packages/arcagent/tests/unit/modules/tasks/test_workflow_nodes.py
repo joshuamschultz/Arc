@@ -708,3 +708,57 @@ class TestTheModelIsShownTheSchemaItIsJudgedBy:
         call = hook.split("\n\n")[0]
         assert "schema=" in call, "the prompt no longer carries the resolved schema"
         assert "resolve_schema" in source, "the prompt no longer resolves the bundle's schema"
+
+
+@pytest.mark.asyncio
+class TestOutputArrivesHoweverTheModelSendsIt:
+    """A correct answer in the wrong wrapper is still a correct answer.
+
+    The live failure: the node produced exactly the shape its schema required,
+    sent it as the JSON *text* of that object, and the gate reported
+    "is not of type 'object'" — so a node that had done its work right failed,
+    twice, and the agent concluded the platform was broken. It was: a declared
+    `dict` argument is a request, not a guarantee (LLM05).
+    """
+
+    async def test_a_json_string_output_satisfies_the_schema(self, node_state: Any) -> None:
+        from arcagent.modules.tasks.capabilities import _state, complete_task
+
+        await _make_node_task(node_state)
+        result = json.loads(
+            await complete_task(
+                id="task_node_1", resolution="done", output=json.dumps({"risk": "low"})
+            )
+        )
+
+        assert "error" not in result, result
+        st = await _state()
+        stored = await st.store.get("task_node_1")
+        assert stored is not None
+        assert stored.status == "done"
+        # Stored as the object, never as the text of one.
+        assert stored.output == {"risk": "low"}
+
+    async def test_set_task_output_takes_the_same_shape(self, node_state: Any) -> None:
+        from arcagent.modules.tasks.capabilities import _state, set_task_output
+
+        await _make_node_task(node_state)
+        await set_task_output(id="task_node_1", output=json.dumps({"risk": "high"}))
+
+        st = await _state()
+        stored = await st.store.get("task_node_1")
+        assert stored is not None
+        assert stored.output == {"risk": "high"}
+
+    async def test_text_that_is_not_an_object_is_a_repairable_refusal(
+        self, node_state: Any
+    ) -> None:
+        from arcagent.modules.tasks.capabilities import complete_task
+
+        await _make_node_task(node_state)
+        result = json.loads(
+            await complete_task(id="task_node_1", resolution="done", output="not json at all")
+        )
+
+        assert result["retryable"] is True
+        assert "output" in result["error"]
