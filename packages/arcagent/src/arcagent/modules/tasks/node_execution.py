@@ -88,6 +88,10 @@ class WorkflowNode(BaseModel):
     # materialised (COMP-015). Seeds this node's fresh session so a per-node
     # session cannot reset the run's accumulation.
     accumulated_legs: list[str] = Field(default_factory=list)
+    # Where this node's prompt/schema files live, stamped by the runner that
+    # dispatched it. Empty means the runner did not say and the executor falls
+    # back to the deployment's bundle directory.
+    bundle_root: str = ""
 
 
 @dataclass(frozen=True)
@@ -172,6 +176,7 @@ def node_from_task(task: Any) -> WorkflowNode | None:
             artifacts=list(metadata.get("artifacts") or ()),
             upstream=dict(metadata.get("upstream") or {}),
             accumulated_legs=list(metadata.get("accumulated_legs") or ()),
+            bundle_root=str(metadata.get("bundle_root") or ""),
             idempotency_key=str(metadata.get("idempotency_key") or ""),
         )
     except (TypeError, ValueError):
@@ -194,7 +199,10 @@ def run_workspace(team_root: Path | None, agent_workspace: Path, run_id: str) ->
 
 
 def render_node_section(
-    node: WorkflowNode, skill_body: str | None = None, instructions: str = ""
+    node: WorkflowNode,
+    skill_body: str | None = None,
+    instructions: str = "",
+    schema: dict[str, Any] | None = None,
 ) -> str:
     """The prompt section carrying node instructions and upstream outputs.
 
@@ -202,6 +210,14 @@ def render_node_section(
     per-node label — bound into a prompt SECTION, never interpolated into a
     command or spliced into prose (REQ-239). The model reads them as data it was
     handed, with the producing node named, so a value can always be traced back.
+
+    ``schema`` is the RESOLVED output schema — the same object the completion
+    gate validates against, read from the same verified bundle. Passing it is
+    what makes the contract two-sided: the runner stamps a bundle-relative
+    PATH, so without this the model was told nothing about the shape and then
+    failed a gate enforcing it. Showing it adds no trust surface — the bytes
+    are covered by the bundle's signed manifest, unlike anything a model or a
+    tool result supplies.
     """
     lines = [f"## Workflow node `{node.node_id}` (run {node.run_id}, attempt {node.attempt})"]
     if instructions:
@@ -211,8 +227,9 @@ def render_node_section(
         for upstream_id, value in sorted(node.upstream.items()):
             rendered = json.dumps(value, indent=2, default=str)[:MAX_OUTPUT_CHARS]
             lines.extend([f"`{upstream_id}`:", "```json", rendered, "```"])
-    schema = node.output_schema if isinstance(node.output_schema, dict) else None
-    if schema is not None:
+    effective = schema if schema is not None else node.output_schema
+    resolved = effective if isinstance(effective, dict) else None
+    if resolved is not None:
         lines.extend(
             [
                 "",
@@ -220,7 +237,7 @@ def render_node_section(
                 "Call `complete_task` with an `output` matching this JSON Schema. "
                 "An output that does not match is a retryable failure, not a result.",
                 "```json",
-                json.dumps(schema, indent=2)[:MAX_OUTPUT_CHARS],
+                json.dumps(resolved, indent=2)[:MAX_OUTPUT_CHARS],
                 "```",
             ]
         )

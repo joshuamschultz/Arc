@@ -55,6 +55,9 @@ def plane(tmp_path: Path) -> Iterator[_RecordingPlane]:
     from arcagent.modules.workflows import _runtime
 
     recorder = _RecordingPlane()
+    import os
+
+    os.environ["ARC_CONFIG_DIR"] = str(tmp_path)
     _runtime.reset()
     _runtime.configure(
         config={"enabled": True},

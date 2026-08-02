@@ -592,3 +592,119 @@ class TestTheSessionKeyIsAFilename:
         path = manager._session_jsonl_path(_session_key("wf/run-abc123/review_clients/0"))
 
         assert path.parent == manager._sessions_dir
+
+
+class TestTheBundleFollowsTheNode:
+    """A node's schema and prompt live where the RUNNER dispatched from.
+
+    The live failure: `node declares output_schema '…json' but its bundle is
+    not reachable here`. The executor looked under its own agent workspace
+    while bundles live in the deployment directory the operator signs into, so
+    every node that declared a schema failed on a fleet.
+    """
+
+    def test_the_stamped_root_is_used(self, tmp_path: Path) -> None:
+        from arcagent.modules.tasks.capabilities import _bundle_root
+        from arcagent.modules.tasks.node_execution import node_from_task
+
+        bundle = tmp_path / "deployment" / "workflows" / "onboarding"
+        bundle.mkdir(parents=True)
+        node = node_from_task(MagicMock(metadata=_node_block(bundle_root=str(bundle))))
+        assert node is not None
+
+        assert _bundle_root(MagicMock(), node) == bundle
+
+    def test_the_runner_stamps_what_the_executor_reads(self) -> None:
+        """Producer and consumer, checked against each other, not assumed."""
+        from arcteam.workflow import runner
+
+        source = Path(runner.__file__).read_text(encoding="utf-8")
+        _, _, build_task = source.partition("def _build_task")
+        assert '"bundle_root"' in build_task, "the runner no longer stamps the bundle root"
+
+    def test_an_absent_stamp_falls_back_to_the_deployment_directory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from arcagent.modules.tasks.capabilities import _bundle_root
+        from arcagent.modules.tasks.node_execution import node_from_task
+
+        monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "config"))
+        bundle = tmp_path / "config" / "workflows" / "onboarding"
+        bundle.mkdir(parents=True)
+        node = node_from_task(MagicMock(metadata=_node_block(workflow="onboarding")))
+        assert node is not None
+
+        assert _bundle_root(MagicMock(), node) == bundle
+
+    def test_a_schema_is_actually_readable_through_the_stamped_root(self, tmp_path: Path) -> None:
+        """The claim that matters: the gate fires instead of reporting absence."""
+        import json as _json
+
+        from arcagent.modules.tasks.capabilities import _bundle_root
+        from arcagent.modules.tasks.node_execution import node_from_task, resolve_schema
+
+        bundle = tmp_path / "workflows" / "onboarding"
+        (bundle / "schemas").mkdir(parents=True)
+        (bundle / "schemas" / "out.json").write_text(
+            _json.dumps({"type": "object", "required": ["risk"]}), encoding="utf-8"
+        )
+        node = node_from_task(
+            MagicMock(
+                metadata=_node_block(bundle_root=str(bundle), output_schema="schemas/out.json")
+            )
+        )
+        assert node is not None
+
+        schema = resolve_schema(node, _bundle_root(MagicMock(), node))
+
+        assert isinstance(schema, dict)
+        assert schema["required"] == ["risk"]
+
+
+class TestTheModelIsShownTheSchemaItIsJudgedBy:
+    """A node was judged against a schema it was never told about.
+
+    The runner stamps `output_schema` as a bundle-relative PATH. The prompt
+    section only rendered a schema when it was already a dict, so on a real run
+    the model saw no shape at all — then did the work correctly, returned its
+    own shape, and failed the gate. Same resolution on both sides, or the
+    contract is one-sided.
+    """
+
+    def test_a_path_shaped_schema_reaches_the_prompt(self, tmp_path: Path) -> None:
+        import json as _json
+
+        from arcagent.modules.tasks.capabilities import _bundle_root
+        from arcagent.modules.tasks.node_execution import (
+            node_from_task,
+            render_node_section,
+            resolve_schema,
+        )
+
+        bundle = tmp_path / "workflows" / "onboarding"
+        (bundle / "schemas").mkdir(parents=True)
+        (bundle / "schemas" / "out.json").write_text(
+            _json.dumps({"type": "object", "required": ["clients"]}), encoding="utf-8"
+        )
+        node = node_from_task(
+            MagicMock(
+                metadata=_node_block(bundle_root=str(bundle), output_schema="schemas/out.json")
+            )
+        )
+        assert node is not None
+
+        schema = resolve_schema(node, _bundle_root(MagicMock(), node))
+        section = render_node_section(node, schema=schema if isinstance(schema, dict) else None)
+
+        assert "Required output shape" in section
+        assert "clients" in section
+
+    def test_the_hook_passes_the_resolved_schema(self) -> None:
+        """Producer and consumer of the resolution, checked against each other."""
+        from arcagent.modules.tasks import capabilities
+
+        source = Path(capabilities.__file__).read_text(encoding="utf-8")
+        _, _, hook = source.partition('sections["workflow_node"] = render_node_section')
+        call = hook.split("\n\n")[0]
+        assert "schema=" in call, "the prompt no longer carries the resolved schema"
+        assert "resolve_schema" in source, "the prompt no longer resolves the bundle's schema"
