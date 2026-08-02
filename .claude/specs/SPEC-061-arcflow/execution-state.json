@@ -305,7 +305,7 @@
     },
     "T-869": {
       "description": "(red) Removability test: every capability works with the dashboard uninstalled",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
@@ -333,7 +333,7 @@
     },
     "T-865": {
       "description": "(refactor) Refactor: scoped runner queries and bounded accumulation",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
@@ -396,7 +396,7 @@
     "T-865"
   ],
   "meta": {
-    "last_updated": "2026-08-01",
+    "last_updated": "2026-08-02",
     "sessions": 1,
     "total_tasks": 48
   }

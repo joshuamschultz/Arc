@@ -9,9 +9,9 @@
 
 | Doc | Status | Last Update |
 |---|---|---|
-| PRD | draft | 2026-08-01 |
-| SDD | draft | 2026-08-01 |
-| PLAN | draft | 2026-08-01 |
+| PRD | approved | 2026-08-02 |
+| SDD | approved | 2026-08-02 |
+| PLAN | complete (50/50 tasks) | 2026-08-02 |
 
 ## Steering References
 
@@ -41,7 +41,19 @@ _(append `### Phase N: <name>` blocks via `append_phase_note.py` at phase bounda
 
 Feature-specific insights captured here. Global / reusable patterns go to memory via `/memorize`.
 
-_(none yet)_
+- **Capability-leg threading was two half-seams, both green.** The node adapter read
+  `metadata["accumulated_legs"]` and the dispatch loop wrote back under a nested key that held
+  the workflow *id*, while the runner stamped nothing at all. Each half had passing tests
+  against its own idea of the shape; the composition (COMP-015's whole point) never ran. Closed
+  by T-865: the runner unions the run's legs and stamps them, bounded and audited, and the
+  write-back lands on the key the parser reads — proven by a round-trip test, not by inspection.
+- **The operator CLI started runs that were born dead.** `arc workflow run` built its runner with
+  no entity registry, so every node failed owner resolution with "unknown agent" while the
+  command printed "Started run …". The gateway host wires team bindings for exactly this reason;
+  the operator surface starts runs too, so it needs them just as much (found by T-869).
+- **Removability is only provable with arcui actually uninstalled.** A meta-path finder that
+  refuses the import is the test; asserting "no arcui in the source" would have passed either
+  way. `test_the_dashboard_really_is_uninstalled` guards the guard.
 
 ## Open Questions
 

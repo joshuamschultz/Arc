@@ -240,7 +240,7 @@
   - Components: COMP-008, COMP-014
   - Requirements: REQ-233, REQ-237
   - Acceptance: The same signed workflow run twice records identical node sequences; a resumed run does not re-execute completed nodes; a schema-violating node output fails the run rather than propagating. Driven through the real dispatch path.
-- [ ] **T-869**: (red) Removability test: every capability works with the dashboard uninstalled
+- [x] **T-869**: (red) Removability test: every capability works with the dashboard uninstalled
   - domain: test
   - Components: COMP-019, COMP-021
   - Requirements: REQ-257
@@ -263,7 +263,7 @@
 
 ## Phase 4: Polish
 
-- [ ] **T-865**: (refactor) Refactor: scoped runner queries and bounded accumulation
+- [x] **T-865**: (refactor) Refactor: scoped runner queries and bounded accumulation
   - domain: backend
   - Components: COMP-008, COMP-015
   - Requirements: REQ-236
