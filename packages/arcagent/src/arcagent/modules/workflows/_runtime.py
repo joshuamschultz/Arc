@@ -240,6 +240,22 @@ def _operator_public_key(st: _State) -> bytes | None:
     return key
 
 
+def _bundle_root(st: _State) -> Path:
+    """Where this deployment's workflow bundles live.
+
+    One root per deployment, shared with ``arc workflow`` and the fleet runner.
+    Resolving it under the agent's workspace instead is the shape that made an
+    agent-authored workflow real on disk and invisible to everything that could
+    sign or run it.
+    """
+    configured = Path(st.config.workflows_dir)
+    if configured.is_absolute():
+        return configured
+    from arcteam.config import default_config_dir
+
+    return default_config_dir() / configured
+
+
 def _build_control_plane(st: _State, runs: Any) -> None:
     """Construct the control plane and definition store over the bundle root.
 
@@ -259,7 +275,7 @@ def _build_control_plane(st: _State, runs: Any) -> None:
         _logger.info("arcteam.workflow is not installed; workflow tools will report unavailable")
         return
 
-    root = st.workspace / st.config.workflows_dir
+    root = _bundle_root(st)
     root.mkdir(parents=True, exist_ok=True)
     # Every argument here is load-bearing, and every default is dangerous.
     # Omitting ``tier`` makes the store believe it is a personal deployment at

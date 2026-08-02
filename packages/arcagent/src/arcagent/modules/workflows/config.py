@@ -18,9 +18,17 @@ class WorkflowsConfig(ModuleConfig):
     # Config-level enable mirrors the module-config convention (tasks et al.);
     # the load gate is ModuleEntry.enabled in the [modules.workflows] table.
     enabled: bool = False
-    # Definition bundle root, relative to the agent's WORKSPACE. A workflow is
-    # agent state, so it is written with direct filesystem I/O to the workspace
-    # and never through the model-facing file tools (ADR-029).
+    # Definition bundle root, relative to the DEPLOYMENT config dir
+    # (``$ARC_CONFIG_DIR``, default ``~/.arc``) — the same root the operator
+    # signs into and the fleet runner dispatches from. An absolute path is used
+    # as given.
+    #
+    # Not the agent's workspace: a workflow is not agent state. It is signed by
+    # the operator and executed by the fleet's single runner, which cannot reach
+    # into five agents' private workspaces — an agent-authored definition parked
+    # in its own workspace is invisible to the runner, the CLI, and the
+    # dashboard, and can never run (ADR-029 governs an agent's OWN state, and a
+    # workflow is a deployment artifact).
     workflows_dir: str = "workflows"
     # Forwarded to ``arcstore.config.resolve_data_dir`` for the shared run/task
     # plane — empty defers to that function's env > default precedence so this
