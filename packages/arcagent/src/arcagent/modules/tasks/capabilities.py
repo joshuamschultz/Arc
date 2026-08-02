@@ -75,6 +75,7 @@ from arcagent.modules.tasks.node_execution import (
     validate_output,
 )
 from arcagent.tools._decorator import background_task, hook, tool
+from arcagent.utils.json_args import as_optional_object
 from arcagent.utils.sanitizer import sanitize_text
 
 # A SQLite lock-timeout under shared-db contention surfaces as
@@ -235,6 +236,10 @@ async def complete_task(
     output: dict[str, Any] | None = None,
 ) -> str:
     st = await _state()
+    try:
+        output = as_optional_object(output, "output")
+    except ValueError as exc:
+        return json.dumps({"error": str(exc), "retryable": True})
     try:
         current = await st.store.get(id)
         if current is None:
@@ -463,6 +468,10 @@ async def set_task_output(
     output: dict[str, Any] | None = None,
 ) -> str:
     st = await _state()
+    try:
+        output = as_optional_object(output, "output")
+    except ValueError as exc:
+        return json.dumps({"error": str(exc), "retryable": True})
     try:
         current = await st.store.get(id)
         if current is None:
