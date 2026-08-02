@@ -72,6 +72,10 @@ tutorial = [
 # closes CVEs surfaced by the CI pip-audit gate; see sbom/security-suppressions.txt
 # for anything that could NOT be floored.
 constraint-dependencies = [
+    "click>=8.3.3",           # PYSEC-2026-2132 (via arccmd/uvicorn)
+    "mcp>=1.28.1",           # PYSEC-2026-3481/3482/3483 (via arc-agent)
+    "setuptools>=83.0.0",    # PYSEC-2026-3447 (runtime transitive via torch)
+    "torch>=2.13.0",         # PYSEC-2025-194 (default arcmemory[local] runtime)
     "pyjwt>=2.13.0",          # PYSEC-2026-120/175/176/177/178/179 (via mcp[crypto], msal)
     "python-multipart>=0.0.31", # CVE-2026-40347/42561/53538/53539/53540 (via mcp)
     "requests>=2.33.0",       # CVE-2026-25645 (via azure-core, docker)

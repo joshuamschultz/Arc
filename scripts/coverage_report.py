@@ -10,8 +10,8 @@ minimum thresholds:
 Packages checked (new packages introduced in M1):
     arcgateway                                   — gateway daemon
     arcagent.modules.session                     — session FTS5 module
-    arcagent.modules.vault                       — vault credential resolver
-    arcagent.modules.skill_improver              — skill auto-nudge module
+    arcagent.core.vault                          — vault credential resolver
+    arcagent.modules.skills                      — skill lifecycle module
 
 Packages NOT checked here (pre-existing, covered by their own test suites):
     arcagent.core (checked separately via arcagent pytest config)
@@ -41,10 +41,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Threshold configuration
@@ -59,9 +61,25 @@ _BRANCH_THRESHOLD = 75  # %
 _COVERAGE_TARGETS: list[tuple[str, str]] = [
     ("arcgateway", "arcgateway"),
     ("arcagent.modules.session", "arcagent.modules.session"),
-    ("arcagent.modules.vault", "arcagent.modules.vault"),
-    ("arcagent.modules.skill_improver", "arcagent.modules.skill_improver"),
+    ("arcagent.core.vault", "arcagent.core.vault"),
+    ("arcagent.modules.skills", "arcagent.modules.skills"),
 ]
+
+_COVERAGE_SUITES: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
+    (("packages/arcgateway/tests",), ("arcgateway",)),
+    (
+        (
+            "packages/arcagent/tests/unit/modules/session",
+            "packages/arcagent/tests/unit/core/vault",
+            "packages/arcagent/tests/unit/modules/skills",
+        ),
+        (
+            "arcagent.modules.session",
+            "arcagent.core.vault",
+            "arcagent.modules.skills",
+        ),
+    ),
+)
 
 # ---------------------------------------------------------------------------
 # Helper: run pytest with JSON coverage output
@@ -84,49 +102,53 @@ def _run_coverage(
         Dict mapping module name → {"line": float, "branch": float} percent,
         or None if pytest could not be invoked.
     """
-    cov_args = []
-    for _, module in targets:
-        cov_args.extend([f"--cov={module}"])
-
     with tempfile.NamedTemporaryFile(suffix=".json", prefix="arc_coverage_", delete=False) as tmp:
         json_path = Path(tmp.name)
+    json_path.unlink(missing_ok=True)
+    coverage_file = json_path.with_suffix(".data")
+    env = os.environ.copy()
+    env["COVERAGE_FILE"] = str(coverage_file)
 
-    # Use "uv run pytest" to ensure the correct virtualenv is used.
-    # This avoids sys.executable pointing at the wrong Python when
-    # the script is invoked via "python scripts/coverage_report.py".
-    cmd = [
-        "uv",
-        "run",
-        "pytest",
-        "--cov-branch",
-        f"--cov-report=json:{json_path}",
-        "--cov-report=term-missing",
-        "--tb=no",
-        "-q",
-        *cov_args,
-    ]
-
-    if html:
-        cmd += ["--cov-report=html:htmlcov"]
-
-    print(f"\nRunning: {' '.join(cmd)}\n")
-
-    try:
-        subprocess.run(  # noqa: S603 — cmd is built from hard-coded args + config
+    for index, (suites, modules) in enumerate(_COVERAGE_SUITES):
+        cmd = [
+            sys.executable,
+            "-m",
+            "pytest",
+            *suites,
+            "--cov-branch",
+            "--cov-report=",
+            "--tb=short",
+            "-q",
+            *(f"--cov={module}" for module in modules),
+        ]
+        if index > 0:
+            cmd.append("--cov-append")
+        print(f"\nRunning: {' '.join(cmd)}\n")
+        completed = subprocess.run(  # noqa: S603 — fixed interpreter + repository paths
             cmd,
             cwd=root,
-            capture_output=False,  # let pytest output go to stdout
+            env=env,
             check=False,
         )
-    except FileNotFoundError:
-        print("ERROR: 'uv' not found. Install uv from https://docs.astral.sh/uv/", file=sys.stderr)
-        print(
-            "Then install dev dependencies:\n"
-            "  uv pip install -e packages/arcgateway -e packages/arcagent "
-            "-e packages/arcrun -e packages/arcllm -e packages/arccli",
-            file=sys.stderr,
+        if completed.returncode != 0:
+            print(f"ERROR: coverage suite failed: {', '.join(suites)}", file=sys.stderr)
+            return None
+
+    report_cmd = [sys.executable, "-m", "coverage", "json", "-o", str(json_path)]
+    subprocess.run(report_cmd, cwd=root, env=env, check=True)  # noqa: S603
+    subprocess.run(  # noqa: S603
+        [sys.executable, "-m", "coverage", "report", "-m"],
+        cwd=root,
+        env=env,
+        check=True,
+    )
+    if html:
+        subprocess.run(  # noqa: S603
+            [sys.executable, "-m", "coverage", "html", "-d", "htmlcov"],
+            cwd=root,
+            env=env,
+            check=True,
         )
-        return None
 
     # Parse JSON coverage report
     if not json_path.exists():
@@ -146,12 +168,13 @@ def _run_coverage(
             json_path.unlink(missing_ok=True)
         except OSError:
             pass
+        coverage_file.unlink(missing_ok=True)
 
     return _parse_coverage_json(raw, targets)
 
 
 def _parse_coverage_json(
-    raw: dict,
+    raw: dict[str, Any],
     targets: list[tuple[str, str]],
 ) -> dict[str, dict[str, float]]:
     """Extract per-module line and branch coverage from coverage.json.
@@ -170,7 +193,7 @@ def _parse_coverage_json(
     #     "path/to/file.py": { "summary": { "percent_covered": float, ... } }
     #   }
     # }
-    files_data: dict = raw.get("files", {})
+    files_data: dict[str, dict[str, Any]] = raw.get("files", {})
 
     results: dict[str, dict[str, float]] = {}
 
@@ -178,7 +201,7 @@ def _parse_coverage_json(
         # Match all file paths that belong to this module.
         module_path_fragment = module_name.replace(".", "/")
 
-        matched_files: list[dict] = [
+        matched_files: list[dict[str, Any]] = [
             data
             for path, data in files_data.items()
             if module_path_fragment in path.replace("\\", "/")
