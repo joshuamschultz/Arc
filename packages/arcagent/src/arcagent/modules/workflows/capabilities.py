@@ -232,7 +232,11 @@ def _version_required(expected_version: int | None) -> dict[str, Any] | None:
 
 @tool(
     name="workflow_create",
-    description="Create a new workflow as an unsigned draft from a list of nodes",
+    description=(
+        "THE way to build a workflow. Creates a named multi-step, multi-agent "
+        "workflow from a list of nodes. Never hand-write workflow.toml and never "
+        "read Arc's source to figure out the format — this tool is the format."
+    ),
     classification="state_modifying",
     capability_tags=("workflows",),
     when_to_use="When a repeatable, multi-step process should become a named artifact.",
@@ -281,7 +285,8 @@ async def workflow_create(
 
 @tool(
     name="workflow_add_node",
-    description="Add one node to a workflow; returns a new draft version",
+    description="Add one step to an existing workflow; returns a new draft version",
+    when_to_use="When an existing workflow is missing a step.",
     classification="state_modifying",
     capability_tags=("workflows",),
     requires_skill="workflow-builder",
@@ -307,7 +312,8 @@ async def workflow_add_node(
 
 @tool(
     name="workflow_edit_node",
-    description="Change allowlisted fields on one node; returns a new draft version",
+    description="Change one step of an existing workflow; returns a new draft version",
+    when_to_use="When a step's agent, prompt, tool, condition, or wiring is wrong.",
     classification="state_modifying",
     capability_tags=("workflows",),
     requires_skill="workflow-builder",
@@ -354,7 +360,7 @@ async def workflow_edit_node(
 
 @tool(
     name="workflow_remove_node",
-    description="Remove one node from a workflow; returns a new draft version",
+    description="Remove one step from a workflow; returns a new draft version",
     classification="state_modifying",
     capability_tags=("workflows",),
     requires_skill="workflow-builder",
@@ -379,7 +385,8 @@ async def workflow_remove_node(
 
 @tool(
     name="workflow_set_trigger",
-    description="Set or clear a workflow's trigger; returns a new draft version",
+    description="Set when a workflow fires (cron/manual); returns a new draft version",
+    when_to_use="When the process should run on a schedule instead of on request.",
     classification="state_modifying",
     capability_tags=("workflows",),
     requires_skill="workflow-builder",

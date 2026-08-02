@@ -12,6 +12,15 @@ tools: [workflow_create, workflow_add_node, workflow_edit_node, workflow_remove_
 
 ## Contract
 
+**Build workflows only with the `workflow_*` tools.** Do not read Arc's source
+code to learn the format, do not write `workflow.toml` with the file tools, and
+do not do the work the workflow describes. The tools ARE the format: they
+validate the whole graph and hand back a typed error list naming the node and
+field to fix. Reading source or hand-writing a bundle produces something the
+runner cannot sign or dispatch, and burns the turn budget that should have
+built the thing.
+
+
 Before calling `workflow_create` you must be able to state, without guessing:
 
 - **The trigger.** What starts it — a person asking, a clock, or nothing yet (manual).
