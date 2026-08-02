@@ -182,6 +182,44 @@ def _resolve_bundle_signer(
     )
 
 
+#: The messaging substrate the AGENTS are on — the same variable and default
+#: ``arc team`` and the gateway's runner host use. A CLI that resolved node
+#: owners against a different bus would resolve none of them.
+_NATS_URL_ENV = "ARCTEAM_NATS_URL"
+
+
+async def _team_bindings(arc_dir: Path) -> tuple[Any, Any]:
+    """Owner resolution and narration for the runs THIS process starts.
+
+    Without them ``arc workflow run`` prints "Started run …" and the run is
+    already failed: no ``@handle`` resolves, so the first node dies with
+    "unknown agent" — a refusal that looks like a start. The gateway's runner
+    host wires the same two bindings for the same reason; the operator surface
+    starts runs too, so it needs them just as much.
+
+    Degrades to ``(None, None)`` with a warning rather than refusing: an
+    operator must still be able to author, sign, and inspect on a box where the
+    team bus is down.
+    """
+    import os
+
+    from arcagent.core.arcteam_bootstrap import make_backend
+    from arcteam.workflow.identity import RunnerIdentity
+    from arcteam.workflow.stores import build_team_bindings
+
+    from arccli.commands.operator import resolve_operator_signer
+
+    try:
+        return await build_team_bindings(
+            backend=await make_backend(os.environ.get(_NATS_URL_ENV, "nats://127.0.0.1:4222")),
+            operator_signer=resolve_operator_signer(),
+            identity=RunnerIdentity.load(operator_key_path(arc_dir)),
+        )
+    except Exception as exc:  # reason: authoring must survive a down team bus
+        err(f"Warning: team bindings unavailable ({exc}); runs cannot resolve node owners")
+        return None, None
+
+
 async def _resolve_control_plane(
     arc_dir: Path, *, tier: Tier = "personal"
 ) -> tuple[WorkflowControlPlane, Callable[[], Coroutine[Any, Any, None]]]:
@@ -209,6 +247,7 @@ async def _resolve_control_plane(
     backend = SqliteBackend(store_db_path(None))
     await backend.start()
     sink = _audit_sink()
+    owners, narrator = await _team_bindings(arc_dir)
     runner = build_workflow_runner(
         tier=tier,
         task_store_backend=backend,
@@ -216,6 +255,8 @@ async def _resolve_control_plane(
         workspace_root=arc_dir,
         operator_public_key=operator_public_key(arc_dir),
         audit_sink=sink,
+        registry=owners,
+        narrator=narrator,
     )
     plane = WorkflowControlPlane(
         definitions=_resolve_bundle_signer(_workflows_root(arc_dir), tier=tier, sink=sink),
