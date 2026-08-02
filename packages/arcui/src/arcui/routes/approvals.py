@@ -14,6 +14,7 @@ cannot mint it.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from arcstore.approvals import ApprovalStore
 from arctrust import OperatorKey, default_operator_key_path
@@ -51,6 +52,49 @@ def _operator_authority() -> OperatorApprovalAuthority:
     """
     signer = OperatorKey.load(default_operator_key_path(), generate_if_absent=False).into_signer()
     return OperatorApprovalAuthority(signer)
+
+
+#: The pending-approval ``tool`` an agent writes when it wants a draft signed.
+WORKFLOW_SIGN_TOOL = "workflow_sign"
+
+
+def _sign_requested_workflow(request: Request, row: Any) -> str | None:
+    """Sign the bundle this approval was raised for. Returns a refusal, or None.
+
+    The operator key is resolved here, in this process, exactly as it already is
+    for the approval grant itself. What must never happen is an agent reaching
+    a signature: the agent can only WRITE THE REQUEST, and this path is gated on
+    the operator role before it runs.
+    """
+    workflow_id = str((row.arguments or {}).get("workflow_id", ""))
+    if not workflow_id:
+        return "workflow_sign_request_names_no_workflow"
+    plane = getattr(request.app.state, "workflow_control_plane", None)
+    definitions = getattr(plane, "definitions", None)
+    if definitions is None:
+        return "workflow_control_plane_unavailable"
+    try:
+        from arcteam.workflow import sign_definition
+
+        bundle = definitions.load(workflow_id)
+        if row.call_hash and bundle.content_hash != row.call_hash:
+            # The whole point of binding the request to a hash: what the
+            # operator read is not what they would be signing.
+            return "workflow_changed_since_the_request"
+        operator = OperatorKey.load(default_operator_key_path(), generate_if_absent=False)
+        seed = getattr(operator, "seed", None)
+        if not seed:
+            return "operator_key_has_no_in_process_seed"
+        sign_definition(
+            definitions,
+            workflow_id,
+            signer_did=f"operator:{operator.public_key.hex()[:16]}",
+            private_key=seed,
+        )
+    except Exception as exc:  # reason: a refusal is reported, never a 500 page
+        logger.exception("signing workflow %s from approval failed", workflow_id)
+        return f"workflow_sign_failed: {type(exc).__name__}: {exc}"
+    return None
 
 
 async def list_approvals(request: Request) -> JSONResponse:
@@ -92,6 +136,24 @@ async def approve_request(request: Request) -> JSONResponse:
             detail="operator key unavailable",
         )
         return _error(f"operator_key_unavailable: {type(exc).__name__}", 500)
+
+    # A workflow-signing request is the one approval whose grant is not the
+    # whole effect: approving it SIGNS the bundle. The signature happens here,
+    # in the operator-authenticated path, and never through the control plane —
+    # the operation set an agent can reach must stay one that cannot sign
+    # (REQ-224). The row's call_hash is the definition's content hash, so a
+    # definition edited since the request no longer matches and is refused.
+    if row.tool == WORKFLOW_SIGN_TOOL:
+        signed = _sign_requested_workflow(request, row)
+        if signed is not None:
+            emit_mutation_audit(
+                request,
+                target=target,
+                operation="approval.approve",
+                outcome="denied",
+                detail=signed,
+            )
+            return _error(signed, 409)
 
     grant = sign_approval_for_hash(row.call_hash, operator)
     updated = await store.resolve(

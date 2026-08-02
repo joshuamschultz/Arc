@@ -3,7 +3,7 @@ name: workflow-builder
 version: 1.0.0
 description: Turn a repeatable business process described in conversation into a named, validated ArcFlow workflow draft.
 triggers: [we do this every time, turn that into a workflow, automate this process, build a workflow for, this should run every Monday, same steps every week]
-tools: [workflow_create, workflow_put_files, workflow_add_node, workflow_edit_node, workflow_remove_node, workflow_set_trigger, workflow_set_channel, workflow_inspect, workflow_list, workflow_run]
+tools: [workflow_create, workflow_put_files, workflow_request_signature, workflow_add_node, workflow_edit_node, workflow_remove_node, workflow_set_trigger, workflow_set_channel, workflow_inspect, workflow_list, workflow_run]
 ---
 
 ## Resources
@@ -115,7 +115,7 @@ an undeclared cycle is rejected by the validator.
 6. Repair from the errors. Each carries `node_id`, `field`, `observed`, and `admissible` — use `admissible` first, it names the values that would work. **Stop after three attempts** and ask the person the specific question you are stuck on.
 7. Read the graph back to them in plain language: "First X does A, then Y does B if the risk is low, otherwise Z reviews it." Fix what they correct with `workflow_edit_node`.
 8. Only if they asked for automation: `workflow_set_trigger`. Only if the run should be narrated somewhere: `workflow_set_channel`.
-9. Tell them it is a **draft** and that they must sign it with `arc workflow sign <id>` before it will run at enterprise or federal tier.
+9. Call `workflow_request_signature`. It puts the draft in the operator's approvals queue; approving it there signs this exact version. Tell them it is a **draft** waiting on their approval — never that it is ready to run.
 
 ## Anti Patterns
 
@@ -193,4 +193,4 @@ Before telling the person the workflow is ready:
 - Every node another node reads declares an `output_schema`.
 - Every cycle you built declares `loop_back_to` **and** `max_iterations`.
 - You read the graph back in plain language and they agreed with it.
-- You told them it is unsigned, and named the command that signs it.
+- You told them it is unsigned and that you have sent it for their approval.

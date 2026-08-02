@@ -189,6 +189,22 @@ class WorkflowControlPlane(Protocol):
         """One run's detail: status, path taken, per-node status."""
         ...
 
+    async def read_file(self, workflow_id: str, path: str) -> dict[str, Any] | None:
+        """One companion file's text — the prompt a node actually runs."""
+        ...
+
+    async def write_file(
+        self,
+        workflow_id: str,
+        path: str,
+        content: str,
+        *,
+        expected_version: int,
+        actor: OperatorActor,
+    ) -> ControlPlaneResult:
+        """Rewrite one companion file as a versioned definition edit."""
+        ...
+
 
 @runtime_checkable
 class GateControlPlane(Protocol):
@@ -527,11 +543,67 @@ async def resolve_gate(request: Request) -> Response:
     return _relay(request, result, target=target, operation="gate.resolve", ok_status=200)
 
 
+async def get_workflow_file(request: Request) -> JSONResponse:
+    """GET /api/workflows/{id}/file?path=… — one prompt or schema body."""
+    workflow_id = request.path_params["id"]
+    target = f"workflow:{workflow_id}"
+    denial = _require_operator(request, target=target, operation="workflow.file.read")
+    if denial is not None:
+        return denial
+
+    path = request.query_params.get("path", "")
+    if not path:
+        return _error("expected ?path=<bundle-relative path>", 400)
+
+    plane = _control_plane(request)
+    if plane is None:
+        return _error("workflow_control_plane_unavailable", 503)
+
+    body = await plane.read_file(workflow_id, path)
+    if body is None:
+        return _error("not found", 404)
+    return JSONResponse(body)
+
+
+async def put_workflow_file(request: Request) -> JSONResponse:
+    """PUT /api/workflows/{id}/file — rewrite one prompt or schema body.
+
+    A versioned edit, not a disk write: the bundle is the signed unit, so
+    changing an instruction bumps the version and drops the signature exactly
+    as changing a node does.
+    """
+    workflow_id = request.path_params["id"]
+    target = f"workflow:{workflow_id}"
+    denial = _require_operator(request, target=target, operation="workflow.file.write")
+    if denial is not None:
+        return denial
+
+    body = await _json_body(request)
+    path = (body or {}).get("path")
+    content = (body or {}).get("content")
+    expected_version = (body or {}).get("expected_version")
+    if not isinstance(path, str) or not isinstance(content, str):
+        return _error('expected {"path": str, "content": str, "expected_version": int}', 400)
+    if not isinstance(expected_version, int):
+        return _error("expected_version must be an integer", 400)
+
+    plane = _control_plane(request)
+    if plane is None:
+        return _error("workflow_control_plane_unavailable", 503)
+
+    result = await plane.write_file(
+        workflow_id, path, content, expected_version=expected_version, actor=_actor(request)
+    )
+    return _relay(request, result, target=target, operation="workflow.file.write", ok_status=200)
+
+
 routes = [
     Route("/api/workflows", list_workflows, methods=["GET"]),
     Route("/api/workflows", create_workflow, methods=["POST"]),
     Route("/api/workflows/{id}", get_workflow, methods=["GET"]),
     Route("/api/workflows/{id}", patch_workflow, methods=["PATCH"]),
+    Route("/api/workflows/{id}/file", get_workflow_file, methods=["GET"]),
+    Route("/api/workflows/{id}/file", put_workflow_file, methods=["PUT"]),
     Route("/api/workflows/{id}/archive", archive_workflow, methods=["POST"]),
     Route("/api/workflows/{id}/unarchive", unarchive_workflow, methods=["POST"]),
     Route("/api/workflows/{id}/run", run_workflow, methods=["POST"]),
