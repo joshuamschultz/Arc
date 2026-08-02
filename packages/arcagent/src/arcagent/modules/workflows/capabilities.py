@@ -40,6 +40,8 @@ from arcagent.modules.workflows import _runtime
 from arcagent.modules.workflows.models import (
     NODE_FIELDS,
     TRIGGER_FIELDS,
+    as_object,
+    as_objects,
     issue,
     normalize_inline_text,
     project,
@@ -169,9 +171,14 @@ def _dump(result: Any) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {"result": payload}
 
 
-def _clean_nodes(nodes: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
-    """Project every node through the field allowlist."""
-    return [project(node, NODE_FIELDS) for node in nodes or []]
+def _clean_nodes(nodes: Any) -> list[dict[str, Any]]:
+    """Project every node through the field allowlist.
+
+    Takes ``Any`` on purpose: what arrives is model output, and a shape this
+    refuses must come back as a repairable error rather than a crash — see
+    :func:`~arcagent.modules.workflows.models.as_objects`.
+    """
+    return [project(node, NODE_FIELDS) for node in as_objects(nodes, "nodes")]
 
 
 def _text(value: str, field: str) -> str:
@@ -243,7 +250,10 @@ async def workflow_create(
     bad_id = _bad_workflow_id(workflow_id)
     if bad_id is not None:
         return _errors(bad_id)
-    node_list = nodes or []
+    try:
+        node_list = as_objects(nodes, "nodes")
+    except ValueError as exc:
+        return _errors(issue(field="nodes", error=str(exc), observed=nodes))
     quota = _node_quota(len(node_list))
     if quota is not None:
         return _errors(quota)
@@ -282,11 +292,15 @@ async def workflow_add_node(
     expected_version: int | None = None,
 ) -> str:
     """Add a node and re-validate the whole graph."""
+    try:
+        fields = project(as_object(node or {}, "node"), NODE_FIELDS)
+    except ValueError as exc:
+        return _errors(issue(field="node", error=str(exc), observed=node))
     return await _edit_document(
         workflow_id,
         expected_version,
         reason="added a node",
-        change=lambda doc: doc["node"].append(project(node or {}, NODE_FIELDS)),
+        change=lambda doc: doc["node"].append(fields),
         added_nodes=1,
     )
 
@@ -311,7 +325,10 @@ async def workflow_edit_node(
     # ``id`` is deliberately excluded: node ids are immutable once signed, so an
     # in-flight run pinned by hash and every historical audit row stay valid.
     allowed = NODE_FIELDS - {"id"}
-    clean = project(updates or {}, allowed)
+    try:
+        clean = project(as_object(updates or {}, "updates"), allowed)
+    except ValueError as exc:
+        return _errors(issue(node_id=node_id, field="updates", error=str(exc), observed=updates))
     if not clean:
         return _errors(
             issue(
@@ -374,9 +391,14 @@ async def workflow_set_trigger(
 ) -> str:
     """Declare when a workflow fires. Dispatch is typed — never a free-text prompt."""
 
+    try:
+        clean = project(as_object(trigger, "trigger"), TRIGGER_FIELDS) if trigger else {}
+    except ValueError as exc:
+        return _errors(issue(field="trigger", error=str(exc), observed=trigger))
+
     def change(document: dict[str, Any]) -> None:
-        if trigger:
-            document["trigger"] = project(trigger, TRIGGER_FIELDS)
+        if clean:
+            document["trigger"] = clean
         else:
             document.pop("trigger", None)
 

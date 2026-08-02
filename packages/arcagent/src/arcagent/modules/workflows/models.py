@@ -24,6 +24,7 @@ not mirrored here — a second copy of the schema is a second source of truth.
 
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
 from typing import Any
@@ -136,11 +137,50 @@ def project(source: dict[str, Any], allowed: frozenset[str]) -> dict[str, Any]:
     return {key: value for key, value in source.items() if key in allowed}
 
 
+def as_object(value: Any, field: str) -> dict[str, Any]:
+    """One structured argument, however the model actually sent it.
+
+    A model routinely hands a JSON *string* where an object is declared. The
+    tool used to index straight into it and raise ``AttributeError``, which the
+    capability layer surfaces as a crash rather than a repairable error — so the
+    model retried the same malformed call until the run hit its turn limit and
+    nothing was ever built. Model output is untrusted input to a tool (LLM05):
+    parse what is parseable, and refuse the rest by naming the shape.
+    """
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{field} must be an object; this is not JSON ({exc.msg})") from exc
+        if isinstance(parsed, dict):
+            return parsed
+        raise ValueError(f"{field} must be an object, not {type(parsed).__name__}")
+    raise ValueError(f"{field} must be an object, not {type(value).__name__}")
+
+
+def as_objects(value: Any, field: str) -> list[dict[str, Any]]:
+    """A list of structured arguments, however the model actually sent it."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{field} must be a list; this is not JSON ({exc.msg})") from exc
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError(f"{field} must be a list, not {type(value).__name__}")
+    return [as_object(item, f"{field}[{index}]") for index, item in enumerate(value)]
+
+
 __all__ = [
     "INLINE_TEXT_FIELDS",
     "NODE_FIELDS",
     "TRIGGER_FIELDS",
     "WORKFLOW_FIELDS",
+    "as_object",
+    "as_objects",
     "issue",
     "normalize_inline_text",
     "project",

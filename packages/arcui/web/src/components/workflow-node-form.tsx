@@ -10,6 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { useAgentCapabilities, useRoster } from '@/lib/queries'
 import type { WorkflowNode, WorkflowNodeKind } from '@/lib/types'
 
 /**
@@ -25,6 +26,10 @@ import type { WorkflowNode, WorkflowNodeKind } from '@/lib/types'
  */
 
 export const NODE_KINDS: WorkflowNodeKind[] = ['agent', 'tool', 'script', 'router', 'gate']
+
+/** arcrun's registered strategies (arcrun.strategies.STRATEGIES). A node may
+ * pin one or hand the loop a shortlist to choose from. */
+export const STRATEGIES = ['react', 'code', 'plan_execute'] as const
 
 export const KIND_HELP: Record<WorkflowNodeKind, string> = {
   agent: 'A bounded agent run. Give it a prompt file, optionally a skill.',
@@ -159,6 +164,68 @@ export function fromDraft(draft: NodeDraft): Record<string, unknown> {
   return node
 }
 
+
+/** Free text with suggestions — the operator may always type something the
+ * deployment does not know about yet, and the control plane still decides. */
+function Suggested({
+  value,
+  onChange,
+  options,
+  placeholder,
+  listId,
+}: {
+  value: string
+  onChange: (v: string) => void
+  options: string[]
+  placeholder?: string
+  listId: string
+}) {
+  return (
+    <>
+      <Input
+        value={value}
+        placeholder={placeholder}
+        list={listId}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      <datalist id={listId}>
+        {options.map((option) => (
+          <option key={option} value={option} />
+        ))}
+      </datalist>
+    </>
+  )
+}
+
+function ChipMultiSelect({
+  selected,
+  options,
+  onToggle,
+}: {
+  selected: string[]
+  options: readonly string[]
+  onToggle: (value: string) => void
+}) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {options.map((option) => (
+        <button
+          key={option}
+          type="button"
+          onClick={() => onToggle(option)}
+          className={`rounded-md border px-2 py-0.5 font-mono text-[11px] ${
+            selected.includes(option)
+              ? 'border-status-online/40 bg-status-online/10 text-status-online'
+              : 'border-border bg-muted/30 text-muted-foreground'
+          }`}
+        >
+          {option}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 function Field({
   label,
   hint,
@@ -191,6 +258,45 @@ export function WorkflowNodeForm({
   const set = <K extends keyof NodeDraft>(key: K, value: NodeDraft[K]) =>
     onChange({ ...draft, [key]: value })
 
+  // Suggestions come from the LIVE deployment, never a hardcoded list: the
+  // handles the runner can resolve, and the skills/tools the chosen agent
+  // actually has loaded. A node naming something absent is a real error the
+  // control plane reports — this only stops the operator from guessing.
+  const roster = useRoster()
+  const handles = useMemo(
+    () =>
+      (roster.data?.agents ?? [])
+        .filter((a) => !a.hidden)
+        .map((a) => `@${a.agent_id ?? a.name ?? ''}`)
+        .filter((h) => h !== '@'),
+    [roster.data],
+  )
+  const agentId = draft.agent.replace(/^@/, '')
+  const capabilities = useAgentCapabilities(agentId || (roster.data?.agents ?? [])[0]?.agent_id || '')
+  const skills = useMemo(
+    () =>
+      (capabilities.data?.items ?? [])
+        .filter((item) => item.kind === 'skill')
+        .map((item) => item.name),
+    [capabilities.data],
+  )
+  const tools = useMemo(
+    () =>
+      (capabilities.data?.items ?? [])
+        .filter((item) => item.kind === 'tool')
+        .map((item) => item.name),
+    [capabilities.data],
+  )
+  const strategySelected = splitList(draft.strategy)
+  const toggleStrategy = (value: string) =>
+    set(
+      'strategy',
+      (strategySelected.includes(value)
+        ? strategySelected.filter((s) => s !== value)
+        : [...strategySelected, value]
+      ).join(', '),
+    )
+
   const upstream = useMemo(
     () => siblings.filter((n) => n.id !== draft.id).map((n) => n.id),
     [siblings, draft.id],
@@ -222,10 +328,12 @@ export function WorkflowNodeForm({
 
       {draft.kind !== 'gate' && (
         <Field label="Agent" hint="@handle that runs this node. Defaults to the workflow owner.">
-          <Input
+          <Suggested
+            listId={`agents-${draft.id}`}
             value={draft.agent}
-            placeholder="@sales"
-            onChange={(e) => set('agent', e.target.value)}
+            options={handles}
+            placeholder={handles[0] ?? '@sales'}
+            onChange={(v) => set('agent', v)}
           />
         </Field>
       )}
@@ -235,19 +343,50 @@ export function WorkflowNodeForm({
           <Field label="Prompt file" hint="Path inside the bundle, e.g. prompts/collect.md">
             <Input value={draft.prompt} onChange={(e) => set('prompt', e.target.value)} />
           </Field>
-          <Field label="Skill" hint="Skill activated for this node (optional).">
-            <Input value={draft.skill} onChange={(e) => set('skill', e.target.value)} />
+          <Field
+            label="Skill"
+            hint={
+              skills.length > 0
+                ? 'Activated for this node. Suggestions are what this agent has loaded.'
+                : 'Activated for this node (optional).'
+            }
+          >
+            <Suggested
+              listId={`skills-${draft.id}`}
+              value={draft.skill}
+              options={skills}
+              onChange={(v) => set('skill', v)}
+            />
           </Field>
-          <Field label="Strategy" hint="Comma separated, e.g. react, reflect.">
-            <Input value={draft.strategy} onChange={(e) => set('strategy', e.target.value)} />
+          <Field
+            label="Strategy"
+            hint="Pin one, or offer a shortlist and let the loop choose. None = react."
+          >
+            <ChipMultiSelect
+              selected={strategySelected}
+              options={STRATEGIES}
+              onToggle={toggleStrategy}
+            />
           </Field>
         </>
       )}
 
       {draft.kind === 'tool' && (
         <>
-          <Field label="Tool" hint="The single tool this node calls, e.g. web_search.">
-            <Input value={draft.tool} onChange={(e) => set('tool', e.target.value)} />
+          <Field
+            label="Tool"
+            hint={
+              tools.length > 0
+                ? 'The single tool this node calls. Suggestions are what the named agent has.'
+                : 'The single tool this node calls, e.g. web_search.'
+            }
+          >
+            <Suggested
+              listId={`tools-${draft.id}`}
+              value={draft.tool}
+              options={tools}
+              onChange={(v) => set('tool', v)}
+            />
           </Field>
           <Field
             label="Arguments (JSON)"
@@ -303,13 +442,14 @@ export function WorkflowNodeForm({
             {draft.routes.map((route, i) => (
               <div key={i} className="space-y-1 rounded-lg border border-border p-2">
                 <div className="flex items-center gap-2">
-                  <Input
+                  <Suggested
+                    listId={`routes-${draft.id}`}
                     value={route.to}
+                    options={upstream}
                     placeholder="target node id"
-                    className="font-mono text-xs"
-                    onChange={(e) => {
+                    onChange={(v) => {
                       const routes = [...draft.routes]
-                      routes[i] = { ...route, to: e.target.value }
+                      routes[i] = { ...route, to: v }
                       set('routes', routes)
                     }}
                   />
