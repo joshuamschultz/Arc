@@ -81,7 +81,9 @@ class DashboardWorkflowPlane:
             return None
         detail = await self._summary(bundle)
         definition = bundle.definition
-        detail["nodes"] = [node.model_dump(mode="json", exclude_none=True) for node in definition.nodes]
+        detail["nodes"] = [
+            node.model_dump(mode="json", exclude_none=True) for node in definition.nodes
+        ]
         detail["edges"] = _edges(definition)
         detail["channel"] = definition.channel
         detail["versions"] = [{"version": v} for v in self._definitions.versions(workflow_id)]
@@ -190,7 +192,9 @@ class DashboardWorkflowPlane:
             "version": definition.version,
             "status": bundle.status,
             "signer_did": bundle.signer_did,
-            "trigger": None if trigger is None else trigger.model_dump(mode="json", exclude_none=True),
+            "trigger": (
+                None if trigger is None else trigger.model_dump(mode="json", exclude_none=True)
+            ),
             "last_run": None if latest is None else _run_summary(latest),
         }
 
@@ -234,9 +238,7 @@ def _run_summary(run: Any) -> dict[str, Any]:
 
 def _edges(definition: Any) -> list[dict[str, str]]:
     """The graph the dashboard draws, derived from each node's ``needs``."""
-    edges = [
-        {"from": need, "to": node.id} for node in definition.nodes for need in node.needs
-    ]
+    edges = [{"from": need, "to": node.id} for node in definition.nodes for need in node.needs]
     edges.extend(
         {"from": node.id, "to": node.loop_back_to}
         for node in definition.nodes
@@ -307,7 +309,7 @@ def build_dashboard_plane(
     root = workflows_root or definitions.root
 
     def _validate(definition: Any, *, pending_files: frozenset[str] = frozenset()) -> Any:
-        return validate_definition(definition, root=root, pending_files=pending_files)
+        return validate_definition(definition, bundle_root=root, pending_files=pending_files)
 
     plane = WorkflowControlPlane(
         definitions=definitions,

@@ -319,6 +319,12 @@ def create_app(
             for adapter in (embedded_gateway.web_adapter, *embedded_gateway.adapters):
                 if adapter is not None:
                     await adapter.connect()
+            # SPEC-061 COMP-023: the workflow screens read and write through
+            # the SAME control plane the CLI and the agent tools use, composed
+            # onto the runner the gateway just started. Without this the routes
+            # exist, the engine runs, and every screen answers 503 — the shape
+            # this feature has produced repeatedly, one seam at a time.
+            _attach_workflow_plane(starlette_app, embedded_gateway)
         # COMP-004 / REQ-090: when the deployment has a team but no service was
         # injected, construct the arcteam MessagingService over the same managed
         # NATS the bootstrap started. Without this the handle team_chat reads is
@@ -474,9 +480,11 @@ def create_app(
     # arcteam-owned forwarder for human group posts (REQ-061). arcui forwards,
     # never signs — see ``team_ws`` route.
     app.state.team_post_forwarder = team_post_forwarder
-    # SPEC-061 ArcFlow (COMP-023): thin delegating adapter to the not-yet-merged
-    # arcteam control plane. ``None`` until that workstream lands — the routes
-    # then fail-open to 503 rather than fabricating workflow behavior.
+    # SPEC-061 ArcFlow (COMP-023): the dashboard's view of arcteam's control
+    # plane. Injectable for tests; on a real deployment the lifespan builds it
+    # from the runner the gateway started (``_attach_workflow_plane``). Still
+    # ``None`` where no runner is hosted — the routes then fail-open to 503
+    # rather than fabricating workflow behavior.
     app.state.workflow_control_plane = workflow_control_plane
     app.state.gate_control_plane = gate_control_plane
     app.state.agent_registry = agent_registry
@@ -503,6 +511,27 @@ def create_app(
     app.state.roster_provider = _roster_provider
 
     return app
+
+
+def _attach_workflow_plane(app: Starlette, embedded_gateway: Any) -> None:
+    """Compose the dashboard's workflow plane onto the running engine.
+
+    Fail-open and logged: a deployment whose gateway hosts no runner (or whose
+    arcteam engine is absent) keeps every other screen working and answers the
+    workflow routes with their existing 503. What must never happen silently is
+    the opposite case — a live runner and a dashboard that cannot see it.
+    """
+    host = getattr(embedded_gateway, "workflow_runner_host", None)
+    runner = getattr(host, "_runner", None) if host is not None else None
+    if runner is None:
+        logger.info("no workflow runner hosted here; workflow screens stay unavailable")
+        return
+    try:
+        from arcui.workflow_plane import build_dashboard_plane
+
+        app.state.workflow_control_plane = build_dashboard_plane(runner=runner)
+    except Exception:  # reason: fail-open — the rest of the dashboard must serve
+        logger.exception("workflow control plane could not be composed; screens stay 503")
 
 
 def attach_llm(app: Starlette, instance: Any, label: str | None = None) -> None:
