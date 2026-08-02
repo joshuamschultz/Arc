@@ -132,12 +132,7 @@ m1-gates: architecture-tests loc-budgets race-stress
 # test — standard test run (excludes slow-marked tests)
 # ---------------------------------------------------------------------------
 test:
-	$(UV_RUN) pytest \
-		packages/arcgateway/tests/ \
-		tests/ \
-		-v \
-		--tb=short \
-		-m "not slow"
+	$(UV_RUN) python scripts/run_all_tests.py -v --tb=short -m "not slow"
 
 # ---------------------------------------------------------------------------
 # lint — ruff linter

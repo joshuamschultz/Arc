@@ -150,19 +150,36 @@ class FileHandler:
             return None
 
         try:
-            async with httpx.AsyncClient(follow_redirects=True) as client:
-                resp = await client.get(url, headers=headers or {}, timeout=60.0)
-                resp.raise_for_status()
+            timeout = httpx.Timeout(60.0, connect=10.0)
+            async with httpx.AsyncClient(
+                follow_redirects=True,
+                max_redirects=3,
+                timeout=timeout,
+            ) as client:
+                async with client.stream("GET", url, headers=headers or {}) as resp:
+                    resp.raise_for_status()
+                    content_length = int(resp.headers.get("content-length", "0") or 0)
+                    if content_length > self._max_file_size:
+                        _logger.warning(
+                            "Downloaded file exceeds max size (%d > %d); discarding",
+                            content_length,
+                            self._max_file_size,
+                        )
+                        return None
 
-                # Check size
-                data = resp.content
-                if len(data) > self._max_file_size:
-                    _logger.warning(
-                        "Downloaded file exceeds max size (%d > %d); discarding",
-                        len(data),
-                        self._max_file_size,
-                    )
-                    return None
+                    chunks: list[bytes] = []
+                    received = 0
+                    async for chunk in resp.aiter_bytes():
+                        received += len(chunk)
+                        if received > self._max_file_size:
+                            _logger.warning(
+                                "Downloaded file exceeds max size (%d > %d); discarding",
+                                received,
+                                self._max_file_size,
+                            )
+                            return None
+                        chunks.append(chunk)
+                    data = b"".join(chunks)
 
                 # Determine filename
                 if not filename:

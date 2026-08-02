@@ -30,17 +30,8 @@ jobs:
       - name: Ruff format check
         run: uv run ruff format --check .
 
-      - name: Mypy (arcllm)
-        run: uv run mypy packages/arcllm/src/arcllm/ --strict
-
-      - name: Mypy (arcrun)
-        run: uv run mypy packages/arcrun/src/arcrun/ --strict
-
-      - name: Mypy (arcagent)
-        run: uv run mypy packages/arcagent/src/arcagent/ --strict
-
-      - name: Mypy (arcmemory)
-        run: uv run mypy packages/arcmemory/src/arcmemory/ --strict
+      - name: Mypy (all shipped packages)
+        run: uv run mypy packages/*/src/ --strict
 
   test:
     name: Test (Python ${{ matrix.python-version }}, ${{ matrix.os }})
@@ -103,6 +94,10 @@ jobs:
         # is guarded so the suite runs with or without the [vec] extra.
         run: uv run pytest packages/arcmemory/tests/ -v --tb=short -m "not slow"
 
+      - name: Run complete monorepo suite
+        if: runner.os == 'Linux' && matrix.python-version == '3.12'
+        run: uv run python scripts/run_all_tests.py -q --tb=short -m "not slow"
+
   security:
     name: Security & SBOM
     runs-on: ubuntu-latest
@@ -153,4 +148,3 @@ jobs:
         with:
           name: sbom-cyclonedx
           path: sbom/arc-python.cdx.json
-

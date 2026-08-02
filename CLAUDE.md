@@ -1,30 +1,51 @@
-# ArcAgent Build Standards
+# Arc Build Standards
 
 > Build like a top 1% developer. No shortcuts. Root causes, not workarounds.
 
-> Don't Mix concerns
-- all llm calls are arcllm
-- loop execution is arcrun
-- agent with tools, skills, extentions, memory, etc is arcagent
-Don't have agent do things related to llm calls, or loop.
-Dont have arcrun do things that belong to agent or arcllm.
+---
 
-> **Agent state persists to the workspace — never through the LLM's file tools**
-- An agent's own state — memory, sessions, `context.md`, identity, the audit chain — is written with **direct filesystem I/O to the agent's workspace** (its home). It must **never** be saved by calling the LLM-facing tools (`write`/`bash`/`edit`).
-- **Why (plain terms):** an agent can be opened to work in *any* project directory — its file/exec tools' working dir becomes your cwd (the coding model) — but its *brain must stay home*. Because state is written straight to the workspace and not via the tools, moving the tools into your project **never drags the agent's memory into your repo**, and never scatters one agent's brain across every folder you opened. (ADR-029)
-- Consequence for new code: a skill/capability that writes **project** files via the tools is correct (that's the point); one that saves **agent** state must use a workspace path via direct I/O. Breaking this invariant re-couples "where the agent works" to "where the agent lives" and defeats the whole coding-agent model.
+## Non-Negotiables
 
-> **Clean code, lean code — no legacy/backward-compat**
-- This codebase is local-only and not deployed anywhere. **Never write migration helpers, deprecation shims, vestigial methods, or "kept for compatibility" code.**
-- When changing a behavior, **delete the old code in the same edit.** No commented-out blocks, no `_DELETE_ME_LATER`, no "vestigial" stubs.
-- **One line beats five.** Don't replace a one-line fix with a multi-method "resolver + helper + warner" abstraction. Smallest correct change wins.
-- No comments explaining what was changed or why this is "the new way." Code reflects current reality; commit messages hold the history.
+### 1. Don't mix concerns
 
-> **Leave it correct — no skipping pre-existing errors**
-- If `ruff check`, `mypy`, or any quality gate surfaces an error during your work, **fix it now**. It does not matter who introduced it or when.
-- Never report "pre-existing — not my problem." The repository is left clean every session, every commit, every PR. Inherited debt is paid off the moment it's seen.
-- This applies to lint errors, type errors, dead code, broken tests, missing docstrings, ambiguous Unicode chars, mutable defaults — everything the linter flags.
-- If a fix is genuinely out of scope for the current task and you cannot land it, raise it explicitly to the user and ask before deferring. Default is fix.
+| Concern | Package |
+|---------|---------|
+| LLM calls | `arcllm` |
+| Loop execution | `arcrun` |
+| Agent (tools, skills, extensions, memory, …) | `arcagent` |
+
+- `arcagent` must not own LLM-call or loop logic.
+- `arcrun` must not own agent or LLM-provider logic.
+- Concern purity is what keeps standalone packages, turnkey composition, and federal hardening possible at once. Mixing layers collapses all three.
+
+### 2. Agent state stays in the workspace — never via LLM file tools (ADR-029)
+
+An agent's own state — memory, sessions, `context.md`, identity, the audit chain — is written with **direct filesystem I/O to the agent's workspace** (its home). It must **never** be saved by calling the LLM-facing tools (`write` / `bash` / `edit`).
+
+**Why:** tools can open any project directory (their cwd becomes your coding cwd), but the agent's *brain must stay home*. Direct workspace I/O means moving tools into a project never drags memory into that repo or scatters one agent's brain across every folder opened.
+
+| Writing… | How |
+|----------|-----|
+| **Project** files | Via the tools — correct; that's the point |
+| **Agent** state | Workspace path + direct I/O only |
+
+Breaking this re-couples "where the agent works" to "where the agent lives" and defeats the coding-agent model.
+
+### 3. No legacy / backward-compat shims
+
+This codebase is local-only and not deployed. **Never** add migration helpers, deprecation shims, vestigial methods, or "kept for compatibility" code.
+
+- Change a behavior → **delete the old code in the same edit.** No commented-out blocks, no `_DELETE_ME_LATER`, no vestigial stubs.
+- **One line beats five.** Don't replace a one-line fix with a multi-method "resolver + helper + warner." Smallest correct change wins.
+- No comments explaining what changed or why this is "the new way." Code is current reality; commit messages hold history.
+
+### 4. Leave it correct — no skipping pre-existing errors
+
+If `ruff check`, `mypy`, or any quality gate surfaces an error during your work, **fix it now** — regardless of who introduced it or when.
+
+- Never report "pre-existing — not my problem." The repo is left clean every session, commit, and PR. Inherited debt is paid when seen.
+- Applies to lint, types, dead code, broken tests, missing docstrings, ambiguous Unicode, mutable defaults — everything the tools flag.
+- If a fix is genuinely out of scope and you cannot land it, raise it to the user and ask before deferring. **Default is fix.**
 
 ---
 
@@ -32,75 +53,77 @@ Dont have arcrun do things that belong to agent or arcllm.
 
 ### 1. Simplicity
 
-The core must be simple: easy to read, hard to break, robust, no confusion.
+The core must be easy to read, hard to break, robust, and unambiguous.
 
-- Favor flat, explicit code over clever abstractions
-- Core stays under 3,500 LOC (see ADR-004 for budget increase rationale).
-- Complexity lives in extensions, plugins, and modules -- never in the nucleus
-- If you need a comment to explain control flow, the code is too complex. Refactor.
-- No nested logic deeper than 2 levels. Extract to named methods.
+- Prefer flat, explicit code over clever abstractions.
+- Core stays under **3,500 LOC** (ADR-004).
+- Complexity lives in extensions, plugins, and modules — never in the nucleus.
+- If you need a comment to explain control flow, refactor.
+- Nesting deeper than 2 levels → extract a named method.
 - One class, one responsibility. One method, one job.
 
 ### 2. Security
 
 Federal-first. This runs on DOE machines, in labs, in SCIFs.
 
-#### The Four Pillars are universal — not federal-mode features (ADR-019)
+#### Four Pillars are universal — not federal-only (ADR-019)
 
-Every Arc deployment, at every tier (personal / enterprise / federal), enforces:
+Every deployment, at every tier (personal / enterprise / federal), enforces:
 
-1. **Identity** — every entity has a DID. `ArcAgent.__init__` requires it. Every tool dispatch carries `caller_did`. Identity primitives live in `arctrust`.
+1. **Identity** — every entity has a DID. `ArcAgent.__init__` requires it. Every tool dispatch carries `caller_did`. Primitives live in `arctrust`.
 2. **Sign** — every loaded artifact (skill, extension, backend, pairing) is verified before use. No `UnsafeNoOp`, no `skip_sandbox`, no `require_manifest = federal-only`. `arctrust.keypair` + Sigstore + Rekor.
-3. **Authorize** — `arctrust.policy.PolicyPipeline` evaluates every tool call. First-DENY-wins. Fail-closed on exceptions.
-4. **Audit** — `arctrust.audit.emit(AuditEvent, sink)` on every operation. `JsonlSink` for compliance, `SignedChainSink` for tamper-evident chain, `arcui.bridge.UIBridgeSink` for live observability. Single emission point, sinks fan out.
+3. **Authorize** — `arctrust.policy.PolicyPipeline` on every tool call. First-DENY-wins. Fail-closed on exceptions.
+4. **Audit** — `arctrust.audit.emit(AuditEvent, sink)` on every operation. Single emission point; sinks fan out: `JsonlSink` (compliance), `SignedChainSink` (tamper-evident chain), `arcui.bridge.UIBridgeSink` (live observability).
 
-Tier is **stringency metadata, not a gate**. Federal requires FIPS-validated crypto, signed allowlists, hard `max_turns` cap, all 5 policy layers. Personal allows self-signed bundles (with audit warn), Global-only policy layer, dynamic tool creation. **Every tier still verifies, authorizes, audits, and identifies.**
+**Tier is stringency metadata, not a gate.** Federal: FIPS-validated crypto, signed allowlists, hard `max_turns` cap, all 5 policy layers. Personal: self-signed bundles (audit warn), Global-only policy layer, dynamic tool creation. **Every tier still identifies, verifies, authorizes, and audits.**
 
 #### Other invariants
 
-- Secure by default, not by configuration
-- Zero-trust everything: identity, comms, data, modules
-- Full observability: OpenTelemetry traces, metrics, structured logs on every action
-- Tamper-evident logging with classification awareness
-- Credentials never touch the filesystem. Vault-backed, short-lived tokens only.
-- Break the Lethal Trifecta: private data + external comms + untrusted input never coexist without human approval
-- mTLS on all internal communications
+- Secure by default, not by configuration.
+- Zero-trust everything: identity, comms, data, modules.
+- Full observability: OpenTelemetry traces, metrics, structured logs on every action.
+- Tamper-evident logging with classification awareness.
+- Credentials never touch the filesystem — vault-backed, short-lived tokens only.
+- **Lethal Trifecta:** private data + external comms + untrusted input never coexist without human approval.
+- mTLS on all internal communications.
 
 ### 3. Scalability
 
-Built for 1,000s of agents running concurrently.
+Built for thousands of agents running concurrently.
 
-- Shared-nothing per agent. Coordinate via message bus (NATS).
-- Async-first. Use `asyncio` and `uvloop` everywhere.
-- Fail gracefully: circuit breakers, exponential backoff, failover chains
-- Cold start under 500ms. Memory per agent under 50MB baseline.
-- Design for horizontal scale. No singleton bottlenecks.
-- Connection pooling, resource limits, and timeouts on everything external
+- Shared-nothing per agent; coordinate via message bus (NATS).
+- Async-first (`asyncio` + `uvloop`).
+- Fail gracefully: circuit breakers, exponential backoff, failover chains.
+- Cold start < 500ms; baseline memory < 50MB per agent.
+- Horizontal scale; no singleton bottlenecks.
+- Connection pooling, resource limits, and timeouts on everything external.
 
 ### 4. Composability
 
 > **Standalone primitives. Turnkey whole. Federal-securable by construction.**
 
-Arc must serve three audiences at once, and no line of code may sacrifice one for another:
+No line of code may sacrifice one of these audiences for another:
 
-1. **The developer who wants one layer.** Someone should be able to `pip install arcllm` and use it alone — a clean provider-agnostic LLM library — without pulling in arcrun or arcagent. Same for `arcrun` (the loop) without `arcagent`. Each package is an independently valuable, independently installable product with its own contract.
-2. **The non-technical user who wants everything.** The layers compose into one turnkey stack that "just works" with zero configuration. Ease for this user comes from **unbreakable defaults**, never from a required setup step.
-3. **The federal operator who needs it hardened later.** A deployment that starts personal-tier must be tightenable to federal **without re-architecture** — federal is a *stringency dial*, not a rewrite. See "The Four Pillars are universal" above.
+1. **Developer who wants one layer** — `pip install arcllm` (or `arcrun`) alone, with its own contract, without pulling higher layers.
+2. **Non-technical user who wants everything** — layers compose into a turnkey stack that works with **zero configuration**. Ease comes from unbreakable defaults, never from a required setup step.
+3. **Federal operator who hardens later** — personal → federal is a *stringency dial*, not a rewrite. Pillars already wired (see §2).
 
-These three are not in tension **if** the seams are designed right. They become impossible the moment code intertwines concerns.
+These stay compatible only when seams are clean. Intertwined concerns make all three impossible.
 
-**How we keep all three open:**
+**How we keep all three open**
 
-- **Dependencies point one way, never up.** `arcrun` → `arcllm`; `arcagent` → both; `arctrust` is a leaf that imports no sibling. A lower layer never imports a higher one — that is what makes it usable alone. Violate this once and the standalone story dies.
-- **One contract per seam, and the default is unbreakable.** A layer exposes a single typed contract; the base implementation is correct with zero config; power users override it natively. *(Worked example — SPEC-059 streaming: `StreamEvent` lives in `arcllm` and is fully usable by an arcllm-only consumer; the base `invoke_stream` yields a single-event fallback so any provider works untouched; native overrides are opt-in. `arcrun` consumes that one contract and knows nothing of provider wires; `arcllm` knows nothing of the loop.)*
-- **The security seams are present from day one, dormant until tightened.** Identity (`caller_did`), Sign, Authorize, Audit are wired at every seam at every tier — personal just runs them at low stringency. This is the load-bearing federal-preservation rule: because the audit/identity hook already exists on (e.g.) a transient injection or a tool dispatch, hardening to federal is config, not surgery. **Never ship a path that would need the pillars *retrofitted* to go federal** — that retrofit is the rewrite we are avoiding.
-- **Concern purity is the enabler, not bureaucracy.** "Don't mix concerns" (top of this file) is what makes 1, 2, and 3 simultaneously true. LLM logic in the loop, or loop logic in the agent, collapses all three audiences into one tangled product.
+| Rule | Meaning |
+|------|---------|
+| **Dependencies point one way, never up** | `arcrun` → `arcllm`; `arcagent` → both; `arctrust` is a leaf. A lower layer never imports a higher one. Violate once and standalone dies. |
+| **One contract per seam; default unbreakable** | Typed seam; base impl correct with zero config; native overrides opt-in. *Example (SPEC-059):* `StreamEvent` lives in `arcllm`; base `invoke_stream` yields a single-event fallback so any provider works; `arcrun` consumes that contract and knows nothing of provider wires. |
+| **Security seams from day one** | Identity (`caller_did`), Sign, Authorize, Audit at every seam at every tier — personal runs them at low stringency. **Never ship a path that would need pillars retrofitted for federal.** |
+| **Concern purity enables all three** | See Non-Negotiable §1. LLM-in-loop or loop-in-agent collapses the audience story into one tangled product. |
 
-**The tradeoffs, stated honestly:**
+**Accepted tradeoffs**
 
-- A per-seam contract adds one layer of indirection over calling a provider SDK raw. **Accepted** — it is the price of standalone-usability + turnkey composition + federal-readiness, and it is small. It is *not* license to over-abstract: the three-instances rule (§Abstractions) still governs; add the seam when the boundary is real, not speculatively.
-- An "unbreakable default" means writing a fallback even for providers that will always override it. **Accepted** — the default is what keeps the simple case simple and the turnkey user unconfigured.
-- Keeping the pillars wired at personal tier costs a little code that a "personal-only" fork wouldn't need. **Accepted** — that cost *is* the federal option value; dropping it to save a few lines forecloses the future the whole project exists for.
+- Per-seam contract vs raw SDK — small cost of standalone + turnkey + federal readiness. Not license to over-abstract; three-instances rule (§Abstractions) still governs.
+- Unbreakable default even when a provider will always override — keeps the simple case simple and the turnkey user unconfigured.
+- Pillars wired at personal tier — that cost *is* the federal option value; dropping it to save lines forecloses the project's purpose.
 
 ---
 
@@ -108,50 +131,49 @@ These three are not in tension **if** the seams are designed right. They become 
 
 ### Readability
 
-- Clean, readable code is non-negotiable
-- No complex inner loops with buried logic. Break it out.
-- Methods should be short enough to read without scrolling
-- Use descriptive names that communicate intent: `validate_module_signature`, not `check`
-- Comment the WHY, not the WHAT. Code explains what; comments explain why.
-- Comment completely at module, class, and non-obvious method level
+- Clean, readable code is non-negotiable.
+- No complex inner loops with buried logic — break them out.
+- Methods short enough to read without scrolling.
+- Names communicate intent: `validate_module_signature`, not `check`.
+- Comment the **why**, not the **what**. Comment at module, class, and non-obvious method level.
 
 ### Abstractions
 
-- DRY: Extract shared patterns into base classes and utilities
-- But don't abstract prematurely. Three instances of a pattern before extracting.
-- Abstractions should reduce cognitive load, not add it
-- Every abstraction must have a clear interface (Protocol or ABC)
+- DRY: extract shared patterns into base classes and utilities.
+- Don't abstract prematurely — **three instances** of a pattern before extracting.
+- Abstractions must reduce cognitive load, not add it.
+- Every abstraction needs a clear interface (`Protocol` or ABC).
 
 ### Maintainability
 
-- Modular architecture: changes to one component should not ripple across the codebase
-- Strong typing everywhere. `mypy --strict` must pass.
-- Pydantic models for all data boundaries (config, messages, events)
-- Interfaces over implementations. Depend on protocols, not concrete classes.
-- Feature toggles via config, not code branches
+- Modular: a change in one component should not ripple across the codebase.
+- Strong typing everywhere — `mypy --strict` must pass.
+- Pydantic models for all data boundaries (config, messages, events).
+- Depend on protocols, not concrete classes.
+- Feature toggles via config, not code branches.
 
-### Project Structure
+### Project structure (`arcagent`)
 
 ```
 arcagent/
-    core/           # The nucleus (<3K LOC total)
-        identity.py     # DID, keypairs, auth
-        config.py       # TOML config, Pydantic validation
-        telemetry.py    # OpenTelemetry, audit events
-        agent.py        # Orchestrator (wires components, invokes ArcRun)
-        session_internal/context.py   # Context management (ContextManager)
-        session_internal/manager.py    # Session + compaction (SessionManager)
-        tool_registry.py    # Tool registry, 4 transports
-        module_bus.py       # Module Bus (event-driven extensions)
-    modules/        # Official modules (each is independent)
-    adapters/       # External system adapters
-    utils/          # Shared utilities
+  core/                         # Nucleus (<3,500 LOC)
+    identity.py                 # DID, keypairs, auth
+    config.py                   # TOML config, Pydantic validation
+    telemetry.py                # OpenTelemetry, audit events
+    agent.py                    # Orchestrator (wires components, invokes ArcRun)
+    session_internal/context.py # ContextManager
+    session_internal/manager.py # Session + compaction (SessionManager)
+    tool_registry.py            # Tool registry, 4 transports
+    module_bus.py               # Module Bus (event-driven extensions)
+  modules/                      # Official modules (independent)
+  adapters/                     # External system adapters
+  utils/                        # Shared utilities
 tests/
-    unit/           # 70% of tests
-    integration/    # 20% of tests
-    e2e/            # 10% of tests
-    security/       # Security-specific tests
-    performance/    # Benchmarks
+  unit/                         # 70%
+  integration/                  # 20%
+  e2e/                          # 10%
+  security/
+  performance/
 ```
 
 ---
@@ -160,43 +182,44 @@ tests/
 
 ### Process
 
-1. **Test first.** Write the failing test before the implementation.
-2. **Read before writing.** Understand existing code before modifying.
-3. **Verify before claiming.** Fresh test output, not assumptions.
-4. **Root cause, not band-aids.** If a fix feels like a workaround, it is. Find the real problem.
-5. **Three strikes rule.** After 3 failed fix attempts, question the architecture.
+1. **Test first** — failing test before implementation.
+2. **Read before writing** — understand existing code before modifying.
+3. **Verify before claiming** — fresh test output, not assumptions.
+4. **Root cause, not band-aids** — if a fix feels like a workaround, it is.
+5. **Three strikes** — after 3 failed fix attempts, question the architecture.
 
-### What "Done" Means
+### Done means
 
-- Tests pass (unit + integration)
-- Types check (`mypy --strict`)
-- Linter clean (`ruff check`)
+- Unit + integration tests pass
+- `mypy --strict` clean
+- `ruff check` clean
 - Audit trail emitted for all new operations
-- No hardcoded secrets, no plaintext credentials
+- No hardcoded secrets / plaintext credentials
 - Docstrings on public API
 
-### What We Don't Do
+### We don't
 
-- No monkey-patching
-- No `# type: ignore` without a comment explaining why
-- No bare `except:` blocks
-- No mutable default arguments
-- No global state outside of config
-- No print statements (use structured logging)
-- No shortcuts that trade security for convenience
+- Monkey-patch
+- `# type: ignore` without an inline why
+- Bare `except:`
+- Mutable default arguments
+- Global state outside config
+- `print` (use structured logging)
+- Trade security for convenience
 
 ---
 
-## Dependencies
+## Stack & Quality Gates
 
-### Foundations (sibling projects)
+### Foundation packages
 
-| Project | Purpose | Location |
-|---------|---------|----------|
-| ArcLLM | Provider-agnostic LLM calls | `../arcllm/` |
-| ArcRun | Runtime agentic loop | `../arcrun/` |
+| Package | Purpose |
+|---------|---------|
+| `arcllm` (`packages/arcllm`) | Provider-agnostic LLM calls |
+| `arcrun` (`packages/arcrun`) | Runtime agentic loop |
+| `arctrust` | Identity, sign, authorize, audit (leaf) |
 
-### Key Libraries
+### Key libraries
 
 | Library | Purpose |
 |---------|---------|
@@ -207,7 +230,7 @@ tests/
 | httpx | Async HTTP |
 | uvloop | High-performance event loop |
 
-### Quality Tools
+### Commands
 
 ```bash
 ruff check .                    # Lint
@@ -217,16 +240,14 @@ pytest --cov=arcagent           # Test + coverage
 pip-audit                       # Dependency audit
 ```
 
----
-
-## Quality Gates
+### Gates
 
 | Gate | Threshold |
 |------|-----------|
-| Line coverage | >= 80% |
-| Branch coverage | >= 75% |
-| Core component coverage | >= 90% |
-| Cyclomatic complexity | <= 10 per function |
+| Line coverage | ≥ 80% |
+| Branch coverage | ≥ 75% |
+| Core component coverage | ≥ 90% |
+| Cyclomatic complexity | ≤ 10 per function |
 | Ruff errors | 0 |
 | mypy errors | 0 |
 | Critical/high vulnerabilities | 0 |
@@ -234,97 +255,74 @@ pip-audit                       # Dependency audit
 
 ---
 
-## Threat Surface Awareness
+## Threat Surface
 
-Every component must be designed to protect against and mitigate these threat surfaces. These are not abstract risks -- they are the attack vectors adversaries will use against deployed agents in federal environments.
+These are the attack vectors adversaries use against agents in federal environments — design every component against them.
 
 ### OWASP Top 10 for LLM Applications (2025)
 
 | Code | Threat | Our Mitigation |
 |------|--------|----------------|
-| LLM01 | **Prompt Injection** | Input validation, system prompt isolation, instruction hierarchy enforcement. Never trust user-adjacent content as instructions. |
-| LLM02 | **Sensitive Information Disclosure** | Output filtering, classification-aware responses, PII/CUI detection before any data leaves the agent. |
-| LLM03 | **Supply Chain** | Signed modules, SBOM generation, dependency auditing (`pip-audit`), provenance verification on all external components. |
-| LLM04 | **Data Poisoning** | Validate training/fine-tuning data integrity. Checksums on all ingested datasets. Isolation between data sources. |
-| LLM05 | **Improper Output Handling** | Sanitize and validate all LLM outputs before passing to tools, APIs, databases, or downstream systems. Never execute raw LLM output. |
-| LLM06 | **Excessive Agency** | Least-privilege tool access. Explicit allowlists per agent. Human-in-the-loop gates for destructive or irreversible actions. |
-| LLM07 | **System Prompt Leakage** | No secrets in system prompts. Treat prompts as potentially exfiltrable. Separate config from instructions. |
-| LLM08 | **Vector and Embedding Weaknesses** | Validate embedding sources, access-control vector stores, prevent cross-tenant data leakage in shared indices. |
-| LLM09 | **Misinformation** | Ground responses in verified data. Flag confidence levels. Never present LLM output as authoritative without verification. |
-| LLM10 | **Unbounded Consumption** | Token budgets, request rate limits, cost ceilings, timeout enforcement on all LLM calls. Circuit breakers on runaway loops. |
+| LLM01 | **Prompt Injection** | Input validation, system-prompt isolation, instruction hierarchy. Never trust user-adjacent content as instructions. |
+| LLM02 | **Sensitive Information Disclosure** | Output filtering, classification-aware responses, PII/CUI detection before data leaves the agent. |
+| LLM03 | **Supply Chain** | Signed modules, SBOM, `pip-audit`, provenance verification on external components. |
+| LLM04 | **Data Poisoning** | Validate training/fine-tuning integrity. Checksums on ingested datasets. Isolate data sources. |
+| LLM05 | **Improper Output Handling** | Sanitize/validate all LLM outputs before tools, APIs, DBs, or downstream systems. Never execute raw LLM output. |
+| LLM06 | **Excessive Agency** | Least-privilege tools. Explicit allowlists. Human-in-the-loop for destructive/irreversible actions. |
+| LLM07 | **System Prompt Leakage** | No secrets in system prompts. Treat prompts as exfiltrable. Separate config from instructions. |
+| LLM08 | **Vector / Embedding Weaknesses** | Validate embedding sources; access-control vector stores; prevent cross-tenant leakage in shared indices. |
+| LLM09 | **Misinformation** | Ground in verified data. Flag confidence. Never present LLM output as authoritative without verification. |
+| LLM10 | **Unbounded Consumption** | Token budgets, rate limits, cost ceilings, timeouts, circuit breakers on runaway loops. |
 
 ### OWASP Top 10 for Agentic Applications (2026)
 
 | Code | Threat | Our Mitigation |
 |------|--------|----------------|
-| ASI01 | **Agent Goal Hijack** | Immutable goal definitions in identity.md (read-only to agent). Policy engine enforces behavioral boundaries. Kill switches. |
-| ASI02 | **Tool Misuse & Exploitation** | Tool-level allowlists/denylists. Parameter validation on every tool call. Audit logging of all tool invocations. |
-| ASI03 | **Identity & Privilege Abuse** | Per-agent DID identity. Scoped namespace permissions (`domain:path:permission`). No shared credentials. No privilege inheritance without explicit grant. |
-| ASI04 | **Agentic Supply Chain** | Runtime-loaded tools and modules must be signed. Pre-load vulnerability scanning. Sandboxed execution for third-party extensions. |
-| ASI05 | **Unexpected Code Execution (RCE)** | Never execute agent-generated code without sandboxing. Firecracker microVM isolation. No `eval()`, no dynamic imports from untrusted sources. |
-| ASI06 | **Memory & Context Poisoning** | Validate memory writes. Integrity checks on context.md and workspace files. Detect anomalous memory mutations. |
-| ASI07 | **Insecure Inter-Agent Communication** | mTLS on all NATS channels. Message signing with Ed25519. Replay protection via nonce + timestamp. No plaintext inter-agent traffic. |
-| ASI08 | **Cascading Failures** | Circuit breakers between agents. Blast radius containment via isolation boundaries. Shared-nothing architecture prevents cascade propagation. |
-| ASI09 | **Human-Agent Trust Exploitation** | Agents never impersonate humans. Clear labeling of AI-generated content. Approval gates on consequential actions. |
-| ASI10 | **Rogue Agents** | Behavioral monitoring via telemetry. Policy violations trigger alerts. Agent revocation via identity service. Anomaly detection on agent actions. |
+| ASI01 | **Agent Goal Hijack** | Immutable goals in `identity.md` (read-only to agent). Policy boundaries. Kill switches. |
+| ASI02 | **Tool Misuse & Exploitation** | Tool allow/deny lists. Parameter validation on every call. Audit all invocations. |
+| ASI03 | **Identity & Privilege Abuse** | Per-agent DID. Scoped namespace permissions (`domain:path:permission`). No shared credentials. No privilege inheritance without explicit grant. |
+| ASI04 | **Agentic Supply Chain** | Signed runtime-loaded tools/modules. Pre-load vuln scanning. Sandboxed third-party extensions. |
+| ASI05 | **Unexpected Code Execution (RCE)** | Never execute agent-generated code without sandboxing. Firecracker microVM. No `eval()`; no dynamic imports from untrusted sources. |
+| ASI06 | **Memory & Context Poisoning** | Validate memory writes. Integrity checks on `context.md` and workspace files. Detect anomalous mutations. |
+| ASI07 | **Insecure Inter-Agent Communication** | mTLS on NATS. Ed25519 message signing. Replay protection (nonce + timestamp). No plaintext inter-agent traffic. |
+| ASI08 | **Cascading Failures** | Circuit breakers. Blast-radius containment. Shared-nothing prevents cascade propagation. |
+| ASI09 | **Human-Agent Trust Exploitation** | Agents never impersonate humans. Label AI-generated content. Approval gates on consequential actions. |
+| ASI10 | **Rogue Agents** | Telemetry monitoring. Policy-violation alerts. Identity-service revocation. Anomaly detection. |
 
-### How This Applies to Development
+### Checklist when writing code
 
-When writing code, ask:
-
-1. **Can this be injected?** -- Validate all inputs. Sanitize all outputs.
-2. **Can this be abused?** -- Least privilege. Explicit allowlists. No implicit trust.
-3. **Can this leak?** -- No secrets in prompts, logs, or error messages. Classification-aware data flow.
-4. **Can this cascade?** -- Isolate failure domains. Circuit breakers. Timeouts.
-5. **Can this be audited?** -- Every action is an event. Every event is logged. Every log is searchable.
+1. **Can this be injected?** — Validate inputs. Sanitize outputs.
+2. **Can this be abused?** — Least privilege. Explicit allowlists. No implicit trust.
+3. **Can this leak?** — No secrets in prompts, logs, or errors. Classification-aware data flow.
+4. **Can this cascade?** — Isolate failure domains. Circuit breakers. Timeouts.
+5. **Can this be audited?** — Every action is an event. Every event is logged. Every log is searchable.
 
 ---
 
-## Compliance Context
+## Compliance
 
-This codebase must support authorization under:
+Must support authorization under:
 
-- **FedRAMP** -- Federal Risk and Authorization Management
-- **NIST 800-53** -- Security and Privacy Controls (IA, AU, AC families)
-- **CMMC** -- Cybersecurity Maturity Model Certification
+- **FedRAMP** — Federal Risk and Authorization Management
+- **NIST 800-53** — Security and Privacy Controls (IA, AU, AC families)
+- **CMMC** — Cybersecurity Maturity Model Certification
 
-Every architectural decision should be evaluated through these compliance frameworks and the OWASP threat surfaces above.
+Evaluate every architectural decision through these frameworks and the OWASP threat surfaces above.
 
-<!-- code-review-graph MCP tools -->
+---
+
 ## MCP Tools: code-review-graph
 
-**IMPORTANT: This project has a knowledge graph. ALWAYS use the
-code-review-graph MCP tools BEFORE using Grep/Glob/Read to explore
-the codebase.** The graph is faster, cheaper (fewer tokens), and gives
-you structural context (callers, dependents, test coverage) that file
-scanning cannot.
+This project has a knowledge graph. **Always use code-review-graph MCP tools before Grep/Glob/Read** to explore the codebase. The graph is faster, cheaper, and gives structural context (callers, dependents, coverage) that file scanning cannot. Fall back to Grep/Glob/Read only when the graph doesn't cover what you need.
 
-### When to use graph tools FIRST
+| Need | Prefer |
+|------|--------|
+| Exploring code | `semantic_search_nodes` or `query_graph` |
+| Blast radius | `get_impact_radius` |
+| Code review | `detect_changes` + `get_review_context` |
+| Relationships | `query_graph` (`callers_of` / `callees_of` / `imports_of` / `tests_for`) |
+| Architecture | `get_architecture_overview` + `list_communities` |
+| Affected flows | `get_affected_flows` |
+| Renames / dead code | `refactor_tool` |
 
-- **Exploring code**: `semantic_search_nodes` or `query_graph` instead of Grep
-- **Understanding impact**: `get_impact_radius` instead of manually tracing imports
-- **Code review**: `detect_changes` + `get_review_context` instead of reading entire files
-- **Finding relationships**: `query_graph` with callers_of/callees_of/imports_of/tests_for
-- **Architecture questions**: `get_architecture_overview` + `list_communities`
-
-Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
-
-### Key Tools
-
-| Tool | Use when |
-|------|----------|
-| `detect_changes` | Reviewing code changes — gives risk-scored analysis |
-| `get_review_context` | Need source snippets for review — token-efficient |
-| `get_impact_radius` | Understanding blast radius of a change |
-| `get_affected_flows` | Finding which execution paths are impacted |
-| `query_graph` | Tracing callers, callees, imports, tests, dependencies |
-| `semantic_search_nodes` | Finding functions/classes by name or keyword |
-| `get_architecture_overview` | Understanding high-level codebase structure |
-| `refactor_tool` | Planning renames, finding dead code |
-
-### Workflow
-
-1. The graph auto-updates on file changes (via hooks).
-2. Use `detect_changes` for code review.
-3. Use `get_affected_flows` to understand impact.
-4. Use `query_graph` pattern="tests_for" to check coverage.
+**Workflow:** graph auto-updates on file changes → `detect_changes` for review → `get_affected_flows` for impact → `query_graph` `tests_for` for coverage.

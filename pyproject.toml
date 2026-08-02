@@ -124,7 +124,7 @@ warn_return_any = true
 # Skill payload scripts ship inside skill bundles (not importable package
 # modules); several share a filename (e.g. validate.py), which collides under
 # mypy's module resolution. They are not part of the typed package surface.
-exclude = '/skills/[^/]+/scripts/'
+exclude = ['\/skills\/[^/]+\/scripts\/', '\/src\/arctui\/tests\/']
 
 # Optional third-party dependencies without type stubs. These are guarded by
 # runtime import checks and only pulled in via extras (otel/aws/docker/schema).
@@ -151,6 +151,12 @@ module = [
     "browser_use",
     "browser_use.*",
 ]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Sigstore is an optional arcskill hub dependency and does not publish complete
+# typing metadata. The module performs an importability check before loading it.
+module = ["arcskill.hub.verify"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

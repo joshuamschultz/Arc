@@ -98,7 +98,10 @@ async def test_stop_survives_a_runner_that_raises_on_close() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_start_runner_host_starts_a_real_runner() -> None:
+async def test_start_runner_host_starts_a_real_runner(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
     """The default path builds arcteam's real engine and starts it.
 
     This test previously asserted ``host is None`` — the fail-open behaviour of
@@ -107,6 +110,17 @@ async def test_start_runner_host_starts_a_real_runner() -> None:
     nothing errors, and no runner ever advances a frontier. The fail-open
     contract is still covered, by the test below that makes construction raise.
     """
+    from arctrust import OperatorKey
+
+    config_dir = tmp_path / "config"
+    store_dir = tmp_path / "store"
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(config_dir))
+    monkeypatch.setenv("ARCSTORE_DATA_DIR", str(store_dir))
+    OperatorKey.load(
+        config_dir / "operator" / "operator.key",
+        generate_if_absent=True,
+    )
+
     host = await start_runner_host(tier="personal")
 
     assert host is not None, "the gateway booted with no runner — dead wiring"
