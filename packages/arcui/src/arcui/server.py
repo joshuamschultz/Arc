@@ -529,7 +529,10 @@ def _attach_workflow_plane(app: Starlette, embedded_gateway: Any) -> None:
     try:
         from arcui.workflow_plane import build_dashboard_plane
 
-        plane = build_dashboard_plane(runner=runner)
+        plane = build_dashboard_plane(
+            runner=runner,
+            approvals=getattr(app.state, "approval_store", None),
+        )
         app.state.workflow_control_plane = plane
         # The same object answers both Protocols: one control plane, one
         # authority — a gate resolved anywhere lands on the same operation.

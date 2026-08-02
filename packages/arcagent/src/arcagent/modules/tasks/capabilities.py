@@ -34,8 +34,10 @@ first use, since ``_runtime.configure()`` itself is sync (see
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
+import re
 import sqlite3
 import uuid
 from collections.abc import Iterator
@@ -567,6 +569,13 @@ _RELIABILITY_TICK = 5.0
 # the board and the session log line up (``<workspace>/sessions/task:<id>.jsonl``).
 _TASK_SESSION = "task"
 
+# A session key becomes a FILENAME, and a workflow node's row id is
+# path-shaped (``wf/<run>/<node>/<iteration>``) because it is a durable
+# identity, not a name. Flatten it deterministically and carry a digest of the
+# original so two ids can never land on one session — same task, same session,
+# on every retry and after a restart.
+_SAFE_SESSION_KEY = re.compile(r"^[A-Za-z0-9._:-]+$")
+
 # Highest-priority-first ordering (mirrors arcstore's claim order, SDD §2).
 _PRIORITY_RANK: dict[Priority, int] = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 
@@ -661,6 +670,15 @@ async def _dispatch_tick() -> None:
     await _run_task(st, started, run_id, self_did)
 
 
+def _session_key(task_id: str) -> str:
+    """The session a task's run resumes into, safe to use as a filename."""
+    if _SAFE_SESSION_KEY.match(task_id):
+        return f"{_TASK_SESSION}:{task_id}"
+    digest = hashlib.sha256(task_id.encode("utf-8")).hexdigest()[:12]
+    flattened = re.sub(r"[^A-Za-z0-9._-]+", "-", task_id).strip("-")
+    return f"{_TASK_SESSION}:{flattened}-{digest}"
+
+
 async def _run_task(st: _runtime._State, task: Task, run_id: str, self_did: str) -> None:
     """Drive one dispatched run under the reliability wrapper (P1).
 
@@ -686,7 +704,7 @@ async def _run_task(st: _runtime._State, task: Task, run_id: str, self_did: str)
         run = asyncio.ensure_future(
             st.agent_run_fn(
                 _format_task_prompt(task),
-                session_key=f"{_TASK_SESSION}:{task.id}",
+                session_key=_session_key(task.id),
                 run_id=run_id,
                 **run_kwargs,
             )

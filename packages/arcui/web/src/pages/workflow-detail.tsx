@@ -1,6 +1,15 @@
 import { useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Archive, ArchiveRestore, ChevronLeft, Play, Plus, StopCircle, Trash2 } from 'lucide-react'
+import {
+  Archive,
+  ArchiveRestore,
+  ChevronLeft,
+  Play,
+  Plus,
+  ShieldCheck,
+  StopCircle,
+  Trash2,
+} from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -31,6 +40,7 @@ import {
   useArchiveWorkflow,
   useCancelWorkflowRun,
   usePatchWorkflow,
+  useRequestSignature,
   useRunWorkflow,
   useUnarchiveWorkflow,
   useWorkflow,
@@ -718,8 +728,19 @@ export function WorkflowDetailPage() {
   const archiveWorkflow = useArchiveWorkflow(id)
   const unarchiveWorkflow = useUnarchiveWorkflow(id)
   const runWorkflow = useRunWorkflow(id)
+  const requestSignature = useRequestSignature(id)
   const [tab, setTab] = useState('graph')
   const [actionError, setActionError] = useState<string | null>(null)
+
+  const requestSign = async () => {
+    setActionError(null)
+    try {
+      await requestSignature.mutateAsync()
+      setActionError(null)
+    } catch (e) {
+      setActionError(describeError(e).message)
+    }
+  }
 
   const runNow = async () => {
     setActionError(null)
@@ -764,19 +785,31 @@ export function WorkflowDetailPage() {
         }
         actions={
           <div className="flex items-center gap-2">
-            {actionError ? (
-          <span className="text-xs text-destructive">{actionError}</span>
-        ) : (
-          <span className="text-[11px] text-muted-foreground">
-            Drag from a node's right edge to another's left to order them. Click a node to edit it.
-            Select an edge and press delete to unlink.
-          </span>
-        )}
+            {actionError && <span className="text-xs text-destructive">{actionError}</span>}
+            {workflow.data?.status === 'draft' && (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={requestSignature.isPending}
+                onClick={requestSign}
+                title="Puts this exact draft in the operator approvals queue"
+              >
+                <ShieldCheck className="size-3.5" />
+                {requestSignature.isPending ? 'Requesting…' : 'Request signing'}
+              </Button>
+            )}
             <Button
               size="sm"
               onClick={runNow}
-              disabled={workflow.data?.status !== 'signed' || runWorkflow.isPending}
-              title={workflow.data?.status !== 'signed' ? 'Only a signed workflow can run' : undefined}
+              disabled={runWorkflow.isPending}
+              // An unsigned draft runs at personal tier and is refused above it.
+              // The deployment decides that, not this button — a hard disable
+              // here made a perfectly runnable draft look broken.
+              title={
+                workflow.data?.status === 'signed'
+                  ? undefined
+                  : 'Unsigned: runs at personal tier, refused at enterprise and federal'
+              }
             >
               <Play className="size-3.5" /> Run
             </Button>
