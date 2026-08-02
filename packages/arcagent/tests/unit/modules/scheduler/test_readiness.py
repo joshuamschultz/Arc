@@ -160,3 +160,24 @@ async def _bind_elsewhere(workspace: Path, fn: Any) -> None:
     from arcagent.modules.scheduler import _runtime
 
     _runtime.remember_run_fn(workspace, fn)
+
+
+def test_the_lifecycle_offers_the_run_callback_to_modules() -> None:
+    """Producer and consumer of the binding, checked against each other.
+
+    The scheduler declares `agent_run_fn` in `configure()`; core offers it in
+    the by-signature kwargs. If either side drops it, the module is configured
+    with no callback again and nothing fires — the failure this replaced.
+    """
+    import inspect
+
+    from arcagent.core import agent_lifecycle
+    from arcagent.modules.scheduler import _runtime
+
+    source = Path(agent_lifecycle.__file__).read_text(encoding="utf-8")
+    assert '"agent_run_fn": agent.run_collected' in source, (
+        "core no longer offers the run callback to modules"
+    )
+    assert "agent_run_fn" in inspect.signature(_runtime.configure).parameters, (
+        "the scheduler no longer asks for the run callback"
+    )

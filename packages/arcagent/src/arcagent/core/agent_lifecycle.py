@@ -265,6 +265,14 @@ def configure_module_runtimes(
             "egress_proxy": egress_proxy,
             "human_gate": agent._human_gate,
             "operator_signer": agent._operator_signer,
+            # The agent's own run callback, offered the same way: a module gets
+            # it only by declaring the parameter. The scheduler used to receive
+            # this through an ``agent:ready`` event instead, and a binding that
+            # travels by event can be missed — wrong task, wrong ordering, a
+            # handler that never ran — which is how one agent's reminders sat
+            # due and silent for days. Handed in at configure time, there is
+            # nothing left to miss.
+            "agent_run_fn": agent.run_collected,
         }
         sig = inspect.signature(configure_fn)
         kwargs = {name: value for name, value in available.items() if name in sig.parameters}

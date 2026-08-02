@@ -87,7 +87,14 @@ def configure(
     bus: Any = None,
     agent_run_fn: AgentRunFn | None = None,
 ) -> None:
-    """Bind module state for the CURRENT asyncio task. Called once at agent startup."""
+    """Bind module state for the CURRENT asyncio task. Called once at agent startup.
+
+    ``agent_run_fn`` is the agent's own run callback, handed in here rather than
+    delivered later by an ``agent:ready`` event. An event-delivered binding can
+    be missed — wrong task, wrong ordering, a handler that never ran — and when
+    it is missed the engine has no way to tell, so every stored schedule sits
+    due and silent. Handed in at configure time it cannot be missed.
+    """
     if isinstance(config, SchedulerConfig):
         cfg = config
     else:
