@@ -126,6 +126,20 @@ class RunState:
             if group[-1].task.status == "done"
         }
 
+    def accumulated_legs(self) -> set[str]:
+        """Every lethal-trifecta leg any node of this run has lit (COMP-015).
+
+        Run-scoped, not needs-scoped: a leg lit on a parallel branch still
+        belongs to the run, and scoping this to a node's own upstream would let
+        a graph launder a composition down the branch that did not read it.
+        """
+        legs: set[str] = set()
+        for group in self.instances.values():
+            for instance in group:
+                recorded = instance.task.metadata.get("accumulated_legs") or ()
+                legs.update(str(leg) for leg in recorded)
+        return legs
+
     def in_flight(self) -> list[Task]:
         return [
             instance.task

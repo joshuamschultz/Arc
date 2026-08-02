@@ -50,12 +50,12 @@ from arcteam.types import Entity, EntityStatus, EntityType, Message, MsgType
 from arcagent.core.session_internal.capability_ledger import (
     CarriedLegs,
     bind_carried_legs,
+    carried_legs,
     reset_carried_legs,
 )
 from arcagent.modules.tasks import _runtime
 from arcagent.modules.tasks.models import Priority, Task
 from arcagent.modules.tasks.node_execution import (
-    WORKFLOW_META,
     WorkflowNode,
     _confined,
     allowed_strategies,
@@ -243,6 +243,7 @@ async def complete_task(
         refusal = _node_completion_refusal(st, current, output)
         if refusal is not None:
             return await _fail_node_attempt(st, current, refusal)
+        await _seal_run_legs(st, current)
         if current.requires_review:
             # Opt-in human gate (P3): land in ``review``, not ``done`` — an
             # operator approves/rejects before it is terminal (LLM06/ASI09).
@@ -735,17 +736,34 @@ async def _persist_run_legs(
     durable path the work does: the runner reads it off the completed node and
     stamps it onto the next node it materialises. A message would be lossy; a
     row is not.
+
+    The key is FLAT, alongside the runner's own metadata keys, because that is
+    where both producers read it: ``node_from_task`` seeds this node from it and
+    the runner unions it into the next node's stamp.
     """
     if set(legs) == set(node.accumulated_legs):
         return
     metadata = dict(task.metadata or {})
-    block = dict(metadata.get(WORKFLOW_META, {}))
-    block["accumulated_legs"] = sorted(legs)
-    metadata[WORKFLOW_META] = block
+    metadata["accumulated_legs"] = sorted(legs)
     try:
         await st.store.update(task.id, {"metadata": metadata}, actor_did=self_did)
     except _TOOL_ERRORS:
         _logger.warning("Could not persist accumulated legs for node %s", node.node_id)
+
+
+async def _seal_run_legs(st: _runtime._State, task: Task) -> None:
+    """Land the run's carried legs BEFORE this node's row goes terminal.
+
+    The runner stamps the next node from COMPLETED rows, so legs written only
+    once the whole dispatch unwinds can be missed by a tick that lands in
+    between: the next node would start under-charged, which is exactly the
+    cross-session composition COMP-015 exists to make unreachable.
+    """
+    node = current_node()
+    carrier = carried_legs()
+    if node is None or carrier is None:
+        return
+    await _persist_run_legs(st, task, node, carrier.snapshot(), st.identity.did)
 
 
 async def _await_run(

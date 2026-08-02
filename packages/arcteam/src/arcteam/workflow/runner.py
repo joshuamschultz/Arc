@@ -151,6 +151,7 @@ class WorkflowRunner:
         run_workspace_root: Path | None = None,
         on_close: Callable[[], Awaitable[None]] | None = None,
         tick_failure_threshold: int = 3,
+        max_capability_legs: int = 16,
     ) -> None:
         self._tasks = tasks
         self._runs = runs
@@ -171,6 +172,10 @@ class WorkflowRunner:
         # consecutive_failures + circuit_breaker_threshold, default 3). See
         # ``run_forever`` for why this counts and escalates but never stops.
         self._tick_failure_threshold = tick_failure_threshold
+        # Ceiling on the run's carried trifecta legs (mirrors CarriedLegs'
+        # default). A per-run security collection that grows without a bound is
+        # the SPEC-009 lesson; truncation is audited, never silent.
+        self._max_capability_legs = max_capability_legs
         self._consecutive_tick_failures = 0
         self._last_known_channels: list[str] = []
 
@@ -251,9 +256,7 @@ class WorkflowRunner:
         # already moving through it.
         bundle = self._definitions.load_for_dispatch(run.workflow_id)
         if bundle.content_hash != run.content_hash:
-            return await self._terminate(
-                run_id, "failed", "definition changed under a live run"
-            )
+            return await self._terminate(run_id, "failed", "definition changed under a live run")
         definition = bundle.definition
 
         wall_clock = self._wall_clock_failure(run)
@@ -399,9 +402,7 @@ class WorkflowRunner:
 
     # -- one pass over the graph -------------------------------------------
 
-    async def _pass(
-        self, run: RunRecord, definition: WorkflowSpec
-    ) -> tuple[RunRecord, bool]:
+    async def _pass(self, run: RunRecord, definition: WorkflowSpec) -> tuple[RunRecord, bool]:
         """Decide every node once against a freshly derived state."""
         rows = await self._tasks.query_by_flow_run(run.run_id)
         state = RunState(rows, run.path_taken)
@@ -446,9 +447,7 @@ class WorkflowRunner:
             return await self._require_run(run.run_id), True
         return await self._require_run(run.run_id), changed
 
-    def _decide(
-        self, node: NodeSpec, state: RunState, scope: Mapping[str, Any]
-    ) -> _Decision:
+    def _decide(self, node: NodeSpec, state: RunState, scope: Mapping[str, Any]) -> _Decision:
         """Whether this node runs, is skipped, or is not yet decidable."""
         candidate = self._candidate_iteration(node, state)
         if candidate is None:
@@ -512,6 +511,7 @@ class WorkflowRunner:
         if not pending:
             return False
         budget = await self._budget_for(run, state)
+        legs = self._legs_for(run, state)
         rows: list[Task] = []
         for node, iteration in pending:
             grant = await budget.reserve(
@@ -523,7 +523,9 @@ class WorkflowRunner:
                 continue
             # The row id IS the identity pair, already unambiguous, and the
             # store dedupes on it — there is no second key to get wrong.
-            rows.append(await self._build_task(run, definition, node, iteration, state, scope))
+            rows.append(
+                await self._build_task(run, definition, node, iteration, state, scope, legs)
+            )
         if not rows:
             return False
         created = await self._tasks.create_batch(rows, actor_did=self._runner_did)
@@ -540,6 +542,7 @@ class WorkflowRunner:
         iteration: int,
         state: RunState,
         scope: Mapping[str, Any],
+        legs: list[str],
     ) -> Task:
         """One node instance as a durable row, owned by exactly one agent."""
         try:
@@ -567,6 +570,10 @@ class WorkflowRunner:
             "strategy": list(node.strategy),
             "output_schema": node.output_schema,
             "artifacts": list(node.artifacts),
+            # What the run has already lit (COMP-015). The node's fresh session
+            # starts pre-charged with this, so a composition no single session
+            # could complete stays unreachable by splitting it across nodes.
+            "accumulated_legs": list(legs),
         }
         for field in ("prompt", "skill", "script", "gate"):
             value = getattr(node, field, None)
@@ -595,9 +602,31 @@ class WorkflowRunner:
             timeout_seconds=node.timeout_s,
         )
 
-    async def _record_materialization(
-        self, run: RunRecord, state: RunState, task: Task
-    ) -> bool:
+    def _legs_for(self, run: RunRecord, state: RunState) -> list[str]:
+        """The run's carried legs, bounded — the value stamped on every new node.
+
+        Sorted-then-truncated so two runners deciding the same frontier stamp
+        the same set, and truncation is audited because dropping a leg silently
+        would weaken the composition check exactly when the run is most charged.
+        """
+        legs = sorted(state.accumulated_legs())
+        if len(legs) <= self._max_capability_legs:
+            return legs
+        kept = legs[: self._max_capability_legs]
+        self._audit(
+            "workflow.legs.truncated",
+            target=f"{run.workflow_id}/{run.run_id}",
+            outcome="truncated",
+            extra={
+                "run_id": run.run_id,
+                "max_legs": self._max_capability_legs,
+                "kept": kept,
+                "dropped": legs[self._max_capability_legs :],
+            },
+        )
+        return kept
+
+    async def _record_materialization(self, run: RunRecord, state: RunState, task: Task) -> bool:
         """Journal a row exactly once, however many times it is re-derived."""
         node_id = str(task.metadata["node_id"])
         iteration = int(task.metadata["iteration"])
@@ -619,7 +648,14 @@ class WorkflowRunner:
             "workflow.node.materialized",
             target=f"{run.workflow_id}/{node_id}",
             outcome="materialized",
-            extra={"run_id": run.run_id, "iteration": iteration, "task_id": task.id},
+            extra={
+                "run_id": run.run_id,
+                "iteration": iteration,
+                "task_id": task.id,
+                # Growth is only bounded if it is also visible: this is where an
+                # operator reads how charged the run was when the node started.
+                "accumulated_legs": list(task.metadata.get("accumulated_legs") or ()),
+            },
         )
         if self._narrator is not None:
             kind = str(task.metadata.get("node_kind", ""))
@@ -828,9 +864,7 @@ class WorkflowRunner:
             changed = True
         return changed
 
-    async def _fail_node(
-        self, run: RunRecord, node_id: str, state: RunState, reason: str
-    ) -> None:
+    async def _fail_node(self, run: RunRecord, node_id: str, state: RunState, reason: str) -> None:
         instance = state.latest(node_id)
         if instance is not None and instance.task.status not in ("done", "failed"):
             await self._tasks.update(
@@ -872,9 +906,7 @@ class WorkflowRunner:
                 run.run_id, "failed", f"node failed: {failures[0].node_id}"
             )
         undecided = [
-            node.id
-            for node in definition.nodes
-            if state.terminal_state(node.id)[0] == "absent"
+            node.id for node in definition.nodes if state.terminal_state(node.id)[0] == "absent"
         ]
         if undecided:
             return await self._terminate(
@@ -897,9 +929,7 @@ class WorkflowRunner:
         )
         if not flipped:
             return await self._require_run(run_id)
-        await self._append(
-            run_id, {"kind": "outcome", "status": status, "detail": resolution}
-        )
+        await self._append(run_id, {"kind": "outcome", "status": status, "detail": resolution})
         self._audit(
             "workflow.run.finished",
             target=f"{run.workflow_id}/{run_id}",
@@ -1017,9 +1047,7 @@ class WorkflowRunner:
         for artifact in node.artifacts:
             parts = artifact.replace("\\", "/").split("/")
             if not artifact or artifact.startswith("/") or ".." in parts:
-                raise NodeDecisionError(
-                    node.id, f"artifact {artifact!r} escapes the workspace"
-                )
+                raise NodeDecisionError(node.id, f"artifact {artifact!r} escapes the workspace")
 
     async def _owner_for(self, node: NodeSpec, definition: WorkflowSpec) -> str | None:
         handle = node.agent or definition.owner
@@ -1167,9 +1195,7 @@ def _no_registry() -> _NoRegistry:
     return _NoRegistry()
 
 
-def _definition_audit_hook(
-    sink: AuditSink, tier: str
-) -> Callable[[str, dict[str, Any]], None]:
+def _definition_audit_hook(sink: AuditSink, tier: str) -> Callable[[str, dict[str, Any]], None]:
     """Route the definition store's lifecycle events into the audit chain.
 
     The store takes this as an optional hook and stays silent without one. Two

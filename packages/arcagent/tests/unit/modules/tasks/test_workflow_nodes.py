@@ -472,3 +472,75 @@ class TestNodeParsing:
         assert node.run_id == "run_1"
         assert node.workflow_id == "onboarding"
         assert node.idempotency_key == "run_1::verify::1"
+
+    def test_the_runners_stamped_legs_seed_the_node(self) -> None:
+        from arcagent.modules.tasks.node_execution import node_from_task
+
+        node = node_from_task(MagicMock(metadata=_node_block(accumulated_legs=["private_data"])))
+        assert node is not None
+        assert node.accumulated_legs == ["private_data"]
+
+
+@pytest.mark.asyncio
+class TestLegsAreWrittenBackWhereTheRunnerReadsThem:
+    """COMP-015's return leg — the row is the handoff, so it must round-trip.
+
+    The write-back is what lets the runner union this node's legs into the next
+    node's stamp. Written to a key ``node_from_task`` does not read, the
+    threading is one-directional and the accumulation silently restarts at every
+    node; written under the ``workflow`` key it would clobber the workflow id.
+    """
+
+    async def test_persisted_legs_round_trip_through_the_parser(self, node_state: Any) -> None:
+        from arcagent.modules.tasks.capabilities import _persist_run_legs, _state
+        from arcagent.modules.tasks.node_execution import node_from_task
+
+        task = await _make_node_task(node_state)
+        node = node_from_task(task)
+        assert node is not None
+        st = await _state()
+
+        await _persist_run_legs(st, task, node, frozenset({"private_data"}), st.identity.did)
+
+        stored = await st.store.get(task.id)
+        assert stored is not None
+        assert stored.metadata["workflow"] == "onboarding"
+        reparsed = node_from_task(stored)
+        assert reparsed is not None
+        assert reparsed.accumulated_legs == ["private_data"]
+
+    async def test_completing_a_node_lands_its_legs_with_the_terminal_status(
+        self, node_state: Any
+    ) -> None:
+        """Legs written AFTER the row goes done can be missed by the next tick.
+
+        The runner stamps the following node from completed rows. If the write
+        back only happened once the whole dispatch unwound, a tick landing in
+        that window would materialise the next node under-charged — the exact
+        composition hole COMP-015 exists to close. So completion carries them.
+        """
+        from arcagent.core.session_internal.capability_ledger import (
+            CarriedLegs,
+            bind_carried_legs,
+            reset_carried_legs,
+        )
+        from arcagent.modules.tasks.capabilities import _state, complete_task
+        from arcagent.modules.tasks.node_execution import bind_node, node_from_task, reset_node
+
+        task = await _make_node_task(node_state, output_schema=None)
+        node = node_from_task(task)
+        assert node is not None
+        st = await _state()
+
+        node_token = bind_node(node)
+        legs_token = bind_carried_legs(CarriedLegs(legs={"private_data"}))
+        try:
+            await complete_task(id=task.id, resolution="done", output={"risk": "low"})
+        finally:
+            reset_carried_legs(legs_token)
+            reset_node(node_token)
+
+        stored = await st.store.get(task.id)
+        assert stored is not None
+        assert stored.status == "done"
+        assert stored.metadata["accumulated_legs"] == ["private_data"]
