@@ -48,3 +48,7 @@ class WorkflowsConfig(ModuleConfig):
     # the human to clarify rather than oscillate (rounds 1-2 capture 76-95% of
     # achievable repair; models regress beyond ~3).
     max_repair_attempts: int = 3
+    # Ceiling on one companion file (a prompt or a JSON schema) an agent may
+    # write with a definition. Prompts are the signed instruction surface, so
+    # they are bounded like any other agent-authored artifact.
+    max_file_bytes: int = 32_768

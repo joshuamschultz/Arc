@@ -3,7 +3,7 @@ name: workflow-builder
 version: 1.0.0
 description: Turn a repeatable business process described in conversation into a named, validated ArcFlow workflow draft.
 triggers: [we do this every time, turn that into a workflow, automate this process, build a workflow for, this should run every Monday, same steps every week]
-tools: [workflow_create, workflow_add_node, workflow_edit_node, workflow_remove_node, workflow_set_trigger, workflow_set_channel, workflow_inspect, workflow_list, workflow_run]
+tools: [workflow_create, workflow_put_files, workflow_add_node, workflow_edit_node, workflow_remove_node, workflow_set_trigger, workflow_set_channel, workflow_inspect, workflow_list, workflow_run]
 ---
 
 ## Resources
@@ -52,6 +52,34 @@ Five node kinds, and the honest test for each:
 | `router` | The path forks | You can enumerate every branch |
 | `gate` | A human must decide | A wrong answer is expensive or irreversible |
 
+**Every field a node may carry.** This is the whole vocabulary — there is no
+other field, and nothing to look up anywhere else.
+
+| Field | Kinds | Meaning |
+|---|---|---|
+| `id` | all | required; the node's name, unique in the graph |
+| `kind` | all | required; one of `agent`, `tool`, `script`, `router`, `gate` |
+| `agent` | all but `gate` | `@handle` that runs it; defaults to the workflow owner |
+| `needs` | all | ids this node runs after — this is how you draw an edge |
+| `join` | all | `all` (default) or `any`, when `needs` has more than one |
+| `when` | all | run only if this predicate is true, else skip |
+| `output_schema` | all | bundle path to the JSON Schema its output must match |
+| `artifacts` | all | files that must exist when it finishes |
+| `timeout_s`, `max_attempts` | all | per-node bounds |
+| `loop_back_to`, `max_iterations` | all | the only way to declare a cycle |
+| `prompt`, `skill`, `strategy` | `agent` | prompt file, skill to activate, arcrun strategies |
+| `tool`, `args` | `tool` | required tool name; arguments, wired with `$nodes.<id>.output.<field>` |
+| `script` | `script` | required bundle path to the script |
+| `gate` | `gate` | label for the human decision |
+| `mode`, `routes` | `router` | `rules` or `llm`; `[{to, when}, {to, default=true}]` |
+
+**Prompt and schema files travel WITH the definition.** `prompt`,
+`output_schema`, and `script` name bundle-relative paths; you supply their
+bodies in the same call via `files={"prompts/collect.md": "..."}`, or later with
+`workflow_put_files`. Never write them with `write`/`bash`, and never go looking
+for where bundles live on disk — you do not need to know, and a file written
+outside this path is not part of the signed bundle.
+
 **Typed handoff is the point.** A node declares `output_schema`; the runner
 validates the output against it *before* any downstream node sees it. A schema
 violation is a retryable failure, never a value passed forward. So write the
@@ -82,7 +110,7 @@ an undeclared cycle is rejected by the validator.
 1. Ask what starts the process and what finishes it. Write both down before anything else.
 2. Walk the steps in order with the person. For each, ask "and what does that step hand to the next one?" until they name a concrete result.
 3. Choose a node kind per step using the table above. When torn between `agent` and `tool`, pick `tool` — a declared call is auditable and an agent step is not.
-4. Write the `output_schema` for every node whose output another node reads. Skip it only for terminal nodes.
+4. Write the `output_schema` for every node whose output another node reads, and pass the schema and prompt bodies in the same call's `files` argument. Skip a schema only for terminal nodes.
 5. Call `workflow_create` with the whole graph at once. It validates the entire thing and returns a typed error list if anything is wrong.
 6. Repair from the errors. Each carries `node_id`, `field`, `observed`, and `admissible` — use `admissible` first, it names the values that would work. **Stop after three attempts** and ask the person the specific question you are stuck on.
 7. Read the graph back to them in plain language: "First X does A, then Y does B if the risk is low, otherwise Z reviews it." Fix what they correct with `workflow_edit_node`.
@@ -140,6 +168,11 @@ await workflow_create(
         {"id": "provision", "kind": "script", "script": "scripts/provision.py",
          "agent": "@ops", "needs": ["risk_router"]},
     ],
+    files={
+        "prompts/collect.md": "Collect the customer's name, company domain, and seat count.",
+        "schemas/customer_record.json": '{"type": "object", "required": ["company_domain"]}',
+        "schemas/verification.json": '{"type": "object", "required": ["risk"]}',
+    },
 )
 
 # Rejected? Repair from `admissible`, then re-read the version before editing:

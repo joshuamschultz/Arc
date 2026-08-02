@@ -56,6 +56,10 @@ _logger = logging.getLogger("arcagent.modules.workflows.capabilities")
 # layer regressed — and this surface fails closed rather than reporting it.
 _DRAFT = "draft"
 
+# Ceiling on companion files per call — a bundle is a handful of prompts and
+# schemas, not a directory tree.
+_MAX_FILES = 20
+
 
 async def _plane() -> Any:
     """Return the control plane, finishing lazy async wiring first, or None."""
@@ -181,6 +185,30 @@ def _clean_nodes(nodes: Any) -> list[dict[str, Any]]:
     return [project(node, NODE_FIELDS) for node in as_objects(nodes, "nodes")]
 
 
+def _clean_files(files: Any, st: _runtime._State) -> dict[str, bytes] | None:
+    """Companion bodies as bytes, keyed by bundle-relative path.
+
+    Paths are confined by the definition store, which refuses anything that
+    escapes the bundle — this only bounds how much an agent may write in one
+    call, and refuses a shape it cannot encode.
+    """
+    if not files:
+        return None
+    if not isinstance(files, dict):
+        raise ValueError(f"files must be an object of path -> text, not {type(files).__name__}")
+    if len(files) > _MAX_FILES:
+        raise ValueError(f"at most {_MAX_FILES} companion files per call")
+    payload: dict[str, bytes] = {}
+    for path, body in files.items():
+        if not isinstance(body, str):
+            raise ValueError(f"{path}: file body must be text, not {type(body).__name__}")
+        encoded = body.encode("utf-8")
+        if len(encoded) > st.config.max_file_bytes:
+            raise ValueError(f"{path}: exceeds {st.config.max_file_bytes} bytes")
+        payload[str(path)] = encoded
+    return payload
+
+
 def _text(value: str, field: str) -> str:
     """Normalize one inline free-text field; raises ``ValueError`` on refusal."""
     if not value:
@@ -232,11 +260,7 @@ def _version_required(expected_version: int | None) -> dict[str, Any] | None:
 
 @tool(
     name="workflow_create",
-    description=(
-        "THE way to build a workflow. Creates a named multi-step, multi-agent "
-        "workflow from a list of nodes. Never hand-write workflow.toml and never "
-        "read Arc's source to figure out the format — this tool is the format."
-    ),
+    description="Create a named multi-step, multi-agent workflow from a list of steps",
     classification="state_modifying",
     capability_tags=("workflows",),
     when_to_use="When a repeatable, multi-step process should become a named artifact.",
@@ -248,8 +272,16 @@ async def workflow_create(
     owner: str = "",
     channel: str = "",
     nodes: list[dict[str, Any]] | None = None,
+    files: dict[str, str] | None = None,
 ) -> str:
-    """Create version 1 of a workflow as an unsigned draft."""
+    """Create version 1 of a workflow as an unsigned draft.
+
+    ``files`` carries the prompt and schema bodies a node references, keyed by
+    the SAME bundle-relative path the node declares. They travel with the
+    definition so the whole bundle lands in one validated write — without this
+    an agent has to know where bundles live on disk and write them itself,
+    which is how a build turns into a filesystem hunt.
+    """
     st = _runtime.state()
     bad_id = _bad_workflow_id(workflow_id)
     if bad_id is not None:
@@ -280,7 +312,11 @@ async def workflow_create(
     if channel:
         header["channel"] = channel
     document: dict[str, Any] = {"workflow": header, "node": _clean_nodes(node_list)}
-    return await _mutate(lambda: plane.create(document, actor_did=st.identity.did))
+    try:
+        payload = _clean_files(files, st)
+    except ValueError as exc:
+        return _errors(issue(field="files", error=str(exc)))
+    return await _mutate(lambda: plane.create(document, actor_did=st.identity.did, files=payload))
 
 
 @tool(
@@ -380,6 +416,42 @@ async def workflow_remove_node(
 
     return await _edit_document(
         workflow_id, expected_version, reason="removed a node", change=change
+    )
+
+
+@tool(
+    name="workflow_put_files",
+    description="Write prompt or schema files into a workflow bundle; returns a new draft version",
+    classification="state_modifying",
+    capability_tags=("workflows",),
+    when_to_use="When a node references a prompt or schema file that does not exist yet.",
+    requires_skill="workflow-builder",
+)
+async def workflow_put_files(
+    workflow_id: str = "",
+    files: dict[str, str] | None = None,
+    expected_version: int | None = None,
+) -> str:
+    """Add or replace companion files, keyed by the path a node declares.
+
+    The bundle is the unit that gets signed, so its prompts and schemas are
+    written through this tool rather than with the filesystem tools: an agent
+    never has to know where bundles live, and every body lands inside the
+    bundle the store confines.
+    """
+    st = _runtime.state()
+    try:
+        payload = _clean_files(files, st)
+    except ValueError as exc:
+        return _errors(issue(field="files", error=str(exc)))
+    if payload is None:
+        return _errors(issue(field="files", error="no files given"))
+    return await _edit_document(
+        workflow_id,
+        expected_version,
+        reason="added bundle files",
+        change=lambda _doc: None,
+        files=payload,
     )
 
 
@@ -604,6 +676,7 @@ async def _edit_document(
     reason: str,
     change: Callable[[dict[str, Any]], None],
     added_nodes: int = 0,
+    files: dict[str, bytes] | None = None,
 ) -> str:
     """Load, mutate in memory, then submit the WHOLE document once.
 
@@ -649,6 +722,7 @@ async def _edit_document(
             expected_version=expected_version,
             actor_did=st.identity.did,
             reason=reason,
+            files=files,
         )
     )
 

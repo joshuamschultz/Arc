@@ -123,3 +123,61 @@ def test_a_well_formed_list_passes_through_untouched() -> None:
 
     nodes: list[Any] = [dict(_NODE)]
     assert as_objects(nodes, "nodes") == nodes
+
+
+@pytest.mark.asyncio
+class TestCompanionFilesTravelWithTheDefinition:
+    """A node references `prompts/x.md`; some tool has to be able to write it.
+
+    Without this the agent has to find the bundle directory on disk and write
+    the file itself — which is exactly the filesystem hunt that burned a whole
+    turn budget instead of building the workflow.
+    """
+
+    async def test_create_carries_prompt_and_schema_bodies(
+        self, workflows_state: RecordingControlPlane
+    ) -> None:
+        from arcagent.modules.workflows.capabilities import workflow_create
+
+        result = json.loads(
+            await workflow_create(
+                workflow_id="client-update",
+                owner="@sales",
+                nodes=[{**_NODE, "prompt": "prompts/collect.md"}],
+                files={"prompts/collect.md": "Collect the client list."},
+            )
+        )
+
+        assert "errors" not in result, result
+        assert workflows_state.files["prompts/collect.md"] == b"Collect the client list."
+
+    async def test_put_files_adds_them_to_an_existing_bundle(
+        self, workflows_state: RecordingControlPlane
+    ) -> None:
+        from arcagent.modules.workflows.capabilities import workflow_create, workflow_put_files
+
+        await workflow_create(workflow_id="client-update", owner="@sales", nodes=[_NODE])
+        result = json.loads(
+            await workflow_put_files(
+                workflow_id="client-update",
+                expected_version=1,
+                files={"schemas/out.json": '{"type": "object"}'},
+            )
+        )
+
+        assert "errors" not in result, result
+        assert workflows_state.files["schemas/out.json"] == b'{"type": "object"}'
+
+    async def test_a_body_that_is_not_text_is_refused(self) -> None:
+        from arcagent.modules.workflows.capabilities import workflow_create
+
+        result = json.loads(
+            await workflow_create(
+                workflow_id="client-update",
+                owner="@sales",
+                nodes=[_NODE],
+                files={"prompts/collect.md": {"not": "text"}},  # type: ignore[dict-item]
+            )
+        )
+
+        assert result["errors"][0]["field"] == "files"

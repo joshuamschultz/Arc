@@ -67,7 +67,14 @@ function splitXml(text: string): Segment[] {
 
 interface PromptSection {
   name: string
+  /** The element's own name attribute, when it has one (a tool, a skill). */
+  label: string | null
   body: string
+}
+
+/** The `name="…"` of an open tag — what distinguishes one `<tool>` from 79. */
+function nameAttribute(openTag: string): string | null {
+  return /\sname="([^"]+)"/.exec(openTag)?.[1] ?? null
 }
 
 /** Top-level `<tag>…</tag>` sections, or null when the body is not a prompt. */
@@ -78,10 +85,18 @@ function parsePromptSections(content: string): PromptSection[] | null {
   for (let m = XML_BLOCK.exec(content); m !== null; m = XML_BLOCK.exec(content)) {
     if (content.slice(covered, m.index).trim()) return null // prose between sections
     const name = m[1]
-    sections.push({ name, body: m[0].slice(m[0].indexOf('>') + 1, -(name.length + 3)).trim() })
+    const openTag = m[0].slice(0, m[0].indexOf('>') + 1)
+    sections.push({
+      name,
+      label: nameAttribute(openTag),
+      body: m[0].slice(m[0].indexOf('>') + 1, -(name.length + 3)).trim(),
+    })
     covered = m.index + m[0].length
   }
-  if (sections.length < 2 || content.slice(covered).trim()) return null
+  // One element counts. Requiring two made a `<tool>` carrying only a
+  // `<description>` fall through to the raw-XML renderer while its neighbour
+  // with a second child rendered as tidy rows — the same prompt, two looks.
+  if (sections.length < 1 || content.slice(covered).trim()) return null
   return sections
 }
 
@@ -92,6 +107,7 @@ function PromptSections({ sections }: { sections: PromptSection[] }) {
         <CollapsedBlock
           key={`${s.name}-${i}`}
           name={s.name}
+          label={s.label}
           lines={s.body ? s.body.split('\n').length : 0}
         >
           <StringContent content={s.body} />
@@ -151,10 +167,12 @@ function XmlSegment({ text }: { text: string }) {
 /** A named, collapsed shell around a long block. */
 function CollapsedBlock({
   name,
+  label,
   lines,
   children,
 }: {
   name: string
+  label?: string | null
   lines: number
   children: ReactNode
 }) {
@@ -169,6 +187,9 @@ function CollapsedBlock({
       >
         <span className="font-mono text-[10px] text-muted-foreground">{open ? '▾' : '▸'}</span>
         <span className="font-mono text-xs font-semibold text-primary">{name}</span>
+        {label && (
+          <span className="truncate font-mono text-xs text-foreground">{label}</span>
+        )}
         <span className="ml-auto font-mono text-[10px] text-muted-foreground">{lines} lines</span>
       </button>
       {open && <div className="border-t border-border p-2">{children}</div>}
