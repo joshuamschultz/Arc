@@ -168,6 +168,24 @@ class TestCompanionFilesTravelWithTheDefinition:
         assert "errors" not in result, result
         assert workflows_state.files["schemas/out.json"] == b'{"type": "object"}'
 
+    async def test_files_sent_as_a_json_string_still_land(
+        self, workflows_state: RecordingControlPlane
+    ) -> None:
+        """The live shape: the whole files map arrived as one JSON string."""
+        from arcagent.modules.workflows.capabilities import workflow_create
+
+        result = json.loads(
+            await workflow_create(
+                workflow_id="client-update",
+                owner="@sales",
+                nodes=[_NODE],
+                files=json.dumps({"prompts/step1.md": "hello"}),
+            )
+        )
+
+        assert "errors" not in result, result
+        assert workflows_state.files["prompts/step1.md"] == b"hello"
+
     async def test_a_body_that_is_not_text_is_refused(self) -> None:
         from arcagent.modules.workflows.capabilities import workflow_create
 

@@ -194,8 +194,10 @@ def _clean_files(files: Any, st: _runtime._State) -> dict[str, bytes] | None:
     """
     if not files:
         return None
-    if not isinstance(files, dict):
-        raise ValueError(f"files must be an object of path -> text, not {type(files).__name__}")
+    # Same coercion every other structured argument gets: a model hands a JSON
+    # string where an object is declared, and a refusal it cannot repair costs
+    # the whole build.
+    files = as_object(files, "files")
     if len(files) > _MAX_FILES:
         raise ValueError(f"at most {_MAX_FILES} companion files per call")
     payload: dict[str, bytes] = {}
@@ -528,7 +530,11 @@ async def workflow_run(workflow_id: str = "", input: dict[str, Any] | None = Non
     if refusal is not None:
         return _errors(issue(field="workflow_id", error=refusal))
     try:
-        result = await plane.run(workflow_id, input=input or {}, actor_did=st.identity.did)
+        run_input = as_object(input, "input") if input else {}
+    except ValueError as exc:
+        return _errors(issue(field="input", error=str(exc), observed=input))
+    try:
+        result = await plane.run(workflow_id, input=run_input, actor_did=st.identity.did)
     except Exception as exc:  # reason: a tool returns JSON, it never crashes the loop
         return _from_exception(exc)
     return _result(result, "run")
