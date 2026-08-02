@@ -55,6 +55,7 @@ from arcui.routes import team_pages as team_pages_routes
 from arcui.routes import team_ws as team_ws_routes
 from arcui.routes import traces as traces_routes
 from arcui.routes import trust as trust_routes
+from arcui.routes import workflows as workflows_routes
 from arcui.team_stream import TeamBusObserver, TeamStreamHub
 
 logger = logging.getLogger(__name__)
@@ -135,6 +136,8 @@ def create_app(
     data_dir: Path | None = None,
     workspace_dir: Path | None = None,
     allow_external_task_refs: bool = False,
+    workflow_control_plane: Any | None = None,
+    gate_control_plane: Any | None = None,
 ) -> Starlette:
     """Build a Starlette application with all ArcUI routes.
 
@@ -169,6 +172,14 @@ def create_app(
             in a task title/description are rejected as an external-comms
             surface. Personal/enterprise → True: pointing an agent at a repo or
             doc is a core use. Never gates reads of already-persisted tasks.
+        workflow_control_plane: SPEC-061 COMP-021 implementation
+            (``arcteam.WorkflowControlPlane`` once merged) satisfying
+            ``arcui.routes.workflows.WorkflowControlPlane``. ``None`` (default)
+            degrades every workflow route to 503 — arcui never fabricates
+            workflow behavior of its own.
+        gate_control_plane: SPEC-061 COMP-018 implementation satisfying
+            ``arcui.routes.workflows.GateControlPlane``. ``None`` (default)
+            degrades the gate-resolution route to 503.
 
     Returns:
         Configured Starlette app, ready for uvicorn.
@@ -208,6 +219,7 @@ def create_app(
         *approvals_routes.routes,
         *cancellations_routes.routes,
         *trust_routes.routes,
+        *workflows_routes.routes,
     ]
 
     # Mount static files if the directory exists.
@@ -462,6 +474,11 @@ def create_app(
     # arcteam-owned forwarder for human group posts (REQ-061). arcui forwards,
     # never signs — see ``team_ws`` route.
     app.state.team_post_forwarder = team_post_forwarder
+    # SPEC-061 ArcFlow (COMP-023): thin delegating adapter to the not-yet-merged
+    # arcteam control plane. ``None`` until that workstream lands — the routes
+    # then fail-open to 503 rather than fabricating workflow behavior.
+    app.state.workflow_control_plane = workflow_control_plane
+    app.state.gate_control_plane = gate_control_plane
     app.state.agent_registry = agent_registry
     app.state.circuit_breakers = []
     app.state.telemetry_modules = []

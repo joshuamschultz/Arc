@@ -3,6 +3,7 @@ import {
   MessageSquare,
   Cpu,
   Workflow,
+  GitBranch,
   BookOpen,
   Wrench,
   ListChecks,
@@ -31,6 +32,7 @@ export interface NavItem {
 export const NAV_ITEMS: NavItem[] = [
   { path: 'agents', label: 'Agents', icon: Boxes },
   { path: 'messages', label: 'Messages', icon: MessageSquare },
+  { path: 'workflows', label: 'Workflows', icon: GitBranch },
   { path: 'arcllm', label: 'ArcLLM', icon: Cpu },
   { path: 'arcrun', label: 'ArcRun', icon: Workflow },
   { path: 'knowledge', label: 'Knowledge', icon: BookOpen },

@@ -2,8 +2,8 @@
 
 Double-guarded like the Firecracker live test:
 - @pytest.mark.slow so it is excluded from the fast unit run.
-- @pytest.mark.skipif on the absence of the ``docker`` CLI, so it never runs on a
-  host without a container runtime.
+- @pytest.mark.skipif on the absence of a reachable Docker daemon, so it never
+  runs on a host without a container runtime.
 
 Proves the enterprise/personal-default container path actually RUNS agent code and
 returns its stdout — the surface the #1 host-path staging bug had left broken.
@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import shutil
 
 import pytest
 
@@ -21,12 +20,7 @@ from arcrun.builtins.execute import make_execute_tool
 from arcrun.events import EventBus
 from arcrun.types import ToolContext
 
-_HAS_DOCKER = shutil.which("docker") is not None
-
-pytestmark = [
-    pytest.mark.slow,
-    pytest.mark.skipif(not _HAS_DOCKER, reason="no docker CLI — container cannot run here"),
-]
+pytestmark = [pytest.mark.slow, pytest.mark.requires_docker]
 
 
 def _ctx() -> ToolContext:

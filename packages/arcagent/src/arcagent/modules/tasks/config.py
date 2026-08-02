@@ -63,3 +63,10 @@ class TasksConfig(ModuleConfig):
     # escalation) and the assignee on assignment. Best-effort — a delivery
     # failure never blocks a state transition (AU still records it).
     notify: bool = True
+
+    # --- Workflow node execution (SPEC-061 COMP-014/015) -------------------
+    # Ceiling on the lethal-trifecta legs a single workflow RUN may accumulate
+    # across its nodes. The accumulation is unbounded by construction (a run can
+    # have many nodes), and an unbounded security collection is the SPEC-009
+    # lesson — so it is capped and the cap is observable.
+    max_run_capability_legs: int = 16

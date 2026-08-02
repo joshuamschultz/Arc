@@ -2,8 +2,37 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from typing import Any
+
+import pytest
+
+_IN_CI = os.environ.get("CI", "").lower() not in ("", "0", "false")
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Gate ``requires_docker`` on a reachable *daemon*, not on the CLI existing.
+
+    ``shutil.which("docker")`` was the old predicate and it lied: OrbStack and
+    Docker Desktop leave the CLI on PATH while the daemon is stopped, so the
+    isolation suites ran anyway and died on a socket error.
+
+    Locally a stopped daemon skips. In CI it does NOT skip — the tests run and
+    fail the build, because these suites are the only evidence that isolation
+    holds, and a security suite that silently passes without exercising anything
+    is worse than one that is red.
+    """
+    if _IN_CI:
+        return
+    from arcrun.backends import DockerBackend
+
+    if DockerBackend.available():
+        return
+    skip = pytest.mark.skip(reason="no reachable Docker daemon (required in CI)")
+    for item in items:
+        if "requires_docker" in item.keywords:
+            item.add_marker(skip)
 
 
 @dataclass

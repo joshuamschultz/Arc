@@ -1,0 +1,18 @@
+{
+  "feature": "arcflow",
+  "brainstorm_path": null,
+  "current_category": null,
+  "current_decision": 0,
+  "decisions": {},
+  "auto_applied": [],
+  "locked_decisions": [],
+  "open_questions": [],
+  "notes": "Engine in arcteam; lazy materialization + path-taken record; workflow=group chat; subagents strategy first; DESIGN.md needs v3 sync",
+  "meta": {
+    "last_updated": "2026-08-01",
+    "sessions": 1
+  },
+  "status": "complete",
+  "decisions_logged": 37,
+  "id_range": "D-501 to D-537"
+}

@@ -166,7 +166,13 @@ warn_unused_ignores = false
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-addopts = "--strict-markers -v"
+# importlib import mode keys test modules by full path. Several packages ship a
+# `tests` package with same-named submodules, so under the default prepend mode
+# `pytest packages/a/tests packages/b/tests` collides on `tests.integration.*`
+# and dies in collection — which is why the full cross-package matrix could never
+# be run in one command. Per-package runs were unaffected, so this stayed hidden.
+addopts = "--strict-markers -v --import-mode=importlib"
 markers = [
     "slow: end-to-end test that starts a real nats-server (skipped when the binary is absent)",
+    "requires_docker: needs a reachable Docker daemon; skipped locally, required in CI",
 ]

@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import unicodedata
 import uuid
-from typing import Literal
+from typing import Any, Literal
 from zoneinfo import available_timezones
 
 from croniter import croniter
@@ -122,8 +122,18 @@ class ScheduleEntry(BaseModel):
 
     id: str
     type: Literal["cron", "interval", "once"]
-    prompt: str
+    # Free text is the payload of a ``prompt`` action ONLY. A ``workflow_run``
+    # entry carries no prose at all — see ``action`` below.
+    prompt: str = ""
     enabled: bool = True
+
+    # What a due firing DOES (SPEC-061 COMP-017). ``prompt`` fires free text at
+    # the agent loop and hopes; ``workflow_run`` dispatches a named, signed
+    # workflow directly, with no model anywhere in the decision to start it.
+    # A trigger that means "run this process" must not be expressed as English.
+    action: Literal["prompt", "workflow_run"] = "prompt"
+    workflow_id: str | None = None
+    workflow_input: dict[str, Any] | None = None
 
     # Type-specific fields.
     expression: str | None = None  # cron
@@ -142,10 +152,21 @@ class ScheduleEntry(BaseModel):
     # Audit.
     metadata: ScheduleMetadata = ScheduleMetadata()
 
+    @property
+    def label(self) -> str:
+        """Short human-readable name for logs and bus events.
+
+        A ``workflow_run`` entry carries no prose, so its name is the workflow
+        it starts — an empty label would make every typed trigger anonymous in
+        the notification a user actually reads.
+        """
+        return self.prompt[:80] if self.prompt else f"workflow:{self.workflow_id}"
+
     @field_validator("prompt")
     @classmethod
     def _validate_prompt(cls, v: str) -> str:
-        validate_prompt(v)
+        if v:
+            validate_prompt(v)
         return v
 
     @field_validator("deliver_to")
@@ -176,6 +197,20 @@ class ScheduleEntry(BaseModel):
         ctx = info.context or {}
         min_interval = ctx.get("min_interval_seconds", DEFAULT_MIN_INTERVAL_SECONDS)
         max_timeout = ctx.get("max_timeout_seconds", DEFAULT_MAX_TIMEOUT_SECONDS)
+
+        if self.action == "prompt" and not self.prompt:
+            msg = "A prompt schedule requires 'prompt'"
+            raise ValueError(msg)
+        if self.action == "workflow_run":
+            if not self.workflow_id:
+                msg = "A workflow_run schedule requires 'workflow_id'"
+                raise ValueError(msg)
+            if self.prompt:
+                # A typed action carrying free text is the failure this action
+                # exists to remove: the payload would be an unsigned instruction
+                # surface riding a signed trigger (LLM01).
+                msg = "A workflow_run schedule must not carry a prompt"
+                raise ValueError(msg)
 
         if self.type == "cron" and not self.expression:
             msg = "Cron schedule requires 'expression'"

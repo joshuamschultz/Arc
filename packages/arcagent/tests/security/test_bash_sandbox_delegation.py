@@ -3,22 +3,19 @@
 The builtin ``bash`` must delegate to arcrun's tier-routed isolation backend at
 enterprise/federal (never host ``create_subprocess_shell``), mounting the
 workspace read-write, protected files read-only, and never mounting host
-``~/.arc``. Personal keeps host bash. The live tests run only when Docker is
-available (like SPEC-036).
+``~/.arc``. Personal keeps host bash. The live tests run only when a Docker
+daemon answers (like SPEC-036); in CI its absence fails the build.
 """
 
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from arcagent.builtins.capabilities import _runtime
-
-_DOCKER = shutil.which("docker") is not None
 
 
 @pytest.fixture(autouse=True)
@@ -69,7 +66,7 @@ class TestTierDelegation:
 
 
 @pytest.mark.slow
-@pytest.mark.skipif(not _DOCKER, reason="requires a Docker daemon")
+@pytest.mark.requires_docker
 @pytest.mark.asyncio
 class TestSandboxLive:
     async def test_workspace_write_and_protected_readonly(self, tmp_path: Path) -> None:

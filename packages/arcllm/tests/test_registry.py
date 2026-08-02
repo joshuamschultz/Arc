@@ -413,7 +413,7 @@ class TestModuleStacking:
             modules={"rate_limit": ModuleConfig(enabled=True, requests_per_minute=60)},
         )
         with patch("arcllm.registry.load_global_config", return_value=mock_global):
-            model = load_model("anthropic", rate_limit=False)
+            model = load_model("anthropic", rate_limit=False, retry=False)
         assert not isinstance(model, RateLimitModule)
         assert isinstance(model, AnthropicAdapter)
 
@@ -641,7 +641,7 @@ class TestModuleStacking:
             modules={"telemetry": ModuleConfig(enabled=True)},
         )
         with patch("arcllm.registry.load_global_config", return_value=mock_global):
-            model = load_model("anthropic", telemetry=False)
+            model = load_model("anthropic", telemetry=False, retry=False)
         assert not isinstance(model, TelemetryModule)
         assert isinstance(model, AnthropicAdapter)
 
@@ -665,7 +665,7 @@ class TestModuleStacking:
             modules={"audit": ModuleConfig(enabled=True)},
         )
         with patch("arcllm.registry.load_global_config", return_value=mock_global):
-            model = load_model("anthropic", audit=False)
+            model = load_model("anthropic", audit=False, retry=False)
         assert not isinstance(model, AuditModule)
         assert isinstance(model, AnthropicAdapter)
 
@@ -737,7 +737,7 @@ class TestModuleStacking:
             modules={"queue": ModuleConfig(enabled=True, max_concurrent=2)},
         )
         with patch("arcllm.registry.load_global_config", return_value=mock_global):
-            model = load_model("anthropic", queue=False)
+            model = load_model("anthropic", queue=False, retry=False)
         assert not isinstance(model, QueueModule)
         assert isinstance(model, AnthropicAdapter)
 
@@ -789,7 +789,7 @@ class TestModuleStacking:
             modules={"otel": ModuleConfig(enabled=True, exporter="none")},
         )
         with patch("arcllm.registry.load_global_config", return_value=mock_global):
-            model = load_model("anthropic", otel=False)
+            model = load_model("anthropic", otel=False, retry=False)
         assert not isinstance(model, OtelModule)
         assert isinstance(model, AnthropicAdapter)
 
@@ -1168,3 +1168,47 @@ weight = 0
             assert "kA" not in ep.endpoint_id
             assert "kB" not in ep.endpoint_id
             assert "POOL_KEY" in ep.endpoint_id
+
+
+class TestRetryIsOnByDefault:
+    """A transient provider failure is normal weather, not an exceptional event.
+
+    Retry was previously opt-in, so any deployment that never edited its config
+    failed a call that would have succeeded on the next attempt — in a workflow
+    node or an ordinary chat turn alike. The module was built, tested, and off.
+    """
+
+    def test_retry_resolves_enabled_with_no_config_entry(self) -> None:
+        from arcllm.registry import DEFAULT_ON_MODULES, _resolve_module_config, clear_cache
+
+        clear_cache()
+        assert "retry" in DEFAULT_ON_MODULES
+        assert _resolve_module_config("retry", None) is not None, (
+            "a deployment that never mentioned retry must still retry"
+        )
+
+    def test_an_explicit_false_still_disables_it(self) -> None:
+        """Default-on must not become un-turn-off-able."""
+        from arcllm.registry import _resolve_module_config, clear_cache
+
+        clear_cache()
+        assert _resolve_module_config("retry", False) is None
+
+    def test_modules_that_change_behaviour_stay_opt_in(self) -> None:
+        """The default-on set is deliberately tiny.
+
+        A module that changes what the model SEES or what a caller is ALLOWED to
+        do must be a deliberate choice — never something a default turns on.
+        """
+        from arcllm.registry import DEFAULT_ON_MODULES, _resolve_module_config, clear_cache
+
+        clear_cache()
+        # Assert only what this code controls: the default-on SET. Whether a
+        # deployment's own config enables these is its choice — asserting
+        # resolution here would make the test depend on the ambient
+        # ~/.arc/arcllm.toml, which is how a test starts reporting the machine
+        # it runs on rather than the code it covers.
+        for module in ("security", "guardrails", "injection", "routing", "fallback"):
+            assert module not in DEFAULT_ON_MODULES, module
+        # A module in neither the default-on set nor any config must stay off.
+        assert _resolve_module_config("no_such_module", None) is None
