@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from arcgateway.adapters.base import BasePlatformAdapter
     from arcgateway.adapters.web import WebPlatformAdapter
     from arcgateway.config import GatewayConfig
+    from arcgateway.workflow_runner_host import RunnerHost
 
 _logger = logging.getLogger("arcgateway.bootstrap")
 
@@ -42,6 +43,13 @@ class EmbeddedGateway(NamedTuple):
     ``[platforms.web]`` block is disabled). ``adapters`` holds every enabled
     remote-platform adapter (telegram, slack, …) built through the generic
     adapter-plugin registry — the gateway core names none of them.
+
+    ``workflow_runner_host`` (SPEC-061 COMP-009) is the singleton ArcFlow
+    runner host constructed on THIS (the agent) side of the fleet service —
+    ``None`` when arcteam's workflow engine has not landed in this checkout
+    yet, or a runner is already active elsewhere in this process. Its
+    presence here — not in arcui — is what makes execution independent of
+    the dashboard (REQ-230).
     """
 
     executor: Executor
@@ -49,6 +57,7 @@ class EmbeddedGateway(NamedTuple):
     web_adapter: WebPlatformAdapter | None
     stream_bridge: StreamBridge
     adapters: tuple[BasePlatformAdapter, ...] = ()
+    workflow_runner_host: RunnerHost | None = None
 
 
 def _load_did_index(team_root: Path) -> dict[str, Path]:
@@ -336,12 +345,23 @@ async def build_for_embedded(
         [a.name for a in remote_adapters],
     )
 
+    # SPEC-061 COMP-009: the ArcFlow runner is constructed HERE, on the agent
+    # side of the fleet service — never in arcui's lifespan (REQ-230). This is
+    # the only integration point; a headless (arcui-absent) invocation of
+    # this same function progresses workflows identically. Fail-open: a
+    # checkout without arcteam's workflow engine yet still boots the rest of
+    # the embedded gateway (`workflow_runner_host` is simply ``None``).
+    from arcgateway.workflow_runner_host import start_runner_host
+
+    workflow_runner_host = await start_runner_host(tier=gateway_config.gateway.tier)
+
     return EmbeddedGateway(
         executor=executor,
         session_router=session_router,
         web_adapter=web_adapter,
         stream_bridge=stream_bridge,
         adapters=tuple(remote_adapters),
+        workflow_runner_host=workflow_runner_host,
     )
 
 

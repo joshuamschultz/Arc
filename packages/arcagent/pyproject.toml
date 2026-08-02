@@ -115,6 +115,7 @@ testpaths = ["tests"]
 addopts = "--strict-markers -v"
 markers = [
     "slow: live-runtime tests (real docker) excluded from the fast unit run",
+    "requires_docker: needs a reachable Docker daemon; skipped locally, required in CI",
 ]
 
 [tool.hatch.build.targets.wheel]

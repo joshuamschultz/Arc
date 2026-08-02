@@ -1,0 +1,403 @@
+{
+  "feature": "SPEC-061-arcflow",
+  "current_task": null,
+  "tasks": {
+    "T-826": {
+      "description": "(red) WorkflowDefinition model tests: five node kinds, needs, join, loops, schema_version",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-827": {
+      "description": "(green) WorkflowDefinition models",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-828": {
+      "description": "(red) PredicateEvaluator tests: whitelisted AST only, no calls or attribute access",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-829": {
+      "description": "(green) PredicateEvaluator",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-830": {
+      "description": "(red) GraphValidator tests: the join deadlock, cycles, dangling refs, unsatisfiable outputs, quotas",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-831": {
+      "description": "(green) GraphValidator with SCC analysis and typed error list",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-832": {
+      "description": "(red) Canonical hashing and manifest tests: reformat-stable, file-drift detected",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-833": {
+      "description": "(green) DefinitionStore: canonical hash, file manifest, operator-pinned verification, tier gate",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-834": {
+      "description": "(red) Draft-status invariant test: validation success never confers signed status",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-835": {
+      "description": "(red) Run store tests: lifecycle, path taken, conditional transitions",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-836": {
+      "description": "(green) Run store on the shared mutable plane",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-837": {
+      "description": "(red) Batch task creation tests: cross-owner atomicity and idempotency",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-838": {
+      "description": "(green) Batch task creation keyed on run and node identity",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-839": {
+      "description": "(green) Runner identity resolution",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-840": {
+      "description": "(red) ValueResolver tests: typed binding, never textual interpolation",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-841": {
+      "description": "(green) ValueResolver",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-842": {
+      "description": "(red) Runner tests: lazy materialization, routers, loops, path taken, cancel ordering",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-843": {
+      "description": "(green) WorkflowRunner: frontier advancement, routing, loops, wiring, budget",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-844": {
+      "description": "(red) Node execution adapter tests: schema validation and artifact checks actually fire",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-845": {
+      "description": "(green) Node execution adapter: prompt injection seam, skill activation, strategy, schema, artifacts, idempotency key",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-846": {
+      "description": "(red) Capability-leg threading test: accumulation survives a fresh node session",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-847": {
+      "description": "(green) Capability-leg threader with bounded accumulation",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-848": {
+      "description": "(green) Activation approval for capability-spanning definitions",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-849": {
+      "description": "(red) Builder tool tests: allowlists, quotas, ordering, typed repairable errors",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-850": {
+      "description": "(green) Workflow builder tools in the agent module",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-851": {
+      "description": "(green) workflow-builder skill",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-860": {
+      "description": "(green) Runner: resume without re-execution, and ordered cancellation",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-861": {
+      "description": "(green) Runner: run-level budget, stall detection, and terminal roll-up",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-862": {
+      "description": "(green) Node adapter: output-schema enforcement, artifact checks, idempotency key",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-863": {
+      "description": "(green) Builder tools: versioned editing with optimistic concurrency",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-866": {
+      "description": "(red) Handoff invariant: a run completes with every outbound message dropped",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-867": {
+      "description": "(green) Handoff writes name exactly one owner and are atomically claimed",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-868": {
+      "description": "(green) WorkflowControlPlane: one shared operation set for every surface",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-870": {
+      "description": "(green) Archive semantics: hide and disable without erasing history",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-871": {
+      "description": "(green) Purge guard: refuse while runs reference the definition",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-852": {
+      "description": "(green) Runner host in the fleet service with singleton enforcement",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-853": {
+      "description": "(refactor) Layer model and dependency declarations updated",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-854": {
+      "description": "(green) Channel binding and run narration",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-855": {
+      "description": "(green) Gate resolution: control-plane only, in-channel, reviewer chooses outcome",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-856": {
+      "description": "(green) Typed schedule trigger, tested through the real firing path",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-857": {
+      "description": "(green) Operator signing and workflow CLI",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-858": {
+      "description": "(green) End-to-end: describe, sign, run twice, identical path",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-864": {
+      "description": "(green) End-to-end: two runs of one signed workflow produce identical paths",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-869": {
+      "description": "(red) Removability test: every capability works with the dashboard uninstalled",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-872": {
+      "description": "(green) Dashboard workflow routes: thin delegating adapter",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-873": {
+      "description": "(green) Dashboard management surface: list, create, edit, archive, run",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-874": {
+      "description": "(green) Definition graph and live run status views",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-865": {
+      "description": "(refactor) Refactor: scoped runner queries and bounded accumulation",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-875": {
+      "status": "done"
+    },
+    "T-876": {
+      "status": "done"
+    }
+  },
+  "task_order": [
+    "T-826",
+    "T-827",
+    "T-828",
+    "T-829",
+    "T-830",
+    "T-831",
+    "T-832",
+    "T-833",
+    "T-834",
+    "T-835",
+    "T-836",
+    "T-837",
+    "T-838",
+    "T-839",
+    "T-840",
+    "T-841",
+    "T-842",
+    "T-843",
+    "T-844",
+    "T-845",
+    "T-846",
+    "T-847",
+    "T-848",
+    "T-849",
+    "T-850",
+    "T-851",
+    "T-860",
+    "T-861",
+    "T-862",
+    "T-863",
+    "T-866",
+    "T-867",
+    "T-868",
+    "T-870",
+    "T-871",
+    "T-852",
+    "T-853",
+    "T-854",
+    "T-855",
+    "T-856",
+    "T-857",
+    "T-858",
+    "T-864",
+    "T-869",
+    "T-872",
+    "T-873",
+    "T-874",
+    "T-865"
+  ],
+  "meta": {
+    "last_updated": "2026-08-02",
+    "sessions": 1,
+    "total_tasks": 48
+  }
+}

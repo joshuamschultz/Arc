@@ -139,4 +139,30 @@ def build_loop_controls(agent: ArcAgent, session: SessionManager) -> dict[str, A
     }
 
 
-__all__ = ["build_approval_provider", "build_loop_controls", "resolve_approval_set"]
+def narrowed_loop_controls(
+    agent: ArcAgent, session: SessionManager, requested: list[str] | None
+) -> dict[str, Any]:
+    """Loop-control kwargs, narrowed by a caller-requested strategy allowlist.
+
+    A caller (a workflow node, SPEC-061 REQ-243) may pin which strategies its
+    turn may use, but it may never WIDEN what the operator allowed in
+    ``arcrun.toml``: the request is intersected with a configured allowlist, so
+    the tighter set always wins — the same rule the per-run token/cost budget
+    follows.
+    """
+    controls = build_loop_controls(agent, session)
+    if requested is None:
+        return controls
+    configured = controls.get("allowed_strategies")
+    controls["allowed_strategies"] = (
+        requested if not configured else [s for s in requested if s in configured]
+    )
+    return controls
+
+
+__all__ = [
+    "build_approval_provider",
+    "build_loop_controls",
+    "narrowed_loop_controls",
+    "resolve_approval_set",
+]

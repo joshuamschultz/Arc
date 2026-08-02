@@ -1,11 +1,19 @@
 import { getToken } from './auth'
 
-/** Thrown on any non-2xx API response; carries the server's `{error}` text. */
+/** Thrown on any non-2xx API response; carries the server's `{error}` text.
+ *
+ * `errors` is populated when the body is a typed field-error list (SPEC-061
+ * ArcFlow's `{"errors": [{node_id, field, error, observed, admissible}]}`,
+ * COMP-002) — callers that need to render against the offending node/field
+ * (rather than a single flattened message) read this instead of `.message`.
+ */
 export class ApiError extends Error {
   status: number
-  constructor(status: number, message: string) {
+  errors?: Array<Record<string, unknown>>
+  constructor(status: number, message: string, errors?: Array<Record<string, unknown>>) {
     super(message)
     this.status = status
+    this.errors = errors
     this.name = 'ApiError'
   }
 }
@@ -15,28 +23,42 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
-async function parseError(res: Response): Promise<string> {
+async function parseError(
+  res: Response,
+): Promise<{ message: string; errors?: Array<Record<string, unknown>> }> {
   try {
     // Most routes use `ErrorResponse{error}`; the knowledge mutation routes
-    // (COMP-002) return `{status, results: [{error}]}` on a 404/500 instead —
-    // check both so a failed edit/delete surfaces its real reason verbatim.
+    // (COMP-002) return `{status, results: [{error}]}` on a 404/500 instead;
+    // workflow routes (SPEC-061) return `{errors: [{node_id, field, ...}]}`
+    // on a validation rejection — check all three so a failed request
+    // surfaces its real reason verbatim.
     const body = (await res.json()) as {
       error?: string
+      errors?: Array<Record<string, unknown>>
       results?: Array<{ error?: string | null }>
     }
-    if (body?.error) return body.error
+    if (Array.isArray(body?.errors) && body.errors.length) {
+      return {
+        message: body.errors.map((e) => `${e.field}: ${e.error}`).join('; '),
+        errors: body.errors,
+      }
+    }
+    if (body?.error) return { message: body.error }
     const resultErrors = body?.results?.map((r) => r.error).filter(Boolean)
-    if (resultErrors?.length) return resultErrors.join('; ')
+    if (resultErrors?.length) return { message: resultErrors.join('; ') }
   } catch {
     /* not JSON */
   }
-  return `HTTP ${res.status}`
+  return { message: `HTTP ${res.status}` }
 }
 
 /** GET `path`, returning parsed JSON. Throws `ApiError` on failure. */
 export async function apiGet<T>(path: string, signal?: AbortSignal): Promise<T> {
   const res = await fetch(path, { headers: authHeaders(), signal })
-  if (!res.ok) throw new ApiError(res.status, await parseError(res))
+  if (!res.ok) {
+    const parsed = await parseError(res)
+    throw new ApiError(res.status, parsed.message, parsed.errors)
+  }
   return (await res.json()) as T
 }
 
@@ -50,7 +72,10 @@ async function apiSend<T>(
     headers: { ...authHeaders(), 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   })
-  if (!res.ok) throw new ApiError(res.status, await parseError(res))
+  if (!res.ok) {
+    const parsed = await parseError(res)
+    throw new ApiError(res.status, parsed.message, parsed.errors)
+  }
   // 204 No Content (e.g. DELETE) carries no body — parsing it as JSON would throw.
   if (res.status === 204) return undefined as T
   return (await res.json()) as T

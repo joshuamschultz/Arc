@@ -72,6 +72,10 @@ tutorial = [
 # closes CVEs surfaced by the CI pip-audit gate; see sbom/security-suppressions.txt
 # for anything that could NOT be floored.
 constraint-dependencies = [
+    "click>=8.3.3",           # PYSEC-2026-2132 (via arccmd/uvicorn)
+    "mcp>=1.28.1",           # PYSEC-2026-3481/3482/3483 (via arc-agent)
+    "setuptools>=83.0.0",    # PYSEC-2026-3447 (runtime transitive via torch)
+    "torch>=2.13.0",         # PYSEC-2025-194 (default arcmemory[local] runtime)
     "pyjwt>=2.13.0",          # PYSEC-2026-120/175/176/177/178/179 (via mcp[crypto], msal)
     "python-multipart>=0.0.31", # CVE-2026-40347/42561/53538/53539/53540 (via mcp)
     "requests>=2.33.0",       # CVE-2026-25645 (via azure-core, docker)
@@ -124,7 +128,7 @@ warn_return_any = true
 # Skill payload scripts ship inside skill bundles (not importable package
 # modules); several share a filename (e.g. validate.py), which collides under
 # mypy's module resolution. They are not part of the typed package surface.
-exclude = '/skills/[^/]+/scripts/'
+exclude = ['\/skills\/[^/]+\/scripts\/', '\/src\/arctui\/tests\/']
 
 # Optional third-party dependencies without type stubs. These are guarded by
 # runtime import checks and only pulled in via extras (otel/aws/docker/schema).
@@ -154,6 +158,12 @@ module = [
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
+# Sigstore is an optional arcskill hub dependency and does not publish complete
+# typing metadata. The module performs an importability check before loading it.
+module = ["arcskill.hub.verify"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
 # The Slack integration's @app.event handlers are decorated by the stub-less
 # optional slack_bolt lib (its decorators resolve to Any), so strict
 # untyped-decorator checks don't apply to this optional-dependency module.
@@ -166,7 +176,13 @@ warn_unused_ignores = false
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-addopts = "--strict-markers -v"
+# importlib import mode keys test modules by full path. Several packages ship a
+# `tests` package with same-named submodules, so under the default prepend mode
+# `pytest packages/a/tests packages/b/tests` collides on `tests.integration.*`
+# and dies in collection — which is why the full cross-package matrix could never
+# be run in one command. Per-package runs were unaffected, so this stayed hidden.
+addopts = "--strict-markers -v --import-mode=importlib"
 markers = [
     "slow: end-to-end test that starts a real nats-server (skipped when the binary is absent)",
+    "requires_docker: needs a reachable Docker daemon; skipped locally, required in CI",
 ]

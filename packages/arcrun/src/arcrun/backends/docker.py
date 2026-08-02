@@ -34,6 +34,8 @@ Capabilities
 from __future__ import annotations
 
 import asyncio
+import shutil
+import subprocess
 import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -112,6 +114,36 @@ class DockerBackend:
         # Key: handle_id, Value: exec PID as reported by docker exec's --detach-keys trick.
         # For simplicity we track the docker exec subprocess so we can cancel it directly.
         self._exec_procs: dict[str, asyncio.subprocess.Process] = {}
+
+    # ------------------------------------------------------------------
+    # Availability (fail-closed, mirrors VmBackend.available)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def available() -> bool:
+        """True only when a Docker *daemon* answers, not merely that a CLI exists.
+
+        ``shutil.which("docker")`` is not this check. OrbStack and Docker Desktop
+        both leave the CLI on PATH while the daemon is stopped, so a which-based
+        probe reports container isolation as available and the run fails later on
+        a socket error. Ask the daemon.
+        """
+        docker = shutil.which("docker")
+        if docker is None:
+            return False
+        try:
+            return (
+                subprocess.run(  # noqa: S603 — fixed argv, absolute path from which, no shell
+                    [docker, "info"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=15,
+                    check=False,
+                ).returncode
+                == 0
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
 
     # ------------------------------------------------------------------
     # Protocol implementation

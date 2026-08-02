@@ -73,6 +73,19 @@ class _State:
     # idle agent. The dispatch loop calls it to actually run an assigned task.
     # None until agent:ready fires (or in test paths that never dispatch).
     agent_run_fn: Any = None
+    # The agent's per-session lethal-trifecta ledger and capability registry,
+    # both bound at ``agent:ready``. The ledger is how a workflow node's fresh
+    # session inherits the RUN's accumulated legs (COMP-015) instead of resetting
+    # them; the registry is how a node's declared skill is activated
+    # deterministically rather than by hoping the model calls ``use_skill``.
+    # None outside a fully-wired agent (bare/test construction).
+    capability_ledger: Any = None
+    skill_registry: Any = None
+    # The shared team root. A workflow run's declared artifacts are relative to
+    # ``<team_root>/shared/runs/<run_id>/`` (D-539), which is what makes artifact
+    # containment structural rather than a rule. Empty for a solo agent, which
+    # then contains against its own workspace.
+    team_root: str = ""
     # Serialises the lazy first-use build in ``ensure_store`` so two concurrent
     # first tool calls can't both open the backend + a live NATS connection
     # (REL-F4 check-then-act race -> one orphaned connection).
@@ -108,6 +121,7 @@ def configure(
     operator_signer: Any = None,
     registry: Any = None,
     messenger: Any = None,
+    team_root: str = "",
 ) -> None:
     """Bind module state for the CURRENT asyncio task. Called once at agent startup.
 
@@ -130,6 +144,7 @@ def configure(
             operator_signer=operator_signer,
             registry=registry,
             messenger=messenger,
+            team_root=team_root,
         )
     )
 

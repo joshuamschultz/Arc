@@ -413,6 +413,21 @@ stuck_reclaim_seconds = 300.0  # orphaned in_progress reclaim threshold
 routing = true               # auto-route ownerless tasks to least-loaded agent
 notify = true                # operator/assignee notifications on transitions
 
+[modules.workflows]
+enabled = true
+priority = 100
+
+[modules.workflows.config]
+# ArcFlow (SPEC-061): named, signed workflow definitions this agent can author
+# from conversation and run. Declared here because an undeclared module sits
+# dead fleet-wide — the builder tools never register and nothing says why.
+workflows_dir = "workflows"  # bundle root, relative to the agent's workspace
+data_dir = ""                # empty defers to arcstore.resolve_data_dir (shared store)
+max_workflows = 50           # quota, checked before any validation work (LLM10)
+max_nodes = 200              # per-definition node ceiling
+max_inline_text_length = 2000  # ceiling on inline free text a builder tool accepts
+max_repair_attempts = 3      # bounded self-repair before asking the human
+
 [modules.runcontrol]
 enabled = true
 priority = 100

@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 import sqlite3
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -360,6 +361,59 @@ class SqliteBackend:
         )
         return won
 
+    async def mutable_create_batch(
+        self,
+        collection: str,
+        entries: Sequence[tuple[str, dict[str, Any]]],
+        *,
+        actor_did: str,
+        sink: Any | None = None,
+    ) -> list[dict[str, Any]]:
+        """Atomically ``INSERT OR IGNORE`` many rows in one transaction (SPEC-061 COMP-007).
+
+        All entries commit or none do (single ``BEGIN IMMEDIATE``, mirroring
+        ``_write_batch``'s operational-table pattern). A key that already
+        exists is left untouched and its CURRENT stored row is returned
+        instead of the caller's proposed value, so a crashed caller re-
+        invoking this with the same ``(collection, key)`` pairs gets back the
+        rows already created rather than duplicating or clobbering them.
+        Results are returned in the same order as ``entries``.
+        """
+        rows = await asyncio.to_thread(self._mutable_create_batch, collection, list(entries))
+        self._emit_mutable_audit(
+            action="mutable.create_batch", target=collection, actor_did=actor_did, sink=sink
+        )
+        return rows
+
+    async def mutable_increment(
+        self,
+        collection: str,
+        key: str,
+        deltas: dict[str, int | float],
+        *,
+        actor_did: str,
+        sink: Any | None = None,
+    ) -> bool:
+        """Atomically add each numeric ``delta`` to its dotted JSON path (SPEC-061 COMP-006).
+
+        ``json_set``/``json_extract`` compose into a single ``UPDATE`` under
+        ``BEGIN IMMEDIATE`` — no read-then-write gap: every new value is
+        ``COALESCE(json_extract(value, path), 0) + delta`` computed against
+        the row's pre-update ``value`` (SQL's ``SET`` reads the old row), so
+        two counters incremented in the same call (e.g. tokens and wall-clock)
+        both land, and a fresh, never-set counter still starts from zero
+        rather than raising. Returns True iff the row existed.
+        """
+        won = await asyncio.to_thread(self._mutable_increment, collection, key, deltas)
+        self._emit_mutable_audit(
+            action="mutable.increment",
+            target=f"{collection}/{key}",
+            actor_did=actor_did,
+            sink=sink,
+            outcome="applied" if won else "no-op",
+        )
+        return won
+
     def _emit_mutable_audit(
         self, *, action: str, target: str, actor_did: str, sink: Any, outcome: str = "applied"
     ) -> None:
@@ -615,6 +669,66 @@ class SqliteBackend:
             # and the merge happen inside one atomic SQLite step (the
             # pairing.py:788-794 claim pattern) — no read-then-write gap for a
             # second concurrent caller to slip through.
+            conn.execute("BEGIN IMMEDIATE")
+            cur = conn.execute(sql, params)
+            conn.commit()
+            return cur.rowcount > 0
+        finally:
+            conn.close()
+
+    def _mutable_create_batch(
+        self, collection: str, entries: list[tuple[str, dict[str, Any]]]
+    ) -> list[dict[str, Any]]:
+        now = datetime.now(UTC).isoformat()
+        conn = self._connect()
+        try:
+            conn.row_factory = sqlite3.Row
+            # BEGIN IMMEDIATE up front so the whole batch — every row across
+            # every owner — commits or none of it does; no other writer can
+            # observe a partial batch (SPEC-061 COMP-007 cross-owner atomicity).
+            conn.execute("BEGIN IMMEDIATE")
+            for key, value in entries:
+                payload = json.dumps(value, ensure_ascii=True, separators=(",", ":"))
+                conn.execute(
+                    "INSERT OR IGNORE INTO mutable_records(collection, key, value, updated_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    (collection, key, payload, now),
+                )
+            results: list[dict[str, Any]] = []
+            for key, _value in entries:
+                row = conn.execute(
+                    "SELECT value, updated_at FROM mutable_records WHERE collection=? AND key=?",
+                    (collection, key),
+                ).fetchone()
+                results.append(_decode_mutable_row(row))
+            conn.commit()
+            return results
+        finally:
+            conn.close()
+
+    def _mutable_increment(
+        self, collection: str, key: str, deltas: dict[str, int | float]
+    ) -> bool:
+        if not deltas:
+            return False
+        # Nested json_set() calls, each reading json_extract(value, ...) —
+        # "value" always resolves to the row's PRE-update contents inside a
+        # single UPDATE's SET expression, so disjoint paths never clobber one
+        # another and there is no read-then-write gap for a lost increment.
+        expr = "value"
+        params: list[Any] = []
+        for path, delta in deltas.items():
+            json_path = f"$.{path}"
+            expr = f"json_set({expr}, ?, COALESCE(json_extract(value, ?), 0) + ?)"
+            params.extend([json_path, json_path, delta])
+        now = datetime.now(UTC).isoformat()
+        sql = (
+            f"UPDATE mutable_records SET value={expr}, updated_at=? "  # noqa: S608
+            "WHERE collection=? AND key=?"
+        )
+        params.extend([now, collection, key])
+        conn = self._connect()
+        try:
             conn.execute("BEGIN IMMEDIATE")
             cur = conn.execute(sql, params)
             conn.commit()

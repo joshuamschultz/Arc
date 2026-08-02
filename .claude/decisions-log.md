@@ -6119,3 +6119,265 @@ _(no decisions in this category for this feature)_
 ### Related Solutions
 _(none)_
 
+
+---
+
+## ArcFlow — Named Signed Workflows — Build Decisions (2026-08-01)
+
+**Phase**: build | **Status**: complete | **Total decisions**: 37 (32 user, 5 auto-applied)
+**ID range**: D-501 to D-537
+**Priority framework**: simplicity → modularity → security → scalability
+
+### Summary
+Named, semi-permanent, signed workflow.toml graphs (nodes: agent/tool/script/router/gate) authored conversationally/IDE/arcui, executed on the existing task-DAG substrate by a deterministic fleet runner owned by arcteam. Design draft: .claude/specs/SPEC-061-arcflow/DESIGN.md.
+
+### Auto-Applied (Compliance Mandates)
+| ID | Category | Decision | Mandated Answer | Citation |
+|---|---|---|---|---|
+| D-501 | Audit & Compliance | Audit trail | All workflow lifecycle events (created/edited/signed/activated, run state changes, router choices, loop iterations, gate resolutions) emit AuditEvents to the operator-signed WORM chain with actor DID. | fedramp/nist regime — steering tech.md ## Compliance; NIST 800-53 AU; CLAUDE.md Pillar 4 |
+| D-502 | Security | Artifact signing | Definitions verified via arctrust .arcsig sidecars pinned to the operator key before execution; unsigned refused above personal tier. | CLAUDE.md Pillar 2 (Sign); LLM03/ASI04; SPEC-047 pinned-not-TOFU fix |
+| D-503 | Security | Per-call authorization | Every node tool call passes PolicyPipeline with caller DID; first-DENY-wins; fail-closed. | CLAUDE.md Pillars 1+3; NIST 800-53 AC/IA |
+| D-504 | Security | Input validation at trust boundaries | Run input schema-validated against [input].schema; definition free-text fields pass the same sanitizer discipline as Task fields. | OWASP baseline; LLM01 |
+| D-505 | Security | Secret management | No secrets in workflow files, prompts, or schemas; vault-backed short-lived credentials only. | OWASP baseline; LLM07; CLAUDE.md Security |
+
+### Architecture
+
+#### D-506: Engine home
+**Decision**: arcteam owns the workflow engine (models, validator, runner, run coordination); arcagent gets only a thin tool module exposing workflow_* tools that call into arcteam.
+**Priority**: modularity
+**Alternatives**: arcagent module owns everything; new arcflow package
+**Rationale**: Josh: workflows ARE multi-agent coordination and arcteam owns the coordination layer; arcflow is a narrowed multi-agent coordination. Layering stays clean: the runner needs only arcstore + messaging, never arcagent.
+
+#### D-507: Execution substrate
+**Decision**: A run instantiates onto the existing tasks module + arcstore task DAG (blocked_by/deps_met/claim/retry/review). No third DAG engine.
+**Priority**: simplicity
+**Alternatives**: extend modules/planning; new bespoke executor
+**Rationale**: The task layer already owns atomic claims, dependency gating, retries, dead-letter, review gates, and cross-agent handoff; planning stays for ad-hoc self-decomposed goals.
+
+#### D-508: Run progression
+**Decision**: A dedicated fleet runner: deterministic arcteam code hosted in the existing arc service process. No orchestrator agent; models never sequence.
+**Priority**: security
+**Alternatives**: owning agent hosts the runner; any participant advances runs
+**Rationale**: One authoritative progressor for cross-agent graphs; deterministic control flow with LLM calls confined to journaled nodes (durable-execution research consensus; app-store D-004/D-022/D-024).
+
+#### D-509: Vocabulary and node kinds
+**Decision**: Graph units are nodes (not stages). Kinds: agent (LLM step w/ optional skill + strategy), tool (API calls are tools), script, router, gate.
+**Priority**: simplicity
+**Alternatives**: stage vocabulary per app-store docs
+**Rationale**: Josh's call; app-store docs adopt [[node]] when next touched.
+
+#### D-510: Multi-agent scope
+**Decision**: Multi-agent in v1: every node names its executing agent.
+**Priority**: modularity
+**Alternatives**: single-owner v1, multi-agent v2
+**Rationale**: The point of the feature is coordinated multi-agent processes; the task substrate already supports cross-agent assignment with signed DMs.
+
+#### D-511: Handoff transport
+**Decision**: Dispatch stays task + signed DM (atomic, no per-member triage cost); every transition is narrated to the workflow's group channel; narration never wakes a run.
+**Priority**: security
+**Alternatives**: handoff by channel broadcast
+**Rationale**: Broadcast dispatch burns a classification call per member and gives up atomicity; narration gives the public visibility Josh wants without the tax (app-store D-026).
+**Note**: the phrase "task + signed DM" was ambiguous about which one *is* the handoff — [clarified by D-538](#d-538-handoff-is-a-task-write-never-a-message).
+
+#### D-538: Handoff is a task write, never a message
+**Decision**: The handoff between workflow nodes IS the task-row write that sets the next node's owner. A signed DM may follow only as a wake signal — it never contains the work, and a lost DM costs latency only because the owning agent's dispatch loop finds the row regardless. No run's progress may depend on a message being delivered, read, or acted upon. Messaging in a workflow is narration and signalling only.
+**Priority**: security
+**Alternatives**: handoff carried in message bodies; handoff by channel post
+**Rationale**: Four properties a task row has and a message does not — (1) it **forces action**: a task must be claimed and driven to a terminal state, while a message can be read and ignored with no trace; (2) it **retries**: attempts, backoff, timeout and dead-letter already exist per row, whereas delivery is fire-and-forget; (3) it **has history**: a durable queryable audited row records what was handed off and what came back, where a chat line is a story, not a state machine; (4) it **directs ownership**: `owner_did` plus the atomic claim guarantees exactly one named executor, where in a channel anyone may answer, several may, or none. Clarifies D-511 rather than reversing it — dispatch was always task-first; this removes any reading in which the DM carries the work.
+
+#### D-539: A run is an office, not a data bus — the shared run workspace
+**Decision**: Every run gets a shared workspace at `<team_root>/shared/runs/<run_id>/`, alongside the team shared-files area that already exists. Each node's agent works there for its node and keeps its own private workspace for its own state. Work product lives as files in that shared folder; a node's typed `output` carries only the facts the graph needs (router inputs, the did-you-do-it contract); an agent's memory and identity stay home (ADR-029). `artifacts` are paths relative to the run workspace.
+**Priority**: simplicity
+**Alternatives**: marshal work product through task-row metadata and message payloads; per-node output blobs in the store
+**Rationale**: Josh's framing — people working a process either collaborate on a shared folder or keep their own files, agents already do work, and a workflow only controls order and assignment. Inventing a transport for work product is the part that would have made this feature big. Three consequences fall out: no size or encoding decisions for bulk output; the "trust the filesystem, not the report" check is just looking in the shared folder; and path confinement stops being a guard someone must remember, because the workspace IS the boundary. That last point retires a whole defect class — an untested confinement guard on agent-supplied file paths was the most serious bug found during implementation, and this design removes the need for the guard rather than testing it harder.
+
+
+#### D-512: Authoring surfaces
+**Decision**: Three surfaces from day one — IDE (hand-edit TOML), conversation (validated builder tools guided by a shipped workflow-builder skill), arcui editor — all converging on one artifact and one validator; every surface produces unsigned drafts.
+**Priority**: modularity
+**Alternatives**: conversation-only v1; LLM emits raw TOML
+**Rationale**: n8n lesson: constrain generation to validated builder tools emitting the canonical schema so agent-authored and human-authored converge on the same code path.
+
+### Data Model
+
+#### D-513: Canonical artifact and storage
+**Decision**: workflow.toml + schemas/ + prompts/ + scripts/ in the owning agent's workspace with detached .arcsig sidecars; prior versions retained as versions/<n>.toml; arcstore indexes (metadata, version, content hash) but never owns; written via direct filesystem I/O (ADR-029).
+**Priority**: security
+**Alternatives**: definitions in arcstore rows; git-only history
+**Rationale**: One canonical serialized form is simultaneously the executable, the UI render source, and the diffable audit record (Step Functions/n8n single-artifact discipline); workspace-is-truth is the app-store rule.
+
+#### D-514: Node materialization
+**Decision**: Lazy frontier materialization: the runner creates a task row only when a node becomes reachable. Untaken branches never become tasks and need no status. The Run row records the path taken (ordered nodes, router choices, loop iterations) as the authoritative trace.
+**Priority**: simplicity
+**Alternatives**: instantiate all nodes upfront + new skipped status; done+resolution=skipped
+**Rationale**: Josh: an untaken branch needs no status — only the final path taken must be recorded. Also unifies with loops, which must materialize iterations lazily anyway.
+
+#### D-515: Typed handoff
+**Decision**: Every producing node declares output_schema (JSON Schema), validated on completion — schema failure is a retryable node failure. Nodes may declare required artifacts (files that must exist on disk for completion to count). Downstream wiring via $nodes.<id>.output.<field> and $input.<field>, resolved by deterministic runner code from journaled outputs.
+**Priority**: security
+**Alternatives**: free-form output dicts + prose handoff (status quo)
+**Rationale**: ARC-3: a schema is a contract, a prompt asking the model to be careful is not. Artifact checks are the BlastForge pipeline.py lesson: trust the filesystem, not the report.
+
+#### D-516: Run aggregate
+**Decision**: New arcstore runs mutable collection (ARC-1): run_id, workflow id+version+hash, status (pending/running/waiting_gate/done/failed/cancelled), initiator DID, budget, path taken, per-node rollup.
+**Priority**: modularity
+**Alternatives**: extend the spool tables; no Run row (status quo GROUP BY)
+**Rationale**: SpoolKind is a closed Literal with no run_id; every app UI asks is-it-done/what-stage/what-cost and nothing can answer that today.
+
+#### D-517: Loops
+**Decision**: Declared bounded back-edges only: loop_back_to + mandatory max_iterations, statically validated to target an ancestor within the same branch; exhaustion fails the node; every iteration is a fresh audited task row.
+**Priority**: security
+**Alternatives**: free cycles (LangGraph-style); no loops (pure DAG)
+**Rationale**: Production graphs need revise loops (LangGraph retrospective) but unbounded model-driven cycles forfeit auditability and budget control.
+
+#### D-518: Routers and conditional edges
+**Decision**: Routers choose only among pre-declared routes. mode=rules evaluates when-predicates (equality/comparison/boolean over $nodes.*.output.* and $input.* only); mode=llm is an Infer step whose output schema is an enum of the declared route ids, choice recorded and audited.
+**Priority**: security
+**Alternatives**: LLM picks any next node dynamically
+**Rationale**: D-004: models fill in nodes, deterministic code sequences; an enum-constrained choice among declared branches preserves that while allowing judgment-based routing.
+
+### API Design
+
+#### D-519: Tool and CLI surface
+**Decision**: Agent tools: workflow_create/add_node/edit_node/remove_node/set_trigger/set_channel (drafts), workflow_run, workflow_list/inspect/runs/run_status (read-only), workflow_cancel_run. CLI: arc workflow list/show/run/sign/verify/approve. arcui routes mirror the tasks route patterns (operator gate + emit_mutation_audit).
+**Priority**: simplicity
+**Alternatives**: single workflow_edit mega-tool; CLI-only authoring
+**Rationale**: Targeted tools give the model small validated moves with repairable errors; CLI keeps the signing key out of the agent process.
+
+#### D-520: Versioning contract
+**Decision**: Edits bump a monotonic version and require expected_version (optimistic concurrency, stale edits refused); in-flight runs stay pinned to the version+hash they started from; edits never touch a running instantiation.
+**Priority**: security
+**Alternatives**: mutable definition, runs read latest; git-commit-per-edit as the only history
+**Rationale**: Temporal's versioning discipline + n8n's edit-concurrency pattern; prevents mid-run definition drift.
+
+### Observability
+
+#### D-521: Telemetry reuse
+**Decision**: No new telemetry system: per-node execution reuses the hash-chained arcrun EventBus + arcstore spool; the run view joins on pinned run_id exactly as the existing timeline does; the group channel is the human-readable story.
+**Priority**: simplicity
+**Alternatives**: dedicated workflow event stream
+**Rationale**: The tamper-evident chain and the timeline join already exist and are tested; a second stream would drift.
+
+### Audit & Compliance
+
+#### D-522: Gate resolution identity
+**Decision**: Real human DID on gate resolutions is a named prerequisite (SPEC-057 control-plane identity); until it lands, resolutions record the operator role DID and the run view flags them as role-attributed.
+**Priority**: security
+**Alternatives**: ship with role-DID silently (status quo)
+**Rationale**: arcui routes/tasks.py hardcodes did:arc:ui:operator — 'who approved this' is unanswerable per-person today; the workflow audit story requires the person.
+
+### Security
+
+#### D-523: Draft/sign split
+**Decision**: Agents and UIs author unsigned drafts only; signing is out-of-band via arc workflow sign with the operator key, which never enters the agent process. Any edit drops the definition back to draft (content hash changes).
+**Priority**: security
+**Alternatives**: agent-process signing on edit; no signing for workflows
+**Rationale**: If the authoring process could sign, prompt injection could author an exfiltration pipeline and bless it (LLM06/ASI04); mirrors arc approve and arc blueprint sign.
+**Deployment**: personal: unsigned drafts may run with an audit warning | enterprise: unsigned/agent-signed definitions refused, fail-closed | federal: unsigned/agent-signed definitions refused, fail-closed
+
+#### D-524: Trifecta accumulation scope
+**Decision**: Lethal-trifecta capability legs accumulate per RUN: the runner threads accumulated legs into every node's PolicyContext.session_capabilities. Hard v1 requirement.
+**Priority**: security
+**Alternatives**: per-node sessions reset legs (status quo behavior)
+**Rationale**: Fresh per-node sessions would let a workflow complete a forbidden composition across nodes that no single session could — a gate bypass by construction.
+
+#### D-525: Activation approval
+**Decision**: At definition/edit time the validator computes the union of capability legs the graph can touch; a trifecta-spanning definition requires an operator-signed ApprovalGrant at first activation and on any widening edit — not per run.
+**Priority**: security
+**Alternatives**: approve every run; no activation gate
+**Rationale**: Reuses SPEC-035 HumanGate/arc approve machinery; per-run approval would train operators to rubber-stamp.
+**Deployment**: personal: auto-approvable for named compositions per existing policy | enterprise: operator grant required | federal: operator grant required; never auto-approved
+
+#### D-526: Gate reject semantics
+**Decision**: The reviewer chooses per decision: reject-fail (terminate the run) or reject-revise (re-materialize the gated node's upstream with reviewer notes injected). Both audited.
+**Priority**: simplicity
+**Alternatives**: always fail; always send back
+**Rationale**: Matches BlastForge's fix-approval flow and real review behavior; some rejections mean stop, some mean fix.
+
+#### D-527: Side-effect idempotency
+**Decision**: Node attempt ids carry into tool dispatch as idempotency keys so a retried node cannot double-send or double-write (ARC-6).
+**Priority**: security
+**Alternatives**: rely on at-least-once and hope
+**Rationale**: Retry + external side effects without dedup turns 'at least once' into 'twice invoiced'.
+
+### Integration
+
+#### D-528: Trigger seam
+**Decision**: ScheduleEntry gains a typed action (kind=prompt | workflow_run): a workflow [trigger] materializes as a schedule whose firing calls the run entry directly — deterministic dispatch, no model deciding to start. Event triggers (message/webhook) deferred; the action.kind seam accommodates them.
+**Priority**: security
+**Alternatives**: free-text prompt asking the agent to run it (status quo)
+**Rationale**: The scheduler's only mechanism today is English-and-hope into agent_run_fn; a workflow trigger must be a hard structured dispatch.
+
+#### D-529: MCP scope
+**Decision**: MCP tools are out of scope for workflow nodes until the MCP transport is actually built (enum + dependency exist, zero dispatch).
+**Priority**: simplicity
+**Alternatives**: build MCP dispatch inside arcflow
+**Rationale**: Smuggling a transport into a workflow feature would mix concerns; MCP is its own spine work.
+
+### Performance
+
+#### D-530: Per-agent node concurrency
+**Decision**: The existing one-in-progress-task-per-agent cap holds for workflow nodes; parallelism comes from assigning parallel branches to different agents.
+**Priority**: simplicity
+**Alternatives**: lift the cap for workflow tasks; per-workflow concurrency setting
+**Rationale**: Zero changes to the battle-tested claim/dispatch race guards; a same-agent fan-out serializing is acceptable v1 behavior.
+
+#### D-531: Run budget
+**Decision**: RootTokenBudget lifted to the Run; concurrent node accounting reuses planning's reserve-then-settle grants verbatim; runner enforces run-level wall-clock, stall detection, and cancel fan-out (ARC-5).
+**Priority**: scalability
+**Alternatives**: per-node caps only; new budget implementation
+**Rationale**: The concurrency-safe accounting exists and is tested; per-node caps alone cannot stop a livelocked fleet.
+
+### Extensibility
+
+#### D-532: Node strategy field
+**Decision**: strategy on agent nodes threads into arcrun allowed_strategies: omitted = pinned react (deterministic default, no meta-selection call); single entry = forced; list = arcrun's existing select_strategy picks its best among them, audited. Registry-level worker entities (arcteam entity kind) deferred to Phase 4.
+**Priority**: modularity
+**Alternatives**: always let arcrun pick; always pin react
+**Rationale**: Gives both of Josh's modes with machinery that already exists; workflows stay predictable by default.
+
+#### D-533: First companion arcrun strategy
+**Decision**: subagents first: decompose, spawn bounded children that can message each other, synthesize — the strategy shape lives in arcrun with spawn/messaging execution bound in from arcagent (build_arcrun_run_fn pattern). reflect and map follow.
+**Priority**: modularity
+**Alternatives**: reflect first (cheapest); map first
+**Rationale**: Josh's call: closest to the graph-engineering vision of child agents that talk to each other. Noted as the hardest layering of the three; the arcrun boundary (strategies never see the graph) must hold.
+
+### Testing
+
+#### D-534: Test strategy
+**Decision**: TDD per standing rules; coverage gates apply. Four mandatory E2E tests through real paths (producers-unwired guard): schedule trigger fires a real run; output_schema validation actually rejects a bad completion; unsigned definition actually refused at enterprise/federal; accumulated legs actually reach PolicyContext on node N>1. Full package matrix before merge.
+**Priority**: security
+**Alternatives**: unit coverage only
+**Rationale**: The repo's recurring failure is correct predicates with dead activating wiring (SPEC-034/035/037/038/040/043/044/056); these four seams are the likely victims.
+
+### Deployment
+
+#### D-535: Default enablement
+**Decision**: arc agent build scaffold declares [modules.workflows] enabled=true for the tool module; the arcteam runner ships inside the existing arc service process — no new deployment unit.
+**Priority**: simplicity
+**Alternatives**: scaffold declares disabled; no scaffold declaration
+**Rationale**: SPEC-056 lesson: tasks shipped without scaffold declaration and sat dead fleet-wide; removal stays one config line.
+
+### UI/UX
+
+#### D-536: Workflow as group chat
+**Decision**: Every workflow has a group channel whose members are all participating agents and the involved people (owner, gate approvers, coordinator). Handoffs are narrated there; gates surface and are answerable there (the answer routes through the control-plane action with the person's identity — never an agent tool); humans steer agents in-channel via mention-gated activation.
+**Priority**: modularity
+**Alternatives**: narration-only feed; no channel binding
+**Rationale**: Josh: workflows are group chats with all agents and people involved. This is app-store ARC-7 (gates as conversation) + ARC-11 pulled into v1; D-025 gate invariant preserved.
+
+#### D-537: Agents as chat citizens + graph rendering
+**Decision**: Agents are first-class chat participants in arcui alongside people (group and DM). The workflow definition and live-run views render with React Flow (dagre layout), matching the control-plane design language.
+**Priority**: modularity
+**Alternatives**: custom SVG renderer; text/list first
+**Rationale**: The graph is the product story; React Flow ships editor + live view fastest. Agents-in-chat makes the group-chat model real in the UI.
+
+
+### Open Questions
+- arcui editor scope in Phase 3: full graph editing or node-property editing over a rendered graph first?
+- Event triggers (message/webhook/task-created): which lands first after v1?
+- Does the group channel bind per workflow or per run (thread-per-run inside one channel is the likely answer)?
+
+### Related Solutions
+_(none)_
+

@@ -339,7 +339,8 @@ def _emit_audit(
 def _sigstore_importable() -> bool:
     """Return True iff the ``sigstore`` package can be imported."""
     try:
-        import sigstore  # noqa: F401
+        # Optional hub extra does not publish typing metadata.
+        import sigstore  # type: ignore[import-not-found]  # noqa: F401
 
         return True
     except ImportError:
@@ -430,10 +431,11 @@ def _sigstore_verify(
     SignatureInvalid
         On any verification failure.
     """
-    from sigstore.errors import VerificationError
-    from sigstore.models import Bundle
-    from sigstore.verify import Verifier
-    from sigstore.verify.policy import Identity
+    # Optional hub extra does not publish typing metadata.
+    from sigstore.errors import VerificationError  # type: ignore[import-not-found]
+    from sigstore.models import Bundle  # type: ignore[import-not-found]
+    from sigstore.verify import Verifier  # type: ignore[import-not-found]
+    from sigstore.verify.policy import Identity  # type: ignore[import-not-found]
 
     # -- Step 1: locate sidecar -----------------------------------------------
     bundle_file = _locate_bundle_sidecar(bundle_path)
