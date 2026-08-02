@@ -22,6 +22,7 @@ import logging
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 from arcui.routes.workflows import ControlPlaneResult, OperatorActor, WorkflowFieldError
 
@@ -69,12 +70,14 @@ class DashboardWorkflowPlane:
         definitions: Any,
         runs: Any,
         tasks: Any,
+        approvals: Any = None,
         default_owner: str = "@operator",
     ) -> None:
         self._plane = plane
         self._definitions = definitions
         self._runs = runs
         self._tasks = tasks
+        self._approvals = approvals
         self._default_owner = default_owner
 
     @property
@@ -239,6 +242,48 @@ class DashboardWorkflowPlane:
             files={path: content.encode("utf-8")},
         )
         return await self._relay(result, workflow_id=workflow_id)
+
+    async def request_signature(
+        self, workflow_id: str, *, actor: OperatorActor
+    ) -> ControlPlaneResult:
+        """Raise the operator approval whose grant signs this draft.
+
+        Bound to the definition's CONTENT HASH: a draft edited after the ask no
+        longer matches, and approving it is refused rather than signing
+        something the operator never read. Neither this surface nor an agent can
+        sign — both can only ask (REQ-224).
+        """
+        if self._approvals is None:
+            return ControlPlaneResult(
+                errors=[
+                    WorkflowFieldError(
+                        node_id="", field="approvals", error="no approvals store is wired"
+                    )
+                ]
+            )
+        bundle = self._load(workflow_id)
+        if bundle is None:
+            return ControlPlaneResult(not_found=True)
+        from arcstore.approvals import PendingApproval
+
+        approval = await self._approvals.create(
+            PendingApproval(
+                id=f"wfsign_{uuid4().hex[:12]}",
+                agent_did=actor.did,
+                agent_label=workflow_id,
+                tool="workflow_sign",
+                legs=[],
+                call_hash=bundle.content_hash,
+                arguments={
+                    "workflow_id": workflow_id,
+                    "version": str(bundle.definition.version),
+                    "reason": "requested from the dashboard",
+                },
+            )
+        )
+        return ControlPlaneResult(
+            value={"approval_id": approval.id, "status": "pending_operator_approval"}
+        )
 
     async def archive_workflow(
         self, workflow_id: str, *, actor: OperatorActor
@@ -405,6 +450,7 @@ def build_dashboard_plane(
     *,
     runner: Any,
     workflows_root: Path | None = None,
+    approvals: Any = None,
     default_owner: str = "@operator",
 ) -> DashboardWorkflowPlane:
     """Wire the dashboard plane from the runner the fleet service already hosts.
@@ -436,6 +482,7 @@ def build_dashboard_plane(
         definitions=definitions,
         runs=runner.runs,
         tasks=runner.tasks,
+        approvals=approvals,
         default_owner=default_owner,
     )
 

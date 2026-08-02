@@ -544,3 +544,51 @@ class TestLegsAreWrittenBackWhereTheRunnerReadsThem:
         assert stored is not None
         assert stored.status == "done"
         assert stored.metadata["accumulated_legs"] == ["private_data"]
+
+
+class TestTheSessionKeyIsAFilename:
+    """A workflow node's row id is path-shaped; a session key is a filename.
+
+    The live failure: dispatching the first node of a run died with
+    `invalid session key: 'task:wf/run-14052d03515c/review_clients/0'`, which
+    the session manager rejects (correctly — an unvalidated key becomes an
+    out-of-tree write). Every workflow run stopped at its first node.
+    """
+
+    def test_a_path_shaped_task_id_flattens(self) -> None:
+        from arcagent.modules.tasks.capabilities import _session_key
+
+        key = _session_key("wf/run-abc123/review_clients/0")
+
+        assert "/" not in key
+        assert key.startswith("task:wf-run-abc123-review_clients-0")
+
+    def test_the_same_task_always_resumes_the_same_session(self) -> None:
+        from arcagent.modules.tasks.capabilities import _session_key
+
+        assert _session_key("wf/run-abc/n/0") == _session_key("wf/run-abc/n/0")
+
+    def test_two_ids_that_flatten_alike_stay_distinct(self) -> None:
+        """Without the digest, `wf/a/b` and `wf-a-b` would share one session."""
+        from arcagent.modules.tasks.capabilities import _session_key
+
+        assert _session_key("wf/a/b") != _session_key("wf-a-b")
+
+    def test_an_ordinary_task_id_is_untouched(self) -> None:
+        from arcagent.modules.tasks.capabilities import _session_key
+
+        assert _session_key("task_ab12cd34") == "task:task_ab12cd34"
+
+    def test_the_key_survives_the_session_managers_own_check(self, tmp_path: Path) -> None:
+        """Driven through the real validator, not a copy of its rule."""
+        from unittest.mock import MagicMock
+
+        from arcagent.core.config import ContextConfig, SessionConfig
+        from arcagent.core.session_internal.manager import SessionManager
+        from arcagent.modules.tasks.capabilities import _session_key
+
+        manager = SessionManager(SessionConfig(), ContextConfig(), MagicMock(), tmp_path)
+
+        path = manager._session_jsonl_path(_session_key("wf/run-abc123/review_clients/0"))
+
+        assert path.parent == manager._sessions_dir

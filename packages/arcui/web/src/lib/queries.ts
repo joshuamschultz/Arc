@@ -594,6 +594,18 @@ export const useWorkflowRun = (runId: string | null, refetchIntervalMs?: number)
     refetchInterval: refetchIntervalMs,
   })
 
+export const useRequestSignature = (workflowId: string) => {
+  const queryClient = useQueryClient()
+  return useMutation<Dict, Error, void>({
+    mutationFn: () =>
+      apiPost(`/api/workflows/${encodeURIComponent(workflowId)}/request-signature`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['approvals'] })
+      queryClient.invalidateQueries({ queryKey: ['workflow', workflowId] })
+    },
+  })
+}
+
 // The prompt a node actually runs. Fetched only when a panel opens it — a
 // bundle's bodies are not part of the definition payload.
 export const useWorkflowFile = (workflowId: string, path: string | null) =>

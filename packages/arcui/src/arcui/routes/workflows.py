@@ -189,6 +189,12 @@ class WorkflowControlPlane(Protocol):
         """One run's detail: status, path taken, per-node status."""
         ...
 
+    async def request_signature(
+        self, workflow_id: str, *, actor: OperatorActor
+    ) -> ControlPlaneResult:
+        """Queue this exact draft for the operator approval that signs it."""
+        ...
+
     async def read_file(self, workflow_id: str, path: str) -> dict[str, Any] | None:
         """One companion file's text — the prompt a node actually runs."""
         ...
@@ -543,6 +549,27 @@ async def resolve_gate(request: Request) -> Response:
     return _relay(request, result, target=target, operation="gate.resolve", ok_status=200)
 
 
+async def request_signature(request: Request) -> JSONResponse:
+    """POST /api/workflows/{id}/request-signature — queue it for approval.
+
+    The dashboard cannot sign either: it raises the same operator approval an
+    agent raises, bound to this exact content hash, and approving THAT is what
+    signs (REQ-224). One rail, whoever asked.
+    """
+    workflow_id = request.path_params["id"]
+    target = f"workflow:{workflow_id}"
+    denial = _require_operator(request, target=target, operation="workflow.sign.request")
+    if denial is not None:
+        return denial
+
+    plane = _control_plane(request)
+    if plane is None:
+        return _error("workflow_control_plane_unavailable", 503)
+
+    result = await plane.request_signature(workflow_id, actor=_actor(request))
+    return _relay(request, result, target=target, operation="workflow.sign.request", ok_status=201)
+
+
 async def get_workflow_file(request: Request) -> JSONResponse:
     """GET /api/workflows/{id}/file?path=… — one prompt or schema body."""
     workflow_id = request.path_params["id"]
@@ -602,6 +629,7 @@ routes = [
     Route("/api/workflows", create_workflow, methods=["POST"]),
     Route("/api/workflows/{id}", get_workflow, methods=["GET"]),
     Route("/api/workflows/{id}", patch_workflow, methods=["PATCH"]),
+    Route("/api/workflows/{id}/request-signature", request_signature, methods=["POST"]),
     Route("/api/workflows/{id}/file", get_workflow_file, methods=["GET"]),
     Route("/api/workflows/{id}/file", put_workflow_file, methods=["PUT"]),
     Route("/api/workflows/{id}/archive", archive_workflow, methods=["POST"]),
