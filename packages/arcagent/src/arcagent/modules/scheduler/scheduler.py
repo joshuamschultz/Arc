@@ -24,6 +24,9 @@ from arcagent.modules.scheduler.store import ScheduleStore
 if TYPE_CHECKING:
     from arcagent.core.module_bus import ModuleBus
 
+#: How often to repeat the "nothing can fire" warning while unready.
+_UNREADY_WARN_SECONDS = 60.0
+
 _logger = logging.getLogger("arcagent.scheduler")
 
 AgentRunFn = Callable[..., Awaitable[Any]]
@@ -67,6 +70,9 @@ class SchedulerEngine:
         self._running = False
         self._timer_consecutive_errors = 0
         self._ready = asyncio.Event()  # Set when agent_run_fn is bound
+        # Test seam: the configured interval is whole seconds, which makes a
+        # loop test take whole seconds. Overridden only by tests.
+        self._tick_seconds: float = 0.0
 
     @property
     def running(self) -> bool:
@@ -422,10 +428,18 @@ class SchedulerEngine:
             )
 
     async def _timer_loop(self) -> None:
-        """Periodically evaluate all schedules and enqueue those that fire."""
-        # Wait until agent_run_fn is bound (via agent:ready event).
-        await self._ready.wait()
-        interval = self._config.check_interval_seconds
+        """Periodically evaluate all schedules and enqueue those that fire.
+
+        The readiness wait is BOUNDED. It used to be a bare
+        ``await self._ready.wait()``: if ``agent:ready`` never bound a run
+        callback — a hook that did not fire, an ordering that put configure
+        after ready — the loop parked forever and every stored schedule sat
+        enabled, due, and silent. A reminder that will never fire has to say so:
+        this warns on every tick it spends unready with work waiting, and starts
+        ticking the moment a callback arrives.
+        """
+        interval = self._tick_seconds or self._config.check_interval_seconds
+        await self._await_readiness(interval)
         while self._running:
             try:
                 entries = self._store.load()
@@ -447,6 +461,31 @@ class SchedulerEngine:
                     self._running = False
                     return
             await asyncio.sleep(interval)
+
+    async def _await_readiness(self, interval: float) -> None:
+        """Block until a run callback is bound, saying so while it waits."""
+        waited = 0.0
+        while self._running and not self._ready.is_set():
+            try:
+                await asyncio.wait_for(self._ready.wait(), timeout=interval)
+                return
+            except TimeoutError:
+                waited += interval
+                pending = self._pending_count()
+                if pending and waited % _UNREADY_WARN_SECONDS < interval:
+                    _logger.warning(
+                        "Scheduler has %d enabled schedule(s) but no agent run callback "
+                        "after %.0fs — nothing will fire until one is bound",
+                        pending,
+                        waited,
+                    )
+
+    def _pending_count(self) -> int:
+        """Enabled schedules, or 0 if the store cannot be read right now."""
+        try:
+            return sum(1 for entry in self._store.load() if entry.enabled)
+        except Exception:  # reason: a readiness warning must not raise
+            return 0
 
     async def _worker(self) -> None:
         """Sequential execution worker — drains queue one item at a time."""
