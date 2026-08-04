@@ -97,8 +97,10 @@ write_files:
 
 runcmd:
   # Docker's own convenience installer — the distro packages lag too far behind
-  # to have `docker compose` as a plugin.
-  - [sh, -c, "curl -fsSL https://get.docker.com | sh"]
+  # to have `docker compose` as a plugin. Skipped when the machine was created
+  # from a golden snapshot, which already has Docker and the Arc image on disk;
+  # re-running the installer there costs a minute and changes nothing.
+  - [sh, -c, "command -v docker >/dev/null || curl -fsSL https://get.docker.com | sh"]
   - [systemctl, enable, --now, docker]
   - [sh, -c, "cd /opt/arc && docker compose up -d"]
   # Report readiness in the console log so a failed boot is visible rather than
