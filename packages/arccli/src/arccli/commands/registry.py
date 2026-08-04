@@ -164,6 +164,13 @@ def _blueprint_handler(args: list[str]) -> None:
     blueprint_handler(args)
 
 
+def _user_handler(args: list[str]) -> None:
+    """Dispatch wrapper."""
+    from arccli.commands.user import user_handler
+
+    user_handler(args)
+
+
 def _trust_handler(args: list[str]) -> None:
     """Dispatch wrapper."""
     from arccli.commands.trust import trust_handler
@@ -529,6 +536,14 @@ COMMAND_REGISTRY: list[CommandDef] = [
         args_hint="<subcommand>",
         cli_only=True,
         handler=_blueprint_handler,
+    ),
+    CommandDef(
+        name="user",
+        description="Accounts that can sign in — add, list, passwd, role, telegram",
+        category="Tools & Skills",
+        args_hint="<subcommand>",
+        cli_only=True,
+        handler=_user_handler,
     ),
     CommandDef(
         name="team",

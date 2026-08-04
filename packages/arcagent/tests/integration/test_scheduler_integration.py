@@ -5,9 +5,9 @@ End-to-end verification through the LIVE path: the decorator-form
 ``_runtime.configure`` exactly as the capability loader does in production.
 Tests:
 - Schedule creation via the schedule_create tool
-- Execution with metadata update through the engine worker
+- Execution with metadata update through the engine
 - Circuit breaker behavior
-- Graceful shutdown draining the queue
+- The live timer loop firing due work, and teardown stopping it
 """
 
 from __future__ import annotations
@@ -37,9 +37,9 @@ def _reset_runtime() -> Iterator[None]:
     _runtime.reset()
 
 
-def _configure(tmp_path: Path, agent_run_fn: _runtime.AgentRunFn) -> None:
+def _configure(tmp_path: Path, agent_run_fn: _runtime.AgentRunFn, **config: object) -> None:
     _runtime.configure(
-        config={"enabled": True},
+        config={"enabled": True, **config},
         telemetry=MagicMock(),
         workspace=tmp_path,
         agent_run_fn=agent_run_fn,
@@ -80,8 +80,7 @@ class TestSchedulerIntegration:
             entry = st.store.get(schedule_id)
             assert entry is not None
             assert st.engine is not None
-            await st.engine.enqueue(entry)
-            await asyncio.sleep(0.2)
+            await st.engine.execute(entry)
 
             assert "Check inbox" in run_results
             updated = st.store.get(schedule_id)
@@ -150,30 +149,41 @@ class TestSchedulerIntegration:
             await cap.teardown()
 
     @pytest.mark.asyncio
-    async def test_graceful_shutdown_drains_queue(self, tmp_path: Path) -> None:
-        """Queue items should be processed before teardown completes."""
+    async def test_live_loop_fires_due_schedule_then_teardown_stops_it(
+        self, tmp_path: Path
+    ) -> None:
+        """A due schedule fires from the engine's own loop, and teardown ends it.
+
+        The loop runs a firing inline — there is no queue to drain — so what
+        shutdown must guarantee is that the loop stops and nothing keeps ticking.
+        """
         results: list[str] = []
 
         async def mock_run(prompt: str, **kwargs: object) -> str:
             results.append(prompt)
             return "ok"
 
-        _configure(tmp_path, mock_run)
+        _configure(tmp_path, mock_run, check_interval_seconds=1)
         st = _runtime.state()
 
-        cap = Scheduler()
-        await cap.setup(None)
-
         entry = ScheduleEntry(
-            id="sched_drain",
+            id="sched_loop",
             type="interval",
-            prompt="Drain test",
+            prompt="Loop test",
             every_seconds=300,
         )
         st.store.add(entry)
-        assert st.engine is not None
-        await st.engine.enqueue(entry)
-        await asyncio.sleep(0.1)
 
+        cap = Scheduler()
+        await cap.setup(None)
+        assert st.engine is not None
+        for _ in range(40):  # the loop's first tick, without racing a fixed sleep
+            if results:
+                break
+            await asyncio.sleep(0.05)
+
+        assert results == ["Loop test"]  # fired by the loop, not by the test
+        engine = st.engine
         await cap.teardown()
-        assert "Drain test" in results
+        assert engine.running is False
+        assert st.engine is None

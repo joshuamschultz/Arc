@@ -142,6 +142,14 @@ from arctrust.trust_store import (
     load_operator_pubkey,
     register_operator,
 )
+from arctrust.users import (
+    OPERATOR,
+    VIEWER,
+    User,
+    UserStore,
+    UserStoreError,
+    default_users_path,
+)
 from arctrust.validators import (
     ValidatorEntry,
     ValidatorsConfig,
@@ -163,6 +171,8 @@ from arctrust.witness import (
 __all__ = [
     "ECDSA_P256",
     "ED25519",
+    "OPERATOR",
+    "VIEWER",
     "AgentIdentity",
     "AppendOnlyMediumWitness",
     "ArcTrustFipsError",
@@ -192,6 +202,9 @@ __all__ = [
     "ToolCall",
     "TransparencyLogWitness",
     "TrustStoreError",
+    "User",
+    "UserStore",
+    "UserStoreError",
     "ValidatorEntry",
     "ValidatorsConfig",
     "VaultSigner",
@@ -210,6 +223,7 @@ __all__ = [
     "canonical_json",
     "content_sha256",
     "default_operator_key_path",
+    "default_users_path",
     "derive_child_identity",
     "disapprove",
     "dominates",

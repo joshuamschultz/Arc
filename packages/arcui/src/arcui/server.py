@@ -56,6 +56,7 @@ from arcui.routes import team_ws as team_ws_routes
 from arcui.routes import traces as traces_routes
 from arcui.routes import trust as trust_routes
 from arcui.routes import workflows as workflows_routes
+from arcui.routes.auth_routes import ROUTES as _AUTH_ROUTES
 from arcui.team_stream import TeamBusObserver, TeamStreamHub
 
 logger = logging.getLogger(__name__)
@@ -198,6 +199,8 @@ def create_app(
         Route("/sw.js", _service_worker),
         Route("/api/health", _health),
         Route("/api/info", _agent_info),
+        # SPEC-057 REQ-043: sign in as a person, so approvals name one.
+        *[Route(path, handler, methods=methods) for path, handler, methods in _AUTH_ROUTES],
         *traces_routes.routes,
         *config_routes.routes,
         *arcllm_config_routes.routes,

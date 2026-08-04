@@ -120,10 +120,10 @@ class BaseAdapter(LLMProvider):
     def _validate_response_format(self, rf: Any) -> dict[str, Any] | None:
         """Validate the ``response_format`` kwarg shape.
 
-        Returns the validated dict ready to write into a provider
-        request body, or ``None`` when the caller didn't pass one.
-        Adapters that don't support a server-side JSON mode override
-        this to raise ``ArcLLMConfigError``.
+        Returns the validated dict, or ``None`` when the caller didn't
+        pass one (or asked for plain text). Each adapter then renders it
+        into its own provider's shape — a ``response_format`` field on the
+        openai wire, a forced tool call on anthropic.
 
         Accepts these shapes:
 

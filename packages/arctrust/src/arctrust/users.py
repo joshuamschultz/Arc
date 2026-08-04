@@ -1,0 +1,285 @@
+"""Human user identities for a deployment (SPEC-057 REQ-040/041/043).
+
+A bearer token proves someone holds a secret. It does not say who they are, and
+an audit trail whose approvals read "the operator token" cannot answer the only
+question that matters after an incident: which person allowed this. So a
+deployment has *users* — an email, a password, and a DID of their own — and the
+authenticated user becomes the identity recorded against what they approve.
+
+Storage mirrors :mod:`arctrust.operator`: one 0600 file under a 0700 directory in
+``arc_home``, written with direct filesystem I/O. It holds password hashes and
+each user's signing seed, so it carries exactly the same custody expectations as
+``operator.key`` and is checked the same way at load.
+
+Passwords are hashed with Argon2id via PyNaCl at interactive limits — Arc's
+smallest target is a 4GB box, and sensitive limits would make a login there slow
+enough that operators disable it.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import stat
+import time
+import uuid
+from dataclasses import asdict, dataclass, field, replace
+from pathlib import Path
+
+from nacl import pwhash
+from nacl.exceptions import InvalidkeyError
+
+from arctrust.identity import did_from_public_key
+from arctrust.keypair import generate_keypair
+from arctrust.paths import arc_home
+
+_FILE_MODE = 0o600
+_DIR_MODE = 0o700
+
+VIEWER = "viewer"
+OPERATOR = "operator"
+ROLES = (VIEWER, OPERATOR)
+
+
+class UserStoreError(RuntimeError):
+    """The user store is unreadable, mis-permissioned, or malformed."""
+
+
+def default_users_path() -> Path:
+    """``<arc_home>/users.json`` — one store per deployment."""
+    return arc_home() / "users.json"
+
+
+@dataclass(frozen=True)
+class User:
+    id: str
+    email: str
+    password_hash: str
+    did: str
+    public_key: str
+    signing_seed: str
+    roles: tuple[str, ...] = (VIEWER,)
+    # Paired external identity (REQ-041). Password reset goes here, because a
+    # deployment has no mail server and a reset that needs one is a reset that
+    # never happens.
+    telegram_user_id: str | None = None
+    disabled: bool = False
+    created_at: float = field(default_factory=time.time)
+
+    @property
+    def is_operator(self) -> bool:
+        return OPERATOR in self.roles
+
+    def redacted(self) -> dict[str, object]:
+        """The shape safe to hand to an API response or a terminal."""
+        return {
+            "id": self.id,
+            "email": self.email,
+            "did": self.did,
+            "roles": list(self.roles),
+            "telegram_user_id": self.telegram_user_id,
+            "disabled": self.disabled,
+            "created_at": self.created_at,
+        }
+
+
+def hash_password(password: str) -> str:
+    _reject_weak(password)
+    return pwhash.argon2id.str(password.encode()).decode()
+
+
+def _reject_weak(password: str) -> None:
+    # Deliberately a floor, not a character-class policy: length is the only
+    # rule that reliably correlates with strength, and the rest trains people
+    # into Password1! variants.
+    if len(password) < 12:
+        raise ValueError("password must be at least 12 characters")
+
+
+class UserStore:
+    """Load/save the deployment's users. Every mutation writes through."""
+
+    def __init__(self, path: Path | None = None) -> None:
+        self.path = path or default_users_path()
+        self._users: dict[str, User] = {}
+        if self.path.exists():
+            self._load()
+
+    # --- persistence ----------------------------------------------------
+
+    def _load(self) -> None:
+        _reject_insecure(self.path)
+        try:
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise UserStoreError(f"cannot read {self.path}: {exc}") from exc
+        try:
+            self._users = {
+                str(u["email"]): User(**{**u, "roles": tuple(u.get("roles", (VIEWER,)))})
+                for u in raw.get("users", [])
+            }
+        except (TypeError, KeyError) as exc:
+            raise UserStoreError(f"malformed user record in {self.path}: {exc}") from exc
+
+    def save(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.parent.chmod(_DIR_MODE)
+        payload = {"users": [asdict(u) for u in self._users.values()]}
+        # Write-then-rename so a crash mid-write cannot leave a truncated store
+        # that locks everyone out of their own deployment.
+        tmp = self.path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        tmp.chmod(_FILE_MODE)
+        tmp.replace(self.path)
+
+    # --- queries --------------------------------------------------------
+
+    def list(self) -> list[User]:
+        return sorted(self._users.values(), key=lambda u: u.email)
+
+    def get(self, email: str) -> User | None:
+        return self._users.get(_normalize(email))
+
+    def is_empty(self) -> bool:
+        return not self._users
+
+    def by_telegram(self, telegram_user_id: str) -> User | None:
+        for user in self._users.values():
+            if user.telegram_user_id == telegram_user_id:
+                return user
+        return None
+
+    # --- mutations ------------------------------------------------------
+
+    def add(
+        self,
+        email: str,
+        password: str,
+        *,
+        roles: tuple[str, ...] = (VIEWER,),
+        telegram_user_id: str | None = None,
+        org: str = "arc",
+    ) -> User:
+        email = _normalize(email)
+        if email in self._users:
+            raise ValueError(f"user already exists: {email}")
+        for role in roles:
+            if role not in ROLES:
+                raise ValueError(f"unknown role {role!r}; expected one of {ROLES}")
+
+        kp = generate_keypair()
+        user = User(
+            id=str(uuid.uuid4()),
+            email=email,
+            password_hash=hash_password(password),
+            did=did_from_public_key(kp.public_key, org=org, agent_type="user"),
+            public_key=kp.public_key.hex(),
+            signing_seed=kp.private_key.hex(),
+            roles=tuple(roles),
+            telegram_user_id=telegram_user_id,
+        )
+        self._users[email] = user
+        self.save()
+        return user
+
+    def set_password(self, email: str, password: str) -> User:
+        user = self._require(email)
+        updated = replace(user, password_hash=hash_password(password))
+        self._users[updated.email] = updated
+        self.save()
+        return updated
+
+    def set_roles(self, email: str, roles: tuple[str, ...]) -> User:
+        for role in roles:
+            if role not in ROLES:
+                raise ValueError(f"unknown role {role!r}; expected one of {ROLES}")
+        user = self._require(email)
+        updated = replace(user, roles=tuple(roles))
+        self._users[updated.email] = updated
+        self.save()
+        return updated
+
+    def set_telegram(self, email: str, telegram_user_id: str | None) -> User:
+        user = self._require(email)
+        updated = replace(user, telegram_user_id=telegram_user_id)
+        self._users[updated.email] = updated
+        self.save()
+        return updated
+
+    def set_disabled(self, email: str, disabled: bool) -> User:
+        user = self._require(email)
+        updated = replace(user, disabled=disabled)
+        self._users[updated.email] = updated
+        self.save()
+        return updated
+
+    def remove(self, email: str) -> None:
+        email = _normalize(email)
+        if email not in self._users:
+            raise ValueError(f"no such user: {email}")
+        # Removing the last operator would leave a deployment nobody can approve
+        # anything in, recoverable only by hand-editing this file.
+        remaining = [u for e, u in self._users.items() if e != email]
+        if self._users[email].is_operator and not any(u.is_operator for u in remaining):
+            raise ValueError(
+                f"{email} is the only operator; promote another user before removing them"
+            )
+        del self._users[email]
+        self.save()
+
+    def _require(self, email: str) -> User:
+        user = self.get(email)
+        if user is None:
+            raise ValueError(f"no such user: {email}")
+        return user
+
+    # --- authentication -------------------------------------------------
+
+    def verify(self, email: str, password: str) -> User | None:
+        """Return the user when the password matches, else None.
+
+        A disabled user and a wrong password are the same answer on purpose, and
+        an unknown email still pays the hashing cost — otherwise response time
+        alone reveals which addresses have accounts.
+        """
+        user = self.get(email)
+        candidate = user.password_hash if user else _DUMMY_HASH
+        try:
+            pwhash.verify(candidate.encode(), password.encode())
+        except InvalidkeyError:
+            return None
+        if user is None or user.disabled:
+            return None
+        return user
+
+
+def _normalize(email: str) -> str:
+    return email.strip().lower()
+
+
+def _reject_insecure(path: Path) -> None:
+    """Fail closed when the store is group/other readable or a symlink."""
+    if path.is_symlink():
+        raise UserStoreError(f"user store is a symlink, refusing to read it: {path}")
+    mode = stat.S_IMODE(path.stat().st_mode)
+    if mode & (stat.S_IRWXG | stat.S_IRWXO):
+        raise UserStoreError(
+            f"user store has insecure permissions {oct(mode)}; expected 0o600: {path}"
+        )
+    if path.stat().st_uid != os.getuid():
+        raise UserStoreError(f"user store is not owned by this user: {path}")
+
+
+# Hashed once at import so an unknown email costs the same as a known one.
+_DUMMY_HASH = pwhash.argon2id.str(b"arc-timing-equalizer").decode()
+
+__all__ = [
+    "OPERATOR",
+    "ROLES",
+    "VIEWER",
+    "User",
+    "UserStore",
+    "UserStoreError",
+    "default_users_path",
+    "hash_password",
+]

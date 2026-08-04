@@ -24,6 +24,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from arcui.audit import SessionStartFields, UIAuditEvent
+from arcui.sessions import Session, SessionRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,18 @@ logger = logging.getLogger(__name__)
 # Wave 2 TD-MED: env overrides for federal tuning without code edit.
 _DEFAULT_MAX_SESSIONS = int(os.environ.get("ARCUI_MAX_SESSIONS", "10000"))
 _DEFAULT_MAX_BOOTSTRAP_MARKERS = int(os.environ.get("ARCUI_MAX_BOOTSTRAP_MARKERS", "1000"))
+
+# Reachable without a bearer token. Kept explicit and small: every entry here
+# is a route an unauthenticated stranger can call.
+_UNAUTHENTICATED_PATHS = frozenset(
+    {
+        "/api/health",
+        "/api/auth/login",
+        # Tells the login screen whether this deployment has any accounts yet,
+        # so a fresh install can say "run arc user add" instead of failing.
+        "/api/auth/mode",
+    }
+)
 
 
 def _resolve_username(uid: int) -> str:
@@ -173,12 +186,21 @@ class SessionTracker:
 
 
 class AuthConfig:
-    """Token-to-role mapping. Auto-generates tokens if not provided."""
+    """Token-to-role mapping. Auto-generates tokens if not provided.
+
+    Two credential kinds reach here, and the order matters. A **session** comes
+    from a person who signed in with an email and password, and carries their
+    DID so their actions are attributable. A **static token** is the break-glass
+    path: it names nobody, and it exists for automation, first boot, and the
+    case where the user store is unreachable. Sessions are checked first so a
+    signed-in person is never mistaken for the anonymous token.
+    """
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         cfg = config or {}
         self.viewer_token: str = cfg.get("viewer_token") or secrets.token_hex(32)
         self.operator_token: str = cfg.get("operator_token") or secrets.token_hex(32)
+        self.sessions: SessionRegistry = cfg.get("sessions") or SessionRegistry()
 
     def validate_token(self, token: str) -> str | None:
         """Return role for token, or None if invalid.
@@ -186,11 +208,18 @@ class AuthConfig:
         Uses constant-time comparison to prevent timing side-channel attacks.
         Roles: "operator" (read + control), "viewer" (read).
         """
+        session = self.sessions.validate(token)
+        if session is not None:
+            return session.role
         if hmac.compare_digest(token, self.operator_token):
             return "operator"
         if hmac.compare_digest(token, self.viewer_token):
             return "viewer"
         return None
+
+    def identify(self, token: str) -> Session | None:
+        """The person behind ``token``, or None for a static token."""
+        return self.sessions.validate(token)
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -217,8 +246,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
             request.state.role = None
             return await call_next(request)
 
-        # /api/health is exempt — liveness probes must work without credentials.
-        if path == "/api/health":
+        # Exempt: liveness probes must work without credentials, and the login
+        # endpoints are how a credential is obtained in the first place.
+        if path in _UNAUTHENTICATED_PATHS:
             request.state.role = None
             return await call_next(request)
 

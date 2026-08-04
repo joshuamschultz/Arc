@@ -138,10 +138,10 @@ class Delta(BaseModel):
 class ResponseFormat(TypedDict, total=False):
     """Structured-output enforcement hint, OpenAI-compatible shape.
 
-    Adapters that support a provider-side JSON mode (openai-wire family)
-    forward this into the request. Adapters that don't (anthropic, where
-    the recommended path is tool_use) raise ``ArcLLMConfigError`` rather
-    than silently dropping the kwarg.
+    Every adapter builds its provider's own structured-output payload from
+    this one hint: the openai-wire family forwards it as ``response_format``,
+    anthropic carries it as a forced tool call. A caller passes the same
+    kwarg everywhere and reads the object back off ``parsed_content``.
 
     ``type``:
         - ``"text"``: default plain text (no enforcement). Equivalent to
