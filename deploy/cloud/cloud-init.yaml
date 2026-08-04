@@ -2,8 +2,9 @@
 # Provisions one Arc instance on a fresh VM. Injected as user-data at server
 # creation (Hetzner, DigitalOcean, EC2 — any cloud-init distro).
 #
-# The provisioner substitutes the __PLACEHOLDER__ tokens before submitting this
-# file. Secrets are written by cloud-init directly to a 0600 file and never
+# The provisioner substitutes the double-underscored tokens below before
+# submitting this file, and refuses to submit one that still holds any.
+# Secrets are written by cloud-init directly to a 0600 file and never
 # appear in a shell command, so they stay out of the process table and out of
 # any shell history on the box.
 #
