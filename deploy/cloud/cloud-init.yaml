@@ -7,6 +7,14 @@
 # appear in a shell command, so they stay out of the process table and out of
 # any shell history on the box.
 #
+# Two placeholders are easy to get wrong:
+#   __LLM_KEY_ENV__   the *name* of the provider's key variable (ANTHROPIC_API_KEY,
+#                     OPENAI_API_KEY, …). The entrypoint reads the required name
+#                     from the provider, so a mismatch fails the boot loudly.
+#   __TELEGRAM_ALLOWED_USER_IDS__  space-separated. EMPTY MEANS DENY ALL — omit the
+#                     customer's own Telegram user id and he is locked out of his
+#                     own agent. Collect it (@userinfobot) before provisioning.
+#
 # Everything Arc-specific already lives in the image: this file installs Docker,
 # writes config, and starts the stack. Provisioning time is dominated by the
 # image pull, which is why the model weights are baked in rather than fetched
@@ -22,14 +30,20 @@ write_files:
     permissions: "0600"
     owner: root:root
     content: |
-      ANTHROPIC_API_KEY=__ANTHROPIC_API_KEY__
+      __LLM_KEY_ENV__=__LLM_API_KEY__
+      ARC_PROVIDER=__ARC_PROVIDER__
       ARC_IMAGE=__ARC_IMAGE__
       ARC_DOMAIN=__ARC_DOMAIN__
       ARC_ACME_EMAIL=__ARC_ACME_EMAIL__
       ARC_AGENTS=__ARC_AGENT_NAME__
       ARC_AGENT_MODEL=__ARC_AGENT_MODEL__
+      ARC_BLUEPRINT=__ARC_BLUEPRINT__
       ARC_TIER=personal
-      ARC_ENABLE_TELEGRAM=0
+      ARC_ENABLE_TELEGRAM=__ARC_ENABLE_TELEGRAM__
+      TELEGRAM_BOT_TOKEN=__TELEGRAM_BOT_TOKEN__
+      ARC_TELEGRAM_ALLOWED_USER_IDS=__TELEGRAM_ALLOWED_USER_IDS__
+      VIEWER_TOKEN=__VIEWER_TOKEN__
+      OPERATOR_TOKEN=__OPERATOR_TOKEN__
 
   - path: /opt/arc/Caddyfile
     permissions: "0644"

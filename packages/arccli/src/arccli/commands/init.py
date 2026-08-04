@@ -81,7 +81,7 @@ _TIER_PRESETS: dict[str, dict[str, dict[str, Any]]] = {
 
 _VALID_TIERS = list(_TIER_PRESETS.keys())
 
-_PROVIDER_ENV_VARS: dict[str, str] = {
+PROVIDER_ENV_VARS: dict[str, str] = {
     "anthropic": "ANTHROPIC_API_KEY",
     "openai": "OPENAI_API_KEY",
     "google": "GOOGLE_API_KEY",
@@ -92,7 +92,7 @@ _PROVIDER_ENV_VARS: dict[str, str] = {
     "lmstudio": "",
 }
 
-_VALID_PROVIDERS = list(_PROVIDER_ENV_VARS.keys())
+VALID_PROVIDERS = list(PROVIDER_ENV_VARS.keys())
 
 
 # ---------------------------------------------------------------------------
@@ -287,7 +287,7 @@ def _generate_gateway_toml(tier: str) -> str:
 
 def _check_provider_key(provider: str) -> bool:
     """Check if the provider's API key env var is set."""
-    env_var = _PROVIDER_ENV_VARS.get(provider, "")
+    env_var = PROVIDER_ENV_VARS.get(provider, "")
     if not env_var:
         return True
     return bool(os.environ.get(env_var, ""))
@@ -436,7 +436,7 @@ def _init(args: argparse.Namespace) -> None:
         _write("    Local:  ollama, lmstudio (no API key needed)")
         _write("")
         provider = input("  Default provider (default: anthropic): ").strip() or "anthropic"
-    if provider not in _VALID_PROVIDERS:
+    if provider not in VALID_PROVIDERS:
         sys.stderr.write(f"Error: Unknown provider '{provider}'.\n")
         sys.exit(1)
 
@@ -488,7 +488,7 @@ def _init(args: argparse.Namespace) -> None:
             (team_dir / sub).mkdir(parents=True, exist_ok=True)
 
     key_ok = _check_provider_key(provider)
-    env_var = _PROVIDER_ENV_VARS.get(provider, "")
+    env_var = PROVIDER_ENV_VARS.get(provider, "")
 
     tier_display = tier if effective_tier == tier else f"{effective_tier} (raised from {tier})"
     summary = [
