@@ -43,6 +43,25 @@ def _read_password(args: argparse.Namespace, *, confirm: bool = True) -> str:
     return password
 
 
+def _parse_pairs(specs: list[str] | None) -> dict[str, str]:
+    """``["telegram:4242"]`` -> ``{"telegram": "4242"}``.
+
+    The CLI passes platform names straight through. Neither it nor the store
+    knows what any of them mean; the gateway package that owns a surface does.
+    """
+    pairs: dict[str, str] = {}
+    for spec in specs or []:
+        platform, _, external_id = spec.partition(":")
+        if not (platform and external_id):
+            _fail(f"--pair expects PLATFORM:ID, got {spec!r}")
+        pairs[platform.strip().lower()] = external_id.strip()
+    return pairs
+
+
+def _format_pairs(pairings: dict[str, str]) -> str:
+    return ", ".join(f"{k}:{v}" for k, v in sorted(pairings.items())) or "—"
+
+
 def _fail(message: str) -> None:
     sys.stderr.write(f"Error: {message}\n")
     raise SystemExit(1)
@@ -68,7 +87,7 @@ def _add(args: argparse.Namespace) -> None:
             handle=getattr(args, "handle", None),
             display_name=getattr(args, "name", "") or "",
             roles=roles,
-            telegram_user_id=getattr(args, "telegram", None),
+            pairings=_parse_pairs(getattr(args, "pair", None)),
         )
     except ValueError as exc:
         _fail(str(exc))
@@ -80,12 +99,12 @@ def _add(args: argparse.Namespace) -> None:
     sys.stdout.write(f"  DID: {user.did}\n")
     if first:
         sys.stdout.write("  First account on this deployment, so it is an operator.\n")
-    if not user.telegram_user_id:
-        # Without a paired channel there is no way to reset this password, since
-        # a deployment has no mail server.
+    if not user.pairings:
+        # Without a paired surface there is nowhere to send a password reset:
+        # a deployment has no mail server of its own.
         sys.stdout.write(
-            "  No Telegram paired — password reset will not be possible.\n"
-            f"  Add one later: arc user set {user.email} --telegram <id from @userinfobot>\n"
+            "  No chat account paired — password reset will not be possible.\n"
+            f"  Add one later: arc user set {user.email} --pair <platform>:<id>\n"
         )
 
 
@@ -95,14 +114,14 @@ def _list(args: argparse.Namespace) -> None:
         sys.stdout.write("No users yet. Create one: arc user add <email>\n")
         return
     print_table(
-        ["EMAIL", "MENTION", "NAME", "ROLES", "TELEGRAM", "STATUS"],
+        ["EMAIL", "MENTION", "NAME", "ROLES", "PAIRED", "STATUS"],
         [
             [
                 u.email,
                 f"@{u.handle}" if u.handle else "—",
                 u.display_name or "—",
                 ", ".join(u.roles),
-                u.telegram_user_id or "—",
+                _format_pairs(u.pairings),
                 "disabled" if u.disabled else "active",
             ]
             for u in users
@@ -141,20 +160,18 @@ def _set(args: argparse.Namespace) -> None:
         if args.name is not None:
             user = store.set_display_name(args.email, args.name)
             changed.append(f"called {user.called!r}")
-        if args.telegram is not None:
-            value = None if args.telegram in ("", "none") else args.telegram
-            user = store.set_telegram(args.email, value)
+        for spec in args.pair or []:
+            platform, _, external_id = spec.partition(":")
+            user = store.set_pairing(args.email, platform, external_id or None)
             changed.append(
-                f"Telegram {value}"
-                if value
-                else "Telegram unpaired (password reset now impossible)"
+                f"{platform} {external_id}" if external_id else f"{platform} unpaired"
             )
     except ValueError as exc:
         _fail(str(exc))
         return
 
     if not changed:
-        _fail("nothing to change — pass --handle, --name, or --telegram")
+        _fail("nothing to change — pass --handle, --name, or --pair")
     sys.stdout.write(f"{_normalize(args.email)}: {', '.join(changed)}\n")
 
 
@@ -208,7 +225,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     add.add_argument("--name", default=None, help="Display name, e.g. 'Josh Schultz'.")
     add.add_argument(
-        "--telegram", default=None, help="Telegram user id, for password reset."
+        "--pair",
+        action="append",
+        default=None,
+        metavar="PLATFORM:ID",
+        help="Link a chat account, e.g. telegram:4242. Repeatable.",
     )
     add.add_argument("--password-stdin", dest="password_stdin", action="store_true")
     add.set_defaults(func=_add)
@@ -226,12 +247,16 @@ def _build_parser() -> argparse.ArgumentParser:
     role.add_argument("roles", nargs="+", choices=["viewer", "operator"])
     role.set_defaults(func=_role)
 
-    setter = inner.add_parser("set", help="Change an account's name, mention, or Telegram.")
+    setter = inner.add_parser("set", help="Change an account's name, mention, or chat links.")
     setter.add_argument("email")
     setter.add_argument("--handle", default=None, help="Mention name agents use, e.g. josh.")
     setter.add_argument("--name", default=None, help="Display name, e.g. 'Josh Schultz'.")
     setter.add_argument(
-        "--telegram", default=None, help="Telegram user id, or 'none' to unpair."
+        "--pair",
+        action="append",
+        default=None,
+        metavar="PLATFORM:ID",
+        help="Link a chat account, e.g. telegram:4242. Omit the id to unpair. Repeatable.",
     )
     setter.set_defaults(func=_set)
 

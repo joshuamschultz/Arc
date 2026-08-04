@@ -131,12 +131,12 @@ async def me(request: Request) -> JSONResponse:
     if user is not None:
         body["handle"] = user.handle
         body["display_name"] = user.display_name
-        body["telegram_user_id"] = user.telegram_user_id
+        body["pairings"] = dict(user.pairings)
     return JSONResponse(body)
 
 
 async def update_me(request: Request) -> JSONResponse:
-    """PATCH /api/auth/me — change your own name, mention handle, or Telegram id.
+    """PATCH /api/auth/me — change your own name, mention handle, or chat links.
 
     Scoped to the caller on purpose: a viewer editing their own display name is
     routine, and letting them reach anyone else's record through the same route
@@ -164,15 +164,12 @@ async def update_me(request: Request) -> JSONResponse:
         if "handle" in body:
             store.set_handle(session.email, str(body["handle"]))
             changed.append("handle")
-        if "telegram_user_id" in body:
-            raw = str(body["telegram_user_id"]).strip()
-            if raw and not raw.isdigit():
-                return JSONResponse(
-                    {"error": "A Telegram user id is a number — get yours from @userinfobot"},
-                    status_code=400,
-                )
-            store.set_telegram(session.email, raw or None)
-            changed.append("telegram_user_id")
+        # {"pairings": {"telegram": "4242", "slack": ""}} — empty value unpairs.
+        # No platform is named here: which surfaces exist is the gateway's
+        # business, and this route is only the seam that records the link.
+        for platform, external_id in dict(body.get("pairings") or {}).items():
+            store.set_pairing(session.email, str(platform), str(external_id).strip() or None)
+            changed.append(f"pairings.{platform}")
     except ValueError as exc:
         # Carries the real reason: a taken handle names who holds it.
         return JSONResponse({"error": str(exc)}, status_code=400)

@@ -151,14 +151,18 @@ def test_a_person_can_set_what_agents_call_them(client):
     resp = client.patch(
         "/api/auth/me",
         headers=headers,
-        json={"display_name": "Josh Schultz", "handle": "josh", "telegram_user_id": "4242"},
+        json={
+            "display_name": "Josh Schultz",
+            "handle": "josh",
+            "pairings": {"someplatform": "4242"},
+        },
     )
     assert resp.status_code == 200, resp.text
 
     me = client.get("/api/auth/me", headers=headers).json()
     assert me["display_name"] == "Josh Schultz"
     assert me["handle"] == "josh"
-    assert me["telegram_user_id"] == "4242"
+    assert me["pairings"] == {"someplatform": "4242"}
 
 
 def test_a_taken_handle_is_refused_and_says_who_has_it(client):
@@ -175,17 +179,27 @@ def test_a_taken_handle_is_refused_and_says_who_has_it(client):
     assert "watcher@example.com" in resp.json()["error"]
 
 
-def test_a_telegram_id_that_is_not_a_number_is_refused(client):
-    token = client.post(
+def test_a_surface_id_already_taken_is_refused(client):
+    """Two people on one chat account makes every message from it ambiguous."""
+    watcher = client.post(
+        "/api/auth/login", json={"email": "watcher@example.com", "password": GOOD}
+    ).json()["token"]
+    client.patch(
+        "/api/auth/me",
+        headers={"Authorization": f"Bearer {watcher}"},
+        json={"pairings": {"someplatform": "4242"}},
+    )
+
+    boss = client.post(
         "/api/auth/login", json={"email": "boss@example.com", "password": GOOD}
     ).json()["token"]
     resp = client.patch(
         "/api/auth/me",
-        headers={"Authorization": f"Bearer {token}"},
-        json={"telegram_user_id": "@joshschultz"},
+        headers={"Authorization": f"Bearer {boss}"},
+        json={"pairings": {"someplatform": "4242"}},
     )
     assert resp.status_code == 400
-    assert "userinfobot" in resp.json()["error"]
+    assert "watcher@example.com" in resp.json()["error"]
 
 
 def test_a_static_token_has_no_profile_to_edit(client):

@@ -70,10 +70,12 @@ class User:
     # What an agent calls them in prose. Free text; no uniqueness.
     display_name: str = ""
     roles: tuple[str, ...] = (VIEWER,)
-    # Paired external identity (REQ-041). Password reset goes here, because a
-    # deployment has no mail server and a reset that needs one is a reset that
-    # never happens.
-    telegram_user_id: str | None = None
+    # Paired external surface identities (REQ-041): ``{platform: external_id}``.
+    # The platform key is an opaque string owned by whichever gateway package
+    # provides that surface. arctrust deliberately does not know what any of
+    # them mean — it is the trust leaf, and a hardcoded platform here would put
+    # knowledge of a chat product inside the cryptographic foundation.
+    pairings: dict[str, str] = field(default_factory=dict)
     disabled: bool = False
     created_at: float = field(default_factory=time.time)
 
@@ -95,7 +97,7 @@ class User:
             "handle": self.handle,
             "display_name": self.display_name,
             "roles": list(self.roles),
-            "telegram_user_id": self.telegram_user_id,
+            "pairings": dict(self.pairings),
             "disabled": self.disabled,
             "created_at": self.created_at,
         }
@@ -133,7 +135,13 @@ class UserStore:
             raise UserStoreError(f"cannot read {self.path}: {exc}") from exc
         try:
             self._users = {
-                str(u["email"]): User(**{**u, "roles": tuple(u.get("roles", (VIEWER,)))})
+                str(u["email"]): User(
+                    **{
+                        **u,
+                        "roles": tuple(u.get("roles", (VIEWER,))),
+                        "pairings": dict(u.get("pairings", {})),
+                    }
+                )
                 for u in raw.get("users", [])
             }
         except (TypeError, KeyError) as exc:
@@ -161,9 +169,14 @@ class UserStore:
     def is_empty(self) -> bool:
         return not self._users
 
-    def by_telegram(self, telegram_user_id: str) -> User | None:
+    def by_pairing(self, platform: str, external_id: str) -> User | None:
+        """Find the person a surface identity belongs to.
+
+        The caller supplies both halves; this store never guesses which platform
+        a bare id came from.
+        """
         for user in self._users.values():
-            if user.telegram_user_id == telegram_user_id:
+            if user.pairings.get(platform) == external_id:
                 return user
         return None
 
@@ -177,7 +190,7 @@ class UserStore:
         handle: str | None = None,
         display_name: str = "",
         roles: tuple[str, ...] = (VIEWER,),
-        telegram_user_id: str | None = None,
+        pairings: dict[str, str] | None = None,
         org: str = "arc",
     ) -> User:
         email = _normalize(email)
@@ -199,7 +212,7 @@ class UserStore:
             handle=resolved,
             display_name=display_name.strip(),
             roles=tuple(roles),
-            telegram_user_id=telegram_user_id,
+            pairings=dict(pairings or {}),
         )
         self._users[email] = user
         self.save()
@@ -278,9 +291,29 @@ class UserStore:
         self.save()
         return updated
 
-    def set_telegram(self, email: str, telegram_user_id: str | None) -> User:
+    def set_pairing(self, email: str, platform: str, external_id: str | None) -> User:
+        """Attach or drop one external identity. ``None`` unpairs.
+
+        A platform is refused if another account already claims that id on it:
+        two people sharing one surface identity makes every message from it
+        ambiguous about who sent it.
+        """
+        platform = platform.strip().lower()
+        if not platform:
+            raise ValueError("platform is required")
         user = self._require(email)
-        updated = replace(user, telegram_user_id=telegram_user_id)
+        if external_id:
+            owner = self.by_pairing(platform, external_id)
+            if owner is not None and owner.email != user.email:
+                raise ValueError(
+                    f"{platform} id {external_id} is already paired to {owner.email}"
+                )
+        merged = dict(user.pairings)
+        if external_id:
+            merged[platform] = external_id
+        else:
+            merged.pop(platform, None)
+        updated = replace(user, pairings=merged)
         self._users[updated.email] = updated
         self.save()
         return updated

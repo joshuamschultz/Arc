@@ -87,18 +87,40 @@ def test_the_last_operator_cannot_be_removed(store):
     assert [u.email for u in store.list()] == ["viewer@example.com"]
 
 
-def test_a_telegram_account_resolves_to_its_user(store):
-    """Password reset has to find the person from the channel they message from."""
-    store.add("a@example.com", GOOD, telegram_user_id="4242")
-    assert store.by_telegram("4242").email == "a@example.com"
-    assert store.by_telegram("9999") is None
+def test_a_paired_surface_identity_resolves_to_its_user(store):
+    """A reset has to find the person from the account they messaged from."""
+    store.add("a@example.com", GOOD, pairings={"someplatform": "4242"})
+    assert store.by_pairing("someplatform", "4242").email == "a@example.com"
+    assert store.by_pairing("someplatform", "9999") is None
+    # The platform half matters: the same id elsewhere is a different person.
+    assert store.by_pairing("otherplatform", "4242") is None
+
+
+def test_the_same_surface_id_cannot_belong_to_two_people(store):
+    """Otherwise every message from it is ambiguous about who sent it."""
+    store.add("a@example.com", GOOD, pairings={"someplatform": "4242"})
+    store.add("b@example.com", GOOD)
+    with pytest.raises(ValueError, match=r"already paired to a@example\.com"):
+        store.set_pairing("b@example.com", "someplatform", "4242")
+
+
+def test_a_person_can_hold_several_surfaces_at_once(store):
+    store.add("a@example.com", GOOD)
+    store.set_pairing("a@example.com", "someplatform", "4242")
+    store.set_pairing("a@example.com", "otherplatform", "U99")
+    assert store.get("a@example.com").pairings == {
+        "someplatform": "4242",
+        "otherplatform": "U99",
+    }
+    store.set_pairing("a@example.com", "someplatform", None)
+    assert store.get("a@example.com").pairings == {"otherplatform": "U99"}
 
 
 def test_users_survive_a_reload(store, tmp_path):
-    store.add("a@example.com", GOOD, roles=(OPERATOR, VIEWER), telegram_user_id="4242")
+    store.add("a@example.com", GOOD, roles=(OPERATOR, VIEWER), pairings={"someplatform": "4242"})
     reopened = UserStore(tmp_path / "users.json")
     user = reopened.get("a@example.com")
-    assert user.telegram_user_id == "4242"
+    assert user.pairings == {"someplatform": "4242"}
     assert set(user.roles) == {OPERATOR, VIEWER}
     assert reopened.verify("a@example.com", GOOD) is not None
 
