@@ -65,6 +65,8 @@ def _add(args: argparse.Namespace) -> None:
         user = store.add(
             args.email,
             _read_password(args),
+            handle=getattr(args, "handle", None),
+            display_name=getattr(args, "name", "") or "",
             roles=roles,
             telegram_user_id=getattr(args, "telegram", None),
         )
@@ -73,6 +75,8 @@ def _add(args: argparse.Namespace) -> None:
         return
 
     sys.stdout.write(f"Created {user.email} ({', '.join(user.roles)})\n")
+    sys.stdout.write(f"  Called: {user.called}\n")
+    sys.stdout.write(f"  Mention: @{user.handle}\n")
     sys.stdout.write(f"  DID: {user.did}\n")
     if first:
         sys.stdout.write("  First account on this deployment, so it is an operator.\n")
@@ -81,7 +85,7 @@ def _add(args: argparse.Namespace) -> None:
         # a deployment has no mail server.
         sys.stdout.write(
             "  No Telegram paired — password reset will not be possible.\n"
-            f"  Add one later: arc user telegram {user.email} <id from @userinfobot>\n"
+            f"  Add one later: arc user set {user.email} --telegram <id from @userinfobot>\n"
         )
 
 
@@ -91,10 +95,12 @@ def _list(args: argparse.Namespace) -> None:
         sys.stdout.write("No users yet. Create one: arc user add <email>\n")
         return
     print_table(
-        ["EMAIL", "ROLES", "TELEGRAM", "STATUS"],
+        ["EMAIL", "MENTION", "NAME", "ROLES", "TELEGRAM", "STATUS"],
         [
             [
                 u.email,
+                f"@{u.handle}" if u.handle else "—",
+                u.display_name or "—",
                 ", ".join(u.roles),
                 u.telegram_user_id or "—",
                 "disabled" if u.disabled else "active",
@@ -124,19 +130,45 @@ def _role(args: argparse.Namespace) -> None:
     sys.stdout.write(f"{user.email} is now {', '.join(user.roles)}\n")
 
 
-def _telegram(args: argparse.Namespace) -> None:
+def _set(args: argparse.Namespace) -> None:
+    """One place to change everything about an account except its password."""
     store = _store(args)
-    value = None if args.telegram_user_id in ("", "none") else args.telegram_user_id
+    changed: list[str] = []
     try:
-        user = store.set_telegram(args.email, value)
+        if args.handle is not None:
+            user = store.set_handle(args.email, args.handle)
+            changed.append(f"mention @{user.handle}")
+        if args.name is not None:
+            user = store.set_display_name(args.email, args.name)
+            changed.append(f"called {user.called!r}")
+        if args.telegram is not None:
+            value = None if args.telegram in ("", "none") else args.telegram
+            user = store.set_telegram(args.email, value)
+            changed.append(
+                f"Telegram {value}"
+                if value
+                else "Telegram unpaired (password reset now impossible)"
+            )
     except ValueError as exc:
         _fail(str(exc))
         return
-    sys.stdout.write(
-        f"{user.email} paired to Telegram {user.telegram_user_id}\n"
-        if value
-        else f"{user.email} unpaired from Telegram (password reset now impossible)\n"
-    )
+
+    if not changed:
+        _fail("nothing to change — pass --handle, --name, or --telegram")
+    sys.stdout.write(f"{_normalize(args.email)}: {', '.join(changed)}\n")
+
+
+def _show(args: argparse.Namespace) -> None:
+    user = _store(args).get(args.email)
+    if user is None:
+        _fail(f"no such user: {args.email}")
+        return
+    for key, value in user.redacted().items():
+        sys.stdout.write(f"{key:>16}: {value}\n")
+
+
+def _normalize(email: str) -> str:
+    return email.strip().lower()
 
 
 def _disable(args: argparse.Namespace) -> None:
@@ -172,6 +204,10 @@ def _build_parser() -> argparse.ArgumentParser:
     add.add_argument("email")
     add.add_argument("--operator", action="store_true", help="Grant approval rights.")
     add.add_argument(
+        "--handle", default=None, help="Mention name, e.g. josh (derived from email if omitted)."
+    )
+    add.add_argument("--name", default=None, help="Display name, e.g. 'Josh Schultz'.")
+    add.add_argument(
         "--telegram", default=None, help="Telegram user id, for password reset."
     )
     add.add_argument("--password-stdin", dest="password_stdin", action="store_true")
@@ -190,10 +226,18 @@ def _build_parser() -> argparse.ArgumentParser:
     role.add_argument("roles", nargs="+", choices=["viewer", "operator"])
     role.set_defaults(func=_role)
 
-    telegram = inner.add_parser("telegram", help="Pair or unpair a Telegram account.")
-    telegram.add_argument("email")
-    telegram.add_argument("telegram_user_id", help="Numeric id, or 'none' to unpair.")
-    telegram.set_defaults(func=_telegram)
+    setter = inner.add_parser("set", help="Change an account's name, mention, or Telegram.")
+    setter.add_argument("email")
+    setter.add_argument("--handle", default=None, help="Mention name agents use, e.g. josh.")
+    setter.add_argument("--name", default=None, help="Display name, e.g. 'Josh Schultz'.")
+    setter.add_argument(
+        "--telegram", default=None, help="Telegram user id, or 'none' to unpair."
+    )
+    setter.set_defaults(func=_set)
+
+    show = inner.add_parser("show", help="Everything about one account.")
+    show.add_argument("email")
+    show.set_defaults(func=_show)
 
     disable = inner.add_parser("disable", help="Block an account from signing in.")
     disable.add_argument("email")

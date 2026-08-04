@@ -114,16 +114,78 @@ async def me(request: Request) -> JSONResponse:
                 "did": None,
             }
         )
-    return JSONResponse(
-        {
-            "authenticated": True,
-            "anonymous": False,
-            "role": session.role,
-            "email": session.email,
-            "did": session.did,
-            "expires_at": session.expires_at,
-        }
+    body = {
+        "authenticated": True,
+        "anonymous": False,
+        "role": session.role,
+        "email": session.email,
+        "did": session.did,
+        "expires_at": session.expires_at,
+    }
+    # The settings the person can actually change. Read from the store rather
+    # than the session so an edit shows up without signing out and back in.
+    try:
+        user = _store().get(session.email)
+    except Exception:  # reason: an unreadable store must not break /me
+        user = None
+    if user is not None:
+        body["handle"] = user.handle
+        body["display_name"] = user.display_name
+        body["telegram_user_id"] = user.telegram_user_id
+    return JSONResponse(body)
+
+
+async def update_me(request: Request) -> JSONResponse:
+    """PATCH /api/auth/me — change your own name, mention handle, or Telegram id.
+
+    Scoped to the caller on purpose: a viewer editing their own display name is
+    routine, and letting them reach anyone else's record through the same route
+    would make a read-only role into a user-admin one. Managing *other* people
+    is `arc user` on the box.
+    """
+    session = _auth(request).identify(
+        request.headers.get("authorization", "").removeprefix("Bearer ").strip()
     )
+    if session is None:
+        # A static token is not a person, so it has no profile to edit.
+        return JSONResponse({"error": "Sign in to change your settings"}, status_code=403)
+
+    try:
+        body = await request.json()
+    except Exception:  # reason: a malformed body is a bad request, not a 500
+        return JSONResponse({"error": "Expected a JSON body"}, status_code=400)
+
+    try:
+        store = _store()
+        changed: list[str] = []
+        if "display_name" in body:
+            store.set_display_name(session.email, str(body["display_name"]))
+            changed.append("display_name")
+        if "handle" in body:
+            store.set_handle(session.email, str(body["handle"]))
+            changed.append("handle")
+        if "telegram_user_id" in body:
+            raw = str(body["telegram_user_id"]).strip()
+            if raw and not raw.isdigit():
+                return JSONResponse(
+                    {"error": "A Telegram user id is a number — get yours from @userinfobot"},
+                    status_code=400,
+                )
+            store.set_telegram(session.email, raw or None)
+            changed.append("telegram_user_id")
+    except ValueError as exc:
+        # Carries the real reason: a taken handle names who holds it.
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except Exception as exc:
+        logger.error("auth.update_me failed: %s", exc)
+        return JSONResponse({"error": "Could not save your settings"}, status_code=503)
+
+    if not changed:
+        return JSONResponse({"error": "Nothing to change"}, status_code=400)
+
+    user = store.get(session.email)
+    logger.info("auth.settings_changed email=%s fields=%s", session.email, ",".join(changed))
+    return JSONResponse({"ok": True, "changed": changed, "user": user.redacted()})
 
 
 async def mode(request: Request) -> JSONResponse:
@@ -144,7 +206,8 @@ ROUTES = [
     ("/api/auth/login", login, ["POST"]),
     ("/api/auth/logout", logout, ["POST"]),
     ("/api/auth/me", me, ["GET"]),
+    ("/api/auth/me", update_me, ["PATCH"]),
     ("/api/auth/mode", mode, ["GET"]),
 ]
 
-__all__ = ["ROUTES", "login", "logout", "me", "mode"]
+__all__ = ["ROUTES", "login", "logout", "me", "mode", "update_me"]

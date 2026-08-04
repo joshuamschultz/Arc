@@ -129,3 +129,79 @@ def test_a_fresh_install_reports_no_accounts(auth, tmp_path, monkeypatch):
 
 def test_an_unauthenticated_request_is_still_refused(client):
     assert client.get("/api/agents").status_code == 401
+
+
+# --- profile settings -------------------------------------------------------
+
+
+def test_a_new_account_gets_a_mention_handle(client):
+    body = client.post(
+        "/api/auth/login", json={"email": "boss@example.com", "password": GOOD}
+    ).json()
+    me = client.get("/api/auth/me", headers={"Authorization": f"Bearer {body['token']}"}).json()
+    assert me["handle"] == "boss"
+
+
+def test_a_person_can_set_what_agents_call_them(client):
+    token = client.post(
+        "/api/auth/login", json={"email": "boss@example.com", "password": GOOD}
+    ).json()["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    resp = client.patch(
+        "/api/auth/me",
+        headers=headers,
+        json={"display_name": "Josh Schultz", "handle": "josh", "telegram_user_id": "4242"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    me = client.get("/api/auth/me", headers=headers).json()
+    assert me["display_name"] == "Josh Schultz"
+    assert me["handle"] == "josh"
+    assert me["telegram_user_id"] == "4242"
+
+
+def test_a_taken_handle_is_refused_and_says_who_has_it(client):
+    """Silently suffixing it would send their mentions to the wrong person."""
+    token = client.post(
+        "/api/auth/login", json={"email": "boss@example.com", "password": GOOD}
+    ).json()["token"]
+    resp = client.patch(
+        "/api/auth/me",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"handle": "watcher"},
+    )
+    assert resp.status_code == 400
+    assert "watcher@example.com" in resp.json()["error"]
+
+
+def test_a_telegram_id_that_is_not_a_number_is_refused(client):
+    token = client.post(
+        "/api/auth/login", json={"email": "boss@example.com", "password": GOOD}
+    ).json()["token"]
+    resp = client.patch(
+        "/api/auth/me",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"telegram_user_id": "@joshschultz"},
+    )
+    assert resp.status_code == 400
+    assert "userinfobot" in resp.json()["error"]
+
+
+def test_a_static_token_has_no_profile_to_edit(client):
+    """It is a shared secret, not a person, so there is nobody to save against."""
+    resp = client.patch(
+        "/api/auth/me",
+        headers={"Authorization": "Bearer " + "o" * 64},
+        json={"display_name": "Whoever"},
+    )
+    assert resp.status_code == 403
+
+
+def test_editing_your_settings_does_not_require_signing_back_in(client):
+    token = client.post(
+        "/api/auth/login", json={"email": "watcher@example.com", "password": GOOD}
+    ).json()["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    client.patch("/api/auth/me", headers=headers, json={"display_name": "The Watcher"})
+    assert client.get("/api/auth/me", headers=headers).json()["display_name"] == "The Watcher"

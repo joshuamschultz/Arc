@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import stat
 import time
 import uuid
@@ -32,6 +33,10 @@ from nacl.exceptions import InvalidkeyError
 from arctrust.identity import did_from_public_key
 from arctrust.keypair import generate_keypair
 from arctrust.paths import arc_home
+
+# Mention-safe: starts alphanumeric, no spaces, no dots (which would collide
+# with sentence punctuation when an agent writes "@josh.").
+_HANDLE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{1,30}$")
 
 _FILE_MODE = 0o600
 _DIR_MODE = 0o700
@@ -58,6 +63,12 @@ class User:
     did: str
     public_key: str
     signing_seed: str
+    # How an agent addresses this person: "@josh" in a message, ``user://josh``
+    # as an address. Unique across the deployment, because a mention that could
+    # mean two people is a message that reaches neither reliably.
+    handle: str = ""
+    # What an agent calls them in prose. Free text; no uniqueness.
+    display_name: str = ""
     roles: tuple[str, ...] = (VIEWER,)
     # Paired external identity (REQ-041). Password reset goes here, because a
     # deployment has no mail server and a reset that needs one is a reset that
@@ -70,12 +81,19 @@ class User:
     def is_operator(self) -> bool:
         return OPERATOR in self.roles
 
+    @property
+    def called(self) -> str:
+        """What to call this person in prose, falling back sensibly."""
+        return self.display_name or self.handle or self.email
+
     def redacted(self) -> dict[str, object]:
         """The shape safe to hand to an API response or a terminal."""
         return {
             "id": self.id,
             "email": self.email,
             "did": self.did,
+            "handle": self.handle,
+            "display_name": self.display_name,
             "roles": list(self.roles),
             "telegram_user_id": self.telegram_user_id,
             "disabled": self.disabled,
@@ -156,6 +174,8 @@ class UserStore:
         email: str,
         password: str,
         *,
+        handle: str | None = None,
+        display_name: str = "",
         roles: tuple[str, ...] = (VIEWER,),
         telegram_user_id: str | None = None,
         org: str = "arc",
@@ -167,6 +187,7 @@ class UserStore:
             if role not in ROLES:
                 raise ValueError(f"unknown role {role!r}; expected one of {ROLES}")
 
+        resolved = self._resolve_handle(handle, email, taken_by=None)
         kp = generate_keypair()
         user = User(
             id=str(uuid.uuid4()),
@@ -175,12 +196,70 @@ class UserStore:
             did=did_from_public_key(kp.public_key, org=org, agent_type="user"),
             public_key=kp.public_key.hex(),
             signing_seed=kp.private_key.hex(),
+            handle=resolved,
+            display_name=display_name.strip(),
             roles=tuple(roles),
             telegram_user_id=telegram_user_id,
         )
         self._users[email] = user
         self.save()
         return user
+
+    def set_handle(self, email: str, handle: str) -> User:
+        user = self._require(email)
+        resolved = self._resolve_handle(handle, user.email, taken_by=user.email, strict=True)
+        updated = replace(user, handle=resolved)
+        self._users[updated.email] = updated
+        self.save()
+        return updated
+
+    def set_display_name(self, email: str, display_name: str) -> User:
+        user = self._require(email)
+        updated = replace(user, display_name=display_name.strip())
+        self._users[updated.email] = updated
+        self.save()
+        return updated
+
+    def by_handle(self, handle: str) -> User | None:
+        wanted = handle.lstrip("@").strip().lower()
+        for user in self._users.values():
+            if user.handle == wanted:
+                return user
+        return None
+
+    def _resolve_handle(
+        self, handle: str | None, email: str, *, taken_by: str | None, strict: bool = False
+    ) -> str:
+        """Validate an explicit handle, or derive a free one from the email.
+
+        An explicitly requested handle that is taken is an error — silently
+        handing someone ``josh2`` when they asked for ``josh`` means their
+        mentions quietly go to the wrong person. A *derived* handle may be
+        suffixed, because nobody asked for it.
+        """
+        if handle:
+            candidate = handle.lstrip("@").strip().lower()
+            if not _HANDLE_RE.match(candidate):
+                raise ValueError(
+                    "handle must be 2-31 characters: lowercase letters, digits, - or _, "
+                    "starting with a letter or digit"
+                )
+            owner = self.by_handle(candidate)
+            if owner is not None and owner.email != taken_by:
+                raise ValueError(f"handle @{candidate} is already taken by {owner.email}")
+            return candidate
+
+        if strict:
+            raise ValueError("handle cannot be empty")
+
+        base = re.sub(r"[^a-z0-9_-]", "", email.split("@", 1)[0].lower()) or "user"
+        base = base[:31].lstrip("-_") or "user"
+        candidate = base
+        suffix = 2
+        while (owner := self.by_handle(candidate)) is not None and owner.email != taken_by:
+            candidate = f"{base[:28]}{suffix}"
+            suffix += 1
+        return candidate
 
     def set_password(self, email: str, password: str) -> User:
         user = self._require(email)
