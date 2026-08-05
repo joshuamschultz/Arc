@@ -9,52 +9,52 @@
 
 ## Phase 1: Foundation
 
-- [ ] **T-877**: (red) Failing tests for ExtensionManifest: unknown key raises, denied keys stripped, wildcard allowlist refused above personal
+- [x] **T-877**: (red) Failing tests for ExtensionManifest: unknown key raises, denied keys stripped, wildcard allowlist refused above personal
   - domain: test
   - Components: COMP-001
   - Requirements: REQ-262, REQ-264, REQ-268, REQ-269, REQ-274, REQ-290
   - Acceptance: Tests assert extra=forbid raises on a typo, denied paths are dropped with an audit note, and an unbounded allowlist is refused above personal tier. All fail.
-- [ ] **T-878**: (green) ExtensionManifest Pydantic model and denied-key stripping
+- [x] **T-878**: (green) ExtensionManifest Pydantic model and denied-key stripping
   - domain: backend
   - Components: COMP-001
   - Requirements: REQ-262, REQ-264, REQ-268, REQ-269, REQ-274, REQ-290
   - Acceptance: T-877 passes. Manifest parses artifact pin, host prerequisites, secrets, requires, tools with classification and tags, tier floor, approval mode.
-- [ ] **T-879**: (green) Define the ExtensionAttachment Protocol with no implementation
+- [x] **T-879**: (green) Define the ExtensionAttachment Protocol with no implementation
   - domain: backend
   - Components: COMP-004
   - Requirements: REQ-278, REQ-279, REQ-280
   - Acceptance: Protocol declares requirements, probe, describe_tools, invoke. mypy --strict passes. No core module imports any concrete attachment.
-- [ ] **T-880**: (red) Failing tests for ExtensionCatalog: name traversal refused, unofficial warns below federal and is refused at federal
+- [x] **T-880**: (red) Failing tests for ExtensionCatalog: name traversal refused, unofficial warns below federal and is refused at federal
   - domain: test
   - Components: COMP-002
   - Requirements: REQ-268
   - Acceptance: Tests cover ../evil and dotted names, and both tier behaviours for an unlisted bundle. All fail.
-- [ ] **T-881**: (green) ExtensionCatalog with name validation and vetted-upstream allowlist
+- [x] **T-881**: (green) ExtensionCatalog with name validation and vetted-upstream allowlist
   - domain: backend
   - Components: COMP-002
   - Requirements: REQ-268
   - Acceptance: T-880 passes. Allowlist maps name to expected distribution, version and hash; every verdict emits an audit event.
-- [ ] **T-882**: (red) Failing tests for the untrusted extension root: a bundle in a module root is refused; unsigned denied above personal; unpinned key never satisfies a signature requirement
+- [x] **T-882**: (red) Failing tests for the untrusted extension root: a bundle in a module root is refused; unsigned denied above personal; unpinned key never satisfies a signature requirement
   - domain: test
   - Components: COMP-003
   - Requirements: REQ-281, REQ-282, REQ-283
   - Acceptance: Tests drive the real capability loader, not a patched one. All fail.
-- [ ] **T-883**: (green) Add the extension untrusted root and wire the trust gate
+- [x] **T-883**: (green) Add the extension untrusted root and wire the trust gate
   - domain: backend
   - Components: COMP-003
   - Requirements: REQ-281, REQ-282, REQ-283
   - Acceptance: T-882 passes. Bundles load only through the untrusted root; .arcsig verified at load independently of install; any exception denies.
-- [ ] **T-884**: (green) ExtensionLoader routes bundle parts by kind
+- [x] **T-884**: (green) ExtensionLoader routes bundle parts by kind
   - domain: backend
   - Components: COMP-003
   - Requirements: REQ-263, REQ-264, REQ-260, REQ-261
   - Acceptance: Skills and tools land in the agent capability folder; implementation and dependencies stay in the extension folder; host prerequisites are handed off, never installed here.
-- [ ] **T-885**: (refactor) Extract the shared TOML writer and delete both existing copies
+- [x] **T-885**: (refactor) Extract the shared TOML writer and delete both existing copies
   - domain: backend
   - Components: COMP-022
   - Requirements: REQ-260
   - Acceptance: One emitter remains. arcgateway/connect.py and arccli/blueprints.py both import it; their local copies are gone in the same change. Existing tests for both callers still pass.
-- [ ] **T-886**: (green) ConnectionStateStore records and schema
+- [x] **T-886**: (green) ConnectionStateStore records and schema
   - domain: db
   - Components: COMP-019
   - Requirements: REQ-295, REQ-291
