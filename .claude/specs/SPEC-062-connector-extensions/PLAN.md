@@ -62,31 +62,31 @@
 
 ## Phase 2: Core
 
-- [ ] **T-887**: (red) Failing tests for the MCP client against a controlled server: stateless request shape, tools/list, tools/call
+- [ ] **T-887**: (red) Failing tests for the CLI attachment: argv built from declared args only, JSON parsed, exit code mapped, no shell
   - domain: test
   - Components: COMP-005
   - Requirements: REQ-279
-  - Acceptance: Tests assert no initialize handshake, _meta protocol version present, and correct tools/list and tools/call envelopes. All fail.
-- [ ] **T-888**: (green) MCP client over httpx and stdio, 2026-07-28 stateless revision
+  - Acceptance: Tests assert argv is a list never a shell string, that an argument cannot inject a flag or a second command, that stdout JSON becomes ToolResult and stderr does not by itself mean failure, and that a non-zero exit maps to ToolOutcome.ERROR rather than raising. All fail.
+- [ ] **T-888**: (green) CliAttachment over ToolTransport.PROCESS — the default attachment (D-569)
   - domain: backend
   - Components: COMP-005
   - Requirements: REQ-279
-  - Acceptance: T-887 passes. No vendor SDK. stdout carries messages only; stderr is never treated as an error signal.
-- [ ] **T-889**: (green) MCP error handling: protocol errors versus isError results, and resultType round trips
+  - Acceptance: T-887 passes. Each declared CLI command is one named tool. argv is built from the manifest, never interpolated into a shell. Structured output is parsed; stderr is captured but is not itself a failure signal.
+- [ ] **T-889**: (green) CLI failure handling: exit codes, unparseable output, missing binary
   - domain: backend
   - Components: COMP-005
   - Requirements: REQ-270, REQ-271
-  - Acceptance: A JSON-RPC error surfaces as a protocol failure; an isError result reaches the agent for self-correction; an input_required result is not mistaken for completion.
+  - Acceptance: A non-zero exit becomes a ToolResult the agent can read and act on; a missing or unverified binary is a transport failure that raises; unparseable stdout never silently becomes an empty success.
 - [ ] **T-890**: (green) Timeout, bounded retry with backoff, and circuit breaker on every external call
   - domain: backend
   - Components: COMP-005, COMP-006
   - Requirements: REQ-271, REQ-270
   - Acceptance: Both attachment implementations share one policy. A tripped breaker returns a structured error and does not deregister tools.
-- [ ] **T-891**: (green) McpAttachment satisfies the hook Protocol
+- [ ] **T-891**: (green) CliAttachment satisfies the hook Protocol, proven against a real binary
   - domain: backend
   - Components: COMP-005, COMP-004
   - Requirements: REQ-278, REQ-279
-  - Acceptance: The MCP client is adapted to requirements, probe, describe_tools, invoke with no core changes.
+  - Acceptance: requirements/probe/describe_tools/invoke all satisfied with no core changes. Proven end to end against one real CLI, with its install directive, its declared tool surface, and its skill as three separate parts per D-570.
 - [ ] **T-892**: (green) NativeAttachment loads an extension-provided entrypoint
   - domain: backend
   - Components: COMP-006, COMP-004
@@ -238,6 +238,16 @@
   - Components: COMP-006, COMP-016
   - Requirements: REQ-278, REQ-279, REQ-264
   - Acceptance: A service with no acceptable protocol upstream is reached through NativeAttachment, with all service knowledge inside the extension package.
+- [ ] **T-921**: (red) Failing tests for the MCP client against a controlled server: stateless request shape, tools/list, tools/call
+  - domain: test
+  - Components: COMP-005
+  - Requirements: REQ-279
+  - Acceptance: Tests assert no initialize handshake, _meta protocol version present, and correct tools/list and tools/call envelopes. All fail.
+- [ ] **T-922**: (green) McpAttachment — MCP client over httpx and stdio, 2026-07-28 stateless revision (D-569: the option, not the default)
+  - domain: backend
+  - Components: COMP-005, COMP-004
+  - Requirements: REQ-278, REQ-279, REQ-270
+  - Acceptance: T-921 passes. No vendor SDK. Satisfies the same hook Protocol as CliAttachment with no core changes — which is the proof the hook is transport-agnostic. A JSON-RPC error is a protocol failure; an isError result reaches the agent; an input_required result is never mistaken for completion.
 
 ## Traceability
 
