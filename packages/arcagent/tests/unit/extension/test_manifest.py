@@ -20,14 +20,17 @@ Serves REQ-262, REQ-264, REQ-268, REQ-269, REQ-274, REQ-290.
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from typing import Any
 
 import pytest
-from arcagent.extension.manifest import ExtensionManifest, load_manifest
 from pydantic import ValidationError
 
 from arcagent.core.errors import ExtensionError
 from arcagent.core.tier import Tier
+from arcagent.extension import manifest as manifest_module
+from arcagent.extension.manifest import ExtensionManifest, load_manifest
 
 _SHA = "a" * 64
 
@@ -256,3 +259,53 @@ def test_approval_defaults_to_outbound_requires_approval() -> None:
     manifest = load_manifest(text, tier=Tier.PERSONAL)
 
     assert manifest.approval.default == "outbound"
+
+
+class TestTierFloorRefusesButCannotRaise:
+    """D-579: a tier floor declines to run below itself and does nothing else.
+
+    The last test is the load-bearing one. A bundle author who could raise the
+    deployment's stringency would be writing operator policy — so the floor must
+    reach no policy resolver at all, which only a structural check can hold.
+    """
+
+    def test_a_floor_above_the_deployment_refuses_to_load(self) -> None:
+        text = _FULL.replace('tier_floor = "personal"', 'tier_floor = "federal"', 1)
+
+        with pytest.raises(ExtensionError) as excinfo:
+            load_manifest(text, tier=Tier.ENTERPRISE)
+
+        assert excinfo.value.details["reason"] == "tier_floor"
+
+    def test_a_floor_at_or_below_the_deployment_loads(self) -> None:
+        text = _FULL.replace('tier_floor = "personal"', 'tier_floor = "enterprise"', 1)
+
+        manifest = load_manifest(text, tier=Tier.FEDERAL)
+
+        assert manifest.extension.tier_floor == Tier.ENTERPRISE
+
+    def test_the_other_tier_gate_still_keys_off_the_deployment_tier(self) -> None:
+        # The unbounded-allowlist refusal is the one other tier-sensitive rule
+        # here. Raising the floor to the deployment's own tier must not change
+        # its verdict — if the floor fed an "effective tier" anywhere, a
+        # personal deployment with a personal floor could stop admitting what
+        # personal admits.
+        unbounded = _FULL.replace('allow = ["list_issues", "create_issue"]\n', "", 1)
+
+        assert load_manifest(unbounded, tier=Tier.PERSONAL).tools.is_unbounded is True
+
+    def test_tier_floor_is_read_nowhere_but_the_refusal(self) -> None:
+        # The structural guard, and the only one that survives a future edit: a
+        # floor that reached a policy resolver would hand a third-party bundle
+        # author control over operator policy, and no behavioural assertion here
+        # would see it happen.
+        root = Path(manifest_module.__file__).resolve().parents[1]
+        readers = sorted(
+            path.relative_to(root)
+            for path in root.rglob("*.py")
+            # Attribute access only: ``resolve_tier_floor`` is the unrelated
+            # SPEC-047 security-knob helper and must not count as a reader.
+            if re.search(r"\.tier_floor\b", path.read_text(encoding="utf-8"))
+        )
+
+        assert readers == [Path("extension/manifest.py")]

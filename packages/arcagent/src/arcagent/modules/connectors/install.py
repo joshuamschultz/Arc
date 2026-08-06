@@ -56,6 +56,7 @@ from arcagent.extension.manifest import ExtensionManifest, SecretRequirement, lo
 from arcagent.extension.native_attachment import NativeAttachment
 from arcagent.extension.secrets import SecretRef, SecretStore
 from arcagent.extension.state import ConnectionRecord, ConnectionStateStore
+from arcagent.tools._egress_policy import first_forbidden_egress
 from arcagent.utils.toml_writer import dumps_toml
 
 if TYPE_CHECKING:
@@ -122,6 +123,7 @@ class ConnectorPlan:
     approval_mode: str
     tier: Tier
     extensions_root: Path
+    egress_allow: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -152,6 +154,7 @@ def plan_connector(
     tier: Tier,
     audit_sink: AuditSink,
     director: HostPrerequisiteDirector | None = None,
+    egress_allow: Sequence[str] = (),
 ) -> ConnectorPlan:
     """Run the three read-only steps: resolve the bundle, parse it, inspect the host.
 
@@ -159,11 +162,14 @@ def plan_connector(
         extensions_root: The directory every loadable bundle lives directly inside.
         extension: The bundle name the operator asked for.
         instance: The name this connected account will be known by.
-        tier: The deployment tier — decides the unlisted-bundle verdict and the
-            unbounded-allowlist refusal.
+        tier: The deployment tier — decides the unlisted-bundle verdict, the
+            unbounded-allowlist refusal, and the egress verdict.
         audit_sink: Where the catalog records its verdicts.
         director: Host detection. Injectable so a test never depends on what
             happens to be installed on the machine running it.
+        egress_allow: ``tools.policy.egress_allow`` — the tools this operator
+            permits to send data out (D-580). Read from the agent config by
+            :func:`load_egress_allow`.
 
     Returns:
         The plan, including any host prerequisite the operator must satisfy first.
@@ -171,6 +177,10 @@ def plan_connector(
     Raises:
         ExtensionError: The name or bundle was refused (``step="resolve"``) or the
             manifest did not parse or was refused at this tier (``step="manifest"``).
+            The egress verdict is deliberately NOT taken here: this function is
+            also how ``remove`` finds the credentials to delete and how ``doctor``
+            reports a connection, and a planner that refuses would strand the
+            credentials of a connection the tier has since turned forbidden.
     """
     catalog = ExtensionCatalog(root=Path(extensions_root), tier=tier, audit_sink=audit_sink)
     try:
@@ -195,6 +205,7 @@ def plan_connector(
         approval_mode=manifest.approval.default,
         tier=tier,
         extensions_root=Path(extensions_root),
+        egress_allow=tuple(egress_allow),
     )
 
 
@@ -236,6 +247,7 @@ async def install_connector(
         ExtensionError: Any step failed. ``details["step"]`` names which, and
             every credential this call wrote has already been removed.
     """
+    _refuse_declared_egress(plan)
     if plan.unsatisfied_host:
         missing = plan.unsatisfied_host[0]
         raise _refuse(
@@ -254,6 +266,7 @@ async def install_connector(
     )
     try:
         probe = await _probe(plan, attachment_factory)
+        _refuse_probed_egress(plan, probe)
     except BaseException:
         await _forget_secrets(written, store=store, did=caller_did)
         raise
@@ -338,6 +351,24 @@ def load_instances(agent_dir: Path) -> dict[str, InstanceConfig]:
         except ValidationError as exc:
             raise _refuse("persist", f"[{CONFIG_TABLE}.{name}] is invalid — {exc}") from exc
     return instances
+
+
+def load_egress_allow(agent_dir: Path) -> tuple[str, ...]:
+    """Read ``[tools.policy] egress_allow`` — the tools permitted to send out (D-580).
+
+    Args:
+        agent_dir: The agent directory holding ``arcagent.toml``.
+
+    Returns:
+        The permitted tool names. Empty when unset, which is the fail-closed
+        posture: an operator who has permitted no send has permitted no send.
+    """
+    tools = _read_config(agent_dir).get("tools", {})
+    policy = tools.get("policy", {}) if isinstance(tools, dict) else {}
+    allow = policy.get("egress_allow", []) if isinstance(policy, dict) else []
+    if not isinstance(allow, list):
+        raise _refuse("persist", f"[tools.policy] egress_allow in {agent_dir} is not a list")
+    return tuple(str(name) for name in allow)
 
 
 def write_instance(agent_dir: Path, instance: str, config: InstanceConfig) -> None:
@@ -460,6 +491,7 @@ async def _verify_bundle(
         tier=plan.tier,
         audit_sink=audit_sink if audit_sink is not None else NullSink(),
         trusted_public_key=trusted_public_key,
+        egress_allow=plan.egress_allow,
     )
     try:
         await loader.load(plan.extension)
@@ -519,6 +551,41 @@ async def _probe(plan: ConnectorPlan, factory: AttachmentFactory | None) -> Prob
     return result
 
 
+def _refuse_declared_egress(plan: ConnectorPlan) -> None:
+    """Refuse a bundle DECLARING a send this tier forbids from an extension (D-580).
+
+    First of everything, before the host check and long before a credential is
+    written, because the whole point of the rule is that the agent never receives
+    a tool it cannot use — and a refusal that arrives after the install has
+    written something is a cleanup problem rather than a refusal.
+    """
+    declared = ((tool.name, tool.capability_tags) for tool in plan.manifest.tools.declared)
+    _refuse_egress(plan, declared, "manifest")
+
+
+def _refuse_probed_egress(plan: ConnectorPlan, probe: ProbeResult) -> None:
+    """Refuse a connection whose LIVE tools include a send this tier forbids (D-580).
+
+    The manifest check reads a declaration; this reads what the connection
+    actually serves, which is the only place an attachment declaring its verbs
+    somewhere other than ``[[tools.declared]]`` — a CLI's commands, an MCP
+    server's ``tools/list`` — becomes visible. Inside the rollback scope on
+    purpose, so a refusal here takes the credential back out.
+    """
+    _refuse_egress(plan, ((spec.name, spec.capability_tags) for spec in probe.tools), "probe")
+
+
+def _refuse_egress(
+    plan: ConnectorPlan, declared: Iterator[tuple[str, Sequence[str]]], step: str
+) -> None:
+    """Take the one egress verdict over ``declared`` and raise if it refuses."""
+    refusal = first_forbidden_egress(
+        declared, tier=plan.tier, from_extension=True, egress_allow=plan.egress_allow
+    )
+    if refusal is not None:
+        raise _refuse(step, refusal.message, extension=plan.extension, tool=refusal.tool)
+
+
 def _config_path(agent_dir: Path) -> Path:
     path = Path(agent_dir) / "arcagent.toml"
     if not path.is_file():
@@ -549,6 +616,7 @@ __all__ = [
     "build_attachment",
     "delete_instance",
     "install_connector",
+    "load_egress_allow",
     "load_instances",
     "plan_connector",
     "remove_connector",

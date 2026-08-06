@@ -28,6 +28,7 @@ declarations for the operator to satisfy — Arc directs, it never installs (REQ
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NoReturn, cast
@@ -48,6 +49,7 @@ from arcagent.extension.attachment import Requirement, RequirementKind
 from arcagent.extension.catalog import ExtensionCatalog, validate_extension_name
 from arcagent.extension.manifest import ExtensionManifest, load_manifest
 from arcagent.tools._dynamic_loader import resolve_workspace_import_policy
+from arcagent.tools._egress_policy import first_forbidden_egress
 
 _logger = logging.getLogger("arcagent.extension.loader")
 
@@ -94,6 +96,10 @@ class ExtensionLoader:
             through the single :func:`~arctrust.audit.emit` chokepoint.
         trusted_public_key: The operator key signatures are pinned to. ``None`` above
             personal is itself the refusal (REQ-283).
+        egress_allow: ``tools.policy.egress_allow`` — the tools the operator permits
+            to send data out (D-580). Consulted at enterprise; the default empty
+            list is the fail-closed posture, since an operator who has permitted no
+            send has permitted no send.
     """
 
     def __init__(
@@ -104,12 +110,14 @@ class ExtensionLoader:
         tier: Tier,
         audit_sink: AuditSink,
         trusted_public_key: bytes | None = None,
+        egress_allow: Sequence[str] = (),
     ) -> None:
         self._root = Path(extensions_root)
         self._registry = registry
         self._tier = tier
         self._sink = audit_sink
         self._trusted_public_key = trusted_public_key
+        self._egress_allow = tuple(egress_allow)
         self._catalog = ExtensionCatalog(
             root=self._root, tier=tier, audit_sink=audit_sink, actor_did=_LOADER_DID
         )
@@ -167,6 +175,7 @@ class ExtensionLoader:
         self._verify(bundle, name)
         self._catalog.resolve(name)  # official-upstream verdict, audited by the catalog
         manifest = self._read_manifest(bundle, name)
+        self._refuse_forbidden_egress(manifest, name)
         roots = await self._register_capabilities(bundle, name)
         self._audit("extension.loaded", name, "allow", reason="verified")
         return LoadedExtension(
@@ -227,9 +236,26 @@ class ExtensionLoader:
             text = (bundle / MANIFEST_NAME).read_text(encoding="utf-8")
             return load_manifest(text, tier=self._tier)
         except Exception as exc:  # reason: an unreadable/refused manifest denies the load
-            self._refuse(
-                name, reason="invalid_manifest", message=f"{type(exc).__name__}: {exc}"
-            )
+            self._refuse(name, reason="invalid_manifest", message=f"{type(exc).__name__}: {exc}")
+
+    def _refuse_forbidden_egress(self, manifest: ExtensionManifest, name: str) -> None:
+        """Refuse a bundle declaring a send this tier will not take from an extension.
+
+        Ordered before capabilities register, so a refused bundle contributes
+        nothing rather than being unwound afterwards. Re-run on every load and not
+        only at install, because the manifest is re-read every load: a bundle that
+        gains a sending verb in an upgrade, or a deployment since raised to
+        federal, has to be refused before that verb exists (REQ-282's reasoning,
+        applied to the egress declaration).
+        """
+        refusal = first_forbidden_egress(
+            ((tool.name, tool.capability_tags) for tool in manifest.tools.declared),
+            tier=self._tier,
+            from_extension=True,
+            egress_allow=self._egress_allow,
+        )
+        if refusal is not None:
+            self._refuse(name, reason="egress_forbidden", message=refusal.message)
 
     async def _register_capabilities(self, bundle: Path, name: str) -> tuple[str, ...]:
         """Register the bundle's skills and tools through untrusted extension roots.

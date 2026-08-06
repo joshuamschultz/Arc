@@ -8,7 +8,7 @@ import pytest
 
 from arcllm._pii import PiiMatch
 from arcllm.exceptions import ArcLLMConfigError
-from arcllm.modules.security import SecurityModule
+from arcllm.modules.security import SecurityModule, configured_redactor
 from arcllm.types import (
     LLMProvider,
     LLMResponse,
@@ -599,3 +599,38 @@ class TestCustomDetector:
 
         sent = inner.invoke.call_args[0][0]
         assert "[PII:CUSTOM]" in sent[0].content
+
+
+class TestConfiguredRedactor:
+    """D-573 — the policy a caller outside an LLM round-trip applies.
+
+    A workflow activation or a skill mutation builds its payload inside the
+    agent and never passes through SecurityModule, so it would otherwise carry
+    no PII policy at all while everything the model touched carried the tier's.
+    """
+
+    def test_returns_identity_when_the_module_is_not_configured(self) -> None:
+        with patch("arcllm.registry._resolve_module_config", return_value=None):
+            redact = configured_redactor()
+
+        assert redact("mail me at victim@example.com") == "mail me at victim@example.com"
+
+    def test_returns_identity_when_pii_is_disabled(self) -> None:
+        with patch("arcllm.registry._resolve_module_config", return_value={"pii_enabled": False}):
+            redact = configured_redactor()
+
+        assert redact("mail me at victim@example.com") == "mail me at victim@example.com"
+
+    def test_redacts_when_the_deployment_enabled_pii(self) -> None:
+        with patch("arcllm.registry._resolve_module_config", return_value={"pii_enabled": True}):
+            redact = configured_redactor()
+
+        redacted = redact("mail me at victim@example.com")
+        assert "victim@example.com" not in redacted
+        assert "[PII:EMAIL]" in redacted
+
+    def test_leaves_text_without_pii_untouched(self) -> None:
+        with patch("arcllm.registry._resolve_module_config", return_value={"pii_enabled": True}):
+            redact = configured_redactor()
+
+        assert redact("nightly-digest") == "nightly-digest"

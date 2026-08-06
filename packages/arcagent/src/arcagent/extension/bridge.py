@@ -45,6 +45,7 @@ from arcagent.extension.attachment import (
     ToolResult,
     ToolSpec,
 )
+from arcagent.tools._egress_policy import extension_root
 
 _logger = logging.getLogger("arcagent.extension.bridge")
 
@@ -140,6 +141,10 @@ class CapabilityBridge:
             transport=self._transport,
             execute=self._dispatcher(spec.name),
             source=self._source,
+            # Everything this bridge registers came out of an extension bundle, so
+            # the origin the egress gate reads is structural here rather than a
+            # string convention the caller has to remember to get right (D-580).
+            scan_root=extension_root(self._source),
             classification=spec.classification,
             capability_tags=list(spec.capability_tags),
         )

@@ -20,9 +20,8 @@ Three shapes of assertion, and the second and third are the load-bearing ones:
   ([[feedback_producers_unwired_pattern]]).
 * **The presented request must be decidable.** ``sales wants to email
   new@stranger.com`` is a decision; ``sales wants to call gmail.send`` is not.
-  ``HumanGate`` runs its ``arguments`` preview through arcllm's PII detector, so
-  a recipient address arrives at the operator as ``[PII:EMAIL]`` — the target has
-  to reach the operator by a channel redaction does not touch.
+  ``HumanGate`` presents ``arguments`` as it received them (D-572), so the
+  recipient reaches the operator in the arguments themselves.
 """
 
 from __future__ import annotations
@@ -238,15 +237,12 @@ class TestPresentedRequest:
         assert _OUTBOUND.name in channel.requests[0].tool_name
 
     async def test_request_names_the_outbound_target_unredacted(self) -> None:
-        # HumanGate redacts `arguments` through arcllm's PII detector, so the
-        # recipient arrives there as a placeholder. The target must reach the
-        # operator by a route redaction does not touch, or the prompt is
-        # undecidable and the whole gate is theatre.
+        # The recipient reaches the operator in the arguments the gate was
+        # handed. If it did not, the prompt would be undecidable and the whole
+        # gate is theatre.
         gate, channel = _approving_pair()
         await _binding(gate).authorize(_OUTBOUND, {"to": _TARGET})
-        request = channel.requests[0]
-        assert _TARGET not in str(request.arguments), "precondition: arguments are redacted"
-        assert _TARGET in str(request.leg_provenance)
+        assert channel.requests[0].arguments["to"] == _TARGET
 
     async def test_grant_binds_to_the_real_target(self) -> None:
         # Two calls differing only in recipient must not share one approval.

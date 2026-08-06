@@ -23,16 +23,12 @@ weaker trust path:
   resolves them — including the owner-channel exemption, so delivering a result
   to the operator's own sink is not treated as egress.
 
-**Why the outbound target rides ``provenance``.** REQ-275 requires the presented
+**How the request names what it is asking about.** REQ-275 requires the presented
 request to name the instance and the outbound target: *"sales wants to email
 new@stranger.com"* is a decision an operator can make, *"sales wants to call
-send_mail"* is not. ``HumanGate`` builds its ``arguments`` preview through
-``redact_arguments``, which runs arcllm's PII detector — so a recipient address
-placed only in the arguments reaches the operator as ``[PII:EMAIL]`` and the
-prompt becomes undecidable. The instance therefore rides the qualified
-``tool_name`` and the target rides one ``provenance`` entry, both of which reach
-``PendingApproval`` untouched. The *grant* still binds to the real recipient
-regardless, because the call hash covers the unredacted arguments.
+send_mail"* is not. The instance rides the qualified ``tool_name`` and the target
+rides the arguments, which ``HumanGate`` presents as it received them. The *grant*
+binds to the real recipient regardless, because the call hash covers the arguments.
 """
 
 from __future__ import annotations
@@ -196,11 +192,7 @@ class ApprovalBinding:
 
         target = outbound_target(arguments)
         legs = self._legs(spec, arguments)
-        grant = await self._gate.request(
-            self._subject(spec, arguments, legs),
-            legs=legs,
-            provenance=[self._presentation(spec, target)],
-        )
+        grant = await self._gate.request(self._subject(spec, arguments, legs), legs=legs)
         if grant is None:
             self._audit(spec, target, action="connector.approval_denied", outcome="deny")
             return ApprovalDecision(allowed=False, reason="approval_denied")
@@ -257,15 +249,6 @@ class ApprovalBinding:
             classification="unclassified",
             capability_tags=legs,
         )
-
-    def _presentation(self, spec: ToolSpec, target: str) -> dict[str, object]:
-        """The unredacted line the operator decides from (see the module docstring)."""
-        return {
-            "instance": self._instance,
-            "tool": spec.name,
-            "outbound_target": target,
-            "mode": self._mode,
-        }
 
     def _audit(self, spec: ToolSpec, target: str, *, action: str, outcome: str) -> None:
         """Record the verdict through the single emission chokepoint."""

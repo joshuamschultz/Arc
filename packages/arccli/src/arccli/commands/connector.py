@@ -47,6 +47,7 @@ from arcagent.modules.connectors.install import (
     InstanceConfig,
     build_attachment,
     install_connector,
+    load_egress_allow,
     load_instances,
     plan_connector,
     remove_connector,
@@ -200,6 +201,7 @@ def _plan(ctx: _Context, extension: str, instance: str, sink: Any) -> ConnectorP
             instance=instance,
             tier=ctx.tier,
             audit_sink=sink,
+            egress_allow=load_egress_allow(ctx.agent_dir),
         )
     except ExtensionError as exc:
         _fail(exc.message)

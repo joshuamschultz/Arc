@@ -240,6 +240,9 @@ async def _load_bundle(ctx: _AttachContext, extension: str) -> LoadedExtension:
         # bundle an operator actually signed. Absent, the loader's own rule
         # applies: above personal, no pin is itself the refusal (REQ-283).
         trusted_public_key=_pinned_key(state),
+        # The same list ToolRegistry applies, read from the registry that applies
+        # it. A second copy read from elsewhere is the one that drifts (D-580).
+        egress_allow=ctx.registry.policy.egress_allow,
     )
     return await loader.load(extension)
 

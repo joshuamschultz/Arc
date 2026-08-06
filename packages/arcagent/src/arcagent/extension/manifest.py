@@ -14,6 +14,9 @@ privilege-escalation form:
   allowlist is the same unbounded grant as asking for ``*``.
 * a third-party artifact is pinned to one exact version **and** one sha256 (REQ-290).
   A floating pin is a supply-chain hole, not a convenience.
+* a declared tier floor may only **refuse** to load below that tier — it can never raise
+  the deployment's effective stringency (D-579). The operator sets the tier; a bundle
+  author may decline to run under it, never redefine it.
 
 Name validation is deliberately absent: :mod:`arcagent.extension.catalog` owns it, and
 it is the component that turns a name into a filesystem path.
@@ -31,6 +34,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from arcagent.core.errors import ExtensionError
 from arcagent.core.tier import Tier
 from arcagent.extension.attachment import Classification
+from arcagent.tiers import tier_rank
 
 _logger = logging.getLogger("arcagent.extension.manifest")
 
@@ -90,6 +94,9 @@ class ExtensionHeader(_ManifestModel):
     name: str
     version: str
     attachment: str = Field(min_length=1)
+    #: The weakest deployment this bundle agrees to run in. Read ONLY by
+    #: :func:`load_manifest`'s refusal, and by nothing that resolves policy —
+    #: which is what keeps a bundle author from raising the operator's tier.
     tier_floor: Tier = Tier.PERSONAL
 
 
@@ -170,11 +177,12 @@ class ExtensionManifest(_ManifestModel):
 
 
 def load_manifest(text: str, *, tier: Tier) -> ExtensionManifest:
-    """Parse ``extension.toml`` and apply the tier-gated allowlist refusal.
+    """Parse ``extension.toml`` and apply the tier-gated refusals.
 
     Args:
         text: The manifest source.
-        tier: The deployment tier the extension would load into.
+        tier: The deployment tier the extension would load into. Returned
+            unchanged in effect — nothing here can strengthen it (D-579).
 
     Returns:
         The validated manifest.
@@ -182,9 +190,19 @@ def load_manifest(text: str, *, tier: Tier) -> ExtensionManifest:
     Raises:
         ValidationError: An unknown key, a missing table, or an unpinned artifact.
         ExtensionError: The manifest asks for an unbounded tool allowlist above
-            personal tier (REQ-268).
+            personal tier (REQ-268), or declares a tier floor above ``tier``.
     """
     manifest = ExtensionManifest.model_validate(tomllib.loads(text))
+    floor = manifest.extension.tier_floor
+    if tier_rank(tier) < tier_rank(floor):
+        raise ExtensionError(
+            code="EXTENSION_REFUSED",
+            message=(
+                f"extension '{manifest.extension.name}' declares a {floor} tier floor "
+                f"and will not load at {tier} tier"
+            ),
+            details={"reason": "tier_floor", "tier": str(tier), "tier_floor": str(floor)},
+        )
     if manifest.tools.is_unbounded and tier is not Tier.PERSONAL:
         raise ExtensionError(
             code="EXTENSION_REFUSED",

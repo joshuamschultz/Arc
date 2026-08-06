@@ -25,7 +25,7 @@ from arcagent.tools.human_gate import (
     ApprovalRequest,
     HumanGate,
     HumanGateConfig,
-    redact_arguments,
+    preview_arguments,
     summarize_arguments,
 )
 
@@ -222,16 +222,18 @@ def test_policy_context_carries_session_capabilities() -> None:
     assert ctx.session_capabilities is None
 
 
-class TestArgumentRedaction:
-    """SPEC-035 approval enrichment — arguments are redacted + length-bounded."""
+class TestArgumentPreview:
+    """D-572 — the gate shows what it was handed, bounded but never re-redacted."""
 
-    def test_secrets_and_pii_are_redacted(self) -> None:
-        preview = redact_arguments({"to": "victim@example.com", "body": "my ssn is 123-45-6789"})
-        assert "victim@example.com" not in preview["to"]
-        assert "123-45-6789" not in preview["body"]
+    def test_values_pass_through_unredacted(self) -> None:
+        # PII policy is arcllm's and has already run. Hiding a recipient the
+        # model was allowed to see makes the approval prompt undecidable.
+        preview = preview_arguments({"to": "victim@example.com", "body": "ssn 123-45-6789"})
+        assert preview["to"] == "victim@example.com"
+        assert preview["body"] == "ssn 123-45-6789"
 
     def test_values_are_length_bounded(self) -> None:
-        preview = redact_arguments({"body": "A" * 5000})
+        preview = preview_arguments({"body": "A" * 5000})
         assert len(preview["body"]) <= 130  # cap (120) + ellipsis
         assert preview["body"].endswith("...")
 
@@ -243,7 +245,7 @@ class TestArgumentRedaction:
 
 @pytest.mark.asyncio
 class TestApprovalRequestEnrichment:
-    """The gate threads arguments (redacted), provenance, and session_id through."""
+    """The gate threads arguments, provenance, and session_id through untouched."""
 
     async def test_request_carries_enriched_fields_into_channel(self) -> None:
         captured: dict[str, ApprovalRequest] = {}
@@ -275,8 +277,35 @@ class TestApprovalRequestEnrichment:
         req = captured["req"]
         assert req.session_id == "sess-42"
         assert req.leg_provenance == provenance
-        assert "attacker@evil.com" not in req.arguments["to"]  # redacted
+        # The operator is shown the real destination — the whole point of asking.
+        assert req.arguments["to"] == "attacker@evil.com"
         assert set(req.arguments) == {"to", "body"}
+
+    async def test_long_argument_is_still_capped(self) -> None:
+        captured: dict[str, ApprovalRequest] = {}
+
+        async def capture(req: ApprovalRequest) -> ApprovalGrant | None:
+            captured["req"] = req
+            return None
+
+        agent_did = "did:arc:example:org:agent:abc"
+        call = ToolCall(
+            tool_name="messaging_send",
+            arguments={"body": "B" * 5000},
+            agent_did=agent_did,
+            session_id="sess-43",
+            classification="unclassified",
+            capability_tags=frozenset({"external_comms"}),
+        )
+        gate = HumanGate(
+            operator_signer=_operator_signer(),
+            agent_did=agent_did,
+            tier="enterprise",
+            channel=capture,
+        )
+        await gate.request(call, legs=_TRIFECTA)
+
+        assert len(captured["req"].arguments["body"]) <= 130
 
     async def test_emit_payload_includes_enriched_fields(self) -> None:
         events: list[tuple[str, dict[str, object]]] = []
