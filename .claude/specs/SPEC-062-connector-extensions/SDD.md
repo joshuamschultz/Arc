@@ -22,7 +22,7 @@ Five bands, dependencies pointing down only, per `.claude/steering/structure.md#
 
 **4. Governance.** `CapabilityBridge` converts each allowlisted tool into a `RegisteredTool` (`tools/_transport.py:36-74`) carrying `transport`, `classification`, and `capability_tags`, then registers it — which is all that is needed to ride the existing envelope in `core/tool_registry.py:384-600`: schema validation, signed `ToolCall`, `PolicyPipeline` under the admission lock, `HumanGate` for forbidden compositions, timeout, audit. `ToolContractLedger` defends the rug-pull the envelope cannot see. `AuditRedactor` runs in the module before `arctrust.audit.emit`, because `arctrust` is a leaf and must not import `arcllm`.
 
-**5. Surfaces and lifecycle.** The `mcp` module (`arcagent/modules/mcp/`, shipping `capabilities.py` + `_runtime.py` per `core/module_discovery.py:40-52`) hosts the runtime, disabled by default. CLI verbs are the complete surface; arcui calls the same functions.
+**5. Surfaces and lifecycle.** The `connectors` module (`arcagent/modules/connectors/`, shipping `capabilities.py` + `_runtime.py` per `core/module_discovery.py:40-52`) hosts the runtime, disabled by default. CLI verbs are the complete surface; arcui calls the same functions.
 
 ## Components
 
@@ -110,7 +110,7 @@ Five bands, dependencies pointing down only, per `.claude/steering/structure.md#
 **Inputs:** call arguments, call result, tool classification
 **Outputs:** an AuditEvent with full content or the credential carve-out applied, emitted through the single emission point
 
-### COMP-015: Connector module (arcagent/modules/mcp)
+### COMP-015: Connector module (arcagent/modules/connectors)
 **Responsibility:** Hosts the runtime as an optional module shipping both `capabilities.py` and `_runtime.py`, which is what `core/module_discovery.py:40-52` requires for discovery. Disabled by default so an existing agent gains no behaviour until its configuration enables it. Requests only the narrowest kwargs from the signature-dispatched `configure` in `core/agent_lifecycle.py:216-269`, since core offers signing authority only to modules that name it. Holds runtime state on a `contextvars.ContextVar`, never a module global, per the precedent documented in `modules/scheduler/_runtime.py:1-19`.
 **Dependencies:** COMP-003, COMP-012, COMP-008, COMP-011
 **Inputs:** module config, agent identity, tier, policy pipeline, human gate

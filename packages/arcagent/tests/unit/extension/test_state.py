@@ -313,6 +313,34 @@ async def test_credential_metadata_records_coordinates_not_the_value(
     assert not any(word in str(row).lower() for word in ("ghp_", "bearer ", "refresh_token"))
 
 
+async def test_credential_last_refresh_is_recorded(store: ConnectionStateStore) -> None:
+    """COMP-011 renews against expiry, but needs its own last-refresh mark."""
+    await _create(store)
+
+    await store.record_credential_metadata(
+        _AGENT, _INSTANCE, last_refresh_at="2026-08-04T09:00:00+00:00", actor_did=_ACTOR
+    )
+    fetched = await store.get(_AGENT, _INSTANCE)
+
+    assert fetched is not None
+    assert fetched.credential_last_refresh_at == "2026-08-04T09:00:00+00:00"
+
+
+async def test_last_refresh_survives_unrelated_activity(store: ConnectionStateStore) -> None:
+    """``updated_at`` is not a substitute — any write moves it, a refresh does not."""
+    await _create(store)
+    await store.record_credential_metadata(
+        _AGENT, _INSTANCE, last_refresh_at="2026-08-04T09:00:00+00:00", actor_did=_ACTOR
+    )
+
+    await store.mark_healthy(_AGENT, _INSTANCE, actor_did=_ACTOR)
+    fetched = await store.get(_AGENT, _INSTANCE)
+
+    assert fetched is not None
+    assert fetched.credential_last_refresh_at == "2026-08-04T09:00:00+00:00"
+    assert fetched.updated_at != fetched.credential_last_refresh_at
+
+
 async def test_list_reports_every_connection_for_an_agent(store: ConnectionStateStore) -> None:
     await _create(store, instance="jira_primary")
     await _create(store, instance="gmail_primary")

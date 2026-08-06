@@ -73,6 +73,9 @@ class ConnectionRecord(BaseModel):
     credential_expires_at: str | None = None
     credential_issuer: str | None = None
     credential_audience: str | None = None
+    # When the credential was last renewed. Distinct from ``updated_at``, which
+    # any write moves — a health mark is not a refresh (COMP-011).
+    credential_last_refresh_at: str | None = None
     # tool name -> hash of (name, description, input schema) as approved (REQ-291).
     approved_tool_hashes: dict[str, str] = Field(default_factory=dict)
     dependency_declarations: list[str] = Field(default_factory=list)
@@ -195,12 +198,15 @@ class ConnectionStateStore:
         expires_at: str | None = None,
         issuer: str | None = None,
         audience: str | None = None,
+        last_refresh_at: str | None = None,
         actor_did: str,
     ) -> bool:
         """Record credential coordinates so renewal can run ahead of expiry (REQ-287).
 
         Coordinates only — the value belongs to the secret store (COMP-010) and
-        is never handed to this one.
+        is never handed to this one. Each argument left as None is omitted from
+        the patch rather than written as null, so recording a refresh never
+        erases an issuer the caller happened not to pass.
         """
         patch: dict[str, Any] = {}
         if expires_at is not None:
@@ -209,6 +215,8 @@ class ConnectionStateStore:
             patch["credential_issuer"] = issuer
         if audience is not None:
             patch["credential_audience"] = audience
+        if last_refresh_at is not None:
+            patch["credential_last_refresh_at"] = last_refresh_at
         return await self._patch(agent, instance, patch, actor_did=actor_did)
 
     async def approve_tool_contract(

@@ -62,82 +62,82 @@
 
 ## Phase 2: Core
 
-- [ ] **T-887**: (red) Failing tests for the CLI attachment: argv built from declared args only, JSON parsed, exit code mapped, no shell
+- [x] **T-887**: (red) Failing tests for the CLI attachment: argv built from declared args only, JSON parsed, exit code mapped, no shell
   - domain: test
   - Components: COMP-005
   - Requirements: REQ-279
   - Acceptance: Tests assert argv is a list never a shell string, that an argument cannot inject a flag or a second command, that stdout JSON becomes ToolResult and stderr does not by itself mean failure, and that a non-zero exit maps to ToolOutcome.ERROR rather than raising. All fail.
-- [ ] **T-888**: (green) CliAttachment over ToolTransport.PROCESS — the default attachment (D-569)
+- [x] **T-888**: (green) CliAttachment over ToolTransport.PROCESS — the default attachment (D-569)
   - domain: backend
   - Components: COMP-005
   - Requirements: REQ-279
   - Acceptance: T-887 passes. Each declared CLI command is one named tool. argv is built from the manifest, never interpolated into a shell. Structured output is parsed; stderr is captured but is not itself a failure signal.
-- [ ] **T-889**: (green) CLI failure handling: exit codes, unparseable output, missing binary
+- [x] **T-889**: (green) CLI failure handling: exit codes, unparseable output, missing binary
   - domain: backend
   - Components: COMP-005
   - Requirements: REQ-270, REQ-271
   - Acceptance: A non-zero exit becomes a ToolResult the agent can read and act on; a missing or unverified binary is a transport failure that raises; unparseable stdout never silently becomes an empty success.
-- [ ] **T-890**: (green) Timeout, bounded retry with backoff, and circuit breaker on every external call
+- [x] **T-890**: (green) Timeout, bounded retry with backoff, and circuit breaker on every external call
   - domain: backend
   - Components: COMP-005, COMP-006
   - Requirements: REQ-271, REQ-270
   - Acceptance: Both attachment implementations share one policy. A tripped breaker returns a structured error and does not deregister tools.
-- [ ] **T-891**: (green) CliAttachment satisfies the hook Protocol, proven against a real binary
+- [x] **T-891**: (green) CliAttachment satisfies the hook Protocol, proven against a real binary
   - domain: backend
   - Components: COMP-005, COMP-004
   - Requirements: REQ-278, REQ-279
   - Acceptance: requirements/probe/describe_tools/invoke all satisfied with no core changes. Proven end to end against one real CLI, with its install directive, its declared tool surface, and its skill as three separate parts per D-570.
-- [ ] **T-892**: (green) NativeAttachment loads an extension-provided entrypoint
+- [x] **T-892**: (green) NativeAttachment loads an extension-provided entrypoint
   - domain: backend
   - Components: COMP-006, COMP-004
   - Requirements: REQ-278, REQ-279, REQ-264
   - Acceptance: A dotted entrypoint from the manifest is imported and adapted to the same Protocol. All service knowledge stays in the extension package.
-- [ ] **T-893**: (red) Failing tests for the process launcher: env scrubbing, lazy start, idle reap, one path at every tier
+- [x] **T-893**: (red) Failing tests for the process launcher: env scrubbing, lazy start, idle reap, one path at every tier
   - domain: test
   - Components: COMP-008
   - Requirements: REQ-272, REQ-273, REQ-292
   - Acceptance: Tests assert LD_*, DYLD_*, PYTHONSTARTUP and NODE_OPTIONS are absent from the child environment and that no tier takes a different code path. All fail.
-- [ ] **T-894**: (green) ProcessLauncher with SandboxPolicy and env safety filter
+- [x] **T-894**: (green) ProcessLauncher with SandboxPolicy and env safety filter
   - domain: infra
   - Components: COMP-008
   - Requirements: REQ-272, REQ-273, REQ-292
   - Acceptance: T-893 passes. Personal defaults to a no-op policy; stricter tiers swap the policy object only.
-- [ ] **T-895**: (green) ArtifactPinVerifier checks version and hash before each execution
+- [x] **T-895**: (green) ArtifactPinVerifier checks version and hash before each execution
   - domain: backend
   - Components: COMP-009
   - Requirements: REQ-290
   - Acceptance: A mismatch refuses the run and emits an audit event naming expected and actual. A manifest without a pin cannot execute a third-party artifact.
-- [ ] **T-896**: (red) Failing tests for CapabilityBridge: each tool registered by name, denied tools skipped without raising, classification defaults restrictive
+- [x] **T-896**: (red) Failing tests for CapabilityBridge: each tool registered by name, denied tools skipped without raising, classification defaults restrictive
   - domain: test
   - Components: COMP-012
   - Requirements: REQ-266, REQ-267, REQ-269
   - Acceptance: Tests drive the real ToolRegistry so a missing registration cannot pass. All fail.
-- [ ] **T-897**: (green) CapabilityBridge converts tool specs into registered capabilities
+- [x] **T-897**: (green) CapabilityBridge converts tool specs into registered capabilities
   - domain: backend
   - Components: COMP-012
   - Requirements: REQ-266, REQ-267, REQ-269
   - Acceptance: T-896 passes. Each tool carries transport, classification, and capability tags, and rides the existing signed-call, policy, timeout and audit envelope unchanged.
-- [ ] **T-898**: (green) Compose the manifest allowlist with the existing tool allow and deny filter
+- [x] **T-898**: (green) Compose the manifest allowlist with the existing tool allow and deny filter
   - domain: backend
   - Components: COMP-012
   - Requirements: REQ-268, REQ-266
   - Acceptance: Deny wins across both layers. A denied tool is skipped with a policy-denied audit event rather than crashing startup.
-- [ ] **T-899**: (red) Failing tests for ToolContractLedger: an altered description suspends the tool and demands re-approval
+- [x] **T-899**: (red) Failing tests for ToolContractLedger: an altered description suspends the tool and demands re-approval
   - domain: test
   - Components: COMP-007
   - Requirements: REQ-291
   - Acceptance: Test approves a tool set, mutates a description on the controlled server, retrieves again, and asserts suspension plus audit. Fails.
-- [ ] **T-900**: (green) ToolContractLedger hashing, comparison, and suspension
+- [x] **T-900**: (green) ToolContractLedger hashing, comparison, and suspension
   - domain: backend
   - Components: COMP-007
   - Requirements: REQ-291
   - Acceptance: T-899 passes. Hash covers name, description and input schema. Upstream annotations are ignored in favour of the manifest.
-- [ ] **T-901**: (green) Connector module scaffold: capabilities.py and _runtime.py, disabled by default
+- [x] **T-901**: (green) Connector module scaffold: capabilities.py and _runtime.py, disabled by default
   - domain: backend
   - Components: COMP-015
   - Requirements: REQ-286
   - Acceptance: Module is discovered only when both files exist, activates only when configured, and requests the narrowest kwargs from signature-dispatched configure.
-- [ ] **T-902**: (green) Module runtime state on a contextvar, never a module global
+- [x] **T-902**: (green) Module runtime state on a contextvar, never a module global
   - domain: backend
   - Components: COMP-015
   - Requirements: REQ-286, REQ-285
@@ -145,32 +145,32 @@
 
 ## Phase 3: Integration
 
-- [ ] **T-903**: (red) Failing tests for the SecretStore seam: nothing written to config, log, prompt, or model context
+- [x] **T-903**: (red) Failing tests for the SecretStore seam: nothing written to config, log, prompt, or model context
   - domain: test
   - Components: COMP-010
   - Requirements: REQ-265, REQ-294
   - Acceptance: Tests inspect every written artifact for the secret value. All fail.
-- [ ] **T-904**: (green) SecretStore interface with the local per-agent backend
+- [x] **T-904**: (green) SecretStore interface with the local per-agent backend
   - domain: auth
   - Components: COMP-010
   - Requirements: REQ-265, REQ-294
   - Acceptance: T-903 passes. Owner-only permissions on file-backed storage; keyed by agent, instance and field.
-- [ ] **T-905**: (green) Tier-selected secret backends behind the same interface
+- [x] **T-905**: (green) Tier-selected secret backends behind the same interface
   - domain: auth
   - Components: COMP-010
   - Requirements: REQ-294
   - Acceptance: Selecting an external vault changes no calling code. Backend choice is configuration, not a branch at each call site.
-- [ ] **T-906**: (red) Failing test for the credential renewal race under forced interleaving
+- [x] **T-906**: (red) Failing test for the credential renewal race under forced interleaving
   - domain: test
   - Components: COMP-011
   - Requirements: REQ-288
   - Acceptance: Two concurrent renewals against a rotating single-use token are held at a barrier; test asserts exactly one renewal in flight and that the persisted token is the accepted one. Fails.
-- [ ] **T-907**: (green) CredentialLifecycle: proactive renewal, single-writer lock, atomic persist
+- [x] **T-907**: (green) CredentialLifecycle: proactive renewal, single-writer lock, atomic persist
   - domain: auth
   - Components: COMP-011
   - Requirements: REQ-287, REQ-288
   - Acceptance: T-906 passes. Renewal happens before expiry, never lazily on failure, and a crash mid-write cannot leave a torn credential.
-- [ ] **T-908**: (green) Terminal versus transient renewal failure, and operator escalation
+- [x] **T-908**: (green) Terminal versus transient renewal failure, and operator escalation
   - domain: auth
   - Components: COMP-011, COMP-013
   - Requirements: REQ-289
@@ -180,22 +180,22 @@
   - Components: COMP-013
   - Requirements: REQ-274, REQ-275
   - Acceptance: A gated call suspends, presents instance and outbound target, and resumes only on a signed operator grant pinned to the operator identity.
-- [ ] **T-910**: (red) Failing tests for AuditRedactor: full capture, and a credential read that never records the value
+- [x] **T-910**: (red) Failing tests for AuditRedactor: full capture, and a credential read that never records the value
   - domain: test
   - Components: COMP-014
   - Requirements: REQ-276, REQ-277
   - Acceptance: Tests assert inputs and outputs are present for an ordinary call and absent for a credential value. All fail.
-- [ ] **T-911**: (green) AuditRedactor using the existing detector, applied before emission
+- [x] **T-911**: (green) AuditRedactor using the existing detector, applied before emission
   - domain: backend
   - Components: COMP-014
   - Requirements: REQ-276, REQ-277
   - Acceptance: T-910 passes. Redaction runs in the module, never inside the leaf audit package, so the dependency direction holds.
-- [ ] **T-912**: (green) HostPrerequisiteDirector detects and instructs, never installs
+- [x] **T-912**: (green) HostPrerequisiteDirector detects and instructs, never installs
   - domain: infra
   - Components: COMP-018
   - Requirements: REQ-262
   - Acceptance: A missing host prerequisite produces an explicit instruction naming what the operator must install. No implicit host mutation occurs in any path.
-- [ ] **T-913**: (green) DependencyResolver: conflict refusal at install, reference-counted removal
+- [x] **T-913**: (green) DependencyResolver: conflict refusal at install, reference-counted removal
   - domain: infra
   - Components: COMP-017
   - Requirements: REQ-264, REQ-284
