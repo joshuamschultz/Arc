@@ -5,8 +5,8 @@ three quarters of its lifetime has elapsed (REQ-287). Waiting for a call to
 return 401 means every connection breaks at least once per credential lifetime,
 in the middle of whatever the agent was doing.
 
-The hard part is REQ-288, and it is not obvious. Atlassian — and every provider
-that rotates its refresh token — issues a *single-use* refresh token: the moment
+The hard part is REQ-288, and it is not obvious. Any provider that rotates its
+refresh token issues that token *single-use*: the moment
 one is exchanged it is dead. So two renewals racing for the same account do not
 merely duplicate work, they destroy the account: the second presents a token the
 authorization server has already consumed, gets ``invalid_grant``, and a late

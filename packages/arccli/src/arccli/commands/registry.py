@@ -122,6 +122,13 @@ def _ext_handler(args: list[str]) -> None:
     ext_handler(args)
 
 
+def _connector_handler(args: list[str]) -> None:
+    """Dispatch wrapper."""
+    from arccli.commands.connector import connector_handler
+
+    connector_handler(args)
+
+
 def _task_handler(args: list[str]) -> None:
     """Dispatch wrapper."""
     from arccli.commands.task import task_handler
@@ -521,6 +528,14 @@ COMMAND_REGISTRY: list[CommandDef] = [
         category="Tools & Skills",
         args_hint="<subcommand>",
         handler=_ext_handler,
+    ),
+    CommandDef(
+        name="connector",
+        description="Connect an agent to an external system — add, auth, list, probe, remove",
+        category="Tools & Skills",
+        args_hint="<subcommand>",
+        cli_only=True,
+        handler=_connector_handler,
     ),
     CommandDef(
         name="blueprint",

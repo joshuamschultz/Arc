@@ -225,6 +225,7 @@ def configure_module_runtimes(
     """
     identity = agent._identity
     telemetry = agent._telemetry
+    tool_registry = agent._tool_registry
     agent_name = agent._config.agent.name
     team_root = agent._config.team.root
     llm_config = agent._config.llm
@@ -256,6 +257,17 @@ def configure_module_runtimes(
             "bus": agent._bus,
             "agent_did": identity.did if identity else "",
             "identity": identity,
+            # The agent's config file, so a module that owns its own top-level
+            # config table can read it. Offered as the path rather than the
+            # parsed document because core parses only what ArcAgentConfig
+            # models; a module's own table is the module's to read.
+            "config_path": agent._config_path,
+            # The tool registry, so a module that contributes tools at runtime
+            # registers them into the one component that owns the dispatch
+            # envelope — schema validation, signed ToolCall, policy pipeline,
+            # human gate, timeout, audit. A second dispatch path would be a
+            # second envelope, and the one that drifts is the ungoverned one.
+            "tool_registry": tool_registry,
             # The deployment tier, from the SAME [security] setting the tool
             # registry and policy pipeline read. A module that gates on tier must
             # never carry its own copy in module config — two sources of truth

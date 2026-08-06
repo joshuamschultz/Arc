@@ -175,7 +175,7 @@
   - Components: COMP-011, COMP-013
   - Requirements: REQ-289
   - Acceptance: Transient errors retry with backoff; a failure needing re-consent stops retrying, marks the connection, and escalates through the operator approval path rather than agent chat.
-- [ ] **T-909**: (green) ApprovalBinding: reads free and outbound gated by default, relaxable per instance
+- [x] **T-909**: (green) ApprovalBinding: reads free and outbound gated by default, relaxable per instance
   - domain: auth
   - Components: COMP-013
   - Requirements: REQ-274, REQ-275
@@ -200,7 +200,7 @@
   - Components: COMP-017
   - Requirements: REQ-264, REQ-284
   - Acceptance: An unsatisfiable version conflict between two extensions is refused at install rather than discovered at runtime. Removal drops only what no other extension declares.
-- [ ] **T-914**: (green) Connector CLI: add, auth, list, tools, probe, doctor, approve, remove
+- [x] **T-914**: (green) Connector CLI: add, auth, list, tools, probe, doctor, approve, remove
   - domain: api
   - Components: COMP-016
   - Requirements: REQ-260, REQ-261, REQ-293
@@ -208,22 +208,22 @@
 
 ## Phase 4: Polish
 
-- [ ] **T-915**: (red) Failing conformance test: a reference extension is added end to end with zero core files modified
+- [x] **T-915**: (red) Failing conformance test: a reference extension is added end to end with zero core files modified
   - domain: test
   - Components: COMP-021, COMP-004
   - Requirements: REQ-278, REQ-280
   - Acceptance: The governing test. A fixture extension implementing only the hook Protocol installs, registers tools, and executes a call. A git diff over core packages must be empty. Fails until the mechanism is genuinely general.
-- [ ] **T-916**: (green) Architecture test: no vendor or service name appears in core packages
+- [x] **T-916**: (green) Architecture test: no vendor or service name appears in core packages
   - domain: test
   - Components: COMP-021
   - Requirements: REQ-280
   - Acceptance: Scan fails on any vendor identifier in core outside test fixtures, and names the offending file and line.
-- [ ] **T-917**: (green) Removability tests: agent starts and passes smoke with all extensions removed, and again with all optional modules removed
+- [x] **T-917**: (green) Removability tests: agent starts and passes smoke with all extensions removed, and again with all optional modules removed
   - domain: test
   - Components: COMP-021, COMP-015
   - Requirements: REQ-284, REQ-285, REQ-286
   - Acceptance: Both teardown paths leave a working agent with no residual configuration causing failure.
-- [ ] **T-918**: (green) Management surfaces call the same functions as the CLI
+- [x] **T-918**: (green) Management surfaces call the same functions as the CLI
   - domain: ui
   - Components: COMP-020
   - Requirements: REQ-293, REQ-295
@@ -238,12 +238,12 @@
   - Components: COMP-006, COMP-016
   - Requirements: REQ-278, REQ-279, REQ-264
   - Acceptance: A service with no acceptable protocol upstream is reached through NativeAttachment, with all service knowledge inside the extension package.
-- [ ] **T-921**: (red) Failing tests for the MCP client against a controlled server: stateless request shape, tools/list, tools/call
+- [x] **T-921**: (red) Failing tests for the MCP client against a controlled server: stateless request shape, tools/list, tools/call
   - domain: test
   - Components: COMP-005
   - Requirements: REQ-279
   - Acceptance: Tests assert no initialize handshake, _meta protocol version present, and correct tools/list and tools/call envelopes. All fail.
-- [ ] **T-922**: (green) McpAttachment — MCP client over httpx and stdio, 2026-07-28 stateless revision (D-569: the option, not the default)
+- [x] **T-922**: (green) McpAttachment — MCP client over httpx and stdio, 2026-07-28 stateless revision (D-569: the option, not the default)
   - domain: backend
   - Components: COMP-005, COMP-004
   - Requirements: REQ-278, REQ-279, REQ-270
