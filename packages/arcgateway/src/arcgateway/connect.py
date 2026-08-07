@@ -18,6 +18,8 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+from arcagent.utils.toml_writer import dumps_toml
+
 # Telegram bot tokens: "<bot_id>:<secret>" — digits, colon, ~35 url-safe chars.
 _TOKEN_RE = re.compile(r"^\d{5,}:[A-Za-z0-9_-]{30,}$")
 # Platform block names must satisfy the adapter-name guard (^[a-z][a-z0-9_]{0,31}$).
@@ -91,43 +93,7 @@ def _write_gateway_block(
     }
     data.setdefault("security", {})["require_pairing"] = True
     gateway_config.parent.mkdir(parents=True, exist_ok=True)
-    gateway_config.write_text(_dump_toml(data), encoding="utf-8")
-
-
-def _dump_toml(data: dict[str, Any]) -> str:
-    """Serialize a nested config dict to TOML that ``tomllib`` round-trips.
-
-    Minimal emitter (no ``tomli_w`` dependency in-tree): scalars before sub-tables,
-    ``[a.b]`` headers for nesting — the shape GatewayConfig reads back.
-    """
-    lines: list[str] = []
-    _emit_table(data, [], lines)
-    return "\n".join(lines).rstrip("\n") + "\n"
-
-
-def _emit_table(table: dict[str, Any], path: list[str], lines: list[str]) -> None:
-    scalars = [(k, v) for k, v in table.items() if not isinstance(v, dict)]
-    subtables = [(k, v) for k, v in table.items() if isinstance(v, dict)]
-    if path:
-        lines.append(f"[{'.'.join(path)}]")
-    for key, val in scalars:
-        lines.append(f"{key} = {_scalar(val)}")
-    if path:
-        lines.append("")
-    for key, val in subtables:
-        _emit_table(val, [*path, key], lines)
-
-
-def _scalar(val: Any) -> str:
-    if isinstance(val, bool):
-        return "true" if val else "false"
-    if isinstance(val, str):
-        return '"' + val.replace("\\", "\\\\").replace('"', '\\"') + '"'
-    if isinstance(val, (int, float)):
-        return str(val)
-    if isinstance(val, list):
-        return "[" + ", ".join(_scalar(v) for v in val) + "]"
-    raise ValueError(f"unsupported TOML value type: {type(val).__name__}")
+    gateway_config.write_text(dumps_toml(data), encoding="utf-8")
 
 
 __all__ = ["connect_telegram"]

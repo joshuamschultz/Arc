@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from arcrun import Event
-from arctrust import AuditEvent, Signer, WormSink, emit
+from arctrust import AuditEvent, RecordCipher, Signer, WormSink, emit
 
 from arcagent.core.config import ArcAgentConfig
 from arcagent.core.module_bus import ModuleBus
@@ -44,6 +44,7 @@ def build_checkpoint_sink(
     actor_did: str,
     witness: WitnessAnchor | None = None,
     federal: bool = False,
+    cipher: RecordCipher | None = None,
 ) -> Callable[[dict[str, Any]], None]:
     """Build the trace-store checkpoint sink — an OPERATOR-signed WORM anchor.
 
@@ -68,16 +69,22 @@ def build_checkpoint_sink(
     chain = agent_root / ".audit" / "trace-checkpoint.worm"
 
     def _sink(checkpoint: dict[str, Any]) -> None:
-        _anchor_local(chain, signer, actor_did, checkpoint)
+        _anchor_local(chain, signer, actor_did, checkpoint, cipher)
         _submit_witness(witness, signer, checkpoint, federal=federal)
 
     return _sink
 
 
-def _anchor_local(chain: Path, signer: Signer, actor_did: str, checkpoint: dict[str, Any]) -> None:
+def _anchor_local(
+    chain: Path,
+    signer: Signer,
+    actor_did: str,
+    checkpoint: dict[str, Any],
+    cipher: RecordCipher | None,
+) -> None:
     """Append the operator-signed checkpoint to the local WORM chain (fail-open)."""
     try:
-        worm = WormSink(chain, signer)
+        worm = WormSink(chain, signer, cipher=cipher)
         try:
             emit(
                 AuditEvent(
@@ -214,6 +221,7 @@ def ensure_model(
     operator_signer: Signer | None = None,
     actor_did: str = "",
     witness: WitnessAnchor | None = None,
+    record_cipher: RecordCipher | None = None,
 ) -> tuple[Any, Any]:
     """Load the eval model, wiring trace store + on_event bridge.
 
@@ -242,6 +250,7 @@ def ensure_model(
             actor_did=actor_did,
             witness=witness,
             federal=config.security.tier == "federal",
+            cipher=record_cipher,
         )
         if operator_signer is not None
         else None

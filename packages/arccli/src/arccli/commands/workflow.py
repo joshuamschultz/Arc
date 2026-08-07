@@ -128,11 +128,15 @@ def _audit_sink() -> WormSink:
     from arcstore import resolve_data_dir
     from arcstore.ingest import WORM_ACTIVE_FILENAME
 
-    from arccli.commands.operator import resolve_operator_signer
+    from arccli.commands.operator import resolve_operator_signer, resolve_record_cipher
 
     worm_dir = resolve_data_dir(None) / "worm"
     worm_dir.mkdir(parents=True, exist_ok=True)
-    return WormSink(worm_dir / WORM_ACTIVE_FILENAME, resolve_operator_signer())
+    return WormSink(
+        worm_dir / WORM_ACTIVE_FILENAME,
+        resolve_operator_signer(),
+        cipher=resolve_record_cipher(),
+    )
 
 
 def _store_audit_hook(sink: AuditSink, tier: Tier) -> WorkflowAuditHook:

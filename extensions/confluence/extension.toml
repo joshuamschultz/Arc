@@ -1,0 +1,76 @@
+# Confluence Cloud through this bundle's own REST adapter — D-562.
+#
+# Same reasoning as the jira bundle, and a separate bundle rather than a shared
+# one: an operator who wants an agent reading the wiki should not have to grant
+# it the issue tracker, and each bundle carries its own credential and its own
+# approval mode.
+#
+# The implementation is in arc_ext_confluence/, a subdirectory, for the reason
+# spelled out in the jira manifest: bundle-root .py files are scanned as agent
+# capabilities and are import-policy-gated by tier.
+
+# Top-level, ahead of every table: TOML would fold a bare key written after a
+# [header] into that table, and `requires` belongs to the manifest itself.
+requires = ["httpx>=0.27,<1.0"]
+
+[extension]
+name = "confluence"
+version = "1.0.0"
+attachment = "native"
+tier_floor = "personal"
+
+[config.native]
+entrypoint = "arc_ext_confluence"
+
+[[secrets]]
+name = "api_token"
+prompt = "Atlassian API token (id.atlassian.com/manage-profile/security/api-tokens)"
+
+[[secrets]]
+name = "email"
+prompt = "The Atlassian account email the API token belongs to"
+
+[[secrets]]
+name = "base_url"
+prompt = "Confluence base URL, e.g. https://yourcompany.atlassian.net"
+
+[tools]
+allow = [
+  "confluence_search_pages",
+  "confluence_get_page",
+  "confluence_list_spaces",
+  "confluence_create_page",
+  "confluence_update_page",
+]
+
+[[tools.declared]]
+name = "confluence_search_pages"
+description = "Search pages with CQL."
+classification = "read_only"
+
+[[tools.declared]]
+name = "confluence_get_page"
+description = "Read one page's body by id."
+classification = "read_only"
+
+[[tools.declared]]
+name = "confluence_list_spaces"
+description = "List the spaces this account can see."
+classification = "read_only"
+
+# Publishing to a space is publishing to that space's audience — a destination
+# the model names. Tagged so the egress gate sees it (D-580).
+[[tools.declared]]
+name = "confluence_create_page"
+description = "Create a page in a space."
+classification = "state_modifying"
+capability_tags = ["network_egress"]
+
+[[tools.declared]]
+name = "confluence_update_page"
+description = "Replace an existing page's title and body."
+classification = "state_modifying"
+capability_tags = ["network_egress"]
+
+[approval]
+default = "outbound"

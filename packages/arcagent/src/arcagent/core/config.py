@@ -140,6 +140,12 @@ class ToolConfig(BaseModel):
     # SPEC-035 REQ-013 — origins external-comms tools may reach through the
     # EgressProxy (deny-by-default). ``scheme://host[:port]`` entries.
     egress_allowlist: list[str] = []
+    # D-580 — tool NAMES the operator permits to send data out, which is what
+    # enterprise tier requires before an egress tool may install or register.
+    # Distinct from ``egress_allowlist`` above: that names DESTINATIONS a send
+    # may reach, this names the verbs allowed to send at all. Composes with
+    # ``allow``/``deny`` and can only subtract — deny still wins.
+    egress_allow: list[str] = []
     # SPEC-038 REQ-023 — per-tool resource classification label (no-read-up).
     # Tool name → classification string (e.g. ``{"read_secret" = "SECRET"}``).
     # Unlabeled tools default to UNCLASSIFIED (no gating).

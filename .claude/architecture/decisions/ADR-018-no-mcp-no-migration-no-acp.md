@@ -1,6 +1,6 @@
 # ADR-018: SPEC-018 excludes MCP client, migration tooling, and ACP adapter
 
-**Status**: Accepted
+**Status**: Accepted for migration tooling and ACP; the MCP-client exclusion is superseded by ADR-030
 **Date**: 2026-04-18
 **Spec**: SPEC-018 (Hermes Parity Roadmap)
 
@@ -50,7 +50,7 @@ SPEC-018 ships with **none** of these. They are not deferred to M2/M3 — they a
 
 ## Reconsider when
 
-- **MCP**: two or more federal/enterprise customers explicitly request MCP host support AND the use case is not served by existing platform adapters
+- **MCP**: reconsidered and reversed on 2026-08-04 — see ADR-030. The trigger that fired was not customer demand but the discovery that every maintained integration for the ten target services is an MCP server, so "the community can write an adapter" resolved to "adopt MCP" in practice.
 - **Migration**: a significant population of Hermes users is blocked and config delta makes automation materially better than manual
 - **ACP**: two or more enterprise customers explicitly request ACP/IDE integration AND the use case is not covered by arccli/arctui/arcui
 

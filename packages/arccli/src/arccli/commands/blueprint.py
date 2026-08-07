@@ -161,11 +161,11 @@ def _default_audit(arc_dir: Path, effective_tier: str) -> Callable[[str, dict[st
 def _worm_sink(arc_dir: Path) -> Any:
     from arctrust import WormSink
 
-    from arccli.commands.operator import resolve_operator_signer
+    from arccli.commands.operator import resolve_operator_signer, resolve_record_cipher
 
     chain = arc_dir / ".audit" / "blueprints.worm"
     chain.parent.mkdir(parents=True, exist_ok=True)
-    return WormSink(chain, resolve_operator_signer(arc_dir))
+    return WormSink(chain, resolve_operator_signer(arc_dir), cipher=resolve_record_cipher(arc_dir))
 
 
 # ---------------------------------------------------------------------------

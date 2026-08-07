@@ -1,0 +1,96 @@
+# Jira Cloud through this bundle's own REST adapter — D-562.
+#
+# No third-party Atlassian server is adopted: sooperset/mcp-atlassian carries 35
+# advisories including a critical arbitrary-file-write to RCE, and Atlassian's
+# hosted endpoint states it does not meet FedRAMP. The know-how was already
+# written; only the transport was missing, and the transport is 250 lines of
+# httpx living inside this folder.
+#
+# The implementation is in arc_ext_jira/, a SUBDIRECTORY. That placement is
+# deliberate: the capability scanner picks up top-level .py files as agent tools
+# and subjects them to the tier's import policy (federal allows only __future__
+# and arcagent), so adapter code at the bundle root would be refused at federal.
+# In a subdirectory it is D-567 category three — implementation the extension
+# owns, referenced by its entrypoint, signature-verified like every other byte,
+# and never registered as an agent capability.
+
+# Top-level, ahead of every table: TOML would fold a bare key written after a
+# [header] into that table, and `requires` belongs to the manifest itself. It is
+# the adapter's only dependency, checked against every other installed
+# extension by DependencyResolver before this install proceeds.
+requires = ["httpx>=0.27,<1.0"]
+
+[extension]
+name = "jira"
+version = "1.0.0"
+attachment = "native"
+tier_floor = "personal"
+
+[config.native]
+# A unique top-level module name, not a generic one. NativeAttachment imports by
+# bare dotted name and sys.modules caches process-wide, so two bundles both
+# shipping "adapter" would resolve to whichever loaded first.
+entrypoint = "arc_ext_jira"
+
+[[secrets]]
+name = "api_token"
+prompt = "Jira Cloud API token (id.atlassian.com/manage-profile/security/api-tokens)"
+
+[[secrets]]
+name = "email"
+prompt = "The Atlassian account email the API token belongs to"
+
+[[secrets]]
+name = "base_url"
+prompt = "Jira base URL, e.g. https://yourcompany.atlassian.net"
+
+[tools]
+allow = [
+  "jira_search_issues",
+  "jira_get_issue",
+  "jira_list_projects",
+  "jira_create_issue",
+  "jira_add_comment",
+  "jira_transition_issue",
+]
+
+[[tools.declared]]
+name = "jira_search_issues"
+description = "Search issues with JQL."
+classification = "read_only"
+
+[[tools.declared]]
+name = "jira_get_issue"
+description = "Read one issue by key."
+classification = "read_only"
+
+[[tools.declared]]
+name = "jira_list_projects"
+description = "List the projects this account can see."
+classification = "read_only"
+
+# The two verbs below put agent-authored text in front of a project's audience —
+# a destination the model names. That is the external_comms leg, so they are
+# tagged: enterprise needs each in tools.policy.egress_allow, and federal refuses
+# this bundle at install because these lines exist.
+[[tools.declared]]
+name = "jira_create_issue"
+description = "Create an issue in a project."
+classification = "state_modifying"
+capability_tags = ["network_egress"]
+
+[[tools.declared]]
+name = "jira_add_comment"
+description = "Add a comment to an issue."
+classification = "state_modifying"
+capability_tags = ["network_egress"]
+
+# A transition changes state; it carries no agent-authored content to an
+# audience, so it is state_modifying without the egress leg.
+[[tools.declared]]
+name = "jira_transition_issue"
+description = "Move an issue through its workflow."
+classification = "state_modifying"
+
+[approval]
+default = "outbound"

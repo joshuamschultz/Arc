@@ -28,12 +28,18 @@ ApprovalProvider = Callable[[str, str, str], Awaitable[bool]]
 
 def build_skill_approval_provider(human_gate: object, agent_did: str) -> ApprovalProvider:
     """Return an ``ApprovalProvider`` that asks the shared HumanGate for a skill mutation."""
+    from arcllm import configured_redactor
     from arctrust.policy import ToolCall
+
+    # This call is BUILT here and never transits arcllm, so nothing has applied
+    # the deployment's PII policy to it. Applied at construction, before the
+    # truncation — a cap taken first can split a match and leave a fragment.
+    redact = configured_redactor()
 
     async def _provider(action: str, skill_name: str, detail: str) -> bool:
         call = ToolCall(
             tool_name=f"skill.mutation:{action}",
-            arguments={"skill": skill_name, "detail": detail[:200]},
+            arguments={"skill": redact(skill_name), "detail": redact(detail)[:200]},
             agent_did=agent_did,
             session_id="",
             classification="unclassified",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import json
+from collections.abc import Callable
 from typing import Any
 
 from arctrust.fips import assert_fips_if_required
@@ -95,6 +96,44 @@ def _load_detector_class(ref: str) -> PiiDetector:
     return instance
 
 
+def _build_detector(config: dict[str, Any]) -> PiiDetector | None:
+    """Build the configured PII detector, or None when redaction is disabled."""
+    if not config.get("pii_enabled", True):
+        return None
+    detector_class_ref = config.get("pii_detector_class", "")
+    if detector_class_ref:
+        return _load_detector_class(detector_class_ref)
+    return RegexPiiDetector(
+        custom_patterns=config.get("pii_custom_patterns") or None,
+        entities=config.get("pii_entities") or None,
+    )
+
+
+def configured_redactor() -> Callable[[str], str]:
+    """Return the deployment's PII redaction, resolved from its configured settings.
+
+    The one entry point for a caller that builds a payload OUTSIDE an LLM
+    round-trip — a workflow activation, a skill mutation — and therefore never
+    passes through :class:`SecurityModule`. Such a payload would otherwise carry
+    no policy at all, while everything the model touched carried the tier's.
+
+    Returns identity when the deployment has not enabled redaction, so the
+    configured policy decides and the caller never overrides it.
+    """
+    from arcllm.registry import _resolve_module_config
+
+    config = _resolve_module_config("security", None)
+    detector = _build_detector(config) if config is not None else None
+    if detector is None:
+        return lambda text: text
+
+    def redact(text: str) -> str:
+        matches = detector.detect(text)
+        return redact_text(text, matches) if matches else text
+
+    return redact
+
+
 class SecurityModule(BaseModule):
     """Per-invoke security middleware: PII redaction + request signing.
 
@@ -122,18 +161,7 @@ class SecurityModule(BaseModule):
         validate_config_keys(config, _VALID_CONFIG_KEYS, "SecurityModule")
 
         # Build PII detector (lazy — only if PII enabled)
-        self._pii_detector: PiiDetector | None = None
-        if config.get("pii_enabled", True):
-            custom_patterns = config.get("pii_custom_patterns", [])
-            entities = config.get("pii_entities") or None
-            detector_class_ref = config.get("pii_detector_class", "")
-            if detector_class_ref:
-                self._pii_detector = _load_detector_class(detector_class_ref)
-            else:
-                self._pii_detector = RegexPiiDetector(
-                    custom_patterns=custom_patterns or None,
-                    entities=entities,
-                )
+        self._pii_detector: PiiDetector | None = _build_detector(config)
 
         # Build signer (lazy — only if signing enabled). Asymmetric by default
         # (Ed25519); ecdsa-p256 for the FIPS/federal path. HMAC is gone.

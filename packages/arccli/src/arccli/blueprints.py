@@ -43,6 +43,7 @@ from typing import Any
 from arcagent.capabilities.artifact_signing import load_signature, verify_file
 from arcagent.core.config import _deep_merge
 from arcagent.tiers import stricter_tier, tier_rank
+from arcagent.utils.toml_writer import dumps_toml
 
 _logger = logging.getLogger("arccli.blueprints")
 
@@ -255,18 +256,6 @@ def list_blueprints(
     return out
 
 
-def dumps_toml(data: dict[str, Any]) -> str:
-    """Serialize a nested config dict to TOML the flat loader round-trips.
-
-    Handles the config shape (tables, ``[a.b]`` sub-tables, scalar/list values) — there
-    is no ``tomli_w`` dependency in-tree, and the materialized file must parse back to the
-    same dict via ``tomllib`` + ``ArcAgentConfig``.
-    """
-    lines: list[str] = []
-    _emit_table(data, [], lines)
-    return "\n".join(lines).rstrip("\n") + "\n"
-
-
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -456,31 +445,6 @@ def _strip_denied(overlay: dict[str, Any]) -> dict[str, Any]:
                 "blueprint overlay set trusted-admin key %s; ignoring it", ".".join(path)
             )
     return result
-
-
-def _emit_table(table: dict[str, Any], path: list[str], lines: list[str]) -> None:
-    scalars = [(k, v) for k, v in table.items() if not isinstance(v, dict)]
-    subtables = [(k, v) for k, v in table.items() if isinstance(v, dict)]
-    if path:
-        lines.append(f"[{'.'.join(path)}]")
-    for key, val in scalars:
-        lines.append(f"{key} = {_toml_scalar(val)}")
-    if path:
-        lines.append("")
-    for key, val in subtables:
-        _emit_table(val, [*path, key], lines)
-
-
-def _toml_scalar(val: Any) -> str:
-    if isinstance(val, bool):
-        return "true" if val else "false"
-    if isinstance(val, str):
-        return '"' + val.replace("\\", "\\\\").replace('"', '\\"') + '"'
-    if isinstance(val, (int, float)):
-        return str(val)
-    if isinstance(val, list):
-        return "[" + ", ".join(_toml_scalar(v) for v in val) + "]"
-    raise ValueError(f"unsupported TOML value type: {type(val).__name__}")
 
 
 __all__ = [

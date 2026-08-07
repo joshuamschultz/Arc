@@ -1,0 +1,285 @@
+# Google Workspace (Gmail, Drive, Calendar) through the `gog` binary — D-571.
+#
+# Part 1 of D-570, the INSTALL DIRECTIVE, is `[[host_requires]].instruction`
+# below: the operator runs it, Arc only shows it. Part 2 is this manifest, which
+# names every command as its own tool and is what grants authority. Part 3 is
+# `skills/google_workspace/SKILL.md`, which teaches when to use which.
+#
+# No `[[secrets]]` — and that absence is the point. `gog auth add` puts an OAuth
+# refresh token in the platform keyring (encrypted-file backend on headless
+# Linux) and Arc never sees, stores, or forwards it. A connector that needs no
+# credential from Arc is the strongest posture the mechanism can express.
+#
+# Multi-account routing (D-550/D-571) is `--account`. It is declared as a tool
+# ARGUMENT rather than pinned per instance because nothing in the mechanism
+# carries an instance identity into an attachment — see the report.
+
+[extension]
+name = "google_workspace"
+version = "1.0.0"
+attachment = "cli"
+tier_floor = "personal"
+
+# Pinned to one exact build and one digest (REQ-290). This is the linux/arm64
+# release asset, the platform the fleet runs; a host on another platform must be
+# given that platform's digest from the same release's checksums.txt, because
+# ArtifactPin holds exactly one sha256.
+[artifact]
+package = "openclaw/gogcli"
+version = "0.34.1"
+sha256 = "8510db6492c27f7704bf60af276f34ede81b67d88b6ffcf953153da841eaa3ed"
+
+[[host_requires]]
+name = "gog"
+minimum_version = "0.34.1"
+instruction = """
+Install the gogcli binary on this host, then authorise the accounts:
+
+  1. curl -fsSLO https://github.com/openclaw/gogcli/releases/download/v0.34.1/gogcli_0.34.1_linux_arm64.tar.gz
+  2. echo '8510db6492c27f7704bf60af276f34ede81b67d88b6ffcf953153da841eaa3ed  gogcli_0.34.1_linux_arm64.tar.gz' | sha256sum -c -
+  3. tar xzf gogcli_0.34.1_linux_arm64.tar.gz && install -m 0755 gog /usr/local/bin/gog
+  4. gog auth add            # once per Google account you want reachable
+  5. gog auth list           # confirm the accounts and note their addresses
+
+Step 2 is not optional: it is the pin in [artifact] being checked. On a host
+that is not linux/arm64, take the digest for that asset from the same release's
+checksums.txt.
+"""
+
+[tools]
+allow = [
+  "google_gmail_labels",
+  "google_gmail_draft",
+  "google_gmail_send",
+  "google_drive_list",
+  "google_calendar_list",
+  "google_calendar_events",
+  "google_calendar_freebusy",
+]
+
+[[tools.declared]]
+name = "google_gmail_labels"
+description = "List the Gmail labels on an account."
+classification = "read_only"
+
+[[tools.declared]]
+name = "google_gmail_draft"
+description = "Create a Gmail draft. The draft is not sent."
+classification = "state_modifying"
+
+# The one verb here that puts agent-chosen content in front of a recipient the
+# model names. Tagged so the egress gate (D-580) sees it: personal allows it,
+# enterprise needs it in tools.policy.egress_allow, federal refuses this bundle
+# at install because of this line. Under-tagging it would be the whole point of
+# the gate, defeated.
+[[tools.declared]]
+name = "google_gmail_send"
+description = "Send an email from an authorised Gmail account."
+classification = "state_modifying"
+capability_tags = ["network_egress"]
+
+[[tools.declared]]
+name = "google_drive_list"
+description = "List or filter Google Drive files."
+classification = "read_only"
+
+[[tools.declared]]
+name = "google_calendar_list"
+description = "List the calendars an account can see."
+classification = "read_only"
+
+[[tools.declared]]
+name = "google_calendar_events"
+description = "List or search calendar events in a time window."
+classification = "read_only"
+
+[[tools.declared]]
+name = "google_calendar_freebusy"
+description = "Read free/busy blocks for calendars in a time window."
+classification = "read_only"
+
+[approval]
+default = "outbound"
+
+[config.cli]
+binary = "gog"
+probe_argv = ["--version"]
+install_instruction = "See [[host_requires]] in this bundle's extension.toml."
+
+# Every read command carries --readonly and --gmail-no-send: the binary refuses a
+# mutating API call from inside, so a read verb cannot become a write one even if
+# argv construction were wrong. --wrap-untrusted marks fetched text as external
+# untrusted content (LLM01). --no-input means a prompt is a failure, never a hang.
+
+[[config.cli.commands]]
+tool = "google_gmail_labels"
+argv = ["gmail", "labels", "list", "--json", "--readonly", "--gmail-no-send", "--no-input"]
+description = "List the Gmail labels on an account. Use it to learn the label names the search verbs accept."
+classification = "read_only"
+
+[[config.cli.commands.arguments]]
+name = "account"
+flag = "--account"
+description = "Which authorised Google account to act as (the address shown by `gog auth list`)."
+
+[[config.cli.commands]]
+tool = "google_gmail_draft"
+argv = ["gmail", "drafts", "create", "--json", "--no-input"]
+description = "Create a Gmail draft. Nothing leaves the account until a human sends it."
+classification = "state_modifying"
+
+[[config.cli.commands.arguments]]
+name = "account"
+flag = "--account"
+description = "Which authorised Google account to act as."
+
+[[config.cli.commands.arguments]]
+name = "to"
+flag = "--to"
+description = "Recipients, comma-separated."
+
+[[config.cli.commands.arguments]]
+name = "subject"
+flag = "--subject"
+description = "Subject line."
+
+[[config.cli.commands.arguments]]
+name = "body"
+flag = "--body"
+description = "Plain-text body."
+
+[[config.cli.commands]]
+tool = "google_gmail_send"
+argv = ["gmail", "send", "--json", "--no-input"]
+description = "Send an email. This delivers to the named recipients immediately."
+classification = "state_modifying"
+capability_tags = ["network_egress"]
+
+[[config.cli.commands.arguments]]
+name = "account"
+flag = "--account"
+description = "Which authorised Google account to send as."
+
+[[config.cli.commands.arguments]]
+name = "to"
+flag = "--to"
+description = "Recipients, comma-separated."
+
+[[config.cli.commands.arguments]]
+name = "cc"
+flag = "--cc"
+description = "CC recipients, comma-separated."
+
+[[config.cli.commands.arguments]]
+name = "bcc"
+flag = "--bcc"
+description = "BCC recipients, comma-separated."
+
+[[config.cli.commands.arguments]]
+name = "subject"
+flag = "--subject"
+description = "Subject line."
+
+[[config.cli.commands.arguments]]
+name = "body"
+flag = "--body"
+description = "Plain-text body."
+
+[[config.cli.commands]]
+tool = "google_drive_list"
+argv = ["drive", "ls", "--json", "--readonly", "--wrap-untrusted", "--no-input"]
+description = "List Drive files, optionally filtered by a Drive query or scoped to a folder."
+classification = "read_only"
+
+[[config.cli.commands.arguments]]
+name = "account"
+flag = "--account"
+description = "Which authorised Google account to act as."
+
+[[config.cli.commands.arguments]]
+name = "query"
+flag = "--query"
+description = "Drive query filter, e.g. name contains 'budget'."
+
+[[config.cli.commands.arguments]]
+name = "parent"
+flag = "--parent"
+description = "Folder ID to list. Omit for the drive root."
+
+[[config.cli.commands.arguments]]
+name = "max"
+flag = "--max"
+description = "Maximum number of files to return."
+
+[[config.cli.commands]]
+tool = "google_calendar_list"
+argv = ["calendar", "calendars", "--json", "--readonly", "--wrap-untrusted", "--no-input"]
+description = "List the calendars this account can see, with their IDs."
+classification = "read_only"
+
+[[config.cli.commands.arguments]]
+name = "account"
+flag = "--account"
+description = "Which authorised Google account to act as."
+
+[[config.cli.commands]]
+tool = "google_calendar_events"
+argv = ["calendar", "events", "--json", "--readonly", "--wrap-untrusted", "--no-input"]
+description = "List or free-text search calendar events inside a time window."
+classification = "read_only"
+
+[[config.cli.commands.arguments]]
+name = "account"
+flag = "--account"
+description = "Which authorised Google account to act as."
+
+[[config.cli.commands.arguments]]
+name = "calendars"
+flag = "--calendars"
+description = "Comma-separated calendar IDs. Omit for the primary calendar."
+
+[[config.cli.commands.arguments]]
+name = "query"
+flag = "--query"
+description = "Free-text search over event titles and descriptions."
+
+[[config.cli.commands.arguments]]
+name = "from"
+flag = "--from"
+description = "Window start: RFC3339, a date, or a relative word like today or monday."
+
+[[config.cli.commands.arguments]]
+name = "to"
+flag = "--to"
+description = "Window end, same forms as from."
+
+[[config.cli.commands.arguments]]
+name = "max"
+flag = "--max"
+description = "Maximum number of events to return."
+
+[[config.cli.commands]]
+tool = "google_calendar_freebusy"
+argv = ["calendar", "freebusy", "--json", "--readonly", "--wrap-untrusted", "--no-input"]
+description = "Read free/busy blocks — availability only, no event contents."
+classification = "read_only"
+
+[[config.cli.commands.arguments]]
+name = "account"
+flag = "--account"
+description = "Which authorised Google account to act as."
+
+[[config.cli.commands.arguments]]
+name = "cal"
+flag = "--cal"
+description = "Calendar ID or name to query."
+
+[[config.cli.commands.arguments]]
+name = "from"
+flag = "--from"
+description = "Window start."
+
+[[config.cli.commands.arguments]]
+name = "to"
+flag = "--to"
+description = "Window end."

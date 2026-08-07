@@ -33,7 +33,7 @@ from arcrun import Tool as ArcRunTool
 from arcrun import ToolContext
 from arctrust import AgentIdentity
 
-from arcagent.core.config import ToolsConfig
+from arcagent.core.config import ToolConfig, ToolsConfig
 from arcagent.core.errors import ToolError, ToolVetoedError
 from arcagent.core.module_bus import ModuleBus
 from arcagent.core.session_internal.capability_ledger import (
@@ -44,6 +44,7 @@ from arcagent.core.session_internal.capability_ledger import (
     legs_for_tags,
 )
 from arcagent.core.telemetry import AgentTelemetry
+from arcagent.core.tier import Tier
 from arcagent.core.tool_policy import (
     PolicyContext,
     PolicyDenied,
@@ -57,6 +58,7 @@ from arcagent.core.tool_policy_bridge import (
     _bind_caller_did,
     _is_memory_tool,
 )
+from arcagent.tools._egress_policy import EgressVerdict, egress_verdict, is_extension_origin
 from arcagent.tools._policy_fill import build_clearance_context, build_provider_usage
 from arcagent.tools._transport import (
     _PY_TYPE_MAP,
@@ -162,6 +164,16 @@ class ToolRegistry:
         return self._tools
 
     @property
+    def policy(self) -> ToolConfig:
+        """The operator's tool policy — allow/deny and per-tool egress permissions.
+
+        Public because the extension load path has to apply the same
+        ``egress_allow`` this registry applies, and a second copy read from
+        somewhere else is the one that drifts.
+        """
+        return self._config.policy
+
+    @property
     def is_prompt_cached(self) -> bool:
         """Whether the prompt catalog is currently cached."""
         return self._prompt_cache is not None
@@ -203,7 +215,7 @@ class ToolRegistry:
         return self._prompt_cache
 
     def register(self, tool: RegisteredTool) -> None:
-        """Register a tool, filtered by allow/deny policy.
+        """Register a tool, filtered by allow/deny policy and the egress gate.
 
         Policy semantics:
           - empty allow + empty deny  → all tools register (default)
@@ -211,34 +223,45 @@ class ToolRegistry:
           - non-empty deny             → listed tools are skipped
           - deny takes precedence over allow when both name the same tool
 
+        D-580 adds one more subtraction: a tool that sends data out registers
+        only if its tier and origin permit it. This is the single load-path
+        chokepoint every origin crosses — builtins, modules, capability roots and
+        extension attachments all arrive here — so the gate lives here rather
+        than being re-implemented per origin. It can only subtract: deny is
+        checked first, so an ``egress_allow`` entry never re-admits a denied tool.
+
         Denied tools are skipped silently: they do not enter the registry,
         a warning is logged, and a `tool.policy_denied` audit event fires.
         Registration never raises on policy denial — letting an agent start
         cleanly with a least-privilege deny=[`write`,`bash`] config without
         crashing when built-in tools attempt to register.
         """
-        if not self._policy_allows(tool.name):
-            policy = self._config.policy
-            # DEBUG, not WARNING: deny/allow filtering is intentional config-driven
-            # behavior, not an error. The audit event below preserves the trail.
-            _logger.debug(
-                "policy filter: excluded tool %r from registry (allow=%s, deny=%s)",
-                tool.name,
-                list(policy.allow),
-                list(policy.deny),
-            )
-            self._telemetry.audit_event(
-                "tool.policy_denied",
-                {
-                    "tool": tool.name,
-                    "allowlist": list(policy.allow),
-                    "denylist": list(policy.deny),
-                },
-            )
+        egress = self._egress_verdict(tool)
+        if self._policy_allows(tool.name) and egress.allowed:
+            self._tools[tool.name] = tool
+            self._prompt_cache = None  # Invalidate cached catalog
+            _logger.info("Registered tool: %s (%s)", tool.name, tool.transport.value)
             return
-        self._tools[tool.name] = tool
-        self._prompt_cache = None  # Invalidate cached catalog
-        _logger.info("Registered tool: %s (%s)", tool.name, tool.transport.value)
+
+        policy = self._config.policy
+        # DEBUG, not WARNING: deny/allow filtering is intentional config-driven
+        # behavior, not an error. The audit event below preserves the trail.
+        _logger.debug(
+            "policy filter: excluded tool %r from registry (allow=%s, deny=%s, egress=%s)",
+            tool.name,
+            list(policy.allow),
+            list(policy.deny),
+            egress.reason or "permitted",
+        )
+        self._telemetry.audit_event(
+            "tool.policy_denied",
+            {
+                "tool": tool.name,
+                "allowlist": list(policy.allow),
+                "denylist": list(policy.deny),
+                "egress_refusal": egress.message,
+            },
+        )
 
     def unregister(self, tool_name: str) -> bool:
         """Remove a tool from the registry. Returns True if removed.
@@ -265,6 +288,16 @@ class ToolRegistry:
         if policy.allow and tool_name not in policy.allow:
             return False
         return True
+
+    def _egress_verdict(self, tool: RegisteredTool) -> EgressVerdict:
+        """The D-580 tier + origin egress decision, read from the tool's own signals."""
+        return egress_verdict(
+            tool_name=tool.name,
+            capability_tags=tool.capability_tags,
+            tier=Tier(self._tier),
+            from_extension=is_extension_origin(source=tool.source, scan_root=tool.scan_root),
+            egress_allow=self._config.policy.egress_allow,
+        )
 
     def to_arcrun_tools(self) -> list[ArcRunTool]:
         """Convert all registered tools to ``arcrun.Tool`` instances.

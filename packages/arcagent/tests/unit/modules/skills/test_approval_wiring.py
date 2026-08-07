@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -17,14 +18,14 @@ from arcagent.modules.skills.approval import build_skill_approval_provider
 
 
 class _Gate:
-    """Minimal HumanGate stand-in: records the call + legs, returns a preset grant/None."""
+    """Minimal HumanGate stand-in: records the call, returns a preset grant/None."""
 
     def __init__(self, grant: object | None) -> None:
         self._grant = grant
-        self.calls: list[tuple[str, frozenset[str]]] = []
+        self.calls: list[tuple[str, frozenset[str], dict[str, Any]]] = []
 
     async def request(self, call: Any, *, legs: frozenset[str]) -> object | None:
-        self.calls.append((call.tool_name, legs))
+        self.calls.append((call.tool_name, legs, dict(call.arguments)))
         return self._grant
 
 
@@ -46,7 +47,7 @@ async def test_provider_returns_true_on_grant_and_labels_leg() -> None:
     gate = _Gate(object())  # any non-None grant == approved
     provider = build_skill_approval_provider(gate, "did:arc:agent")
     assert await provider("skill.mutation", "s", "detail") is True
-    tool_name, legs = gate.calls[0]
+    tool_name, legs, _ = gate.calls[0]
     assert tool_name == "skill.mutation:skill.mutation"
     assert legs == frozenset({"skill_mutation"})  # auditable as a skill-mutation approval
 
@@ -79,3 +80,32 @@ def test_configure_no_gate_leaves_provider_none(tmp_path: Path) -> None:
     """No HumanGate → no provider → the improver fails closed when approval is required."""
     _runtime.configure(config={"adapter": "arcskill", "tier": "federal"}, workspace=tmp_path)
     assert _runtime.state().adapter._approval_provider is None
+
+
+@pytest.mark.asyncio
+async def test_arc_built_call_carries_the_deployments_pii_policy() -> None:
+    """D-573 — this call never transits arcllm, so the policy is applied here.
+
+    Without it the gate would present a payload nothing had ever screened, at
+    exactly the tier that cares. The policy is arcllm's; only the application
+    point is ours.
+    """
+    gate = _Gate(object())
+    with patch("arcllm.registry._resolve_module_config", return_value={"pii_enabled": True}):
+        provider = build_skill_approval_provider(gate, "did:arc:agent")
+    await provider("retire", "s", "reported by victim@example.com")
+
+    arguments = gate.calls[0][2]
+    assert "victim@example.com" not in arguments["detail"]
+    assert "[PII:EMAIL]" in arguments["detail"]
+
+
+@pytest.mark.asyncio
+async def test_arc_built_call_is_untouched_when_the_deployment_disables_pii() -> None:
+    """The tier decides, not this module — the mirror of the D-572 deletion."""
+    gate = _Gate(object())
+    with patch("arcllm.registry._resolve_module_config", return_value={"pii_enabled": False}):
+        provider = build_skill_approval_provider(gate, "did:arc:agent")
+    await provider("retire", "s", "reported by victim@example.com")
+
+    assert gate.calls[0][2]["detail"] == "reported by victim@example.com"

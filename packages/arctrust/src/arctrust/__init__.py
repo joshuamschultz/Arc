@@ -34,6 +34,10 @@ Audit:
     read_verified_anchor — Read the newest verified "trace.checkpoint"
                           anchor from a WORM chain, or None if the chain
                           fails verify_chain() or carries no such record
+    RecordCipher        — Seals a record's captured content at rest (D-577);
+                          the chain commits to the ciphertext, so verification
+                          still needs no sealing key
+    derive_record_key   — At-rest key from already-custodied seed material
 
 Policy:
     Decision            — Immutable policy evaluation result
@@ -88,6 +92,7 @@ from arctrust.audit import (
     verify_chain,
     worm_policy_sink,
 )
+from arctrust.audit_cipher import RecordCipher, derive_record_key
 from arctrust.canonical import canonical_json
 from arctrust.classification import (
     Classification,
@@ -184,6 +189,7 @@ __all__ = [
     "PolicyContext",
     "PolicyLayer",
     "PolicyPipeline",
+    "RecordCipher",
     "Signer",
     "SignerConfig",
     "SignerError",
@@ -211,6 +217,7 @@ __all__ = [
     "content_sha256",
     "default_operator_key_path",
     "derive_child_identity",
+    "derive_record_key",
     "disapprove",
     "dominates",
     "emit",
