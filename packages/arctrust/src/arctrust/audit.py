@@ -49,6 +49,7 @@ if sys.platform != "win32":
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
+from arctrust.audit_cipher import RecordCipher
 from arctrust.canonical import canonical_json
 from arctrust.signer import ED25519, Signer, verify_signature
 
@@ -194,6 +195,9 @@ class WormSink:
     - **Bounded** — the active file rotates to ``<stem>.<NNN><suffix>`` segments
       at ``max_records``/``max_bytes`` so verification streams rather than
       holding the whole chain in RAM.
+    - **Sealed at rest** — with a ``cipher``, each record's captured content is
+      encrypted BEFORE it is hashed (D-577), so the chain commits to the
+      ciphertext and ``verify_chain`` still passes without the sealing key.
 
     Args:
         path: Active chain file. Rotated segments live beside it.
@@ -206,6 +210,8 @@ class WormSink:
             detect head replacement (anti-genesis-substitution).
         max_records: Records per segment before rotation.
         max_bytes: Active-file size before rotation.
+        cipher: Seals each record's captured content at rest (D-577). ``None``
+            writes it in the clear.
     """
 
     _FILE_MODE = 0o600
@@ -219,9 +225,11 @@ class WormSink:
         genesis_tip: str = GENESIS_PREV_HASH,
         max_records: int = 100_000,
         max_bytes: int = 50 * 1024 * 1024,
+        cipher: RecordCipher | None = None,
     ) -> None:
         self._path = Path(path)
         self._signer = signer
+        self._cipher = cipher
         self._public_key = signer.public_key
         self._algorithm = signer.algorithm
         self._genesis_tip = genesis_tip
@@ -284,6 +292,10 @@ class WormSink:
         seq = self._next_seq
         prev_hash = self._chain_tip or self._genesis_tip
         event_dump = event.model_dump(mode="json")
+        if self._cipher is not None:
+            # Seal BEFORE hashing so the chain commits to the ciphertext (D-577):
+            # integrity stays provable by a verifier who holds no sealing key.
+            event_dump = self._cipher.seal(event_dump)
         event_hash = _canonical_event_hash(seq=seq, prev_hash=prev_hash, event=event_dump)
         signature = self._signer.sign(event_hash.encode("utf-8")).hex()
         record = {
@@ -464,6 +476,7 @@ def read_verified_anchor(
     *,
     action: str = "trace.checkpoint",
     genesis_tip: str = GENESIS_PREV_HASH,
+    cipher: RecordCipher | None = None,
 ) -> dict[str, Any] | None:
     """Read the newest verified checkpoint anchor from a WORM chain.
 
@@ -477,7 +490,8 @@ def read_verified_anchor(
        its own integrity cannot attest to anything it carries.
     2. Otherwise scan every record and return the ``extra`` dict of the
        LATEST record whose ``event.action == action``. Return ``None`` if
-       no such record exists.
+       no such record exists. The manifest lives in ``extra``, so a chain
+       written with a cipher needs the same ``cipher`` to read it back.
 
     This is the read half of the trace-checkpoint signed anchor: a caller
     combines the returned checkpoint's ``head_hash`` with a live trace
@@ -490,8 +504,9 @@ def read_verified_anchor(
     for segment in _segment_files(Path(chain_path)):
         for record in _iter_records(segment):
             event = record.get("event", {})
-            if event.get("action") == action:
-                latest = event.get("extra")
+            if event.get("action") != action:
+                continue
+            latest = cipher.unseal(event)["extra"] if cipher is not None else event.get("extra")
     return latest
 
 

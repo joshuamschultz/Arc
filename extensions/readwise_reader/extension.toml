@@ -1,0 +1,245 @@
+# Readwise Reader through the official `readwise` CLI — D-571.
+#
+# The best fit of the four CLI connectors: every verb is flag-driven, `--json`
+# gives machine-readable output, and the vendor ships a `readonly` mode that
+# hides write verbs at the binary and requires re-authentication to leave.
+#
+# One property an operator must know, and which no manifest field can express:
+# THIS CLI DISCOVERS ITS OWN VERBS FROM A REMOTE SERVER (mcp2.readwise.io) and
+# caches them. The set of commands the binary offers can change without the
+# binary changing — the rug-pull shape D-563 exists for, on a transport that has
+# no contract ledger. The `allow` list below is the containment: whatever the
+# server starts serving, only these seven names may ever register.
+#
+# No `[[secrets]]` — `readwise login-with-token` keeps the token in
+# ~/.readwise-cli.json and Arc never handles it.
+
+[extension]
+name = "readwise_reader"
+version = "1.0.0"
+attachment = "cli"
+tier_floor = "personal"
+
+# The published npm tarball, digest computed over the artifact itself. Note the
+# hole this pin does NOT close: @readwise/cli declares
+# "@modelcontextprotocol/sdk": "latest", so `npm install -g` resolves a
+# transitive dependency at install time that this digest does not cover.
+[artifact]
+package = "@readwise/cli"
+version = "0.5.9"
+sha256 = "5cbc88096ca20c70f005b5264453ba698b6203f4bfae8ba72658bc3768a06de9"
+
+[[host_requires]]
+name = "node"
+minimum_version = "20.0.0"
+instruction = "Install Node.js 20 or newer on this host; the Readwise CLI is a Node program."
+
+[[host_requires]]
+name = "readwise"
+minimum_version = "0.5.9"
+instruction = """
+Install the Readwise CLI on this host, verify it, then authorise it:
+
+  1. npm pack @readwise/cli@0.5.9
+  2. echo '5cbc88096ca20c70f005b5264453ba698b6203f4bfae8ba72658bc3768a06de9  readwise-cli-0.5.9.tgz' | sha256sum -c -
+  3. npm install -g ./readwise-cli-0.5.9.tgz
+  4. readwise login-with-token          # paste the token from readwise.io/access_token
+  5. readwise config set readonly true  # STRONGLY RECOMMENDED unless the agent must write
+
+Step 2 checks the pin in [artifact]. It covers @readwise/cli itself and NOT its
+dependencies: this package declares "@modelcontextprotocol/sdk": "latest", which
+npm resolves fresh at install time. Install behind an internal registry or a
+vendored lockfile if that floating resolution is unacceptable.
+
+Step 5 is a real control, not advice: with readonly on, the binary hides its
+write verbs, and turning it back off logs the session out and forces
+re-authentication — an agent cannot silently re-enable writes.
+"""
+
+[tools]
+allow = [
+  "readwise_search_documents",
+  "readwise_list_documents",
+  "readwise_get_document",
+  "readwise_get_document_highlights",
+  "readwise_search_highlights",
+  "readwise_list_tags",
+  "readwise_save_document",
+]
+
+[[tools.declared]]
+name = "readwise_search_documents"
+description = "Search saved Reader documents by text."
+classification = "read_only"
+capability_tags = ["web"]
+
+[[tools.declared]]
+name = "readwise_list_documents"
+description = "List Reader documents, filtered by category, location, or tag."
+classification = "read_only"
+capability_tags = ["web"]
+
+[[tools.declared]]
+name = "readwise_get_document"
+description = "Fetch one Reader document's metadata and content."
+classification = "read_only"
+capability_tags = ["web"]
+
+[[tools.declared]]
+name = "readwise_get_document_highlights"
+description = "Fetch the highlights on one Reader document."
+classification = "read_only"
+capability_tags = ["web"]
+
+[[tools.declared]]
+name = "readwise_search_highlights"
+description = "Semantic search across saved Readwise highlights."
+classification = "read_only"
+capability_tags = ["web"]
+
+[[tools.declared]]
+name = "readwise_list_tags"
+description = "List the tags in the Reader library."
+classification = "read_only"
+
+# Tagged network_egress, and the reason is not that it writes. Readwise's servers
+# FETCH the url this verb is given, so a model that chooses the url chooses an
+# outbound request to a host it picked — data encoded in a query string leaves
+# the deployment. That is the external_comms leg exactly. `web` rides alongside
+# because the fetched page then comes back as untrusted content.
+[[tools.declared]]
+name = "readwise_save_document"
+description = "Save a URL into the Reader library. Readwise fetches the URL."
+classification = "state_modifying"
+capability_tags = ["network_egress", "web"]
+
+[approval]
+default = "outbound"
+
+[config.cli]
+binary = "readwise"
+probe_argv = ["--version"]
+install_instruction = "See [[host_requires]] in this bundle's extension.toml."
+
+[[config.cli.commands]]
+tool = "readwise_search_documents"
+argv = ["reader-search-documents", "--json"]
+description = "Search saved Reader documents by text. Prefer this over listing when you know what you are looking for."
+classification = "read_only"
+capability_tags = ["web"]
+
+[[config.cli.commands.arguments]]
+name = "query"
+flag = "--query"
+description = "Search text."
+
+[[config.cli.commands.arguments]]
+name = "category_in"
+flag = "--category-in"
+description = "Restrict to a category: article, email, rss, highlight, note, pdf, epub, tweet, video."
+
+[[config.cli.commands.arguments]]
+name = "location_in"
+flag = "--location-in"
+description = "Restrict to a location: new, later, shortlist, archive, feed."
+
+[[config.cli.commands.arguments]]
+name = "limit"
+flag = "--limit"
+description = "Maximum number of documents to return."
+
+[[config.cli.commands]]
+tool = "readwise_list_documents"
+argv = ["reader-list-documents", "--json"]
+description = "List Reader documents without a search term — use it to walk a location or a tag."
+classification = "read_only"
+capability_tags = ["web"]
+
+[[config.cli.commands.arguments]]
+name = "category"
+flag = "--category"
+description = "Category to list."
+
+[[config.cli.commands.arguments]]
+name = "location"
+flag = "--location"
+description = "Location to list: new, later, shortlist, archive, feed."
+
+[[config.cli.commands.arguments]]
+name = "tag"
+flag = "--tag"
+description = "Only documents carrying this tag."
+
+[[config.cli.commands.arguments]]
+name = "limit"
+flag = "--limit"
+description = "Maximum number of documents to return."
+
+[[config.cli.commands]]
+tool = "readwise_get_document"
+argv = ["reader-get-document-details", "--json"]
+description = "Fetch one document's full metadata and content by its id."
+classification = "read_only"
+capability_tags = ["web"]
+
+[[config.cli.commands.arguments]]
+name = "document_id"
+flag = "--document-id"
+description = "The document id, as returned by the search and list verbs."
+
+[[config.cli.commands]]
+tool = "readwise_get_document_highlights"
+argv = ["reader-get-document-highlights", "--json"]
+description = "Fetch the highlights and notes on one document."
+classification = "read_only"
+capability_tags = ["web"]
+
+[[config.cli.commands.arguments]]
+name = "document_id"
+flag = "--document-id"
+description = "The document id."
+
+[[config.cli.commands]]
+tool = "readwise_search_highlights"
+argv = ["readwise-search-highlights", "--json"]
+description = "Semantic search across every saved highlight, not just one document's."
+classification = "read_only"
+capability_tags = ["web"]
+
+[[config.cli.commands.arguments]]
+name = "vector_search_term"
+flag = "--vector-search-term"
+description = "What the highlight should be about, in plain language."
+
+[[config.cli.commands]]
+tool = "readwise_list_tags"
+argv = ["reader-list-tags", "--json"]
+description = "List every tag in the library. Use it before filtering by tag."
+classification = "read_only"
+
+[[config.cli.commands]]
+tool = "readwise_save_document"
+argv = ["reader-create-document", "--json"]
+description = "Save a URL into the Reader library. Readwise's servers fetch the URL you give it."
+classification = "state_modifying"
+capability_tags = ["network_egress", "web"]
+
+[[config.cli.commands.arguments]]
+name = "url"
+flag = "--url"
+description = "The URL to save. Readwise will fetch it."
+
+[[config.cli.commands.arguments]]
+name = "title"
+flag = "--title"
+description = "Override the title Readwise would derive."
+
+[[config.cli.commands.arguments]]
+name = "tags"
+flag = "--tags"
+description = "Tags to apply, comma-separated."
+
+[[config.cli.commands.arguments]]
+name = "notes"
+flag = "--notes"
+description = "A note to store with the document."

@@ -1,0 +1,184 @@
+# Microsoft 365 (Outlook mail, calendar, OneDrive) over MCP.
+#
+# ============================================================================
+# THIS BUNDLE CANNOT BE INSTALLED TODAY, AND THAT IS A FINDING, NOT A DEFECT
+# IN THE BUNDLE.
+#
+# `arcagent.modules.connectors.install.build_attachment` constructs exactly two
+# attachment kinds — "native" and "cli" — and refuses anything else at the probe
+# step. `McpAttachment` exists and is complete (828 lines, two transports), but
+# nothing routes a manifest to it and no `_McpConfig` model exists, so there is
+# no defined shape for `[config.mcp]` either. Installing this bundle fails with
+# `probe: unknown attachment kind 'mcp'`.
+#
+# The manifest still PARSES — `ExtensionHeader.attachment` is an open string on
+# purpose (REQ-278/280) and `config` is a free-form table — so everything below
+# is real and testable except the last step. `[config.mcp]` is written against
+# the shape `McpAttachment` + `StdioTransport` + `ProcessDefinition` already
+# take, so wiring it should be a factory branch and not a redesign.
+# ============================================================================
+#
+# MCP is the right transport here and not a fallback. There is no acceptable
+# Microsoft 365 CLI, and the Graph surface is 324 endpoints wide — which is
+# exactly why `allow` below is short and explicit. An omitted allowlist is the
+# same unbounded grant as "*" and is refused above personal tier.
+
+[extension]
+name = "microsoft365"
+version = "1.0.0"
+attachment = "mcp"
+tier_floor = "personal"
+
+[artifact]
+package = "@softeria/ms-365-mcp-server"
+version = "0.136.0"
+sha256 = "bf953dae54cef1c2ea616b964f5b72beb8910f22b6e84c60cd94c14b6935b232"
+
+[[host_requires]]
+name = "node"
+minimum_version = "20.0.0"
+instruction = "Install Node.js 20 or newer on this host; the MCP server is a Node program."
+
+[[host_requires]]
+name = "ms-365-mcp-server"
+minimum_version = "0.136.0"
+instruction = """
+Install the server on this host, verify it, then authorise it:
+
+  1. npm pack @softeria/ms-365-mcp-server@0.136.0
+  2. echo 'bf953dae54cef1c2ea616b964f5b72beb8910f22b6e84c60cd94c14b6935b232  softeria-ms-365-mcp-server-0.136.0.tgz' | sha256sum -c -
+  3. npm install -g ./softeria-ms-365-mcp-server-0.136.0.tgz
+  4. Register an Entra ID application, then export
+     MS365_MCP_CLIENT_ID and MS365_MCP_TENANT_ID for the agent process.
+  5. ms-365-mcp-server --login    # completes the device-code flow once
+
+Install it, do not `npx` it. `npx -y <pkg>` resolves and executes whatever the
+registry serves at the moment of launch, which makes the digest in [artifact]
+describe bytes that are not the bytes that ran.
+"""
+
+[[secrets]]
+name = "client_id"
+prompt = "Entra ID application (client) ID for the Microsoft Graph app registration"
+
+[[secrets]]
+name = "tenant_id"
+prompt = "Entra ID tenant ID, or 'common' for multi-tenant"
+
+[tools]
+# Nine names out of 324. Every one of them is a name this manifest chose; a verb
+# the server starts serving that is not on this list can never register.
+allow = [
+  "list-mail-messages",
+  "get-mail-message",
+  "list-mail-folders",
+  "send-mail",
+  "list-calendar-events",
+  "get-calendar-view",
+  "create-calendar-event",
+  "list-folder-files",
+  "search-onedrive-files",
+]
+
+[[tools.declared]]
+name = "list-mail-messages"
+description = "List Outlook messages in the signed-in mailbox."
+classification = "read_only"
+
+[[tools.declared]]
+name = "get-mail-message"
+description = "Read one Outlook message, including its body."
+classification = "read_only"
+
+[[tools.declared]]
+name = "list-mail-folders"
+description = "List the mail folders in the mailbox."
+classification = "read_only"
+
+# The one sending verb in the set. Tagged so the egress gate (D-580) sees it,
+# which also means this bundle is refused at federal tier at install.
+[[tools.declared]]
+name = "send-mail"
+description = "Send an Outlook email to the named recipients."
+classification = "state_modifying"
+capability_tags = ["network_egress"]
+
+[[tools.declared]]
+name = "list-calendar-events"
+description = "List calendar events."
+classification = "read_only"
+
+[[tools.declared]]
+name = "get-calendar-view"
+description = "Read the calendar over an explicit time window, recurrences expanded."
+classification = "read_only"
+
+# Creating an event mails an invitation to every attendee the model names, so it
+# is an egress verb even though it reads like a write.
+[[tools.declared]]
+name = "create-calendar-event"
+description = "Create a calendar event. Attendees are invited by email."
+classification = "state_modifying"
+capability_tags = ["network_egress"]
+
+[[tools.declared]]
+name = "list-folder-files"
+description = "List files in a OneDrive folder."
+classification = "read_only"
+
+[[tools.declared]]
+name = "search-onedrive-files"
+description = "Search OneDrive files by name and content."
+classification = "read_only"
+
+[approval]
+default = "outbound"
+
+# The proposed shape, written against what McpAttachment, StdioTransport and
+# ProcessDefinition already accept. `--read-only` and `--enabled-tools` are the
+# server's own controls, applied as defence in depth behind the `allow` list
+# above: the manifest bounds what may register, and these bound what the server
+# is willing to serve in the first place.
+[config.mcp]
+transport = "stdio"
+argv = [
+  "ms-365-mcp-server",
+  "--enabled-tools",
+  "^(list-mail-messages|get-mail-message|list-mail-folders|send-mail|list-calendar-events|get-calendar-view|create-calendar-event|list-folder-files|search-onedrive-files)$",
+  "--allowed-scopes",
+  "User.Read Mail.Read Mail.Send Calendars.ReadWrite Files.Read",
+]
+client_name = "arc"
+
+[config.mcp.resilience]
+timeout_seconds = 60.0
+max_attempts = 3
+
+[config.mcp.tools.list-mail-messages]
+classification = "read_only"
+
+[config.mcp.tools.get-mail-message]
+classification = "read_only"
+
+[config.mcp.tools.list-mail-folders]
+classification = "read_only"
+
+[config.mcp.tools.send-mail]
+classification = "state_modifying"
+capability_tags = ["network_egress"]
+
+[config.mcp.tools.list-calendar-events]
+classification = "read_only"
+
+[config.mcp.tools.get-calendar-view]
+classification = "read_only"
+
+[config.mcp.tools.create-calendar-event]
+classification = "state_modifying"
+capability_tags = ["network_egress"]
+
+[config.mcp.tools.list-folder-files]
+classification = "read_only"
+
+[config.mcp.tools.search-onedrive-files]
+classification = "read_only"

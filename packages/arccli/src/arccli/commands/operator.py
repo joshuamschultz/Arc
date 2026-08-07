@@ -16,10 +16,12 @@ from typing import Any
 from arctrust import (
     FileNotaryTransit,
     OperatorKey,
+    RecordCipher,
     Signer,
     SignerConfig,
     SignerError,
     build_signer,
+    derive_record_key,
 )
 from arctrust.signer import VAULT_TRANSIT
 
@@ -113,6 +115,21 @@ def resolve_operator_signer(arc_dir: Path | None = None) -> Signer:
             vault_transit=transit,
         )
     return load_operator_key(arc_dir).into_signer(sec.signing_algorithm)
+
+
+def resolve_record_cipher(arc_dir: Path | None = None) -> RecordCipher | None:
+    """Resolve the at-rest seal for a CLI-written WORM chain (D-577).
+
+    Mirrors :meth:`arcagent.core.agent.ArcAgent._resolve_record_cipher` so a chain
+    written by ``arc`` and one written by the agent seal identically: the key is
+    derived from the operator seed the deployment already custodies. Under
+    ``vault_transit`` custody that seed never enters this process, so no at-rest
+    key is resolvable and the caller writes in the clear — the key-custody question
+    SPEC-063 owns.
+    """
+    if _machine_security().custody == VAULT_TRANSIT:
+        return None
+    return RecordCipher(derive_record_key(load_operator_key(arc_dir).seed))
 
 
 def _resolve_transit(sec: Any) -> FileNotaryTransit:

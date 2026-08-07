@@ -37,6 +37,7 @@ from arctrust import (
     AppendOnlyMediumWitness,
     FileNotaryTransit,
     OperatorKey,
+    RecordCipher,
     Signer,
     SignerConfig,
     SignerError,
@@ -44,6 +45,7 @@ from arctrust import (
     WormSink,
     assert_fips_if_required,
     build_signer,
+    derive_record_key,
     parse_classification,
     read_verified_anchor,
     verify_local_head_witnessed,
@@ -126,6 +128,9 @@ class ArcAgent:
         # Every WORM/checkpoint signature goes through this, so a federal
         # vault-transit deployment signs by reference (seed never in-process).
         self._operator_signer: Signer | None = None
+        # D-577 — seals the captured content of every WORM record at rest. Full
+        # connector capture (D-552) put email bodies and documents in the chain.
+        self._record_cipher: RecordCipher | None = None
         # SPEC-053 — federal external witness for trace-checkpoint anchors. None
         # at personal/enterprise (tier = stringency: federal only ADDS this).
         self._witness: WitnessAnchor | None = None
@@ -254,6 +259,26 @@ class ArcAgent:
         )
         return self._operator_key.into_signer(sec.signing_algorithm)
 
+    def _resolve_record_cipher(self) -> RecordCipher | None:
+        """Resolve the at-rest seal for WORM records (D-577).
+
+        The key is derived from the operator seed this deployment already
+        custodies, so encryption introduces no second secret to store or lose.
+        Under ``vault_transit`` custody the seed never enters this process, so
+        no at-rest key is resolvable here and records are written in the clear —
+        which is exactly the key-custody question SPEC-063 owns. Degrade LOUD:
+        a silent fall back to plaintext on the tier that asked for the strictest
+        custody would be the worst possible failure of this control.
+        """
+        if self._operator_key is not None:
+            return RecordCipher(derive_record_key(self._operator_key.seed))
+        _logger.warning(
+            "audit records are NOT sealed at rest: custody=vault_transit keeps the "
+            "operator seed out of this process and no at-rest key is configured "
+            "(SPEC-063 owns audit-store key custody)"
+        )
+        return None
+
     def _resolve_transit(self, sec: Any) -> FileNotaryTransit:
         """Resolve the out-of-process signing transit for vault_transit custody.
 
@@ -327,7 +352,9 @@ class ArcAgent:
         if self._witness is None or self._operator_signer is None:
             return
         local = read_verified_anchor(
-            self._trace_checkpoint_chain_path(), self._operator_signer.public_key
+            self._trace_checkpoint_chain_path(),
+            self._operator_signer.public_key,
+            cipher=self._record_cipher,
         )
         verify_local_head_witnessed(
             local, self._witness, federal=self._config.security.tier == "federal"
@@ -409,6 +436,7 @@ class ArcAgent:
         # reference and NEVER loads the seed into this process (SPEC-037 F1).
         sec = self._config.security
         self._operator_signer = self._resolve_operator_signer(sec)
+        self._record_cipher = self._resolve_record_cipher()
         self._witness = self._build_witness()
         # Fail closed at federal if the local head diverged from the witness.
         self._verify_witness_consistency()
@@ -426,7 +454,9 @@ class ArcAgent:
         # (SPEC-034). arcagent owns the file path; arctrust owns the adapter and
         # the chain. Signed with the OPERATOR key (SPEC-053), never the agent
         # DID — the audited subject must not be its own audit authority.
-        worm = WormSink(self._policy_audit_log_path(), self._operator_signer)
+        worm = WormSink(
+            self._policy_audit_log_path(), self._operator_signer, cipher=self._record_cipher
+        )
         self._policy_worm = worm
         policy_sink = worm_policy_sink(worm)
         # SPEC-035 REQ-011 — the lethal-trifecta forbidden composition is LIVE in
@@ -578,6 +608,7 @@ class ArcAgent:
                 operator_signer=self._operator_signer,
                 actor_did=self._identity.did if self._identity is not None else "",
                 witness=self._witness,
+                record_cipher=self._record_cipher,
             )
             self._model = model
             self._trace_store = trace_store

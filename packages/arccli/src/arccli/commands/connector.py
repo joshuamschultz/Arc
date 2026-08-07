@@ -102,11 +102,15 @@ def _audit_sink(arc_dir: Path, data_dir: Path) -> Any:
     from arcstore.ingest import WORM_ACTIVE_FILENAME
     from arctrust import WormSink
 
-    from arccli.commands.operator import resolve_operator_signer
+    from arccli.commands.operator import resolve_operator_signer, resolve_record_cipher
 
     worm_dir = data_dir / "worm"
     worm_dir.mkdir(parents=True, exist_ok=True)
-    return WormSink(worm_dir / WORM_ACTIVE_FILENAME, resolve_operator_signer(arc_dir))
+    return WormSink(
+        worm_dir / WORM_ACTIVE_FILENAME,
+        resolve_operator_signer(arc_dir),
+        cipher=resolve_record_cipher(arc_dir),
+    )
 
 
 @contextlib.contextmanager
