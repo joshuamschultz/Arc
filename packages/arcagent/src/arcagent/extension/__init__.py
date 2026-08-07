@@ -10,11 +10,42 @@ the generalized select-one mechanism plus the family registry + inspection for t
 
 The mechanism speaks only structural Protocols + primitives; it never names a concrete
 implementation type or statically imports a builtin/BYO package.
+
+SPEC-062 adds the connector seam alongside it:
+
+* :class:`ExtensionAttachment` + its value types — the one hook contract any external
+  system is reached through; core depends on it and on nothing more concrete.
+* :class:`ExtensionManifest` + :func:`load_manifest` — the only document Arc parses
+  from an extension bundle.
 """
 
 from __future__ import annotations
 
+from arcagent.extension.attachment import (
+    Classification,
+    ExtensionAttachment,
+    ProbeResult,
+    Requirement,
+    RequirementKind,
+    ToolOutcome,
+    ToolResult,
+    ToolSpec,
+)
+from arcagent.extension.manifest import ExtensionManifest, load_manifest
 from arcagent.extension.point import ExtensionPoint
 from arcagent.extension.select import select_extension
 
-__all__ = ["ExtensionPoint", "select_extension"]
+__all__ = [
+    "Classification",
+    "ExtensionAttachment",
+    "ExtensionManifest",
+    "ExtensionPoint",
+    "ProbeResult",
+    "Requirement",
+    "RequirementKind",
+    "ToolOutcome",
+    "ToolResult",
+    "ToolSpec",
+    "load_manifest",
+    "select_extension",
+]

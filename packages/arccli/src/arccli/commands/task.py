@@ -75,11 +75,15 @@ def _audit_sink(data_dir: Path) -> Any:
     from arcstore.ingest import WORM_ACTIVE_FILENAME
     from arctrust import WormSink
 
-    from arccli.commands.operator import resolve_operator_signer
+    from arccli.commands.operator import resolve_operator_signer, resolve_record_cipher
 
     worm_dir = data_dir / "worm"
     worm_dir.mkdir(parents=True, exist_ok=True)
-    return WormSink(worm_dir / WORM_ACTIVE_FILENAME, resolve_operator_signer())
+    return WormSink(
+        worm_dir / WORM_ACTIVE_FILENAME,
+        resolve_operator_signer(),
+        cipher=resolve_record_cipher(),
+    )
 
 
 async def _open_store(data_dir: Path, *, mutable: bool) -> tuple[TaskStore, SqliteBackend]:

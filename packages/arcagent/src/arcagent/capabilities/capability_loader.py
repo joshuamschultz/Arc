@@ -92,7 +92,23 @@ _UNTRUSTED_ROOTS: frozenset[str] = frozenset(
     }
 )
 
+#: Prefix of a per-extension root — ``extension:<name>`` and its ``-skills``
+#: sibling (SPEC-062 REQ-281). A third-party bundle gets a root named after
+#: itself, so no fixed set can enumerate them: a membership test alone would
+#: call every extension root trusted by absence, exactly as ``module:*`` is.
+EXTENSION_ROOT_PREFIX = "extension:"
+
 _logger = logging.getLogger("arcagent.capabilities.capability_loader")
+
+
+def is_untrusted_root(root_name: str) -> bool:
+    """Return True if ``root_name`` must pass the AST validator + Sign/TOFU gate.
+
+    The single load-time trust decision. Untrusted is the fixed set of
+    agent-writable roots plus every per-extension root; ``builtins*`` and
+    ``module:*`` — the harness's own shipped package code — stay trusted.
+    """
+    return root_name in _UNTRUSTED_ROOTS or root_name.startswith(EXTENSION_ROOT_PREFIX)
 
 # Type alias for a (root_name, root_path) pair.
 ScanRoot = tuple[str, Path]
@@ -291,7 +307,7 @@ class CapabilityLoader:
         seen_tools: set[str],
     ) -> None:
         restricted_builtins: dict[str, object] | None = None
-        if root_name in _UNTRUSTED_ROOTS:
+        if is_untrusted_root(root_name):
             try:
                 self._ast_cache.validate(path)
             except Exception as exc:  # reason: best-effort — record + continue
@@ -510,7 +526,7 @@ class CapabilityLoader:
         entry = validation.entry
         # SKILL.md is injected into the agent prompt (LLM01/ASI06), so an
         # agent-writable skill folder passes the same Sign/TOFU gate as a .py.
-        if root_name in _UNTRUSTED_ROOTS:
+        if is_untrusted_root(root_name):
             gate = await self._passes_trust_gate(skill_md, folder.name, delta)
             if not gate.allowed:
                 delta.outcomes.append(
@@ -737,4 +753,10 @@ def _topological_sort(
     return out
 
 
-__all__ = ["CapabilityLoader", "CapabilityOutcome", "ScanRoot"]
+__all__ = [
+    "EXTENSION_ROOT_PREFIX",
+    "CapabilityLoader",
+    "CapabilityOutcome",
+    "ScanRoot",
+    "is_untrusted_root",
+]

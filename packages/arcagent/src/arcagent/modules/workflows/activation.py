@@ -135,11 +135,16 @@ async def require_activation_grant(
             f"{sorted(union)} and no operator approval channel is reachable"
         )
 
+    from arcllm import configured_redactor
     from arctrust.policy import ToolCall
 
+    # Built here, never through arcllm, so the deployment's PII policy has not
+    # run on it. Applied at construction so the gate can present what it was
+    # handed without deciding a policy it does not own.
+    redact = configured_redactor()
     call = ToolCall(
         tool_name="workflow_activate",
-        arguments={"workflow_id": workflow_id, "content_hash": content_hash},
+        arguments={"workflow_id": redact(workflow_id), "content_hash": content_hash},
         agent_did=agent_did,
         session_id=f"workflow:{workflow_id}",
         classification="unclassified",

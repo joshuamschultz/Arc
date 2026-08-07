@@ -55,30 +55,18 @@ _MAX_ARG_VALUE_LEN = 120
 _MAX_ARG_SUMMARY_LEN = 200
 
 
-def _redact(text: str) -> str:
-    """Redact PII/secrets from ``text`` via arcllm's regex detector.
+def preview_arguments(arguments: Mapping[str, object]) -> dict[str, str]:
+    """Return a length-bounded per-argument preview for operator triage.
 
-    Imported lazily (mirrors ``arcagent.modules.web.capabilities``) so the gate
-    takes no arcllm module-bus dependency; ``RegexPiiDetector`` is stateless and
-    safe to instantiate per call.
-    """
-    from arcllm._pii import RegexPiiDetector, redact_text
-
-    detector = RegexPiiDetector()
-    matches = detector.detect(text)
-    return str(redact_text(text, matches)) if matches else text
-
-
-def redact_arguments(arguments: Mapping[str, object]) -> dict[str, str]:
-    """Return a redacted, length-bounded per-argument preview for operator triage.
-
-    Each value is stringified, PII/secret-redacted, then truncated to a small cap.
-    Lets the operator see WHAT is being acted on (which file/URL/recipient/body)
-    without leaking secrets or inflating the log (LLM02).
+    The gate shows the arguments AS IT RECEIVED THEM. Which values an operator
+    may see is the deployment's PII policy, owned by ``arcllm`` and already
+    applied before a call reaches here; deciding it a second time here made Arc
+    stricter with the human approving an action than with the model that
+    proposed it. Bounding the size of the row IS this module's concern (LLM02).
     """
     preview: dict[str, str] = {}
     for name, value in arguments.items():
-        rendered = _redact(str(value))
+        rendered = str(value)
         if len(rendered) > _MAX_ARG_VALUE_LEN:
             rendered = rendered[:_MAX_ARG_VALUE_LEN] + "..."
         preview[name] = rendered
@@ -86,8 +74,8 @@ def redact_arguments(arguments: Mapping[str, object]) -> dict[str, str]:
 
 
 def summarize_arguments(arguments: Mapping[str, object]) -> str:
-    """Return a one-line redacted, bounded argument summary for a provenance entry."""
-    line = ", ".join(f"{name}={value}" for name, value in redact_arguments(arguments).items())
+    """Return a one-line bounded argument summary for a provenance entry."""
+    line = ", ".join(f"{name}={value}" for name, value in preview_arguments(arguments).items())
     return line[:_MAX_ARG_SUMMARY_LEN]
 
 
@@ -97,7 +85,7 @@ class ApprovalRequest:
 
     Beyond the tool/legs/hash the gate needs, carries the triage context an
     operator needs to decide a trifecta block (SPEC-035 approval enrichment):
-    ``arguments`` (redacted preview of WHAT is being acted on), ``leg_provenance``
+    ``arguments`` (bounded preview of WHAT is being acted on), ``leg_provenance``
     (which prior calls lit each leg, and when), and the ``session_id``.
     """
 
@@ -172,8 +160,8 @@ class HumanGate:
 
         ``legs`` is the accumulated forbidden union that tripped the gate — used
         for auto-approve matching and for labeling the request. ``provenance`` is
-        the ordered list of prior calls that lit each leg (already redacted by the
-        caller), threaded through so the operator can triage the composition.
+        the ordered list of prior calls that lit each leg, threaded through so the
+        operator can triage the composition.
         """
         from arctrust.policy import _hash_call
 
@@ -182,7 +170,7 @@ class HumanGate:
             agent_did=call.agent_did,
             legs=legs,
             call_hash=_hash_call(call),
-            arguments=redact_arguments(call.arguments),
+            arguments=preview_arguments(call.arguments),
             leg_provenance=provenance or [],
             session_id=call.session_id,
         )
@@ -271,6 +259,6 @@ __all__ = [
     "ApprovalRequest",
     "HumanGate",
     "HumanGateConfig",
-    "redact_arguments",
+    "preview_arguments",
     "summarize_arguments",
 ]

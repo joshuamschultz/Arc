@@ -1,0 +1,79 @@
+# 1Password through the official Python SDK, service-account, ONE vault, read-only.
+#
+# NOT the `op` CLI, and that is the whole design decision: `op` authenticates a
+# session and every child process it spawns inherits it, so handing an agent the
+# CLI hands it the operator's whole 1Password session. The SDK holds the
+# credential inside this process, and a service-account token is scoped in
+# 1Password itself to the single vault named in `vault_id`.
+#
+# THREE VERBS, DELIBERATELY SPLIT (D-570). Listing items, reading an item's
+# non-secret fields, and resolving one secret value are three separate grants. An
+# agent that must know which credentials exist never needs the third, and an
+# operator can give it the first two and stop. Folding them into one "get item"
+# verb would make every listing a secret disclosure.
+#
+# No write verbs exist here at all. Read-only is not a flag on this bundle; it is
+# what the bundle contains.
+
+# Top-level, ahead of every table: TOML would fold a bare key written after a
+# [header] into that table, and `requires` belongs to the manifest itself.
+# DependencyResolver checks it against every other installed extension.
+requires = ["onepassword-sdk==0.4.1"]
+
+[extension]
+name = "onepassword"
+version = "1.0.0"
+attachment = "native"
+tier_floor = "personal"
+
+[config.native]
+entrypoint = "arc_ext_onepassword"
+
+# The SDK, pinned to the sdist digest published on PyPI.
+[artifact]
+package = "onepassword-sdk"
+version = "0.4.1"
+sha256 = "4b9224208aa6e35e13bad8534e6521d3abf5ba166ea4efd370fcdc918c4a4d26"
+
+[[secrets]]
+name = "service_account_token"
+prompt = "1Password service-account token, scoped read-only to ONE vault"
+
+[[secrets]]
+name = "vault_id"
+prompt = "The id of the single vault this connection may read"
+
+[tools]
+allow = ["onepassword_list_items", "onepassword_get_item", "onepassword_resolve_secret"]
+
+# capability_tags = ["user_profile"] on all three, and the tag is doing real work.
+# It is the deployment tag that resolves to the private_data trifecta leg, so a
+# vault read lights that leg and the lethal-trifecta gate can see it composing
+# with a send and an untrusted read later in the session. There is no dedicated
+# "secret" tag in the deployment map; user_profile is the one that reaches the
+# right leg. Leaving these untagged would make the most sensitive read on the box
+# invisible to the gate.
+
+[[tools.declared]]
+name = "onepassword_list_items"
+description = "List item titles and ids in the connected vault. No secret values."
+classification = "read_only"
+capability_tags = ["user_profile"]
+
+[[tools.declared]]
+name = "onepassword_get_item"
+description = "Read one item's non-secret fields. Concealed values are named, not returned."
+classification = "read_only"
+capability_tags = ["user_profile"]
+
+[[tools.declared]]
+name = "onepassword_resolve_secret"
+description = "Resolve one op:// reference to its secret value."
+classification = "read_only"
+capability_tags = ["user_profile"]
+
+# Every call to this connection is gated, not only outbound ones: reading a
+# credential is the consequential act here, and there is no outbound verb for
+# `outbound` to catch.
+[approval]
+default = "all"

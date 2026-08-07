@@ -1,0 +1,37 @@
+# The reference extension's manifest — SPEC-062 COMP-021 / COMP-001.
+#
+# Everything Arc is allowed to learn about this connection is here plus the hook
+# implementation next to it. No Arc package may carry a line of it.
+
+[extension]
+name = "reference_service"
+version = "1.0.0"
+attachment = "native"
+tier_floor = "personal"
+
+# The dotted entrypoint COMP-006 imports and asks for ``build_native_attachment``.
+# It names ``reference_attachment.py`` in this bundle: REQ-264 keeps an extension's
+# implementation inside the extension's own folder.
+[config.native]
+entrypoint = "reference_attachment"
+
+[[secrets]]
+name = "reference_token"
+prompt = "Reference service token (any value; the fixture never reads it)"
+
+[tools]
+allow = ["reference_echo", "reference_store"]
+
+[[tools.declared]]
+name = "reference_echo"
+description = "Echo a message back from the reference service."
+classification = "read_only"
+
+[[tools.declared]]
+name = "reference_store"
+description = "Store a value in the reference service."
+classification = "state_modifying"
+capability_tags = ["network_egress"]
+
+[approval]
+default = "outbound"

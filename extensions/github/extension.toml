@@ -1,0 +1,225 @@
+# GitHub through the `gh` binary — D-571.
+#
+# READ-ONLY BY CONSTRUCTION, and not as a policy choice: `gh`'s write verbs
+# (`pr create`, `issue create`, `pr merge`) print a URL rather than JSON, and a
+# CliAttachment reports any non-JSON stdout as a tool ERROR. Declaring them would
+# ship verbs that report failure on success, so they are absent. See the report.
+#
+# That absence is also the cleanest demonstration of D-570's point: an operator
+# gets `github_pr_list` without ever getting `pr merge`, because authority comes
+# from this manifest and not from a shell.
+#
+# No `[[secrets]]`: `gh auth login` keeps the token in the host keyring and Arc
+# never handles it.
+
+[extension]
+name = "github"
+version = "1.0.0"
+attachment = "cli"
+tier_floor = "personal"
+
+# linux/arm64 release asset for the fleet's platform. One ArtifactPin holds one
+# digest, so another platform needs its own digest from the same checksums file.
+[artifact]
+package = "cli/cli"
+version = "2.97.0"
+sha256 = "73ea440ecad9c9e284429997ee6f93577bc6f7bc6fba357ef62c53ad8fb641a5"
+
+[[host_requires]]
+name = "gh"
+minimum_version = "2.97.0"
+instruction = """
+Install the GitHub CLI on this host, then authorise it:
+
+  1. curl -fsSLO https://github.com/cli/cli/releases/download/v2.97.0/gh_2.97.0_linux_arm64.tar.gz
+  2. echo '73ea440ecad9c9e284429997ee6f93577bc6f7bc6fba357ef62c53ad8fb641a5  gh_2.97.0_linux_arm64.tar.gz' | sha256sum -c -
+  3. tar xzf gh_2.97.0_linux_arm64.tar.gz && install -m 0755 gh_2.97.0_linux_arm64/bin/gh /usr/local/bin/gh
+  4. gh auth login --scopes repo,read:org      # or: gh auth login --with-token < token-file
+  5. gh auth status                            # confirm the account and scopes
+
+Grant the narrowest scopes the agent needs. These tools only read, so a
+read-only fine-grained token is enough.
+"""
+
+[tools]
+allow = [
+  "github_pr_list",
+  "github_issue_list",
+  "github_repo_list",
+  "github_release_list",
+  "github_run_list",
+]
+
+[[tools.declared]]
+name = "github_pr_list"
+description = "List or search pull requests in a repository."
+classification = "read_only"
+
+[[tools.declared]]
+name = "github_issue_list"
+description = "List or search issues in a repository."
+classification = "read_only"
+
+[[tools.declared]]
+name = "github_repo_list"
+description = "List repositories the authenticated account can see."
+classification = "read_only"
+
+[[tools.declared]]
+name = "github_release_list"
+description = "List releases of a repository."
+classification = "read_only"
+
+[[tools.declared]]
+name = "github_run_list"
+description = "List GitHub Actions workflow runs for a repository."
+classification = "read_only"
+
+[approval]
+default = "outbound"
+
+[config.cli]
+binary = "gh"
+probe_argv = ["--version"]
+install_instruction = "See [[host_requires]] in this bundle's extension.toml."
+
+# The --json field list is manifest data, fixed in argv: the model chooses which
+# repository to read, never which fields come back.
+
+[[config.cli.commands]]
+tool = "github_pr_list"
+argv = [
+  "pr",
+  "list",
+  "--json=number,title,state,isDraft,author,headRefName,baseRefName,updatedAt,url",
+]
+description = "List or search pull requests. Use search for anything more selective than state."
+classification = "read_only"
+
+[[config.cli.commands.arguments]]
+name = "repo"
+flag = "--repo"
+description = "Repository as OWNER/REPO."
+
+[[config.cli.commands.arguments]]
+name = "search"
+flag = "--search"
+description = "GitHub search query, e.g. 'review-requested:@me' or 'is:open label:bug'."
+
+[[config.cli.commands.arguments]]
+name = "state"
+flag = "--state"
+description = "One of open, closed, merged, all. Defaults to open."
+
+[[config.cli.commands.arguments]]
+name = "author"
+flag = "--author"
+description = "Filter by author login."
+
+[[config.cli.commands.arguments]]
+name = "limit"
+flag = "--limit"
+description = "Maximum number of pull requests to return."
+
+[[config.cli.commands]]
+tool = "github_issue_list"
+argv = ["issue", "list", "--json=number,title,state,author,labels,assignees,updatedAt,url"]
+description = "List or search issues in a repository."
+classification = "read_only"
+
+[[config.cli.commands.arguments]]
+name = "repo"
+flag = "--repo"
+description = "Repository as OWNER/REPO."
+
+[[config.cli.commands.arguments]]
+name = "search"
+flag = "--search"
+description = "GitHub search query."
+
+[[config.cli.commands.arguments]]
+name = "state"
+flag = "--state"
+description = "One of open, closed, all. Defaults to open."
+
+[[config.cli.commands.arguments]]
+name = "assignee"
+flag = "--assignee"
+description = "Filter by assignee login."
+
+[[config.cli.commands.arguments]]
+name = "limit"
+flag = "--limit"
+description = "Maximum number of issues to return."
+
+[[config.cli.commands]]
+tool = "github_repo_list"
+argv = ["repo", "list", "--json=name,nameWithOwner,description,isPrivate,isArchived,updatedAt,url"]
+description = "List repositories the authenticated account can see."
+classification = "read_only"
+
+[[config.cli.commands.arguments]]
+name = "visibility"
+flag = "--visibility"
+description = "One of public, private, internal."
+
+[[config.cli.commands.arguments]]
+name = "language"
+flag = "--language"
+description = "Filter by primary language."
+
+[[config.cli.commands.arguments]]
+name = "limit"
+flag = "--limit"
+description = "Maximum number of repositories to return."
+
+[[config.cli.commands]]
+tool = "github_release_list"
+argv = ["release", "list", "--json=name,tagName,isLatest,isDraft,isPrerelease,publishedAt"]
+description = "List a repository's releases, newest first."
+classification = "read_only"
+
+[[config.cli.commands.arguments]]
+name = "repo"
+flag = "--repo"
+description = "Repository as OWNER/REPO."
+
+[[config.cli.commands.arguments]]
+name = "limit"
+flag = "--limit"
+description = "Maximum number of releases to return."
+
+[[config.cli.commands]]
+tool = "github_run_list"
+argv = [
+  "run",
+  "list",
+  "--json=databaseId,displayTitle,workflowName,status,conclusion,headBranch,createdAt,url",
+]
+description = "List GitHub Actions workflow runs — use it to see whether CI is green."
+classification = "read_only"
+
+[[config.cli.commands.arguments]]
+name = "repo"
+flag = "--repo"
+description = "Repository as OWNER/REPO."
+
+[[config.cli.commands.arguments]]
+name = "workflow"
+flag = "--workflow"
+description = "Workflow file name or display name."
+
+[[config.cli.commands.arguments]]
+name = "branch"
+flag = "--branch"
+description = "Filter runs by branch."
+
+[[config.cli.commands.arguments]]
+name = "status"
+flag = "--status"
+description = "Filter by status, e.g. failure, success, in_progress."
+
+[[config.cli.commands.arguments]]
+name = "limit"
+flag = "--limit"
+description = "Maximum number of runs to return."

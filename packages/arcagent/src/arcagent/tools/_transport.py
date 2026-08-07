@@ -53,6 +53,12 @@ class RegisteredTool:
     when_to_use: str = ""
     example: str = ""
     category: str = ""
+    # D-580 — the capability scan root this tool's code loaded from
+    # (``extension:<name>``, ``agent``, ``workspace``, ``module:*``, …). Empty
+    # when first-party code registered the tool directly. With ``source`` it is
+    # the ORIGIN half of the egress gate: without it a bundle's own ``.py``
+    # capabilities would reach the registry indistinguishable from an operator's.
+    scan_root: str = ""
     classification: ToolClassification = "state_modifying"
     # Capability tags power non-compositional safety checks (SPEC-017
     # SDD §5.2). Examples: "file_read", "file_write", "network_egress",

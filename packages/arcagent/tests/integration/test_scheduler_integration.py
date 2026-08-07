@@ -5,14 +5,13 @@ End-to-end verification through the LIVE path: the decorator-form
 ``_runtime.configure`` exactly as the capability loader does in production.
 Tests:
 - Schedule creation via the schedule_create tool
-- Execution with metadata update through the engine worker
+- Execution with metadata update, run inline by the engine
 - Circuit breaker behavior
-- Graceful shutdown draining the queue
+- Teardown stopping a running engine
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 from collections.abc import Iterator
 from pathlib import Path
@@ -80,8 +79,7 @@ class TestSchedulerIntegration:
             entry = st.store.get(schedule_id)
             assert entry is not None
             assert st.engine is not None
-            await st.engine.enqueue(entry)
-            await asyncio.sleep(0.2)
+            await st.engine.execute(entry)
 
             assert "Check inbox" in run_results
             updated = st.store.get(schedule_id)
@@ -150,8 +148,8 @@ class TestSchedulerIntegration:
             await cap.teardown()
 
     @pytest.mark.asyncio
-    async def test_graceful_shutdown_drains_queue(self, tmp_path: Path) -> None:
-        """Queue items should be processed before teardown completes."""
+    async def test_teardown_stops_a_running_engine(self, tmp_path: Path) -> None:
+        """Teardown stops the loop; a firing already ran inline, so there is nothing to drain."""
         results: list[str] = []
 
         async def mock_run(prompt: str, **kwargs: object) -> str:
@@ -165,15 +163,18 @@ class TestSchedulerIntegration:
         await cap.setup(None)
 
         entry = ScheduleEntry(
-            id="sched_drain",
+            id="sched_teardown",
             type="interval",
-            prompt="Drain test",
+            prompt="Teardown test",
             every_seconds=300,
         )
         st.store.add(entry)
-        assert st.engine is not None
-        await st.engine.enqueue(entry)
-        await asyncio.sleep(0.1)
+        engine = st.engine
+        assert engine is not None
+        assert engine.running
+
+        await engine.execute(entry)
+        assert "Teardown test" in results
 
         await cap.teardown()
-        assert "Drain test" in results
+        assert not engine.running

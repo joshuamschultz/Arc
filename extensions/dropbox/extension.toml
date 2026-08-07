@@ -1,0 +1,110 @@
+# Dropbox through the `dbxcli` binary.
+#
+# THE CHOICE, AND WHY (the manifest's perspective, as asked):
+#
+#   CLI. `dbxcli` is one Go binary with a published SHA256SUMS, so [artifact]
+#   pins exactly the bytes that will run — one digest, no runtime under it, no
+#   transitive dependency tree. It has `--output json`, which CliAttachment
+#   requires. Its verbs are separate subcommands, so `dropbox_list` is grantable
+#   without `put`, which is the D-570 property. MCP loses on every one of those:
+#   there is no maintained Dropbox MCP server on npm to pin (checked
+#   @dropbox/dropbox-mcp-server, dropbox-mcp, @modelcontextprotocol/server-dropbox
+#   — none exist), and `mcp` is not a kind `build_attachment` can construct
+#   today, so an mcp bundle would be refused at probe.
+#
+# THE COST, STATED PLAINLY: `dbxcli` names the object it acts on POSITIONALLY —
+# `ls <path>`, `search <query>`, `get <source>`, `revs <file>`. A CliArgument
+# renders only `--flag=value`, so none of those can be declared. What survives is
+# the three verbs below plus a root-relative recursive listing. Dropbox is the
+# connector the positional gap costs the most; see the report.
+#
+# No `[[secrets]]` — `dbxcli login` keeps a refreshable OAuth token on the host.
+
+[extension]
+name = "dropbox"
+version = "1.0.0"
+attachment = "cli"
+tier_floor = "personal"
+
+[artifact]
+package = "dropbox/dbxcli"
+version = "3.7.1"
+sha256 = "243a2dbf418bc166a116ec7850529c8762fd3af1ae64e3a0274eba863a75a62a"
+
+[[host_requires]]
+name = "dbxcli"
+minimum_version = "3.7.1"
+instruction = """
+Install dbxcli on this host, then authorise it:
+
+  1. Download the asset for this host's platform from
+     https://github.com/dropbox/dbxcli/releases/tag/v3.7.1
+  2. Check it against that release's SHA256SUMS file. The digest in [artifact]
+     is for dbxcli_3.7.1_darwin_arm64.tar.gz; take the matching line for another
+     platform, because ArtifactPin holds one digest and one only.
+  3. tar xzf dbxcli_3.7.1_<platform>.tar.gz && install -m 0755 <dir>/dbxcli /usr/local/bin/dbxcli
+  4. dbxcli login
+  5. dbxcli account --output json    # confirm the account
+
+Scope the Dropbox app to the narrowest permissions the agent needs. These verbs
+only read.
+"""
+
+[tools]
+allow = ["dropbox_list", "dropbox_account", "dropbox_usage"]
+
+[[tools.declared]]
+name = "dropbox_list"
+description = "List files and folders from the Dropbox root."
+classification = "read_only"
+
+[[tools.declared]]
+name = "dropbox_account"
+description = "Read the connected Dropbox account's identity."
+classification = "read_only"
+
+[[tools.declared]]
+name = "dropbox_usage"
+description = "Read the Dropbox account's storage usage."
+classification = "read_only"
+
+[approval]
+default = "outbound"
+
+[config.cli]
+binary = "dbxcli"
+probe_argv = ["version"]
+install_instruction = "See [[host_requires]] in this bundle's extension.toml."
+
+[[config.cli.commands]]
+tool = "dropbox_list"
+argv = ["ls", "--output=json", "--long"]
+description = "List files and folders from the Dropbox root. Pass recursive to walk the whole tree; there is no way to list a single subfolder directly."
+classification = "read_only"
+
+[[config.cli.commands.arguments]]
+name = "recursive"
+flag = "--recursive"
+description = "Set to true to list every subfolder as well as the root."
+
+[[config.cli.commands.arguments]]
+name = "limit"
+flag = "--limit"
+description = "Maximum number of entries to return."
+
+[[config.cli.commands.arguments]]
+name = "sort"
+flag = "--sort"
+description = "Sort by name, size, time, or type."
+
+[[config.cli.commands]]
+tool = "dropbox_account"
+argv = ["account", "--output=json"]
+description = "Read which Dropbox account this connection is authorised as."
+classification = "read_only"
+
+[[config.cli.commands]]
+tool = "dropbox_usage"
+argv = ["du", "--output=json"]
+description = "Read the account's storage usage."
+classification = "read_only"
