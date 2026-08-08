@@ -17,7 +17,7 @@ entrypoint = "reference_attachment"
 
 [[secrets]]
 name = "reference_token"
-prompt = "Reference service token (any value; the fixture never reads it)"
+prompt = "Reference service token (any value; the fixture only fingerprints it)"
 
 [tools]
 allow = ["reference_echo", "reference_store"]

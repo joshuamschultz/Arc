@@ -54,7 +54,7 @@ from arcagent.extension.host import HostPrerequisiteDirector, HostVerdict
 from arcagent.extension.loader import ExtensionLoader
 from arcagent.extension.manifest import ExtensionManifest, SecretRequirement, load_manifest
 from arcagent.extension.native_attachment import NativeAttachment
-from arcagent.extension.secrets import SecretRef, SecretStore
+from arcagent.extension.secrets import Secret, SecretRef, SecretStore
 from arcagent.extension.state import ConnectionRecord, ConnectionStateStore
 from arcagent.tools._egress_policy import first_forbidden_egress
 from arcagent.utils.toml_writer import dumps_toml
@@ -82,8 +82,9 @@ INSTALL_STEPS: tuple[str, ...] = (
     "persist",
 )
 
-#: How a manifest's declared attachment kind becomes something that can be probed.
-AttachmentFactory = Callable[[ExtensionManifest, Path], ExtensionAttachment]
+#: How a manifest's declared attachment kind becomes something that can be probed,
+#: holding the credentials the operator connected it with.
+AttachmentFactory = Callable[[ExtensionManifest, Path, Mapping[str, Secret]], ExtensionAttachment]
 
 
 def _refuse(step: str, message: str, **details: Any) -> ExtensionError:
@@ -273,7 +274,17 @@ async def install_connector(
         plan, agent=agent, values=secret_values, store=store, did=caller_did
     )
     try:
-        probe = await _probe(plan, attachment_factory)
+        # Read back out of the store rather than reusing ``secret_values``: what the
+        # probe proves must be the credential the running agent will later resolve,
+        # not the one this call happened to be handed.
+        secrets = await resolve_secrets(
+            plan.manifest,
+            agent=agent,
+            instance=plan.instance,
+            store=store,
+            caller_did=caller_did,
+        )
+        probe = await _probe(plan, attachment_factory, secrets)
         _refuse_probed_egress(plan, probe)
     except BaseException:
         await _forget_secrets(written, store=store, did=caller_did)
@@ -434,20 +445,108 @@ def _importable(bundle: Path) -> Iterator[None]:
             sys.path.remove(entry)
 
 
-def build_attachment(manifest: ExtensionManifest, bundle: Path) -> ExtensionAttachment:
+async def resolve_secrets(
+    manifest: ExtensionManifest,
+    *,
+    agent: str,
+    instance: str,
+    store: SecretStore | None,
+    caller_did: str,
+) -> dict[str, Secret]:
+    """Every credential this bundle declares, still wrapped, or refuse naming the gaps.
+
+    The store is the only place a connector credential lives, so this is the only
+    way one reaches an attachment. Values stay :class:`~arcagent.extension.secrets.
+    Secret` all the way here and are unwrapped in :func:`build_attachment` alone.
+
+    Args:
+        manifest: What the bundle declares it needs.
+        agent: The agent's directory name, which keys the store. Every surface must
+            spell it the same way or one writes a credential the others cannot read.
+        instance: The connected account. Credentials are per-instance, which is what
+            lets one bundle back two accounts without either seeing the other's.
+        store: Where credentials live. ``None`` is not a failure for a bundle that
+            declares none — a ``cli`` connector whose binary owns its own auth needs
+            no store at all — and is a refusal for one that does.
+        caller_did: Recorded as the actor on every read.
+
+    Returns:
+        Field name to credential, one entry per declared secret.
+
+    Raises:
+        ExtensionError: A declared credential is not in the store. The fields are
+            named and never valued: a connection serving verbs it has no credential
+            for is a 401 the agent cannot read.
+    """
+    if not manifest.secrets:
+        return {}
+    if store is None:
+        raise _refuse(
+            "secrets",
+            f"{manifest.extension.name} needs a stored credential and this deployment "
+            f"has no secret store configured",
+            extension=manifest.extension.name,
+            instance=instance,
+        )
+    resolved: dict[str, Secret] = {}
+    missing: list[str] = []
+    for declared in manifest.secrets:
+        ref = SecretRef(agent=agent, instance=instance, field=declared.name)
+        secret = await store.get(ref, caller_did=caller_did)
+        if secret is None:
+            missing.append(declared.name)
+        else:
+            resolved[declared.name] = secret
+    if missing:
+        raise _refuse(
+            "secrets",
+            f"{instance} has no stored credential for {', '.join(missing)} — "
+            f"run 'arc connector auth {instance}'",
+            extension=manifest.extension.name,
+            instance=instance,
+            missing=missing,
+        )
+    return resolved
+
+
+def build_attachment(
+    manifest: ExtensionManifest, bundle: Path, secrets: Mapping[str, Secret]
+) -> ExtensionAttachment:
     """Build the attachment a manifest declares, or refuse the kind.
 
     Two kinds ship: ``cli`` runs a locally installed binary the operator was
     directed to install, and ``native`` imports the implementation the extension
     package supplies. A third party adds a kind by supplying a factory, which is
     why this function refuses an unknown kind rather than guessing at one.
+
+    **This is where a credential is revealed, and it is the only place.** A
+    :class:`~arcagent.extension.secrets.Secret` renders ``Secret(***)`` wherever it
+    is formatted, and ``reveal()`` ends that protection — so the value crosses
+    exactly one boundary, from the store into the extension's own factory, with no
+    log line, audit event, or refusal between the two.
     """
     kind = manifest.extension.attachment
     if kind == "native":
         entrypoint = _NativeConfig.model_validate(manifest.config.get("native", {})).entrypoint
+        context: dict[str, Any] = {"bundle": str(bundle)}
+        context.update({name: secret.reveal() for name, secret in secrets.items()})
         with _importable(bundle):
-            return NativeAttachment(entrypoint, {"bundle": str(bundle)})
+            return NativeAttachment(entrypoint, context)
     if kind == "cli":
+        if manifest.secrets:
+            # A CLI attachment reaches its service by spawning a binary, and no
+            # manifest table says which of that binary's inputs a credential would
+            # become. Accepting the declaration would store a credential and deliver
+            # it nowhere, which is precisely the failure this argument exists to fix.
+            raise _refuse(
+                "probe",
+                f"{manifest.extension.name} declares credential(s) "
+                f"{', '.join(secret.name for secret in manifest.secrets)} and attaches "
+                f"as 'cli', which has no way to receive one — a CLI connector's binary "
+                f"owns its own authentication",
+                extension=manifest.extension.name,
+                attachment=kind,
+            )
         declared = _CliConfig.model_validate(manifest.config.get("cli", {}))
         return CliAttachment(
             binary=declared.binary,
@@ -550,11 +649,13 @@ async def _forget_secrets(refs: Sequence[SecretRef], *, store: SecretStore, did:
             _logger.exception("could not roll back connector secret %s", ref)
 
 
-async def _probe(plan: ConnectorPlan, factory: AttachmentFactory | None) -> ProbeResult:
-    """Build the attachment and prove the connection answers."""
+async def _probe(
+    plan: ConnectorPlan, factory: AttachmentFactory | None, secrets: Mapping[str, Secret]
+) -> ProbeResult:
+    """Build the attachment with its credentials and prove the connection answers."""
     build = factory or build_attachment
     try:
-        attachment = build(plan.manifest, plan.bundle)
+        attachment = build(plan.manifest, plan.bundle, secrets)
         result = await attachment.probe()
     except ExtensionError as exc:
         raise _refuse("probe", exc.message, extension=plan.extension) from exc
@@ -640,5 +741,6 @@ __all__ = [
     "load_instances",
     "plan_connector",
     "remove_connector",
+    "resolve_secrets",
     "write_instance",
 ]

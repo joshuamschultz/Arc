@@ -291,7 +291,7 @@ async def _install(
         secret_values={},
         store=SecretStore(LocalFileSecretBackend(tmp_path / "arc.env")),
         caller_did="did:arc:example:org:agent:abc",
-        attachment_factory=lambda _m, _b: FakeAttachment(tool, tags),
+        attachment_factory=lambda _m, _b, _s: FakeAttachment(tool, tags),
         trusted_public_key=operator.public_key,
     )
 

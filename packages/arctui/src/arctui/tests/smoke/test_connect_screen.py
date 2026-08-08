@@ -47,8 +47,11 @@ _MANIFEST = """
 [extension]
 name = "acme_tickets"
 version = "2.1.0"
-attachment = "cli"
+attachment = "native"
 description = "Open and read Acme tickets."
+
+[config.native]
+entrypoint = "acme_tui_attachment"
 
 [[secrets]]
 name = "api_token"
@@ -57,19 +60,68 @@ prompt = "Paste the Acme API token"
 [tools]
 allow = ["ping"]
 
-[approval]
-default = "outbound"
-
-[config.cli]
-binary = "python3"
-probe_argv = ["--version"]
-
-[[config.cli.commands]]
-tool = "ping"
-argv = ["--version"]
+[[tools.declared]]
+name = "ping"
 description = "Report the Acme client version."
 classification = "read_only"
+
+[approval]
+default = "outbound"
 """
+
+#: The bundle's own implementation, written beside its manifest as a real bundle
+#: does. A ``native`` bundle rather than a ``cli`` one because the credential the
+#: operator types must actually reach the connector, and a ``cli`` attachment
+#: reaches its service by spawning a binary — it has no way to receive one, which
+#: ``build_attachment`` refuses by name. Probing reachable therefore means the
+#: screen delivered the credential, not merely that it stored one.
+#:
+#: The entrypoint name is unique to this suite: a native entrypoint is imported by
+#: bare module name and ``sys.modules`` caches it for the whole session, so two
+#: fixtures sharing one name would silently serve each other's implementation.
+_ADAPTER = '''
+"""The acme fixture's own implementation, outside every Arc package."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from arcagent.extension.attachment import ProbeResult, ToolResult, ToolSpec
+
+
+class AcmeAttachment:
+    """Reachable exactly when Arc handed it the credential the manifest declares."""
+
+    def __init__(self, context: dict[str, Any]) -> None:
+        self._token = str(context.get("api_token") or "")
+
+    def requirements(self) -> list[Any]:
+        return []
+
+    async def probe(self) -> ProbeResult:
+        if not self._token:
+            return ProbeResult(reachable=False, detail="acme has no credential for api_token")
+        return ProbeResult(
+            reachable=True, tools=await self.describe_tools(), detail="acme is authenticated"
+        )
+
+    async def describe_tools(self) -> list[ToolSpec]:
+        return [
+            ToolSpec(
+                name="ping",
+                description="Report the Acme client version.",
+                input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                classification="read_only",
+            )
+        ]
+
+    async def invoke(self, tool: str, args: dict[str, Any]) -> ToolResult:
+        return ToolResult(tool=tool, content="acme 2.1.0")
+
+
+def build_native_attachment(context: dict[str, Any]) -> AcmeAttachment:
+    return AcmeAttachment(context)
+'''
 
 _MANIFEST_NEEDS_HOST = (
     _MANIFEST
@@ -108,6 +160,7 @@ def _write_bundle(agent_dir: Path, manifest: str = _MANIFEST) -> None:
     bundle = agent_dir / "extensions" / _EXTENSION
     bundle.mkdir(parents=True, exist_ok=True)
     (bundle / "extension.toml").write_text(manifest, encoding="utf-8")
+    (bundle / "acme_tui_attachment.py").write_text(_ADAPTER, encoding="utf-8")
 
 
 def _rendered(transcript: TranscriptView) -> str:

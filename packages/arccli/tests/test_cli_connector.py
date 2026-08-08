@@ -118,7 +118,7 @@ def _reachable(monkeypatch: pytest.MonkeyPatch) -> None:
     """Default every test to a reachable attachment; a test may override it."""
     monkeypatch.setattr(
         "arccli.commands.connector._attachment_factory",
-        lambda: lambda _manifest, _bundle: _FakeAttachment(),
+        lambda: lambda _manifest, _bundle, _secrets: _FakeAttachment(),
     )
 
 
@@ -245,7 +245,7 @@ class TestAdd:
     ) -> None:
         monkeypatch.setattr(
             "arccli.commands.connector._attachment_factory",
-            lambda: lambda _manifest, _bundle: _UnreachableAttachment(),
+            lambda: lambda _manifest, _bundle, _secrets: _UnreachableAttachment(),
         )
         _answer_prompts(monkeypatch)
 
@@ -339,7 +339,7 @@ class TestReadVerbs:
         run("add", _EXTENSION, "--instance", _INSTANCE)
         monkeypatch.setattr(
             "arccli.commands.connector._attachment_factory",
-            lambda: lambda _manifest, _bundle: _UnreachableAttachment(),
+            lambda: lambda _manifest, _bundle, _secrets: _UnreachableAttachment(),
         )
         with pytest.raises(SystemExit) as exited:
             run("probe", _INSTANCE)

@@ -806,6 +806,7 @@ name = "arcui"
 version = "0.3.0"
 source = { editable = "packages/arcui" }
 dependencies = [
+    { name = "arc-agent" },
     { name = "arcgateway" },
     { name = "arcllm" },
     { name = "arcskill" },
@@ -822,6 +823,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "arc-agent", editable = "packages/arcagent" },
     { name = "arcgateway", editable = "packages/arcgateway" },
     { name = "arcllm", editable = "packages/arcllm" },
     { name = "arcskill", editable = "packages/arcskill" },

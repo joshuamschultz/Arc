@@ -24,7 +24,6 @@ the import of the bundle.
 from __future__ import annotations
 
 import json
-import os
 from typing import Any, Final
 
 from arcagent.extension.attachment import (
@@ -35,11 +34,6 @@ from arcagent.extension.attachment import (
     ToolResult,
     ToolSpec,
 )
-
-#: These hold environment variable NAMES, not credentials; the noqa is for
-#: the linter's name-based heuristic, which cannot tell the two apart.
-ENV_TOKEN: Final = "ARC_ONEPASSWORD_SERVICE_ACCOUNT_TOKEN"  # noqa: S105
-ENV_VAULT_ID: Final = "ARC_ONEPASSWORD_VAULT_ID"
 
 #: Reported to 1Password so a vault's access log names what reached it.
 _INTEGRATION_NAME: Final = "Arc connector extension"
@@ -84,9 +78,8 @@ class OnePasswordAttachment:
             return ProbeResult(
                 reachable=False,
                 detail=(
-                    f"onepassword is not configured: {', '.join(missing)} unset. Arc stores the "
-                    f"declared secrets but does not yet hand them to an attachment, so set "
-                    f"{ENV_TOKEN} and {ENV_VAULT_ID} in the agent's environment."
+                    f"onepassword has no credential for {', '.join(missing)} — "
+                    f"run 'arc connector auth <instance>' to supply them."
                 ),
             )
         try:
@@ -249,15 +242,14 @@ def _error(tool: str, content: str) -> ToolResult:
     return ToolResult(tool=tool, outcome=ToolOutcome.ERROR, content=content)
 
 
-def _setting(context: dict[str, Any], key: str, env: str) -> str:
-    """A credential from the caller's context, else the environment, else empty."""
-    value = context.get(key)
-    return str(value) if value else os.environ.get(env, "")
+def _credential(context: dict[str, Any], key: str) -> str:
+    """One declared credential out of the context Arc resolved from its secret store."""
+    return str(context.get(key) or "")
 
 
 def build_native_attachment(context: dict[str, Any]) -> OnePasswordAttachment:
     """The fixed factory Arc calls to build this extension's attachment."""
     return OnePasswordAttachment(
-        token=_setting(context, "service_account_token", ENV_TOKEN),
-        vault_id=_setting(context, "vault_id", ENV_VAULT_ID),
+        token=_credential(context, "service_account_token"),
+        vault_id=_credential(context, "vault_id"),
     )

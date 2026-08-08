@@ -20,6 +20,7 @@ The name is generic Arc convention; nothing in Arc names *this* extension.
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 from arcagent.extension.attachment import (
@@ -37,9 +38,18 @@ from arcagent.extension.attachment import (
 ECHO_TOOL = "reference_echo"
 STORE_TOOL = "reference_store"
 
-#: The credential the operator would supply for a real service. Declared, never read —
-#: the fixture must never need a secret to prove the mechanism works.
+#: The credential the operator supplies. A real service would authenticate with it; this
+#: one records a FINGERPRINT of what it was handed, which is what lets a test prove the
+#: exact stored value arrived without ever putting a credential in a tool result.
 CREDENTIAL_NAME = "reference_token"
+
+#: The key ``ECHO_TOOL`` answers the fingerprint under.
+FINGERPRINT_KEY = "reference_token_fingerprint"
+
+
+def fingerprint(value: str) -> str:
+    """A short, one-way digest — safe to render, useless to anyone who steals it."""
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
 
 
 class ReferenceAttachment:
@@ -56,6 +66,9 @@ class ReferenceAttachment:
         self.context = dict(context or {})
         self.stored: dict[str, str] = {}
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.credential = str(self.context.get(CREDENTIAL_NAME, ""))
+        if self.credential:
+            self.stored[FINGERPRINT_KEY] = fingerprint(self.credential)
 
     def requirements(self) -> list[Requirement]:
         """One credential, declared so the install path has something to prompt for."""
@@ -63,16 +76,22 @@ class ReferenceAttachment:
             Requirement(
                 kind=RequirementKind.CREDENTIAL,
                 name=CREDENTIAL_NAME,
-                instruction="Any value; the reference service never reads it.",
+                instruction="Any value; the reference service only fingerprints it.",
             )
         ]
 
     async def probe(self) -> ProbeResult:
-        """Always reachable: the service is this object."""
+        """Always reachable: the service is this object.
+
+        The detail says whether a credential arrived — a word, never the value — so a
+        surface that only ever sees a ``ProbeResult`` can still tell a connected
+        account from an unconfigured one.
+        """
+        held = "authenticated" if self.credential else "unauthenticated"
         return ProbeResult(
             reachable=True,
             tools=await self.describe_tools(),
-            detail="in-memory reference service",
+            detail=f"in-memory reference service ({held})",
         )
 
     async def describe_tools(self) -> list[ToolSpec]:

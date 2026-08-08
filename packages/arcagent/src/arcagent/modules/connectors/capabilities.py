@@ -12,6 +12,10 @@ a second one:
   first, because that is the one component holding the signature gate and
   building an attachment EXECUTES extension-declared code (a native attachment
   imports the extension's own module).
+* Only then are the instance's credentials read out of the secret store and
+  handed to the attachment. After verification, so a bundle the gate refuses is
+  never given one; and fail-closed, so a connection whose declared credential is
+  missing is refused by name instead of serving verbs that answer 401.
 * What the upstream then serves is annotated from the **manifest**, never
   trusted from the server: an upstream choosing its own ``capability_tags``
   would be choosing whether the lethal-trifecta gate applies to it, and a served
@@ -55,12 +59,15 @@ from arcagent.extension.catalog import resolve_extension_roots
 from arcagent.extension.contract_ledger import ContractVerdict, ToolContractLedger
 from arcagent.extension.loader import ExtensionLoader, LoadedExtension
 from arcagent.extension.manifest import ToolPolicy
+from arcagent.extension.secrets import SecretStore, select_secret_backend
 from arcagent.extension.state import ConnectionStateStore, open_connection_state
 from arcagent.modules.connectors import _runtime
 from arcagent.modules.connectors.install import (
     InstanceConfig,
     build_attachment,
+    connector_env_file,
     load_instances,
+    resolve_secrets,
 )
 from arcagent.tools._decorator import capability
 
@@ -129,7 +136,11 @@ class Connectors:
             return ()
 
         context = _AttachContext(
-            state=state, sink=sink, registry=state.tool_registry, store=self._state_store
+            state=state,
+            sink=sink,
+            registry=state.tool_registry,
+            store=self._state_store,
+            secrets=_secret_store(state, sink),
         )
         registered: list[str] = []
         for instance, configured in sorted(instances.items()):
@@ -148,6 +159,7 @@ class _AttachContext:
     sink: AuditSink
     registry: ToolRegistry
     store: ConnectionStateStore
+    secrets: SecretStore | None
 
 
 async def _attach_one(
@@ -163,10 +175,20 @@ async def _attach_one(
     state = ctx.state
     try:
         loaded = await _load_bundle(ctx, configured.extension)
+        # The credentials the operator connected this account with, read from the one
+        # store every surface writes to. Absent, the connection is refused by name
+        # rather than attached to serve verbs that answer 401.
+        secrets = await resolve_secrets(
+            loaded.manifest,
+            agent=state.agent_dir.name,
+            instance=instance,
+            store=ctx.secrets,
+            caller_did=state.identity.did,
+        )
         # Built once and reused: the connection whose tools were described has to
         # be the connection the registered verbs then call, or a stateful
         # attachment answers from a session nobody looked at.
-        connection = build_attachment(loaded.manifest, loaded.path)
+        connection = build_attachment(loaded.manifest, loaded.path, secrets)
         served = await _servable_tools(ctx, instance, loaded, connection)
         specs = [spec for spec in served if spec.name not in taken]
         for spec in served:
@@ -323,6 +345,27 @@ def _extension_roots(state: _runtime._State) -> tuple[Path, ...]:
     if configured:
         return (Path(configured).expanduser().resolve(),)
     return resolve_extension_roots(state.agent_dir)
+
+
+def _secret_store(state: _runtime._State, sink: AuditSink) -> SecretStore | None:
+    """Where this agent's connector credentials live, or ``None`` if it has no store.
+
+    The same selection ``arc connector`` makes, from the same agent directory, so the
+    agent reads the file the CLI wrote. ``None`` is not itself a failure: a ``cli``
+    bundle whose binary owns its own authentication declares no ``[[secrets]]`` and
+    needs no store, and taking the safest connectors away because a deployment has
+    configured no vault would be the wrong refusal. A bundle that DOES declare a
+    credential is refused by name in :func:`~arcagent.modules.connectors.install.
+    resolve_secrets`.
+    """
+    try:
+        backend = select_secret_backend(
+            Tier(state.tier), env_file=connector_env_file(state.agent_dir)
+        )
+    except ExtensionError as exc:
+        _logger.warning("connectors: no secret store on this deployment — %s", exc.message)
+        return None
+    return SecretStore(backend, sink=sink)
 
 
 def _transport(kind: str) -> ToolTransport:
