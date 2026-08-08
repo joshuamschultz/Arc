@@ -92,8 +92,14 @@ if __name__ == "__main__":
 
 
 def docker_available() -> bool:
-    """True when the ``docker`` CLI is on ``$PATH`` (module-level for test override)."""
-    return bool(shutil.which("docker"))
+    """True when a Docker daemon will run a container (module-level for test override).
+
+    One implementation, in ``hub._docker`` — the improver and the hub are asking the
+    same question, and two answers that can disagree is one of them being wrong.
+    """
+    from arcskill.hub._docker import _docker_available
+
+    return _docker_available()
 
 
 class HubEvalRunner:

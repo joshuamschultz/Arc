@@ -15,6 +15,7 @@ Targets:
 from __future__ import annotations
 
 import io
+import subprocess
 import tarfile
 import tempfile
 from pathlib import Path
@@ -227,14 +228,49 @@ def test_safe_extract_normal_bundle_extracts_all() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_docker_available_returns_true_when_on_path() -> None:
-    with patch("arcskill.hub._docker.shutil.which", return_value="/usr/bin/docker"):
+def _probe(returncode: int) -> MagicMock:
+    return MagicMock(returncode=returncode)
+
+
+def test_docker_available_returns_true_when_the_daemon_answers() -> None:
+    _docker_available.cache_clear()
+    with (
+        patch("arcskill.hub._docker.shutil.which", return_value="/usr/bin/docker"),
+        patch("arcskill.hub._docker.subprocess.run", return_value=_probe(0)),
+    ):
         assert _docker_available() is True
+    _docker_available.cache_clear()
 
 
 def test_docker_available_returns_false_when_absent() -> None:
+    _docker_available.cache_clear()
     with patch("arcskill.hub._docker.shutil.which", return_value=None):
         assert _docker_available() is False
+    _docker_available.cache_clear()
+
+
+def test_docker_available_returns_false_when_the_client_is_installed_but_dead() -> None:
+    """The whole point: a CLI on $PATH with no daemon behind it is not a sandbox."""
+    _docker_available.cache_clear()
+    with (
+        patch("arcskill.hub._docker.shutil.which", return_value="/usr/bin/docker"),
+        patch("arcskill.hub._docker.subprocess.run", return_value=_probe(1)),
+    ):
+        assert _docker_available() is False
+    _docker_available.cache_clear()
+
+
+def test_docker_available_returns_false_when_the_probe_times_out() -> None:
+    _docker_available.cache_clear()
+    with (
+        patch("arcskill.hub._docker.shutil.which", return_value="/usr/bin/docker"),
+        patch(
+            "arcskill.hub._docker.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd="docker", timeout=5),
+        ),
+    ):
+        assert _docker_available() is False
+    _docker_available.cache_clear()
 
 
 # ---------------------------------------------------------------------------
