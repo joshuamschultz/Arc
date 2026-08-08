@@ -217,18 +217,11 @@ class ArcLLMDistiller:
             arcllm.Message(role="user", content=user),
         ]
         provider = self._provider_factory()
-        response = await self._invoke(provider, messages)
+        response = await provider.invoke(messages, response_format={"type": "json_object"})
         parsed = response.parsed_content
         if isinstance(parsed, dict):
             return parsed
         return self._parse(response.content)
-
-    async def _invoke(self, provider: Any, messages: list[Any]) -> Any:
-        """Invoke with JSON-mode when supported, plain otherwise (anthropic path)."""
-        try:
-            return await provider.invoke(messages, response_format={"type": "json_object"})
-        except arcllm.ArcLLMConfigError:  # provider without server-side JSON mode
-            return await provider.invoke(messages)
 
     @staticmethod
     def _parse(content: str | None) -> dict[str, Any]:

@@ -7,15 +7,18 @@
 # agent, its memory, its identity keys, and its access tokens.
 #
 # Env:
-#   ANTHROPIC_API_KEY               required — fails closed if absent
+#   <PROVIDER>_API_KEY              required for cloud providers — fails closed if absent
 #   ARC_AGENTS                      space-separated agent names (default: arc_agent)
 #   ARC_AGENT_MODEL                 default: anthropic/claude-sonnet-5
 #   ARC_PROVIDER                    default: anthropic
+#   ARC_BLUEPRINT                   optional — applied to each agent at creation
 #   ARC_TIER                        default: personal
 #   ARC_UI_PORT                     default: 8420
 #   ARC_ENABLE_TELEGRAM             default: 0
 #   ARC_TELEGRAM_ALLOWED_USER_IDS   space-separated Telegram user ids (empty = deny all)
 #   TELEGRAM_BOT_TOKEN              required when ARC_ENABLE_TELEGRAM=1
+#   VIEWER_TOKEN / OPERATOR_TOKEN   optional — minted here when a provisioner
+#                                   has not already handed them to the customer
 
 set -euo pipefail
 
@@ -32,6 +35,7 @@ TIER="${ARC_TIER:-personal}"
 UI_PORT="${ARC_UI_PORT:-8420}"
 ENABLE_TELEGRAM="${ARC_ENABLE_TELEGRAM:-0}"
 TELEGRAM_ALLOWED_USER_IDS="${ARC_TELEGRAM_ALLOWED_USER_IDS:-}"
+BLUEPRINT="${ARC_BLUEPRINT:-}"
 read -r -a AGENT_NAMES <<< "${ARC_AGENTS:-arc_agent}"
 
 log()  { echo "→ $*"; }
@@ -58,7 +62,21 @@ else
 fi
 
 # --- 2. secrets: fail closed before anything is written -------------------
-[ -n "${ANTHROPIC_API_KEY:-}" ] || fail "ANTHROPIC_API_KEY is not set — pass it via --env-file or -e"
+# Which key is required follows from the provider. `arc init` owns that mapping;
+# reading it here keeps one source of truth and lets an unknown provider fail
+# with its own name rather than a misleading complaint about Anthropic.
+KEY_VAR="$("$VENV_PY" -c '
+import sys
+from arccli.commands.init import PROVIDER_ENV_VARS
+provider = sys.argv[1]
+if provider not in PROVIDER_ENV_VARS:
+    sys.exit(2)
+print(PROVIDER_ENV_VARS[provider])
+' "$PROVIDER")" || fail "ARC_PROVIDER=$PROVIDER is not a provider Arc knows"
+# Local providers (ollama, lmstudio) map to an empty var name — no key needed.
+if [ -n "$KEY_VAR" ] && [ -z "${!KEY_VAR:-}" ]; then
+  fail "$KEY_VAR is not set — required for ARC_PROVIDER=$PROVIDER; pass it via --env-file or -e"
+fi
 if [ "$ENABLE_TELEGRAM" = "1" ] && [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
   fail "ARC_ENABLE_TELEGRAM=1 but TELEGRAM_BOT_TOKEN is not set"
 fi
@@ -68,15 +86,18 @@ ARC_ENV="$ARC_CONFIG_DIR/arc.env"
 
 # Tokens are generated exactly once and pinned for the life of the volume.
 # The UI derives its (agent, user) chat-session id from the viewer token, so
-# regenerating on restart strands every prior conversation.
+# regenerating on restart strands every prior conversation. A provisioner may
+# supply both up front, which is what lets it show a customer the dashboard
+# link at checkout instead of waiting for the box to finish booting.
+mint() { "$VENV_PY" -c 'import secrets; print(secrets.token_hex(32))'; }
 if [ -f "$ARC_ENV" ]; then
   ok "$ARC_ENV present — viewer/operator tokens stay pinned"
 else
-  log "Minting viewer/operator tokens..."
+  log "Writing viewer/operator tokens..."
   ( umask 077
     {
-      printf 'VIEWER_TOKEN=%s\n' "$("$VENV_PY" -c 'import secrets; print(secrets.token_hex(32))')"
-      printf 'OPERATOR_TOKEN=%s\n' "$("$VENV_PY" -c 'import secrets; print(secrets.token_hex(32))')"
+      printf 'VIEWER_TOKEN=%s\n' "${VIEWER_TOKEN:-$(mint)}"
+      printf 'OPERATOR_TOKEN=%s\n' "${OPERATOR_TOKEN:-$(mint)}"
     } > "$ARC_ENV"
   )
   chmod 600 "$ARC_ENV"
@@ -115,8 +136,15 @@ for AGENT_NAME in "${AGENT_NAMES[@]}"; do
   if [ -d "$TEAM_ROOT/$AGENT_NAME" ]; then
     ok "$TEAM_ROOT/$AGENT_NAME already exists"
   else
-    log "Creating agent $AGENT_NAME ($AGENT_MODEL)..."
-    "$ARC_BIN" agent create "$AGENT_NAME" --dir "$TEAM_ROOT" --model "$AGENT_MODEL"
+    log "Creating agent $AGENT_NAME ($AGENT_MODEL, tier=$TIER)..."
+    "$ARC_BIN" agent create "$AGENT_NAME" --dir "$TEAM_ROOT" --model "$AGENT_MODEL" --tier "$TIER"
+    # Blueprints are materialized only at creation. Re-applying on every restart
+    # would overwrite the persona, prompt overlays, and schedules the operator
+    # has tuned since — the whole point of "pick a blueprint, then make it yours".
+    if [ -n "$BLUEPRINT" ]; then
+      log "Applying blueprint $BLUEPRINT to $AGENT_NAME..."
+      "$ARC_BIN" blueprint apply "$BLUEPRINT" --agent "$TEAM_ROOT/$AGENT_NAME"
+    fi
   fi
   "$VENV_PY" "$OVERLAYS" agent-config \
     "$TEAM_ROOT/$AGENT_NAME/arcagent.toml" --provider "$PROVIDER" --model "${AGENT_MODEL#*/}"

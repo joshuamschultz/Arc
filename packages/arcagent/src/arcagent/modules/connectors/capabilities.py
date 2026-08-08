@@ -51,6 +51,7 @@ from arcagent.core.tool_registry import ToolRegistry, ToolTransport
 from arcagent.extension.approval import ApprovalBinding
 from arcagent.extension.attachment import ExtensionAttachment, ToolSpec
 from arcagent.extension.bridge import CapabilityBridge
+from arcagent.extension.catalog import resolve_extension_roots
 from arcagent.extension.contract_ledger import ContractVerdict, ToolContractLedger
 from arcagent.extension.loader import ExtensionLoader, LoadedExtension
 from arcagent.extension.manifest import ToolPolicy
@@ -64,11 +65,6 @@ from arcagent.modules.connectors.install import (
 from arcagent.tools._decorator import capability
 
 _logger = logging.getLogger("arcagent.modules.connectors.capabilities")
-
-#: Where an agent's bundles live unless its config points elsewhere. The same
-#: default ``arc connector --extensions-root`` overrides, so a connection the CLI
-#: installed is a connection this module finds.
-_BUNDLES_DIRNAME = "extensions"
 
 #: The manifest's attachment kind that is reached by spawning something. Every
 #: other kind runs in this process, and an unknown one never gets this far —
@@ -224,7 +220,7 @@ async def _load_bundle(ctx: _AttachContext, extension: str) -> LoadedExtension:
     """
     state = ctx.state
     loader = ExtensionLoader(
-        extensions_root=_extensions_root(state),
+        roots=_extension_roots(state),
         # The bundle's own skills and tools register through an untrusted
         # ``extension:<name>`` root, which is what runs the AST validator and the
         # Sign gate over every file it ships. They do not reach the agent's
@@ -314,12 +310,19 @@ async def _open_state_store(
 # --- helpers ----------------------------------------------------------------
 
 
-def _extensions_root(state: _runtime._State) -> Path:
-    """Where this agent's bundles live: its config's answer, or the default."""
+def _extension_roots(state: _runtime._State) -> tuple[Path, ...]:
+    """Where this agent's bundles live: its config's one root, or the search path.
+
+    A configured root means exactly that root — the same thing
+    ``arc connector --extensions-root`` means — so an operator who pinned a
+    directory gets the directory they pinned. Unset, the deployment's ordered
+    search path applies, which is what lets a fleet ship its bundles once instead
+    of copying them into every agent (D-584).
+    """
     configured = state.config.extensions_root
     if configured:
-        return Path(configured).expanduser().resolve()
-    return state.agent_dir / _BUNDLES_DIRNAME
+        return (Path(configured).expanduser().resolve(),)
+    return resolve_extension_roots(state.agent_dir)
 
 
 def _transport(kind: str) -> ToolTransport:

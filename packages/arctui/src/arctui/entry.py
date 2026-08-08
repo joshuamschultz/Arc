@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 if TYPE_CHECKING:
+    from arctui.roster import AgentRef
     from arctui.serve import Endpoint
     from arctui.transport import ChatTransport
 
@@ -150,12 +151,14 @@ def _maybe_prompt_trust(config_path: Path, cwd: Path) -> None:
 
 async def _build_transport(
     args: list[str],
-) -> tuple[ChatTransport | None, str | None, str | None, str | None]:
+) -> tuple[ChatTransport | None, str | None, AgentRef | None, str | None]:
     """Resolve agent + gateway and open a chat transport.
 
-    Returns ``(transport, message, agent_label, gateway_label)``. On success
-    ``message`` is None; on failure ``transport`` is None and ``message`` is the
-    reason the TUI shows in no-agent mode.
+    Returns ``(transport, message, agent, gateway_label)``. On success ``message``
+    is None; on failure ``transport`` is None and ``message`` is the reason the TUI
+    shows in no-agent mode. The roster's ``AgentRef`` travels rather than just its
+    id, because ``/connect`` needs the agent's directory and must learn it from the
+    same resolution that decided what to attach to.
     """
     from arctui.gateway_client import GatewayChatClient
     from arctui.roster import resolve_agent
@@ -183,12 +186,12 @@ async def _build_transport(
     except Exception as exc:  # reason: fail-open — boot no-agent with the reason
         _logger.error("Could not attach to gateway: %s", exc)
         return None, f"Could not attach to a gateway: {exc}", None, None
-    return client, None, agent_id, endpoint.base_url
+    return client, None, res.selected, endpoint.base_url
 
 
 async def _run(args: list[str]) -> None:
     """Resolve a transport, then run the TUI against it."""
-    transport, message, agent_label, gateway_label = await _build_transport(args)
+    transport, message, agent, gateway_label = await _build_transport(args)
     if message is not None:
         _logger.info("%s Starting in no-agent mode.", message)
 
@@ -196,8 +199,9 @@ async def _run(args: list[str]) -> None:
 
     app = ArcTUI(
         transport=transport,
-        agent_label=agent_label,
+        agent_label=agent.agent_id if agent is not None else None,
         gateway_label=gateway_label,
+        agent_dir=agent.root if agent is not None else None,
     )
     try:
         await app.run_async()

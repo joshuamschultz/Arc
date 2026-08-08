@@ -2,10 +2,19 @@
 # Provisions one Arc instance on a fresh VM. Injected as user-data at server
 # creation (Hetzner, DigitalOcean, EC2 — any cloud-init distro).
 #
-# The provisioner substitutes the __PLACEHOLDER__ tokens before submitting this
-# file. Secrets are written by cloud-init directly to a 0600 file and never
+# The provisioner substitutes the double-underscored tokens below before
+# submitting this file, and refuses to submit one that still holds any.
+# Secrets are written by cloud-init directly to a 0600 file and never
 # appear in a shell command, so they stay out of the process table and out of
 # any shell history on the box.
+#
+# Two placeholders are easy to get wrong:
+#   __LLM_KEY_ENV__   the *name* of the provider's key variable (ANTHROPIC_API_KEY,
+#                     OPENAI_API_KEY, …). The entrypoint reads the required name
+#                     from the provider, so a mismatch fails the boot loudly.
+#   __TELEGRAM_ALLOWED_USER_IDS__  space-separated. EMPTY MEANS DENY ALL — omit the
+#                     customer's own Telegram user id and he is locked out of his
+#                     own agent. Collect it (@userinfobot) before provisioning.
 #
 # Everything Arc-specific already lives in the image: this file installs Docker,
 # writes config, and starts the stack. Provisioning time is dominated by the
@@ -22,14 +31,20 @@ write_files:
     permissions: "0600"
     owner: root:root
     content: |
-      ANTHROPIC_API_KEY=__ANTHROPIC_API_KEY__
+      __LLM_KEY_ENV__=__LLM_API_KEY__
+      ARC_PROVIDER=__ARC_PROVIDER__
       ARC_IMAGE=__ARC_IMAGE__
       ARC_DOMAIN=__ARC_DOMAIN__
       ARC_ACME_EMAIL=__ARC_ACME_EMAIL__
       ARC_AGENTS=__ARC_AGENT_NAME__
       ARC_AGENT_MODEL=__ARC_AGENT_MODEL__
+      ARC_BLUEPRINT=__ARC_BLUEPRINT__
       ARC_TIER=personal
-      ARC_ENABLE_TELEGRAM=0
+      ARC_ENABLE_TELEGRAM=__ARC_ENABLE_TELEGRAM__
+      TELEGRAM_BOT_TOKEN=__TELEGRAM_BOT_TOKEN__
+      ARC_TELEGRAM_ALLOWED_USER_IDS=__TELEGRAM_ALLOWED_USER_IDS__
+      VIEWER_TOKEN=__VIEWER_TOKEN__
+      OPERATOR_TOKEN=__OPERATOR_TOKEN__
 
   - path: /opt/arc/Caddyfile
     permissions: "0644"
@@ -82,8 +97,10 @@ write_files:
 
 runcmd:
   # Docker's own convenience installer — the distro packages lag too far behind
-  # to have `docker compose` as a plugin.
-  - [sh, -c, "curl -fsSL https://get.docker.com | sh"]
+  # to have `docker compose` as a plugin. Skipped when the machine was created
+  # from a golden snapshot, which already has Docker and the Arc image on disk;
+  # re-running the installer there costs a minute and changes nothing.
+  - [sh, -c, "command -v docker >/dev/null || curl -fsSL https://get.docker.com | sh"]
   - [systemctl, enable, --now, docker]
   - [sh, -c, "cd /opt/arc && docker compose up -d"]
   # Report readiness in the console log so a failed boot is visible rather than

@@ -23,6 +23,7 @@
 [extension]
 name = "dropbox"
 version = "1.0.0"
+description = "Browse the files in a Dropbox account and check its storage use."
 attachment = "cli"
 tier_floor = "personal"
 

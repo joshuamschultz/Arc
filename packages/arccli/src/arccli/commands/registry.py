@@ -129,6 +129,13 @@ def _connector_handler(args: list[str]) -> None:
     connector_handler(args)
 
 
+def _keys_handler(args: list[str]) -> None:
+    """Dispatch wrapper."""
+    from arccli.commands.keys import keys_handler
+
+    keys_handler(args)
+
+
 def _task_handler(args: list[str]) -> None:
     """Dispatch wrapper."""
     from arccli.commands.task import task_handler
@@ -169,6 +176,13 @@ def _blueprint_handler(args: list[str]) -> None:
     from arccli.commands.blueprint import blueprint_handler
 
     blueprint_handler(args)
+
+
+def _user_handler(args: list[str]) -> None:
+    """Dispatch wrapper."""
+    from arccli.commands.user import user_handler
+
+    user_handler(args)
 
 
 def _trust_handler(args: list[str]) -> None:
@@ -538,12 +552,28 @@ COMMAND_REGISTRY: list[CommandDef] = [
         handler=_connector_handler,
     ),
     CommandDef(
+        name="keys",
+        description="Provider API keys — list, set (hidden prompt), remove",
+        category="Configuration",
+        args_hint="<subcommand>",
+        cli_only=True,
+        handler=_keys_handler,
+    ),
+    CommandDef(
         name="blueprint",
         description="Preset-config bootstrap — list, show, apply, verify, sign",
         category="Tools & Skills",
         args_hint="<subcommand>",
         cli_only=True,
         handler=_blueprint_handler,
+    ),
+    CommandDef(
+        name="user",
+        description="Accounts that can sign in — add, list, passwd, role, telegram",
+        category="Tools & Skills",
+        args_hint="<subcommand>",
+        cli_only=True,
+        handler=_user_handler,
     ),
     CommandDef(
         name="team",

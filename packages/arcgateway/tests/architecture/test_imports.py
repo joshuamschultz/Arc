@@ -52,40 +52,63 @@ def _violations(root: Path, forbidden_prefixes: tuple[str, ...]) -> list[tuple[P
     return out
 
 
-# ── arcui imports arcagent ONLY via the approved capability-inventory seam ────
+# ── arcui imports arcagent ONLY via the three approved seams ─────────────────
 
-# The single arcagent module arcui may import (arcui-reality-mirror, Option A).
-_APPROVED_ARCAGENT_SEAM = "arcagent.capabilities.inventory"
+#: The complete set of arcagent modules arcui may import. One module per thing
+#: arcui does with an agent: mirror what it loaded, connect it to a system, hold
+#: the fleet's provider keys.
+_APPROVED_ARCAGENT_SEAMS = frozenset(
+    {
+        "arcagent.capabilities.inventory",
+        "arcagent.connections",
+        "arcagent.keys",
+    }
+)
 
 
-def test_arcui_imports_arcagent_only_via_inventory_seam() -> None:
-    """arcui reaches arcagent ONLY through the approved capability-inventory seam.
+def test_arcui_imports_arcagent_only_via_approved_seams() -> None:
+    """arcui reaches arcagent ONLY through the three approved seams — never anything else.
 
-    Ruling (arcui-reality-mirror, Option A — team-lead approved): the capability
-    views must mirror what an agent actually loads, so arcui consumes arcagent's
-    real discovery + trust verdicts via ``arcagent.capabilities.inventory`` — and
-    nothing else from arcagent. arcui declares no package dependency on arcagent
-    at all; the seam is imported lazily at call time so the surface cannot widen
-    unnoticed. This narrows, rather than deletes, the SPEC-023 §2.2 boundary:
-    every OTHER arcagent import from arcui is still a forbidden layering
-    violation.
+    The original ruling (arcui-reality-mirror, Option A) allowed exactly one:
+    capability views must mirror what an agent actually loads, so arcui consumes
+    arcagent's real discovery + trust verdicts via ``arcagent.capabilities.
+    inventory``. That ruling assumed arcui is only a VIEW of agents.
+
+    SPEC-064 makes it a control surface as well — an operator sets up a
+    connection and a provider key from the browser, which SPEC-062 anticipated
+    when it put the install sequence in arcagent so "arctui and arcui drive the
+    same code rather than re-deriving the sequence." Driving shared code means
+    importing it. So the boundary moves by exactly two modules, and both are
+    façades written to be imported by a surface: ``arcagent.connections`` (the
+    whole connected-account surface, including the refusal type and the audit
+    chain's lifetime) and ``arcagent.keys`` (the write-only provider-key store).
+
+    That is the WHOLE widening. Every other arcagent module — ``core.errors``,
+    ``core.tier``, ``extension.*``, ``modules.*`` — remains a forbidden layering
+    violation, and a route needing one of them is the signal that the façade is
+    missing something, not that this list should grow. The seams stay narrow
+    because each is one module whose public API is the contract; a surface that
+    reached past them would be re-deriving a sequence arcagent owns.
 
     Trust, signing, and approval live in ``arctrust`` — the leaf foundation that
     imports no siblings — so arcui imports it FREELY (operator keys, arc-home
     resolution, the TOFU approve/disapprove store) as a legitimate lower layer
-    for a view. Only ``arcagent`` is restricted to the single inventory seam;
-    ``arctrust`` is not, which is why the previously-offending ``approvals.py``
-    and ``system_config.py`` now depend on arctrust instead of ``arcagent.core.config``.
+    for a view. Only ``arcagent`` is restricted, which is why the
+    previously-offending ``approvals.py`` and ``system_config.py`` depend on
+    arctrust instead of ``arcagent.core.config``.
     """
     if not _ARCUI_SRC.exists():
         pytest.skip("arcui package not found in this checkout")
     bad = [
-        (p, m) for p, m in _violations(_ARCUI_SRC, ("arcagent",)) if m != _APPROVED_ARCAGENT_SEAM
+        (p, m)
+        for p, m in _violations(_ARCUI_SRC, ("arcagent",))
+        if m not in _APPROVED_ARCAGENT_SEAMS
     ]
     assert not bad, (
-        f"arcui imports arcagent outside the approved '{_APPROVED_ARCAGENT_SEAM}' "
-        "seam (SPEC-023 §2.2, narrowed by arcui-reality-mirror):\n"
-        + "\n".join(f"  {p}: {m}" for p, m in bad)
+        "arcui imports arcagent outside the approved seams "
+        f"{sorted(_APPROVED_ARCAGENT_SEAMS)} (SPEC-023 §2.2, narrowed by "
+        "arcui-reality-mirror, widened by SPEC-064 to the two control-surface "
+        "façades):\n" + "\n".join(f"  {p}: {m}" for p, m in bad)
     )
 
 

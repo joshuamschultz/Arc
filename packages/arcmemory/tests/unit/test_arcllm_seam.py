@@ -236,24 +236,16 @@ async def test_distiller_invokes_provider_directly_not_as_context_manager() -> N
     assert len(provider.invocations) == 1  # the provider was invoked directly
 
 
-async def test_distiller_falls_back_to_plain_when_json_mode_unsupported() -> None:
-    class _Anthropicish(_FakeProvider):
-        async def invoke(self, messages: list[Any], *, response_format: Any = None) -> Any:
-            self.invocations.append({"response_format": response_format})
-            if response_format is not None:  # anthropic path: no server-side JSON mode
-                raise arcllm.ArcLLMConfigError("json mode unsupported")
-            return SimpleNamespace(parsed_content=None, content='{"facts": []}')
-
-    provider = _Anthropicish()
+async def test_distiller_asks_for_json_mode_once() -> None:
+    """Every adapter builds its own provider-native JSON payload, so one call is
+    enough — no probe-and-retry, which billed a guaranteed error trace per call."""
+    provider = _FakeProvider(parsed={"facts": []})
     distiller = ArcLLMDistiller(_factory(provider), model="m")
 
-    result = await distiller.extract_facts([Event(event_id="e0", scope="s", kind="obs", text="t")])
+    await distiller.extract_facts([Event(event_id="e0", scope="s", kind="obs", text="t")])
 
-    assert result.facts == []
-    # Tried JSON-mode first, then retried plain — two invocations.
-    assert len(provider.invocations) == 2
-    assert provider.invocations[0]["response_format"] is not None
-    assert provider.invocations[1]["response_format"] is None
+    assert len(provider.invocations) == 1
+    assert provider.invocations[0]["response_format"] == {"type": "json_object"}
 
 
 async def test_distiller_tolerates_garbage_content() -> None:

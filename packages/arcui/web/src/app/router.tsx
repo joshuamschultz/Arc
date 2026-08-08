@@ -14,6 +14,7 @@ import { ApprovalsPage } from '@/pages/approvals'
 import { GatedCapabilitiesPage } from '@/pages/gated-capabilities'
 import { SettingsPage } from '@/pages/settings'
 import { WorkflowsPage } from '@/pages/workflows'
+import { ConnectionsPage } from '@/pages/connections'
 import { LazyWorkflowDetailPage } from './lazy-workflow-detail'
 import { DEFAULT_PATH } from './nav'
 
@@ -47,6 +48,9 @@ export const router = createBrowserRouter([
       // SPEC-061 ArcFlow — workflow management surface (COMP-020).
       { path: 'workflows', element: <WorkflowsPage /> },
       { path: 'workflows/:id', element: <LazyWorkflowDetailPage /> },
+
+      // SPEC-064 — connection surfaces (connectors + keys).
+      { path: 'connections', element: <ConnectionsPage /> },
 
       { path: '*', element: <Navigate to={`/${DEFAULT_PATH}`} replace /> },
     ],

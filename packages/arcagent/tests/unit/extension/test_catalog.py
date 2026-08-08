@@ -23,15 +23,15 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from arctrust.audit import AuditEvent
+
+from arcagent.core.errors import ExtensionError
+from arcagent.core.tier import Tier
 from arcagent.extension.catalog import (
     OFFICIAL_EXTENSIONS,
     ExtensionCatalog,
     validate_extension_name,
 )
-from arctrust.audit import AuditEvent
-
-from arcagent.core.errors import ExtensionError
-from arcagent.core.tier import Tier
 
 _OFFICIAL_NAME = "acme_tickets"
 
@@ -108,7 +108,7 @@ def test_validate_extension_name_accepts_safe_names(name: str) -> None:
 def test_resolve_refuses_a_traversal_name_and_audits_the_refusal(official_root: Path) -> None:
     """A traversal name never becomes a path: refusal + a recorded deny."""
     sink = RecordingSink()
-    catalog = ExtensionCatalog(root=official_root, tier=Tier.PERSONAL, audit_sink=sink)
+    catalog = ExtensionCatalog(roots=[official_root], tier=Tier.PERSONAL, audit_sink=sink)
 
     with pytest.raises(ExtensionError):
         catalog.resolve("../evil")
@@ -124,7 +124,7 @@ def test_resolve_returns_an_official_verdict_for_an_allowlisted_bundle(
 ) -> None:
     """A vetted bundle resolves to its path and is marked official."""
     sink = RecordingSink()
-    catalog = ExtensionCatalog(root=official_root, tier=Tier.PERSONAL, audit_sink=sink)
+    catalog = ExtensionCatalog(roots=[official_root], tier=Tier.PERSONAL, audit_sink=sink)
 
     resolution = catalog.resolve(_OFFICIAL_NAME)
 
@@ -140,7 +140,7 @@ def test_unlisted_bundle_warns_with_an_audit_event_below_federal(
     """Below federal an unvetted bundle loads — but the risk is recorded, allow-with-warning."""
     _bundle(tmp_path, "rando_connector")
     sink = RecordingSink()
-    catalog = ExtensionCatalog(root=tmp_path, tier=tier, audit_sink=sink)
+    catalog = ExtensionCatalog(roots=[tmp_path], tier=tier, audit_sink=sink)
 
     resolution = catalog.resolve("rando_connector")
 
@@ -156,7 +156,7 @@ def test_unlisted_bundle_is_refused_at_federal(tmp_path: Path) -> None:
     """Federal is a signed-allowlist control point: unlisted means unloadable."""
     _bundle(tmp_path, "rando_connector")
     sink = RecordingSink()
-    catalog = ExtensionCatalog(root=tmp_path, tier=Tier.FEDERAL, audit_sink=sink)
+    catalog = ExtensionCatalog(roots=[tmp_path], tier=Tier.FEDERAL, audit_sink=sink)
 
     with pytest.raises(ExtensionError):
         catalog.resolve("rando_connector")
@@ -169,7 +169,7 @@ def test_unlisted_bundle_is_refused_at_federal(tmp_path: Path) -> None:
 def test_allowlisted_bundle_still_resolves_at_federal(official_root: Path) -> None:
     """Federal refuses the UNLISTED bundle, not every bundle."""
     sink = RecordingSink()
-    catalog = ExtensionCatalog(root=official_root, tier=Tier.FEDERAL, audit_sink=sink)
+    catalog = ExtensionCatalog(roots=[official_root], tier=Tier.FEDERAL, audit_sink=sink)
 
     resolution = catalog.resolve(_OFFICIAL_NAME)
 
@@ -179,7 +179,7 @@ def test_allowlisted_bundle_still_resolves_at_federal(official_root: Path) -> No
 def test_missing_bundle_is_refused_and_audited(official_root: Path) -> None:
     """A name that passes validation but has no bundle on disk fails closed."""
     sink = RecordingSink()
-    catalog = ExtensionCatalog(root=official_root, tier=Tier.PERSONAL, audit_sink=sink)
+    catalog = ExtensionCatalog(roots=[official_root], tier=Tier.PERSONAL, audit_sink=sink)
 
     with pytest.raises(ExtensionError):
         catalog.resolve("ghost_connector")
@@ -200,7 +200,7 @@ def test_resolve_never_escapes_the_extensions_root(tmp_path: Path) -> None:
     outside.mkdir()
 
     sink = RecordingSink()
-    catalog = ExtensionCatalog(root=root, tier=Tier.PERSONAL, audit_sink=sink)
+    catalog = ExtensionCatalog(roots=[root], tier=Tier.PERSONAL, audit_sink=sink)
     resolution = catalog.resolve("rando_connector")
 
     assert root.resolve() in resolution.path.resolve().parents

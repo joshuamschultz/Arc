@@ -327,6 +327,36 @@ def emit_mutation_audit(
         worm.write(fields)
 
 
+#: Actor recorded when no operator key exists to name one. The deployment is
+#: uninitialised; the action still happened and still gets an actor.
+_UI_ACTOR_DID = "did:arc:ui:operator"
+
+
+def operator_audit_sink(request: Any) -> Any:
+    """The chain arcagent components (key store, secret store, catalog) write into.
+
+    Deliberately the WORM sink this process ALREADY holds rather than a fresh one
+    per request: :class:`~arctrust.audit.WormSink` keeps an exclusive ``flock``
+    for its lifetime, so a route that opens its own would contend with — or leak a
+    lock against — every later writer. Reusing the open one also puts these events
+    in the file the Observe ingest tails, which is what makes them visible on the
+    Security screen.
+
+    Falls back to a discarding sink when no operator key exists, matching
+    :func:`emit_mutation_audit`'s degrade rather than minting a signing authority.
+    """
+    from arctrust.audit import NullSink
+
+    worm = getattr(request.app.state, "audit_worm", None)
+    return worm.sink if worm is not None else NullSink()
+
+
+def operator_actor_did(request: Any) -> str:
+    """The DID recorded as the actor for an operator-driven mutation."""
+    worm = getattr(request.app.state, "audit_worm", None)
+    return str(worm.operator_did) if worm is not None else _UI_ACTOR_DID
+
+
 __all__ = [
     "AgentAutoconnectFields",
     "MutationAuditFields",
@@ -336,4 +366,6 @@ __all__ = [
     "UIAuditLogger",
     "build_mutation_worm_writer",
     "emit_mutation_audit",
+    "operator_actor_did",
+    "operator_audit_sink",
 ]

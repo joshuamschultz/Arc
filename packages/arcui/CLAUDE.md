@@ -8,7 +8,7 @@ Real-time multi-agent dashboard: Starlette server reading the shared `arcstore` 
 
 ## Layer
 
-**Surface / dashboard.** Depends on `arcllm`, `arcgateway`, `arcstore`, `arcteam`, `arctrust`, `arcskill`, Starlette/uvicorn. Launched mainly via `arc ui start` / `arc ui tail` (`arccli`).
+**Surface / dashboard.** Depends on `arcllm`, `arcagent`, `arcgateway`, `arcstore`, `arcteam`, `arctrust`, `arcskill`, Starlette/uvicorn. Launched mainly via `arc ui start` / `arc ui tail` (`arccli`).
 
 ## Layout
 

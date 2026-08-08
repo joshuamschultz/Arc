@@ -26,6 +26,7 @@
 [extension]
 name = "microsoft365"
 version = "1.0.0"
+description = "Read and send Outlook mail, manage the calendar, and browse OneDrive files."
 attachment = "mcp"
 tier_floor = "personal"
 

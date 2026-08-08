@@ -1,15 +1,21 @@
 """System-level (user-wide ``~/.arc``) config editor routes.
 
-``GET/PATCH /api/system-config/{file}`` for ``file`` in
-``{arcagent, arcllm, arcrun}`` — the three fleet-wide TOML files that live
+``GET/PATCH /api/system-config/{file}`` for the fleet-wide TOML files that live
 directly under the user config root (``${ARC_CONFIG_DIR:-~/.arc}``). Per-agent
-``team/<agent>/<file>.toml`` layer OVER these; this editor is the fleet-default
-layer an operator sees and edits.
+``team/<agent>/<file>.toml`` layer OVER the three agent files; this editor is
+the fleet-default layer an operator sees and edits.
+
+``gateway.toml`` is edited here and ONLY here: it configures the deployment's
+chat surfaces (which platforms are connected, which accounts may talk to the
+agent), so it has no per-agent counterpart. Leaving it out meant the one file
+an operator most often needs to change — to connect Telegram, or to add an
+allowed user — could not be reached from the dashboard at all.
 
 Mirrors ``routes/agent_detail/config_files.py`` exactly (tomlkit round-trip,
 operator-gated PATCH, re-parse-before-write, viewer secret redaction, 3-file
-allowlist, missing file → 200 empty sections). The only difference is the target
-path: the user config root rather than ``team/<agent>/``.
+allowlist, missing file → 200 empty sections). The differences are the target
+path — the user config root rather than ``team/<agent>/`` — and the one extra
+file in the allowlist.
 """
 
 from __future__ import annotations
@@ -36,6 +42,11 @@ from arcui.schemas import AgentConfigFileResponse
 
 logger = logging.getLogger("arcui.routes.system_config")
 
+# The per-agent three, plus gateway. Kept as its own set rather than widening
+# the shared one: ``team/<agent>/gateway.toml`` does not exist, so adding it
+# there would offer an editor for a file that can never be written.
+_SYSTEM_CONFIG_FILES = _CONFIG_FILES | {"gateway"}
+
 
 def _system_path(file: str) -> Path:
     """Resolve ``<config_dir>/{file}.toml`` under the user-wide config root."""
@@ -49,7 +60,7 @@ async def get_system_config(request: Request) -> JSONResponse:
     shows a friendly empty state instead of an error.
     """
     file = request.path_params["file"]
-    if file not in _CONFIG_FILES:
+    if file not in _SYSTEM_CONFIG_FILES:
         return _error(f"Unknown config file: {file}", 404)
 
     path = _system_path(file)
@@ -85,7 +96,7 @@ async def patch_system_config(request: Request) -> JSONResponse:
         return _error("Operator role required", 403)
 
     file = request.path_params["file"]
-    if file not in _CONFIG_FILES:
+    if file not in _SYSTEM_CONFIG_FILES:
         return _error(f"Unknown config file: {file}", 404)
 
     path = _system_path(file)

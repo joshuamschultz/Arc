@@ -34,7 +34,6 @@ import stat
 from pathlib import Path
 
 import pytest
-from arcagent.extension.loader import ExtensionLoader
 from arctrust.audit import AuditEvent
 from arctrust.identity import AgentIdentity
 
@@ -43,6 +42,7 @@ from arcagent.capabilities.capability_loader import is_untrusted_root
 from arcagent.capabilities.capability_registry import CapabilityRegistry
 from arcagent.core.errors import ExtensionError
 from arcagent.core.tier import Tier
+from arcagent.extension.loader import ExtensionLoader
 
 _MANIFEST = """
 [extension]
@@ -110,7 +110,7 @@ def _loader(
     trusted_public_key: bytes | None = None,
 ) -> ExtensionLoader:
     return ExtensionLoader(
-        extensions_root=root,
+        roots=[root],
         registry=registry if registry is not None else CapabilityRegistry(),
         tier=tier,
         audit_sink=sink,

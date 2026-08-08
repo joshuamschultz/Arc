@@ -22,10 +22,12 @@ from arcagent.core.config import (
     AgentConfig,
     ArcAgentConfig,
     ContextConfig,
+    HumanGatePolicy,
     IdentityConfig,
     LLMConfig,
     SecurityConfig,
     TelemetryConfig,
+    ToolsConfig,
 )
 from arcagent.tools._transport import RegisteredTool, ToolTransport
 
@@ -49,6 +51,10 @@ def _config(tmp_path: Path, workspace: Path) -> ArcAgentConfig:
         identity=IdentityConfig(did="", key_dir=str(tmp_path / "keys"), vault_path=""),
         telemetry=TelemetryConfig(enabled=False),
         context=ContextConfig(max_tokens=10000),
+        # The mechanical approval channel (SPEC-035) waits the configured window for
+        # an operator to run `arc approve`. At the 300s default this test spends five
+        # minutes proving a denial; the denial is the same one at a tenth of a second.
+        tools=ToolsConfig(human_gate=HumanGatePolicy(timeout_seconds=0.1)),
         # enterprise → every plain tool requires approval; breakers set explicitly.
         security=SecurityConfig(
             tier="enterprise",

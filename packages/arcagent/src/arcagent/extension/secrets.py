@@ -143,36 +143,47 @@ class WritableVault(Protocol):
     async def delete_secret(self, path: str) -> bool: ...
 
 
-class LocalFileSecretBackend:
-    """The default store: one owner-only env file in the agent's own home (D-555).
+class EnvFile:
+    """One owner-only ``KEY=value`` file, read and rewritten safely (D-582).
 
     Every mutation rewrites the whole file through a private temp file and one
     ``os.replace``, guarded by a lock so two coroutines cannot lose each other's
     entry in a read-modify-write. A second *process* touching the same file can
     still lose its own update, but ``os.replace`` means it can never leave a torn
-    one — and each agent owns its own file, so contention is an operator running
-    the CLI against a live agent rather than routine.
+    one.
+
+    The recipe is shared rather than copied: connector credentials
+    (:class:`LocalFileSecretBackend`) and provider API keys
+    (:class:`arcagent.keys.KeyStore`) are the same kind of file with the same
+    exposure, and a second implementation is a second place to get a permission
+    bit wrong.
     """
 
-    def __init__(self, env_file: Path) -> None:
-        self._path = Path(env_file)
+    def __init__(self, path: Path) -> None:
+        self._path = Path(path)
         self._lock = asyncio.Lock()
 
-    async def get(self, ref: SecretRef) -> str | None:
-        async with self._lock:
-            entries = await asyncio.to_thread(self._read)
-        return entries.get(ref.env_key)
+    @property
+    def path(self) -> Path:
+        """Where this store lives — what a surface tells the operator to inspect."""
+        return self._path
 
-    async def put(self, ref: SecretRef, value: str) -> None:
+    async def read(self) -> dict[str, str]:
+        """Every entry, or an empty mapping when the file was never written."""
+        async with self._lock:
+            return await asyncio.to_thread(self._read)
+
+    async def put(self, key: str, value: str) -> None:
         async with self._lock:
             entries = await asyncio.to_thread(self._read)
-            entries[ref.env_key] = value
+            entries[key] = value
             await asyncio.to_thread(self._write, entries)
 
-    async def delete(self, ref: SecretRef) -> bool:
+    async def delete(self, key: str) -> bool:
+        """Drop one entry. False when there was nothing to drop."""
         async with self._lock:
             entries = await asyncio.to_thread(self._read)
-            if entries.pop(ref.env_key, None) is None:
+            if entries.pop(key, None) is None:
                 return False
             await asyncio.to_thread(self._write, entries)
             return True
@@ -245,6 +256,26 @@ class LocalFileSecretBackend:
             message=f"refusing to read the secret store at {self._path}: {reason}",
             details={"path": str(self._path), "reason": reason},
         )
+
+
+class LocalFileSecretBackend:
+    """The default store: one owner-only env file in the agent's own home (D-555).
+
+    Each agent owns its own file, so contention on it is an operator running the
+    CLI against a live agent rather than routine.
+    """
+
+    def __init__(self, env_file: Path) -> None:
+        self._file = EnvFile(env_file)
+
+    async def get(self, ref: SecretRef) -> str | None:
+        return (await self._file.read()).get(ref.env_key)
+
+    async def put(self, ref: SecretRef, value: str) -> None:
+        await self._file.put(ref.env_key, value)
+
+    async def delete(self, ref: SecretRef) -> bool:
+        return await self._file.delete(ref.env_key)
 
 
 class VaultSecretBackend:
@@ -381,6 +412,7 @@ def select_secret_backend(
 
 
 __all__ = [
+    "EnvFile",
     "LocalFileSecretBackend",
     "Secret",
     "SecretBackend",

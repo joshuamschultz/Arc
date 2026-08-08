@@ -760,3 +760,132 @@ export type GateDecision = 'approve' | 'fail_run' | 'return_for_revision'
 export function asWorkflowFieldErrors(errors?: Array<Record<string, unknown>>): WorkflowFieldError[] {
   return (errors ?? []) as unknown as WorkflowFieldError[]
 }
+
+// --- Connection surfaces (SPEC-064) ----------------------------------------
+
+/** One provider arcllm knows about. `present` is the whole answer: the API
+ *  carries no value, prefix, length, or hash, so a surface built on this
+ *  cannot leak a key (D-583). */
+export interface KeyEntry {
+  provider: string
+  env_var: string
+  required: boolean
+  present: boolean
+}
+
+export interface KeysResponse {
+  keys: KeyEntry[]
+}
+
+/** Result of a key write or clear. The value is never echoed back. */
+export interface KeyWriteResponse {
+  env_var: string
+  present: boolean
+  removed?: boolean
+}
+
+/** A credential a bundle declares; `prompt` is the operator-facing ask. */
+export interface ConnectorSecret {
+  name: string
+  prompt: string
+}
+
+/** A binary (or similar) the bundle needs on this host. arcui shows the
+ *  instruction; the operator runs it. */
+export interface HostRequirement {
+  name: string
+  instruction: string
+}
+
+export interface ConnectorTool {
+  name: string
+  description: string
+  classification: string
+  capability_tags: string[]
+}
+
+export interface CatalogBundle {
+  name: string
+  version: string
+  description: string
+  attachment: string
+  tier_floor: string
+  approval_default: string
+  secrets: ConnectorSecret[]
+  host_requires: HostRequirement[]
+  tools: ConnectorTool[]
+  root: string
+}
+
+/** A bundle on the search path whose manifest would not parse — surfaced
+ *  rather than silently dropped. */
+export interface UnreadableBundle {
+  name: string
+  reason: string
+}
+
+export interface ConnectorCatalogResponse {
+  available: CatalogBundle[]
+  unreadable: UnreadableBundle[]
+}
+
+export interface ConnectorInstance {
+  instance: string
+  extension: string
+  approval: string
+}
+
+export interface AgentConnectorsResponse {
+  instances: ConnectorInstance[]
+  extensions_root: string
+}
+
+export interface ConnectorInstallResponse {
+  instance: string
+  extension: string
+  tools: string[]
+  detail: string
+}
+
+/** Rotation result — field names only, never values. */
+export interface ConnectorAuthResponse {
+  instance: string
+  updated: string[]
+}
+
+export interface ConnectorProbeResponse {
+  reachable: boolean
+  detail: string
+  tools: ConnectorTool[]
+}
+
+/** One row of `arc connector doctor`. `status` is the CLI's vocabulary. */
+export interface DoctorCheck {
+  check: string
+  status: string
+  detail: string
+}
+
+export interface ConnectorDoctorResponse {
+  checks: DoctorCheck[]
+}
+
+export interface ConnectorApproveResponse {
+  instance: string
+  approved: string[]
+}
+
+export interface ConnectorRemoveResponse {
+  instance: string
+  removed_secrets: string[]
+  removed_config: boolean
+  removed_state: boolean
+}
+
+/** An install refused for a missing host prerequisite returns 400 with
+ *  `unsatisfied_host` alongside `error`; this reads it back off the decoded
+ *  error body so the operator sees the instruction, not a generic failure. */
+export function asUnsatisfiedHost(body?: Record<string, unknown>): HostRequirement[] {
+  const raw = body?.unsatisfied_host
+  return Array.isArray(raw) ? (raw as HostRequirement[]) : []
+}

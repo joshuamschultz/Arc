@@ -93,6 +93,10 @@ class ExtensionHeader(_ManifestModel):
 
     name: str
     version: str
+    #: One line, written for a person choosing from a list: what connecting this
+    #: lets the agent do. Read by ``ExtensionCatalog.available`` and shown by every
+    #: picker, so a bundle without one is a row an operator cannot choose from.
+    description: str = ""
     attachment: str = Field(min_length=1)
     #: The weakest deployment this bundle agrees to run in. Read ONLY by
     #: :func:`load_manifest`'s refusal, and by nothing that resolves policy —

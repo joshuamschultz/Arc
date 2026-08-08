@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import logging
 import shutil
+import subprocess
 import time
+from functools import lru_cache
 from pathlib import Path
 
 from arcskill.hub._result import DryRunResult
@@ -39,10 +41,37 @@ __all__ = ["_DockerBackend", "_docker_available", "_run_docker"]
 
 _DRY_RUN_TIMEOUT_SECONDS = 10
 
+#: How long to wait for the daemon to answer before calling it absent. Short: an
+#: unresponsive daemon is an unusable sandbox either way.
+_DAEMON_PROBE_TIMEOUT_SECONDS = 5
 
+
+@lru_cache(maxsize=1)
 def _docker_available() -> bool:
-    """True if the docker CLI is on $PATH."""
-    return bool(shutil.which("docker"))
+    """True when a Docker daemon will actually run a container for us.
+
+    The CLI on ``$PATH`` is not the question. A machine with the client installed
+    and the daemon stopped answers every ``shutil.which`` truthfully and every
+    ``docker run`` with a connection refusal — so a caller asking "do I have a
+    sandbox?" would be told yes and then fail at the point where the sandbox was
+    supposed to contain something. Ask the daemon.
+
+    Cached: the answer gates a supply-chain decision taken many times per install,
+    and a daemon started midway through one is not a state worth re-probing for.
+    """
+    binary = shutil.which("docker")
+    if binary is None:
+        return False
+    try:
+        probe = subprocess.run(  # noqa: S603 — resolved absolute path, fixed argv, no shell
+            [binary, "version", "--format", "{{.Server.Version}}"],
+            capture_output=True,
+            timeout=_DAEMON_PROBE_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return probe.returncode == 0
 
 
 async def _run_docker(
