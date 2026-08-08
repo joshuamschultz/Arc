@@ -51,16 +51,24 @@ class KeyStatus:
     present: bool
 
 
-def default_env_file(arc_dir: Path | None = None) -> Path:
-    """The file every surface writes provider keys to: ``<arc_home>/.env``.
+#: The deployment's one environment file. ``arc.env``, not ``.env``: the systemd
+#: unit sources this name, ``arc gateway connect-telegram`` writes to it, and the
+#: connector credential store documents it. A second name existed — ``arc init``
+#: created ``.env`` and nothing in a running deployment ever read it — so a key
+#: stored there reported ``present`` forever while the provider stayed unreachable.
+ENV_FILENAME = "arc.env"
 
-    The one ``arc init`` creates and the one the deployment sources. Resolved here
-    so the CLI and the web route cannot drift onto two different files — a key set
-    in one and invisible in the other is indistinguishable from a key that failed
-    to save. ``arc_dir`` is the CLI's ``--arc-dir`` override, so pointing one
-    command at one deployment's world still goes through this resolver.
+
+def default_env_file(arc_dir: Path | None = None) -> Path:
+    """The file every surface writes provider keys to: ``<arc_home>/arc.env``.
+
+    Resolved here so no two surfaces can drift onto different files — a key set in
+    one and invisible to the other is indistinguishable from a key that failed to
+    save, and that is the worst failure this store can have. ``arc_dir`` is the
+    CLI's ``--arc-dir`` override, so pointing one command at one deployment's world
+    still goes through this resolver.
     """
-    return (arc_dir or arc_home()) / ".env"
+    return (arc_dir or arc_home()) / ENV_FILENAME
 
 
 class KeyStore:

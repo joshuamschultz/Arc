@@ -21,7 +21,7 @@ import pytest
 from arctrust.audit import AuditEvent
 
 from arcagent.core.errors import ExtensionError
-from arcagent.keys import KeyStatus, KeyStore, default_env_file
+from arcagent.keys import ENV_FILENAME, KeyStatus, KeyStore, default_env_file
 
 CALLER = "did:arc:local:operator"
 KEY_VALUE = "sk-ant-api03-do-not-leak-me-4f2c9e"
@@ -39,7 +39,7 @@ class RecordingSink:
 
 @pytest.fixture
 def env_file(tmp_path: Path) -> Path:
-    return tmp_path / "arc" / ".env"
+    return default_env_file(tmp_path / "arc")
 
 
 @pytest.fixture
@@ -232,10 +232,17 @@ async def test_no_audit_event_ever_carries_the_value(env_file: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_the_default_env_file_is_the_one_arc_init_creates(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_default_env_file_is_the_one_the_deployment_sources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``arc.env`` — the name the systemd unit sources and the gateway writes.
+
+    Pinned as a literal on purpose: this is the one place the name is allowed to
+    be spelled out, because agreeing with the deployment is the whole property.
+    """
     monkeypatch.setenv("ARC_CONFIG_DIR", "/tmp/arc-home-under-test")
-    assert default_env_file() == Path("/tmp/arc-home-under-test/.env")
+    assert default_env_file() == Path("/tmp/arc-home-under-test/arc.env")
 
 
 def test_an_overridden_arc_dir_still_goes_through_the_one_resolver(tmp_path: Path) -> None:
-    assert default_env_file(tmp_path) == tmp_path / ".env"
+    assert default_env_file(tmp_path) == tmp_path / ENV_FILENAME

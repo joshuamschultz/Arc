@@ -737,7 +737,7 @@ async def calculate(expression: str) -> str:
 
 _ENV_PATHS = [
     Path.cwd() / ".env",
-    Path.home() / ".arc" / ".env",
+    Path.home() / ".arc" / "arc.env",
     Path.home() / ".env",
 ]
 

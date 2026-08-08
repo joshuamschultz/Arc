@@ -58,7 +58,7 @@ def _eval_arith(node: ast.AST) -> float:
 
 _ENV_PATHS = [
     Path.cwd() / ".env",
-    Path.home() / ".arc" / ".env",
+    Path.home() / ".arc" / "arc.env",
     Path.home() / ".env",
 ]
 
