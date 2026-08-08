@@ -566,3 +566,220 @@ class ExportTracesResponse(BaseModel):
 
     traces: list[dict[str, Any]]
     count: int
+
+
+# ---------------------------------------------------------------------------
+# SPEC-064 — provider keys and connectors
+# ---------------------------------------------------------------------------
+#
+# These models carry no field able to hold a credential value, and that is the
+# point rather than an accident of the shapes chosen (D-583, D-585). A key or a
+# connector secret reaching a browser would be a leak in the one surface that
+# cannot un-send it, so ``extra="forbid"`` plus the absence of a value field
+# means a route trying to include one raises here instead of serializing it.
+
+
+class ProviderKeyStatus(BaseModel):
+    """One row of ``GET /api/keys`` — a coordinate and whether a value is stored."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str
+    env_var: str
+    required: bool
+    present: bool
+
+
+class ProviderKeysResponse(BaseModel):
+    """Body of ``GET /api/keys``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    keys: list[ProviderKeyStatus]
+
+
+class ProviderKeySetResponse(BaseModel):
+    """Body of ``PUT /api/keys/{env_var}`` — the value is never echoed."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    env_var: str
+    present: bool
+
+
+class ProviderKeyDeleteResponse(BaseModel):
+    """Body of ``DELETE /api/keys/{env_var}``.
+
+    ``removed`` is False when there was nothing to forget, which is a report and
+    never an error.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    env_var: str
+    present: bool
+    removed: bool
+
+
+class ConnectorSecretField(BaseModel):
+    """A credential the operator must supply: its field name and its prompt."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    prompt: str
+
+
+class ConnectorHostRequirement(BaseModel):
+    """A host prerequisite the operator installs. Arc directs; it never installs."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    instruction: str
+
+
+class ConnectorTool(BaseModel):
+    """One tool a bundle declares or a live connection serves."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    description: str
+    classification: str
+    capability_tags: list[str]
+
+
+class ConnectorCatalogEntry(BaseModel):
+    """One installable bundle on the extension search path."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    version: str
+    description: str
+    attachment: str
+    tier_floor: str
+    approval_default: str
+    secrets: list[ConnectorSecretField]
+    host_requires: list[ConnectorHostRequirement]
+    tools: list[ConnectorTool]
+    root: str
+
+
+class ConnectorUnreadableBundle(BaseModel):
+    """A directory that looked like a bundle and could not be read, and why.
+
+    Listed rather than dropped: a bundle that vanishes silently is a support
+    call, and one that 500s the listing takes every other bundle with it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    reason: str
+
+
+class ConnectorCatalogResponse(BaseModel):
+    """Body of ``GET /api/connectors/catalog``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    available: list[ConnectorCatalogEntry]
+    unreadable: list[ConnectorUnreadableBundle]
+
+
+class ConnectorInstance(BaseModel):
+    """One ``[extensions.<instance>]`` block, as a listing row."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    instance: str
+    extension: str
+    approval: str
+
+
+class AgentConnectorsResponse(BaseModel):
+    """Body of ``GET /api/agents/{id}/connectors``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    instances: list[ConnectorInstance]
+    extensions_root: str
+
+
+class ConnectorInstallResponse(BaseModel):
+    """Body of ``POST /api/agents/{id}/connectors`` — what the install produced."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    instance: str
+    extension: str
+    tools: list[str]
+    detail: str
+
+
+class ConnectorHostBlockedResponse(BaseModel):
+    """400 body when the host lacks a prerequisite: the error plus what to install."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    error: str
+    unsatisfied_host: list[ConnectorHostRequirement]
+
+
+class ConnectorAuthResponse(BaseModel):
+    """Body of ``PUT /api/agents/{id}/connectors/{instance}/auth`` — field names only."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    instance: str
+    updated: list[str]
+
+
+class ConnectorProbeResponse(BaseModel):
+    """Body of ``POST /api/agents/{id}/connectors/{instance}/probe``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    reachable: bool
+    detail: str
+    tools: list[ConnectorTool]
+
+
+class ConnectorDoctorCheck(BaseModel):
+    """One diagnostic row — the same rows ``arc connector doctor`` prints."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    check: str
+    status: str
+    detail: str
+
+
+class ConnectorDoctorResponse(BaseModel):
+    """Body of ``GET /api/agents/{id}/connectors/{instance}/doctor``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    checks: list[ConnectorDoctorCheck]
+
+
+class ConnectorApproveResponse(BaseModel):
+    """Body of ``POST /api/agents/{id}/connectors/{instance}/approve`` (REQ-291)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    instance: str
+    approved: list[str]
+
+
+class ConnectorRemoveResponse(BaseModel):
+    """Body of ``DELETE /api/agents/{id}/connectors/{instance}`` — what was dropped."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    instance: str
+    removed_secrets: list[str]
+    removed_config: bool
+    removed_state: bool

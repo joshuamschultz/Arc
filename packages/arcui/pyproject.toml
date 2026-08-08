@@ -20,6 +20,10 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "tomlkit>=0.12",
     "arcllm>=0.1",
+    # SPEC-064: the keys and connector routes drive arcagent's key store and
+    # shared connector install path directly. Declared rather than leaned on
+    # through arcgateway — a transitive dependency is one an upstream may drop.
+    "arc-agent>=0.2",
     "arcgateway>=0.2",
     "arcskill",
     "croniter>=2.0",

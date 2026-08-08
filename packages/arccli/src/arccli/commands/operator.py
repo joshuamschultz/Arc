@@ -20,6 +20,7 @@ from arctrust import (
     Signer,
     SignerConfig,
     SignerError,
+    WormSink,
     build_signer,
     derive_record_key,
 )
@@ -132,6 +133,28 @@ def resolve_record_cipher(arc_dir: Path | None = None) -> RecordCipher | None:
     return RecordCipher(derive_record_key(load_operator_key(arc_dir).seed))
 
 
+def operator_worm_sink(arc_dir: Path | None, data_dir: Path) -> WormSink:
+    """Open the deployment's operator-signed WORM chain under ``data_dir``.
+
+    The chain lives with the operational data (the same file ``arc task`` and ``arc
+    workflow`` append to); the key that signs it and the at-rest seal come from the
+    config dir. One opener rather than one per command: a surface composing the
+    path itself would write a second chain nothing ingests.
+
+    The caller MUST close it — the sink holds an exclusive ``flock`` for its
+    lifetime, so an unclosed one locks every later writer out.
+    """
+    from arcstore.ingest import WORM_ACTIVE_FILENAME
+
+    worm_dir = Path(data_dir) / "worm"
+    worm_dir.mkdir(parents=True, exist_ok=True)
+    return WormSink(
+        worm_dir / WORM_ACTIVE_FILENAME,
+        resolve_operator_signer(arc_dir),
+        cipher=resolve_record_cipher(arc_dir),
+    )
+
+
 def _resolve_transit(sec: Any) -> FileNotaryTransit:
     """Resolve the out-of-process transit for CLI vault_transit signing."""
     keystore = (
@@ -158,5 +181,6 @@ __all__ = [
     "load_operator_key",
     "operator_key_path",
     "operator_public_key",
+    "operator_worm_sink",
     "resolve_operator_signer",
 ]

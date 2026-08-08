@@ -4,8 +4,18 @@ import {
   useQueryClient,
   type UseQueryResult,
 } from '@tanstack/react-query'
-import { apiGet, apiPatch, apiPost, apiPut } from './api'
+import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from './api'
 import type {
+  AgentConnectorsResponse,
+  ConnectorApproveResponse,
+  ConnectorAuthResponse,
+  ConnectorCatalogResponse,
+  ConnectorDoctorResponse,
+  ConnectorInstallResponse,
+  ConnectorProbeResponse,
+  ConnectorRemoveResponse,
+  KeysResponse,
+  KeyWriteResponse,
   PromptWriteResponse,
   RubricResponse,
   RubricUpdate,
@@ -712,5 +722,127 @@ export const useResolveGate = (taskId: string) => {
     mutationFn: ({ decision, notes }) =>
       apiPost(`/api/workflow-tasks/${encodeURIComponent(taskId)}/gate`, { decision, notes }),
     onSuccess: () => queryClient.invalidateQueries({ predicate: (q) => q.queryKey[0] === 'workflow-run' }),
+  })
+}
+
+// --- Keys (SPEC-064) -------------------------------------------------------
+
+const KEYS_KEY = ['keys']
+
+// Fleet-wide provider keys from `~/.arc/.env`. The response carries presence
+// only, so nothing here can cache, key, or render a credential.
+export const useKeys = () => useApiQuery<KeysResponse>(KEYS_KEY, '/api/keys')
+
+// The value travels in the body — never in the path, the query key, or the
+// cache — and the caller drops it as soon as the write lands.
+export const useSetKey = () => {
+  const queryClient = useQueryClient()
+  return useMutation<KeyWriteResponse, Error, { envVar: string; value: string }>({
+    mutationFn: ({ envVar, value }) =>
+      apiPut(`/api/keys/${encodeURIComponent(envVar)}`, { value }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: KEYS_KEY }),
+  })
+}
+
+export const useClearKey = () => {
+  const queryClient = useQueryClient()
+  return useMutation<KeyWriteResponse, Error, string>({
+    mutationFn: (envVar) => apiDelete(`/api/keys/${encodeURIComponent(envVar)}`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: KEYS_KEY }),
+  })
+}
+
+// --- Connectors (SPEC-064) -------------------------------------------------
+
+const connectorsKey = (agentId: string | null) => ['agent', agentId, 'connectors']
+const doctorKey = (agentId: string, instance: string) => [
+  'agent',
+  agentId,
+  'connectors',
+  instance,
+  'doctor',
+]
+
+// What this deployment could connect. Bundles whose manifest would not parse
+// come back under `unreadable` rather than failing the listing.
+export const useConnectorCatalog = () =>
+  useApiQuery<ConnectorCatalogResponse>(['connectors', 'catalog'], '/api/connectors/catalog')
+
+export const useAgentConnectors = (agentId: string | null) =>
+  useQuery<AgentConnectorsResponse>({
+    queryKey: connectorsKey(agentId),
+    queryFn: ({ signal }) =>
+      apiGet(`/api/agents/${encodeURIComponent(agentId!)}/connectors`, signal),
+    enabled: !!agentId,
+  })
+
+// Secrets are consumed by the route and dropped; the response names tools, not
+// credentials, so nothing sensitive reaches the cache.
+export const useInstallConnector = (agentId: string) => {
+  const queryClient = useQueryClient()
+  return useMutation<
+    ConnectorInstallResponse,
+    Error,
+    { extension: string; instance: string; secrets: Record<string, string> }
+  >({
+    mutationFn: (body) => apiPost(`/api/agents/${encodeURIComponent(agentId)}/connectors`, body),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: connectorsKey(agentId) }),
+  })
+}
+
+// Rotation. The response lists field names only.
+export const useReauthConnector = (agentId: string, instance: string) => {
+  const queryClient = useQueryClient()
+  return useMutation<ConnectorAuthResponse, Error, Record<string, string>>({
+    mutationFn: (secrets) =>
+      apiPut(
+        `/api/agents/${encodeURIComponent(agentId)}/connectors/${encodeURIComponent(instance)}/auth`,
+        { secrets },
+      ),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: doctorKey(agentId, instance) }),
+  })
+}
+
+// Opens a live connection, so it is a mutation (and operator-only server side).
+// Its result is the row's live status — deliberately not cached.
+export const useProbeConnector = (agentId: string, instance: string) =>
+  useMutation<ConnectorProbeResponse, Error, void>({
+    mutationFn: () =>
+      apiPost(
+        `/api/agents/${encodeURIComponent(agentId)}/connectors/${encodeURIComponent(instance)}/probe`,
+      ),
+  })
+
+export const useConnectorDoctor = (agentId: string, instance: string, enabled: boolean) =>
+  useQuery<ConnectorDoctorResponse>({
+    queryKey: doctorKey(agentId, instance),
+    queryFn: ({ signal }) =>
+      apiGet(
+        `/api/agents/${encodeURIComponent(agentId)}/connectors/${encodeURIComponent(instance)}/doctor`,
+        signal,
+      ),
+    enabled,
+  })
+
+// Records the tool contract served right now (rug-pull defense, REQ-291).
+export const useApproveConnector = (agentId: string, instance: string) => {
+  const queryClient = useQueryClient()
+  return useMutation<ConnectorApproveResponse, Error, void>({
+    mutationFn: () =>
+      apiPost(
+        `/api/agents/${encodeURIComponent(agentId)}/connectors/${encodeURIComponent(instance)}/approve`,
+      ),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: doctorKey(agentId, instance) }),
+  })
+}
+
+export const useRemoveConnector = (agentId: string) => {
+  const queryClient = useQueryClient()
+  return useMutation<ConnectorRemoveResponse, Error, string>({
+    mutationFn: (instance) =>
+      apiDelete(
+        `/api/agents/${encodeURIComponent(agentId)}/connectors/${encodeURIComponent(instance)}`,
+      ),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: connectorsKey(agentId) }),
   })
 }

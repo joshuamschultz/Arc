@@ -15,6 +15,7 @@
 [extension]
 name = "github"
 version = "1.0.0"
+description = "Read pull requests, issues, repositories, releases, and CI runs on GitHub."
 attachment = "cli"
 tier_floor = "personal"
 

@@ -294,11 +294,20 @@ class TestTierFloorRefusesButCannotRaise:
 
         assert load_manifest(unbounded, tier=Tier.PERSONAL).tools.is_unbounded is True
 
-    def test_tier_floor_is_read_nowhere_but_the_refusal(self) -> None:
+    def test_tier_floor_is_read_only_by_the_refusal_and_the_listing(self) -> None:
         # The structural guard, and the only one that survives a future edit: a
         # floor that reached a policy resolver would hand a third-party bundle
         # author control over operator policy, and no behavioural assertion here
         # would see it happen.
+        #
+        # ``connections.py`` is the second and last permitted reader: it copies
+        # the floor onto a catalog listing entry so a surface can SHOW which
+        # bundles this deployment could run ("enterprise+"), and takes no verdict
+        # from it — the listing is a display record with no resolver behind it.
+        # That read is not new; it lived in ``arcui/routes/connectors.py``, out of
+        # this scan's reach, until the connection façade (D-587) made one seam of
+        # it. The set stays exact, so a THIRD reader — or a policy resolver
+        # growing inside either of these two — still fails here.
         root = Path(manifest_module.__file__).resolve().parents[1]
         readers = sorted(
             path.relative_to(root)
@@ -308,4 +317,4 @@ class TestTierFloorRefusesButCannotRaise:
             if re.search(r"\.tier_floor\b", path.read_text(encoding="utf-8"))
         )
 
-        assert readers == [Path("extension/manifest.py")]
+        assert readers == [Path("connections.py"), Path("extension/manifest.py")]

@@ -137,7 +137,7 @@ def _plan(tmp_path: Path, *, manifest: str = _MANIFEST) -> ConnectorPlan:
     root = tmp_path / "extensions"
     _bundle(root, manifest=manifest)
     return plan_connector(
-        extensions_root=root,
+        extensions_root=[root],
         extension=_EXTENSION,
         instance=_INSTANCE,
         tier=Tier.PERSONAL,
@@ -165,7 +165,7 @@ class TestPlan:
         root.mkdir()
         with pytest.raises(ExtensionError) as caught:
             plan_connector(
-                extensions_root=root,
+                extensions_root=[root],
                 extension="nothing_here",
                 instance=_INSTANCE,
                 tier=Tier.PERSONAL,
@@ -254,7 +254,7 @@ class TestInstall:
             return FakeAttachment()
 
         plan = plan_connector(
-            extensions_root=root,
+            extensions_root=[root],
             extension=_EXTENSION,
             instance=_INSTANCE,
             tier=Tier.ENTERPRISE,
@@ -384,7 +384,7 @@ class TestInstall:
 
         for instance, value in (("sales", "one"), ("support", "two")):
             plan = plan_connector(
-                extensions_root=root,
+                extensions_root=[root],
                 extension=_EXTENSION,
                 instance=instance,
                 tier=Tier.PERSONAL,

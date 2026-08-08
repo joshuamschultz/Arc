@@ -277,7 +277,7 @@ async def _install(
     bundle = _bundle(root, _manifest(tool=tool, tags=tags, classification=classification))
     _sign(bundle / "extension.toml", operator)
     plan = plan_connector(
-        extensions_root=root,
+        extensions_root=[root],
         extension=_EXTENSION,
         instance="sales",
         tier=tier,
@@ -427,7 +427,7 @@ async def test_the_loader_refuses_a_federal_egress_bundle_and_registers_nothing(
     registry = CapabilityRegistry()
 
     loader = ExtensionLoader(
-        extensions_root=root,
+        roots=[root],
         registry=registry,
         tier=Tier.FEDERAL,
         audit_sink=RecordingSink(),
@@ -451,7 +451,7 @@ async def test_the_loader_admits_a_read_only_bundle_at_federal(
     _sign(bundle / "extension.toml", operator)
 
     loader = ExtensionLoader(
-        extensions_root=root,
+        roots=[root],
         registry=CapabilityRegistry(),
         tier=Tier.FEDERAL,
         audit_sink=RecordingSink(),

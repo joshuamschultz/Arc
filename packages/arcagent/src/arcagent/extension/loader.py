@@ -4,12 +4,12 @@ An extension is code someone else wrote, so the only thing that must never happe
 it arriving through a door that skips the trust gate. Everything here follows from
 that:
 
-* **One root, and it is untrusted.** A bundle's capabilities register through
+* **Every root is untrusted.** A bundle's capabilities register through
   ``extension:<name>`` roots and nothing else, so
   :func:`~arcagent.capabilities.capability_loader.is_untrusted_root` classifies them
   untrusted and :class:`CapabilityLoader` runs the AST validator + Sign gate on every
-  file. A bundle outside the extensions root is refused rather than loaded from where
-  it sits — a module-shaped path would otherwise inherit shipped-package trust
+  file. A bundle outside every extensions root is refused rather than loaded from
+  where it sits — a module-shaped path would otherwise inherit shipped-package trust
   (REQ-281).
 * **Verified at LOAD, not at install.** Every shipped byte is re-verified against its
   ``.arcsig`` sidecar on each load, so bytes edited after a clean install are caught
@@ -46,15 +46,12 @@ from arcagent.capabilities.inventory import append_capability_scan_roots
 from arcagent.core.errors import ExtensionError
 from arcagent.core.tier import Tier
 from arcagent.extension.attachment import Requirement, RequirementKind
-from arcagent.extension.catalog import ExtensionCatalog, validate_extension_name
+from arcagent.extension.catalog import MANIFEST_NAME, ExtensionCatalog
 from arcagent.extension.manifest import ExtensionManifest, load_manifest
 from arcagent.tools._dynamic_loader import resolve_workspace_import_policy
 from arcagent.tools._egress_policy import first_forbidden_egress
 
 _logger = logging.getLogger("arcagent.extension.loader")
-
-#: The only document Arc parses from a bundle (COMP-001).
-MANIFEST_NAME = "extension.toml"
 
 #: DID recorded as the actor on load verdicts when no agent identity is in hand.
 _LOADER_DID = "did:arc:extension-loader"
@@ -87,7 +84,9 @@ class ExtensionLoader:
     """Loads a bundle through the untrusted extension root, or refuses it.
 
     Args:
-        extensions_root: The directory every loadable bundle lives directly inside.
+        roots: The bundle search path, in order. A loadable bundle lives directly
+            inside one of them; :class:`~arcagent.extension.catalog.ExtensionCatalog`
+            takes the containment decision for all of them.
         registry: The agent's capability registry the bundle's skills and tools
             register into.
         tier: Deployment tier — stringency, not a gate. Every tier verifies and
@@ -105,25 +104,25 @@ class ExtensionLoader:
     def __init__(
         self,
         *,
-        extensions_root: Path,
+        roots: Sequence[Path],
         registry: CapabilityRegistry,
         tier: Tier,
         audit_sink: AuditSink,
         trusted_public_key: bytes | None = None,
         egress_allow: Sequence[str] = (),
     ) -> None:
-        self._root = Path(extensions_root)
+        self._roots = tuple(Path(root) for root in roots)
         self._registry = registry
         self._tier = tier
         self._sink = audit_sink
         self._trusted_public_key = trusted_public_key
         self._egress_allow = tuple(egress_allow)
         self._catalog = ExtensionCatalog(
-            root=self._root, tier=tier, audit_sink=audit_sink, actor_did=_LOADER_DID
+            roots=self._roots, tier=tier, audit_sink=audit_sink, actor_did=_LOADER_DID
         )
 
     async def load(self, name: str) -> LoadedExtension:
-        """Load the named bundle from the extensions root.
+        """Load the named bundle from the first root on the search path holding it.
 
         Args:
             name: The extension name, as written by an operator.
@@ -146,7 +145,7 @@ class ExtensionLoader:
             self._refuse(name, reason="load_error", message=f"{type(exc).__name__}: {exc}")
 
     async def load_path(self, path: Path) -> LoadedExtension:
-        """Load the bundle at ``path``, which must sit directly in the extensions root.
+        """Load the bundle at ``path``, which must sit directly in one of the roots.
 
         Args:
             path: The bundle directory.
@@ -155,23 +154,26 @@ class ExtensionLoader:
             The loaded bundle, exactly as :meth:`load` returns it.
 
         Raises:
-            ExtensionError: ``path`` is outside the extensions root — loading it
+            ExtensionError: ``path`` is outside every extensions root — loading it
                 where it sits would grant it whatever trust that location carries
                 (REQ-281) — or any refusal :meth:`load` raises.
         """
         bundle = Path(path)
-        if bundle.parent.resolve() != self._root.resolve():
+        if all(bundle.parent.resolve() != root.resolve() for root in self._roots):
             self._refuse(
                 bundle.name,
                 reason="outside_extension_root",
-                message=f"{bundle} is not in the extensions root {self._root}",
+                message=f"{bundle} is not in any extensions root {list(self._roots)}",
             )
         return await self.load(bundle.name)
 
     # --- Load steps, in refusal order --------------------------------------
 
     async def _load(self, name: str) -> LoadedExtension:
-        bundle = self._resolve(name)
+        # The catalog owns name validation and containment across every root on
+        # the search path — a second copy here is a second guard to keep in step,
+        # and the one that drifts is the one an attacker uses.
+        bundle = self._catalog.locate(name)
         self._verify(bundle, name)
         self._catalog.resolve(name)  # official-upstream verdict, audited by the catalog
         manifest = self._read_manifest(bundle, name)
@@ -185,19 +187,6 @@ class ExtensionLoader:
             requirements=_declared_requirements(manifest),
             capability_roots=roots,
         )
-
-    def _resolve(self, name: str) -> Path:
-        """Turn an operator-supplied string into a contained bundle path."""
-        try:
-            validate_extension_name(name)
-        except ValueError as exc:
-            self._refuse(name, reason="invalid_name", message=str(exc))
-        bundle = self._root / name
-        if self._root.resolve() not in bundle.resolve().parents:
-            self._refuse(name, reason="escapes_root", message=f"{name!r} escapes the root")
-        if not bundle.is_dir():
-            self._refuse(name, reason="not_found", message=f"no bundle for {name!r} in the root")
-        return bundle
 
     def _verify(self, bundle: Path, name: str) -> None:
         """Re-verify every shipped byte against its sidecar, on every load.
@@ -337,4 +326,4 @@ def _declared_requirements(manifest: ExtensionManifest) -> tuple[Requirement, ..
     return (*host, *credentials)
 
 
-__all__ = ["MANIFEST_NAME", "ExtensionLoader", "LoadedExtension"]
+__all__ = ["ExtensionLoader", "LoadedExtension"]

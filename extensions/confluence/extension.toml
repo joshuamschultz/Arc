@@ -16,6 +16,7 @@ requires = ["httpx>=0.27,<1.0"]
 [extension]
 name = "confluence"
 version = "1.0.0"
+description = "Search, read, and write Confluence pages in your team's spaces."
 attachment = "native"
 tier_floor = "personal"
 

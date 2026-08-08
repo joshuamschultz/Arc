@@ -17,6 +17,7 @@
 [extension]
 name = "readwise_reader"
 version = "1.0.0"
+description = "Search your Readwise Reader library, read saved documents, and save new URLs."
 attachment = "cli"
 tier_floor = "personal"
 

@@ -94,6 +94,23 @@ def test_manifest_parses_and_names_itself_after_its_directory(
     assert manifest.extension.name == bundle.name
 
 
+def test_every_bundle_describes_itself_for_a_person_choosing_from_a_list(
+    manifest: ExtensionManifest,
+) -> None:
+    """SPEC-064 T-006 — a row with no description is a row nobody can choose.
+
+    ``arc connector available``, the web catalog, and the TUI picker all show
+    this line and nothing else about the bundle before an operator commits to
+    installing it. A shipped bundle without one is undiscoverable in every
+    surface at once, which is why this is asserted here rather than left to
+    review.
+    """
+    description = manifest.extension.description
+    assert description, f"{manifest.extension.name} ships no [extension].description"
+    assert description.endswith("."), "written as a sentence, for a person"
+    assert len(description) <= 120, "one line, not a paragraph"
+
+
 def test_tool_allowlist_is_bounded_and_matches_the_declarations(
     manifest: ExtensionManifest,
 ) -> None:
@@ -313,7 +330,7 @@ def _plan(bundle: Path, manifest: ExtensionManifest, tier: Tier) -> ConnectorPla
         secrets=tuple(manifest.secrets),
         approval_mode=manifest.approval.default,
         tier=tier,
-        extensions_root=EXTENSIONS_ROOT,
+        extensions_root=(EXTENSIONS_ROOT,),
     )
 
 

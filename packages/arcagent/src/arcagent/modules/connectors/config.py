@@ -24,9 +24,11 @@ class ConnectorsConfig(ModuleConfig):
     Inherits ``extra="forbid"`` from ModuleConfig for typo detection.
 
     Attributes:
-        extensions_root: Where this agent's bundles live. Empty means the
-            ``extensions/`` directory beside ``arcagent.toml`` — the same
-            default ``arc connector --extensions-root`` overrides.
+        extensions_root: The ONE directory this agent's bundles live in — the
+            same thing ``arc connector --extensions-root`` means. Empty means the
+            deployment's ordered search path instead (``<agent>/extensions``,
+            ``$ARC_EXTENSIONS_ROOT``, ``<arc_home>/extensions``), so a fleet
+            ships its bundles once rather than once per agent (D-584).
         data_dir: The operational data plane holding approved tool-contract
             hashes. Empty defers to ``arcstore.resolve_data_dir``, so the agent
             reads the store the CLI wrote to.

@@ -23,6 +23,7 @@ requires = ["onepassword-sdk==0.4.1"]
 [extension]
 name = "onepassword"
 version = "1.0.0"
+description = "Look up items in a 1Password vault and resolve a secret when one is needed."
 attachment = "native"
 tier_floor = "personal"
 
