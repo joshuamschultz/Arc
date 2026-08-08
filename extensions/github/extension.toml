@@ -19,24 +19,57 @@ description = "Read pull requests, issues, repositories, releases, and CI runs o
 attachment = "cli"
 tier_floor = "personal"
 
-# linux/arm64 release asset for the fleet's platform. One ArtifactPin holds one
-# digest, so another platform needs its own digest from the same checksums file.
+# Every platform this release publishes a checksum for, each digest taken from
+# gh_2.97.0_checksums.txt. Per-platform because a sha256 describes the bytes of
+# ONE asset: a single digest was correct on linux/arm64 and described unrelated
+# bytes everywhere else, which left `arc connector host-setup` the choice of
+# skipping verification or refusing every host but the fleet's.
 [artifact]
 package = "cli/cli"
 version = "2.97.0"
-sha256 = "73ea440ecad9c9e284429997ee6f93577bc6f7bc6fba357ef62c53ad8fb641a5"
 
+[artifact.platforms."linux/arm64"]
+url = "https://github.com/cli/cli/releases/download/v2.97.0/gh_2.97.0_linux_arm64.tar.gz"
+sha256 = "73ea440ecad9c9e284429997ee6f93577bc6f7bc6fba357ef62c53ad8fb641a5"
+member = "gh_2.97.0_linux_arm64/bin/gh"
+
+[artifact.platforms."linux/amd64"]
+url = "https://github.com/cli/cli/releases/download/v2.97.0/gh_2.97.0_linux_amd64.tar.gz"
+sha256 = "a2c9b8497e1f85b1ad0dfcb78b5a622e098801b8e461e459e88e1ee12f018112"
+member = "gh_2.97.0_linux_amd64/bin/gh"
+
+[artifact.platforms."darwin/arm64"]
+url = "https://github.com/cli/cli/releases/download/v2.97.0/gh_2.97.0_macOS_arm64.zip"
+sha256 = "a58b8fd77b417a38f47a0b54d1370c59b0fcdb324ccc9ca002b0998f7c4c999e"
+member = "gh_2.97.0_macOS_arm64/bin/gh"
+
+[artifact.platforms."darwin/amd64"]
+url = "https://github.com/cli/cli/releases/download/v2.97.0/gh_2.97.0_macOS_amd64.zip"
+sha256 = "63298c998cc2a924c9e254c6af6a1caad6ece281122687a91f079bc0a462700e"
+member = "gh_2.97.0_macOS_amd64/bin/gh"
+
+# `gh` is the rare CLI whose login has BOTH shapes. `gh auth login` opens a
+# browser and waits for a person; `gh auth login --with-token` reads the token on
+# stdin and exits, so Arc can finish it and `token_command` says so. Every other
+# CLI connector shipped here leaves that field empty, which is the honest "only a
+# person at this host can do this".
 [[host_requires]]
 name = "gh"
 minimum_version = "2.97.0"
+authorize_command = "gh auth login --scopes repo,read:org"
+token_command = "gh auth login --with-token"
 instruction = """
 Install the GitHub CLI on this host, then authorise it:
 
   1. curl -fsSLO https://github.com/cli/cli/releases/download/v2.97.0/gh_2.97.0_linux_arm64.tar.gz
   2. echo '73ea440ecad9c9e284429997ee6f93577bc6f7bc6fba357ef62c53ad8fb641a5  gh_2.97.0_linux_arm64.tar.gz' | sha256sum -c -
-  3. tar xzf gh_2.97.0_linux_arm64.tar.gz && install -m 0755 gh_2.97.0_linux_arm64/bin/gh /usr/local/bin/gh
+  3. tar xzf gh_2.97.0_linux_arm64.tar.gz && install -m 0755 gh_2.97.0_linux_arm64/bin/gh ~/.local/bin/gh
   4. gh auth login --scopes repo,read:org      # or: gh auth login --with-token < token-file
   5. gh auth status                            # confirm the account and scopes
+
+Step 1 and 2 are for linux/arm64. For another platform take that asset and its
+line from gh_2.97.0_checksums.txt in the same release; [artifact] pins the four
+Arc can install for you.
 
 Grant the narrowest scopes the agent needs. These tools only read, so a
 read-only fine-grained token is enough.

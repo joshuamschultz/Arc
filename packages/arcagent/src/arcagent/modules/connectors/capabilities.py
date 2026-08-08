@@ -56,7 +56,7 @@ from arcagent.extension.approval import ApprovalBinding
 from arcagent.extension.attachment import ExtensionAttachment, ToolSpec
 from arcagent.extension.bridge import CapabilityBridge
 from arcagent.extension.catalog import resolve_extension_roots
-from arcagent.extension.contract_ledger import ContractVerdict, ToolContractLedger
+from arcagent.extension.contract_ledger import ToolContractLedger
 from arcagent.extension.loader import ExtensionLoader, LoadedExtension
 from arcagent.extension.manifest import ToolPolicy
 from arcagent.extension.secrets import SecretStore, select_secret_backend
@@ -281,20 +281,17 @@ async def _servable_tools(
     ``extension/approval.py`` judges one at call time.
     """
     specs = _annotated(await connection.describe_tools(), loaded.manifest.tools)
-    # Keyed by the agent's directory name, which is what ``arc connector approve``
-    # writes under: two spellings of "which agent" would mean an operator's
-    # approval never clears the suspension it was minted for.
+    # Keyed by the agent's directory name, which is what the install wrote under:
+    # two spellings of "which agent" would mean an operator's approval never
+    # clears the suspension it was minted for.
     ledger = ToolContractLedger(
         ctx.store, agent=ctx.state.agent_dir.name, instance=instance, sink=ctx.sink
     )
-    verdicts = await ledger.review(specs)
-    # SUSPENDED is the only verdict that removes a tool. NEW means nobody has
-    # approved this contract yet, which is every connection's first start —
-    # refusing those would leave a freshly installed connection dead until an
-    # operator ran ``arc connector approve``, and the ledger has already recorded
-    # each one as unapproved. A contract that MOVES after approval is the
-    # rug-pull this defends against, and that one is gone until re-approved.
-    return [spec for spec in specs if verdicts[spec.name] is not ContractVerdict.SUSPENDED]
+    # The ledger's own filter, not a second one written here. Connecting approves
+    # the contract the connection served at install, so an unapproved verb at
+    # startup is one the upstream added afterwards — the rug-pull's other half,
+    # and no more callable than a description that changed underneath.
+    return await ledger.callable_tools(specs)
 
 
 def _annotated(specs: list[ToolSpec], policy: ToolPolicy) -> list[ToolSpec]:

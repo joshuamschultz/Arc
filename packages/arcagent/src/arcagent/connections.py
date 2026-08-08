@@ -47,14 +47,18 @@ from arcagent.extension.catalog import (
     ExtensionResolution,
     resolve_extension_roots,
 )
-from arcagent.extension.host import HostVerdict
+from arcagent.extension.host import HostPrerequisiteDirector, HostVerdict
+from arcagent.extension.host_install import host_install_dir, install_pinned_binary
+from arcagent.extension.host_login import run_token_login
 from arcagent.extension.manifest import (
+    ArtifactPin,
     DeclaredTool,
     HostRequirement,
     SecretRequirement,
     load_manifest,
 )
 from arcagent.extension.secrets import SecretRef, SecretStore, select_secret_backend
+from arcagent.extension.state import ConnectionStateStore, open_connection_state
 from arcagent.modules.connectors.install import (
     AttachmentFactory,
     ConnectorPlan,
@@ -384,6 +388,120 @@ class DoctorCheck:
     detail: str
 
 
+@dataclass(frozen=True)
+class HostAuthorization:
+    """One host binary that holds its own credential, and the command that grants it.
+
+    ``token_command`` non-empty means Arc can complete this sign-in itself, given
+    a token. Empty means only a person at the host can — a browser hand-off or a
+    device code — and ``command`` is then the entire honest answer.
+    """
+
+    binary: str
+    command: str
+    instruction: str
+    token_command: str = ""
+
+
+@dataclass(frozen=True)
+class HostSetupReport:
+    """What putting a bundle's host prerequisites on this machine actually did.
+
+    ``manual_steps`` is the bundle's own instruction, carried on every answer:
+    a refusal that leaves an operator with no next step is the wall this button
+    exists to remove, and a success is where a person may still prefer to read
+    what was done.
+    """
+
+    installed: bool
+    detail: str
+    manual_steps: str = ""
+
+
+@dataclass(frozen=True)
+class Authorization:
+    """How one connection is authorised, and whether it currently answers.
+
+    Two shapes, and a surface must be able to tell them apart without guessing:
+    ``credentials`` non-empty means Arc holds the credential and the operator
+    supplies it here; ``hosts`` non-empty means the binary holds its own and the
+    operator runs :attr:`HostAuthorization.command` on the machine. A connection
+    with neither is one Arc cannot help with, and says so rather than rendering an
+    empty form over a button that does nothing.
+
+    ``credentials`` carries the declared field and its prompt — a
+    :class:`~arcagent.extension.manifest.SecretRequirement` has no field able to
+    hold a value, so a surface rendering one cannot leak one (LLM02, LLM07).
+    """
+
+    instance: str
+    extension: str
+    credentials: tuple[SecretRequirement, ...]
+    hosts: tuple[HostAuthorization, ...]
+    reachable: bool
+    detail: str
+
+    @property
+    def supplied_to_arc(self) -> bool:
+        """True when the operator's next step is typing a credential into Arc."""
+        return bool(self.credentials)
+
+    @property
+    def token_binary(self) -> str:
+        """The binary whose sign-in Arc can finish with a token, or empty.
+
+        This is the one question a surface asks before offering a button, and it
+        is answered from the manifest rather than guessed from the binary's name.
+        """
+        for host in self.hosts:
+            if host.token_command:
+                return host.binary
+        return ""
+
+    @property
+    def manual_command(self) -> str:
+        """The command only a person at this host can run, or empty when Arc can do it.
+
+        A surface renders this under "Arc cannot finish this for you", so a
+        token-accepting connector must NOT produce one: sending an operator to a
+        terminal for a sign-in the button would have completed is the same lie
+        told in the other direction.
+        """
+        for host in self.hosts:
+            if not host.token_command:
+                return host.command
+        return ""
+
+
+def _authorization(
+    instance: str, plan: ConnectorPlan, probe: DoctorCheck, *, note: str = ""
+) -> Authorization:
+    """The one shape both the read and the sign-in answer with.
+
+    One builder rather than two: reading how a connection is authorised and
+    signing it in differ only in whether something was attempted first, and two
+    copies of this mapping would let a surface see a host command on one verb and
+    not the other.
+    """
+    return Authorization(
+        instance=instance,
+        extension=plan.extension,
+        credentials=plan.secrets,
+        hosts=tuple(
+            HostAuthorization(
+                binary=required.name,
+                command=required.authorize_command,
+                instruction=required.instruction,
+                token_command=required.token_command,
+            )
+            for required in plan.manifest.host_requires
+            if required.authorize_command
+        ),
+        reachable=probe.status == "reachable",
+        detail=f"{note} {probe.detail}".strip() if note else probe.detail,
+    )
+
+
 class Connections:
     """One agent's connected accounts: what could be connected, what is, and whether it works.
 
@@ -399,10 +517,12 @@ class Connections:
         *,
         audit: AuditChain | None = None,
         attachment_factory: AttachmentFactory | None = None,
+        install_dir: Path | None = None,
     ) -> None:
         self._world = world
         self._audit = audit if audit is not None else AuditChain()
         self._factory: AttachmentFactory = attachment_factory or build_attachment
+        self._install_dir = install_dir
 
     @classmethod
     def for_agent(
@@ -415,6 +535,7 @@ class Connections:
         env_file: Path | str | None = None,
         audit: AuditChain | None = None,
         attachment_factory: AttachmentFactory | None = None,
+        install_dir: Path | None = None,
     ) -> Connections:
         """Resolve an agent's world and bind it to a chain in one step."""
         world = resolve_world(
@@ -424,7 +545,12 @@ class Connections:
             extensions_root=extensions_root,
             env_file=env_file,
         )
-        return cls(world, audit=audit, attachment_factory=attachment_factory)
+        return cls(
+            world,
+            audit=audit,
+            attachment_factory=attachment_factory,
+            install_dir=install_dir,
+        )
 
     @property
     def world(self) -> ConnectionWorld:
@@ -479,6 +605,149 @@ class Connections:
             attachment = await self._attachment(self._plan_for(instance, sink), sink)
             return await attachment.probe()
 
+    async def authorization(self, instance: str) -> Authorization:
+        """How this connection is authorised — the answer both surfaces render.
+
+        ``arc connector auth`` used to tell the operator of a ``cli`` connector
+        that it "declares no credentials; nothing to supply", and arcui drew a
+        Replace-credentials button over an empty form. Both were true and neither
+        was usable: ``gh`` DOES need authorising, just not by Arc. This names the
+        exact host command instead.
+
+        Raises:
+            ExtensionError: Nothing is connected under that name
+                (``code`` :data:`NOT_INSTALLED`), or its bundle was refused.
+        """
+        with self._audit.open() as sink:
+            plan = self._plan_for(instance, sink)
+            probe = await self._reachability(plan, sink)
+        return _authorization(instance, plan, probe)
+
+    async def authorize(self, instance: str, *, token: str = "") -> Authorization:
+        """Sign this connection's host binary in — when that can be done without a human.
+
+        Honest in both directions, which is the whole of it. A binary whose login
+        opens a browser or prints a device code is NOT run: the answer names the
+        command an operator types on this host, and claims nothing. One that reads
+        a token on stdin IS run, and the answer is the probe taken afterwards —
+        the only evidence a sign-in worked.
+
+        **The token enters and does not come back.** It reaches the binary's stdin
+        and nothing else: it is in no field of the returned
+        :class:`Authorization`, no log record, and no audit event (LLM02, LLM07).
+        Arc stores no copy — the binary owns its own credential, and a second copy
+        would be a second place to leak it from.
+
+        Args:
+            instance: The connected account to sign in.
+            token: The operator's credential, when they supplied one. Empty asks
+                for the current state and the honest next step, and runs nothing.
+
+        Returns:
+            How this connection is authorised, and whether it now answers.
+
+        Raises:
+            ExtensionError: Nothing is connected under that name
+                (``code`` :data:`NOT_INSTALLED`), or its bundle was refused.
+        """
+        with self._audit.open() as sink:
+            plan = self._plan_for(instance, sink)
+            note = await self._sign_in(plan, token, sink)
+            probe = await self._reachability(plan, sink)
+        return _authorization(instance, plan, probe, note=note)
+
+    async def setup_host(self, extension: str) -> HostSetupReport:
+        """Put the host binaries a bundle pins on this machine, verified before they land.
+
+        Keyed by bundle rather than by instance: the prerequisite belongs to the
+        bundle and is missing before any instance exists.
+
+        This does not weaken REQ-262 — Arc still never RUNS the manifest's
+        instruction. A manifest names bytes and a digest; the bytes are verified
+        before anything is unpacked and land in a user-writable directory. What
+        changes is only that an operator no longer has to reproduce a checksum
+        check by hand to get past the wall.
+
+        Returns:
+            What happened, and the bundle's own steps for the person who would
+            rather do it themselves — carried whether it worked or not.
+
+        Raises:
+            ExtensionError: The bundle name resolved to nothing, or its manifest
+                was refused. A refusal from the install itself is reported in the
+                returned :class:`HostSetupReport`, not raised: the operator needs
+                the reason and the manual steps together.
+        """
+        with self._audit.open() as sink:
+            plan = self._plan(extension, extension, sink)
+            steps = "\n\n".join(
+                required.instruction for required in plan.manifest.host_requires
+            )
+            if not plan.unsatisfied_host:
+                return HostSetupReport(True, f"{extension} has what it needs here.", steps)
+            if plan.manifest.artifact is None:
+                return HostSetupReport(
+                    False,
+                    f"{extension} pins no downloadable build, so Arc cannot install it.",
+                    steps,
+                )
+            return await self._install_host(plan.manifest.artifact, plan, steps, sink)
+
+    async def _install_host(
+        self, pin: ArtifactPin, plan: ConnectorPlan, steps: str, sink: AuditSink
+    ) -> HostSetupReport:
+        """Download, verify, and place one pinned binary, reporting either verdict.
+
+        The verdict is re-taken from the host afterwards rather than inferred from
+        "the file was written": a binary in a directory that is not on ``PATH`` is
+        one the connector still cannot find, and reporting it as ready would be
+        the same false success the button exists to avoid.
+        """
+        target = self._install_dir if self._install_dir is not None else host_install_dir()
+        try:
+            path = await install_pinned_binary(
+                pin,
+                install_dir=target,
+                caller_did=self._world.did,
+                audit_sink=sink,
+                tier=self._world.tier,
+            )
+        except ExtensionError as exc:
+            return HostSetupReport(False, exc.message, steps)
+
+        remaining = HostPrerequisiteDirector().unsatisfied(plan.manifest.host_requires)
+        if remaining:
+            return HostSetupReport(
+                False,
+                f"Installed {path}, but {remaining[0].name} is still not on this host's "
+                f"PATH — add {target} to PATH and try again.",
+                steps,
+            )
+        return HostSetupReport(
+            True, f"Installed {path}, verified against its published digest.", steps
+        )
+
+    async def _sign_in(self, plan: ConnectorPlan, token: str, sink: AuditSink) -> str:
+        """Run the one login Arc can finish, or say plainly why it did not run one."""
+        accepting = next(
+            (required for required in plan.manifest.host_requires if required.token_command),
+            None,
+        )
+        if accepting is None:
+            return f"{plan.extension} signs in on this host; Arc ran nothing."
+        if not token:
+            return (
+                f"{accepting.name} signs in with a token — supply one and Arc will run it."
+            )
+        result = await run_token_login(
+            accepting,
+            token=token,
+            caller_did=self._world.did,
+            audit_sink=sink,
+            tier=self._world.tier,
+        )
+        return result.detail
+
     async def doctor(self, instance: str) -> tuple[DoctorCheck, ...]:
         """Everything that could be wrong with one connection, without fixing any of it.
 
@@ -521,6 +790,7 @@ class Connections:
                 secret_values=secrets,
                 store=self._store(sink),
                 caller_did=self._world.did,
+                state=await self._connection_state(),
                 attachment_factory=self._factory,
                 audit_sink=sink,
                 trusted_public_key=self._pinned_key(),
@@ -569,18 +839,29 @@ class Connections:
         The rug-pull defence (REQ-291): a tool whose shape changes afterwards is
         suspended until an operator approves it again.
 
+        An install already approves what it probed, so this is the RE-approval an
+        operator runs after a contract legitimately changed — not a step a fresh
+        connection needs before its tools work.
+
         Returns:
             The approved tool names.
+
+        Raises:
+            ExtensionError: Nothing is connected under that name, or the
+                connection has no record for an approval to be written against
+                (``code`` :data:`~arcagent.extension.contract_ledger.
+                APPROVAL_NOT_STORED`).
         """
         from arcagent.extension.contract_ledger import ToolContractLedger
-        from arcagent.extension.state import open_connection_state
 
         with self._audit.open() as sink:
             attachment = await self._attachment(self._plan_for(instance, sink), sink)
             specs = await attachment.describe_tools()
-            state = await open_connection_state(str(self._world.data_dir))
             ledger = ToolContractLedger(
-                state, agent=self._world.agent, instance=instance, sink=sink
+                await self._connection_state(),
+                agent=self._world.agent,
+                instance=instance,
+                sink=sink,
             )
             await ledger.approve(specs, actor_did=self._world.did)
         return tuple(spec.name for spec in specs)
@@ -600,9 +881,19 @@ class Connections:
                 store=self._store(sink),
                 caller_did=self._world.did,
                 secret_fields=self._declared_secret_fields(instance, sink),
+                state=await self._connection_state(),
             )
 
     # --- internals -------------------------------------------------------
+
+    async def _connection_state(self) -> ConnectionStateStore:
+        """The connection directory this agent's records and approvals live in.
+
+        Opened per verb rather than held: the same reason the audit chain is, and
+        the same directory every surface resolves — a second spelling of the data
+        dir would mean the agent reads a store no surface ever wrote to.
+        """
+        return await open_connection_state(str(self._world.data_dir))
 
     def _plan(self, extension: str, instance: str, sink: AuditSink) -> ConnectorPlan:
         """Plan against an already-open chain, so no verb opens a second ``flock``."""
@@ -704,8 +995,10 @@ __all__ = [
     "NOT_INSTALLED",
     "NO_AGENT",
     "UNDECLARED_CREDENTIAL",
+    "ArtifactPin",
     "AttachmentFactory",
     "AuditChain",
+    "Authorization",
     "CatalogEntry",
     "ClosableSink",
     "ConnectionWorld",
@@ -714,7 +1007,10 @@ __all__ = [
     "DeclaredTool",
     "DoctorCheck",
     "ExtensionError",
+    "HostAuthorization",
+    "HostPrerequisiteDirector",
     "HostRequirement",
+    "HostSetupReport",
     "HostVerdict",
     "InstallReport",
     "InstanceConfig",

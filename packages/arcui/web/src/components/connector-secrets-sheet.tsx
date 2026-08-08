@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { TriangleAlert } from 'lucide-react'
 import {
   Sheet,
   SheetContent,
@@ -9,6 +8,8 @@ import {
 } from '@/components/ui/sheet'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
+import { HostSetupPanel } from '@/components/host-setup-panel'
+import { useOperatorMode } from '@/hooks/use-operator-mode'
 import { useInstallConnector, useReauthConnector } from '@/lib/queries'
 import { ApiError } from '@/lib/api'
 import { asUnsatisfiedHost, type CatalogBundle, type HostRequirement } from '@/lib/types'
@@ -38,6 +39,7 @@ export function ConnectorSecretsSheet({
   const [values, setValues] = useState<Record<string, string>>({})
   const [error, setError] = useState<string | null>(null)
   const [unsatisfied, setUnsatisfied] = useState<HostRequirement[]>([])
+  const [operatorMode] = useOperatorMode()
 
   const rotating = instance !== undefined
   const busy = install.isPending || reauth.isPending
@@ -103,24 +105,14 @@ export function ConnectorSecretsSheet({
               {error}
             </div>
           )}
-          {unsatisfied.length > 0 && (
-            <div className="space-y-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-              <p className="flex items-start gap-2">
-                <TriangleAlert className="mt-0.5 size-4 shrink-0" />
-                <span>
-                  This host is missing something {bundle.name} needs. Install it yourself, then
-                  connect again — arcui will not install it for you.
-                </span>
-              </p>
-              {unsatisfied.map((h) => (
-                <div key={h.name} className="space-y-1">
-                  <div className="font-mono text-[11px] text-foreground">{h.name}</div>
-                  <pre className="overflow-x-auto rounded border border-border bg-muted/40 px-2 py-1 font-mono text-[11px] text-foreground">
-                    {h.instruction}
-                  </pre>
-                </div>
-              ))}
-            </div>
+          {(unsatisfied.length > 0 || bundle.host_requires.length > 0) && (
+            <HostSetupPanel
+              agentId={agentId}
+              extension={bundle.name}
+              requirements={unsatisfied.length > 0 ? unsatisfied : bundle.host_requires}
+              operatorMode={operatorMode}
+              blocking={unsatisfied.length > 0}
+            />
           )}
           {!rotating && (
             <div className="space-y-1.5">
@@ -163,15 +155,13 @@ export function ConnectorSecretsSheet({
               <p className="text-[11px] text-muted-foreground">{s.prompt}</p>
             </div>
           ))}
-          {bundle.host_requires.length > 0 && unsatisfied.length === 0 && (
-            <div className="space-y-1 rounded-md border border-border bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground">
-              <p className="font-medium text-foreground">Needs on this host</p>
-              {bundle.host_requires.map((h) => (
-                <p key={h.name}>
-                  <span className="font-mono text-foreground">{h.name}</span> — {h.instruction}
-                </p>
-              ))}
-            </div>
+          {bundle.secrets.length === 0 && (
+            <p className="rounded-md border border-border bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground">
+              There is nothing to type here. {bundle.name} keeps its own sign-in on this computer,
+              so Arc just points at it. Use{' '}
+              <span className="font-medium text-foreground">Sign in</span> on the connection row to
+              check or renew that sign-in.
+            </p>
           )}
           <Button className="w-full" disabled={!canSubmit} onClick={submit}>
             {busy ? 'Working…' : rotating ? 'Replace credentials' : 'Connect'}

@@ -12,8 +12,10 @@ document:
   (the ``_DENIED_OVERLAY_PATHS`` / ``_strip_denied`` precedent in
   ``arccli/blueprints.py``).
 * an unbounded tool allowlist is refused above personal (REQ-268).
-* a third-party artifact without an exact version AND a sha256 is rejected
-  (REQ-290) — a floating pin is a supply-chain hole, not a convenience.
+* a third-party artifact without an exact version AND a per-platform sha256 is
+  rejected (REQ-290) — a floating pin is a supply-chain hole, not a convenience,
+  and one digest standing for every platform is a pin that matches one machine
+  and silently describes the wrong bytes on all the others.
 
 Serves REQ-262, REQ-264, REQ-268, REQ-269, REQ-274, REQ-290.
 """
@@ -34,6 +36,19 @@ from arcagent.extension.manifest import ExtensionManifest, load_manifest
 
 _SHA = "a" * 64
 
+#: The whole ``[artifact]`` declaration, as one block. Tests swap this for a
+#: broken variant, so a substitution that stops matching fails loudly rather
+#: than silently testing the good manifest twice.
+_ARTIFACT = f"""[artifact]
+package = "acme-mcp-server"
+version = "2.3.1"
+
+[artifact.platforms."linux/arm64"]
+url = "https://example.invalid/acme-2.3.1-linux-arm64.tar.gz"
+sha256 = "{_SHA}"
+member = "acme_2.3.1_linux_arm64/bin/acme"
+"""
+
 # A complete, well-formed manifest. Tests mutate a copy of this rather than each
 # writing their own, so a failure points at the mutated clause and nothing else.
 _FULL = f"""
@@ -45,11 +60,7 @@ version = "1.4.0"
 attachment = "mcp"
 tier_floor = "personal"
 
-[artifact]
-package = "acme-mcp-server"
-version = "2.3.1"
-sha256 = "{_SHA}"
-
+{_ARTIFACT}
 [[host_requires]]
 name = "node"
 minimum_version = "20.0.0"
@@ -162,25 +173,50 @@ def test_omitted_tool_allowlist_is_unbounded_and_refused_above_personal(tier: Ti
         load_manifest(text, tier=tier)
 
 
+def _platform_block(platform: str, sha: str = _SHA, url: str = "https://e.invalid/a.tgz") -> str:
+    return f'[artifact.platforms."{platform}"]\nurl = "{url}"\nsha256 = "{sha}"\n'
+
+
 @pytest.mark.parametrize(
     ("bad_artifact", "reason"),
     [
-        (f'[artifact]\npackage = "acme-mcp-server"\nsha256 = "{_SHA}"\n', "no version"),
-        ('[artifact]\npackage = "acme-mcp-server"\nversion = "2.3.1"\n', "no sha256"),
+        (f'[artifact]\npackage = "acme-mcp-server"\n{_platform_block("linux/arm64")}', "no version"),
+        ('[artifact]\npackage = "acme-mcp-server"\nversion = "2.3.1"\n', "no platform pinned"),
         (
-            f'[artifact]\npackage = "acme-mcp-server"\nversion = ">=2.3"\nsha256 = "{_SHA}"\n',
+            f'[artifact]\npackage = "acme-mcp-server"\nversion = ">=2.3"\n'
+            f"{_platform_block('linux/arm64')}",
             "range, not an exact version",
         ),
         (
-            f'[artifact]\npackage = "acme-mcp-server"\nversion = "latest"\nsha256 = "{_SHA}"\n',
+            f'[artifact]\npackage = "acme-mcp-server"\nversion = "latest"\n'
+            f"{_platform_block('linux/arm64')}",
             "floating tag",
         ),
         (
-            '[artifact]\npackage = "acme-mcp-server"\nversion = "2.3.1"\nsha256 = "deadbeef"\n',
+            f'[artifact]\npackage = "acme-mcp-server"\nversion = "2.3.1"\n'
+            f"{_platform_block('linux/arm64', sha='deadbeef')}",
             "sha256 is not 64 hex chars",
         ),
+        (
+            f'[artifact]\npackage = "acme-mcp-server"\nversion = "2.3.1"\n'
+            f'[artifact.platforms."linux/arm64"]\nsha256 = "{_SHA}"\n',
+            "a digest with nothing to fetch",
+        ),
+        (
+            f'[artifact]\npackage = "acme-mcp-server"\nversion = "2.3.1"\n'
+            f"{_platform_block('linux/arm64', url='http://e.invalid/a.tgz')}",
+            "plaintext download URL",
+        ),
     ],
-    ids=["no-version", "no-sha256", "version-range", "floating-tag", "short-hash"],
+    ids=[
+        "no-version",
+        "no-platform",
+        "version-range",
+        "floating-tag",
+        "short-hash",
+        "no-url",
+        "plaintext-url",
+    ],
 )
 def test_third_party_artifact_without_an_exact_pin_is_rejected(
     bad_artifact: str, reason: str
@@ -189,8 +225,7 @@ def test_third_party_artifact_without_an_exact_pin_is_rejected(
 
     ``reason`` documents the case in the failure output; it is not asserted on.
     """
-    good = f'[artifact]\npackage = "acme-mcp-server"\nversion = "2.3.1"\nsha256 = "{_SHA}"\n'
-    text = _FULL.replace(good, bad_artifact, 1)
+    text = _FULL.replace(_ARTIFACT, bad_artifact, 1)
     assert text != _FULL, f"fixture did not substitute the {reason} artifact block"
 
     with pytest.raises(ValidationError):
@@ -200,12 +235,72 @@ def test_third_party_artifact_without_an_exact_pin_is_rejected(
 def test_manifest_without_an_artifact_is_valid() -> None:
     """A hosted or native attachment runs no third-party artifact — the pin is
     required only when there is something to pin."""
-    good = f'[artifact]\npackage = "acme-mcp-server"\nversion = "2.3.1"\nsha256 = "{_SHA}"\n'
-    text = _FULL.replace(good, "", 1)
+    text = _FULL.replace(_ARTIFACT, "", 1)
 
     manifest = load_manifest(text, tier=Tier.PERSONAL)
 
     assert manifest.artifact is None
+
+
+def test_a_pin_answers_for_the_platform_it_covers_and_refuses_every_other() -> None:
+    """The whole point of keying digests: a host with no pinned build gets ``None``.
+
+    One ``sha256`` covering every platform was a pin that matched exactly one
+    machine and described the wrong bytes on all the others — an install that
+    honoured it would have to either skip verification or refuse everywhere but
+    the pinned platform. ``None`` here is what lets the installer refuse the
+    unpinned host by name instead.
+    """
+    pin = load_manifest(_FULL, tier=Tier.PERSONAL).artifact
+    assert pin is not None
+
+    covered = pin.for_host("linux/arm64")
+
+    assert covered is not None
+    assert covered.sha256 == _SHA
+    assert covered.member == "acme_2.3.1_linux_arm64/bin/acme"
+    assert pin.for_host("darwin/arm64") is None
+
+
+def test_a_platform_independent_pin_answers_for_every_host() -> None:
+    """An npm tarball or a PyPI sdist is the same bytes everywhere.
+
+    Keyed under ``any`` so a manifest never has to repeat one digest per
+    platform to say "this build names no machine".
+    """
+    text = _FULL.replace(_ARTIFACT, f'[artifact]\npackage = "a"\nversion = "1"\n{_platform_block("any")}', 1)
+    pin = load_manifest(text, tier=Tier.PERSONAL).artifact
+    assert pin is not None
+
+    assert pin.for_host("linux/arm64") is not None
+    assert pin.for_host("darwin/amd64") is not None
+
+
+def test_a_host_requirement_says_whether_arc_can_finish_its_login() -> None:
+    """SPEC-064 — a button that claims to authorise an interactive CLI is a lie.
+
+    ``gh auth login`` opens a browser and waits for a person; ``gh auth login
+    --with-token`` reads the token on stdin and exits. Only the manifest knows
+    which of the two a binary has, so a surface that guessed would offer half the
+    shipped connectors a button that hangs. An empty ``token_command`` is the
+    honest "a person must run this on the host".
+    """
+    text = _FULL.replace(
+        '[[host_requires]]\nname = "node"\nminimum_version = "20.0.0"\n',
+        '[[host_requires]]\nname = "acme"\nauthorize_command = "acme auth login"\n'
+        'token_command = "acme auth login --with-token"\n',
+        1,
+    )
+
+    requirement = load_manifest(text, tier=Tier.PERSONAL).host_requires[0]
+
+    assert requirement.authorize_command == "acme auth login"
+    assert requirement.token_command == "acme auth login --with-token"
+
+
+def test_a_host_requirement_defaults_to_no_non_interactive_login() -> None:
+    """Silence must mean "Arc cannot finish this", never "try it and see"."""
+    assert load_manifest(_FULL, tier=Tier.PERSONAL).host_requires[0].token_command == ""
 
 
 def test_manifest_parses_the_full_declaration() -> None:
@@ -221,7 +316,7 @@ def test_manifest_parses_the_full_declaration() -> None:
     assert manifest.artifact is not None
     assert manifest.artifact.package == "acme-mcp-server"
     assert manifest.artifact.version == "2.3.1"
-    assert manifest.artifact.sha256 == _SHA
+    assert manifest.artifact.platforms["linux/arm64"].sha256 == _SHA
 
     assert [req.name for req in manifest.host_requires] == ["node"]
     assert manifest.host_requires[0].minimum_version == "20.0.0"
