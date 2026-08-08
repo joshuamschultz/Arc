@@ -9,11 +9,13 @@ import type {
   AgentConnectorsResponse,
   ConnectorApproveResponse,
   ConnectorAuthResponse,
+  ConnectorAuthStatusResponse,
   ConnectorCatalogResponse,
   ConnectorDoctorResponse,
   ConnectorInstallResponse,
   ConnectorProbeResponse,
   ConnectorRemoveResponse,
+  HostSetupResponse,
   KeysResponse,
   KeyWriteResponse,
   PromptWriteResponse,
@@ -833,6 +835,56 @@ export const useApproveConnector = (agentId: string, instance: string) => {
         `/api/agents/${encodeURIComponent(agentId)}/connectors/${encodeURIComponent(instance)}/approve`,
       ),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: doctorKey(agentId, instance) }),
+  })
+}
+
+// Installs the host binaries a bundle declares, so an operator never has to
+// open a terminal. Keyed by extension, not instance: the prerequisite belongs
+// to the bundle and is missing before any instance exists.
+export const useHostSetup = (agentId: string, extension: string) => {
+  const queryClient = useQueryClient()
+  return useMutation<HostSetupResponse, Error, void>({
+    mutationFn: () =>
+      apiPost(
+        `/api/agents/${encodeURIComponent(agentId)}/connectors/${encodeURIComponent(extension)}/host-setup`,
+      ),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['connectors', 'catalog'] }),
+  })
+}
+
+const authStatusKey = (agentId: string, instance: string) => [
+  'agent',
+  agentId,
+  'connectors',
+  instance,
+  'auth-status',
+]
+
+// Is the host binary behind this connection signed in? Only meaningful for
+// bundles that declare no secrets — those hold their own credential.
+export const useConnectorAuthStatus = (agentId: string, instance: string, enabled: boolean) =>
+  useQuery<ConnectorAuthStatusResponse>({
+    queryKey: authStatusKey(agentId, instance),
+    queryFn: ({ signal }) =>
+      apiGet(
+        `/api/agents/${encodeURIComponent(agentId)}/connectors/${encodeURIComponent(instance)}/auth-status`,
+        signal,
+      ),
+    enabled,
+    retry: false,
+  })
+
+// Runs the bundle's login command. `token` is optional — some binaries take one
+// non-interactively; the rest answer with the command a person must run.
+export const useAuthorizeConnector = (agentId: string, instance: string) => {
+  const queryClient = useQueryClient()
+  return useMutation<ConnectorAuthStatusResponse, Error, { token?: string }>({
+    mutationFn: (body) =>
+      apiPost(
+        `/api/agents/${encodeURIComponent(agentId)}/connectors/${encodeURIComponent(instance)}/authorize`,
+        body,
+      ),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: authStatusKey(agentId, instance) }),
   })
 }
 

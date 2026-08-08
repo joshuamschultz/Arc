@@ -40,6 +40,7 @@ This component holds no credential state of its own: values live in
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -50,6 +51,8 @@ from arctrust.audit import AuditEvent, AuditSink, emit
 from arcagent.core.errors import ExtensionError
 from arcagent.extension.secrets import Secret, SecretRef, SecretStore
 from arcagent.extension.state import ConnectionHealth
+
+_logger = logging.getLogger("arcagent.extension.credentials")
 
 #: OAuth error codes that mean a human must re-consent. Retrying one of these is
 #: not just futile — it consumes attempts against a connection that is already
@@ -237,9 +240,7 @@ class CredentialLifecycle:
                     self._audit("credential.renew", account, caller_did, "deny", exc.error_code)
                     raise
                 if attempt == _MAX_ATTEMPTS - 1:
-                    await self.state.set_health(
-                        account.agent, account.instance, "degraded", actor_did=caller_did
-                    )
+                    await self._mark(account, "degraded", caller_did)
                     self._audit("credential.renew", account, caller_did, "error", exc.error_code)
                     raise
                 await self.sleep(min(_BASE_BACKOFF_SECONDS * 2**attempt, _MAX_BACKOFF_SECONDS))
@@ -250,7 +251,7 @@ class CredentialLifecycle:
     ) -> None:
         """Store the value, then the metadata — never the other way round."""
         await self.secrets.put(account.secret_ref, renewed.value, caller_did=caller_did)
-        await self.state.record_credential_metadata(
+        stored = await self.state.record_credential_metadata(
             account.agent,
             account.instance,
             expires_at=renewed.expires_at.isoformat(),
@@ -259,16 +260,47 @@ class CredentialLifecycle:
             last_refresh_at=self.clock().isoformat(),
             actor_did=caller_did,
         )
+        if not stored:
+            # The store refuses to patch a connection it does not hold, so a
+            # silent False here means the new expiry was never durable. The next
+            # pass would read the OLD expiry, find it due, and exchange a refresh
+            # token this call has already consumed — the unrecoverable outcome
+            # this whole component is built around (REQ-288).
+            raise ExtensionError(
+                code="CONNECTION_STATE_MISSING",
+                message=(
+                    f"{account.key} has no connection record, so the renewed credential's "
+                    f"expiry could not be stored"
+                ),
+                details={"connection": account.key},
+            )
         self._audit("credential.renew", account, caller_did, "allow", None)
 
     async def _needs_attention(self, account: ConnectedAccount, reason: str, detail: str) -> None:
         """Mark the connection and ask the operator — never the agent's chat."""
-        await self.state.set_health(
-            account.agent, account.instance, "needs_attention", actor_did=account.agent
-        )
+        await self._mark(account, "needs_attention", account.agent)
         await self.escalation.request_operator_attention(
             agent=account.agent, instance=account.instance, reason=reason, detail=detail
         )
+
+    async def _mark(
+        self, account: ConnectedAccount, health: ConnectionHealth, actor_did: str
+    ) -> None:
+        """Set a connection's health, and say so when the mark landed nowhere.
+
+        Never raises: both callers are already reporting the failure that caused
+        the mark, and replacing that report with a bookkeeping error would lose
+        the reason the operator actually needs. Silence is what is unacceptable —
+        a dashboard showing ``healthy`` for a connection nothing can renew.
+        """
+        if not await self.state.set_health(
+            account.agent, account.instance, health, actor_did=actor_did
+        ):
+            _logger.error(
+                "connection %s has no state record; its health could not be marked %s",
+                account.key,
+                health,
+            )
 
     async def _expiry(self, account: ConnectedAccount) -> datetime | None:
         record = await self.state.get(account.agent, account.instance)

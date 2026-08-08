@@ -20,6 +20,9 @@ Two properties get most of the attention here:
 
 from __future__ import annotations
 
+import json
+import shlex
+import sys
 import tomllib
 from collections.abc import Callable
 from pathlib import Path
@@ -53,6 +56,89 @@ default = "outbound"
 [config.cli]
 binary = "acme"
 """
+
+#: A bundle in the shape half the shipped ones actually have: a ``cli`` connector
+#: with NO ``[[secrets]]``, because its binary keeps its own token in the host
+#: keyring. ``arc connector auth`` used to answer these with "declares no
+#: credentials; nothing to supply", which is true and leaves the operator stuck.
+_HOSTED_EXTENSION = "acme_hosted"
+_AUTHORIZE_COMMAND = "sh -c 'acme auth login --scopes read'"
+
+_HOSTED_MANIFEST = f"""
+[extension]
+name = "{_HOSTED_EXTENSION}"
+version = "1.0.0"
+attachment = "cli"
+
+[[host_requires]]
+name = "sh"
+authorize_command = "{_AUTHORIZE_COMMAND}"
+instruction = "Authorise the acme CLI on this host."
+
+[tools]
+allow = ["create_issue"]
+
+[approval]
+default = "outbound"
+
+[config.cli]
+binary = "acme"
+"""
+
+_HOSTED_INSTANCE = "hosted"
+
+
+def _hosted_manifest(*, host: str = "sh", token_login: str = "") -> str:
+    """The hosted bundle, re-declared with or without a login Arc can finish."""
+    token_clause = f"token_command = {json.dumps(token_login)}\n" if token_login else ""
+    return f"""
+[extension]
+name = "{_HOSTED_EXTENSION}"
+version = "1.0.0"
+
+attachment = "cli"
+
+[[host_requires]]
+name = {json.dumps(host)}
+authorize_command = {json.dumps(_AUTHORIZE_COMMAND)}
+{token_clause}instruction = "Authorise the acme CLI on this host."
+
+[tools]
+allow = ["create_issue"]
+
+[approval]
+default = "outbound"
+
+[config.cli]
+binary = "acme"
+"""
+
+
+def _token_login_command(marker: Path) -> str:
+    """A real non-interactive login: reads the token on stdin, then signs in.
+
+    A real subprocess rather than a substitute, because what is under test is
+    that the token reached stdin at all.
+    """
+    script = (
+        "import sys, pathlib;"
+        " token = sys.stdin.read().strip();"
+        f" pathlib.Path({str(marker)!r}).write_text('ok') if token else None;"
+        " sys.exit(0 if token else 1)"
+    )
+    return f"{sys.executable} -c {shlex.quote(script)}"
+
+
+def _connect_hosted(
+    run: Callable[..., None], agent_dir: Path, *, token_login: str = ""
+) -> None:
+    """Install the hosted bundle, first re-declaring how its binary signs in."""
+    host = sys.executable if token_login else "sh"
+    (agent_dir / "extensions" / _HOSTED_EXTENSION / "extension.toml").write_text(
+        _hosted_manifest(host=host, token_login=token_login), encoding="utf-8"
+    )
+    run("add", _HOSTED_EXTENSION, "--instance", _HOSTED_INSTANCE)
+
 
 _DECLARED_VERBS = (
     "add",
@@ -110,6 +196,9 @@ def agent_dir(tmp_path: Path) -> Path:
     bundle = agent / "extensions" / _EXTENSION
     bundle.mkdir(parents=True)
     (bundle / "extension.toml").write_text(_MANIFEST, encoding="utf-8")
+    hosted = agent / "extensions" / _HOSTED_EXTENSION
+    hosted.mkdir(parents=True)
+    (hosted / "extension.toml").write_text(_HOSTED_MANIFEST, encoding="utf-8")
     return agent
 
 
@@ -403,6 +492,31 @@ class TestAuthAndApprove:
         assert "rotated-value" in env
         assert _TOKEN not in env
 
+    def test_auth_on_a_credential_less_connector_names_the_host_command(
+        self,
+        run: Callable[..., None],
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """The operator must finish this command knowing exactly what to type next.
+
+        Four of the eight shipped bundles declare no ``[[secrets]]`` — ``gh``,
+        ``gog``, ``dbxcli`` and ``readwise`` each keep their own token — and the
+        old answer, "declares no credentials; nothing to supply", left a
+        non-technical operator with a connector that could not be authorised at
+        all. The manifest's ``authorize_command`` is the whole answer, so it has
+        to reach stdout verbatim.
+        """
+        run("add", _HOSTED_EXTENSION, "--instance", "hosted")
+        capsys.readouterr()
+
+        run("auth", "hosted")
+
+        out = capsys.readouterr().out
+        assert _AUTHORIZE_COMMAND in out, (
+            "a credential-less connector's auth verb told the operator nothing to run"
+        )
+        assert "nothing to supply" not in out
+
     def test_approve_records_the_current_tool_contract(
         self,
         run: Callable[..., None],
@@ -442,3 +556,80 @@ class TestRemove:
     ) -> None:
         run("remove", "never_installed")
         assert "never_installed" in capsys.readouterr().out
+
+
+class TestAuthorizeAndHostSetup:
+    """REQ-293 — the two host-facing actions exist at the terminal too.
+
+    The requirement is "through arccli OR arcui", so a button the web has and the
+    terminal does not is a surface an operator on a headless box cannot reach.
+    Both verbs keep the same honesty the web keeps: a login only a person can
+    finish is printed, never attempted.
+    """
+
+    def test_both_verbs_are_reachable(self) -> None:
+        assert {"authorize", "host-setup"} <= set(_SUBCOMMAND_MAP)
+
+    def test_authorize_prints_the_command_for_an_interactive_only_connector(
+        self,
+        run: Callable[..., None],
+        agent_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """No ``token_command`` means no button and no prompt — just the command."""
+        _connect_hosted(run, agent_dir)
+        prompted = _answer_prompts(monkeypatch, "unused")
+
+        run("authorize", _HOSTED_INSTANCE)
+
+        out = capsys.readouterr().out
+        assert _AUTHORIZE_COMMAND in out
+        assert prompted == [], "an interactive-only login must not ask for a token"
+
+    def test_authorize_prompts_for_the_token_when_arc_can_finish_the_login(
+        self,
+        run: Callable[..., None],
+        agent_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Hidden prompt, never a ``--token`` flag: argv lands in shell history
+        and in the process table, which is the exposure getpass exists to remove."""
+        marker = agent_dir / "signed-in"
+        _connect_hosted(run, agent_dir, token_login=_token_login_command(marker))
+        _answer_prompts(monkeypatch, _TOKEN)
+
+        run("authorize", _HOSTED_INSTANCE)
+
+        assert marker.exists(), "the token never reached the binary"
+        assert _TOKEN not in capsys.readouterr().out
+
+    def test_host_setup_reports_a_refusal_and_the_manual_steps(
+        self,
+        run: Callable[..., None],
+        agent_dir: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A bundle pinning no build cannot be installed, and says so with the
+        steps a person runs instead rather than a bare failure."""
+        (agent_dir / "extensions" / _HOSTED_EXTENSION / "extension.toml").write_text(
+            _hosted_manifest(host="definitely_not_installed_xyz"), encoding="utf-8"
+        )
+
+        with pytest.raises(SystemExit):
+            run("host-setup", _HOSTED_EXTENSION)
+
+        out = capsys.readouterr().out
+        assert "pins no downloadable build" in out
+        assert "Authorise the acme CLI on this host." in out
+
+    def test_host_setup_says_so_when_the_host_already_has_what_it_needs(
+        self,
+        run: Callable[..., None],
+        agent_dir: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        run("host-setup", _HOSTED_EXTENSION)
+
+        assert "has what it needs here" in capsys.readouterr().out

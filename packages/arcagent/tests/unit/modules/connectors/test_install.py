@@ -36,6 +36,7 @@ from arcagent.extension.attachment import (
     ToolSpec,
 )
 from arcagent.extension.secrets import LocalFileSecretBackend, SecretRef, SecretStore
+from arcagent.extension.state import ConnectionStateStore
 from arcagent.modules.connectors.install import (
     ConnectorPlan,
     install_connector,
@@ -107,6 +108,76 @@ class FakeAttachment:
 
     async def invoke(self, tool: str, args: dict[str, Any]) -> ToolResult:
         return ToolResult(tool=tool, outcome=ToolOutcome.OK)
+
+
+class MemoryBackend:
+    """The mutable plane in a dict, with the merge semantics the real one has.
+
+    A real :class:`~arcagent.extension.state.ConnectionStateStore` over a fake
+    plane rather than a fake store: ``_patch`` returning False for a row that does
+    not exist is the behaviour every assertion here turns on, so the store's own
+    code has to run.
+    """
+
+    def __init__(self) -> None:
+        self.rows: dict[str, dict[str, Any]] = {}
+
+    async def mutable_create_batch(
+        self,
+        collection: str,
+        entries: Any,
+        *,
+        actor_did: str,
+        sink: Any | None = None,
+    ) -> list[dict[str, Any]]:
+        return [self.rows.setdefault(key, dict(value)) for key, value in entries]
+
+    async def mutable_merge(
+        self,
+        collection: str,
+        key: str,
+        patch: dict[str, Any],
+        *,
+        actor_did: str,
+        sink: Any | None = None,
+    ) -> bool:
+        row = self.rows.get(key)
+        if row is None:
+            return False
+        _deep_merge(row, patch)
+        return True
+
+    async def mutable_read(self, collection: str, key: str) -> dict[str, Any] | None:
+        return self.rows.get(key)
+
+    async def mutable_query(
+        self, collection: str, *, where: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
+        return [
+            row
+            for row in self.rows.values()
+            if all(row.get(field) == value for field, value in (where or {}).items())
+        ]
+
+    async def mutable_delete(
+        self, collection: str, key: str, *, actor_did: str, sink: Any | None = None
+    ) -> bool:
+        return self.rows.pop(key, None) is not None
+
+
+def _deep_merge(row: dict[str, Any], patch: dict[str, Any]) -> None:
+    """Recursive merge — what a single-statement backend merge does to one row."""
+    for field, value in patch.items():
+        existing = row.get(field)
+        if isinstance(existing, dict) and isinstance(value, dict):
+            _deep_merge(existing, value)
+        else:
+            row[field] = value
+
+
+def _state() -> ConnectionStateStore:
+    """The connection directory an install is required to register into."""
+    return ConnectionStateStore(MemoryBackend())
 
 
 def _bundle(root: Path, *, manifest: str = _MANIFEST) -> Path:
@@ -190,6 +261,7 @@ class TestInstall:
         self, tmp_path: Path
     ) -> None:
         agent_dir = _agent_dir(tmp_path)
+        state = _state()
         store, env_file = _store(tmp_path)
 
         report = await install_connector(
@@ -199,6 +271,7 @@ class TestInstall:
             secret_values={"api_token": "s3cr3t"},
             store=store,
             caller_did=_CALLER,
+            state=state,
             attachment_factory=lambda _m, _b, _s: FakeAttachment(),
         )
 
@@ -211,6 +284,13 @@ class TestInstall:
         assert stored.reveal() == "s3cr3t"
         assert _blocks(agent_dir)[_INSTANCE]["extension"] == _EXTENSION
         assert _blocks(agent_dir)[_INSTANCE]["approval"] == "outbound"
+        # Connecting registers the connection AND approves the contract it just
+        # probed: without the record the approval is a merge against nothing, and
+        # without the approval every tool it serves is suspended at the next start.
+        record = await state.get(_AGENT, _INSTANCE)
+        assert record is not None
+        assert record.health == "healthy"
+        assert list(record.approved_tool_hashes) == ["create_issue"]
         # The secret is in the store and nowhere else.
         assert "s3cr3t" not in (agent_dir / "arcagent.toml").read_text(encoding="utf-8")
         assert "s3cr3t" in env_file.read_text(encoding="utf-8")
@@ -218,6 +298,7 @@ class TestInstall:
     async def test_the_written_block_is_readable_back(self, tmp_path: Path) -> None:
         # A write nothing can read is dead wiring; the reader ships with the writer.
         agent_dir = _agent_dir(tmp_path)
+        state = _state()
         store, _env = _store(tmp_path)
         await install_connector(
             _plan(tmp_path),
@@ -226,6 +307,7 @@ class TestInstall:
             secret_values={"api_token": "s3cr3t"},
             store=store,
             caller_did=_CALLER,
+            state=state,
             attachment_factory=lambda _m, _b, _s: FakeAttachment(),
         )
         instances = load_instances(agent_dir)
@@ -241,6 +323,7 @@ class TestInstall:
         # is the assertion that matters: an install can fail for unrelated reasons
         # and still have executed the bundle, which makes a broken gate look shut.
         agent_dir = _agent_dir(tmp_path)
+        state = _state()
         store, env_file = _store(tmp_path)
         root = tmp_path / "extensions"
         _bundle(root)
@@ -265,6 +348,7 @@ class TestInstall:
                 secret_values={"api_token": "s3cr3t"},
                 store=store,
                 caller_did=_CALLER,
+                state=state,
                 attachment_factory=_factory,
             )
 
@@ -272,11 +356,13 @@ class TestInstall:
         assert built == [], "an unverified bundle's code was executed"
         assert not env_file.exists()
         assert _blocks(agent_dir) == {}
+        assert await state.get(_AGENT, _INSTANCE) is None
 
     async def test_a_missing_secret_names_the_secrets_step_and_writes_nothing(
         self, tmp_path: Path
     ) -> None:
         agent_dir = _agent_dir(tmp_path)
+        state = _state()
         store, env_file = _store(tmp_path)
 
         with pytest.raises(ExtensionError) as caught:
@@ -287,18 +373,21 @@ class TestInstall:
                 secret_values={},
                 store=store,
                 caller_did=_CALLER,
+                state=state,
                 attachment_factory=lambda _m, _b, _s: FakeAttachment(),
             )
 
         assert caught.value.details["step"] == "secrets"
         assert not env_file.exists()
         assert _blocks(agent_dir) == {}
+        assert await state.get(_AGENT, _INSTANCE) is None
 
     async def test_an_unsatisfied_host_prerequisite_names_the_host_step(
         self, tmp_path: Path
     ) -> None:
         manifest = _MANIFEST + '\n[[host_requires]]\nname = "definitely_not_installed_xyz"\n'
         agent_dir = _agent_dir(tmp_path)
+        state = _state()
         store, env_file = _store(tmp_path)
 
         with pytest.raises(ExtensionError) as caught:
@@ -309,6 +398,7 @@ class TestInstall:
                 secret_values={"api_token": "s3cr3t"},
                 store=store,
                 caller_did=_CALLER,
+                state=state,
                 attachment_factory=lambda _m, _b, _s: FakeAttachment(),
             )
 
@@ -316,11 +406,13 @@ class TestInstall:
         assert "definitely_not_installed_xyz" in str(caught.value)
         assert not env_file.exists()
         assert _blocks(agent_dir) == {}
+        assert await state.get(_AGENT, _INSTANCE) is None
 
     async def test_a_failed_probe_rolls_the_secret_back(self, tmp_path: Path) -> None:
         # The step that most often fails is the one that runs AFTER the secret is
         # written, so this is the rollback that actually has to work.
         agent_dir = _agent_dir(tmp_path)
+        state = _state()
         store, _env = _store(tmp_path)
 
         with pytest.raises(ExtensionError) as caught:
@@ -331,6 +423,7 @@ class TestInstall:
                 secret_values={"api_token": "s3cr3t"},
                 store=store,
                 caller_did=_CALLER,
+                state=state,
                 attachment_factory=lambda _m, _b, _s: FakeAttachment(
                     reachable=False, detail="acme: command not found"
                 ),
@@ -343,11 +436,13 @@ class TestInstall:
         )
         assert left is None
         assert _blocks(agent_dir) == {}
+        assert await state.get(_AGENT, _INSTANCE) is None
 
     async def test_an_attachment_that_cannot_be_built_rolls_the_secret_back(
         self, tmp_path: Path
     ) -> None:
         agent_dir = _agent_dir(tmp_path)
+        state = _state()
         store, _env = _store(tmp_path)
 
         def explode(_manifest: object, _bundle: object, _secrets: object) -> FakeAttachment:
@@ -361,6 +456,7 @@ class TestInstall:
                 secret_values={"api_token": "s3cr3t"},
                 store=store,
                 caller_did=_CALLER,
+                state=state,
                 attachment_factory=explode,
             )
 
@@ -370,11 +466,13 @@ class TestInstall:
         )
         assert left is None
         assert _blocks(agent_dir) == {}
+        assert await state.get(_AGENT, _INSTANCE) is None
 
     async def test_a_second_instance_of_one_bundle_is_independent(self, tmp_path: Path) -> None:
         # One bundle backs several named accounts (SDD data model), so installing
         # the second must not disturb the first's block or its credential.
         agent_dir = _agent_dir(tmp_path)
+        state = _state()
         store, _env = _store(tmp_path)
         root = tmp_path / "extensions"
         _bundle(root)
@@ -394,6 +492,7 @@ class TestInstall:
                 secret_values={"api_token": value},
                 store=store,
                 caller_did=_CALLER,
+                state=state,
                 attachment_factory=lambda _m, _b, _s: FakeAttachment(),
             )
 
@@ -411,6 +510,7 @@ class TestRemove:
 
     async def test_remove_drops_the_secret_and_the_block(self, tmp_path: Path) -> None:
         agent_dir = _agent_dir(tmp_path)
+        state = _state()
         store, _env = _store(tmp_path)
         plan = _plan(tmp_path)
         await install_connector(
@@ -420,6 +520,7 @@ class TestRemove:
             secret_values={"api_token": "s3cr3t"},
             store=store,
             caller_did=_CALLER,
+            state=state,
             attachment_factory=lambda _m, _b, _s: FakeAttachment(),
         )
 
@@ -429,10 +530,15 @@ class TestRemove:
             instance=_INSTANCE,
             store=store,
             caller_did=_CALLER,
+            state=state,
             secret_fields=[secret.name for secret in plan.secrets],
         )
 
         assert report.removed_secrets == ("api_token",)
+        assert report.removed_state is True
+        # A record that outlives its account hands the next install under this name
+        # the approvals an operator minted for the connection they disconnected.
+        assert await state.get(_AGENT, _INSTANCE) is None
         assert _blocks(agent_dir) == {}
         assert load_instances(agent_dir) == {}
         left = await store.get(
@@ -442,6 +548,7 @@ class TestRemove:
 
     async def test_removing_an_unknown_instance_is_not_an_error(self, tmp_path: Path) -> None:
         agent_dir = _agent_dir(tmp_path)
+        state = _state()
         store, _env = _store(tmp_path)
         report = await remove_connector(
             agent_dir=agent_dir,
@@ -449,6 +556,7 @@ class TestRemove:
             instance="never_installed",
             store=store,
             caller_did=_CALLER,
+            state=state,
             secret_fields=[],
         )
         assert report.removed_config is False

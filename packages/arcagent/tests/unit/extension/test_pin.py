@@ -34,7 +34,8 @@ from arctrust.audit import AuditEvent
 
 from arcagent.core.errors import ExtensionError
 from arcagent.core.tier import Tier
-from arcagent.extension.manifest import ArtifactPin
+from arcagent.extension.manifest import ArtifactPin, PlatformArtifact
+from arcagent.extension.platforms import host_platform
 
 #: A child that outlives the assertions in the launcher-enforcement tests.
 _STAY_ALIVE = "import time; time.sleep(30)"
@@ -79,16 +80,27 @@ def _write_artifact(directory: Path, body: bytes = b"the approved build") -> Pat
     return path
 
 
+def _pin(digest: str, *, version: str = "2.3.1", platform: str | None = None) -> ArtifactPin:
+    """A pin covering exactly one platform — this host's, unless a test names another."""
+    return ArtifactPin(
+        package="example-mcp-server",
+        version=version,
+        platforms={
+            platform or host_platform(): PlatformArtifact(
+                url="https://example.invalid/example-mcp-server.tgz", sha256=digest
+            )
+        },
+    )
+
+
 def _artifact(path: Path, *, version: str = "2.3.1", installed: str | None = None) -> Any:
     """A pinned artifact whose pin matches ``path`` unless a test breaks it."""
     module = _module()
-    pin = ArtifactPin(
-        package="example-mcp-server",
-        version=version,
-        sha256=hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else "0" * 64,
-    )
+    digest = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else "0" * 64
     return module.PinnedArtifact(
-        pin=pin, path=path, installed_version=installed if installed is not None else version
+        pin=_pin(digest, version=version),
+        path=path,
+        installed_version=installed if installed is not None else version,
     )
 
 
@@ -142,8 +154,37 @@ def test_the_refusal_event_names_the_expected_and_the_actual_hash(tmp_path: Path
         _verifier(sink).verify(artifact, caller_did=_CALLER)
 
     (event,) = _denials(sink)
-    assert event.extra["expected"] == artifact.pin.sha256
+    covered = artifact.pin.for_host(host_platform())
+    assert covered is not None
+    assert event.extra["expected"] == covered.sha256
     assert event.extra["actual"] == actual
+
+
+def test_a_platform_the_pin_does_not_cover_is_refused_rather_than_waved_through(
+    tmp_path: Path,
+) -> None:
+    """A digest published beside another platform's asset describes the wrong bytes.
+
+    The tempting repair — verify against whatever single digest the manifest
+    happens to hold — passes on the one platform it was taken from and silently
+    compares unrelated bytes on every other. So a host the pin does not name has
+    no digest at all, and the verdict is a refusal, not a shrug.
+    """
+    sink = _RecordingSink()
+    path = _write_artifact(tmp_path)
+    module = _module()
+    artifact = module.PinnedArtifact(
+        pin=_pin(hashlib.sha256(path.read_bytes()).hexdigest(), platform="sunos/sparc"),
+        path=path,
+        installed_version="2.3.1",
+    )
+
+    with pytest.raises(ExtensionError):
+        _verifier(sink).verify(artifact, caller_did=_CALLER)
+
+    (event,) = _denials(sink)
+    assert event.extra["reason"] == "unpinned_platform"
+    assert host_platform() in event.extra["expected"]
 
 
 # --- exact version -----------------------------------------------------------

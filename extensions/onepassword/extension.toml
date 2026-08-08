@@ -30,10 +30,16 @@ tier_floor = "personal"
 [config.native]
 entrypoint = "arc_ext_onepassword"
 
-# The SDK, pinned to the sdist digest published on PyPI.
+# The SDK, pinned to the sdist digest published on PyPI. Keyed `any` because an
+# sdist is the same bytes everywhere, and carrying no `member` because pip
+# installs it — this bundle declares no [[host_requires]] at all, so there was
+# never a binary for Arc to place.
 [artifact]
 package = "onepassword-sdk"
 version = "0.4.1"
+
+[artifact.platforms.any]
+url = "https://files.pythonhosted.org/packages/df/06/989f5b40e802e11e37c44bc72faabcdd362dcba3392fbfc48be6da49e147/onepassword_sdk-0.4.1.tar.gz"
 sha256 = "4b9224208aa6e35e13bad8534e6521d3abf5ba166ea4efd370fcdc918c4a4d26"
 
 [[secrets]]

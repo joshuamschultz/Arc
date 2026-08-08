@@ -21,13 +21,21 @@ description = "Search your Readwise Reader library, read saved documents, and sa
 attachment = "cli"
 tier_floor = "personal"
 
-# The published npm tarball, digest computed over the artifact itself. Note the
-# hole this pin does NOT close: @readwise/cli declares
+# The published npm tarball, digest computed over the artifact itself. Keyed
+# `any` because an npm tarball is the same bytes on every machine, and carrying
+# no `member` because it is not an archive holding one executable: npm installs
+# it, so `arc connector host-setup` reports honestly that it cannot place this
+# one on PATH and hands over the steps below.
+#
+# Note the hole this pin does NOT close: @readwise/cli declares
 # "@modelcontextprotocol/sdk": "latest", so `npm install -g` resolves a
 # transitive dependency at install time that this digest does not cover.
 [artifact]
 package = "@readwise/cli"
 version = "0.5.9"
+
+[artifact.platforms.any]
+url = "https://registry.npmjs.org/@readwise/cli/-/cli-0.5.9.tgz"
 sha256 = "5cbc88096ca20c70f005b5264453ba698b6203f4bfae8ba72658bc3768a06de9"
 
 [[host_requires]]
@@ -35,9 +43,14 @@ name = "node"
 minimum_version = "20.0.0"
 instruction = "Install Node.js 20 or newer on this host; the Readwise CLI is a Node program."
 
+# `readwise login-with-token` takes the token from piped stdin — the package's
+# own README documents `echo "$READWISE_TOKEN" | readwise login-with-token` —
+# so it is one of the two shipped logins Arc can complete on its own.
 [[host_requires]]
 name = "readwise"
 minimum_version = "0.5.9"
+authorize_command = "readwise login-with-token"
+token_command = "readwise login-with-token"
 instruction = """
 Install the Readwise CLI on this host, verify it, then authorise it:
 

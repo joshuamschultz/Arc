@@ -12,8 +12,10 @@ privilege-escalation form:
   ``arccli/blueprints.py``).
 * an unbounded tool allowlist is refused above personal tier (REQ-268); omitting the
   allowlist is the same unbounded grant as asking for ``*``.
-* a third-party artifact is pinned to one exact version **and** one sha256 (REQ-290).
-  A floating pin is a supply-chain hole, not a convenience.
+* a third-party artifact is pinned to one exact version **and** a sha256 for every
+  platform it publishes (REQ-290). A floating pin is a supply-chain hole, not a
+  convenience — and so is one digest standing in for every platform, which matches
+  exactly one machine and describes the wrong bytes on all the others.
 * a declared tier floor may only **refuse** to load below that tier — it can never raise
   the deployment's effective stringency (D-579). The operator sets the tier; a bundle
   author may decline to run under it, never redefine it.
@@ -34,6 +36,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from arcagent.core.errors import ExtensionError
 from arcagent.core.tier import Tier
 from arcagent.extension.attachment import Classification
+from arcagent.extension.platforms import ANY_PLATFORM
 from arcagent.tiers import tier_rank
 
 _logger = logging.getLogger("arcagent.extension.manifest")
@@ -56,6 +59,11 @@ _EXACT_VERSION = r"^[0-9][0-9a-zA-Z.+_-]*$"
 
 #: A full sha256 digest, lowercase hex.
 _SHA256 = r"^[0-9a-f]{64}$"
+
+#: Artifacts are fetched over TLS only. The digest already pins the bytes, but a
+#: plaintext URL hands a network attacker the ability to choose which refusal an
+#: operator sees, and there is no published release that needs it.
+_HTTPS_URL = r"^https://"
 
 #: The allowlist entry that asks for every tool the upstream cares to serve.
 _WILDCARD = "*"
@@ -104,20 +112,65 @@ class ExtensionHeader(_ManifestModel):
     tier_floor: Tier = Tier.PERSONAL
 
 
+class PlatformArtifact(_ManifestModel):
+    """``[artifact.platforms."<os>/<arch>"]`` — one platform's published build.
+
+    ``member`` is the path INSIDE the downloaded archive of the executable to
+    place on PATH. It is empty when the download is not an archive holding one
+    binary — an npm tarball, a PyPI sdist — which is a build Arc can still pin
+    and still cannot install, and says so rather than guessing.
+    """
+
+    url: str = Field(pattern=_HTTPS_URL)
+    sha256: str = Field(pattern=_SHA256)
+    member: str = ""
+
+
 class ArtifactPin(_ManifestModel):
-    """``[artifact]`` — the exact third-party build Arc will execute (REQ-290)."""
+    """``[artifact]`` — the exact third-party build Arc will execute (REQ-290).
+
+    Digests are keyed by platform, spelled as :func:`~arcagent.extension.
+    platforms.host_platform` spells it, because a sha256 only describes the bytes
+    of the asset it was published beside. One digest for the whole pin would be
+    correct on the platform it was taken from and wrong everywhere else, leaving
+    an installer the choice of skipping verification or refusing every host but
+    one. A platform this pin does not name has no answer here, which is what lets
+    a caller refuse that host by name.
+    """
 
     package: str
     version: str = Field(pattern=_EXACT_VERSION)
-    sha256: str = Field(pattern=_SHA256)
+    platforms: dict[str, PlatformArtifact] = Field(min_length=1)
+
+    def for_host(self, host: str) -> PlatformArtifact | None:
+        """The build pinned for ``host``, the platform-independent one, or ``None``."""
+        return self.platforms.get(host) or self.platforms.get(ANY_PLATFORM)
 
 
 class HostRequirement(_ManifestModel):
-    """``[[host_requires]]`` — a prerequisite the operator installs on the host (REQ-262)."""
+    """``[[host_requires]]`` — a prerequisite the operator installs on the host (REQ-262).
+
+    ``authorize_command`` is first-class rather than a line an operator has to find
+    inside ``instruction``: a bundle that declares no ``[[secrets]]`` holds its
+    credential in the binary's own keyring, so this string is the entire answer to
+    "how do I connect this?" and a surface has to be able to show it on its own.
+    Empty means the binary is a runtime with no account of its own — Node, Python —
+    and there is nothing to authorise.
+
+    ``token_command`` is the same login run to completion WITHOUT a human: it reads
+    the token on stdin and exits. Most CLI logins are not that — ``gog auth add``
+    opens a browser, ``ms-365-mcp-server --login`` prints a device code — and a
+    surface that offered a button for those would either hang on a prompt or claim
+    a sign-in that never happened. Empty is the honest "only a person at this host
+    can finish it", and it is the default, because silence must never read as
+    "try it and see".
+    """
 
     name: str
     minimum_version: str | None = None
     instruction: str = ""
+    authorize_command: str = ""
+    token_command: str = ""
 
 
 class SecretRequirement(_ManifestModel):
@@ -226,6 +279,7 @@ __all__ = [
     "ExtensionHeader",
     "ExtensionManifest",
     "HostRequirement",
+    "PlatformArtifact",
     "SecretRequirement",
     "ToolPolicy",
     "load_manifest",

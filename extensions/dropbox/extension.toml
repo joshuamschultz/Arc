@@ -27,23 +27,49 @@ description = "Browse the files in a Dropbox account and check its storage use."
 attachment = "cli"
 tier_floor = "personal"
 
+# One digest per platform, each line taken from the release's own SHA256SUMS.
+# This bundle is why they are keyed: it used to pin only darwin/arm64 while the
+# deployment ran linux/arm64, so the pin covered a build the fleet never ran and
+# the install had to be done by hand.
 [artifact]
 package = "dropbox/dbxcli"
 version = "3.7.1"
-sha256 = "243a2dbf418bc166a116ec7850529c8762fd3af1ae64e3a0274eba863a75a62a"
 
+[artifact.platforms."linux/arm64"]
+url = "https://github.com/dropbox/dbxcli/releases/download/v3.7.1/dbxcli_3.7.1_linux_arm64.tar.gz"
+sha256 = "a601ace683ea1b6c091da440ca6cd160b1899f32fc9e14fba3e9f656d40b8c90"
+member = "dbxcli_3.7.1_linux_arm64/dbxcli"
+
+[artifact.platforms."linux/amd64"]
+url = "https://github.com/dropbox/dbxcli/releases/download/v3.7.1/dbxcli_3.7.1_linux_amd64.tar.gz"
+sha256 = "9baf9ad3ae680a223d11db0df42461e39802c62b6eaefdb878a28906dc092bbc"
+member = "dbxcli_3.7.1_linux_amd64/dbxcli"
+
+[artifact.platforms."darwin/arm64"]
+url = "https://github.com/dropbox/dbxcli/releases/download/v3.7.1/dbxcli_3.7.1_darwin_arm64.tar.gz"
+sha256 = "243a2dbf418bc166a116ec7850529c8762fd3af1ae64e3a0274eba863a75a62a"
+member = "dbxcli_3.7.1_darwin_arm64/dbxcli"
+
+[artifact.platforms."darwin/amd64"]
+url = "https://github.com/dropbox/dbxcli/releases/download/v3.7.1/dbxcli_3.7.1_darwin_amd64.tar.gz"
+sha256 = "53525ca4810793c773cf0b3a0ca3139e1fccd4207e19f6059c9776a7c07e1110"
+member = "dbxcli_3.7.1_darwin_amd64/dbxcli"
+
+# No `token_command`: `dbxcli login` prints a Dropbox OAuth URL and waits at a
+# prompt for the code a person pastes back. Nothing can be piped in, so Arc
+# shows the command and does not pretend it can run it.
 [[host_requires]]
 name = "dbxcli"
 minimum_version = "3.7.1"
+authorize_command = "dbxcli login"
 instruction = """
 Install dbxcli on this host, then authorise it:
 
   1. Download the asset for this host's platform from
      https://github.com/dropbox/dbxcli/releases/tag/v3.7.1
-  2. Check it against that release's SHA256SUMS file. The digest in [artifact]
-     is for dbxcli_3.7.1_darwin_arm64.tar.gz; take the matching line for another
-     platform, because ArtifactPin holds one digest and one only.
-  3. tar xzf dbxcli_3.7.1_<platform>.tar.gz && install -m 0755 <dir>/dbxcli /usr/local/bin/dbxcli
+  2. Check it against that release's SHA256SUMS file. [artifact] pins the four
+     platforms Arc can install for you; take the matching line for any other.
+  3. tar xzf dbxcli_3.7.1_<platform>.tar.gz && install -m 0755 <dir>/dbxcli ~/.local/bin/dbxcli
   4. dbxcli login
   5. dbxcli account --output json    # confirm the account
 

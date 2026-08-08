@@ -631,12 +631,19 @@ class ConnectorSecretField(BaseModel):
 
 
 class ConnectorHostRequirement(BaseModel):
-    """A host prerequisite the operator installs. Arc directs; it never installs."""
+    """A host prerequisite, and whether THIS host already meets it.
+
+    ``satisfied`` is the difference between a catalog that describes a manifest and
+    one that describes a deployment. Without it a card shows the full install
+    instructions for a binary that has been on the machine for hours, which reads as
+    "this is broken" to the operator it is aimed at.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     name: str
     instruction: str
+    satisfied: bool = False
 
 
 class ConnectorTool(BaseModel):
@@ -735,6 +742,71 @@ class ConnectorAuthResponse(BaseModel):
 
     instance: str
     updated: list[str]
+
+
+class ConnectorHostAuthorization(BaseModel):
+    """One host binary that holds its own credential, and the command that grants it.
+
+    ``token_command`` non-empty means Arc can complete this sign-in itself, given
+    a token; empty means only a person at the host can finish it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    binary: str
+    command: str
+    instruction: str
+    token_command: str
+
+
+class ConnectorAuthStatusResponse(BaseModel):
+    """Body of the ``auth-status`` and ``authorize`` verbs — the sign-in, honestly.
+
+    ``command`` is present ONLY when Arc cannot finish the sign-in itself: the
+    panel renders it under "someone with terminal access can type this", so
+    returning one for a login the button would have completed sends the operator
+    away from the thing that works. It has no field able to hold a credential.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    authorized: bool
+    detail: str
+    command: str
+
+
+class ConnectorHostSetupResponse(BaseModel):
+    """Body of ``POST /api/agents/{id}/connectors/{extension}/host-setup``.
+
+    A refusal is a 200 with ``installed: false``: the reason and the steps a
+    person runs instead are both operator-facing text, and an operator left with
+    an error and no next step is the wall this button exists to remove.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    installed: bool
+    detail: str
+    manual_steps: str
+
+
+class ConnectorAuthorizationResponse(BaseModel):
+    """Body of ``GET /api/agents/{id}/connectors/{instance}/auth`` — how to connect this.
+
+    ``credentials`` non-empty means render the form; ``hosts`` non-empty means
+    render the command the operator runs on the machine instead. A connector whose
+    binary owns its token has an empty ``credentials`` list, which is why a panel
+    that only read that list drew an empty form over a dead button.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    instance: str
+    extension: str
+    credentials: list[ConnectorSecretField]
+    hosts: list[ConnectorHostAuthorization]
+    reachable: bool
+    detail: str
 
 
 class ConnectorProbeResponse(BaseModel):

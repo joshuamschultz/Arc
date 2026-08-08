@@ -790,11 +790,13 @@ export interface ConnectorSecret {
   prompt: string
 }
 
-/** A binary (or similar) the bundle needs on this host. arcui shows the
- *  instruction; the operator runs it. */
+/** A binary (or similar) the bundle needs on this host. `satisfied` is this
+ *  host's answer, not the manifest's: absent when the server does not check,
+ *  in which case the surface knows only that the bundle declares it. */
 export interface HostRequirement {
   name: string
   instruction: string
+  satisfied?: boolean
 }
 
 export interface ConnectorTool {
@@ -880,6 +882,24 @@ export interface ConnectorRemoveResponse {
   removed_secrets: string[]
   removed_config: boolean
   removed_state: boolean
+}
+
+/** Result of asking the server to install a bundle's host prerequisites.
+ *  A refusal is a 200 with `installed: false` — the reason and the steps a
+ *  person would run instead are both operator-facing text. */
+export interface HostSetupResponse {
+  installed: boolean
+  detail: string
+  manual_steps?: string
+}
+
+/** Sign-in state of a connector that holds its own credentials (no declared
+ *  secrets — the host binary owns the token). `command` is present when the
+ *  login can only be completed by a person at a terminal. */
+export interface ConnectorAuthStatusResponse {
+  authorized: boolean
+  detail: string
+  command?: string
 }
 
 /** An install refused for a missing host prerequisite returns 400 with

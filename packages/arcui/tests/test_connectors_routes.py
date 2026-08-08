@@ -14,11 +14,19 @@ installed, and a write that lands before a refusal.
 
 from __future__ import annotations
 
+import hashlib
+import io
+import json
+import shlex
+import sys
+import tarfile
 import tomllib
 from pathlib import Path
 from typing import Any
 
 import pytest
+from arcagent.connections import HostPrerequisiteDirector
+from arcagent.extension.platforms import host_platform
 from arcgateway import team_roster
 from arctrust.identity import AgentIdentity
 from starlette.applications import Starlette
@@ -112,6 +120,189 @@ def build_native_attachment(context: dict[str, Any]) -> AcmeAttachment:
     return AcmeAttachment(context)
 '''
 
+#: The command the hosted fixture's binary is authorised with — the string a
+#: browser must be able to show an operator who has no credential to type.
+_AUTHORIZE_COMMAND = "acme auth login --scopes read"
+
+#: A bundle in the shape ``github``, ``dropbox``, ``google_workspace`` and
+#: ``readwise_reader`` really have: no ``[[secrets]]`` at all, because the binary
+#: holds its own token. Its own entrypoint module so the always-reachable
+#: implementation cannot be confused with the credential-checking one above.
+_MANIFEST_HOSTED = f"""
+[extension]
+name = "{_EXTENSION}"
+version = "1.0.0"
+attachment = "native"
+description = "Acme through a binary that keeps its own token."
+
+[config.native]
+entrypoint = "acme_hosted_attachment"
+
+[[host_requires]]
+name = "sh"
+authorize_command = "{_AUTHORIZE_COMMAND}"
+instruction = "Install the acme CLI, then authorise it."
+
+[tools]
+allow = ["ping"]
+
+[[tools.declared]]
+name = "ping"
+description = "Report the Acme client version."
+classification = "read_only"
+
+[approval]
+default = "outbound"
+"""
+
+_ADAPTER_HOSTED = '''
+"""A connector whose binary owns its authentication: Arc holds no credential."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from arcagent.extension.attachment import ProbeResult, ToolResult, ToolSpec
+
+
+class HostedAttachment:
+    """Always reachable — the host binary, not Arc, decides whether it is authorised."""
+
+    def __init__(self, context: dict[str, Any]) -> None:
+        self._context = context
+
+    def requirements(self) -> list[Any]:
+        return []
+
+    async def probe(self) -> ProbeResult:
+        return ProbeResult(
+            reachable=True, tools=await self.describe_tools(), detail="acme 2.1.0"
+        )
+
+    async def describe_tools(self) -> list[ToolSpec]:
+        return [
+            ToolSpec(
+                name="ping",
+                description="Report the Acme client version.",
+                input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                classification="read_only",
+            )
+        ]
+
+    async def invoke(self, tool: str, args: dict[str, Any]) -> ToolResult:
+        return ToolResult(tool=tool, content="acme 2.1.0")
+
+
+def build_native_attachment(context: dict[str, Any]) -> HostedAttachment:
+    return HostedAttachment(context)
+'''
+
+#: A connector whose reachability tracks a real sign-in rather than always
+#: answering yes. ``authorize`` is only meaningful if the probe behind it can
+#: change, so this attachment is reachable exactly when its host binary has left
+#: a marker beside the bundle — which is what the login command below writes.
+#: Without it, "authorize reported success" would be true of doing nothing.
+_ADAPTER_SIGNIN = '''
+"""A connector that is reachable only once its host binary has signed in."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+from arcagent.extension.attachment import ProbeResult, ToolResult, ToolSpec
+
+SIGNED_IN_MARKER = ".acme-signed-in"
+
+
+class SignInAttachment:
+    def __init__(self, context: dict[str, Any]) -> None:
+        self._marker = Path(str(context.get("bundle"))) / SIGNED_IN_MARKER
+
+    def requirements(self) -> list[Any]:
+        return []
+
+    async def probe(self) -> ProbeResult:
+        if not self._marker.exists():
+            return ProbeResult(reachable=False, detail="acme is not signed in")
+        return ProbeResult(
+            reachable=True, tools=await self.describe_tools(), detail="acme is signed in"
+        )
+
+    async def describe_tools(self) -> list[ToolSpec]:
+        return [
+            ToolSpec(
+                name="ping",
+                description="Report the Acme client version.",
+                input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                classification="read_only",
+            )
+        ]
+
+    async def invoke(self, tool: str, args: dict[str, Any]) -> ToolResult:
+        return ToolResult(tool=tool, content="acme 2.1.0")
+
+
+def build_native_attachment(context: dict[str, Any]) -> SignInAttachment:
+    return SignInAttachment(context)
+'''
+
+#: The marker filename the sign-in adapter watches, kept in one place so the
+#: manifest's login command and the adapter cannot drift apart.
+_SIGNED_IN_MARKER = ".acme-signed-in"
+
+
+def _signin_manifest(*, host: str, authorize: str, token_login: str = "") -> str:
+    """A no-secrets bundle whose reachability follows a real sign-in.
+
+    ``token_login`` empty is the interactive-only shape — ``dbxcli login``,
+    ``gog auth add`` — where the honest answer is the command and nothing else.
+    """
+    token_clause = f"token_command = {json.dumps(token_login)}\n" if token_login else ""
+    return f"""
+[extension]
+name = "{_EXTENSION}"
+version = "1.0.0"
+attachment = "native"
+description = "Acme through a binary that keeps its own token."
+
+[config.native]
+entrypoint = "acme_signin_attachment"
+
+[[host_requires]]
+name = {json.dumps(host)}
+authorize_command = {json.dumps(authorize)}
+{token_clause}instruction = "Install the acme CLI on this host, then authorise it."
+
+[tools]
+allow = ["ping"]
+
+[[tools.declared]]
+name = "ping"
+description = "Report the Acme client version."
+classification = "read_only"
+
+[approval]
+default = "outbound"
+"""
+
+
+def _token_login_command(bundle: Path) -> str:
+    """A real non-interactive login: reads the token on stdin, then signs in.
+
+    This interpreter stands in for ``gh auth login --with-token``. It is a real
+    subprocess reading real stdin, so a route that put the token on argv, or
+    never delivered it at all, fails here rather than passing against a stub.
+    """
+    script = (
+        "import sys, pathlib;"
+        " token = sys.stdin.read().strip();"
+        f" pathlib.Path({str(bundle / _SIGNED_IN_MARKER)!r}).write_text('ok') if token else None;"
+        " sys.exit(0 if token else 1)"
+    )
+    return f"{sys.executable} -c {shlex.quote(script)}"
+
+
 _MANIFEST_NEEDS_HOST = (
     _MANIFEST
     + """
@@ -162,11 +353,14 @@ def _agent(tmp_path: Path) -> tuple[TestClient, str, Path]:
     return TestClient(app), "acme", agent_dir
 
 
-def _write_bundle(root: Path, name: str = _EXTENSION, manifest: str = _MANIFEST) -> None:
+def _write_bundle(root: Path, name: str = _EXTENSION, manifest: str = _MANIFEST) -> Path:
     bundle = root / name
     bundle.mkdir(parents=True, exist_ok=True)
     (bundle / "extension.toml").write_text(manifest, encoding="utf-8")
     (bundle / "acme_attachment.py").write_text(_ADAPTER, encoding="utf-8")
+    (bundle / "acme_hosted_attachment.py").write_text(_ADAPTER_HOSTED, encoding="utf-8")
+    (bundle / "acme_signin_attachment.py").write_text(_ADAPTER_SIGNIN, encoding="utf-8")
+    return bundle
 
 
 def _headers(token: str = "operator") -> dict[str, str]:
@@ -304,6 +498,7 @@ def test_an_unsatisfied_host_prerequisite_is_400_and_writes_nothing(world: Path)
         {
             "name": "definitely_not_installed_xyz",
             "instruction": "brew install definitely-not-installed-xyz",
+            "satisfied": False,
         }
     ]
     assert _instance_blocks(agent_dir) == {}
@@ -358,6 +553,49 @@ def test_auth_rotates_and_names_only_the_fields(world: Path) -> None:
     env = (agent_dir / "connectors.env").read_text(encoding="utf-8")
     assert rotated in env
     assert _SENTINEL not in env
+
+
+def test_the_auth_view_names_the_credential_fields_and_never_a_value(world: Path) -> None:
+    """The panel has to know which form to draw before it draws one."""
+    client, agent_id, agent_dir = _agent(world)
+    _write_bundle(agent_dir / "extensions")
+    assert _install(client, agent_id).status_code == 200
+
+    resp = client.get(
+        f"/api/agents/{agent_id}/connectors/{_INSTANCE}/auth", headers=_headers("viewer")
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert [field["name"] for field in body["credentials"]] == ["api_token"]
+    assert body["hosts"] == []
+    assert body["reachable"] is True
+    assert _SENTINEL not in resp.text
+
+
+def test_the_auth_view_of_a_credential_less_connector_names_the_host_command(
+    world: Path,
+) -> None:
+    """The defect a non-technical operator hit: a Replace-credentials button over
+    an empty form.
+
+    Half the shipped bundles declare no ``[[secrets]]`` because their binary keeps
+    its own token, so a panel reading only the credential list has nothing to
+    render and nothing to say. The command that authorises the binary is what the
+    operator actually needs, and it has to reach the browser.
+    """
+    client, agent_id, agent_dir = _agent(world)
+    _write_bundle(agent_dir / "extensions", manifest=_MANIFEST_HOSTED)
+    assert _install(client, agent_id, secrets={}).status_code == 200
+
+    resp = client.get(
+        f"/api/agents/{agent_id}/connectors/{_INSTANCE}/auth", headers=_headers("viewer")
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["credentials"] == []
+    assert [host["command"] for host in body["hosts"]] == [_AUTHORIZE_COMMAND]
 
 
 def test_probe_reports_a_live_connection(world: Path) -> None:
@@ -470,3 +708,452 @@ def test_an_oversized_install_body_is_413(world: Path) -> None:
         headers={**_headers(), "Content-Type": "application/json"},
     )
     assert resp.status_code == 413
+
+
+# ---------------------------------------------------------------------------
+# Sign-in: the button must be honest in BOTH directions
+# ---------------------------------------------------------------------------
+
+
+def _auth_status(client: TestClient, agent_id: str, *, token: str = "viewer") -> Any:
+    return client.get(
+        f"/api/agents/{agent_id}/connectors/{_INSTANCE}/auth-status", headers=_headers(token)
+    )
+
+
+def _authorize(client: TestClient, agent_id: str, body: dict[str, Any], *, token: str = "operator") -> Any:
+    return client.post(
+        f"/api/agents/{agent_id}/connectors/{_INSTANCE}/authorize",
+        json=body,
+        headers=_headers(token),
+    )
+
+
+def _connect_signin(
+    world: Path, *, token_login: bool
+) -> tuple[TestClient, str, Path, Path]:
+    """An installed connector whose binary holds its own credential.
+
+    ``token_login`` picks which of the two real shapes it is: a binary that
+    completes its login from stdin, or one whose login only a person can finish.
+    """
+    client, agent_id, agent_dir = _agent(world)
+    bundle = _write_bundle(agent_dir / "extensions", manifest=_MANIFEST)
+    manifest = _signin_manifest(
+        host=sys.executable,
+        authorize=f"{sys.executable} -m acme_login",
+        token_login=_token_login_command(bundle) if token_login else "",
+    )
+    (bundle / "extension.toml").write_text(manifest, encoding="utf-8")
+    (bundle / _SIGNED_IN_MARKER).write_text("ok", encoding="utf-8")
+    resp = _install(client, agent_id, secrets={})
+    assert resp.status_code == 200, resp.text
+    (bundle / _SIGNED_IN_MARKER).unlink()
+    return client, agent_id, agent_dir, bundle
+
+
+def test_auth_status_reports_the_real_state_of_an_interactive_only_connector(
+    world: Path,
+) -> None:
+    """Readable by a viewer, and it reports the PROBE — not a stored flag.
+
+    The connector is not signed in, so ``authorized`` is false and the answer
+    carries the exact command a person runs on this host. That command is the
+    honest dead end the panel renders.
+    """
+    client, agent_id, _dir, _bundle = _connect_signin(world, token_login=False)
+
+    resp = _auth_status(client, agent_id)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["authorized"] is False
+    assert body["detail"]
+    assert body["command"] == f"{sys.executable} -m acme_login"
+
+
+def test_auth_status_offers_no_terminal_command_when_arc_can_sign_in_itself(
+    world: Path,
+) -> None:
+    """The mirror-image lie: telling an operator to open a terminal for a login
+    Arc can finish sends them away from the button that works."""
+    client, agent_id, _dir, _bundle = _connect_signin(world, token_login=True)
+
+    body = _auth_status(client, agent_id).json()
+
+    assert body["authorized"] is False
+    assert body["command"] == ""
+
+
+def test_auth_status_reports_a_signed_in_connector_as_authorized(world: Path) -> None:
+    client, agent_id, _dir, bundle = _connect_signin(world, token_login=True)
+    (bundle / _SIGNED_IN_MARKER).write_text("ok", encoding="utf-8")
+
+    body = _auth_status(client, agent_id).json()
+
+    assert body["authorized"] is True
+
+
+def test_authorize_with_a_token_runs_the_login_and_reports_the_real_result(
+    world: Path,
+) -> None:
+    """The token reaches the binary's stdin and the connection becomes reachable.
+
+    Asserted through the marker the login itself writes, so a route that stored
+    the token, or answered without running anything, fails here.
+    """
+    client, agent_id, _dir, bundle = _connect_signin(world, token_login=True)
+
+    resp = _authorize(client, agent_id, {"token": _SENTINEL})
+
+    assert resp.status_code == 200
+    assert (bundle / _SIGNED_IN_MARKER).exists()
+    assert resp.json()["authorized"] is True
+
+
+def test_authorize_never_returns_the_token(world: Path) -> None:
+    """The response body is rendered in a browser and cached by the query client.
+
+    The sign-in is asserted to have really happened, so this cannot pass by the
+    route having done nothing with the token at all.
+    """
+    client, agent_id, _dir, bundle = _connect_signin(world, token_login=True)
+
+    resp = _authorize(client, agent_id, {"token": _SENTINEL})
+
+    assert (bundle / _SIGNED_IN_MARKER).exists()
+    assert _SENTINEL not in resp.text
+
+
+def test_authorize_never_logs_the_token(
+    world: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    client, agent_id, _dir, bundle = _connect_signin(world, token_login=True)
+
+    with caplog.at_level("DEBUG"):
+        _authorize(client, agent_id, {"token": _SENTINEL})
+
+    assert (bundle / _SIGNED_IN_MARKER).exists()
+    assert _SENTINEL not in caplog.text
+
+
+def test_authorize_never_writes_the_token_into_the_agents_world(world: Path) -> None:
+    """A host binary owns its own credential; Arc storing a copy would be a
+    second place to leak it from and a second place to forget to remove it."""
+    client, agent_id, agent_dir, _bundle = _connect_signin(world, token_login=True)
+
+    _authorize(client, agent_id, {"token": _SENTINEL})
+
+    leaked = [
+        path
+        for path in agent_dir.rglob("*")
+        if path.is_file() and _SENTINEL in path.read_text(encoding="utf-8", errors="ignore")
+    ]
+    assert leaked == []
+
+
+def test_authorize_on_an_interactive_only_connector_claims_nothing_and_runs_nothing(
+    world: Path,
+) -> None:
+    """The whole constraint: a button that claims to have finished a browser
+    hand-off is worse than no button, because the operator stops looking."""
+    client, agent_id, _dir, bundle = _connect_signin(world, token_login=False)
+
+    resp = _authorize(client, agent_id, {"token": _SENTINEL})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["authorized"] is False
+    assert body["command"] == f"{sys.executable} -m acme_login"
+    assert not (bundle / _SIGNED_IN_MARKER).exists()
+
+
+def test_authorize_without_a_token_does_not_pretend_to_have_signed_in(world: Path) -> None:
+    client, agent_id, _dir, bundle = _connect_signin(world, token_login=True)
+
+    body = _authorize(client, agent_id, {}).json()
+
+    assert body["authorized"] is False
+    assert not (bundle / _SIGNED_IN_MARKER).exists()
+
+
+def test_auth_status_for_an_instance_that_is_not_connected_is_404(world: Path) -> None:
+    client, agent_id, agent_dir = _agent(world)
+    _write_bundle(agent_dir / "extensions")
+
+    assert _auth_status(client, agent_id).status_code == 404
+    assert _authorize(client, agent_id, {}).status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Host setup: verified before anything runs, or it does not happen
+# ---------------------------------------------------------------------------
+
+_HELPER = "acme_helper_xyz"
+
+_HELPER_BODY = b"#!/bin/sh\necho acme 1.0.0\n"
+
+
+def _helper_tarball(member: str = f"acme_1.0.0/{_HELPER}") -> bytes:
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        info = tarfile.TarInfo(member)
+        info.size = len(_HELPER_BODY)
+        info.mode = 0o755
+        archive.addfile(info, io.BytesIO(_HELPER_BODY))
+    return buffer.getvalue()
+
+
+def _host_setup_manifest(
+    *, platform: str, digest: str, member: str = f"acme_1.0.0/{_HELPER}"
+) -> str:
+    return f"""
+[extension]
+name = "{_EXTENSION}"
+version = "1.0.0"
+attachment = "native"
+description = "Acme through a helper this host does not have yet."
+
+[config.native]
+entrypoint = "acme_hosted_attachment"
+
+[artifact]
+package = "acme/acme"
+version = "1.0.0"
+
+[artifact.platforms."{platform}"]
+url = "https://example.invalid/acme_1.0.0.tar.gz"
+sha256 = "{digest}"
+member = "{member}"
+
+[[host_requires]]
+name = "{_HELPER}"
+authorize_command = "{_HELPER} login"
+instruction = "Download acme_1.0.0.tar.gz, check it against the release SHA256SUMS, and install it."
+
+[tools]
+allow = ["ping"]
+
+[[tools.declared]]
+name = "ping"
+description = "Report the Acme client version."
+classification = "read_only"
+
+[approval]
+default = "outbound"
+"""
+
+
+@pytest.fixture
+def host_setup(
+    world: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Any:
+    """A home directory and a PATH that exist only for this test.
+
+    ``HOME`` is redirected so the route's real default install directory —
+    ``~/.local/bin``, resolved by the shipped code and not by the test — lands
+    inside ``tmp_path``. Nothing in this suite may write to the developer's own.
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    install_dir = home / ".local" / "bin"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("PATH", f"{install_dir}:{tmp_path / 'empty-path'}")
+    return install_dir
+
+
+def _setup_host(client: TestClient, agent_id: str, *, token: str = "operator") -> Any:
+    return client.post(
+        f"/api/agents/{agent_id}/connectors/{_EXTENSION}/host-setup", headers=_headers(token)
+    )
+
+
+def _serving(payload: bytes, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Replace the shipped HTTPS transport, and nothing else about the install.
+
+    The pin resolution, the digest check, the unpack, and the placement all still
+    run for real — substituting the install itself would prove only that the
+    route can call a substitute.
+    """
+    from arcagent.extension import host_install
+
+    requested: list[str] = []
+
+    async def fetch(url: str) -> bytes:
+        requested.append(url)
+        return payload
+
+    monkeypatch.setattr(host_install, "https_get", fetch)
+    return requested
+
+
+def test_host_setup_installs_a_verified_binary_into_the_user_writable_directory(
+    world: Path, host_setup: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = _helper_tarball()
+    _serving(payload, monkeypatch)
+    client, agent_id, agent_dir = _agent(world)
+    _write_bundle(
+        agent_dir / "extensions",
+        manifest=_host_setup_manifest(
+            platform=host_platform(), digest=hashlib.sha256(payload).hexdigest()
+        ),
+    )
+
+    resp = _setup_host(client, agent_id)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["installed"] is True, body
+    assert (host_setup / _HELPER).read_bytes() == _HELPER_BODY
+
+
+def test_host_setup_refuses_a_digest_mismatch_and_installs_nothing(
+    world: Path, host_setup: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A digest mismatch is a hard refusal, never a warning — and the operator is
+    handed the manual steps rather than a dead end."""
+    _serving(_helper_tarball(), monkeypatch)
+    client, agent_id, agent_dir = _agent(world)
+    _write_bundle(
+        agent_dir / "extensions",
+        manifest=_host_setup_manifest(platform=host_platform(), digest="b" * 64),
+    )
+
+    body = _setup_host(client, agent_id).json()
+
+    assert body["installed"] is False
+    assert not host_setup.exists() or list(host_setup.iterdir()) == []
+    assert "SHA256SUMS" in body["manual_steps"]
+
+
+def test_host_setup_refuses_a_platform_with_no_pinned_digest_without_downloading(
+    world: Path, host_setup: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Installing unverified because THIS platform was not pinned is the exact
+    supply-chain hole a per-platform digest exists to close."""
+    requested = _serving(_helper_tarball(), monkeypatch)
+    client, agent_id, agent_dir = _agent(world)
+    _write_bundle(
+        agent_dir / "extensions",
+        manifest=_host_setup_manifest(platform="sunos/sparc", digest="c" * 64),
+    )
+
+    body = _setup_host(client, agent_id).json()
+
+    assert body["installed"] is False
+    assert requested == []
+    assert not host_setup.exists() or list(host_setup.iterdir()) == []
+    assert body["manual_steps"]
+
+
+def test_host_setup_never_writes_outside_the_install_directory(
+    world: Path, host_setup: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``member`` is a path a manifest chose, so it is placed by basename alone."""
+    payload = _helper_tarball(member=f"../../../../{_HELPER}")
+    _serving(payload, monkeypatch)
+    client, agent_id, agent_dir = _agent(world)
+    _write_bundle(
+        agent_dir / "extensions",
+        manifest=_host_setup_manifest(
+            platform=host_platform(),
+            digest=hashlib.sha256(payload).hexdigest(),
+            member=f"../../../../{_HELPER}",
+        ),
+    )
+
+    _setup_host(client, agent_id)
+
+    assert (host_setup / _HELPER).is_file()
+    assert not (tmp_path / _HELPER).exists()
+    assert not (host_setup.parent.parent / _HELPER).exists()
+
+
+def test_host_setup_reports_a_bundle_with_nothing_to_install_rather_than_failing(
+    world: Path, host_setup: Path
+) -> None:
+    """``jira`` and ``confluence`` need no host binary at all; the button must
+    say so rather than 500 or claim to have installed something."""
+    client, agent_id, agent_dir = _agent(world)
+    _write_bundle(agent_dir / "extensions")
+
+    body = _setup_host(client, agent_id).json()
+
+    assert body["installed"] is True
+    assert body["detail"]
+
+
+def test_host_setup_refuses_a_bundle_that_does_not_exist(world: Path) -> None:
+    client, agent_id, agent_dir = _agent(world)
+    _write_bundle(agent_dir / "extensions")
+
+    resp = client.post(
+        f"/api/agents/{agent_id}/connectors/nosuchbundle/host-setup", headers=_headers()
+    )
+
+    assert resp.status_code == 400
+
+
+def test_a_viewer_is_refused_the_sign_in_and_the_host_install(world: Path) -> None:
+    """Both mutations reach the host: one runs a program, the other puts one there."""
+    client, agent_id, agent_dir = _agent(world)
+    _write_bundle(agent_dir / "extensions")
+
+    assert _authorize(client, agent_id, {"token": _SENTINEL}, token="viewer").status_code == 403
+    assert _setup_host(client, agent_id, token="viewer").status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# The catalog answers about THIS host, not only about the manifest
+# ---------------------------------------------------------------------------
+
+
+def _catalog_with_director(
+    world: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    present: set[str],
+    manifest: str,
+) -> dict[str, Any]:
+    """Read the catalog with host presence decided by the test, not the machine."""
+    fleet = world / "fleet_extensions"
+    _write_bundle(fleet, manifest=manifest)
+    monkeypatch.setenv("ARC_EXTENSIONS_ROOT", str(fleet))
+    client, _agent_id, _dir = _agent(world)
+    client.app.state.host_director = HostPrerequisiteDirector(  # type: ignore[attr-defined]
+        path_lookup=lambda name: f"/usr/bin/{name}" if name in present else None
+    )
+    resp = client.get("/api/connectors/catalog", headers=_headers("viewer"))
+    assert resp.status_code == 200
+    entry: dict[str, Any] = next(
+        e for e in resp.json()["available"] if e["name"] == _EXTENSION
+    )
+    return entry
+
+
+def test_a_prerequisite_this_host_already_has_reports_satisfied(
+    world: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The regression: a card told an operator to install a binary already present.
+
+    The catalog used to echo the manifest's ``[[host_requires]]`` verbatim, so a
+    bundle needing ``dbxcli`` showed its full install instructions forever — on a
+    host where ``dbxcli`` had been installed for hours.
+    """
+    entry = _catalog_with_director(world, monkeypatch, {"sh"}, _MANIFEST_HOSTED)
+
+    required = entry["host_requires"]
+    assert [r["name"] for r in required] == ["sh"]
+    assert required[0]["satisfied"] is True
+    # Nothing left for the operator to do, so nothing is asked of them.
+    assert required[0]["instruction"] == ""
+
+
+def test_a_prerequisite_this_host_lacks_reports_unsatisfied_with_its_instruction(
+    world: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entry = _catalog_with_director(world, monkeypatch, set(), _MANIFEST_HOSTED)
+
+    required = entry["host_requires"]
+    assert required[0]["satisfied"] is False
+    assert "Install the acme CLI" in required[0]["instruction"]

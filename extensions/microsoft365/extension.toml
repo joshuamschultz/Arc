@@ -30,9 +30,17 @@ description = "Read and send Outlook mail, manage the calendar, and browse OneDr
 attachment = "mcp"
 tier_floor = "personal"
 
+# The published npm tarball, digest computed over the artifact itself. Keyed
+# `any` because an npm tarball is the same bytes everywhere, and carrying no
+# `member` because npm installs it rather than it being an archive holding one
+# executable — so `arc connector host-setup` says plainly that it cannot place
+# this on PATH and hands over the steps below.
 [artifact]
 package = "@softeria/ms-365-mcp-server"
 version = "0.136.0"
+
+[artifact.platforms.any]
+url = "https://registry.npmjs.org/@softeria/ms-365-mcp-server/-/ms-365-mcp-server-0.136.0.tgz"
 sha256 = "bf953dae54cef1c2ea616b964f5b72beb8910f22b6e84c60cd94c14b6935b232"
 
 [[host_requires]]
@@ -40,9 +48,13 @@ name = "node"
 minimum_version = "20.0.0"
 instruction = "Install Node.js 20 or newer on this host; the MCP server is a Node program."
 
+# No `token_command`: `--login` runs the Entra ID device-code flow, which prints
+# a code and waits for a person to enter it in a browser. There is no token to
+# pipe in, so the command is shown and never attempted.
 [[host_requires]]
 name = "ms-365-mcp-server"
 minimum_version = "0.136.0"
+authorize_command = "ms-365-mcp-server --login"
 instruction = """
 Install the server on this host, verify it, then authorise it:
 

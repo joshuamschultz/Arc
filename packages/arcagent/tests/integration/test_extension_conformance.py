@@ -79,6 +79,7 @@ from arcagent.extension.attachment import ExtensionAttachment
 from arcagent.extension.bridge import CapabilityBridge
 from arcagent.extension.loader import ExtensionLoader
 from arcagent.extension.secrets import LocalFileSecretBackend, SecretStore
+from arcagent.extension.state import ConnectionStateStore, open_connection_state
 from arcagent.modules.connectors.install import (
     InstanceConfig,
     connector_env_file,
@@ -218,6 +219,18 @@ def _credential_store(agent_home: Path) -> SecretStore:
     return SecretStore(LocalFileSecretBackend(connector_env_file(agent_home)))
 
 
+def _data_dir(agent_dir: Path) -> Path:
+    """This test's own operational plane — where connection records and approvals live."""
+    path = agent_dir / "data"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+async def _connection_state(agent_dir: Path) -> ConnectionStateStore:
+    """The connection directory an install registers into, and the agent reads back."""
+    return await open_connection_state(str(_data_dir(agent_dir)))
+
+
 def _write_agent_toml(agent_dir: Path, *, connectors_enabled: bool, extra: str = "") -> Path:
     """Write a real ``arcagent.toml``, because the install path writes into one too."""
     workspace = agent_dir / "workspace"
@@ -239,7 +252,18 @@ def _write_agent_toml(agent_dir: Path, *, connectors_enabled: bool, extra: str =
         'vault_path = ""',
     ]
     if connectors_enabled:
-        lines += ["", "[modules.connectors]", "enabled = true"]
+        # A per-test data dir, not the machine's. The connection records and the
+        # approved contract hashes an install writes have to be the ones this
+        # agent reads back, and a shared default store would let one test's
+        # approvals decide another test's verdicts.
+        lines += [
+            "",
+            "[modules.connectors]",
+            "enabled = true",
+            "",
+            "[modules.connectors.config]",
+            f'data_dir = "{_data_dir(agent_dir)}"',
+        ]
     if extra:
         lines += ["", extra]
     path = agent_dir / "arcagent.toml"
@@ -388,6 +412,7 @@ async def test_installing_the_reference_extension_reaches_its_own_implementation
         secret_values={"reference_token": "unused"},
         store=store,
         caller_did=_CALLER,
+        state=await _connection_state(agent_dir),
     )
 
     assert sorted(report.tools) == [_ECHO, _STORE]
@@ -435,6 +460,7 @@ async def test_a_started_agent_serves_the_tools_of_an_installed_connection(
         secret_values={"reference_token": "unused"},
         store=_credential_store(agent_home),
         caller_did=_CALLER,
+        state=await _connection_state(agent_home),
     )
     assert _INSTANCE in load_instances(agent_home), "the install did not persist the instance"
     # The manifest's default gates every outbound call on a signed operator grant, which
@@ -503,6 +529,7 @@ async def test_a_started_agent_serves_a_connection_with_its_credential_delivered
         secret_values={"reference_token": _TOKEN},
         store=_credential_store(agent_home),
         caller_did=_CALLER,
+        state=await _connection_state(agent_home),
     )
     write_instance(agent_home, _INSTANCE, InstanceConfig(extension=_BUNDLE, approval="none"))
 
@@ -581,6 +608,7 @@ async def test_an_unsigned_bundle_is_verified_before_any_of_its_code_runs(
             secret_values={"reference_token": "unused"},
             store=SecretStore(LocalFileSecretBackend(tmp_path / "arc.env")),
             caller_did=_CALLER,
+            state=await _connection_state(tmp_path),
             attachment_factory=_factory,
         )
 
