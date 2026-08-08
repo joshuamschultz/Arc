@@ -1,10 +1,16 @@
 """SPEC-062 COMP-009 — ``ArtifactPinVerifier``, the approved build and nothing else.
 
 An extension that runs third-party code declares exactly one build in its manifest:
-one version, one sha256 (:class:`~arcagent.extension.manifest.ArtifactPin`). This
-module is what makes that declaration mean something at run time.
+one version, and one sha256 per platform it publishes
+(:class:`~arcagent.extension.manifest.ArtifactPin`). This module is what makes that
+declaration mean something at run time.
 
-Two design points carry the requirement (REQ-290):
+Three design points carry the requirement (REQ-290):
+
+* **The digest is resolved for THIS host, or there is no digest.** A sha256 is
+  published beside one platform's asset and describes no other's bytes, so a
+  verifier holding a single digest is correct on one machine and comparing
+  unrelated bytes everywhere else. A host the pin does not name is refused.
 
 * **Before each execution, not at install.** Install-time verification proves what was
   approved, not what is about to run — and the gap between those two is the whole of
@@ -34,6 +40,7 @@ from arctrust.audit import AuditEvent, AuditSink, emit
 from arcagent.core.errors import ExtensionError
 from arcagent.core.tier import Tier
 from arcagent.extension.manifest import ArtifactPin
+from arcagent.extension.platforms import host_platform
 
 #: Read the artifact in bounded chunks — an extension bundle is operator-supplied and
 #: may be large; a whole-file read would put its size on the heap for no benefit.
@@ -88,6 +95,16 @@ class ArtifactPinVerifier:
                 refusal is emitted to the audit sink before it is raised.
         """
         pin = artifact.pin
+        host = host_platform()
+        covered = pin.for_host(host)
+        if covered is None:
+            self._refuse(
+                artifact,
+                caller_did=caller_did,
+                reason="unpinned_platform",
+                expected=f"a digest pinned for {host}",
+                actual=f"pinned only for {', '.join(sorted(pin.platforms)) or 'nothing'}",
+            )
         if not artifact.path.is_file():
             self._refuse(
                 artifact,
@@ -105,12 +122,12 @@ class ArtifactPinVerifier:
                 actual=artifact.installed_version,
             )
         digest = _sha256_of(artifact.path)
-        if digest != pin.sha256:
+        if digest != covered.sha256:
             self._refuse(
                 artifact,
                 caller_did=caller_did,
                 reason="hash_mismatch",
-                expected=pin.sha256,
+                expected=covered.sha256,
                 actual=digest,
             )
         self._record(

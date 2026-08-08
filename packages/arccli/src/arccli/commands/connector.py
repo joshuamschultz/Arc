@@ -1,11 +1,17 @@
 """``arc connector`` — connect an agent to an external system, and manage it.
 
-SPEC-062 COMP-016, SPEC-064 T-011. Nine verbs make up the COMPLETE management
-surface (REQ-293): ``available``, ``add``, ``auth``, ``list``, ``tools``,
-``probe``, ``doctor``, ``approve``, and ``remove``. The terminal is sufficient
-for all of them; the web panel is a convenience that is required for nothing
-(D-561). ``available`` is the one verb that needs no agent — an operator asking
-what can be connected has not chosen one yet.
+SPEC-062 COMP-016, SPEC-064 T-011. Eleven verbs make up the COMPLETE management
+surface (REQ-293): ``available``, ``add``, ``auth``, ``authorize``,
+``host-setup``, ``list``, ``tools``, ``probe``, ``doctor``, ``approve``, and
+``remove``. The terminal is sufficient for all of them; the web panel is a
+convenience that is required for nothing (D-561). ``available`` is the one verb
+that needs no agent — an operator asking what can be connected has not chosen one
+yet.
+
+``authorize`` and ``host-setup`` are the two verbs that touch the machine, and
+both stay honest about what they can do: a login only a person can finish is
+printed rather than attempted, and an install happens only against the digest the
+bundle pins for THIS platform.
 
 This module owns exactly two things the shared path cannot: **asking the
 operator**, and the argparse surface. Every declared credential is collected with
@@ -41,6 +47,7 @@ from typing import Any, NoReturn
 from arcagent.connections import (
     AttachmentFactory,
     AuditChain,
+    Authorization,
     CatalogEntry,
     Connections,
     ConnectorPlan,
@@ -132,18 +139,84 @@ def _add(args: argparse.Namespace) -> None:
 
 
 def _auth(args: argparse.Namespace) -> None:
-    """Re-supply this instance's credentials — a rotation, or a first-time fix."""
+    """Authorise this instance — by prompt when Arc holds the credential, by directing
+    the operator to the host command when the connector's own binary holds it."""
     connections = _connections(args)
     try:
         plan = connections.plan_for(args.instance)
         if not plan.secrets:
-            _out(f"{plan.extension} declares no credentials; nothing to supply.")
+            _direct_host_authorization(asyncio.run(connections.authorization(args.instance)))
             return
         updated = asyncio.run(connections.reauth(plan, _prompt_secrets(plan)))
     except ExtensionError as exc:
         _fail(exc.message)
     env_file = connections.world.env_file
     _out(f"Updated {len(updated)} credential(s) for '{args.instance}' in {env_file}.")
+
+
+def _direct_host_authorization(auth: Authorization) -> None:
+    """Print the exact command that authorises a connector whose binary owns its token.
+
+    "declares no credentials; nothing to supply" was true and useless: ``gh`` does
+    need authorising, just not by Arc, and an operator who reads that has nowhere
+    to go. Every line here is something to type or something already done.
+    """
+    _out(f"{auth.extension} keeps its own credential; Arc never holds one for it.")
+    if not auth.hosts:
+        _out("  Its manifest names no authorising command — see the bundle's host_requires.")
+    for host in auth.hosts:
+        _out(f"  Run on this host: {host.command}")
+    if auth.token_binary:
+        _out(f"  Or let Arc do it: arc connector authorize {auth.instance}")
+    _out(f"  {'answering' if auth.reachable else 'NOT answering'}: {auth.detail}")
+
+
+def _authorize(args: argparse.Namespace) -> None:
+    """Sign in a connector whose binary holds its own token — honestly, either way.
+
+    A binary that reads a token on stdin is prompted for and run. One whose login
+    opens a browser or prints a device code is NOT attempted: the command is
+    printed instead, because a terminal that reports a sign-in nobody completed is
+    the same lie a fake button tells.
+
+    There is no ``--token`` flag, for the reason this module's docstring gives:
+    a credential on argv lands in shell history and in the process table.
+    """
+    connections = _connections(args)
+    try:
+        auth = asyncio.run(connections.authorization(args.instance))
+        if auth.token_binary:
+            token = getpass.getpass(f"Token for {auth.token_binary} (hidden): ")
+            auth = asyncio.run(connections.authorize(args.instance, token=token))
+    except ExtensionError as exc:
+        _fail(exc.message)
+
+    _direct_host_authorization(auth)
+    if not auth.reachable:
+        sys.exit(1)
+
+
+def _host_setup(args: argparse.Namespace) -> None:
+    """Install the host binaries a bundle pins, verified against its published digest.
+
+    Arc still never runs the manifest's ``instruction`` (REQ-262): the manifest
+    names bytes and a digest, the bytes are checked before anything is unpacked,
+    and they land in the operator's own ``~/.local/bin``. Anything Arc cannot
+    install prints the bundle's own steps and exits non-zero.
+    """
+    connections = _connections(args)
+    try:
+        report = asyncio.run(connections.setup_host(args.extension))
+    except ExtensionError as exc:
+        _fail(exc.message)
+
+    _out(report.detail)
+    if report.installed:
+        return
+    if report.manual_steps:
+        _out("")
+        _out(report.manual_steps)
+    sys.exit(1)
 
 
 def _available(args: argparse.Namespace) -> None:
@@ -354,8 +427,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="arc connector",
         description=(
-            "Connect an agent to an external system — available, add, auth, list, "
-            "tools, probe, doctor, approve, remove."
+            "Connect an agent to an external system — available, add, auth, "
+            "authorize, host-setup, list, tools, probe, doctor, approve, remove."
         ),
         add_help=True,
     )
@@ -377,8 +450,22 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--instance", required=True, help="Name for this connected account.")
     _add_common(p)
 
-    p = subs.add_parser("auth", help="Re-supply an instance's credentials (hidden prompt).")
+    p = subs.add_parser(
+        "auth", help="Authorise an instance: hidden prompt, or the host command to run."
+    )
     p.add_argument("instance", help="Connected account name.")
+    _add_common(p)
+
+    p = subs.add_parser(
+        "authorize", help="Sign in a connector whose own binary holds the credential."
+    )
+    p.add_argument("instance", help="Connected account name.")
+    _add_common(p)
+
+    p = subs.add_parser(
+        "host-setup", help="Install the host binaries a bundle pins, digest-verified."
+    )
+    p.add_argument("extension", help="Extension bundle name.")
     _add_common(p)
 
     p = subs.add_parser("list", help="List this agent's connected accounts.")
@@ -411,6 +498,8 @@ _SUBCOMMAND_MAP = {
     "available": _available,
     "add": _add,
     "auth": _auth,
+    "authorize": _authorize,
+    "host-setup": _host_setup,
     "list": _list,
     "tools": _tools,
     "probe": _probe,

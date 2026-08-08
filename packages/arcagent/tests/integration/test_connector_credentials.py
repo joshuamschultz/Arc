@@ -50,6 +50,7 @@ from arcagent.extension.secrets import (
     SecretRef,
     SecretStore,
 )
+from arcagent.extension.state import ConnectionStateStore, open_connection_state
 from arcagent.modules.connectors.install import (
     ConnectorPlan,
     build_attachment,
@@ -141,6 +142,11 @@ def _plan(root: Path) -> ConnectorPlan:
     )
 
 
+async def _state(tmp_path: Path) -> ConnectionStateStore:
+    """The connection directory an install registers into — this test's own, never the machine's."""
+    return await open_connection_state(str(tmp_path / "data"))
+
+
 async def _stored(agent_dir: Path, value: str = _TOKEN) -> SecretStore:
     """A store already holding the credential an operator supplied."""
     store = _store(agent_dir)
@@ -221,6 +227,7 @@ async def test_the_install_path_hands_the_stored_credential_to_the_attachment_it
         secret_values={_FIELD: _TOKEN},
         store=_store(agent_dir),
         caller_did=_CALLER,
+        state=await _state(tmp_path),
         attachment_factory=_recording,
     )
 
@@ -249,6 +256,7 @@ async def test_the_facade_probes_a_connection_that_holds_its_credential(
         secret_values={_FIELD: _TOKEN},
         store=_store(agent_dir),
         caller_did=_CALLER,
+        state=await _state(tmp_path),
     )
 
     result = await _connections(tmp_path, agent_dir, root, sink).probe(_INSTANCE)
@@ -282,6 +290,7 @@ async def test_a_revealed_credential_never_reaches_a_rendered_string(
         secret_values={_FIELD: _TOKEN},
         store=_store(agent_dir, sink),
         caller_did=_CALLER,
+        state=await _state(tmp_path),
         audit_sink=sink,
     )
     connections = _connections(tmp_path, agent_dir, root, sink)

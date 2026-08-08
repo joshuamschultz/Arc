@@ -51,6 +51,7 @@ from arcagent.extension.attachment import (
 from arcagent.extension.bridge import CapabilityBridge
 from arcagent.extension.loader import ExtensionLoader
 from arcagent.extension.secrets import LocalFileSecretBackend, SecretStore
+from arcagent.extension.state import open_connection_state
 from arcagent.modules.connectors.install import install_connector, plan_connector
 from arcagent.tools._decorator import ToolMetadata
 
@@ -291,6 +292,7 @@ async def _install(
         secret_values={},
         store=SecretStore(LocalFileSecretBackend(tmp_path / "arc.env")),
         caller_did="did:arc:example:org:agent:abc",
+        state=await open_connection_state(str(tmp_path / "data")),
         attachment_factory=lambda _m, _b, _s: FakeAttachment(tool, tags),
         trusted_public_key=operator.public_key,
     )

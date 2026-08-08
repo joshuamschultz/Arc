@@ -42,8 +42,13 @@ from enum import StrEnum
 from arctrust.audit import AuditEvent, AuditSink, emit
 from arctrust.canonical import canonical_json
 
+from arcagent.core.errors import ExtensionError
 from arcagent.extension.attachment import ToolSpec
 from arcagent.extension.state import ConnectionStateStore
+
+#: Refusal code for an approval that reached the store and changed nothing. A
+#: surface renders it as "that connection is not registered", never as success.
+APPROVAL_NOT_STORED = "CONNECTION_APPROVAL_NOT_STORED"
 
 #: A suspension is the ledger's own act, not an agent's or an operator's — no
 #: one requested it, a mismatch caused it. Naming the component follows the
@@ -119,12 +124,34 @@ class ToolContractLedger:
         The only path that writes a hash, and therefore the only path that can
         clear a suspension — re-approving a changed tool is a deliberate act by
         a named operator, never a side effect of looking at the tool list.
+
+        Raises:
+            ExtensionError: The hash was not stored, which the store reports by
+                returning False from a merge against a connection it does not
+                hold. Raising is the whole point: an ``approved`` event for a
+                write that did nothing is an audit trail recording approvals
+                that never happened, and it is worse than no audit trail — it is
+                what let ``Approved 5 tool contract(s)`` print over an empty
+                store while every one of those tools stayed uncallable.
         """
         for spec in specs:
             served = contract_hash(spec)
-            await self._store.approve_tool_contract(
+            stored = await self._store.approve_tool_contract(
                 self._agent, self._instance, spec.name, served, actor_did=actor_did
             )
+            if not stored:
+                raise ExtensionError(
+                    code=APPROVAL_NOT_STORED,
+                    message=(
+                        f"{self._agent}/{self._instance} is not a registered connection, "
+                        f"so the contract for {spec.name!r} could not be approved"
+                    ),
+                    details={
+                        "agent": self._agent,
+                        "instance": self._instance,
+                        "tool": spec.name,
+                    },
+                )
             self._emit(
                 actor_did=actor_did,
                 action=f"{_ACTION_PREFIX}.approve",
@@ -207,4 +234,10 @@ class ToolContractLedger:
         )
 
 
-__all__ = ["LEDGER_DID", "ContractVerdict", "ToolContractLedger", "contract_hash"]
+__all__ = [
+    "APPROVAL_NOT_STORED",
+    "LEDGER_DID",
+    "ContractVerdict",
+    "ToolContractLedger",
+    "contract_hash",
+]

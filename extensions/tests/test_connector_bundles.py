@@ -37,7 +37,9 @@ from arcagent.core.session_internal.capability_ledger import TAG_TO_LEGS
 from arcagent.core.tier import Tier
 from arcagent.extension.cli_attachment import CliCommand
 from arcagent.extension.manifest import ExtensionManifest, load_manifest
+from arcagent.extension.platforms import ANY_PLATFORM
 from arcagent.extension.secrets import LocalFileSecretBackend, SecretStore
+from arcagent.extension.state import open_connection_state
 from arcagent.modules.connectors.install import (
     ConnectorPlan,
     build_attachment,
@@ -50,6 +52,12 @@ EXTENSIONS_ROOT = Path(__file__).resolve().parents[1]
 
 #: Recorded as the actor on the install path's credential operations.
 _CALLER = "did:arc:testorg:executor/bundles"
+
+#: The platforms Arc is deployed on: the DGX fleet, an x86 server, and the
+#: laptops it is developed on. A bundle Arc can install must hold the published
+#: digest for each, or ``host-setup`` refuses on that host — correctly, and
+#: uselessly.
+_DEPLOYED_PLATFORMS = ("linux/arm64", "linux/amd64", "darwin/arm64", "darwin/amd64")
 
 
 def _bundles() -> list[Path]:
@@ -167,7 +175,59 @@ def test_a_third_party_artifact_is_pinned_to_one_build(manifest: ExtensionManife
             f"{manifest.extension.name} directs a host install but pins no artifact"
         )
         return
-    assert manifest.artifact.version and manifest.artifact.sha256
+    assert manifest.artifact.version and manifest.artifact.platforms
+
+
+def test_a_downloadable_binary_is_pinned_on_every_platform_arc_deploys_to(
+    manifest: ExtensionManifest,
+) -> None:
+    """SPEC-064 — one digest for a whole release is a pin that covers one machine.
+
+    A sha256 is published beside ONE asset. The dropbox bundle pinned
+    ``darwin_arm64`` while the deployment ran ``linux/arm64``, so the install had
+    to be done by hand: a button could only have skipped verification or refused
+    every host but the pinned one. A bundle whose artifact is a placeable binary
+    (it names a ``member``) must therefore carry the digest for each platform Arc
+    runs on, taken from that release's published checksums file.
+
+    A platform-independent package — an npm tarball, a PyPI sdist — is exempt: it
+    is keyed ``any`` and is not something Arc can place on PATH at all.
+    """
+    pin = manifest.artifact
+    if pin is None or ANY_PLATFORM in pin.platforms:
+        return
+    missing = [platform for platform in _DEPLOYED_PLATFORMS if platform not in pin.platforms]
+    assert not missing, f"{pin.package} has no pinned digest for {missing}"
+
+
+def test_every_pinned_platform_names_a_binary_to_place_or_none_of_them_do(
+    manifest: ExtensionManifest,
+) -> None:
+    """Half a bundle installable is a button that works on one operator's laptop."""
+    pin = manifest.artifact
+    if pin is None:
+        return
+    members = {bool(build.member) for build in pin.platforms.values()}
+    assert len(members) == 1, f"{pin.package} places a binary on some platforms and not others"
+
+
+def test_a_login_arc_can_finish_declares_it_and_no_other_one_does(
+    manifest: ExtensionManifest,
+) -> None:
+    """SPEC-064 — the manifest, not a guess, decides whether a button is offered.
+
+    ``token_command`` may only be set on the prerequisite that also carries
+    ``authorize_command``: a runtime like Node has no account of its own, and a
+    login command attached to it would offer a button that signs nothing in.
+    """
+    for required in manifest.host_requires:
+        if required.token_command:
+            assert required.authorize_command, (
+                f"{required.name} declares a non-interactive login but no login at all"
+            )
+            assert required.token_command.split()[0] == required.name, (
+                f"{required.name}'s token_command must invoke {required.name} and nothing else"
+            )
 
 
 def test_a_host_prerequisite_is_directed_with_an_instruction(
@@ -176,6 +236,27 @@ def test_a_host_prerequisite_is_directed_with_an_instruction(
     """Arc shows the instruction and never runs it (REQ-262), so it must be real."""
     for requirement in manifest.host_requires:
         assert len(requirement.instruction) > 40, requirement.name
+
+
+def test_a_bundle_arc_holds_no_credential_for_names_the_command_that_authorises_it(
+    manifest: ExtensionManifest,
+) -> None:
+    """A connector with no ``[[secrets]]`` must still be connectable by a human.
+
+    Its token lives in the binary's own keyring, so Arc has nothing to prompt for
+    and both surfaces used to answer "declares no credentials; nothing to supply"
+    — true, and no help at all to the operator who then had a ``Connected``
+    connection serving nothing. ``authorize_command`` is that operator's next
+    step, so exactly one host prerequisite has to carry it: the account-holding
+    binary, never the runtime it happens to need.
+    """
+    if manifest.secrets or not manifest.host_requires:
+        return
+    commands = [required.authorize_command for required in manifest.host_requires]
+    assert [command for command in commands if command], (
+        f"{manifest.extension.name} declares no [[secrets]] and no authorize_command, "
+        f"so nothing can tell an operator how to authorise it"
+    )
 
 
 # --- the attachment -----------------------------------------------------------
@@ -382,6 +463,7 @@ async def test_an_egress_bundle_is_refused_at_federal_before_anything_is_written
             secret_values={secret.name: "unused" for secret in manifest.secrets},
             store=store,
             caller_did=_CALLER,
+            state=await open_connection_state(str(tmp_path / "data")),
         )
 
     error = raised.value
@@ -411,6 +493,7 @@ async def test_the_same_bundle_passes_the_gate_at_personal(path: Path, tmp_path:
             secret_values={secret.name: "unused" for secret in manifest.secrets},
             store=store,
             caller_did=_CALLER,
+            state=await open_connection_state(str(tmp_path / "data")),
         )
 
     assert raised.value.details["step"] != "manifest"
@@ -436,6 +519,7 @@ async def test_a_read_only_bundle_clears_the_federal_egress_gate(
             secret_values={secret.name: "unused" for secret in manifest.secrets},
             store=store,
             caller_did=_CALLER,
+            state=await open_connection_state(str(tmp_path / "data")),
         )
 
     assert raised.value.details["step"] != "manifest"

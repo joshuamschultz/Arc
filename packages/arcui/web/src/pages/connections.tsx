@@ -1,8 +1,19 @@
 import { useState } from 'react'
-import { Cable, Plug, Stethoscope, RefreshCw, ShieldCheck, Trash2, TriangleAlert } from 'lucide-react'
+import {
+  Cable,
+  LogIn,
+  Plug,
+  Stethoscope,
+  RefreshCw,
+  ShieldCheck,
+  Trash2,
+  TriangleAlert,
+} from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
 import { OperatorModeToggle } from '@/components/operator-mode-toggle'
+import { ConnectorAuthorizePanel } from '@/components/connector-authorize-panel'
 import { ConnectorSecretsSheet } from '@/components/connector-secrets-sheet'
+import { HostRequirementLine } from '@/components/host-setup-panel'
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -105,9 +116,13 @@ function ConnectionRow({
   const approve = useApproveConnector(agentId, inst.instance)
   const remove = useRemoveConnector(agentId)
   const [showDoctor, setShowDoctor] = useState(false)
+  const [showAuth, setShowAuth] = useState(false)
   const [confirmRemove, setConfirmRemove] = useState(false)
 
   const busy = probe.isPending || approve.isPending || remove.isPending
+  // No declared secrets means the host binary holds the credential: there is
+  // nothing to type, so this row signs in rather than opening a blank form.
+  const holdsOwnLogin = bundle !== undefined && bundle.secrets.length === 0
 
   return (
     <>
@@ -165,19 +180,30 @@ function ConnectionRow({
                 >
                   <ShieldCheck /> Approve
                 </Button>
-                <Button
-                  variant="outline"
-                  size="xs"
-                  disabled={busy || !bundle}
-                  onClick={() => bundle && onReauth(bundle, inst.instance)}
-                  title={
-                    bundle
-                      ? 'Replace this connection’s credentials'
-                      : `${inst.extension} is no longer on the extension search path`
-                  }
-                >
-                  Re-auth
-                </Button>
+                {holdsOwnLogin ? (
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    onClick={() => setShowAuth(!showAuth)}
+                    title={`Check or renew the ${inst.extension} sign-in on this computer`}
+                  >
+                    <LogIn /> {showAuth ? 'Hide sign-in' : 'Sign in'}
+                  </Button>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    disabled={busy || !bundle}
+                    onClick={() => bundle && onReauth(bundle, inst.instance)}
+                    title={
+                      bundle
+                        ? 'Replace this connection’s credentials'
+                        : `${inst.extension} is no longer on the extension search path`
+                    }
+                  >
+                    Re-auth
+                  </Button>
+                )}
                 {confirmRemove ? (
                   <>
                     <Button
@@ -219,6 +245,18 @@ function ConnectionRow({
           {remove.isError && <p className="mt-1 text-xs text-destructive">{remove.error.message}</p>}
         </TableCell>
       </TableRow>
+      {showAuth && (
+        <TableRow className="hover:bg-transparent">
+          <TableCell colSpan={5} className="p-3">
+            <ConnectorAuthorizePanel
+              agentId={agentId}
+              instance={inst.instance}
+              extension={inst.extension}
+              operatorMode={operatorMode}
+            />
+          </TableCell>
+        </TableRow>
+      )}
       {showDoctor && (
         <TableRow className="hover:bg-transparent">
           <TableCell colSpan={5} className="p-3">
@@ -280,13 +318,8 @@ function BundleCard({
       </p>
       <p className="mt-1 font-mono text-[11px] text-muted-foreground/70">from {bundle.root}</p>
       {bundle.host_requires.length > 0 && (
-        <div className="mt-3 space-y-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-700 dark:text-amber-400">
-          <p className="font-medium">Needs on this host — install it yourself:</p>
-          {bundle.host_requires.map((h) => (
-            <p key={h.name}>
-              <span className="font-mono text-foreground">{h.name}</span> — {h.instruction}
-            </p>
-          ))}
+        <div className="mt-2">
+          <HostRequirementLine requirements={bundle.host_requires} />
         </div>
       )}
       <div className="mt-3 pt-1">

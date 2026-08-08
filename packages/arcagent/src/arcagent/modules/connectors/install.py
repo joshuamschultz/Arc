@@ -50,6 +50,7 @@ from arcagent.core.tier import Tier
 from arcagent.extension.attachment import ExtensionAttachment, ProbeResult
 from arcagent.extension.catalog import MANIFEST_NAME, ExtensionCatalog
 from arcagent.extension.cli_attachment import CliAttachment, CliCommand, CliResilience
+from arcagent.extension.contract_ledger import ToolContractLedger
 from arcagent.extension.host import HostPrerequisiteDirector, HostVerdict
 from arcagent.extension.loader import ExtensionLoader
 from arcagent.extension.manifest import ExtensionManifest, SecretRequirement, load_manifest
@@ -226,8 +227,8 @@ async def install_connector(
     secret_values: Mapping[str, str],
     store: SecretStore,
     caller_did: str,
+    state: ConnectionStateStore,
     attachment_factory: AttachmentFactory | None = None,
-    state: ConnectionStateStore | None = None,
     audit_sink: AuditSink | None = None,
     trusted_public_key: bytes | None = None,
     registry: CapabilityRegistry | None = None,
@@ -240,9 +241,14 @@ async def install_connector(
         agent: The agent's slug, which keys the secret store.
         secret_values: One value per declared secret, collected by the surface.
         store: Where credentials are written — and nowhere else.
-        caller_did: Recorded as the actor on every credential operation.
+        caller_did: Recorded as the actor on every credential operation, and the
+            operator this connection's tool contract is approved by.
+        state: The connection directory. Required, not optional: an install that
+            registers no record is an install whose tools can never be approved,
+            because every later write is a merge patch against a row that is not
+            there. Making it a parameter a caller could omit is what shipped a
+            connection reporting ``Connected`` and serving nothing.
         attachment_factory: How the manifest becomes something probeable.
-        state: Operational state, when the data plane is available.
         audit_sink: Where the loader records its verification verdict.
         trusted_public_key: The operator key bundle signatures are pinned to.
             ``None`` above personal tier is itself the refusal (REQ-283).
@@ -295,11 +301,19 @@ async def install_connector(
         plan.instance,
         InstanceConfig(extension=plan.extension, approval=plan.approval_mode),
     )
-    if state is not None:
-        await state.create(
-            ConnectionRecord(agent=agent, instance=plan.instance, health="healthy"),
-            actor_did=caller_did,
-        )
+    await state.create(
+        ConnectionRecord(agent=agent, instance=plan.instance, health="healthy"),
+        actor_did=caller_did,
+    )
+    # Connecting IS approving (REQ-291). An operator who supplied this account's
+    # credentials and completed its probe has consented to the contract it just
+    # served; requiring a second, separate ``arc connector approve`` before a
+    # single verb worked was the step nobody knew to run. The defence is
+    # untouched — it exists to catch a contract that moves AFTER approval, and
+    # this is the moment there is finally something for it to move away from.
+    await ToolContractLedger(
+        state, agent=agent, instance=plan.instance, sink=audit_sink or NullSink()
+    ).approve(probe.tools, actor_did=caller_did)
     return InstallReport(
         instance=plan.instance,
         extension=plan.extension,
@@ -316,9 +330,13 @@ async def remove_connector(
     store: SecretStore,
     caller_did: str,
     secret_fields: Sequence[str],
-    state: ConnectionStateStore | None = None,
+    state: ConnectionStateStore,
 ) -> RemovalReport:
     """Drop one connected account: its credentials, its config block, its state.
+
+    ``state`` is required for the same reason it is on the install: a removal that
+    leaves the record behind hands the next install of that name the approvals an
+    operator minted for the account they just disconnected.
 
     Removing something that was never installed is reported, not raised: an
     operator cleaning up after a failed install must not be blocked by a step that
@@ -330,15 +348,11 @@ async def remove_connector(
         if await store.delete(ref, caller_did=caller_did):
             removed.append(field)
 
-    removed_state = False
-    if state is not None:
-        removed_state = await state.forget(agent, instance, actor_did=caller_did)
-
     return RemovalReport(
         instance=instance,
         removed_secrets=tuple(removed),
         removed_config=delete_instance(agent_dir, instance),
-        removed_state=removed_state,
+        removed_state=await state.forget(agent, instance, actor_did=caller_did),
     )
 
 

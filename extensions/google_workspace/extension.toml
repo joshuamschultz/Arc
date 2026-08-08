@@ -21,30 +21,54 @@ description = "Read and draft Gmail, list Drive files, and check Google Calendar
 attachment = "cli"
 tier_floor = "personal"
 
-# Pinned to one exact build and one digest (REQ-290). This is the linux/arm64
-# release asset, the platform the fleet runs; a host on another platform must be
-# given that platform's digest from the same release's checksums.txt, because
-# ArtifactPin holds exactly one sha256.
+# Pinned to one exact build and one digest PER PLATFORM (REQ-290), each taken
+# from the release's own checksums.txt. Keyed by platform because a sha256
+# describes the bytes of one asset: a single digest matched the fleet's
+# linux/arm64 and silently described the wrong bytes on a laptop.
 [artifact]
 package = "openclaw/gogcli"
 version = "0.34.1"
-sha256 = "8510db6492c27f7704bf60af276f34ede81b67d88b6ffcf953153da841eaa3ed"
 
+[artifact.platforms."linux/arm64"]
+url = "https://github.com/openclaw/gogcli/releases/download/v0.34.1/gogcli_0.34.1_linux_arm64.tar.gz"
+sha256 = "8510db6492c27f7704bf60af276f34ede81b67d88b6ffcf953153da841eaa3ed"
+member = "gog"
+
+[artifact.platforms."linux/amd64"]
+url = "https://github.com/openclaw/gogcli/releases/download/v0.34.1/gogcli_0.34.1_linux_amd64.tar.gz"
+sha256 = "a5b4be2ea635d4c830972dec1f3a90b0ca17f9c25e7a6353d1e068d8505ea983"
+member = "gog"
+
+[artifact.platforms."darwin/arm64"]
+url = "https://github.com/openclaw/gogcli/releases/download/v0.34.1/gogcli_0.34.1_darwin_arm64.tar.gz"
+sha256 = "90ab9104d543d16ac5367d405dc61b886003a118ce7eaddd0dd73c0363141449"
+member = "gog"
+
+[artifact.platforms."darwin/amd64"]
+url = "https://github.com/openclaw/gogcli/releases/download/v0.34.1/gogcli_0.34.1_darwin_amd64.tar.gz"
+sha256 = "14ae529f1ca9404252c5606689cd1e40a02b7357ca60f6491d9c85937342d3d4"
+member = "gog"
+
+# No `token_command`: `gog auth add` runs the Google OAuth consent flow, which
+# opens a browser and waits for a person. There is no token to pipe in, so Arc
+# must not offer a button that would hang at the prompt and then report a
+# sign-in nobody completed.
 [[host_requires]]
 name = "gog"
 minimum_version = "0.34.1"
+authorize_command = "gog auth add"
 instruction = """
 Install the gogcli binary on this host, then authorise the accounts:
 
   1. curl -fsSLO https://github.com/openclaw/gogcli/releases/download/v0.34.1/gogcli_0.34.1_linux_arm64.tar.gz
   2. echo '8510db6492c27f7704bf60af276f34ede81b67d88b6ffcf953153da841eaa3ed  gogcli_0.34.1_linux_arm64.tar.gz' | sha256sum -c -
-  3. tar xzf gogcli_0.34.1_linux_arm64.tar.gz && install -m 0755 gog /usr/local/bin/gog
+  3. tar xzf gogcli_0.34.1_linux_arm64.tar.gz && install -m 0755 gog ~/.local/bin/gog
   4. gog auth add            # once per Google account you want reachable
   5. gog auth list           # confirm the accounts and note their addresses
 
-Step 2 is not optional: it is the pin in [artifact] being checked. On a host
-that is not linux/arm64, take the digest for that asset from the same release's
-checksums.txt.
+Step 2 is not optional: it is the pin in [artifact] being checked. Steps 1 and 2
+are for linux/arm64; for another platform take that asset and its line from the
+same release's checksums.txt. [artifact] pins all four Arc can install for you.
 """
 
 [tools]
