@@ -1,5 +1,6 @@
 """Anthropic Messages API adapter."""
 
+import json
 from typing import Any
 
 from arcllm.adapters.base import BaseAdapter
@@ -22,6 +23,16 @@ ANTHROPIC_API_VERSION = "2023-06-01"
 # Anthropic caps a request at 4 cache breakpoints. The last tool and the
 # conversation tail take one each; the rest is the system's budget.
 _MAX_SYSTEM_SEGMENTS = 2
+
+# Anthropic has no server-side JSON mode. Its native structured-output path is a
+# forced tool call: the schema goes in as the tool's input_schema and the model
+# answers by filling it. Translating response_format into that shape is this
+# adapter's job — the caller passes the same kwarg to every provider.
+_STRUCTURED_TOOL_NAME = "structured_output"
+_STRUCTURED_TOOL_DESCRIPTION = (
+    "Return your answer as a structured object, in the shape the system prompt "
+    "asks for. Call this tool exactly once and emit nothing else."
+)
 
 # Anthropic stop_reason -> ArcLLM StopReason
 _ANTHROPIC_STOP_REASON_MAP: dict[str, StopReason] = {
@@ -210,16 +221,47 @@ class AnthropicAdapter(BaseAdapter):
                 body["tool_choice"] = tool_choice
         if caching and formatted:
             self._apply_last_message_breakpoint(formatted)
-        # Anthropic has no server-side JSON mode — the recommended path for
-        # structured output is tool_use with a signals_completion tool. Fail
-        # loudly rather than silently dropping the kwarg.
-        if kwargs.get("response_format") is not None:
-            self._validate_response_format(kwargs["response_format"])  # may raise on bad shape
-            raise ArcLLMConfigError(
-                "Anthropic adapter does not support response_format. "
-                "Use a tool with signals_completion=True for structured output."
-            )
+        rf = self._validate_response_format(kwargs.get("response_format"))
+        if rf is not None:
+            self._apply_structured_output(body, rf, tools)
         return body
+
+    def _apply_structured_output(
+        self, body: dict[str, Any], rf: dict[str, Any], tools: list[Tool] | None
+    ) -> None:
+        """Carry ``response_format`` as the forced tool Anthropic answers with."""
+        if tools:
+            raise ArcLLMConfigError(
+                "response_format cannot be combined with tools on Anthropic: "
+                "structured output is itself a forced tool call, which would "
+                "disable the tools you passed."
+            )
+        if self._model_meta is not None and not self._model_meta.supports_tools:
+            raise ArcLLMConfigError(
+                f"Model {self._model_name!r} is not marked tool-capable in provider "
+                "metadata; Anthropic structured output needs a forced tool call."
+            )
+        tool = self._structured_tool(rf)
+        body["tools"] = [tool]
+        body["tool_choice"] = {"type": "tool", "name": tool["name"]}
+
+    def _structured_tool(self, rf: dict[str, Any]) -> dict[str, Any]:
+        """Build the synthetic tool whose input_schema is the requested shape.
+
+        ``json_object`` has no schema to carry, so the open object schema lets
+        the model return whatever shape the prompt asked for.
+        """
+        schema = rf.get("json_schema") or {}
+        return {
+            "name": str(schema.get("name") or _STRUCTURED_TOOL_NAME),
+            "description": str(schema.get("description") or _STRUCTURED_TOOL_DESCRIPTION),
+            "input_schema": schema.get("schema") or {"type": "object"},
+        }
+
+    def _structured_tool_name(self, **kwargs: Any) -> str | None:
+        """Name of this call's forced structured-output tool, if it has one."""
+        rf = self._validate_response_format(kwargs.get("response_format"))
+        return self._structured_tool(rf)["name"] if rf is not None else None
 
     # -- Response parsing -----------------------------------------------------
 
@@ -241,30 +283,44 @@ class AnthropicAdapter(BaseAdapter):
             cache_write_tokens=usage_data.get("cache_creation_input_tokens"),
         )
 
-    def _parse_response(self, data: dict[str, Any]) -> LLMResponse:
+    def _parse_response(
+        self, data: dict[str, Any], structured_tool: str | None = None
+    ) -> LLMResponse:
         text_parts: list[str] = []
         tool_calls: list[ToolCall] = []
         thinking_parts: list[str] = []
+        parsed_content: dict[str, Any] | None = None
 
         for block in data.get("content", []):
             block_type = block.get("type")
             if block_type == "text":
                 text_parts.append(block["text"])
             elif block_type == "tool_use":
-                tool_calls.append(self._parse_tool_call(block))
+                if block["name"] == structured_tool and isinstance(block["input"], dict):
+                    parsed_content = block["input"]
+                else:
+                    tool_calls.append(self._parse_tool_call(block))
             elif block_type == "thinking":
                 thinking_parts.append(block["thinking"])
 
         content = "\n".join(text_parts) if text_parts else None
         thinking = "\n".join(thinking_parts) if thinking_parts else None
+        stop_reason = self._map_stop_reason(data["stop_reason"])
+        if parsed_content is not None:
+            # The forced tool is the answer, not work for the agent loop: surface
+            # it as content and end the turn, so no caller waits on a tool result
+            # for a tool that was never registered.
+            content = json.dumps(parsed_content)
+            stop_reason = "end_turn"
 
         return LLMResponse(
             content=content,
             tool_calls=tool_calls,
             usage=self._parse_usage(data["usage"]),
             model=data["model"],
-            stop_reason=self._map_stop_reason(data["stop_reason"]),
+            stop_reason=stop_reason,
             thinking=thinking,
+            parsed_content=parsed_content,
             raw=data,
         )
 
@@ -291,4 +347,4 @@ class AnthropicAdapter(BaseAdapter):
                 retry_after=self._parse_retry_after(response),
             )
 
-        return self._parse_response(response.json())
+        return self._parse_response(response.json(), self._structured_tool_name(**kwargs))

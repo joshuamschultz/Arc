@@ -1,5 +1,6 @@
 """Tests for ArcLLM Anthropic adapter."""
 
+import json
 from unittest.mock import AsyncMock
 
 import httpx
@@ -405,16 +406,133 @@ class TestAnthropicRequestBuilding:
         body = adapter._build_request_body([Message(role="user", content="Hi")])
         assert body["temperature"] == 0.7
 
-    def test_response_format_rejected(self):
-        """Anthropic has no server-side JSON mode — silent drop is a
-        confusing failure mode, so we raise instead."""
+
+class TestAnthropicStructuredOutput:
+    """response_format is translated to Anthropic's native forced-tool path."""
+
+    def test_json_object_becomes_forced_tool(self):
         from arcllm.adapters.anthropic import AnthropicAdapter
-        from arcllm.exceptions import ArcLLMConfigError
 
         adapter = AnthropicAdapter(FAKE_CONFIG, FAKE_MODEL)
-        messages = [Message(role="user", content="Hi")]
+        body = adapter._build_request_body(
+            [Message(role="user", content="Hi")],
+            response_format={"type": "json_object"},
+        )
+        assert "response_format" not in body
+        assert body["tools"][0]["input_schema"] == {"type": "object"}
+        assert body["tool_choice"] == {
+            "type": "tool",
+            "name": body["tools"][0]["name"],
+        }
+
+    def test_json_schema_carries_the_schema(self):
+        from arcllm.adapters.anthropic import AnthropicAdapter
+
+        schema = {"type": "object", "properties": {"answer": {"type": "string"}}}
+        adapter = AnthropicAdapter(FAKE_CONFIG, FAKE_MODEL)
+        body = adapter._build_request_body(
+            [Message(role="user", content="Hi")],
+            response_format={
+                "type": "json_schema",
+                "json_schema": {"name": "verdict", "schema": schema},
+            },
+        )
+        assert body["tools"][0]["name"] == "verdict"
+        assert body["tools"][0]["input_schema"] == schema
+        assert body["tool_choice"] == {"type": "tool", "name": "verdict"}
+
+    def test_text_format_is_a_noop(self):
+        from arcllm.adapters.anthropic import AnthropicAdapter
+
+        adapter = AnthropicAdapter(FAKE_CONFIG, FAKE_MODEL)
+        body = adapter._build_request_body(
+            [Message(role="user", content="Hi")],
+            response_format={"type": "text"},
+        )
+        assert "tools" not in body
+        assert "tool_choice" not in body
+
+    def test_caller_tools_conflict_raises(self):
+        """Forcing the structured tool would disable the caller's own tools."""
+        from arcllm.adapters.anthropic import AnthropicAdapter
+
+        adapter = AnthropicAdapter(FAKE_CONFIG, FAKE_MODEL)
+        tools = [Tool(name="search", description="d", parameters={"type": "object"})]
+        with pytest.raises(ArcLLMConfigError, match="tools"):
+            adapter._build_request_body(
+                [Message(role="user", content="Hi")],
+                tools,
+                response_format={"type": "json_object"},
+            )
+
+    def test_non_tool_model_raises(self):
+        from arcllm.adapters.anthropic import AnthropicAdapter
+
+        config = ProviderConfig(
+            provider=FAKE_PROVIDER_SETTINGS,
+            models={FAKE_MODEL: FAKE_MODEL_META.model_copy(update={"supports_tools": False})},
+        )
+        adapter = AnthropicAdapter(config, FAKE_MODEL)
+        with pytest.raises(ArcLLMConfigError, match="tool-capable"):
+            adapter._build_request_body(
+                [Message(role="user", content="Hi")],
+                response_format={"type": "json_object"},
+            )
+
+    def test_bad_shape_still_raises(self):
+        from arcllm.adapters.anthropic import AnthropicAdapter
+
+        adapter = AnthropicAdapter(FAKE_CONFIG, FAKE_MODEL)
         with pytest.raises(ArcLLMConfigError, match="response_format"):
-            adapter._build_request_body(messages, response_format={"type": "json_object"})
+            adapter._build_request_body(
+                [Message(role="user", content="Hi")],
+                response_format={"type": "yaml_object"},
+            )
+
+    def test_forced_tool_result_parses_as_content_not_a_tool_call(self):
+        """The synthetic tool is an answer, never work for the agent loop."""
+        from arcllm.adapters.anthropic import AnthropicAdapter
+
+        adapter = AnthropicAdapter(FAKE_CONFIG, FAKE_MODEL)
+        data = _make_anthropic_tool_response(
+            tool_name="structured_output",
+            tool_input={"timeline": ["09:00 kickoff"]},
+        )
+        resp = adapter._parse_response(data, structured_tool="structured_output")
+        assert resp.parsed_content == {"timeline": ["09:00 kickoff"]}
+        assert json.loads(resp.content) == {"timeline": ["09:00 kickoff"]}
+        assert resp.tool_calls == []
+        assert resp.stop_reason == "end_turn"
+
+    def test_real_tool_calls_are_untouched(self):
+        from arcllm.adapters.anthropic import AnthropicAdapter
+
+        adapter = AnthropicAdapter(FAKE_CONFIG, FAKE_MODEL)
+        data = _make_anthropic_tool_response(tool_name="search", tool_input={"q": "cats"})
+        resp = adapter._parse_response(data, structured_tool="structured_output")
+        assert resp.parsed_content is None
+        assert [tc.name for tc in resp.tool_calls] == ["search"]
+        assert resp.stop_reason == "tool_use"
+
+    @pytest.mark.asyncio
+    async def test_invoke_returns_parsed_structured_content(self):
+        from arcllm.adapters.anthropic import AnthropicAdapter
+
+        adapter = AnthropicAdapter(FAKE_CONFIG, FAKE_MODEL)
+        payload = {"decisions": ["ship it"]}
+        adapter._client.post = AsyncMock(
+            return_value=httpx.Response(
+                200,
+                json=_make_anthropic_tool_response(
+                    tool_name="structured_output", tool_input=payload
+                ),
+            )
+        )
+        resp = await adapter.invoke(
+            [Message(role="user", content="Hi")],
+            response_format={"type": "json_object"},
+        )
+        assert resp.parsed_content == payload
 
 
 class TestAnthropicResponseParsing:

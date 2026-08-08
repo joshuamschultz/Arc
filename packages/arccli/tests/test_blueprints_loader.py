@@ -54,9 +54,28 @@ def test_coding_blueprint_carries_persona_from_md() -> None:
     assert "senior software engineer" in r.persona
 
 
-def test_config_only_blueprint_has_no_persona() -> None:
-    r = bp.resolve_blueprint("personal-assistant", tier="personal")
-    assert r.persona is None
+def test_a_blueprint_without_a_persona_file_resolves_to_none(tmp_path: Path) -> None:
+    """Pinned to a synthetic blueprint, not a shipped one.
+
+    This previously asserted that ``personal-assistant`` had no persona, which
+    made the test a hostage of that blueprint's content: adding the persona it
+    was always meant to have broke a loader test that was not about the loader.
+    """
+    plain = tmp_path / "config-only"
+    plain.mkdir()
+    (plain / "blueprint.toml").write_text(
+        '[blueprint]\nname = "config-only"\nversion = "1.0.0"\ntier = "personal"\n'
+        '[security]\ntier = "personal"\n',
+        encoding="utf-8",
+    )
+    assert bp.resolve_blueprint(str(plain), tier="personal").persona is None
+
+
+def test_every_shipped_blueprint_that_has_a_persona_file_loads_it() -> None:
+    """A persona.md that silently fails to load leaves the agent with no identity."""
+    for name in ("coding", "personal-assistant", "enterprise-ops", "federal-analyst"):
+        resolved = bp.resolve_blueprint(name, tier="personal")
+        assert resolved.persona, f"{name} ships a persona.md but it did not load"
 
 
 # ---------------------------------------------------------------------------

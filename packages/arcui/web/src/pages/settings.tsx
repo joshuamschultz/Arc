@@ -26,6 +26,11 @@ const CONFIG_FILES = [
   { key: 'arcagent', label: 'ArcAgent' },
 ] as const
 
+// gateway.toml exists only fleet-wide — it configures which chat surfaces this
+// deployment has and who is allowed to talk to them, so there is no per-agent
+// counterpart to layer over. It appears as a fourth tab under System only.
+const SYSTEM_ONLY_FILES = [{ key: 'gateway', label: 'Gateway' }] as const
+
 // Sentinel scope: the fleet-wide `~/.arc` files that per-agent files layer over.
 const SYSTEM_SCOPE = '__system__'
 
@@ -227,12 +232,14 @@ export function SettingsPage() {
   const isSystem = scope === SYSTEM_SCOPE
   const [operatorMode] = useOperatorMode()
 
+  const visibleFiles = isSystem ? [...CONFIG_FILES, ...SYSTEM_ONLY_FILES] : [...CONFIG_FILES]
+
   const currentAgent = agents.find((a) => a.agent_id === scope)
   const scopeName = isSystem
     ? 'System (~/.arc)'
     : currentAgent?.display_name || currentAgent?.name || currentAgent?.agent_id || 'agent'
   const description = isSystem
-    ? 'System (~/.arc) config editor — fleet-wide arcagent.toml, arcllm.toml, arcrun.toml. Per-agent files layer over these.'
+    ? 'System (~/.arc) config editor — fleet-wide arcagent.toml, arcllm.toml, arcrun.toml, and gateway.toml. Per-agent files layer over the first three.'
     : `Config editor for ${scopeName} — arcagent.toml, arcllm.toml, arcrun.toml.`
 
   return (
@@ -271,14 +278,14 @@ export function SettingsPage() {
         <Tabs defaultValue="arcllm" className="flex flex-1 flex-col overflow-hidden">
           <div className="border-b border-border px-6">
             <TabsList className="my-2">
-              {CONFIG_FILES.map((f) => (
+              {visibleFiles.map((f) => (
                 <TabsTrigger key={f.key} value={f.key}>
                   {f.label}
                 </TabsTrigger>
               ))}
             </TabsList>
           </div>
-          {CONFIG_FILES.map((f) => (
+          {visibleFiles.map((f) => (
             <TabsContent key={f.key} value={f.key} className="flex-1 overflow-auto p-6">
               <ConfigFilePanel
                 system={isSystem}
