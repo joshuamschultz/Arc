@@ -201,7 +201,7 @@ def test_a_cli_bundle_builds_and_its_commands_match_its_declarations(
     """
     if manifest.extension.attachment != "cli":
         pytest.skip("not a CLI bundle")
-    build_attachment(manifest, bundle)  # refuses an unbuildable config
+    build_attachment(manifest, bundle, {})  # refuses an unbuildable config
     commands = _cli_commands(manifest)
     assert {command.tool for command in commands} == set(_declared_tags(manifest))
     for command in commands:
@@ -236,7 +236,7 @@ async def test_a_native_bundle_serves_exactly_what_its_manifest_declares(
     """
     if manifest.extension.attachment != "native":
         pytest.skip("not a native bundle")
-    attachment = build_attachment(manifest, bundle)
+    attachment = build_attachment(manifest, bundle, {})
     served = {spec.name: spec for spec in await attachment.describe_tools()}
     assert sorted(served) == sorted(_declared_tags(manifest))
     for tool in manifest.tools.declared:
@@ -249,19 +249,27 @@ async def test_a_native_bundle_without_its_credentials_refuses_by_name(
 ) -> None:
     """An unconfigured connection must fail the probe, not attach and 401 later.
 
-    Clearing exactly ``ARC_<EXTENSION>_<SECRET>`` is also the assertion that the
-    adapters read that naming and no other: if one of them reached for a
-    differently named variable, this test would keep passing on a clean machine
-    and start failing on the operator's, which is the wrong way round.
+    The environment is deliberately POISONED with the variable each adapter used to
+    fall back to. The store is the one path a credential travels: it is audited,
+    per-instance, and tier-selected, where ``ARC_<EXTENSION>_<SECRET>`` is none of
+    those — one variable would silently serve two connected accounts of the same
+    bundle and would bypass the vault a federal deployment configured. So a bundle
+    handed no credentials must refuse **even with those variables set**, and it must
+    name the fields it is missing.
     """
     if manifest.extension.attachment != "native":
         pytest.skip("not a native bundle")
     for secret in manifest.secrets:
-        monkeypatch.delenv(f"ARC_{manifest.extension.name.upper()}_{secret.name.upper()}", False)
-    attachment = build_attachment(manifest, bundle)
-    result = await attachment.probe()
+        monkeypatch.setenv(
+            f"ARC_{manifest.extension.name.upper()}_{secret.name.upper()}", "from-the-environment"
+        )
+
+    result = await build_attachment(manifest, bundle, {}).probe()
+
     assert not result.reachable
     assert manifest.extension.name in result.detail
+    for secret in manifest.secrets:
+        assert secret.name in result.detail, "a refusal must name the field it is missing"
 
 
 def test_native_implementation_lives_below_the_bundle_root(

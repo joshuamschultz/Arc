@@ -68,6 +68,7 @@ from arcagent.modules.connectors.install import (
     load_instances,
     plan_connector,
     remove_connector,
+    resolve_secrets,
 )
 
 #: Refusal code for a verb aimed at an instance this agent has not connected. A
@@ -469,14 +470,14 @@ class Connections:
     async def tools(self, instance: str) -> tuple[ToolSpec, ...]:
         """The verbs one connection offers the agent right now."""
         with self._audit.open() as sink:
-            plan = self._plan_for(instance, sink)
-            return tuple(await self._attachment(plan).describe_tools())
+            attachment = await self._attachment(self._plan_for(instance, sink), sink)
+            return tuple(await attachment.describe_tools())
 
     async def probe(self, instance: str) -> ProbeResult:
         """Open the connection right now — the only honest answer to "does this work"."""
         with self._audit.open() as sink:
-            plan = self._plan_for(instance, sink)
-            return await self._attachment(plan).probe()
+            attachment = await self._attachment(self._plan_for(instance, sink), sink)
+            return await attachment.probe()
 
     async def doctor(self, instance: str) -> tuple[DoctorCheck, ...]:
         """Everything that could be wrong with one connection, without fixing any of it.
@@ -491,7 +492,7 @@ class Connections:
                 for verdict in plan.unsatisfied_host
             ]
             checks += await self._credential_checks(plan, instance, sink)
-            checks.append(await self._reachability(plan))
+            checks.append(await self._reachability(plan, sink))
         return tuple(checks)
 
     # --- writing ---------------------------------------------------------
@@ -575,8 +576,8 @@ class Connections:
         from arcagent.extension.state import open_connection_state
 
         with self._audit.open() as sink:
-            plan = self._plan_for(instance, sink)
-            specs = await self._attachment(plan).describe_tools()
+            attachment = await self._attachment(self._plan_for(instance, sink), sink)
+            specs = await attachment.describe_tools()
             state = await open_connection_state(str(self._world.data_dir))
             ledger = ToolContractLedger(
                 state, agent=self._world.agent, instance=instance, sink=sink
@@ -636,8 +637,21 @@ class Connections:
             return []
         return [required.name for required in plan.secrets]
 
-    def _attachment(self, plan: ConnectorPlan) -> ExtensionAttachment:
-        return self._factory(plan.manifest, plan.bundle)
+    async def _attachment(self, plan: ConnectorPlan, sink: AuditSink) -> ExtensionAttachment:
+        """The connection as it really is: built with the credentials it was connected with.
+
+        Every read verb this class offers goes through here, so a surface can never
+        report on a connection the operator does not have. A declared credential the
+        store does not hold refuses by name rather than answering from a blank one.
+        """
+        secrets = await resolve_secrets(
+            plan.manifest,
+            agent=self._world.agent,
+            instance=plan.instance,
+            store=self._store(sink),
+            caller_did=self._world.did,
+        )
+        return self._factory(plan.manifest, plan.bundle, secrets)
 
     def _store(self, sink: AuditSink) -> SecretStore:
         """The one place a connector credential is written or read."""
@@ -674,10 +688,10 @@ class Connections:
             rows.append(DoctorCheck(required.name, status, str(self._world.env_file)))
         return rows
 
-    async def _reachability(self, plan: ConnectorPlan) -> DoctorCheck:
+    async def _reachability(self, plan: ConnectorPlan, sink: AuditSink) -> DoctorCheck:
         """Probing is the only honest answer to "does this connection work"."""
         try:
-            result = await self._attachment(plan).probe()
+            result = await (await self._attachment(plan, sink)).probe()
         except Exception as exc:  # reason: doctor reports failures, it does not raise them
             return DoctorCheck("connection", "error", f"{type(exc).__name__}: {exc}")
         return DoctorCheck(

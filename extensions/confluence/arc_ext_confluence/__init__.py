@@ -5,9 +5,10 @@ documents the ``/wiki/rest/api/content`` surface: storage-format bodies, the
 version number that must be incremented on every update, and CQL for search.
 
 Credential handling and the two transport rules are the same as the jira
-bundle's, for the same reasons: the mechanism does not yet deliver a declared
-secret to an attachment, every request carries an explicit timeout, and an id or
-a CQL string is data that httpx encodes rather than text spliced into a path.
+bundle's, for the same reasons: the declared secrets arrive in the factory's
+context, resolved from Arc's secret store for this connected instance and from
+nowhere else, every request carries an explicit timeout, and an id or a CQL
+string is data that httpx encodes rather than text spliced into a path.
 
 The update verb reads the current version before it writes. Confluence rejects a
 write whose version is not exactly one higher, so guessing would fail on every
@@ -17,7 +18,6 @@ page that anyone else has touched.
 from __future__ import annotations
 
 import json
-import os
 from typing import Any, Final
 
 import httpx
@@ -29,12 +29,6 @@ from arcagent.extension.attachment import (
     ToolResult,
     ToolSpec,
 )
-
-#: These hold environment variable NAMES, not credentials; the noqa is for
-#: the linter's name-based heuristic, which cannot tell the two apart.
-ENV_BASE_URL: Final = "ARC_CONFLUENCE_BASE_URL"
-ENV_EMAIL: Final = "ARC_CONFLUENCE_EMAIL"
-ENV_API_TOKEN: Final = "ARC_CONFLUENCE_API_TOKEN"  # noqa: S105
 
 #: Seconds any one Confluence request may take before it is abandoned.
 _TIMEOUT: Final = 30.0
@@ -73,9 +67,8 @@ class ConfluenceAttachment:
             return ProbeResult(
                 reachable=False,
                 detail=(
-                    f"confluence is not configured: {', '.join(missing)} unset. Arc stores the "
-                    f"declared secrets but does not yet hand them to an attachment, so set "
-                    f"{ENV_BASE_URL}, {ENV_EMAIL} and {ENV_API_TOKEN} in the agent's environment."
+                    f"confluence has no credential for {', '.join(missing)} — "
+                    f"run 'arc connector auth <instance>' to supply them."
                 ),
             )
         try:
@@ -280,16 +273,15 @@ def _error(tool: str, content: str) -> ToolResult:
     return ToolResult(tool=tool, outcome=ToolOutcome.ERROR, content=content)
 
 
-def _setting(context: dict[str, Any], key: str, env: str) -> str:
-    """A credential from the caller's context, else the environment, else empty."""
-    value = context.get(key)
-    return str(value) if value else os.environ.get(env, "")
+def _credential(context: dict[str, Any], key: str) -> str:
+    """One declared credential out of the context Arc resolved from its secret store."""
+    return str(context.get(key) or "")
 
 
 def build_native_attachment(context: dict[str, Any]) -> ConfluenceAttachment:
     """The fixed factory Arc calls to build this extension's attachment."""
     return ConfluenceAttachment(
-        base_url=_setting(context, "base_url", ENV_BASE_URL),
-        email=_setting(context, "email", ENV_EMAIL),
-        api_token=_setting(context, "api_token", ENV_API_TOKEN),
+        base_url=_credential(context, "base_url"),
+        email=_credential(context, "email"),
+        api_token=_credential(context, "api_token"),
     )
