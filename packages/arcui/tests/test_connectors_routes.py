@@ -37,8 +37,11 @@ _MANIFEST = """
 [extension]
 name = "acme_tickets"
 version = "2.1.0"
-attachment = "cli"
+attachment = "native"
 description = "Open and read Acme tickets."
+
+[config.native]
+entrypoint = "acme_attachment"
 
 [[secrets]]
 name = "api_token"
@@ -47,19 +50,67 @@ prompt = "Paste the Acme API token"
 [tools]
 allow = ["ping"]
 
-[approval]
-default = "outbound"
-
-[config.cli]
-binary = "python3"
-probe_argv = ["--version"]
-
-[[config.cli.commands]]
-tool = "ping"
-argv = ["--version"]
+[[tools.declared]]
+name = "ping"
 description = "Report the Acme client version."
 classification = "read_only"
+
+[approval]
+default = "outbound"
 """
+
+#: The bundle's own implementation, written beside its manifest as a real bundle
+#: does. A ``native`` bundle rather than a ``cli`` one because this suite's whole
+#: subject is a CREDENTIAL travelling from the web form to the connector, and a
+#: ``cli`` attachment reaches its service by spawning a binary — it has no way to
+#: receive one, which ``build_attachment`` refuses by name.
+#:
+#: So the adapter probes reachable only when it was handed the credential. That
+#: makes ``test_probe_reports_a_live_connection`` an assertion that the route
+#: DELIVERED it, not merely that it stored it somewhere.
+_ADAPTER = '''
+"""The acme fixture's own implementation, outside every Arc package."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from arcagent.extension.attachment import ProbeResult, ToolResult, ToolSpec
+
+
+class AcmeAttachment:
+    """Reachable exactly when Arc handed it the credential the manifest declares."""
+
+    def __init__(self, context: dict[str, Any]) -> None:
+        self._token = str(context.get("api_token") or "")
+
+    def requirements(self) -> list[Any]:
+        return []
+
+    async def probe(self) -> ProbeResult:
+        if not self._token:
+            return ProbeResult(reachable=False, detail="acme has no credential for api_token")
+        return ProbeResult(
+            reachable=True, tools=await self.describe_tools(), detail="acme is authenticated"
+        )
+
+    async def describe_tools(self) -> list[ToolSpec]:
+        return [
+            ToolSpec(
+                name="ping",
+                description="Report the Acme client version.",
+                input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                classification="read_only",
+            )
+        ]
+
+    async def invoke(self, tool: str, args: dict[str, Any]) -> ToolResult:
+        return ToolResult(tool=tool, content="acme 2.1.0")
+
+
+def build_native_attachment(context: dict[str, Any]) -> AcmeAttachment:
+    return AcmeAttachment(context)
+'''
 
 _MANIFEST_NEEDS_HOST = (
     _MANIFEST
@@ -115,6 +166,7 @@ def _write_bundle(root: Path, name: str = _EXTENSION, manifest: str = _MANIFEST)
     bundle = root / name
     bundle.mkdir(parents=True, exist_ok=True)
     (bundle / "extension.toml").write_text(manifest, encoding="utf-8")
+    (bundle / "acme_attachment.py").write_text(_ADAPTER, encoding="utf-8")
 
 
 def _headers(token: str = "operator") -> dict[str, str]:
@@ -162,7 +214,7 @@ def test_catalog_lists_a_readable_bundle(world: Path, monkeypatch: pytest.Monkey
     entry = next(e for e in body["available"] if e["name"] == _EXTENSION)
     assert entry["version"] == "2.1.0"
     assert entry["description"] == "Open and read Acme tickets."
-    assert entry["attachment"] == "cli"
+    assert entry["attachment"] == "native"
     assert entry["approval_default"] == "outbound"
     assert entry["secrets"] == [{"name": "api_token", "prompt": "Paste the Acme API token"}]
     assert entry["root"] == str(fleet)

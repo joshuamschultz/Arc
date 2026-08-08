@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import importlib.util
 import shutil
 import sys
@@ -80,6 +81,7 @@ from arcagent.extension.loader import ExtensionLoader
 from arcagent.extension.secrets import LocalFileSecretBackend, SecretStore
 from arcagent.modules.connectors.install import (
     InstanceConfig,
+    connector_env_file,
     install_connector,
     load_instances,
     plan_connector,
@@ -95,7 +97,10 @@ _BUNDLE = "reference_service"
 #: The connected-account name one bundle is installed under.
 _INSTANCE = "primary"
 
-#: The agent slug that keys the secret store (its grammar forbids a hyphen).
+#: The agent slug that keys the secret store (its grammar forbids a hyphen). It is the
+#: agent DIRECTORY name, which is what ``resolve_world`` keys on and what the connector
+#: module reads back at startup: a test spelling it differently would write a credential
+#: the agent under test could never find.
 _AGENT_SLUG = "conformance_agent"
 
 #: Recorded as the actor on every credential operation the install performs.
@@ -103,6 +108,13 @@ _CALLER = "did:arc:testorg:executor/conformance"
 
 _ECHO = "reference_echo"
 _STORE = "reference_store"
+
+#: A credential value nothing else could produce, and the digest the fixture answers
+#: under. Computed here rather than imported from the fixture: a digest shared with the
+#: code under test would agree with itself even if nothing was ever delivered.
+_TOKEN = "sentinel-4Kz9Wp-conformance-token"
+_FINGERPRINT_KEY = "reference_token_fingerprint"
+_FINGERPRINT = hashlib.sha256(_TOKEN.encode("utf-8")).hexdigest()[:16]
 
 
 class _RecordingSink:
@@ -187,6 +199,23 @@ def _registry(agent: ArcAgent) -> ToolRegistry:
     registry = agent._tool_registry
     assert registry is not None, "agent has no tool registry; startup did not complete"
     return registry
+
+
+def _agent_home(tmp_path: Path) -> Path:
+    """The agent's own directory, NAMED after the slug that keys its secret store.
+
+    The connector module reads credentials under its agent directory's name, so a
+    test whose directory name and store key disagree writes a credential the agent it
+    then starts can never find — and would pass only while nothing read one back.
+    """
+    home = tmp_path / _AGENT_SLUG
+    home.mkdir(parents=True, exist_ok=True)
+    return home
+
+
+def _credential_store(agent_home: Path) -> SecretStore:
+    """The file the agent's connector module reads, which is what every surface writes."""
+    return SecretStore(LocalFileSecretBackend(connector_env_file(agent_home)))
 
 
 def _write_agent_toml(agent_dir: Path, *, connectors_enabled: bool, extra: str = "") -> Path:
@@ -388,10 +417,10 @@ async def test_a_started_agent_serves_the_tools_of_an_installed_connection(
     are necessarily distinct, and an assertion keyed to instance identity could only be
     satisfied by a test-only seam in production code.
     """
-    root = tmp_path / "extensions"
+    agent_home = _agent_home(tmp_path)
+    root = agent_home / "extensions"
     _install(root)
-    config_path = _write_agent_toml(tmp_path, connectors_enabled=True)
-    store = SecretStore(LocalFileSecretBackend(tmp_path / "arc.env"))
+    config_path = _write_agent_toml(agent_home, connectors_enabled=True)
     plan = plan_connector(
         extensions_root=[root],
         extension=_BUNDLE,
@@ -401,18 +430,18 @@ async def test_a_started_agent_serves_the_tools_of_an_installed_connection(
     )
     await install_connector(
         plan,
-        agent_dir=tmp_path,
+        agent_dir=agent_home,
         agent=_AGENT_SLUG,
         secret_values={"reference_token": "unused"},
-        store=store,
+        store=_credential_store(agent_home),
         caller_did=_CALLER,
     )
-    assert _INSTANCE in load_instances(tmp_path), "the install did not persist the instance"
+    assert _INSTANCE in load_instances(agent_home), "the install did not persist the instance"
     # The manifest's default gates every outbound call on a signed operator grant, which
     # is correct (REQ-274) and is what the approval tests exercise. Relax it for this one
     # connected account — the operator action REQ-274 explicitly permits — so this test
     # stays pointed at activation rather than blocking on the human gate.
-    write_instance(tmp_path, _INSTANCE, InstanceConfig(extension=_BUNDLE, approval="none"))
+    write_instance(agent_home, _INSTANCE, InstanceConfig(extension=_BUNDLE, approval="none"))
 
     agent = ArcAgent(config=load_config(config_path), config_path=config_path)
     await agent.startup()
@@ -441,6 +470,80 @@ async def test_a_started_agent_serves_the_tools_of_an_installed_connection(
         await agent.shutdown()
 
 
+async def test_a_started_agent_serves_a_connection_with_its_credential_delivered(
+    tmp_path: Path,
+) -> None:
+    """The live-agent half of delivery: the attached connection holds its credential.
+
+    ``arc connector add`` reporting success while the running agent serves a
+    credential-less connection is worse than the install failing, because nothing
+    tells the operator. So this drives the capability the agent actually runs — the
+    connectors module attaching every ``[extensions.*]`` block at startup — and asks
+    the extension, through the agent's own dispatch envelope, for a fingerprint of
+    what it received.
+
+    A fingerprint rather than the value: a credential must never appear in a tool
+    result, and matching the digest proves the exact stored credential arrived.
+    """
+    agent_home = _agent_home(tmp_path)
+    root = agent_home / "extensions"
+    _install(root)
+    config_path = _write_agent_toml(agent_home, connectors_enabled=True)
+    plan = plan_connector(
+        extensions_root=[root],
+        extension=_BUNDLE,
+        instance=_INSTANCE,
+        tier=Tier.PERSONAL,
+        audit_sink=_RecordingSink(),
+    )
+    await install_connector(
+        plan,
+        agent_dir=agent_home,
+        agent=_AGENT_SLUG,
+        secret_values={"reference_token": _TOKEN},
+        store=_credential_store(agent_home),
+        caller_did=_CALLER,
+    )
+    write_instance(agent_home, _INSTANCE, InstanceConfig(extension=_BUNDLE, approval="none"))
+
+    agent = ArcAgent(config=load_config(config_path), config_path=config_path)
+    await agent.startup()
+    try:
+        answered = await _dispatch(agent, _ECHO, {"message": _FINGERPRINT_KEY})
+
+        assert _FINGERPRINT in answered, (
+            "the running agent attached a connection with no credential: the install "
+            "stored one and the capability that attaches at startup never read it"
+        )
+        assert _TOKEN not in answered
+    finally:
+        await agent.shutdown()
+
+
+async def test_a_started_agent_refuses_a_connection_whose_credential_is_gone(
+    tmp_path: Path,
+) -> None:
+    """Fail closed: a connection with no credential contributes no verbs at all.
+
+    The control for the test above. A configured instance whose credential has been
+    deleted — a rotation that failed, a vault that lost it — must not register verbs
+    that answer 401; the module contains the failure, audits it, and the agent still
+    starts.
+    """
+    agent_home = _agent_home(tmp_path)
+    _install(agent_home / "extensions")
+    config_path = _write_agent_toml(agent_home, connectors_enabled=True)
+    write_instance(agent_home, _INSTANCE, InstanceConfig(extension=_BUNDLE, approval="none"))
+
+    agent = ArcAgent(config=load_config(config_path), config_path=config_path)
+    await agent.startup()
+    try:
+        assert _ECHO not in _registry(agent).tools
+        assert "ls" in _registry(agent).tools, "the agent itself must still have started"
+    finally:
+        await agent.shutdown()
+
+
 async def test_an_unsigned_bundle_is_verified_before_any_of_its_code_runs(
     tmp_path: Path,
 ) -> None:
@@ -459,7 +562,7 @@ async def test_an_unsigned_bundle_is_verified_before_any_of_its_code_runs(
     _install(root)  # unsigned: no .arcsig sidecars are written
     built: list[str] = []
 
-    def _factory(manifest: Any, bundle: Path) -> Any:
+    def _factory(manifest: Any, bundle: Path, secrets: Any) -> Any:
         built.append(str(bundle))
         return _import_fixture_module().build_native_attachment({})
 

@@ -1,5 +1,19 @@
 """SPEC-062 D-575 — the credential broker: a connector never receives the credential.
 
+**NOT ON ANY LIVE PATH.** Nothing outside this module's own test imports it. The
+shipped connector path is the other design described below: ``resolve_secrets``
+reads the declared credentials out of the store and ``build_attachment`` reveals
+them into the extension's own factory, so every shipped bundle holds the real
+value. Reading this file is not evidence that the protection below is in force.
+
+Wiring it needs both halves to change, which is why it was not done alongside the
+delivery fix. Each attachment would have to speak the loopback protocol — take a
+handle and an endpoint instead of a value, and send origin-form requests through
+it — and all eight shipped bundles read plain values today. Arc's half would then
+issue a grant per instance at attach time, pinned to the upstream origin the
+manifest declares, and revoke it at teardown; the manifest has no field for that
+origin yet. Until both land, this module is a design held ready, not a control.
+
 Every other design hands the credential to the connector and hopes: into a spawned
 process's environment, or into a header a third-party attachment builds. An OX
 Security scan found command injection in 43% of public MCP servers and path

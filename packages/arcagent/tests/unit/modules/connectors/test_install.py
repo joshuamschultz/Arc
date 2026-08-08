@@ -53,7 +53,10 @@ _MANIFEST = """
 [extension]
 name = "acme_tickets"
 version = "1.0.0"
-attachment = "cli"
+attachment = "native"
+
+[config.native]
+entrypoint = "acme_attachment"
 
 [[secrets]]
 name = "api_token"
@@ -62,19 +65,13 @@ prompt = "Paste the API token"
 [tools]
 allow = ["create_issue"]
 
-[approval]
-default = "outbound"
-
-[config.cli]
-binary = "acme"
-probe_argv = ["--version"]
-
-[[config.cli.commands]]
-tool = "create_issue"
-argv = ["issue", "create"]
+[[tools.declared]]
+name = "create_issue"
 description = "Open a ticket."
 classification = "state_modifying"
-capability_tags = ["network_egress"]
+
+[approval]
+default = "outbound"
 """
 
 
@@ -202,7 +199,7 @@ class TestInstall:
             secret_values={"api_token": "s3cr3t"},
             store=store,
             caller_did=_CALLER,
-            attachment_factory=lambda _m, _b: FakeAttachment(),
+            attachment_factory=lambda _m, _b, _s: FakeAttachment(),
         )
 
         assert report.instance == _INSTANCE
@@ -229,7 +226,7 @@ class TestInstall:
             secret_values={"api_token": "s3cr3t"},
             store=store,
             caller_did=_CALLER,
-            attachment_factory=lambda _m, _b: FakeAttachment(),
+            attachment_factory=lambda _m, _b, _s: FakeAttachment(),
         )
         instances = load_instances(agent_dir)
         assert instances[_INSTANCE].extension == _EXTENSION
@@ -249,7 +246,7 @@ class TestInstall:
         _bundle(root)
         built: list[str] = []
 
-        def _factory(_manifest: object, bundle: Path) -> FakeAttachment:
+        def _factory(_manifest: object, bundle: Path, _secrets: object) -> FakeAttachment:
             built.append(str(bundle))
             return FakeAttachment()
 
@@ -290,7 +287,7 @@ class TestInstall:
                 secret_values={},
                 store=store,
                 caller_did=_CALLER,
-                attachment_factory=lambda _m, _b: FakeAttachment(),
+                attachment_factory=lambda _m, _b, _s: FakeAttachment(),
             )
 
         assert caught.value.details["step"] == "secrets"
@@ -312,7 +309,7 @@ class TestInstall:
                 secret_values={"api_token": "s3cr3t"},
                 store=store,
                 caller_did=_CALLER,
-                attachment_factory=lambda _m, _b: FakeAttachment(),
+                attachment_factory=lambda _m, _b, _s: FakeAttachment(),
             )
 
         assert caught.value.details["step"] == "host"
@@ -334,7 +331,7 @@ class TestInstall:
                 secret_values={"api_token": "s3cr3t"},
                 store=store,
                 caller_did=_CALLER,
-                attachment_factory=lambda _m, _b: FakeAttachment(
+                attachment_factory=lambda _m, _b, _s: FakeAttachment(
                     reachable=False, detail="acme: command not found"
                 ),
             )
@@ -353,7 +350,7 @@ class TestInstall:
         agent_dir = _agent_dir(tmp_path)
         store, _env = _store(tmp_path)
 
-        def explode(_manifest: object, _bundle: object) -> FakeAttachment:
+        def explode(_manifest: object, _bundle: object, _secrets: object) -> FakeAttachment:
             raise RuntimeError("bad entrypoint")
 
         with pytest.raises(ExtensionError) as caught:
@@ -397,7 +394,7 @@ class TestInstall:
                 secret_values={"api_token": value},
                 store=store,
                 caller_did=_CALLER,
-                attachment_factory=lambda _m, _b: FakeAttachment(),
+                attachment_factory=lambda _m, _b, _s: FakeAttachment(),
             )
 
         assert set(_blocks(agent_dir)) == {"sales", "support"}
@@ -423,7 +420,7 @@ class TestRemove:
             secret_values={"api_token": "s3cr3t"},
             store=store,
             caller_did=_CALLER,
-            attachment_factory=lambda _m, _b: FakeAttachment(),
+            attachment_factory=lambda _m, _b, _s: FakeAttachment(),
         )
 
         report = await remove_connector(

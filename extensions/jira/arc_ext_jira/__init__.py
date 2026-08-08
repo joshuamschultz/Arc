@@ -5,13 +5,15 @@ transport. It imports nothing from Arc except the hook's own value types, which
 is the property that makes it deletable: remove the bundle and this code, its
 knowledge of Jira, and its dependency all go with it.
 
-**Credentials.** The mechanism collects the ``[[secrets]]`` this bundle declares
-and writes them to the secret store, but nothing hands them to an attachment —
-``build_attachment`` passes only ``{"bundle": ...}``. So the adapter reads the
-context first (it will simply start working the day the mechanism threads a
-credential or a broker grant through it) and the environment second. When
-neither has them, :meth:`JiraAttachment.probe` refuses by name rather than
-failing later with a 401 nobody can read.
+**Credentials.** The ``[[secrets]]`` this bundle declares are resolved from Arc's
+secret store for this connected instance and handed to
+:func:`build_native_attachment` in its context. That is the only way one reaches
+this adapter: there is no environment fallback, because an ``ARC_JIRA_*``
+variable is not scoped to an instance — two Jira accounts on one agent would
+silently share it — and a value arriving from the process environment would
+bypass the audited, tier-selected store entirely. When a credential is absent,
+:meth:`JiraAttachment.probe` refuses by name rather than failing later with a
+401 nobody can read.
 
 Two rules shape every request. Every call is bounded by an explicit timeout, so a
 hung Atlassian endpoint cannot hold a turn open. And a JQL string or an issue key
@@ -22,7 +24,6 @@ is never concatenated into a path.
 from __future__ import annotations
 
 import json
-import os
 from typing import Any, Final
 
 import httpx
@@ -34,13 +35,6 @@ from arcagent.extension.attachment import (
     ToolResult,
     ToolSpec,
 )
-
-#: Where each credential is looked for, in the environment.
-#: These hold environment variable NAMES, not credentials; the noqa is for
-#: the linter's name-based heuristic, which cannot tell the two apart.
-ENV_BASE_URL: Final = "ARC_JIRA_BASE_URL"
-ENV_EMAIL: Final = "ARC_JIRA_EMAIL"
-ENV_API_TOKEN: Final = "ARC_JIRA_API_TOKEN"  # noqa: S105
 
 #: Seconds any one Jira request may take before it is abandoned.
 _TIMEOUT: Final = 30.0
@@ -86,10 +80,8 @@ class JiraAttachment:
             return ProbeResult(
                 reachable=False,
                 detail=(
-                    f"jira is not configured: {', '.join(missing)} unset. Arc stores the "
-                    f"declared secrets but does not yet hand them to an attachment, so set "
-                    f"{ENV_BASE_URL}, {ENV_EMAIL} and {ENV_API_TOKEN} in the agent's "
-                    f"environment."
+                    f"jira has no credential for {', '.join(missing)} — "
+                    f"run 'arc connector auth <instance>' to supply them."
                 ),
             )
         try:
@@ -302,16 +294,15 @@ def _error(tool: str, content: str) -> ToolResult:
     return ToolResult(tool=tool, outcome=ToolOutcome.ERROR, content=content)
 
 
-def _setting(context: dict[str, Any], key: str, env: str) -> str:
-    """A credential from the caller's context, else the environment, else empty."""
-    value = context.get(key)
-    return str(value) if value else os.environ.get(env, "")
+def _credential(context: dict[str, Any], key: str) -> str:
+    """One declared credential out of the context Arc resolved from its secret store."""
+    return str(context.get(key) or "")
 
 
 def build_native_attachment(context: dict[str, Any]) -> JiraAttachment:
     """The fixed factory Arc calls to build this extension's attachment."""
     return JiraAttachment(
-        base_url=_setting(context, "base_url", ENV_BASE_URL),
-        email=_setting(context, "email", ENV_EMAIL),
-        api_token=_setting(context, "api_token", ENV_API_TOKEN),
+        base_url=_credential(context, "base_url"),
+        email=_credential(context, "email"),
+        api_token=_credential(context, "api_token"),
     )
