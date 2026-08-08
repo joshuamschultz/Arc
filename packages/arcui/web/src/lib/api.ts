@@ -10,10 +10,19 @@ import { getToken } from './auth'
 export class ApiError extends Error {
   status: number
   errors?: Array<Record<string, unknown>>
-  constructor(status: number, message: string, errors?: Array<Record<string, unknown>>) {
+  /** The decoded error body when it was JSON. Routes that attach extra keys a
+   * surface needs to act on (SPEC-064's `unsatisfied_host`) are read from here. */
+  body?: Record<string, unknown>
+  constructor(
+    status: number,
+    message: string,
+    errors?: Array<Record<string, unknown>>,
+    body?: Record<string, unknown>,
+  ) {
     super(message)
     this.status = status
     this.errors = errors
+    this.body = body
     this.name = 'ApiError'
   }
 }
@@ -25,7 +34,11 @@ function authHeaders(): Record<string, string> {
 
 async function parseError(
   res: Response,
-): Promise<{ message: string; errors?: Array<Record<string, unknown>> }> {
+): Promise<{
+  message: string
+  errors?: Array<Record<string, unknown>>
+  body?: Record<string, unknown>
+}> {
   try {
     // Most routes use `ErrorResponse{error}`; the knowledge mutation routes
     // (COMP-002) return `{status, results: [{error}]}` on a 404/500 instead;
@@ -41,11 +54,12 @@ async function parseError(
       return {
         message: body.errors.map((e) => `${e.field}: ${e.error}`).join('; '),
         errors: body.errors,
+        body,
       }
     }
-    if (body?.error) return { message: body.error }
+    if (body?.error) return { message: body.error, body }
     const resultErrors = body?.results?.map((r) => r.error).filter(Boolean)
-    if (resultErrors?.length) return { message: resultErrors.join('; ') }
+    if (resultErrors?.length) return { message: resultErrors.join('; '), body }
   } catch {
     /* not JSON */
   }
@@ -57,7 +71,7 @@ export async function apiGet<T>(path: string, signal?: AbortSignal): Promise<T> 
   const res = await fetch(path, { headers: authHeaders(), signal })
   if (!res.ok) {
     const parsed = await parseError(res)
-    throw new ApiError(res.status, parsed.message, parsed.errors)
+    throw new ApiError(res.status, parsed.message, parsed.errors, parsed.body)
   }
   return (await res.json()) as T
 }
@@ -74,7 +88,7 @@ async function apiSend<T>(
   })
   if (!res.ok) {
     const parsed = await parseError(res)
-    throw new ApiError(res.status, parsed.message, parsed.errors)
+    throw new ApiError(res.status, parsed.message, parsed.errors, parsed.body)
   }
   // 204 No Content (e.g. DELETE) carries no body — parsing it as JSON would throw.
   if (res.status === 204) return undefined as T

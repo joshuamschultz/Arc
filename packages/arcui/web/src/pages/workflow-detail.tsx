@@ -29,12 +29,8 @@ import { StatusText } from '@/components/status-badge'
 import { GateCard } from '@/components/gate-card'
 import { RunDetailDrawer } from '@/components/run-detail-drawer'
 import { WorkflowGraph, type NodeStatusUpdate } from '@/components/workflow-graph'
-import {
-  WorkflowNodeForm,
-  fromDraft,
-  toDraft,
-  type NodeDraft,
-} from '@/components/workflow-node-form'
+import { WorkflowNodeForm } from '@/components/workflow-node-form'
+import { fromDraft, toDraft, type NodeDraft } from '@/lib/workflow-node-draft'
 import { useWorkflowRunLiveStatus } from '@/hooks/use-workflow-run-live-status'
 import {
   useArchiveWorkflow,

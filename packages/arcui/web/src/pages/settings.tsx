@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
 import { QueryState, EmptyState } from '@/components/states'
+import { KeysPanel } from '@/components/keys-panel'
 import { useOperatorMode } from '@/hooks/use-operator-mode'
 import { apiPatch, ApiError } from '@/lib/api'
 import { useRoster, useAgentConfigFile, useSystemConfigFile } from '@/lib/queries'
@@ -283,6 +284,10 @@ export function SettingsPage() {
                   {f.label}
                 </TabsTrigger>
               ))}
+              {/* Keys live in the fleet-wide `~/.arc/.env`, not in any config
+                  file — the tab shows in every scope so a fresh install finds
+                  it without first knowing to switch to System. */}
+              <TabsTrigger value="keys">Keys</TabsTrigger>
             </TabsList>
           </div>
           {visibleFiles.map((f) => (
@@ -296,6 +301,16 @@ export function SettingsPage() {
               />
             </TabsContent>
           ))}
+          <TabsContent value="keys" className="flex-1 overflow-auto p-6">
+            <div className="space-y-4">
+              <p className="text-xs text-muted-foreground">
+                Provider keys are fleet-wide — stored in{' '}
+                <span className="font-mono">~/.arc/.env</span> and shared by every agent,
+                whichever scope is selected above.
+              </p>
+              <KeysPanel editable={operatorMode} />
+            </div>
+          </TabsContent>
         </Tabs>
       )}
     </div>

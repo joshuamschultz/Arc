@@ -12,6 +12,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from arcllm import ProviderKey, list_provider_keys
+
 from arccli.commands._arcllm_surface import (
     BUDGET_BLOCK,
     EVAL_BLOCK,
@@ -80,19 +82,6 @@ _TIER_PRESETS: dict[str, dict[str, dict[str, Any]]] = {
 }
 
 _VALID_TIERS = list(_TIER_PRESETS.keys())
-
-PROVIDER_ENV_VARS: dict[str, str] = {
-    "anthropic": "ANTHROPIC_API_KEY",
-    "openai": "OPENAI_API_KEY",
-    "google": "GOOGLE_API_KEY",
-    "groq": "GROQ_API_KEY",
-    "mistral": "MISTRAL_API_KEY",
-    "deepseek": "DEEPSEEK_API_KEY",
-    "ollama": "",
-    "lmstudio": "",
-}
-
-VALID_PROVIDERS = list(PROVIDER_ENV_VARS.keys())
 
 
 # ---------------------------------------------------------------------------
@@ -285,12 +274,25 @@ def _generate_gateway_toml(tier: str) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _check_provider_key(provider: str) -> bool:
-    """Check if the provider's API key env var is set."""
-    env_var = PROVIDER_ENV_VARS.get(provider, "")
-    if not env_var:
-        return True
-    return bool(os.environ.get(env_var, ""))
+def _provider_key(provider: str) -> ProviderKey | None:
+    """Which env var this provider reads, per arcllm — the one declarer (D-581).
+
+    None when arcllm packages no such provider, which is what makes an unknown
+    ``--provider`` an error here rather than a config file naming a provider the
+    stack cannot load.
+    """
+    return next((key for key in list_provider_keys() if key.provider == provider), None)
+
+
+def _provider_menu() -> list[str]:
+    """The provider list the prompt offers, split by whether a key is needed."""
+    keys = list_provider_keys()
+    cloud = [key.provider for key in keys if key.required]
+    local = [key.provider for key in keys if not key.required]
+    return [
+        f"    Cloud:  {', '.join(cloud)}",
+        f"    Local:  {', '.join(local)} (no API key needed)",
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -432,11 +434,12 @@ def _init(args: argparse.Namespace) -> None:
     if provider is None:
         _write("")
         _write("  LLM Providers:")
-        _write("    Cloud:  anthropic, openai, google, groq, mistral, deepseek")
-        _write("    Local:  ollama, lmstudio (no API key needed)")
+        for line in _provider_menu():
+            _write(line)
         _write("")
         provider = input("  Default provider (default: anthropic): ").strip() or "anthropic"
-    if provider not in VALID_PROVIDERS:
+    provider_key = _provider_key(provider)
+    if provider_key is None:
         sys.stderr.write(f"Error: Unknown provider '{provider}'.\n")
         sys.exit(1)
 
@@ -487,8 +490,8 @@ def _init(args: argparse.Namespace) -> None:
         for sub in ("entities", "channels", "cursors"):
             (team_dir / sub).mkdir(parents=True, exist_ok=True)
 
-    key_ok = _check_provider_key(provider)
-    env_var = PROVIDER_ENV_VARS.get(provider, "")
+    env_var = provider_key.api_key_env
+    key_ok = not provider_key.required or bool(os.environ.get(env_var, ""))
 
     tier_display = tier if effective_tier == tier else f"{effective_tier} (raised from {tier})"
     summary = [
@@ -507,11 +510,8 @@ def _init(args: argparse.Namespace) -> None:
 
     if not key_ok:
         _write("")
-        _write("  Set your API key:")
-        _write(f"    export {env_var}=<your-key>")
-        _write("")
-        _write(f"  Or add it to {env_path}:")
-        _write(f"    echo '{env_var}=sk-...' >> {env_path}")
+        _write(f"  Set your API key ({env_var}) — stored owner-only in {env_path}:")
+        _write(f"    arc keys set {provider}")
 
     _write("")
 

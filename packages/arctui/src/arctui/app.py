@@ -38,7 +38,8 @@ Streaming:
 from __future__ import annotations
 
 import logging
-from typing import Any, ClassVar
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from textual import work
 from textual.app import App, ComposeResult
@@ -50,6 +51,11 @@ from arctui.input_composer import InputComposer
 from arctui.theme import build_tcss
 from arctui.transcript import MessageRole, TranscriptView
 from arctui.transport import ChatTransport
+
+if TYPE_CHECKING:
+    from arcagent.connections import Connections
+
+    from arctui.connect_screen import ConnectOutcome
 
 _logger = logging.getLogger("arctui.app")
 
@@ -64,6 +70,11 @@ class ArcTUI(App[None]):
         driving a served agent. Pass ``None`` in tests to boot without one.
     title:
         Optional application title shown in the header.
+    agent_dir:
+        Directory of the agent this TUI is attached to — the one the roster
+        already resolved. ``/connect`` reads its config and writes its
+        connections there; without it the TUI has no agent to connect anything
+        to and says so.
     """
 
     CSS = build_tcss()
@@ -83,6 +94,7 @@ class ArcTUI(App[None]):
         title: str = "Arc TUI",
         agent_label: str | None = None,
         gateway_label: str | None = None,
+        agent_dir: Path | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -90,6 +102,7 @@ class ArcTUI(App[None]):
         self.title = title
         self._agent_label = agent_label
         self._gateway_label = gateway_label
+        self._agent_dir = agent_dir
         self._turns = 0
         self._transcript: TranscriptView | None = None
         self._activity: ActivityView | None = None
@@ -263,6 +276,15 @@ class ArcTUI(App[None]):
         if command == "help":
             self._show_help()
             return
+        # Connector setup asks the operator a question, and the arccli handler asks it
+        # with getpass — against the terminal Textual owns. It must never be reached
+        # from here (D-586); the modal collects into masked inputs instead.
+        if command == "connect":
+            self._open_connect()
+            return
+        if command == "connections":
+            self._open_connections()
+            return
 
         # Fall through to registry handler.
         from arccli.commands.registry import resolve_command
@@ -289,6 +311,57 @@ class ArcTUI(App[None]):
                     MessageRole.SYSTEM, f"/{command}: no handler registered."
                 )
 
+    # ------------------------------------------------------------------
+    # Connector setup (D-586 — the one verb the registry handler cannot serve)
+    # ------------------------------------------------------------------
+
+    def _open_connect(self) -> None:
+        """Open the connect modal, reporting its outcome into the transcript."""
+        connections = self._connections()
+        if connections is not None:
+            from arctui.connect_screen import ConnectScreen
+
+            self.push_screen(ConnectScreen(connections), self._report_connect_outcome)
+
+    def _open_connections(self) -> None:
+        """Show what this agent already has connected, with a probe action."""
+        connections = self._connections()
+        if connections is not None:
+            from arctui.connect_screen import ConnectionsScreen
+
+            self.push_screen(ConnectionsScreen(connections))
+
+    def _connections(self) -> Connections | None:
+        """Bind the attached agent's connector seam, or say why it cannot."""
+        from arcagent.connections import ExtensionError
+
+        from arctui.connect import open_connections
+
+        if self._agent_dir is None:
+            self._say(
+                MessageRole.SYSTEM,
+                "No agent attached — /connect needs one. Launch with `arc tui` to "
+                "reach a served agent.",
+            )
+            return None
+        try:
+            return open_connections(self._agent_dir)
+        except ExtensionError as exc:
+            self._say(MessageRole.ERROR, exc.message)
+            return None
+
+    def _report_connect_outcome(self, outcome: ConnectOutcome | None) -> None:
+        """Write the modal's result to the transcript. Cancelling says nothing."""
+        if outcome is None:
+            return
+        self._say(
+            MessageRole.SYSTEM if outcome.ok else MessageRole.ERROR, "\n".join(outcome.lines)
+        )
+
+    def _say(self, role: MessageRole, text: str) -> None:
+        if self._transcript is not None:
+            self._transcript.add_message(role, text)
+
     def _show_help(self) -> None:
         """Display help text from the registry in the transcript."""
         from arccli.commands.render import commands_by_category
@@ -296,7 +369,12 @@ class ArcTUI(App[None]):
         if self._transcript is None:
             return
 
-        lines = ["Available commands:"]
+        lines = [
+            "Available commands:",
+            "  Terminal UI:",
+            "    /connect  — connect this agent to an external system",
+            "    /connections  — show what it is already connected to",
+        ]
         by_cat = commands_by_category()
         for category, cmds in by_cat.items():
             lines.append(f"  {category}:")

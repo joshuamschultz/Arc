@@ -18,6 +18,8 @@ src/arctui/
   transcript.py / activity.py / input_composer.py
   entry.py            # Registers arc tui into COMMAND_REGISTRY
   serve.py / gateway_client.py / transport.py
+  connect.py          # Connector calls for /connect — no Textual in it
+  connect_screen.py   # ConnectScreen / ConnectionsScreen modals
   roster.py / trust.py / theme.py / command_completer.py
   tests/              # Colocated unit + smoke (no top-level packages/arctui/tests/)
 ```
@@ -31,6 +33,9 @@ src/arctui/
 - SPEC-058: attach/spawn gateway viewpoint — **do not construct `ArcAgent`** here (avoids second WORM lock / dual ownership).
 - Graceful no-agent mode if the target agent is missing.
 - Talk to gateway/chat transport; don't own the agent process.
+- D-586: `/connect` is handled in the TUI, never routed to the arccli registry —
+  that handler prompts with `getpass` against the terminal Textual owns. The
+  install sequence itself stays in `arcagent.modules.connectors.install`.
 
 ## Tests
 

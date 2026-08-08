@@ -429,6 +429,20 @@ max_nodes = 200              # per-definition node ceiling
 max_inline_text_length = 2000  # ceiling on inline free text a builder tool accepts
 max_repair_attempts = 3      # bounded self-repair before asking the human
 
+[modules.connectors]
+enabled = true
+priority = 100
+
+[modules.connectors.config]
+# Connected accounts (SPEC-062): every [extensions.<instance>] block below is
+# attached at startup — the bundle is verified, its approval mode bound to the
+# human gate, and its verbs registered as individually named tools. Declared
+# here because an undeclared module sits dead: `arc connector add` would write
+# the credential and the config block, and the agent would serve none of it.
+extensions_root = ""  # ONE bundle root; empty = search <agent>/extensions,
+                      # $ARC_EXTENSIONS_ROOT, then ~/.arc/extensions
+data_dir = ""         # empty defers to arcstore.resolve_data_dir (approved tool contracts)
+
 [modules.runcontrol]
 enabled = true
 priority = 100

@@ -6381,3 +6381,19 @@ Named, semi-permanent, signed workflow.toml graphs (nodes: agent/tool/script/rou
 ### Related Solutions
 _(none)_
 
+
+---
+
+## Connection Surfaces — Refactor Decision (2026-08-08)
+
+**Phase**: implement | **Status**: complete | **Total decisions**: 1
+**ID range**: D-587
+**Priority framework**: simplicity → modularity → security → scalability
+
+### Architecture
+
+#### D-587: One façade for connection management, not one import list per surface
+**Decision**: `arcagent.connections` is the single surface-facing seam for managing an agent's connected accounts — `resolve_world` / `Connections` (`catalog`, `installed`, `plan`, `plan_for`, `install`, `reauth`, `tools`, `probe`, `doctor`, `approve`, `remove`) plus `AuditChain`, which owns the WORM sink's lifetime. `arc connector`, `arcui/routes/connectors.py`, and `arctui/connect.py` drive it and keep only what the shared path cannot own: `getpass` and argparse in the CLI, the operator gate and the response models in arcui, the modal text in arctui. `arcagent.modules.connectors.install` keeps the ordering, the signature gate, the probe, and the rollback — the façade orchestrates and re-implements none of it. The arcui→arcagent import ruling widens by exactly two modules: `arcagent.connections` and `arcagent.keys`, alongside `arcagent.capabilities.inventory`.
+**Priority**: modularity
+**Alternatives**: leave the three surfaces each importing eleven arcagent modules; push the orchestration down into the install module; give each surface its own adapter
+**Rationale**: SPEC-062 already intended one path — "the ordering, the rollback, and the config write live in the install module so arctui and arcui drive the same code rather than re-deriving the sequence" — and all three surfaces re-derived the sequence anyway, because the install module is one layer too low to be the seam a surface holds: it knows nothing about resolving an agent's world, opening the operator chain, or selecting a secret backend for the tier, so each caller rebuilt all three. That is three instances of one pattern, which is the repo's own threshold for extracting. Two properties are why the façade exists rather than a shared helper module: a `WormSink` holds an exclusive `flock` for its lifetime, so `AuditChain` makes forgetting to close it impossible instead of a rule three surfaces must each remember; and no return type can hold a credential, so a surface that renders one cannot leak one (LLM02, LLM07). The arch-test widening is honest, not a loosening: arcui stopped being only a view of agents when SPEC-064 made it a control surface for connection and key setup, and every other arcagent module stays forbidden — a route that needs one is the signal the façade is missing something.

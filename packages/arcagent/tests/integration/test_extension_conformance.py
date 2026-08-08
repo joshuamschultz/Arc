@@ -241,7 +241,7 @@ async def _smoke(agent: ArcAgent) -> None:
 
 def _loader(root: Path, registry: CapabilityRegistry, sink: _RecordingSink) -> ExtensionLoader:
     return ExtensionLoader(
-        extensions_root=root,
+        roots=[root],
         registry=registry,
         tier=Tier.PERSONAL,
         audit_sink=sink,
@@ -310,7 +310,7 @@ def test_the_reference_extension_plans_cleanly_on_the_real_install_surface(
     _install(root)
 
     plan = plan_connector(
-        extensions_root=root,
+        extensions_root=[root],
         extension=_BUNDLE,
         instance=_INSTANCE,
         tier=Tier.PERSONAL,
@@ -345,7 +345,7 @@ async def test_installing_the_reference_extension_reaches_its_own_implementation
     _write_agent_toml(agent_dir, connectors_enabled=False)
     store = SecretStore(LocalFileSecretBackend(agent_dir / "arc.env"))
     plan = plan_connector(
-        extensions_root=root,
+        extensions_root=[root],
         extension=_BUNDLE,
         instance=_INSTANCE,
         tier=Tier.PERSONAL,
@@ -393,7 +393,7 @@ async def test_a_started_agent_serves_the_tools_of_an_installed_connection(
     config_path = _write_agent_toml(tmp_path, connectors_enabled=True)
     store = SecretStore(LocalFileSecretBackend(tmp_path / "arc.env"))
     plan = plan_connector(
-        extensions_root=root,
+        extensions_root=[root],
         extension=_BUNDLE,
         instance=_INSTANCE,
         tier=Tier.PERSONAL,
@@ -464,7 +464,7 @@ async def test_an_unsigned_bundle_is_verified_before_any_of_its_code_runs(
         return _import_fixture_module().build_native_attachment({})
 
     plan = plan_connector(
-        extensions_root=root,
+        extensions_root=[root],
         extension=_BUNDLE,
         instance=_INSTANCE,
         tier=Tier.ENTERPRISE,

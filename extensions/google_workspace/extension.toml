@@ -17,6 +17,7 @@
 [extension]
 name = "google_workspace"
 version = "1.0.0"
+description = "Read and draft Gmail, list Drive files, and check Google Calendar."
 attachment = "cli"
 tier_floor = "personal"
 

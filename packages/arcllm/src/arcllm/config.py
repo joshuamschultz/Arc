@@ -155,6 +155,16 @@ class ProviderConfig(BaseModel):
         return self
 
 
+class ProviderKey(BaseModel):
+    """Which environment variable one packaged provider reads its key from."""
+
+    model_config = ConfigDict(frozen=True)
+
+    provider: str
+    api_key_env: str
+    required: bool
+
+
 class DefaultsConfig(BaseModel):
     """Global defaults from [defaults] section."""
 
@@ -349,6 +359,29 @@ def load_provider_config(provider_name: str) -> ProviderConfig:
         return ProviderConfig(provider=provider_settings, models=models, endpoints=endpoints)
     except ValidationError as e:
         raise ArcLLMConfigError(f"Invalid provider config for '{provider_name}': {e}") from e
+
+
+def list_provider_keys() -> tuple[ProviderKey, ...]:
+    """Report the key coordinate of every packaged provider, ordered by name.
+
+    The one reader of ``api_key_env`` for surfaces that ask "which variable does
+    this provider need" (SPEC-064 D-581). Sourced by globbing the packaged
+    ``providers/`` directory through :func:`load_provider_config`, so a new
+    provider TOML is answerable the moment it ships and there is no second parser
+    — nor a second, drifting copy of the map — anywhere in the stack.
+    """
+    directory = _get_config_dir() / "providers"
+    keys: list[ProviderKey] = []
+    for path in sorted(directory.glob("*.toml")):
+        settings = load_provider_config(path.stem).provider
+        keys.append(
+            ProviderKey(
+                provider=path.stem,
+                api_key_env=settings.api_key_env,
+                required=settings.api_key_required,
+            )
+        )
+    return tuple(keys)
 
 
 def load_telemetry_retention_config() -> TraceRetentionConfig:

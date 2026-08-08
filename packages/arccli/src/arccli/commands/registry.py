@@ -129,6 +129,13 @@ def _connector_handler(args: list[str]) -> None:
     connector_handler(args)
 
 
+def _keys_handler(args: list[str]) -> None:
+    """Dispatch wrapper."""
+    from arccli.commands.keys import keys_handler
+
+    keys_handler(args)
+
+
 def _task_handler(args: list[str]) -> None:
     """Dispatch wrapper."""
     from arccli.commands.task import task_handler
@@ -543,6 +550,14 @@ COMMAND_REGISTRY: list[CommandDef] = [
         args_hint="<subcommand>",
         cli_only=True,
         handler=_connector_handler,
+    ),
+    CommandDef(
+        name="keys",
+        description="Provider API keys — list, set (hidden prompt), remove",
+        category="Configuration",
+        args_hint="<subcommand>",
+        cli_only=True,
+        handler=_keys_handler,
     ),
     CommandDef(
         name="blueprint",

@@ -48,10 +48,10 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from arcagent.core.errors import ExtensionError
 from arcagent.core.tier import Tier
 from arcagent.extension.attachment import ExtensionAttachment, ProbeResult
-from arcagent.extension.catalog import ExtensionCatalog
+from arcagent.extension.catalog import MANIFEST_NAME, ExtensionCatalog
 from arcagent.extension.cli_attachment import CliAttachment, CliCommand, CliResilience
 from arcagent.extension.host import HostPrerequisiteDirector, HostVerdict
-from arcagent.extension.loader import MANIFEST_NAME, ExtensionLoader
+from arcagent.extension.loader import ExtensionLoader
 from arcagent.extension.manifest import ExtensionManifest, SecretRequirement, load_manifest
 from arcagent.extension.native_attachment import NativeAttachment
 from arcagent.extension.secrets import SecretRef, SecretStore
@@ -67,6 +67,9 @@ _logger = logging.getLogger("arcagent.modules.connectors.install")
 #: The agent-config table connected instances live in. One bundle can back several
 #: distinctly named instances bound to different accounts.
 CONFIG_TABLE = "extensions"
+
+#: The agent's own owner-only credential file (D-555).
+CONNECTOR_ENV_FILENAME = "connectors.env"
 
 #: The ordered steps an install runs, and the vocabulary a failure reports in.
 INSTALL_STEPS: tuple[str, ...] = (
@@ -122,7 +125,7 @@ class ConnectorPlan:
     secrets: tuple[SecretRequirement, ...]
     approval_mode: str
     tier: Tier
-    extensions_root: Path
+    extensions_root: tuple[Path, ...]
     egress_allow: tuple[str, ...] = ()
 
 
@@ -148,7 +151,7 @@ class RemovalReport:
 
 def plan_connector(
     *,
-    extensions_root: Path,
+    extensions_root: Sequence[Path],
     extension: str,
     instance: str,
     tier: Tier,
@@ -159,7 +162,11 @@ def plan_connector(
     """Run the three read-only steps: resolve the bundle, parse it, inspect the host.
 
     Args:
-        extensions_root: The directory every loadable bundle lives directly inside.
+        extensions_root: The bundle search path, in order (D-584). A loadable
+            bundle lives directly inside one of these; the first root holding the
+            name wins, so an agent-local bundle overrides a fleet-wide one without
+            hiding the rest of the fleet. :func:`~arcagent.extension.catalog.
+            resolve_extension_roots` composes the deployment's order.
         extension: The bundle name the operator asked for.
         instance: The name this connected account will be known by.
         tier: The deployment tier — decides the unlisted-bundle verdict, the
@@ -182,7 +189,8 @@ def plan_connector(
             reports a connection, and a planner that refuses would strand the
             credentials of a connection the tier has since turned forbidden.
     """
-    catalog = ExtensionCatalog(root=Path(extensions_root), tier=tier, audit_sink=audit_sink)
+    roots = tuple(Path(root) for root in extensions_root)
+    catalog = ExtensionCatalog(roots=roots, tier=tier, audit_sink=audit_sink)
     try:
         resolution = catalog.resolve(extension)
     except ExtensionError as exc:
@@ -204,7 +212,7 @@ def plan_connector(
         secrets=tuple(manifest.secrets),
         approval_mode=manifest.approval.default,
         tier=tier,
-        extensions_root=Path(extensions_root),
+        extensions_root=roots,
         egress_allow=tuple(egress_allow),
     )
 
@@ -324,6 +332,16 @@ async def remove_connector(
 
 
 # --- the agent-config seam: both halves ------------------------------------
+
+
+def connector_env_file(agent_dir: Path) -> Path:
+    """The owner-only file this agent's connector credentials live in (D-555).
+
+    One resolver rather than a filename constant per surface: the CLI, the TUI,
+    and the web all hand this path to ``select_secret_backend``, and a surface
+    spelling it differently would write a credential the other two cannot read.
+    """
+    return Path(agent_dir) / CONNECTOR_ENV_FILENAME
 
 
 def load_instances(agent_dir: Path) -> dict[str, InstanceConfig]:
@@ -486,7 +504,7 @@ async def _verify_bundle(
     from arcagent.capabilities.capability_registry import CapabilityRegistry as _Registry
 
     loader = ExtensionLoader(
-        extensions_root=plan.extensions_root,
+        roots=plan.extensions_root,
         registry=registry if registry is not None else _Registry(),
         tier=plan.tier,
         audit_sink=audit_sink if audit_sink is not None else NullSink(),
@@ -607,6 +625,7 @@ def _write_config(agent_dir: Path, document: dict[str, Any]) -> None:
 
 __all__ = [
     "CONFIG_TABLE",
+    "CONNECTOR_ENV_FILENAME",
     "INSTALL_STEPS",
     "AttachmentFactory",
     "ConnectorPlan",
@@ -614,6 +633,7 @@ __all__ = [
     "InstanceConfig",
     "RemovalReport",
     "build_attachment",
+    "connector_env_file",
     "delete_instance",
     "install_connector",
     "load_egress_allow",

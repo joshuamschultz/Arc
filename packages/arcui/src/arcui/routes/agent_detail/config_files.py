@@ -44,6 +44,32 @@ def _error(message: str, status: int) -> JSONResponse:
     return JSONResponse(ErrorResponse(error=message).model_dump(mode="json"), status_code=status)
 
 
+class BodyTooLargeError(Exception):
+    """A request body exceeded :data:`_MAX_BODY_BYTES` (LLM10 unbounded input)."""
+
+
+async def read_json_object(request: Request) -> dict[str, Any] | None:
+    """Read a body-capped JSON object, or ``None`` when the body is not one.
+
+    Lives beside the cap and the error shape because every operator-gated write
+    in this package needs the same three steps in the same order. The body is
+    never logged and never echoed: an operator submitting a provider key or a
+    connector credential sends it through here, so a malformed one has to yield a
+    generic refusal rather than a message quoting what was sent.
+
+    Raises:
+        BodyTooLargeError: The body exceeded the shared cap.
+    """
+    body = await request.body()
+    if len(body) > _MAX_BODY_BYTES:
+        raise BodyTooLargeError
+    try:
+        parsed = json.loads(body)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
 def _is_sensitive(key: str) -> bool:
     low = key.lower()
     return any(sub in low for sub in _SENSITIVE_SUBSTRINGS)
@@ -163,4 +189,4 @@ async def patch_config_file(request: Request) -> JSONResponse:
     )
 
 
-__all__ = ["get_config_file", "patch_config_file"]
+__all__ = ["BodyTooLargeError", "get_config_file", "patch_config_file", "read_json_object"]
