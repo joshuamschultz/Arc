@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from arcagent.keys import KeyStore
+from arcagent.keys import KeyStore, default_env_file
 
 from arccli.commands import init as init_module
 from arccli.commands.keys import _build_parser, keys_handler
@@ -53,7 +53,7 @@ def paths(arc_dir: Path, data_dir: Path) -> list[str]:
 
 
 def _entries(arc_dir: Path) -> dict[str, str]:
-    env_file = arc_dir / ".env"
+    env_file = default_env_file(arc_dir)
     if not env_file.exists():
         return {}
     return dict(
@@ -206,7 +206,7 @@ def test_the_cli_and_the_key_store_agree_on_the_file(
     monkeypatch.setattr(keys_module.getpass, "getpass", lambda prompt="": _KEY_VALUE)
     keys_handler(["set", "anthropic", *paths])
 
-    store = KeyStore(arc_dir / ".env")
+    store = KeyStore(default_env_file(arc_dir))
     statuses = asyncio.run(store.list(caller_did="did:arc:local:operator"))
     assert next(s for s in statuses if s.provider == "anthropic").present is True
 

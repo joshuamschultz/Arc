@@ -65,7 +65,7 @@ async def store_secret(name: str) -> str:
         f"Cannot store this credential myself — credentials never touch the "
         f"filesystem here (see packages/arcagent/CLAUDE.md). Ask the operator to "
         f"add it to the environment file the agent loads at startup "
-        f"(~/.arc/.env, or ~/.arc/arc.env for a systemd deployment — mode 600) as:\n\n"
+        f"(~/.arc/arc.env — mode 600) as:\n\n"
         f"{env_var}=<the value>\n\n"
         f"then restart the agent. Do not paste the value back into this chat or "
         f"write it to any file — write/edit/create_skill/create_tool/update_skill/"
