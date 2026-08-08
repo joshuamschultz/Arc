@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from arcagent.keys import default_env_file
 from arcllm import ProviderKey, list_provider_keys
 
 from arccli.commands._arcllm_surface import (
@@ -470,7 +471,7 @@ def _init(args: argparse.Namespace) -> None:
     for path, content in targets:
         path.write_text(content, encoding="utf-8")
 
-    env_path = arc_dir / ".env"
+    env_path = default_env_file(arc_dir)
     if not env_path.exists():
         env_path.touch(mode=0o600)
 
