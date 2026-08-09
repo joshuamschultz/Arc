@@ -49,6 +49,7 @@ from arcagent.extension.attachment import (
     ToolSpec,
 )
 from arcagent.extension.bridge import CapabilityBridge
+from arcagent.extension.grants import ConnectionRegistry
 from arcagent.extension.loader import ExtensionLoader
 from arcagent.extension.secrets import LocalFileSecretBackend, SecretStore
 from arcagent.extension.state import open_connection_state
@@ -256,13 +257,6 @@ class FakeAttachment:
         return ToolResult(tool=tool, outcome=ToolOutcome.OK)
 
 
-def _agent_dir(tmp_path: Path) -> Path:
-    agent = tmp_path / "sales_agent"
-    agent.mkdir(parents=True, exist_ok=True)
-    (agent / "arcagent.toml").write_text('[agent]\nname = "sales_agent"\n', encoding="utf-8")
-    return agent
-
-
 async def _install(
     tmp_path: Path,
     *,
@@ -287,8 +281,8 @@ async def _install(
     )
     return await install_connector(
         plan,
-        agent_dir=_agent_dir(tmp_path),
-        agent="sales_agent",
+        connections=ConnectionRegistry(tmp_path / "arc"),
+        agents=["sales_agent"],
         secret_values={},
         store=SecretStore(LocalFileSecretBackend(tmp_path / "arc.env")),
         caller_did="did:arc:example:org:agent:abc",
@@ -359,13 +353,12 @@ class TestInstallRefusal:
     async def test_nothing_is_written_when_the_install_is_refused(
         self, tmp_path: Path, operator: AgentIdentity
     ) -> None:
-        """The refusal is a refusal, not a cleanup: no config block is left behind."""
+        """The refusal is a refusal, not a cleanup: no connection is left behind."""
         with pytest.raises(ExtensionError):
             await _install(
                 tmp_path, tool=_SEND, tags=[_EGRESS_TAG], tier=Tier.FEDERAL, operator=operator
             )
-        config = (tmp_path / "sales_agent" / "arcagent.toml").read_text(encoding="utf-8")
-        assert "extensions" not in config
+        assert ConnectionRegistry(tmp_path / "arc").all() == {}
 
     @pytest.mark.parametrize("tier", [Tier.PERSONAL, Tier.ENTERPRISE, Tier.FEDERAL])
     async def test_a_read_only_bundle_installs_at_every_tier(

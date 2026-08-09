@@ -249,6 +249,17 @@
   - Requirements: REQ-278, REQ-279, REQ-270
   - Acceptance: T-921 passes. No vendor SDK. Satisfies the same hook Protocol as CliAttachment with no core changes — which is the proof the hook is transport-agnostic. A JSON-RPC error is a protocol failure; an isError result reaches the agent; an input_required result is never mistaken for completion.
 
+> **T-919 and T-920 are BLOCKED ON OPERATOR CREDENTIALS, not on code.**
+> Every mechanism they would exercise is built and proven against a reference
+> extension: install, signature verification, tool registration under real names,
+> classification, the egress gate, and dispatch through the agent's own envelope
+> (`tests/integration/test_extension_conformance.py`, 29 passing).
+>
+> What remains is evidence that a bundle works against the live service, which
+> requires accounts this repo does not and should not hold. To close them:
+> `arc connector add jira` with an API token, and `arc connector add google_workspace`
+> after `gog auth add`. Record the conformance run as evidence in the bundle.
+
 ## Traceability
 
 | Requirement | Tasks |

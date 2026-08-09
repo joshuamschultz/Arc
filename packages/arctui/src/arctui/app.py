@@ -72,9 +72,9 @@ class ArcTUI(App[None]):
         Optional application title shown in the header.
     agent_dir:
         Directory of the agent this TUI is attached to — the one the roster
-        already resolved. ``/connect`` reads its config and writes its
-        connections there; without it the TUI has no agent to connect anything
-        to and says so.
+        already resolved. Its NAME is who ``/connect`` grants a new connection
+        to; nothing is written inside it. Without one the TUI has no agent to
+        hand a connection to and says so.
     """
 
     CSS = build_tcss()
@@ -321,18 +321,34 @@ class ArcTUI(App[None]):
         if connections is not None:
             from arctui.connect_screen import ConnectScreen
 
-            self.push_screen(ConnectScreen(connections), self._report_connect_outcome)
+            self.push_screen(
+                ConnectScreen(connections, self._grantee()), self._report_connect_outcome
+            )
 
     def _open_connections(self) -> None:
-        """Show what this agent already has connected, with a probe action."""
+        """Show the deployment's connections and who holds them, with a probe action."""
         connections = self._connections()
         if connections is not None:
             from arctui.connect_screen import ConnectionsScreen
 
-            self.push_screen(ConnectionsScreen(connections))
+            self.push_screen(ConnectionsScreen(connections, self._grantee()))
+
+    def _grantee(self) -> str:
+        """The agent a connection made here is granted to.
+
+        Its DIRECTORY name, which is the coordinate a grant is matched against
+        when the agent starts — not the display label, which need not be unique
+        and would produce a grant that is written, listed, and effective for no one.
+        """
+        return self._agent_dir.name if self._agent_dir is not None else ""
 
     def _connections(self) -> Connections | None:
-        """Bind the attached agent's connector seam, or say why it cannot."""
+        """Bind this deployment's connector seam, or say why it cannot.
+
+        The seam itself needs no agent — a connection belongs to the deployment.
+        The attached agent is still required, because it is who a connection made
+        here is granted to, and one granted to nobody would serve nobody.
+        """
         from arcagent.connections import ExtensionError
 
         from arctui.connect import open_connections
@@ -345,7 +361,7 @@ class ArcTUI(App[None]):
             )
             return None
         try:
-            return open_connections(self._agent_dir)
+            return open_connections()
         except ExtensionError as exc:
             self._say(MessageRole.ERROR, exc.message)
             return None

@@ -59,10 +59,7 @@ def _requirement(script: str) -> HostRequirement:
 
 
 #: Reads the token from stdin, proves it arrived, and exits 0.
-_ACCEPTS = (
-    "import sys; token = sys.stdin.read().strip();"
-    " sys.exit(0 if token else 1);"
-)
+_ACCEPTS = "import sys; token = sys.stdin.read().strip(); sys.exit(0 if token else 1);"
 
 #: Echoes what it was given — the binary that would leak the token for us.
 _ECHOES = "import sys; print('signed in as', sys.stdin.read().strip())"
@@ -136,9 +133,7 @@ async def test_the_token_never_reaches_argv(tmp_path: Path) -> None:
     really received rather than on how the call site looks.
     """
     recorded = tmp_path / "argv.txt"
-    script = (
-        f"import sys; open({str(recorded)!r}, 'w').write(repr(sys.argv)); sys.stdin.read()"
-    )
+    script = f"import sys; open({str(recorded)!r}, 'w').write(repr(sys.argv)); sys.stdin.read()"
 
     await _login(_requirement(script), _SENTINEL, _RecordingSink())
 

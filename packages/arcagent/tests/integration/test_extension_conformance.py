@@ -77,16 +77,14 @@ from arcagent.core.tier import Tier
 from arcagent.core.tool_registry import ToolRegistry, ToolTransport
 from arcagent.extension.attachment import ExtensionAttachment
 from arcagent.extension.bridge import CapabilityBridge
+from arcagent.extension.grants import Connection, ConnectionRegistry
 from arcagent.extension.loader import ExtensionLoader
 from arcagent.extension.secrets import LocalFileSecretBackend, SecretStore
 from arcagent.extension.state import ConnectionStateStore, open_connection_state
 from arcagent.modules.connectors.install import (
-    InstanceConfig,
     connector_env_file,
     install_connector,
-    load_instances,
     plan_connector,
-    write_instance,
 )
 
 _FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "reference_extension"
@@ -98,10 +96,9 @@ _BUNDLE = "reference_service"
 #: The connected-account name one bundle is installed under.
 _INSTANCE = "primary"
 
-#: The agent slug that keys the secret store (its grammar forbids a hyphen). It is the
-#: agent DIRECTORY name, which is what ``resolve_world`` keys on and what the connector
-#: module reads back at startup: a test spelling it differently would write a credential
-#: the agent under test could never find.
+#: The agent slug a grant names (its grammar forbids a hyphen). It is the agent
+#: DIRECTORY name, which is what the connector module matches its grants against at
+#: startup: a test spelling it differently would grant a connection to nobody.
 _AGENT_SLUG = "conformance_agent"
 
 #: Recorded as the actor on every credential operation the install performs.
@@ -203,20 +200,32 @@ def _registry(agent: ArcAgent) -> ToolRegistry:
 
 
 def _agent_home(tmp_path: Path) -> Path:
-    """The agent's own directory, NAMED after the slug that keys its secret store.
+    """The agent's own directory, NAMED after the slug a grant names.
 
-    The connector module reads credentials under its agent directory's name, so a
-    test whose directory name and store key disagree writes a credential the agent it
-    then starts can never find — and would pass only while nothing read one back.
+    The connector module matches its grants against its agent directory's name, so a
+    test whose directory name and grant disagree grants the connection to nobody —
+    and would pass only while nothing read a tool back.
     """
     home = tmp_path / _AGENT_SLUG
     home.mkdir(parents=True, exist_ok=True)
     return home
 
 
-def _credential_store(agent_home: Path) -> SecretStore:
+def _arc_dir(tmp_path: Path) -> Path:
+    """The deployment root: this test's connections, grants, credentials, and bundles."""
+    root = tmp_path / "arc"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _connections(arc_dir: Path) -> ConnectionRegistry:
+    """The deployment's connections — what an install writes and the agent reads."""
+    return ConnectionRegistry(arc_dir)
+
+
+def _credential_store(arc_dir: Path) -> SecretStore:
     """The file the agent's connector module reads, which is what every surface writes."""
-    return SecretStore(LocalFileSecretBackend(connector_env_file(agent_home)))
+    return SecretStore(LocalFileSecretBackend(connector_env_file(arc_dir)))
 
 
 def _data_dir(agent_dir: Path) -> Path:
@@ -231,7 +240,9 @@ async def _connection_state(agent_dir: Path) -> ConnectionStateStore:
     return await open_connection_state(str(_data_dir(agent_dir)))
 
 
-def _write_agent_toml(agent_dir: Path, *, connectors_enabled: bool, extra: str = "") -> Path:
+def _write_agent_toml(
+    agent_dir: Path, *, connectors_enabled: bool, extra: str = "", arc_dir: Path | None = None
+) -> Path:
     """Write a real ``arcagent.toml``, because the install path writes into one too."""
     workspace = agent_dir / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
@@ -263,6 +274,7 @@ def _write_agent_toml(agent_dir: Path, *, connectors_enabled: bool, extra: str =
             "",
             "[modules.connectors.config]",
             f'data_dir = "{_data_dir(agent_dir)}"',
+            f'arc_dir = "{arc_dir if arc_dir is not None else agent_dir}"',
         ]
     if extra:
         lines += ["", extra]
@@ -387,16 +399,10 @@ async def test_installing_the_reference_extension_reaches_its_own_implementation
     interpreter's own environment, an extension is not a folder a third party can hand
     over and an operator can delete.
     """
-    root = tmp_path / "extensions"
+    arc_dir = _arc_dir(tmp_path)
+    root = arc_dir / "extensions"
     _install(root)
-    agent_dir = tmp_path / "agent"
-    agent_dir.mkdir()
-    # A real agent directory, because the install writes its instance block into a real
-    # ``arcagent.toml``. Persist must refuse a directory that holds none rather than
-    # inventing a config with no ``[agent]`` or ``[llm]`` — an agent could not start
-    # from that — so the fixture supplies the file instead of the code relaxing.
-    _write_agent_toml(agent_dir, connectors_enabled=False)
-    store = SecretStore(LocalFileSecretBackend(agent_dir / "arc.env"))
+    store = SecretStore(LocalFileSecretBackend(connector_env_file(arc_dir)))
     plan = plan_connector(
         extensions_root=[root],
         extension=_BUNDLE,
@@ -407,12 +413,12 @@ async def test_installing_the_reference_extension_reaches_its_own_implementation
 
     report = await install_connector(
         plan,
-        agent_dir=agent_dir,
-        agent=_AGENT_SLUG,
+        connections=_connections(arc_dir),
+        agents=[_AGENT_SLUG],
         secret_values={"reference_token": "unused"},
         store=store,
         caller_did=_CALLER,
-        state=await _connection_state(agent_dir),
+        state=await _connection_state(arc_dir),
     )
 
     assert sorted(report.tools) == [_ECHO, _STORE]
@@ -443,9 +449,11 @@ async def test_a_started_agent_serves_the_tools_of_an_installed_connection(
     satisfied by a test-only seam in production code.
     """
     agent_home = _agent_home(tmp_path)
-    root = agent_home / "extensions"
+    arc_dir = _arc_dir(tmp_path)
+    root = arc_dir / "extensions"
     _install(root)
-    config_path = _write_agent_toml(agent_home, connectors_enabled=True)
+    config_path = _write_agent_toml(agent_home, connectors_enabled=True, arc_dir=arc_dir)
+    connections = _connections(arc_dir)
     plan = plan_connector(
         extensions_root=[root],
         extension=_BUNDLE,
@@ -455,19 +463,21 @@ async def test_a_started_agent_serves_the_tools_of_an_installed_connection(
     )
     await install_connector(
         plan,
-        agent_dir=agent_home,
-        agent=_AGENT_SLUG,
+        connections=connections,
+        agents=[_AGENT_SLUG],
         secret_values={"reference_token": "unused"},
-        store=_credential_store(agent_home),
+        store=_credential_store(arc_dir),
         caller_did=_CALLER,
-        state=await _connection_state(agent_home),
+        state=await _connection_state(arc_dir),
     )
-    assert _INSTANCE in load_instances(agent_home), "the install did not persist the instance"
+    assert _INSTANCE in connections.all(), "the install did not define the connection"
     # The manifest's default gates every outbound call on a signed operator grant, which
     # is correct (REQ-274) and is what the approval tests exercise. Relax it for this one
     # connected account — the operator action REQ-274 explicitly permits — so this test
     # stays pointed at activation rather than blocking on the human gate.
-    write_instance(agent_home, _INSTANCE, InstanceConfig(extension=_BUNDLE, approval="none"))
+    connections.define(
+        _INSTANCE, Connection(extension=_BUNDLE, approval="none", agents=(_AGENT_SLUG,))
+    )
 
     agent = ArcAgent(config=load_config(config_path), config_path=config_path)
     await agent.startup()
@@ -512,9 +522,11 @@ async def test_a_started_agent_serves_a_connection_with_its_credential_delivered
     result, and matching the digest proves the exact stored credential arrived.
     """
     agent_home = _agent_home(tmp_path)
-    root = agent_home / "extensions"
+    arc_dir = _arc_dir(tmp_path)
+    root = arc_dir / "extensions"
     _install(root)
-    config_path = _write_agent_toml(agent_home, connectors_enabled=True)
+    config_path = _write_agent_toml(agent_home, connectors_enabled=True, arc_dir=arc_dir)
+    connections = _connections(arc_dir)
     plan = plan_connector(
         extensions_root=[root],
         extension=_BUNDLE,
@@ -524,14 +536,16 @@ async def test_a_started_agent_serves_a_connection_with_its_credential_delivered
     )
     await install_connector(
         plan,
-        agent_dir=agent_home,
-        agent=_AGENT_SLUG,
+        connections=connections,
+        agents=[_AGENT_SLUG],
         secret_values={"reference_token": _TOKEN},
-        store=_credential_store(agent_home),
+        store=_credential_store(arc_dir),
         caller_did=_CALLER,
-        state=await _connection_state(agent_home),
+        state=await _connection_state(arc_dir),
     )
-    write_instance(agent_home, _INSTANCE, InstanceConfig(extension=_BUNDLE, approval="none"))
+    connections.define(
+        _INSTANCE, Connection(extension=_BUNDLE, approval="none", agents=(_AGENT_SLUG,))
+    )
 
     agent = ArcAgent(config=load_config(config_path), config_path=config_path)
     await agent.startup()
@@ -558,9 +572,12 @@ async def test_a_started_agent_refuses_a_connection_whose_credential_is_gone(
     starts.
     """
     agent_home = _agent_home(tmp_path)
-    _install(agent_home / "extensions")
-    config_path = _write_agent_toml(agent_home, connectors_enabled=True)
-    write_instance(agent_home, _INSTANCE, InstanceConfig(extension=_BUNDLE, approval="none"))
+    arc_dir = _arc_dir(tmp_path)
+    _install(arc_dir / "extensions")
+    config_path = _write_agent_toml(agent_home, connectors_enabled=True, arc_dir=arc_dir)
+    _connections(arc_dir).define(
+        _INSTANCE, Connection(extension=_BUNDLE, approval="none", agents=(_AGENT_SLUG,))
+    )
 
     agent = ArcAgent(config=load_config(config_path), config_path=config_path)
     await agent.startup()
@@ -603,8 +620,8 @@ async def test_an_unsigned_bundle_is_verified_before_any_of_its_code_runs(
     with contextlib.suppress(ExtensionError):
         await install_connector(
             plan,
-            agent_dir=tmp_path,
-            agent=_AGENT_SLUG,
+            connections=_connections(_arc_dir(tmp_path)),
+            agents=[_AGENT_SLUG],
             secret_values={"reference_token": "unused"},
             store=SecretStore(LocalFileSecretBackend(tmp_path / "arc.env")),
             caller_did=_CALLER,

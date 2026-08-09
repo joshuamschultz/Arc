@@ -49,7 +49,6 @@ export function HostRequirementLine({ requirements }: { requirements: HostRequir
  * exact text to hand someone who does use a terminal.
  */
 export function HostSetupPanel({
-  agentId,
   extension,
   requirements,
   operatorMode,
@@ -57,13 +56,12 @@ export function HostSetupPanel({
    *  bundle merely declares them and we do not know if they are missing. */
   blocking,
 }: {
-  agentId: string
   extension: string
   requirements: HostRequirement[]
   operatorMode: boolean
   blocking: boolean
 }) {
-  const setup = useHostSetup(agentId, extension)
+  const setup = useHostSetup(extension)
   const result = setup.data
   const [showManual, setShowManual] = useState(false)
   // Never ask for something this host already has. A refusal only carries the

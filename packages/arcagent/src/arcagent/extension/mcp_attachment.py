@@ -342,8 +342,7 @@ class HttpTransport:
             received += len(chunk)
             if received > MAX_MESSAGE_BYTES:
                 raise _transport_failure(
-                    f"the MCP server at {self._url} returned more than "
-                    f"{MAX_MESSAGE_BYTES} bytes",
+                    f"the MCP server at {self._url} returned more than {MAX_MESSAGE_BYTES} bytes",
                     url=self._url,
                 )
             chunks.append(chunk)

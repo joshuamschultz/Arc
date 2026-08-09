@@ -17,9 +17,9 @@ another's — unacceptable for a module whose entire job is governing external c
 inputs (module config, agent identity, tier, policy pipeline, human gate) plus the
 two nearly-universal ones every module needs (telemetry, workspace), and the two
 this module cannot do its job without: ``tool_registry``, which owns the dispatch
-envelope every connector verb must ride, and ``config_path``, which is where the
-``[extensions.<instance>]`` blocks an install wrote actually live — the workspace
-is a different directory and is not where an agent's connections are configured.
+envelope every connector verb must ride, and ``config_path``, whose DIRECTORY NAME is
+what a grant names — the workspace is a different directory, and an agent identified
+by the wrong name is an agent matched against the wrong grants.
 
 It also names ``operator_signer``, and for one read only: its ``public_key`` is
 the key an extension bundle's ``.arcsig`` is pinned against (REQ-283), the same
@@ -63,8 +63,24 @@ class _State:
 
     @property
     def agent_dir(self) -> Path:
-        """The directory holding ``arcagent.toml`` — where connections are configured."""
+        """The directory holding ``arcagent.toml``. Its NAME is what a grant names."""
         return self.config_path.parent
+
+    @property
+    def arc_dir(self) -> Path:
+        """The deployment root holding this deployment's connections and grants.
+
+        Resolved here rather than at the read site so the agent, the CLI, the TUI
+        and the web all land on one directory: a second spelling would mean the
+        agent asked a file no surface ever wrote to, and answered "no grants" for
+        every connection an operator had made.
+        """
+        configured = self.config.arc_dir
+        if configured:
+            return Path(configured).expanduser()
+        from arctrust.paths import arc_home
+
+        return arc_home()
 
 
 _state_var: contextvars.ContextVar[_State | None] = contextvars.ContextVar(

@@ -163,9 +163,7 @@ def _set(args: argparse.Namespace) -> None:
         for spec in args.pair or []:
             platform, _, external_id = spec.partition(":")
             user = store.set_pairing(args.email, platform, external_id or None)
-            changed.append(
-                f"{platform} {external_id}" if external_id else f"{platform} unpaired"
-            )
+            changed.append(f"{platform} {external_id}" if external_id else f"{platform} unpaired")
     except ValueError as exc:
         _fail(str(exc))
         return

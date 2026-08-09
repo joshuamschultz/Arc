@@ -1,9 +1,15 @@
 """ConnectionStateStore — per-connection operational state (SPEC-062 COMP-019).
 
 Health, last successful use, credential *coordinates*, approved tool-contract
-hashes, and dependency declarations for one ``(agent, instance)`` connection —
-the state REQ-295 lets a management surface report without probing the external
-service, and the approved-hash side REQ-291's rug-pull defence reads and writes.
+hashes, and dependency declarations for one connection — the state REQ-295 lets a
+management surface report without probing the external service, and the
+approved-hash side REQ-291's rug-pull defence reads and writes.
+
+Keyed by the connection alone, because that is what the state is about. The
+approved tool contract is what the upstream serves, not what one agent sees, so
+two agents granted the same account share one approval: an operator approves a
+changed contract once rather than once per grantee, and a suspension cannot be
+in force for one agent and cleared for another.
 
 This is operational data *about* a connection, not the agent's own brain: it is
 shared with the CLI, the TUI, and the dashboard, so it belongs on the arcstore
@@ -49,12 +55,8 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _key(agent: str, instance: str) -> str:
-    return f"{agent}/{instance}"
-
-
 class ConnectionRecord(BaseModel):
-    """Operational state of one connected instance.
+    """Operational state of one connected account.
 
     Frozen — mutation always goes through :class:`ConnectionStateStore`, which
     patches the durable row; nothing holds a live record and edits it in place.
@@ -64,8 +66,7 @@ class ConnectionRecord(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    agent: str
-    instance: str
+    connection: str
     health: ConnectionHealth = "unknown"
     last_success_at: str | None = None
     # Credential *coordinates* only — REQ-277 records the store, item, field,
@@ -142,58 +143,52 @@ class ConnectionStateStore:
         proposed = record.model_copy(update={"created_at": _now()})
         rows = await self._backend.mutable_create_batch(
             self._COLLECTION,
-            [(_key(record.agent, record.instance), proposed.model_dump(mode="json"))],
+            [(record.connection, proposed.model_dump(mode="json"))],
             actor_did=actor_did,
             sink=self._sink,
         )
-        return self._load(_key(record.agent, record.instance), rows[0])
+        return self._load(record.connection, rows[0])
 
-    async def get(self, agent: str, instance: str) -> ConnectionRecord | None:
+    async def get(self, connection: str) -> ConnectionRecord | None:
         """Return one connection's state, or None if it was never registered."""
-        key = _key(agent, instance)
-        raw = await self._backend.mutable_read(self._COLLECTION, key)
-        return self._load(key, raw) if raw is not None else None
+        raw = await self._backend.mutable_read(self._COLLECTION, connection)
+        return self._load(connection, raw) if raw is not None else None
 
-    async def list(
-        self, *, agent: str | None = None, health: ConnectionHealth | None = None
-    ) -> list[ConnectionRecord]:
+    async def list(self, *, health: ConnectionHealth | None = None) -> list[ConnectionRecord]:
         """Return every readable connection, optionally filtered.
 
         An unreadable row is logged with its key and skipped: a corrupt record
         for one connection must not blank out the status of every other one.
         """
         where: dict[str, Any] = {}
-        if agent is not None:
-            where["agent"] = agent
         if health is not None:
             where["health"] = health
         rows = await self._backend.mutable_query(self._COLLECTION, where=where)
         records: list[ConnectionRecord] = []
         for row in rows:
-            key = _key(str(row.get("agent", "?")), str(row.get("instance", "?")))
+            key = str(row.get("connection", "?"))
             try:
                 records.append(self._load(key, row))
             except ExtensionError as exc:
                 _logger.error("skipping unreadable connection state row: %s", exc.message)
         return records
 
-    async def mark_healthy(self, agent: str, instance: str, *, actor_did: str) -> bool:
+    async def mark_healthy(self, connection: str, *, actor_did: str) -> bool:
         """Record a successful use — health plus the time it happened (REQ-295)."""
         now = _now()
         return await self._patch(
-            agent, instance, {"health": "healthy", "last_success_at": now}, actor_did=actor_did
+            connection, {"health": "healthy", "last_success_at": now}, actor_did=actor_did
         )
 
     async def set_health(
-        self, agent: str, instance: str, health: ConnectionHealth, *, actor_did: str
+        self, connection: str, health: ConnectionHealth, *, actor_did: str
     ) -> bool:
         """Set health without claiming a successful use (REQ-295, REQ-289)."""
-        return await self._patch(agent, instance, {"health": health}, actor_did=actor_did)
+        return await self._patch(connection, {"health": health}, actor_did=actor_did)
 
     async def record_credential_metadata(
         self,
-        agent: str,
-        instance: str,
+        connection: str,
         *,
         expires_at: str | None = None,
         issuer: str | None = None,
@@ -217,10 +212,10 @@ class ConnectionStateStore:
             patch["credential_audience"] = audience
         if last_refresh_at is not None:
             patch["credential_last_refresh_at"] = last_refresh_at
-        return await self._patch(agent, instance, patch, actor_did=actor_did)
+        return await self._patch(connection, patch, actor_did=actor_did)
 
     async def approve_tool_contract(
-        self, agent: str, instance: str, tool: str, contract_hash: str, *, actor_did: str
+        self, connection: str, tool: str, contract_hash: str, *, actor_did: str
     ) -> bool:
         """Record the hash of a tool contract as approved (REQ-291).
 
@@ -229,42 +224,40 @@ class ConnectionStateStore:
         land — a read-modify-write of the whole map would lose one.
         """
         return await self._patch(
-            agent, instance, {"approved_tool_hashes": {tool: contract_hash}}, actor_did=actor_did
+            connection, {"approved_tool_hashes": {tool: contract_hash}}, actor_did=actor_did
         )
 
-    async def approved_hash(self, agent: str, instance: str, tool: str) -> str | None:
+    async def approved_hash(self, connection: str, tool: str) -> str | None:
         """The contract hash approved for ``tool``, or None if never approved (REQ-291)."""
-        record = await self.get(agent, instance)
+        record = await self.get(connection)
         return record.approved_tool_hashes.get(tool) if record is not None else None
 
     async def declare_dependencies(
-        self, agent: str, instance: str, dependencies: Sequence[str], *, actor_did: str
+        self, connection: str, dependencies: Sequence[str], *, actor_did: str
     ) -> bool:
         """Record what this extension declares, so removal can reference-count it."""
         return await self._patch(
-            agent, instance, {"dependency_declarations": list(dependencies)}, actor_did=actor_did
+            connection, {"dependency_declarations": list(dependencies)}, actor_did=actor_did
         )
 
-    async def forget(self, agent: str, instance: str, *, actor_did: str) -> bool:
+    async def forget(self, connection: str, *, actor_did: str) -> bool:
         """Drop a connection's state. Returns True if a record was removed."""
         return await self._backend.mutable_delete(
-            self._COLLECTION, _key(agent, instance), actor_did=actor_did, sink=self._sink
+            self._COLLECTION, connection, actor_did=actor_did, sink=self._sink
         )
 
-    async def _patch(
-        self, agent: str, instance: str, patch: dict[str, Any], *, actor_did: str
-    ) -> bool:
+    async def _patch(self, connection: str, patch: dict[str, Any], *, actor_did: str) -> bool:
         """Merge ``patch`` into an existing row in one atomic statement.
 
         Returns False when the connection does not exist — an update never
-        conjures a half-populated record out of a typo'd instance name.
+        conjures a half-populated record out of a typo'd connection name.
         """
         if not patch:
             return False
         patch["updated_at"] = _now()
         return await self._backend.mutable_merge(
             self._COLLECTION,
-            _key(agent, instance),
+            connection,
             patch,
             actor_did=actor_did,
             sink=self._sink,

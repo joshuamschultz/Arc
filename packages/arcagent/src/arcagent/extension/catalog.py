@@ -19,10 +19,11 @@ Every verdict — allow, warn, refuse — goes through the single
 records nothing is not a control.
 
 Bundles resolve from an ORDERED search path (D-584), not from one directory:
-``<agent>/extensions``, then ``$ARC_EXTENSIONS_ROOT``, then
-``<arc_home>/extensions``. First hit wins **by name**, so an agent-local bundle
-overrides a fleet-wide one of the same name without hiding the rest of the
-fleet — a deployment ships its bundles once instead of once per agent.
+``<arc_dir>/extensions``, then ``$ARC_EXTENSIONS_ROOT``, then
+``<arc_home>/extensions``. First hit wins **by name**, so an operator pointing a
+deployment at its own directory overrides a user-wide bundle of the same name
+without hiding the rest — a deployment ships its bundles once instead of once
+per agent.
 
 The catalog names no upstream: the shipping allowlist is populated by the
 deployment, not by this module.
@@ -59,34 +60,38 @@ _CATALOG_DID = "did:arc:extension-catalog"
 #: thing that makes a directory a bundle rather than a folder.
 MANIFEST_NAME = "extension.toml"
 
-#: The directory name bundles live under, beside an agent config and under arc home.
+#: The directory name bundles live under, inside the deployment root and arc home.
 BUNDLES_DIRNAME = "extensions"
 
 #: Deployment-wide override for the middle root of the search path.
 EXTENSIONS_ROOT_ENV = "ARC_EXTENSIONS_ROOT"
 
 
-def resolve_extension_roots(agent_dir: Path | None = None) -> tuple[Path, ...]:
+def resolve_extension_roots(base_dir: Path | None = None) -> tuple[Path, ...]:
     """Return the ordered bundle search path, dropping roots that do not exist (D-584).
 
-    Order is agent-local, then deployment override, then user-wide:
-    ``<agent_dir>/extensions``, ``$ARC_EXTENSIONS_ROOT``,
-    ``<arc_home>/extensions``. Every surface — CLI, TUI, web — calls this rather
-    than composing its own order, because two orders would mean an operator
-    installing through one surface and an agent reading through another disagree
-    about which directory a given bundle name refers to.
+    Order is the deployment's own directory, then the environment override, then
+    user-wide: ``<base_dir>/extensions``, ``$ARC_EXTENSIONS_ROOT``,
+    ``<arc_home>/extensions``. Every surface — CLI, TUI, web, and the running
+    agent — calls this rather than composing its own order, because two orders
+    would mean an operator installing through one surface and an agent reading
+    through another disagree about which directory a given bundle name refers to.
+
+    A connection is the deployment's, so its bundle must be resolvable by every
+    agent granted it. There is deliberately no agent-local root: one would let a
+    connection attach for the agent that happens to hold a copy of the bundle and
+    fail for its other grantees, which is a grant that works by accident.
 
     Args:
-        agent_dir: The agent directory holding ``arcagent.toml``. ``None`` asks
-            the fleet-wide question, which is what a surface has before an
-            operator has chosen an agent.
+        base_dir: The deployment config root. ``None`` resolves the environment
+            override and the user-wide root only.
 
     Returns:
         Existing directories, in search order, without duplicates.
     """
     candidates = []
-    if agent_dir is not None:
-        candidates.append(Path(agent_dir).expanduser() / BUNDLES_DIRNAME)
+    if base_dir is not None:
+        candidates.append(Path(base_dir).expanduser() / BUNDLES_DIRNAME)
     override = os.environ.get(EXTENSIONS_ROOT_ENV)
     if override:
         candidates.append(Path(override).expanduser())

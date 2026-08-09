@@ -143,19 +143,24 @@ instruction = "brew install definitely-not-installed-xyz"
 
 @pytest.fixture
 def agent_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """An agent directory with one bundle, and an Arc world entirely inside tmp_path.
+    """An agent inside a deployment whose whole world lives in ``tmp_path``.
 
     ``ARC_CONFIG_DIR`` and ``ARCSTORE_DATA_DIR`` are redirected so the operator
-    key this test mints and the WORM chain it writes never touch the real
-    ``~/.arc``. ``ARC_EXTENSIONS_ROOT`` is cleared so a value in the developer's
-    environment cannot add a bundle the assertions do not expect.
+    key this test mints, the connections it defines, and the WORM chain it writes
+    never touch the real ``~/.arc``. ``ARC_EXTENSIONS_ROOT`` is cleared so a value
+    in the developer's environment cannot add a bundle the assertions do not
+    expect.
+
+    The agent lives under ``<arc_dir>/team/<name>`` because that is where the
+    grant model looks for its tier: the directory name is the grant coordinate,
+    and the config beside it is the tier the connection is served at.
     """
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc"))
     monkeypatch.setenv("ARCSTORE_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.delenv("ARC_EXTENSIONS_ROOT", raising=False)
 
-    agent = tmp_path / "acme_agent"
-    (agent / "extensions").mkdir(parents=True)
+    agent = tmp_path / "arc" / "team" / "acme_agent"
+    agent.mkdir(parents=True)
     (agent / "arcagent.toml").write_text(
         f'[agent]\nname = "acme_agent"\n\n[identity]\ndid = "{_DID}"\n\n'
         '[security]\ntier = "personal"\n',
@@ -164,11 +169,22 @@ def agent_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return agent
 
 
-def _write_bundle(agent_dir: Path, manifest: str = _MANIFEST) -> None:
-    bundle = agent_dir / "extensions" / _EXTENSION
+def _arc_dir(agent_dir: Path) -> Path:
+    """The deployment root — where connections, credentials and bundles live."""
+    return agent_dir.parent.parent
+
+
+def _write_bundle(agent_dir: Path, manifest: str = _MANIFEST) -> Path:
+    """Put a bundle on the DEPLOYMENT's search path.
+
+    There is deliberately no agent-local extensions root: a connection is the
+    deployment's, so its bundle has to be resolvable by every agent granted it.
+    """
+    bundle = _arc_dir(agent_dir) / "extensions" / _EXTENSION
     bundle.mkdir(parents=True, exist_ok=True)
     (bundle / "extension.toml").write_text(manifest, encoding="utf-8")
     (bundle / "acme_tui_attachment.py").write_text(_ADAPTER, encoding="utf-8")
+    return bundle
 
 
 def _rendered(transcript: TranscriptView) -> str:
@@ -176,11 +192,19 @@ def _rendered(transcript: TranscriptView) -> str:
     return "\n".join(transcript._format_message(msg) for msg in transcript._messages)
 
 
-def _instance_blocks(agent_dir: Path) -> dict[str, Any]:
-    raw = tomllib.loads((agent_dir / "arcagent.toml").read_text(encoding="utf-8"))
-    blocks = raw.get("extensions", {})
-    assert isinstance(blocks, dict)
-    return blocks
+def _connections(agent_dir: Path) -> dict[str, Any]:
+    """The deployment's connections, read back off disk exactly as the runtime does."""
+    path = _arc_dir(agent_dir) / "connections.toml"
+    if not path.is_file():
+        return {}
+    table = tomllib.loads(path.read_text(encoding="utf-8")).get("connections", {})
+    assert isinstance(table, dict)
+    return table
+
+
+def _env_file(agent_dir: Path) -> Path:
+    """Where a connector credential is written — one owner-only file per deployment."""
+    return _arc_dir(agent_dir) / "connections.env"
 
 
 async def _open_connect(pilot: Any) -> Any:
@@ -254,7 +278,13 @@ async def test_connect_is_handled_inside_the_tui(
 
 
 async def test_the_flow_installs_through_the_real_install_path(agent_dir: Path) -> None:
-    """The modal reaches ``install_connector`` and the instance lands in the config."""
+    """The modal reaches ``install_connector``, and the connection lands granted.
+
+    The grant is the assertion that matters. A connection defined but handed to
+    nobody is a working account no agent can see, so a flow that installed and
+    forgot to grant would look identical to a working one until the operator
+    asked their agent to use it.
+    """
     _write_bundle(agent_dir)
 
     app = ArcTUI(transport=None, agent_label="acme_agent", agent_dir=agent_dir)
@@ -262,10 +292,12 @@ async def test_the_flow_installs_through_the_real_install_path(agent_dir: Path) 
         screen = await _open_connect(pilot)
         await _fill_and_install(pilot, screen, plan_check=True)
 
-    blocks = _instance_blocks(agent_dir)
-    assert blocks[_INSTANCE]["extension"] == _EXTENSION
-    assert blocks[_INSTANCE]["approval"] == "outbound"
-    env = (agent_dir / "connectors.env").read_text(encoding="utf-8")
+    defined = _connections(agent_dir)
+    assert defined[_INSTANCE]["extension"] == _EXTENSION
+    assert defined[_INSTANCE]["approval"] == "outbound"
+    assert defined[_INSTANCE]["agents"] == ["acme_agent"]
+    assert not (agent_dir / "connections.toml").exists(), "nothing is written into the agent"
+    env = _env_file(agent_dir).read_text(encoding="utf-8")
     assert _SENTINEL in env, "the credential belongs in the owner-only env file"
 
 
@@ -281,7 +313,7 @@ async def test_the_credential_never_reaches_the_transcript(agent_dir: Path) -> N
         text = _rendered(transcript)
 
     # The value really did flow — so its absence above is a redaction, not a no-op.
-    assert _SENTINEL in (agent_dir / "connectors.env").read_text(encoding="utf-8")
+    assert _SENTINEL in _env_file(agent_dir).read_text(encoding="utf-8")
     assert _SENTINEL not in text
     assert _INSTANCE in text, "the report itself must still reach the transcript"
 
@@ -305,14 +337,15 @@ async def test_an_unmet_host_prerequisite_ends_the_flow_and_installs_nothing(
         text = _rendered(transcript)
 
     assert "brew install definitely-not-installed-xyz" in text
-    assert _instance_blocks(agent_dir) == {}
-    assert not (agent_dir / "connectors.env").exists()
+    assert _connections(agent_dir) == {}
+    assert not _env_file(agent_dir).exists()
 
 
 async def test_connections_lists_what_the_agent_already_has(agent_dir: Path) -> None:
-    """``/connections`` shows installed instances.
+    """``/connections`` shows the deployment's accounts and who holds each one.
 
-    The operator needs to see state, not only create it.
+    The operator needs to see state, not only create it — and under deny-by-default
+    the state that decides everything is the grant, so the row has to carry it.
     """
     _write_bundle(agent_dir)
 
@@ -331,7 +364,9 @@ async def test_connections_lists_what_the_agent_already_has(agent_dir: Path) -> 
         assert type(listing).__name__ == "ConnectionsScreen"
         rows = listing.query_one("#connections-list", OptionList)
         assert rows.option_count == 1
-        assert _INSTANCE in str(rows.get_option_at_index(0).prompt)
+        row = str(rows.get_option_at_index(0).prompt)
+        assert _INSTANCE in row
+        assert "granted to acme_agent" in row
 
         # Probing is the only honest answer to "does this connection work" — it opens
         # the real attachment rather than reading the config back.
@@ -353,7 +388,7 @@ async def test_a_bundle_that_will_not_parse_is_named_not_dropped(agent_dir: Path
     installed, and 500-ing the whole listing would hide the working one too.
     """
     _write_bundle(agent_dir)
-    broken = agent_dir / "extensions" / "brokenbundle"
+    broken = _arc_dir(agent_dir) / "extensions" / "brokenbundle"
     broken.mkdir()
     (broken / "extension.toml").write_text(
         '[extension]\nname = "brokenbundle"\n', encoding="utf-8"
@@ -390,11 +425,11 @@ async def test_a_name_that_would_break_the_agent_config_is_refused_here_too(
     """Every surface refuses it, because every surface plans before it installs.
 
     A space is not a legal bare TOML key: written into
-    ``[extensions.<instance>]`` it stops ``arcagent.toml`` parsing, and the agent
-    disappears from the roster with every one of its routes answering 404.
+    ``[connections.<instance>]`` it stops ``connections.toml`` parsing, which is
+    now the whole deployment's grant list — every agent loses every connection,
+    not just this one.
     """
     _write_bundle(agent_dir)
-    before = (agent_dir / "arcagent.toml").read_bytes()
 
     app = ArcTUI(transport=None, agent_label="acme_agent", agent_dir=agent_dir)
     async with app.run_test() as pilot:
@@ -409,4 +444,4 @@ async def test_a_name_that_would_break_the_agent_config_is_refused_here_too(
         text = _rendered(transcript)
 
     assert "blackarc_industrial_email" in text
-    assert (agent_dir / "arcagent.toml").read_bytes() == before
+    assert _connections(agent_dir) == {}

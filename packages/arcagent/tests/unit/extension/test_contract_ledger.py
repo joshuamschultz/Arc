@@ -38,8 +38,7 @@ if TYPE_CHECKING:
     from arcagent.extension.state import ConnectionStateStore
 
 _ACTOR = "did:arc:test:human/operator"
-_AGENT = "josh_agent"
-_INSTANCE = "issues_primary"
+_CONNECTION = "issues_primary"
 
 
 def _module() -> ModuleType:
@@ -86,7 +85,7 @@ async def store(backend: SqliteBackend) -> ConnectionStateStore:
     from arcagent.extension.state import ConnectionRecord, ConnectionStateStore
 
     opened = ConnectionStateStore(backend)
-    await opened.create(ConnectionRecord(agent=_AGENT, instance=_INSTANCE), actor_did=_ACTOR)
+    await opened.create(ConnectionRecord(connection=_CONNECTION), actor_did=_ACTOR)
     return opened
 
 
@@ -97,7 +96,7 @@ def sink() -> _RecordingSink:
 
 def _ledger(store: ConnectionStateStore, sink: _RecordingSink) -> Any:
     module = _module()
-    return module.ToolContractLedger(store, agent=_AGENT, instance=_INSTANCE, sink=sink)
+    return module.ToolContractLedger(store, connection=_CONNECTION, sink=sink)
 
 
 @pytest.fixture
@@ -174,7 +173,7 @@ async def test_approval_records_each_hash_in_the_connection_store(
     await ledger.approve(_APPROVED, actor_did=_ACTOR)
 
     for spec in _APPROVED:
-        stored = await store.approved_hash(_AGENT, _INSTANCE, spec.name)
+        stored = await store.approved_hash(_CONNECTION, spec.name)
         assert stored == contract_hash(spec)
 
 
@@ -253,7 +252,7 @@ async def test_suspension_emits_an_audit_event_naming_the_tool_and_instance(
     suspensions = [event for event in sink.events if "suspend" in event.action]
     assert suspensions, [event.action for event in sink.events]
     assert "create_issue" in suspensions[0].target
-    assert _INSTANCE in suspensions[0].model_dump_json()
+    assert _CONNECTION in suspensions[0].model_dump_json()
 
 
 async def test_re_approval_restores_a_suspended_tool(ledger: Any) -> None:
@@ -311,7 +310,7 @@ async def test_reviewing_never_records_an_approval(
     """Recording hashes during review would bless whatever the upstream now serves."""
     await ledger.review([_spec("delete_repository")])
 
-    assert await store.approved_hash(_AGENT, _INSTANCE, "delete_repository") is None
+    assert await store.approved_hash(_CONNECTION, "delete_repository") is None
 
 
 async def test_reviewing_a_changed_tool_never_updates_its_stored_hash(
@@ -325,5 +324,5 @@ async def test_reviewing_a_changed_tool_never_updates_its_stored_hash(
     await ledger.review(changed)
     await ledger.review(changed)
 
-    stored = await store.approved_hash(_AGENT, _INSTANCE, "create_issue")
+    stored = await store.approved_hash(_CONNECTION, "create_issue")
     assert stored == contract_hash(_spec("create_issue"))

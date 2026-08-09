@@ -59,6 +59,12 @@ _logger = logging.getLogger("arcagent.extension.credentials")
 #: broken and delays telling the operator.
 TERMINAL_ERROR_CODES = frozenset({"invalid_grant", "consent_required", "interaction_required"})
 
+#: Actor recorded when the lifecycle itself marks a connection as needing a human.
+#: Nobody requested that mark — a terminal renewal failure caused it — so the
+#: record names the component, the pattern
+#: :data:`~arcagent.extension.contract_ledger.LEDGER_DID` already sets.
+ESCALATION_DID = "did:arc:arcagent:credential-lifecycle"
+
 #: Fraction of a credential's lifetime that may elapse before renewal is due.
 RENEWAL_FRACTION = 0.75
 
@@ -90,21 +96,26 @@ class CredentialRenewalError(ExtensionError):
 
 @dataclass(frozen=True)
 class ConnectedAccount:
-    """One agent's connection to one external account."""
+    """One connected account whose credential renews itself.
 
-    agent: str
-    instance: str
+    Named by the connection, not by an agent: the account is the deployment's and
+    the renewal is one exchange for every agent granted it. Keying this by agent
+    would mean two grantees racing to spend the same single-use refresh token,
+    which is the unrecoverable failure this module is built around (REQ-288).
+    """
+
+    connection: str
     field: str = "refresh_token"
     lifetime: timedelta = DEFAULT_LIFETIME
 
     @property
     def secret_ref(self) -> SecretRef:
         """Where this account's renewable credential is stored."""
-        return SecretRef(agent=self.agent, instance=self.instance, field=self.field)
+        return SecretRef(connection=self.connection, field=self.field)
 
     @property
     def key(self) -> str:
-        return f"{self.agent}/{self.instance}"
+        return self.connection
 
 
 @dataclass(frozen=True)
@@ -139,12 +150,11 @@ class CredentialMetadataStore(Protocol):
     conforming plane, and the seam is narrow enough to read.
     """
 
-    async def get(self, agent: str, instance: str) -> ConnectionCredentialState | None: ...
+    async def get(self, connection: str) -> ConnectionCredentialState | None: ...
 
     async def record_credential_metadata(
         self,
-        agent: str,
-        instance: str,
+        connection: str,
         *,
         expires_at: str | None = None,
         issuer: str | None = None,
@@ -154,7 +164,7 @@ class CredentialMetadataStore(Protocol):
     ) -> bool: ...
 
     async def set_health(
-        self, agent: str, instance: str, health: ConnectionHealth, *, actor_did: str
+        self, connection: str, health: ConnectionHealth, *, actor_did: str
     ) -> bool: ...
 
 
@@ -162,7 +172,7 @@ class OperatorEscalation(Protocol):
     """The operator approval path. Deliberately not a chat surface (ASI09)."""
 
     async def request_operator_attention(
-        self, *, agent: str, instance: str, reason: str, detail: str
+        self, *, connection: str, reason: str, detail: str
     ) -> None: ...
 
 
@@ -252,8 +262,7 @@ class CredentialLifecycle:
         """Store the value, then the metadata — never the other way round."""
         await self.secrets.put(account.secret_ref, renewed.value, caller_did=caller_did)
         stored = await self.state.record_credential_metadata(
-            account.agent,
-            account.instance,
+            account.connection,
             expires_at=renewed.expires_at.isoformat(),
             issuer=renewed.issuer,
             audience=renewed.audience,
@@ -278,9 +287,9 @@ class CredentialLifecycle:
 
     async def _needs_attention(self, account: ConnectedAccount, reason: str, detail: str) -> None:
         """Mark the connection and ask the operator — never the agent's chat."""
-        await self._mark(account, "needs_attention", account.agent)
+        await self._mark(account, "needs_attention", ESCALATION_DID)
         await self.escalation.request_operator_attention(
-            agent=account.agent, instance=account.instance, reason=reason, detail=detail
+            connection=account.connection, reason=reason, detail=detail
         )
 
     async def _mark(
@@ -293,9 +302,7 @@ class CredentialLifecycle:
         the reason the operator actually needs. Silence is what is unacceptable —
         a dashboard showing ``healthy`` for a connection nothing can renew.
         """
-        if not await self.state.set_health(
-            account.agent, account.instance, health, actor_did=actor_did
-        ):
+        if not await self.state.set_health(account.connection, health, actor_did=actor_did):
             _logger.error(
                 "connection %s has no state record; its health could not be marked %s",
                 account.key,
@@ -303,7 +310,7 @@ class CredentialLifecycle:
             )
 
     async def _expiry(self, account: ConnectedAccount) -> datetime | None:
-        record = await self.state.get(account.agent, account.instance)
+        record = await self.state.get(account.connection)
         raw = record.credential_expires_at if record is not None else None
         if raw is None:
             return None
@@ -354,6 +361,7 @@ class CredentialLifecycle:
 
 __all__ = [
     "DEFAULT_LIFETIME",
+    "ESCALATION_DID",
     "RENEWAL_FRACTION",
     "TERMINAL_ERROR_CODES",
     "ConnectedAccount",

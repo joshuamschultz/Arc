@@ -180,7 +180,10 @@ def _platform_block(platform: str, sha: str = _SHA, url: str = "https://e.invali
 @pytest.mark.parametrize(
     ("bad_artifact", "reason"),
     [
-        (f'[artifact]\npackage = "acme-mcp-server"\n{_platform_block("linux/arm64")}', "no version"),
+        (
+            f'[artifact]\npackage = "acme-mcp-server"\n{_platform_block("linux/arm64")}',
+            "no version",
+        ),
         ('[artifact]\npackage = "acme-mcp-server"\nversion = "2.3.1"\n', "no platform pinned"),
         (
             f'[artifact]\npackage = "acme-mcp-server"\nversion = ">=2.3"\n'
@@ -268,7 +271,9 @@ def test_a_platform_independent_pin_answers_for_every_host() -> None:
     Keyed under ``any`` so a manifest never has to repeat one digest per
     platform to say "this build names no machine".
     """
-    text = _FULL.replace(_ARTIFACT, f'[artifact]\npackage = "a"\nversion = "1"\n{_platform_block("any")}', 1)
+    text = _FULL.replace(
+        _ARTIFACT, f'[artifact]\npackage = "a"\nversion = "1"\n{_platform_block("any")}', 1
+    )
     pin = load_manifest(text, tier=Tier.PERSONAL).artifact
     assert pin is not None
 

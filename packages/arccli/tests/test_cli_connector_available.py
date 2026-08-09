@@ -6,11 +6,13 @@ could not answer and a picker no surface could draw.
 
 Three properties are the point of the verb:
 
-* **It works without ``--agent``.** There is a fleet-wide answer (D-584's
+* **It works with no flags at all.** There is a deployment-wide answer (D-584's
   ``$ARC_EXTENSIONS_ROOT`` and ``<arc_home>/extensions``), and an operator
-  choosing which agent to connect has not chosen one yet.
-* **``--agent`` adds that agent's own bundles**, ahead of the fleet's, because
-  that is the resolution order every other verb uses.
+  asking what could be connected has chosen nothing yet.
+* **``--arc-dir`` adds that deployment's own bundles**, ahead of the user-wide
+  ones, because that is the resolution order every other verb uses. There is
+  deliberately no per-agent root: a connection is the deployment's, so a bundle
+  only one agent could resolve would be a grant that works by accident.
 * **An unreadable bundle is shown with its reason.** A directory that would not
   parse is precisely what an operator needs told; dropping it silently turns a
   broken bundle into a missing one.
@@ -24,15 +26,6 @@ from pathlib import Path
 import pytest
 
 from arccli.commands.connector import _SUBCOMMAND_MAP, connector_handler
-
-_AGENT_CONFIG = (
-    "[agent]\n"
-    'name = "sales_agent"\n\n'
-    "[identity]\n"
-    'did = "did:arc:local:executor/7e3e"\n\n'
-    "[security]\n"
-    'tier = "personal"\n'
-)
 
 
 def _bundle(root: Path, name: str, *, version: str = "1.0.0", description: str = "") -> Path:
@@ -64,24 +57,22 @@ def fleet_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture
-def agent_dir(tmp_path: Path) -> Path:
-    """An agent home with one bundle of its own."""
-    agent = tmp_path / "sales_agent"
-    agent.mkdir()
-    (agent / "arcagent.toml").write_text(_AGENT_CONFIG, encoding="utf-8")
-    _bundle(agent / "extensions", "acme_tickets", description="Open and read Acme tickets.")
-    return agent
+def local_arc_dir(tmp_path: Path) -> Path:
+    """A second deployment root with one bundle of its own."""
+    root = tmp_path / "local_arc"
+    _bundle(root / "extensions", "acme_tickets", description="Open and read Acme tickets.")
+    return root
 
 
 def test_available_is_a_reachable_verb() -> None:
-    """A ninth verb on a command that is already registered."""
+    """A verb on a command that is already registered."""
     assert "available" in _SUBCOMMAND_MAP
 
 
-def test_lists_the_fleet_bundles_without_an_agent(
+def test_lists_the_user_wide_bundles_with_no_flags(
     fleet_root: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """No ``--agent``: the fleet-wide search path still has an answer."""
+    """No flags: the user-wide search path still has an answer."""
     connector_handler(["available"])
 
     out = capsys.readouterr().out
@@ -89,11 +80,11 @@ def test_lists_the_fleet_bundles_without_an_agent(
     assert "Read pull requests, issues, and CI runs." in out
 
 
-def test_an_agents_own_bundles_are_included_with_the_fleets(
-    fleet_root: Path, agent_dir: Path, capsys: pytest.CaptureFixture[str]
+def test_a_deployments_own_bundles_are_included_with_the_user_wide_ones(
+    fleet_root: Path, local_arc_dir: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """``--agent`` searches that agent's extensions dir ahead of the fleet's."""
-    connector_handler(["available", "--agent", str(agent_dir)])
+    """``--arc-dir`` searches that deployment's extensions dir first."""
+    connector_handler(["available", "--arc-dir", str(local_arc_dir)])
 
     out = capsys.readouterr().out
     assert "acme_tickets" in out
@@ -101,16 +92,16 @@ def test_an_agents_own_bundles_are_included_with_the_fleets(
 
 
 def test_json_reports_name_version_description_and_source(
-    fleet_root: Path, agent_dir: Path, capsys: pytest.CaptureFixture[str]
+    fleet_root: Path, local_arc_dir: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """``--json`` is the shape a picker reads; the source root is part of it."""
-    connector_handler(["available", "--agent", str(agent_dir), "--json"])
+    connector_handler(["available", "--arc-dir", str(local_arc_dir), "--json"])
 
     payload = json.loads(capsys.readouterr().out)
     entries = {entry["name"]: entry for entry in payload}
     assert entries["acme_tickets"]["version"] == "1.0.0"
     assert entries["acme_tickets"]["description"] == "Open and read Acme tickets."
-    assert entries["acme_tickets"]["path"] == str(agent_dir / "extensions" / "acme_tickets")
+    assert entries["acme_tickets"]["path"] == str(local_arc_dir / "extensions" / "acme_tickets")
     assert entries["github"]["path"] == str(fleet_root / "github")
     assert entries["github"]["error"] == ""
 

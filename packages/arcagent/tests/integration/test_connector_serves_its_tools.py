@@ -56,6 +56,7 @@ from arcagent.core.module_bus import ModuleBus
 from arcagent.core.tool_registry import ToolRegistry
 from arcagent.extension.attachment import ToolSpec
 from arcagent.extension.contract_ledger import APPROVAL_NOT_STORED, ToolContractLedger
+from arcagent.extension.grants import ConnectionRegistry
 from arcagent.extension.state import (
     ConnectionStateStore,
     open_connection_state,
@@ -140,31 +141,34 @@ def _bundle_root(tmp_path: Path) -> Path:
 
 
 class _World:
-    """One agent, one bundle root, one data dir — the three paths every step shares."""
+    """One deployment, one bundle root, one data dir, and the agent it is granted to."""
 
     def __init__(self, tmp_path: Path, *, bundle: str = _BUNDLE) -> None:
+        self.arc_dir = tmp_path / "arc"
+        self.arc_dir.mkdir(parents=True, exist_ok=True)
         self.agent_dir = _agent_dir(tmp_path)
         self.root = _bundle_root(tmp_path)
         self.bundle = bundle
         self.data_dir = tmp_path / "data"
-        self.arc_dir = tmp_path / "arc"
         self.sink = _RecordingSink()
 
     def connections(self) -> Connections:
         """The façade every surface drives, pointed entirely inside the test's tree."""
-        return Connections.for_agent(
-            self.agent_dir,
+        return Connections.for_deployment(
             arc_dir=self.arc_dir,
             data_dir=self.data_dir,
             extensions_root=self.root,
             audit=AuditChain.held(self.sink),
         )
 
+    def registry(self) -> ConnectionRegistry:
+        return ConnectionRegistry(self.arc_dir)
+
     async def install(self) -> None:
         """Connect the account exactly as ``arc connector add`` and arcui do."""
         connections = self.connections()
         plan = connections.plan(self.bundle, _INSTANCE)
-        await connections.install(plan, {_FIELD: _TOKEN} if plan.secrets else {})
+        await connections.install(plan, {_FIELD: _TOKEN} if plan.secrets else {}, agents=[_AGENT])
 
     async def state(self) -> ConnectionStateStore:
         return await open_connection_state(str(self.data_dir))
@@ -178,7 +182,11 @@ class _World:
             human_gate=_gate(),
         )
         _runtime.configure(
-            config={"data_dir": str(self.data_dir), "extensions_root": str(self.root)},
+            config={
+                "data_dir": str(self.data_dir),
+                "extensions_root": str(self.root),
+                "arc_dir": str(self.arc_dir),
+            },
             telemetry=None,
             workspace=self.agent_dir / "workspace",
             identity=_identity(),
@@ -245,7 +253,7 @@ async def test_installing_creates_the_connection_record(world: _World) -> None:
     """
     await world.install()
 
-    record = await (await world.state()).get(_AGENT, _INSTANCE)
+    record = await (await world.state()).get(_INSTANCE)
 
     assert record is not None, "install reported success and registered no connection"
     assert record.health == "healthy"
@@ -261,7 +269,7 @@ async def test_connecting_records_the_served_contract_as_approved(world: _World)
     """
     await world.install()
 
-    record = await (await world.state()).get(_AGENT, _INSTANCE)
+    record = await (await world.state()).get(_INSTANCE)
 
     assert record is not None
     assert sorted(record.approved_tool_hashes) == sorted(_SERVED)
@@ -309,9 +317,7 @@ async def test_approving_a_connection_that_was_never_registered_refuses(
     — an audit trail recording approvals that did not happen is worse than none.
     """
     sink = _RecordingSink()
-    ledger = ToolContractLedger(
-        await world.state(), agent=_AGENT, instance="never_connected", sink=sink
-    )
+    ledger = ToolContractLedger(await world.state(), connection="never_connected", sink=sink)
 
     with pytest.raises(ExtensionError) as caught:
         await ledger.approve([ToolSpec(name="reference_echo")], actor_did=_DID)
@@ -337,12 +343,12 @@ async def test_removing_drops_the_record_and_reinstalling_works(world: _World) -
 
     await world.connections().remove(_INSTANCE)
 
-    assert await (await world.state()).get(_AGENT, _INSTANCE) is None
+    assert await (await world.state()).get(_INSTANCE) is None
 
     await world.install()
     registry = await world.start_agent()
 
-    assert await (await world.state()).get(_AGENT, _INSTANCE) is not None
+    assert await (await world.state()).get(_INSTANCE) is not None
     for tool in _SERVED:
         assert tool in registry.tools
 
@@ -426,13 +432,12 @@ def _write_cli_bundle(root: Path, *, poisoned: bool) -> None:
     )
 
 
-
 # --- the strict rule has an exit ----------------------------------------------
 
 #: A name the coordinate rule refuses. A hyphen is legal in a bare TOML key, so a
-#: block carrying one can exist on disk — hand-edited, or written before the rule
-#: — while the name is refused because it also becomes an env-var segment, where
-#: a hyphen is not a legal shell variable name.
+#: connection carrying one can exist on disk — hand-edited, or written before the
+#: rule — while the name is refused because it also becomes an env-var segment,
+#: where a hyphen is not a legal shell variable name.
 _ILLEGAL_INSTANCE = "personal-mail"
 
 
@@ -445,27 +450,25 @@ async def test_a_connection_whose_name_the_rule_rejects_can_still_be_removed(
     ``plan_connector``, which refuses this name. ``_declared_secret_fields``
     catches that and returns nothing to delete — correct rather than lenient,
     because ``SecretRef`` applies the same rule, so no credential can ever have
-    been stored under it. The config block and the connection record are dropped
-    regardless, which is the whole of what an operator needs.
+    been stored under it. The connection and its record are dropped regardless,
+    which is the whole of what an operator needs.
 
     Driven through the façade every surface uses, not through ``remove_connector``
     beneath it: the catch that makes this work lives in the façade.
     """
     world = _World(tmp_path, bundle=_CLI_BUNDLE)
     _write_cli_bundle(world.root, poisoned=False)
-    config = world.agent_dir / "arcagent.toml"
-    config.write_text(
-        config.read_text(encoding="utf-8")
-        + f'\n[extensions."{_ILLEGAL_INSTANCE}"]\nextension = "{_CLI_BUNDLE}"\n',
+    world.registry().path.write_text(
+        f'[connections."{_ILLEGAL_INSTANCE}"]\nextension = "{_CLI_BUNDLE}"\n',
         encoding="utf-8",
     )
     connections = world.connections()
-    assert _ILLEGAL_INSTANCE in connections.installed(), "it has to be visible to be deleted"
+    assert _ILLEGAL_INSTANCE in connections.connections(), "it has to be visible to be deleted"
 
     report = await connections.remove(_ILLEGAL_INSTANCE)
 
     assert report.removed_config is True
-    assert _ILLEGAL_INSTANCE not in world.connections().installed()
+    assert _ILLEGAL_INSTANCE not in world.connections().connections()
 
 
 async def test_connecting_a_new_account_under_that_name_is_refused(tmp_path: Path) -> None:

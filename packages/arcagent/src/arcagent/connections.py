@@ -1,10 +1,10 @@
-"""SPEC-064 — the one seam a surface uses to manage an agent's connected accounts.
+"""SPEC-064 — the one seam a surface uses to manage a deployment's connected accounts.
 
 :mod:`arcagent.modules.connectors.install` owns the *sequence* — resolve, manifest,
 host, verify, secrets, probe, persist — and the rollback that unwinds it. That is
 one layer too low to be the seam a surface drives: three of them (``arc
 connector``, the arcui routes, the arctui modals) each re-derived the same
-orchestration around it — resolve the agent's world, open and close the operator
+orchestration around it — resolve the deployment, open and close the operator
 WORM chain, select the secret backend for the tier, plan, install, re-auth, probe,
 assemble doctor rows, record an approved contract, remove. This module is that
 orchestration, once.
@@ -23,6 +23,15 @@ that renders one of them cannot leak one (LLM02, LLM07).
 exclusive ``flock`` for its lifetime, so a caller that opens one and forgets to
 close it locks every later writer out of the deployment's chain. Callers describe
 their chain once with :class:`AuditChain` and never hold an open sink.
+
+**A connection belongs to the deployment; a grant hands it to an agent.** Every
+verb here is scoped to the deployment rather than to an agent, because that is
+what a connected account is: one credential, entered once, and a list of the
+agents permitted to use it. :meth:`Connections.grant` and
+:meth:`Connections.revoke` are the whole of access control, and the running
+agent enforces them (:mod:`arcagent.modules.connectors.capabilities`). Nothing
+here writes into an agent's directory, so no surface can hand an agent a
+credential by writing a config block.
 """
 
 from __future__ import annotations
@@ -34,7 +43,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
-from arctrust.audit import AuditEvent, AuditSink, NullSink
+from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
 from pydantic import ValidationError
 
 from arcagent.core.errors import ExtensionError
@@ -46,6 +55,14 @@ from arcagent.extension.catalog import (
     ExtensionCatalog,
     ExtensionResolution,
     resolve_extension_roots,
+)
+from arcagent.extension.coordinates import is_coordinate
+from arcagent.extension.coordinates import refusal as coordinate_refusal
+from arcagent.extension.grants import (
+    BAD_NAME,
+    NO_SUCH_CONNECTION,
+    Connection,
+    ConnectionRegistry,
 )
 from arcagent.extension.host import HostPrerequisiteDirector, HostVerdict
 from arcagent.extension.host_install import host_install_dir, install_pinned_binary
@@ -63,13 +80,10 @@ from arcagent.modules.connectors.install import (
     AttachmentFactory,
     ConnectorPlan,
     InstallReport,
-    InstanceConfig,
     RemovalReport,
     build_attachment,
     connector_env_file,
     install_connector,
-    load_egress_allow,
-    load_instances,
     placement_environment,
     plan_connector,
     remove_connector,
@@ -77,13 +91,35 @@ from arcagent.modules.connectors.install import (
     shape_supplied,
 )
 
-#: Refusal code for a verb aimed at an instance this agent has not connected. A
-#: surface that distinguishes "not found" from "refused" (a web route answering
-#: 404 rather than 400) reads this rather than matching on the message text.
-NOT_INSTALLED = "CONNECTOR_NOT_INSTALLED"
+#: Refusal code for a verb aimed at a connection this deployment has not made.
+#: Re-exported from :mod:`arcagent.extension.grants` so a surface branches on one
+#: code: "not installed" and "not defined" were one question the moment a
+#: connection stopped being a block in someone's config file.
+NOT_INSTALLED = NO_SUCH_CONNECTION
 
-#: Refusal code for an agent directory that is not one, or has no identity yet.
-NO_AGENT = "CONNECTOR_CONTEXT"
+#: Refusal code for a config file that exists and will not parse. Loud rather
+#: than defaulted: reading ``personal`` off a broken federal config would be the
+#: silent downgrade this resolution exists to stop.
+UNREADABLE_TIER = "CONNECTION_TIER_UNREADABLE"
+
+#: Refusal code for a grant this deployment could not honour without silently
+#: re-homing a credential. See :meth:`Connections.grant`.
+TIER_WOULD_RISE = "CONNECTION_TIER_WOULD_RISE"
+
+#: Refusal code for an install whose grants demand more stringency than the plan
+#: was resolved at.
+PLAN_TIER_TOO_LOW = "CONNECTION_PLAN_TIER_TOO_LOW"
+
+#: The fleet-wide config every agent's own config merges over, and the directory
+#: agent directories live in. Both are what the rest of the stack already reads —
+#: ``core/config.py`` composes ``<arc_dir>/arcagent.toml`` under every agent's
+#: file, and ``arctui.roster`` enumerates ``<arc_dir>/team/*/arcagent.toml``.
+_FLEET_CONFIG = "arcagent.toml"
+_TEAM_DIRNAME = "team"
+
+#: Stringency order. A connection two agents share is served at the strictest of
+#: them, because a store that satisfies the laxest satisfies nobody else.
+_STRINGENCY = (Tier.PERSONAL, Tier.ENTERPRISE, Tier.FEDERAL)
 
 #: Refusal code for a credential no manifest declares — the allowlist that stops
 #: a rotation from writing an arbitrary entry into the agent's credential file.
@@ -99,115 +135,202 @@ def _refuse(code: str, message: str, **details: Any) -> ExtensionError:
     return ExtensionError(code=code, message=message, details=details)
 
 
+def _check_agent(agent: str) -> None:
+    """Refuse an agent name that could never match anything, where it was typed.
+
+    A grant is matched against an agent's directory name, so a name the coordinate
+    rule refuses is a grant that is written, listed, and effective for no one —
+    the silent no-op this whole surface exists to remove.
+    """
+    if not is_coordinate(agent):
+        raise _refuse(BAD_NAME, coordinate_refusal("agent name", agent), name=agent)
+
+
 # ---------------------------------------------------------------------------
-# The agent's world
+# The deployment
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class ConnectionWorld:
-    """Everything every verb needs, resolved once from one agent directory.
+    """Everything every verb needs, resolved once for one deployment.
 
-    ``agent`` is the DIRECTORY name, not a roster label, because it keys the secret
-    store: a surface keying on anything else would write a credential the other
-    surfaces cannot see and the agent never reads.
+    There is no agent here, and that is the point. A connected account belongs to
+    the deployment: its credential, its bundle, its approved contract and its
+    grant list are one set of facts, not one set per agent. An agent enters this
+    module only as a NAME in :attr:`~arcagent.extension.grants.Connection.agents`,
+    which is matched against the agent's directory name when it starts.
     """
 
-    agent_dir: Path
     arc_dir: Path
     data_dir: Path
-    agent: str
     did: str
     tier: Tier
     extension_roots: tuple[Path, ...]
     env_file: Path
+    egress_allow: tuple[str, ...] = ()
+
+    @property
+    def connections_file(self) -> Path:
+        """Where this deployment's connections and grants live."""
+        return ConnectionRegistry(self.arc_dir).path
 
 
-def resolve_world(
-    agent_dir: Path | str,
+#: Recorded as the actor when a deployment has no operator key to derive a DID
+#: from. Honest rather than convenient: an unkeyed deployment cannot pin its
+#: connector verdicts to a person, and saying so in the chain is better than
+#: borrowing an agent's identity for an act the agent did not perform.
+UNKEYED_OPERATOR_DID = "did:arc:operator:unkeyed"
+
+
+def resolve_deployment(
     *,
     arc_dir: Path | str | None = None,
     data_dir: Path | str | None = None,
     extensions_root: Path | str | None = None,
     env_file: Path | str | None = None,
 ) -> ConnectionWorld:
-    """Resolve one agent's identity, tier, and paths, or refuse naming what is wrong.
+    """Resolve one deployment's paths, tier, and operator identity.
 
     Args:
-        agent_dir: The agent directory holding ``arcagent.toml``.
-        arc_dir: Arc config dir (default ``<arc_home>``) — where the operator key
-            that pins bundle signatures and signs the audit chain lives.
+        arc_dir: Arc config dir (default ``arc_home()``) — where the connections,
+            their credentials, and the operator key that pins bundle signatures
+            and signs the audit chain all live.
         data_dir: Operational data dir (default arcstore's) — where the connection
             state and the audit chain live. Created when the caller names one.
         extensions_root: Use exactly this bundle root. An operator pointing a
             command at one directory gets that directory and no fallback behind it.
-        env_file: Owner-only credential store (default ``<agent>/connectors.env``).
+        env_file: Owner-only credential store (default ``<arc_dir>/connections.env``).
 
     Returns:
-        The resolved world, ready to hand to :class:`Connections`.
-
-    Raises:
-        ExtensionError: No agent config, an unparseable one, or no DID to record as
-            the actor on a credential write. ``code`` is :data:`NO_AGENT`.
+        The resolved deployment, ready to hand to :class:`Connections`.
     """
-    directory = Path(agent_dir).expanduser().resolve()
-    raw = _read_agent_config(directory)
-    did = str(raw.get("identity", {}).get("did", ""))
-    if not did:
-        config = directory / "arcagent.toml"
-        raise _refuse(NO_AGENT, f"{config} has no [identity].did — run 'arc agent build' first.")
-
+    root = _root(arc_dir)
     return ConnectionWorld(
-        agent_dir=directory,
-        arc_dir=Path(arc_dir).expanduser() if arc_dir else _arc_home(),
+        arc_dir=root,
         data_dir=_data_dir(data_dir),
-        agent=directory.name,
-        did=did,
-        tier=_tier_of(raw),
-        extension_roots=resolve_roots(directory, extensions_root=extensions_root),
-        env_file=(
-            Path(env_file).expanduser().resolve() if env_file else connector_env_file(directory)
-        ),
+        did=_operator_did(root),
+        tier=deployment_tier(root),
+        extension_roots=resolve_roots(root, extensions_root=extensions_root),
+        env_file=(Path(env_file).expanduser().resolve() if env_file else connector_env_file(root)),
+        egress_allow=deployment_egress_allow(root),
     )
 
 
 def resolve_roots(
-    agent_dir: Path | str | None = None, *, extensions_root: Path | str | None = None
+    arc_dir: Path | str | None = None, *, extensions_root: Path | str | None = None
 ) -> tuple[Path, ...]:
-    """The ordered bundle search path, or exactly the one root the operator named.
-
-    ``agent_dir=None`` asks the fleet-wide question — the one a surface has before
-    an operator has chosen which agent to connect.
-    """
+    """The ordered bundle search path, or exactly the one root the operator named."""
     if extensions_root:
         return (Path(extensions_root).expanduser().resolve(),)
-    return resolve_extension_roots(Path(agent_dir) if agent_dir is not None else None)
+    return resolve_extension_roots(Path(arc_dir) if arc_dir is not None else None)
 
 
-def agent_tier(agent_dir: Path | str) -> Tier:
-    """The tier one agent runs at, read from its ``arcagent.toml``.
+def deployment_tier(arc_dir: Path | str | None = None) -> Tier:
+    """The tier floor this deployment runs at.
 
-    Separate from :func:`resolve_world` because listing what a deployment could
-    connect needs the tier a manifest is parsed at, and nothing else — an agent
-    that has not been built yet still has an answer.
+    Read from ``<arc_dir>/arcagent.toml``, which is the fleet-wide layer
+    ``core/config.py`` already merges under every agent's own config — not a new
+    setting. A deployment that has never been hardened answers ``personal``, which
+    is the shipped default that file itself carries.
+
+    Separate from :func:`resolve_deployment` because listing what could be
+    connected needs the tier a manifest is parsed at and nothing else — a
+    deployment that has connected nothing yet still has an answer.
     """
-    return _tier_of(_read_agent_config(Path(agent_dir).expanduser().resolve()))
+    return _tier_of(_read_toml(_root(arc_dir) / _FLEET_CONFIG))
 
 
-def _read_agent_config(agent_dir: Path) -> dict[str, Any]:
-    """Parse one agent's ``arcagent.toml``, or refuse naming what is wrong."""
-    config = agent_dir / "arcagent.toml"
-    if not config.is_file():
-        raise _refuse(NO_AGENT, f"no arcagent.toml at {config} — is that an agent directory?")
-    try:
-        parsed: dict[str, Any] = tomllib.loads(config.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError) as exc:
-        raise _refuse(NO_AGENT, f"{config} — {exc}") from exc
-    return parsed
+def agent_tier(agent: str, arc_dir: Path | str | None = None) -> Tier:
+    """One agent's effective tier, never below the deployment's floor.
+
+    The agent's own ``<arc_dir>/team/<agent>/arcagent.toml`` merges over the fleet
+    file, which is exactly how that agent will run. The floor is then applied as a
+    lower bound rather than a default: a per-agent block declaring ``personal``
+    under a federal deployment is a downgrade of the deployment's own posture, and
+    a shared account must not be the thing that grants it.
+    """
+    root = _root(arc_dir)
+    own = _read_toml(root / _TEAM_DIRNAME / agent / _FLEET_CONFIG)
+    return _strictest([deployment_tier(root), _tier_of(own)])
+
+
+def deployment_egress_allow(arc_dir: Path | str | None = None) -> tuple[str, ...]:
+    """``[tools.policy] egress_allow`` at deployment scope (D-580).
+
+    Read from the same fleet-wide file, consulted at enterprise tier only. Each
+    agent still applies its own list when a verb is registered; this one decides
+    whether the account may be connected at all.
+    """
+    raw = _read_toml(_root(arc_dir) / _FLEET_CONFIG)
+    tools = raw.get("tools", {})
+    policy = tools.get("policy", {}) if isinstance(tools, dict) else {}
+    allow = policy.get("egress_allow", []) if isinstance(policy, dict) else []
+    return tuple(str(name) for name in allow) if isinstance(allow, list) else ()
+
+
+def _strictest(tiers: Sequence[Tier]) -> Tier:
+    """The most stringent of several tiers — fail-closed when they disagree."""
+    return max(tiers, key=_STRINGENCY.index) if tiers else Tier.PERSONAL
 
 
 def _tier_of(raw: Mapping[str, Any]) -> Tier:
-    return Tier(str(raw.get("security", {}).get("tier", "personal")))
+    security = raw.get("security", {})
+    declared = security.get("tier") if isinstance(security, dict) else None
+    return Tier(str(declared)) if declared else Tier.PERSONAL
+
+
+def _root(arc_dir: Path | str | None) -> Path:
+    return Path(arc_dir).expanduser() if arc_dir else _arc_home()
+
+
+def _read_toml(path: Path) -> dict[str, Any]:
+    """Parse one config file, or answer empty when there is not one.
+
+    Absent is the ordinary case — a deployment that has never been hardened, an
+    agent that lives outside the fleet root — and is never an error. A file that
+    exists and will not parse is, because silently reading ``personal`` off a
+    broken federal config is the downgrade this whole resolution exists to stop.
+    """
+    if not path.is_file():
+        return {}
+    try:
+        parsed: dict[str, Any] = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise _refuse(UNREADABLE_TIER, f"{path} — {exc}", path=str(path)) from exc
+    return parsed
+
+
+def _operator_key(arc_dir: Path) -> Any:
+    """The deployment's operator key, or ``None`` when it has none.
+
+    Read-only: never mints a key, so an install above personal tier on a machine
+    with no operator key is refused by the loader rather than quietly satisfied by
+    a keypair this call generated moments earlier (REQ-283).
+    """
+    from arctrust import OperatorKey
+
+    try:
+        return OperatorKey.load(arc_dir.joinpath(*_OPERATOR_KEY), generate_if_absent=False)
+    except (FileNotFoundError, OSError):
+        return None
+
+
+def _operator_did(arc_dir: Path) -> str:
+    """The DID every connector verdict is recorded under.
+
+    Derived from the operator key through the one authority
+    :class:`~arctrust.policy.OperatorApprovalAuthority`, so a connector approval
+    and an ``arc approve`` grant name the same operator. Connecting is an
+    operator's act at every tier; recording it under an agent's DID would put the
+    subject of the audit in the actor's place.
+    """
+    from arctrust.policy import OperatorApprovalAuthority
+
+    key = _operator_key(arc_dir)
+    if key is None:
+        return UNKEYED_OPERATOR_DID
+    return str(OperatorApprovalAuthority(key.into_signer()).did)
 
 
 def _arc_home() -> Path:
@@ -569,7 +692,7 @@ def _authorization(
 
 
 class Connections:
-    """One agent's connected accounts: what could be connected, what is, and whether it works.
+    """A deployment's connected accounts: what could be connected, what is, and who holds it.
 
     Every verb runs inside the caller's :class:`AuditChain`, so a surface never
     holds an open WORM sink, and every refusal is an :class:`ExtensionError` whose
@@ -591,9 +714,8 @@ class Connections:
         self._install_dir = install_dir
 
     @classmethod
-    def for_agent(
+    def for_deployment(
         cls,
-        agent_dir: Path | str,
         *,
         arc_dir: Path | str | None = None,
         data_dir: Path | str | None = None,
@@ -603,9 +725,8 @@ class Connections:
         attachment_factory: AttachmentFactory | None = None,
         install_dir: Path | None = None,
     ) -> Connections:
-        """Resolve an agent's world and bind it to a chain in one step."""
-        world = resolve_world(
-            agent_dir,
+        """Resolve a deployment and bind it to a chain in one step."""
+        world = resolve_deployment(
             arc_dir=arc_dir,
             data_dir=data_dir,
             extensions_root=extensions_root,
@@ -620,28 +741,43 @@ class Connections:
 
     @property
     def world(self) -> ConnectionWorld:
-        """The agent's resolved paths and identity — what a surface reports back."""
+        """The deployment's resolved paths and identity — what a surface reports back."""
         return self._world
+
+    @property
+    def registry(self) -> ConnectionRegistry:
+        """The deployment's connections and grants."""
+        return ConnectionRegistry(self._world.arc_dir)
 
     # --- reading ---------------------------------------------------------
 
     def catalog(self) -> tuple[CatalogEntry, ...]:
-        """What this agent could connect, from its own search path."""
+        """What this deployment could connect, from its own search path."""
         with self._audit.open() as sink:
             return catalog(
                 roots=self._world.extension_roots, tier=self._world.tier, audit_sink=sink
             )
 
-    def installed(self) -> dict[str, InstanceConfig]:
-        """What this agent has connected, from the blocks its runtime binds."""
-        return load_instances(self._world.agent_dir)
+    def connections(self) -> dict[str, Connection]:
+        """Every connected account, and the agents each one is granted to.
 
-    def plan(self, extension: str, instance: str) -> ConnectorPlan:
+        The whole of "who can reach what", answered in one read for every agent at
+        once — which is the question no per-agent arrangement could answer.
+        """
+        return self.registry.all()
+
+    def plan(self, extension: str, instance: str, *, agents: Sequence[str] = ()) -> ConnectorPlan:
         """The read-only half of an install: resolve the bundle, parse it, check the host.
 
         Nothing is written, so a surface can show an operator the credentials it is
         about to ask for and the approval mode it will run under before the first
         field is filled in.
+
+        ``agents`` is who the connection is about to be granted to, and it decides
+        the tier the manifest is parsed and the egress verdict taken at: an account
+        a federal agent will use is a federal account from the first step, not from
+        the moment somebody notices. Omitting it plans at the deployment's floor,
+        and :meth:`install` refuses a plan that turns out to be too lax.
 
         Raises:
             ExtensionError: The name cannot be used, or the bundle was refused;
@@ -650,10 +786,10 @@ class Connections:
                 an unusable name here, before asking an operator for a credential.
         """
         with self._audit.open() as sink:
-            return self._plan(extension, instance, sink)
+            return self._plan(extension, instance, sink, tier=self._tier_for(agents))
 
     def plan_for(self, instance: str) -> ConnectorPlan:
-        """The plan behind an already-connected instance.
+        """The plan behind an already-connected account.
 
         Raises:
             ExtensionError: Nothing is connected under that name
@@ -753,9 +889,7 @@ class Connections:
         """
         with self._audit.open() as sink:
             plan = self._plan(extension, extension, sink)
-            steps = "\n\n".join(
-                required.instruction for required in plan.manifest.host_requires
-            )
+            steps = "\n\n".join(required.instruction for required in plan.manifest.host_requires)
             if not plan.unsatisfied_host:
                 return HostSetupReport(True, f"{extension} has what it needs here.", steps)
             if plan.manifest.artifact is None:
@@ -811,9 +945,7 @@ class Connections:
         A bundle declaring none reports ``unknown`` — the one honest answer when
         there is no evidence, and never a green tick over an empty account.
         """
-        checks = [
-            required for required in plan.manifest.host_requires if required.verify_command
-        ]
+        checks = [required for required in plan.manifest.host_requires if required.verify_command]
         if not checks:
             return ("unknown", "")
 
@@ -847,9 +979,7 @@ class Connections:
         if accepting is None:
             return f"{plan.extension} signs in on this host; Arc ran nothing."
         if not token:
-            return (
-                f"{accepting.name} signs in with a token — supply one and Arc will run it."
-            )
+            return f"{accepting.name} signs in with a token — supply one and Arc will run it."
         result = await run_token_login(
             accepting,
             token=token,
@@ -882,8 +1012,10 @@ class Connections:
 
     # --- writing ---------------------------------------------------------
 
-    async def install(self, plan: ConnectorPlan, secrets: Mapping[str, str]) -> InstallReport:
-        """Run the shared install path: verify, store credentials, probe, then persist.
+    async def install(
+        self, plan: ConnectorPlan, secrets: Mapping[str, str], *, agents: Sequence[str] = ()
+    ) -> InstallReport:
+        """Connect one account, and hand it to the agents that should have it.
 
         The ordering, the signature gate that closes before extension code runs, and
         the rollback that takes a credential back out when the probe fails all
@@ -893,16 +1025,26 @@ class Connections:
             plan: What :meth:`plan` resolved.
             secrets: One value per declared credential. Consumed and dropped — the
                 report names fields, never values.
+            agents: The agents granted this connection. Granting here rather than
+                in a second step is what makes one pass enough for a
+                non-technical operator; an empty list is legal and means an
+                account that is proven to work and reaches nobody yet.
 
         Raises:
             ExtensionError: A step refused. ``details["step"]`` names which, and
-                nothing was left behind.
+                nothing was left behind. An agent name that cannot address
+                anything is refused BEFORE the install runs (``code``
+                :data:`~arcagent.extension.grants.BAD_NAME`), so a typo costs a
+                refusal rather than a connected account nobody can use.
         """
+        for agent in agents:
+            _check_agent(agent)
+        self._refuse_lax_plan(plan, agents)
         with self._audit.open() as sink:
             return await install_connector(
                 plan,
-                agent_dir=self._world.agent_dir,
-                agent=self._world.agent,
+                connections=self.registry,
+                agents=agents,
                 secret_values=secrets,
                 store=self._store(sink),
                 caller_did=self._world.did,
@@ -911,6 +1053,52 @@ class Connections:
                 audit_sink=sink,
                 trusted_public_key=self._pinned_key(),
             )
+
+    def grant(self, instance: str, agents: Sequence[str]) -> Connection:
+        """Permit ``agents`` to use one connected account.
+
+        Nothing is copied: the credential stays at its one coordinate and the
+        grantee reads it through the same store every other grantee does. So a
+        rotation is one write, and :meth:`revoke` cannot leave a credential behind.
+
+        Takes effect at the granted agent's next start — the connector module
+        reads its grants when it attaches, which is the same startup-only binding
+        every other connector change has.
+
+        A grant that would raise this connection's stringency past what its
+        credential's current store can satisfy is REFUSED rather than honoured
+        (see :meth:`_refuse_silent_rehome`). Nothing is re-homed behind an
+        operator's back, and nothing claims a posture it does not have.
+
+        Raises:
+            ExtensionError: No such connection (``code`` :data:`NOT_INSTALLED`), an
+                agent name that cannot address anything, or a grant that would
+                raise the tier past this deployment's store
+                (``code`` :data:`TIER_WOULD_RISE`).
+        """
+        with self._audit.open() as sink:
+            current = self.registry.get(instance)
+            for agent in agents:
+                _check_agent(agent)
+            self._refuse_silent_rehome(instance, [*current.agents, *agents], sink)
+            granted = self.registry.grant(instance, agents)
+            self._record(sink, "connector.grant", instance, agents)
+        return granted
+
+    def revoke(self, instance: str, agents: Sequence[str]) -> Connection:
+        """Take one connected account back from ``agents``. The account is untouched.
+
+        Revoking from an agent that never held it is not an error: an operator
+        making sure nobody has something must not be stopped by a name that
+        already does not.
+
+        Raises:
+            ExtensionError: No such connection (``code`` :data:`NOT_INSTALLED`).
+        """
+        with self._audit.open() as sink:
+            remaining = self.registry.revoke(instance, agents)
+            self._record(sink, "connector.revoke", instance, agents)
+        return remaining
 
     async def reauth(self, plan: ConnectorPlan, secrets: Mapping[str, str]) -> tuple[str, ...]:
         """Re-supply an instance's credentials — a rotation, or a first-time fix.
@@ -946,9 +1134,7 @@ class Connections:
                 value = shaped.get(required.name)
                 if not value:
                     continue
-                ref = SecretRef(
-                    agent=self._world.agent, instance=plan.instance, field=required.name
-                )
+                ref = SecretRef(connection=plan.instance, field=required.name)
                 await store.put(ref, value, caller_did=self._world.did)
                 written.append(required.name)
         return tuple(written)
@@ -978,16 +1164,13 @@ class Connections:
             attachment = await self._attachment(self._plan_for(instance, sink), sink)
             specs = await attachment.describe_tools()
             ledger = ToolContractLedger(
-                await self._connection_state(),
-                agent=self._world.agent,
-                instance=instance,
-                sink=sink,
+                await self._connection_state(), connection=instance, sink=sink
             )
             await ledger.approve(specs, actor_did=self._world.did)
         return tuple(spec.name for spec in specs)
 
     async def remove(self, instance: str) -> RemovalReport:
-        """Drop one connected account: its credentials, its config block, its state.
+        """Disconnect one account: its credential, its definition, every grant on it.
 
         Removing something that was never connected is reported, not raised: an
         operator cleaning up after a failed install must not be blocked by a step
@@ -995,14 +1178,86 @@ class Connections:
         """
         with self._audit.open() as sink:
             return await remove_connector(
-                agent_dir=self._world.agent_dir,
-                agent=self._world.agent,
+                connections=self.registry,
                 instance=instance,
                 store=self._store(sink),
                 caller_did=self._world.did,
                 secret_fields=self._declared_secret_fields(instance, sink),
                 state=await self._connection_state(),
             )
+
+    def _refuse_lax_plan(self, plan: ConnectorPlan, agents: Sequence[str]) -> None:
+        """Refuse an install whose grantees need more stringency than the plan took.
+
+        The plan carries the tier its manifest was parsed at and its egress verdict
+        taken at, so installing it for a stricter agent than it was resolved for
+        would apply a personal deployment's verdicts to a federal agent's account.
+        The surface re-plans; it does not get to keep the lax answer.
+        """
+        required = self._tier_for(agents)
+        if _STRINGENCY.index(required) <= _STRINGENCY.index(plan.tier):
+            return
+        raise _refuse(
+            PLAN_TIER_TOO_LOW,
+            f"{plan.instance!r} would be granted to an agent running at "
+            f"{required.value}, but it was planned at {plan.tier.value} — "
+            f"plan it again for these agents",
+            connection=plan.instance,
+            planned_tier=plan.tier.value,
+            required_tier=required.value,
+        )
+
+    def _refuse_silent_rehome(self, instance: str, agents: Sequence[str], sink: AuditSink) -> None:
+        """Refuse a grant that would raise the tier past the store holding the credential.
+
+        Granting a federal agent an account whose token sits in this host's
+        ``connections.env`` does not move the token. Honouring it would leave a
+        connection reporting federal stringency with its credential in a local
+        file — a control reporting a posture it does not have, which is the exact
+        defect class this feature has already shipped. Re-homing it silently is
+        the other half of that hazard, so neither happens: the operator is told
+        what to configure and re-runs the connect.
+
+        A connection Arc stores no credential for is untouched by this: a bundle
+        whose binary owns its own token has nothing in any store to be in the
+        wrong one.
+        """
+        required = self._tier_for(agents)
+        if required is self._world.tier:
+            return
+        if not self._declared_secret_fields(instance, sink):
+            return
+        try:
+            select_secret_backend(required, env_file=self._world.env_file)
+        except ExtensionError as exc:
+            raise _refuse(
+                TIER_WOULD_RISE,
+                f"granting {instance!r} to these agents raises it to {required.value}, "
+                f"and this deployment cannot hold its credential at that tier: "
+                f"{exc.message}. Configure that store, then connect {instance!r} again.",
+                connection=instance,
+                required_tier=required.value,
+            ) from exc
+
+    def _record(self, sink: AuditSink, action: str, instance: str, agents: Sequence[str]) -> None:
+        """Record a change to who may reach an account (AU-2).
+
+        An access-control decision that is not in the chain is not auditable, and
+        this one names the connection and the agents rather than only the fact
+        that something changed — an auditor reconstructing who could read the mail
+        on a given day needs both.
+        """
+        emit(
+            AuditEvent(
+                actor_did=self._world.did,
+                action=action,
+                target=f"connector:{instance}",
+                outcome="allow",
+                tier=self._world.tier.value,
+                extra={"connection": instance, "agents": ",".join(agents)},
+            ),
+            sink,
+        )
 
     # --- internals -------------------------------------------------------
 
@@ -1015,26 +1270,37 @@ class Connections:
         """
         return await open_connection_state(str(self._world.data_dir))
 
-    def _plan(self, extension: str, instance: str, sink: AuditSink) -> ConnectorPlan:
+    def _plan(
+        self, extension: str, instance: str, sink: AuditSink, *, tier: Tier | None = None
+    ) -> ConnectorPlan:
         """Plan against an already-open chain, so no verb opens a second ``flock``."""
         return plan_connector(
             extensions_root=self._world.extension_roots,
             extension=extension,
             instance=instance,
-            tier=self._world.tier,
+            tier=tier if tier is not None else self._world.tier,
             audit_sink=sink,
-            egress_allow=load_egress_allow(self._world.agent_dir),
+            egress_allow=self._world.egress_allow,
         )
 
     def _plan_for(self, instance: str, sink: AuditSink) -> ConnectorPlan:
-        configured = self.installed().get(instance)
-        if configured is None:
-            raise _refuse(
-                NOT_INSTALLED,
-                f"no connector instance named {instance!r} on {self._world.agent}",
-                instance=instance,
-            )
-        return self._plan(configured.extension, instance, sink)
+        """Plan an existing connection at the tier its own grantees require."""
+        connection = self.registry.get(instance)
+        return self._plan(
+            connection.extension, instance, sink, tier=self._tier_for(connection.agents)
+        )
+
+    def _tier_for(self, agents: Sequence[str]) -> Tier:
+        """The stringency one connection must be served at, given who holds it.
+
+        The strictest of the deployment floor and every grantee. A connection is
+        one account with one credential in one store, so the store has to satisfy
+        the strictest agent that can reach it — satisfying the laxest satisfies
+        nobody else.
+        """
+        return _strictest(
+            [self._world.tier, *(agent_tier(agent, self._world.arc_dir) for agent in agents)]
+        )
 
     def _declared_secret_fields(self, instance: str, sink: AuditSink) -> list[str]:
         """Which credentials this instance declared, when the bundle is still readable.
@@ -1057,8 +1323,7 @@ class Connections:
         """
         secrets = await resolve_secrets(
             plan.manifest,
-            agent=self._world.agent,
-            instance=plan.instance,
+            connection=plan.instance,
             store=self._store(sink),
             caller_did=self._world.did,
         )
@@ -1085,9 +1350,7 @@ class Connections:
         for declared in plan.secrets:
             value = ""
             if not declared.sensitive:
-                ref = SecretRef(
-                    agent=self._world.agent, instance=plan.instance, field=declared.name
-                )
+                ref = SecretRef(connection=plan.instance, field=declared.name)
                 found = await store.get(ref, caller_did=self._world.did)
                 value = found.reveal() if found is not None else ""
             rows.append(
@@ -1116,8 +1379,7 @@ class Connections:
         try:
             secrets = await resolve_secrets(
                 plan.manifest,
-                agent=self._world.agent,
-                instance=plan.instance,
+                connection=plan.instance,
                 store=self._store(sink),
                 caller_did=self._world.did,
             )
@@ -1131,21 +1393,9 @@ class Connections:
         return SecretStore(backend, sink=sink)
 
     def _pinned_key(self) -> bytes | None:
-        """The operator key an extension bundle's signatures are pinned to (REQ-283).
-
-        Read-only: never mints a key, so an install above personal tier on a machine
-        with no operator key is refused by the loader rather than quietly satisfied
-        by a keypair this call generated moments earlier.
-        """
-        from arctrust import OperatorKey
-
-        try:
-            key = OperatorKey.load(
-                self._world.arc_dir.joinpath(*_OPERATOR_KEY), generate_if_absent=False
-            )
-        except (FileNotFoundError, OSError):
-            return None
-        return key.public_key
+        """The operator key an extension bundle's signatures are pinned to (REQ-283)."""
+        key = _operator_key(self._world.arc_dir)
+        return None if key is None else bytes(key.public_key)
 
     async def _credential_checks(
         self, plan: ConnectorPlan, instance: str, sink: AuditSink
@@ -1154,7 +1404,7 @@ class Connections:
         store = self._store(sink)
         rows: list[DoctorCheck] = []
         for required in plan.secrets:
-            ref = SecretRef(agent=self._world.agent, instance=instance, field=required.name)
+            ref = SecretRef(connection=instance, field=required.name)
             found = await store.get(ref, caller_did=self._world.did)
             status = "present" if found else "missing"
             rows.append(DoctorCheck(required.name, status, str(self._world.env_file)))
@@ -1172,16 +1422,22 @@ class Connections:
 
 
 __all__ = [
+    "BAD_NAME",
     "BUNDLES_DIRNAME",
     "NOT_INSTALLED",
-    "NO_AGENT",
+    "PLAN_TIER_TOO_LOW",
+    "TIER_WOULD_RISE",
     "UNDECLARED_CREDENTIAL",
+    "UNKEYED_OPERATOR_DID",
+    "UNREADABLE_TIER",
     "ArtifactPin",
     "AttachmentFactory",
     "AuditChain",
     "Authorization",
     "CatalogEntry",
     "ClosableSink",
+    "Connection",
+    "ConnectionRegistry",
     "ConnectionWorld",
     "Connections",
     "ConnectorPlan",
@@ -1194,7 +1450,6 @@ __all__ = [
     "HostSetupReport",
     "HostVerdict",
     "InstallReport",
-    "InstanceConfig",
     "ProbeResult",
     "RemovalReport",
     "SecretRequirement",
@@ -1204,6 +1459,8 @@ __all__ = [
     "ToolSpec",
     "agent_tier",
     "catalog",
+    "deployment_egress_allow",
+    "deployment_tier",
+    "resolve_deployment",
     "resolve_roots",
-    "resolve_world",
 ]
