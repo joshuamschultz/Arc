@@ -258,7 +258,13 @@ description = "The issue key, e.g. KAN-68."
 
 [[config.cli.commands]]
 tool = "jira_list_projects"
-argv = ["jira", "project", "list", "--json"]
+# --paginate is in the FIXED argv, not left to the model. acli refuses this verb
+# unless one of [recent limit paginate] is present, and an omitted argument
+# contributes no token — so a call that simply does not pass `limit` exits 1 with
+# acli's own flag-group error. Measured on a live site. Pinning it here means the
+# verb cannot be invoked in a shape acli rejects; `limit` stays available to cap
+# the result.
+argv = ["jira", "project", "list", "--json", "--paginate"]
 description = "List the projects this account can see. Use it to find a project key before searching or creating."
 classification = "read_only"
 

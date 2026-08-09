@@ -163,7 +163,20 @@ async def test_a_key_beginning_with_a_dash_is_read_as_the_key(spawn: _Recorder, 
 async def test_listing_projects_takes_only_a_limit(spawn: _Recorder) -> None:
     argv = await _argv_for("jira_list_projects", {"limit": "50"}, spawn)
 
-    assert argv == ["acli", "jira", "project", "list", "--json", "--limit=50"]
+    assert argv == ["acli", "jira", "project", "list", "--json", "--paginate", "--limit=50"]
+
+
+async def test_listing_projects_works_when_the_model_passes_no_limit(spawn: _Recorder) -> None:
+    """acli refuses this verb without one of [recent limit paginate].
+
+    Measured against the live site: an omitted argument contributes no token, so a
+    call that simply does not pass `limit` exited 1 with acli's own flag-group
+    error. `--paginate` is pinned in the fixed argv so the verb cannot be invoked
+    in a shape acli rejects, whatever the model does or does not supply.
+    """
+    argv = await _argv_for("jira_list_projects", {}, spawn)
+
+    assert "--paginate" in argv
 
 
 async def test_creating_an_issue_names_the_project_and_the_type(spawn: _Recorder) -> None:
