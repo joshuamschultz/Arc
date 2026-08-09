@@ -1,17 +1,18 @@
 """The one rule for every operator-chosen name that addresses a connector.
 
-An instance name is not a label. It becomes a TOML key in the agent's own
-``arcagent.toml`` (``[extensions.<instance>]``), a segment of the env-var key the
-local secret backend writes (``ARC_SECRET_<agent>_<instance>_<field>``), and a
-vault path segment. One name, three destinations, so there is one rule and it
-lives here rather than being restated at each of them: a second copy is a rule
-that drifts, and the destination it drifts away from is the one that breaks.
+A connection name is not a label. It becomes a TOML key in the deployment's
+``connections.toml`` (``[connections.<name>]``), a segment of the env-var key the
+local secret backend writes (``ARC_SECRET_<connection>_<field>``), and a vault
+path segment. An agent name granted a connection is matched against the agent's
+directory name. One rule for all of them, living here rather than restated at
+each: a second copy is a rule that drifts, and the destination it drifts away
+from is the one that breaks.
 
 **Why this is stricter than TOML.** A bare TOML key permits far more than this —
 ``personal-mail`` parses perfectly well, and connections carrying hyphenated
 names exist and work. The narrower rule is set by the env-var key, not by TOML: a
 POSIX shell variable name is ``[A-Za-z_][A-Za-z0-9_]*``, so a hyphen produces an
-entry in ``connectors.env`` that cannot be exported and that several dotenv
+entry in ``connections.env`` that cannot be exported and that several dotenv
 parsers reject outright. The strictest destination sets the rule, because a name
 is checked once and then used in all three. Loosen this to match TOML and you
 move the failure from a refusal an operator can read into a credential that
@@ -29,8 +30,8 @@ route by which an unusable name survives anywhere, and no second copy to drift.
 The one thing that must still work on a name this refuses is DELETING it, or the
 strict rule would create something an operator cannot get rid of. It does:
 ``remove`` reads a connection's credential fields through the planner, treats a
-refusal as "no fields to delete", and drops the config block and the connection
-record regardless. That is not an exception to the rule — it is sound because the
+refusal as "no fields to delete", and drops the connection and its record
+regardless. That is not an exception to the rule — it is sound because the
 rule is the same everywhere: ``SecretRef`` applies it too, so no credential can
 exist under a name this refuses, and there is nothing left behind to strand.
 

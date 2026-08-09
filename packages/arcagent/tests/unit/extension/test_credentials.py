@@ -80,14 +80,13 @@ class FakeStateStore:
         self.patches: list[dict[str, Any]] = []
         self.metadata_write_fails = False
 
-    async def get(self, agent: str, instance: str) -> Any:
+    async def get(self, connection: str) -> Any:
         await asyncio.sleep(0)
         return _StateView(self.record)
 
     async def record_credential_metadata(
         self,
-        agent: str,
-        instance: str,
+        connection: str,
         *,
         expires_at: str | None = None,
         issuer: str | None = None,
@@ -109,7 +108,7 @@ class FakeStateStore:
             self.record["credential_expires_at"] = expires_at
         return True
 
-    async def set_health(self, agent: str, instance: str, health: str, *, actor_did: str) -> bool:
+    async def set_health(self, connection: str, health: str, *, actor_did: str) -> bool:
         await asyncio.sleep(0)
         self.patches.append({"health": health})
         self.record["health"] = health
@@ -143,12 +142,10 @@ class FakeEscalation:
         self.calls: list[dict[str, str]] = []
 
     async def request_operator_attention(
-        self, *, agent: str, instance: str, reason: str, detail: str
+        self, *, connection: str, reason: str, detail: str
     ) -> None:
         await asyncio.sleep(0)
-        self.calls.append(
-            {"agent": agent, "instance": instance, "reason": reason, "detail": detail}
-        )
+        self.calls.append({"connection": connection, "reason": reason, "detail": detail})
 
 
 class RecordingSink:
@@ -192,7 +189,7 @@ class RotatingTokenServer:
 
 @pytest.fixture
 def account() -> ConnectedAccount:
-    return ConnectedAccount(agent="coder", instance="atlassian_work")
+    return ConnectedAccount(connection="atlassian_work")
 
 
 @pytest.fixture
@@ -451,7 +448,7 @@ async def test_terminal_failure_stops_marks_and_escalates(
     assert sleeps == [], "a terminal failure backed off instead of stopping"
     assert state.record["health"] == "needs_attention"
     assert len(escalation.calls) == 1
-    assert escalation.calls[0]["instance"] == "atlassian_work"
+    assert escalation.calls[0]["connection"] == "atlassian_work"
     assert code in escalation.calls[0]["reason"]
 
 
@@ -550,8 +547,8 @@ async def test_renewal_is_audited_without_the_token(
 
 async def test_separate_accounts_renew_independently(secrets: SecretStore) -> None:
     """The single-writer lock is per connected account, not a global bottleneck."""
-    work = ConnectedAccount(agent="coder", instance="atlassian_work")
-    personal = ConnectedAccount(agent="coder", instance="atlassian_personal")
+    work = ConnectedAccount(connection="atlassian_work")
+    personal = ConnectedAccount(connection="atlassian_personal")
     state = FakeStateStore(expires_at=NOW + timedelta(minutes=5))
     lifecycle = _lifecycle(secrets, state, FakeEscalation())
     await _seed(secrets, work.secret_ref, "refresh-work")

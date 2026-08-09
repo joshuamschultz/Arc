@@ -99,8 +99,9 @@ class ToolContractLedger:
 
     Args:
         store: The connection state store holding this connection's approved hashes.
-        agent: Agent side of the connection key.
-        instance: Connected-instance side of the connection key.
+        connection: The connected account these contracts belong to. Not an
+            agent: the contract is what the upstream serves, so every agent
+            granted this connection is bound by one approval and one suspension.
         sink: Where approvals and suspensions are recorded; every event reaches it
             through the single :func:`~arctrust.audit.emit` chokepoint (CON-5).
     """
@@ -109,13 +110,11 @@ class ToolContractLedger:
         self,
         store: ConnectionStateStore,
         *,
-        agent: str,
-        instance: str,
+        connection: str,
         sink: AuditSink,
     ) -> None:
         self._store = store
-        self._agent = agent
-        self._instance = instance
+        self._connection = connection
         self._sink = sink
 
     async def approve(self, specs: Sequence[ToolSpec], *, actor_did: str) -> None:
@@ -137,20 +136,16 @@ class ToolContractLedger:
         for spec in specs:
             served = contract_hash(spec)
             stored = await self._store.approve_tool_contract(
-                self._agent, self._instance, spec.name, served, actor_did=actor_did
+                self._connection, spec.name, served, actor_did=actor_did
             )
             if not stored:
                 raise ExtensionError(
                     code=APPROVAL_NOT_STORED,
                     message=(
-                        f"{self._agent}/{self._instance} is not a registered connection, "
+                        f"{self._connection!r} is not a registered connection, "
                         f"so the contract for {spec.name!r} could not be approved"
                     ),
-                    details={
-                        "agent": self._agent,
-                        "instance": self._instance,
-                        "tool": spec.name,
-                    },
+                    details={"connection": self._connection, "tool": spec.name},
                 )
             self._emit(
                 actor_did=actor_did,
@@ -191,7 +186,7 @@ class ToolContractLedger:
 
     async def _approved_hashes(self) -> dict[str, str]:
         """Every approved hash for this connection, in one read of the durable row."""
-        record = await self._store.get(self._agent, self._instance)
+        record = await self._store.get(self._connection)
         return dict(record.approved_tool_hashes) if record is not None else {}
 
     def _record(
@@ -226,9 +221,9 @@ class ToolContractLedger:
             AuditEvent(
                 actor_did=actor_did,
                 action=action,
-                target=f"connector:{self._instance}:{tool}",
+                target=f"connector:{self._connection}:{tool}",
                 outcome=outcome,
-                extra={"instance": self._instance, "tool": tool, **extra},
+                extra={"connection": self._connection, "tool": tool, **extra},
             ),
             self._sink,
         )

@@ -142,9 +142,7 @@ async def run_token_login(
         )
 
     result = await _spawn(argv, token=token, timeout=timeout)
-    return _record(
-        requirement, caller_did=caller_did, sink=audit_sink, tier=tier, result=result
-    )
+    return _record(requirement, caller_did=caller_did, sink=audit_sink, tier=tier, result=result)
 
 
 def _argv(command: str, binary: str) -> list[str] | None:
@@ -299,9 +297,7 @@ async def _capture(
     try:
         process = await asyncio.create_subprocess_exec(
             *argv,
-            env=scrubbed_environment(
-                {name: secret.reveal() for name, secret in placed.items()}
-            ),
+            env=scrubbed_environment({name: secret.reveal() for name, secret in placed.items()}),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
@@ -338,9 +334,7 @@ async def _spawn(argv: list[str], *, token: str, timeout: float) -> LoginResult:
     )
     if run.returncode is None:
         return LoginResult(completed=False, detail=run.text)
-    return LoginResult(
-        completed=run.returncode == 0, detail=_readable(run.text, token) or argv[0]
-    )
+    return LoginResult(completed=run.returncode == 0, detail=_readable(run.text, token) or argv[0])
 
 
 def _readable(output: str, token: str) -> str:

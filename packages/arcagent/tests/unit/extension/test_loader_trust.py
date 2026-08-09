@@ -136,6 +136,26 @@ def test_a_module_root_remains_trusted() -> None:
     assert is_untrusted_root("module:scheduler") is False
 
 
+@pytest.mark.parametrize(
+    "root_name",
+    ["workspace", "global", "agent", "workspace-skills", "global-skills", "agent-skills"],
+)
+def test_every_agent_writable_root_stays_untrusted(root_name: str) -> None:
+    """Pins the set itself, not just the prefix rule.
+
+    ``is_untrusted_root`` is one ``or`` over a frozenset and a prefix. The prefix
+    half is covered above; without this, a name could be dropped from the set and
+    the only signal would be third-party code silently loading trusted.
+    """
+    assert is_untrusted_root(root_name) is True
+
+
+@pytest.mark.parametrize("root_name", ["builtins", "builtins-skills"])
+def test_shipped_package_roots_stay_trusted(root_name: str) -> None:
+    """The complement: package code Arc ships is the only skills root left trusted."""
+    assert is_untrusted_root(root_name) is False
+
+
 @pytest.mark.asyncio
 async def test_bundle_under_a_module_root_is_refused(tmp_path: Path) -> None:
     """A bundle sitting in a module-shaped root never loads: module roots are trusted.

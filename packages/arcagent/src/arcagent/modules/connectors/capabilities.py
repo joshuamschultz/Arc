@@ -1,9 +1,17 @@
 """Decorator-form connector module — SPEC-062 COMP-015 (T-901/T-902, T-917).
 
 A single ``@capability`` class :class:`Connectors` owns the module's lifecycle.
-``setup()`` attaches every ``[extensions.<instance>]`` block the agent's config
-declares and registers each connection's verbs as individually named tools;
-``teardown()`` deregisters exactly the names it registered and nothing else.
+``setup()`` attaches every connection this agent has been **granted** and
+registers each one's verbs as individually named tools; ``teardown()`` deregisters
+exactly the names it registered and nothing else.
+
+**This is where a grant is enforced**, and it is deliberately the only place. The
+module asks :meth:`~arcagent.extension.grants.ConnectionRegistry.granted_to` for
+the connections naming this agent, and an agent named in none gets an empty
+mapping: no bundle is loaded, no credential is read, and no verb reaches the
+registry the model reads its catalog from. Deny-by-default is therefore a
+property of the question asked rather than of a check that could be forgotten —
+there is no code path here that could omit a check and still attach something.
 
 **The order is the security property**, and it is the loader's order rather than
 a second one:
@@ -57,16 +65,15 @@ from arcagent.extension.attachment import ExtensionAttachment, ToolSpec
 from arcagent.extension.bridge import CapabilityBridge
 from arcagent.extension.catalog import resolve_extension_roots
 from arcagent.extension.contract_ledger import ToolContractLedger
+from arcagent.extension.grants import Connection, ConnectionRegistry
 from arcagent.extension.loader import ExtensionLoader, LoadedExtension
 from arcagent.extension.manifest import ToolPolicy
 from arcagent.extension.secrets import SecretStore, select_secret_backend
 from arcagent.extension.state import ConnectionStateStore, open_connection_state
 from arcagent.modules.connectors import _runtime
 from arcagent.modules.connectors.install import (
-    InstanceConfig,
     build_attachment,
     connector_env_file,
-    load_instances,
     resolve_secrets,
 )
 from arcagent.tools._decorator import capability
@@ -121,14 +128,14 @@ class Connectors:
             _refused(sink, state, "ungoverned", "no tool registry or no human gate")
             return ()
         try:
-            instances = load_instances(state.agent_dir)
+            granted = ConnectionRegistry(state.arc_dir).granted_to(state.agent_dir.name)
         except ExtensionError as exc:
-            # A malformed block is refused loudly by load_instances and nothing
-            # attaches: an operator's connections silently half-applied is worse
-            # than an agent that starts with none of them.
-            _refused(sink, state, "unreadable_config", exc.message)
+            # An unreadable deployment file refuses loudly and nothing attaches:
+            # an operator's grants silently half-applied is worse than an agent
+            # that starts with none of them.
+            _refused(sink, state, "unreadable_connections", exc.message)
             return ()
-        if not instances:
+        if not granted:
             return ()
 
         self._state_store = await _open_state_store(state, sink)
@@ -143,7 +150,7 @@ class Connectors:
             secrets=_secret_store(state, sink),
         )
         registered: list[str] = []
-        for instance, configured in sorted(instances.items()):
+        for instance, configured in sorted(granted.items()):
             registered.extend(await _attach_one(context, instance, configured, registered))
         return tuple(registered)
 
@@ -163,7 +170,7 @@ class _AttachContext:
 
 
 async def _attach_one(
-    ctx: _AttachContext, instance: str, configured: InstanceConfig, taken: list[str]
+    ctx: _AttachContext, instance: str, configured: Connection, taken: list[str]
 ) -> tuple[str, ...]:
     """Attach one connection. Any failure denies this one and no other.
 
@@ -180,8 +187,7 @@ async def _attach_one(
         # rather than attached to serve verbs that answer 401.
         secrets = await resolve_secrets(
             loaded.manifest,
-            agent=state.agent_dir.name,
-            instance=instance,
+            connection=instance,
             store=ctx.secrets,
             caller_did=state.identity.did,
         )
@@ -281,12 +287,10 @@ async def _servable_tools(
     ``extension/approval.py`` judges one at call time.
     """
     specs = _annotated(await connection.describe_tools(), loaded.manifest.tools)
-    # Keyed by the agent's directory name, which is what the install wrote under:
-    # two spellings of "which agent" would mean an operator's approval never
-    # clears the suspension it was minted for.
-    ledger = ToolContractLedger(
-        ctx.store, agent=ctx.state.agent_dir.name, instance=instance, sink=ctx.sink
-    )
+    # Keyed by the connection, which is what the install approved under: the
+    # contract belongs to the account, so an operator's re-approval clears the
+    # suspension for every agent granted it rather than for one of them.
+    ledger = ToolContractLedger(ctx.store, connection=instance, sink=ctx.sink)
     # The ledger's own filter, not a second one written here. Connecting approves
     # the contract the connection served at install, so an unapproved verb at
     # startup is one the upstream added afterwards — the rug-pull's other half,
@@ -330,7 +334,7 @@ async def _open_state_store(
 
 
 def _extension_roots(state: _runtime._State) -> tuple[Path, ...]:
-    """Where this agent's bundles live: its config's one root, or the search path.
+    """Where this deployment's bundles live: its config's one root, or the search path.
 
     A configured root means exactly that root — the same thing
     ``arc connector --extensions-root`` means — so an operator who pinned a
@@ -341,13 +345,13 @@ def _extension_roots(state: _runtime._State) -> tuple[Path, ...]:
     configured = state.config.extensions_root
     if configured:
         return (Path(configured).expanduser().resolve(),)
-    return resolve_extension_roots(state.agent_dir)
+    return resolve_extension_roots(state.arc_dir)
 
 
 def _secret_store(state: _runtime._State, sink: AuditSink) -> SecretStore | None:
-    """Where this agent's connector credentials live, or ``None`` if it has no store.
+    """Where this deployment's connector credentials live, or ``None`` if there is no store.
 
-    The same selection ``arc connector`` makes, from the same agent directory, so the
+    The same selection ``arc connector`` makes, from the same arc dir, so the
     agent reads the file the CLI wrote. ``None`` is not itself a failure: a ``cli``
     bundle whose binary owns its own authentication declares no ``[[secrets]]`` and
     needs no store, and taking the safest connectors away because a deployment has
@@ -357,7 +361,7 @@ def _secret_store(state: _runtime._State, sink: AuditSink) -> SecretStore | None
     """
     try:
         backend = select_secret_backend(
-            Tier(state.tier), env_file=connector_env_file(state.agent_dir)
+            Tier(state.tier), env_file=connector_env_file(state.arc_dir)
         )
     except ExtensionError as exc:
         _logger.warning("connectors: no secret store on this deployment — %s", exc.message)

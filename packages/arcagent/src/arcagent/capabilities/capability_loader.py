@@ -110,6 +110,7 @@ def is_untrusted_root(root_name: str) -> bool:
     """
     return root_name in _UNTRUSTED_ROOTS or root_name.startswith(EXTENSION_ROOT_PREFIX)
 
+
 # Type alias for a (root_name, root_path) pair.
 ScanRoot = tuple[str, Path]
 

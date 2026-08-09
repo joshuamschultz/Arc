@@ -95,37 +95,21 @@ classification = "read_only"
 
 
 @pytest.fixture
-def agent_dir(tmp_path: Path) -> Path:
-    """A minimal agent home holding the placed bundle."""
-    agent = tmp_path / "sales_agent"
-    agent.mkdir()
-    (agent / "arcagent.toml").write_text(
-        '[agent]\nname = "sales_agent"\n\n[llm]\nmodel = "none"\n\n'
-        '[identity]\ndid = "did:arc:local:executor/7e3e"\n\n[security]\ntier = "personal"\n',
-        encoding="utf-8",
-    )
-    bundle = agent / "extensions" / _EXTENSION
+def arc_dir(tmp_path: Path) -> Path:
+    """A minimal deployment root holding the placed bundle."""
+    root = tmp_path / "arc"
+    bundle = root / "extensions" / _EXTENSION
     bundle.mkdir(parents=True)
     (bundle / "extension.toml").write_text(_manifest(), encoding="utf-8")
-    return agent
+    return root
 
 
 @pytest.fixture
-def run(agent_dir: Path, tmp_path: Path) -> Callable[..., None]:
+def run(arc_dir: Path, tmp_path: Path) -> Callable[..., None]:
     """Invoke the real handler with every path pinned inside this test's tmp dir."""
 
     def _run(*args: str) -> None:
-        connector_handler(
-            [
-                *args,
-                "--agent",
-                str(agent_dir),
-                "--arc-dir",
-                str(tmp_path / "arc"),
-                "--data-dir",
-                str(tmp_path / "data"),
-            ]
-        )
+        connector_handler([*args, "--arc-dir", str(arc_dir), "--data-dir", str(tmp_path / "data")])
 
     return _run
 
@@ -157,7 +141,7 @@ def test_add_prompts_in_the_bundles_own_words_and_delivers_the_value(
     the manifest's own sentence — the CLI supplies no wording of its own, which is
     what keeps a new connector's instructions inside its own bundle.
     """
-    run("add", _EXTENSION, "--instance", _INSTANCE)
+    run("add", _EXTENSION, "--name", _INSTANCE)
 
     assert any("Acme console" in prompt for prompt in paste), paste
     captured = capsys.readouterr()
@@ -174,7 +158,7 @@ def test_doctor_reports_the_account_as_signed_in(
     logged-out ``dbxcli account``. A ``sign-in signed_in`` row therefore cannot
     come from the probe wearing the badge's name.
     """
-    run("add", _EXTENSION, "--instance", _INSTANCE)
+    run("add", _EXTENSION, "--name", _INSTANCE)
     capsys.readouterr()
 
     run("doctor", _INSTANCE)
@@ -186,18 +170,18 @@ def test_doctor_reports_the_account_as_signed_in(
 
 
 def test_a_bundle_that_places_nothing_is_refused_by_name(
-    agent_dir: Path,
+    arc_dir: Path,
     run: Callable[..., None],
     paste: list[str],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Fails closed at the terminal too, and says which field has nowhere to go."""
-    (agent_dir / "extensions" / _EXTENSION / "extension.toml").write_text(
+    (arc_dir / "extensions" / _EXTENSION / "extension.toml").write_text(
         _manifest(placed=False), encoding="utf-8"
     )
 
     with pytest.raises(SystemExit) as raised:
-        run("add", _EXTENSION, "--instance", _INSTANCE)
+        run("add", _EXTENSION, "--name", _INSTANCE)
 
     assert raised.value.code != 0
     captured = capsys.readouterr()

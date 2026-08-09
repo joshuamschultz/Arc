@@ -197,9 +197,9 @@ def test_a_bundle_declares_the_shape_of_the_field_it_asks_for() -> None:
 def test_a_field_declaring_nothing_has_no_format() -> None:
     assert load_manifest(_MANIFEST.replace('format = "https_url"\n', ""), tier=Tier.PERSONAL)
     assert (
-        load_manifest(
-            _MANIFEST.replace('format = "https_url"\n', ""), tier=Tier.PERSONAL
-        ).secrets[0].format
+        load_manifest(_MANIFEST.replace('format = "https_url"\n', ""), tier=Tier.PERSONAL)
+        .secrets[0]
+        .format
         == ""
     )
 

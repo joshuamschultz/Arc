@@ -65,8 +65,7 @@ def _gate(exit_expression: str) -> str:
 #: Exits 0 and prints JSON only with the credential present — so the install's own
 #: probe is the delivery proof, and no separate "did it arrive" assertion is needed.
 _PROBE_SCRIPT = (
-    "import os,sys; "
-    f"sys.stdout.write('{{}}') if os.environ.get({_VARIABLE!r}) else sys.exit(1)"
+    f"import os,sys; sys.stdout.write('{{}}') if os.environ.get({_VARIABLE!r}) else sys.exit(1)"
 )
 
 #: Stands in for ``dbxcli account``: answers whether THIS account is connected,
@@ -126,15 +125,28 @@ def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
-def _agent(tmp_path: Path) -> tuple[TestClient, str, Path]:
+#: The agent directory name — the coordinate a grant is written against.
+_AGENT = "acme_agent"
+
+
+def _arc_dir(world: Path) -> Path:
+    """The deployment root: connections, credentials and the bundle search path."""
+    return world / "arc"
+
+
+def _env_file(world: Path) -> Path:
+    """The one owner-only file a connector credential may be written to."""
+    return _arc_dir(world) / "connections.env"
+
+
+def _agent(world: Path) -> tuple[TestClient, str, Path]:
     """A one-agent fleet and an app carrying only the connector routes."""
     identity = AgentIdentity.generate(org="arc", agent_type="exec")
-    key_dir = tmp_path / "keys"
+    key_dir = world / "keys"
     identity.save_keys(key_dir)
-    team_root = tmp_path / "team"
-    agent_dir = team_root / "acme_agent"
+    team_root = _arc_dir(world) / "team"
+    agent_dir = team_root / _AGENT
     (agent_dir / "workspace").mkdir(parents=True)
-    (agent_dir / "extensions").mkdir(parents=True)
     (agent_dir / "arcagent.toml").write_text(
         '[agent]\nname = "acme"\norg = "arc"\ntype = "exec"\n'
         f'workspace = "{agent_dir / "workspace"}"\n'
@@ -153,8 +165,9 @@ def _agent(tmp_path: Path) -> tuple[TestClient, str, Path]:
     return TestClient(app), "acme", agent_dir
 
 
-def _write_bundle(agent_dir: Path, *, placed: bool = True) -> Path:
-    bundle = agent_dir / "extensions" / _EXTENSION
+def _write_bundle(world: Path, *, placed: bool = True) -> Path:
+    """Put the bundle on the DEPLOYMENT's search path; there is no agent-local one."""
+    bundle = _arc_dir(world) / "extensions" / _EXTENSION
     bundle.mkdir(parents=True, exist_ok=True)
     (bundle / "extension.toml").write_text(_manifest(placed=placed), encoding="utf-8")
     return bundle
@@ -164,12 +177,13 @@ def _headers(token: str = "operator") -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _install(client: TestClient, agent_id: str, *, value: str = _SENTINEL) -> Any:
+def _install(client: TestClient, *, value: str = _SENTINEL) -> Any:
     return client.post(
-        f"/api/agents/{agent_id}/connectors",
+        "/api/connections",
         json={
             "extension": _EXTENSION,
             "instance": _INSTANCE,
+            "agents": [_AGENT],
             "secrets": {"access_token": value},
         },
         headers=_headers(),
@@ -203,10 +217,10 @@ def test_a_pasted_credential_reaches_the_binary_and_the_connection_installs(
     stored, read back out of the store, put in the environment of a real child
     process, and that process answered". Nothing weaker can produce this result.
     """
-    client, agent_id, agent_dir = _agent(world)
-    _write_bundle(agent_dir)
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(world)
 
-    resp = _install(client, agent_id)
+    resp = _install(client)
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["tools"] == ["acme_ping"]
@@ -220,10 +234,10 @@ def test_the_same_bundle_without_a_placement_is_refused_by_name(world: Path) -> 
     ``cli`` bundle. The refusal names the field so an operator can act on it, and
     carries no part of what they typed.
     """
-    client, agent_id, agent_dir = _agent(world)
-    _write_bundle(agent_dir, placed=False)
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(world, placed=False)
 
-    resp = _install(client, agent_id)
+    resp = _install(client)
 
     assert resp.status_code == 400
     assert "access_token" in resp.json()["error"]
@@ -236,12 +250,12 @@ def test_auth_status_reports_signed_in_from_the_placed_credential(world: Path) -
     Without the placed environment this check exits 2 — so a green badge here is
     the manifest's own sign-in command agreeing, not the probe wearing its name.
     """
-    client, agent_id, agent_dir = _agent(world)
-    _write_bundle(agent_dir)
-    assert _install(client, agent_id).status_code == 200
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(world)
+    assert _install(client).status_code == 200
 
     body = client.get(
-        f"/api/agents/{agent_id}/connectors/{_INSTANCE}/auth-status", headers=_headers("viewer")
+        f"/api/connections/{_INSTANCE}/auth-status", headers=_headers("viewer")
     ).json()
 
     assert body["sign_in"] == "signed_in"
@@ -255,14 +269,14 @@ def test_a_connection_whose_credential_was_forgotten_reports_signed_out(world: P
     then runs without the placement and says so, rather than reporting the last
     good answer.
     """
-    client, agent_id, agent_dir = _agent(world)
-    _write_bundle(agent_dir)
-    assert _install(client, agent_id).status_code == 200
-    (agent_dir / "connectors.env").write_text("", encoding="utf-8")
-    (agent_dir / "connectors.env").chmod(0o600)
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(world)
+    assert _install(client).status_code == 200
+    _env_file(world).write_text("", encoding="utf-8")
+    _env_file(world).chmod(0o600)
 
     body = client.get(
-        f"/api/agents/{agent_id}/connectors/{_INSTANCE}/auth-status", headers=_headers("viewer")
+        f"/api/connections/{_INSTANCE}/auth-status", headers=_headers("viewer")
     ).json()
 
     assert body["sign_in"] == "signed_out"
@@ -280,36 +294,32 @@ def test_the_pasted_value_is_written_only_to_the_agents_own_secret_store(
     are all produced by this one request. Asserting on the response body alone
     would pass while the credential sat in the chain forever.
     """
-    client, agent_id, agent_dir = _agent(world)
-    _write_bundle(agent_dir)
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(world)
 
     with caplog.at_level(logging.DEBUG):
-        resp = _install(client, agent_id)
+        resp = _install(client)
         status = client.get(
-            f"/api/agents/{agent_id}/connectors/{_INSTANCE}/auth-status",
+            f"/api/connections/{_INSTANCE}/auth-status",
             headers=_headers("viewer"),
         )
-        doctor = client.get(
-            f"/api/agents/{agent_id}/connectors/{_INSTANCE}/doctor", headers=_headers("viewer")
-        )
+        doctor = client.get(f"/api/connections/{_INSTANCE}/doctor", headers=_headers("viewer"))
 
     assert resp.status_code == 200
     assert _SENTINEL not in resp.text
     assert _SENTINEL not in status.text
     assert _SENTINEL not in doctor.text
     assert _SENTINEL not in "".join(record.getMessage() for record in caplog.records)
-    assert _files_holding(world, _SENTINEL) == [agent_dir / "connectors.env"]
+    assert _files_holding(world, _SENTINEL) == [_env_file(world)]
 
 
 def test_removing_the_connection_takes_the_credential_back_out(world: Path) -> None:
     """The one file allowed to hold it must not keep holding it afterwards."""
-    client, agent_id, agent_dir = _agent(world)
-    _write_bundle(agent_dir)
-    assert _install(client, agent_id).status_code == 200
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(world)
+    assert _install(client).status_code == 200
 
-    removed = client.delete(
-        f"/api/agents/{agent_id}/connectors/{_INSTANCE}", headers=_headers()
-    )
+    removed = client.delete(f"/api/connections/{_INSTANCE}", headers=_headers())
 
     assert removed.status_code == 200
     assert removed.json()["removed_secrets"] == ["access_token"]
@@ -324,13 +334,11 @@ def test_the_web_never_learns_that_a_placement_exists(world: Path) -> None:
     placement changes what Arc DOES with the value and nothing about what the web
     asks for — which is why no file under ``arcui`` changed for this seam.
     """
-    client, agent_id, agent_dir = _agent(world)
-    _write_bundle(agent_dir)
-    assert _install(client, agent_id).status_code == 200
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(world)
+    assert _install(client).status_code == 200
 
-    body = client.get(
-        f"/api/agents/{agent_id}/connectors/{_INSTANCE}/auth", headers=_headers("viewer")
-    ).json()
+    body = client.get(f"/api/connections/{_INSTANCE}/auth", headers=_headers("viewer")).json()
 
     assert body["credentials"] == [
         {

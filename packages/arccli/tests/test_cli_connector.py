@@ -35,6 +35,9 @@ from arccli.commands.connector import _SUBCOMMAND_MAP, connector_handler
 
 _EXTENSION = "acme_tickets"
 _INSTANCE = "sales"
+
+#: The agent a grant names — its DIRECTORY name under ``<arc-dir>/team``.
+_AGENT = "sales_agent"
 _TOKEN = "sup3r-s3cret-token"
 
 _MANIFEST = """
@@ -129,19 +132,19 @@ def _token_login_command(marker: Path) -> str:
     return f"{sys.executable} -c {shlex.quote(script)}"
 
 
-def _connect_hosted(
-    run: Callable[..., None], agent_dir: Path, *, token_login: str = ""
-) -> None:
-    """Install the hosted bundle, first re-declaring how its binary signs in."""
+def _connect_hosted(run: Callable[..., None], arc_dir: Path, *, token_login: str = "") -> None:
+    """Connect the hosted bundle, first re-declaring how its binary signs in."""
     host = sys.executable if token_login else "sh"
-    (agent_dir / "extensions" / _HOSTED_EXTENSION / "extension.toml").write_text(
+    (arc_dir / "extensions" / _HOSTED_EXTENSION / "extension.toml").write_text(
         _hosted_manifest(host=host, token_login=token_login), encoding="utf-8"
     )
-    run("add", _HOSTED_EXTENSION, "--instance", _HOSTED_INSTANCE)
+    run("add", _HOSTED_EXTENSION, "--name", _HOSTED_INSTANCE)
 
 
 _DECLARED_VERBS = (
     "add",
+    "grant",
+    "revoke",
     "auth",
     "list",
     "tools",
@@ -178,13 +181,14 @@ class _UnreachableAttachment(_FakeAttachment):
 
 
 @pytest.fixture
-def agent_dir(tmp_path: Path) -> Path:
-    """A minimal agent home with one resolvable extension bundle."""
-    agent = tmp_path / "sales_agent"
-    agent.mkdir()
+def arc_dir(tmp_path: Path) -> Path:
+    """A deployment root with one agent and two resolvable extension bundles."""
+    root = tmp_path / "arc"
+    agent = root / "team" / _AGENT
+    agent.mkdir(parents=True)
     (agent / "arcagent.toml").write_text(
         "[agent]\n"
-        'name = "sales_agent"\n\n'
+        f'name = "{_AGENT}"\n\n'
         "[llm]\n"
         'model = "none"\n\n'
         "[identity]\n"
@@ -193,13 +197,13 @@ def agent_dir(tmp_path: Path) -> Path:
         'tier = "personal"\n',
         encoding="utf-8",
     )
-    bundle = agent / "extensions" / _EXTENSION
+    bundle = root / "extensions" / _EXTENSION
     bundle.mkdir(parents=True)
     (bundle / "extension.toml").write_text(_MANIFEST, encoding="utf-8")
-    hosted = agent / "extensions" / _HOSTED_EXTENSION
+    hosted = root / "extensions" / _HOSTED_EXTENSION
     hosted.mkdir(parents=True)
     (hosted / "extension.toml").write_text(_HOSTED_MANIFEST, encoding="utf-8")
-    return agent
+    return root
 
 
 @pytest.fixture(autouse=True)
@@ -212,7 +216,7 @@ def _reachable(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
-def run(agent_dir: Path, tmp_path: Path) -> Callable[..., None]:
+def run(arc_dir: Path, tmp_path: Path) -> Callable[..., None]:
     """Invoke the handler with every path pinned inside the test's own tmp dir.
 
     ``--arc-dir`` and ``--data-dir`` are real operator flags, not test scaffolding:
@@ -221,17 +225,7 @@ def run(agent_dir: Path, tmp_path: Path) -> Callable[..., None]:
     """
 
     def _run(*args: str) -> None:
-        connector_handler(
-            [
-                *args,
-                "--agent",
-                str(agent_dir),
-                "--arc-dir",
-                str(tmp_path / "arc"),
-                "--data-dir",
-                str(tmp_path / "data"),
-            ]
-        )
+        connector_handler([*args, "--arc-dir", str(arc_dir), "--data-dir", str(tmp_path / "data")])
 
     return _run
 
@@ -248,8 +242,14 @@ def _answer_prompts(monkeypatch: pytest.MonkeyPatch, value: str = _TOKEN) -> lis
     return asked
 
 
-def _config(agent_dir: Path) -> dict[str, Any]:
-    return tomllib.loads((agent_dir / "arcagent.toml").read_text(encoding="utf-8"))
+def _connections(arc_dir: Path) -> dict[str, Any]:
+    """The deployment's connections, as they are actually written to disk."""
+    path = arc_dir / "connections.toml"
+    if not path.is_file():
+        return {}
+    parsed = tomllib.loads(path.read_text(encoding="utf-8")).get("connections", {})
+    assert isinstance(parsed, dict)
+    return parsed
 
 
 class TestSurfaceCompleteness:
@@ -270,12 +270,12 @@ class TestAdd:
     def test_prompts_for_each_declared_secret_without_echoing_it(
         self,
         run: Callable[..., None],
-        agent_dir: Path,
+        arc_dir: Path,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         asked = _answer_prompts(monkeypatch)
-        run("add", _EXTENSION, "--instance", _INSTANCE)
+        run("add", _EXTENSION, "--name", _INSTANCE, "--agents", _AGENT)
 
         assert len(asked) == 1
         assert "Acme API token" in asked[0]
@@ -284,25 +284,25 @@ class TestAdd:
         assert _TOKEN not in captured.err
 
     def test_persists_the_instance_block_but_never_the_secret(
-        self, run: Callable[..., None], agent_dir: Path, monkeypatch: pytest.MonkeyPatch
+        self, run: Callable[..., None], arc_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _answer_prompts(monkeypatch)
-        run("add", _EXTENSION, "--instance", _INSTANCE)
+        run("add", _EXTENSION, "--name", _INSTANCE, "--agents", _AGENT)
 
-        block = _config(agent_dir)["extensions"][_INSTANCE]
+        block = _connections(arc_dir)[_INSTANCE]
         assert block["extension"] == _EXTENSION
         assert block["approval"] == "outbound"
-        assert _TOKEN not in (agent_dir / "arcagent.toml").read_text(encoding="utf-8")
+        assert _TOKEN not in (arc_dir / "connections.toml").read_text(encoding="utf-8")
 
     def test_reports_the_tools_the_probe_found(
         self,
         run: Callable[..., None],
-        agent_dir: Path,
+        arc_dir: Path,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         _answer_prompts(monkeypatch)
-        run("add", _EXTENSION, "--instance", _INSTANCE)
+        run("add", _EXTENSION, "--name", _INSTANCE, "--agents", _AGENT)
         assert "create_issue" in capsys.readouterr().out
 
     def test_the_install_is_audited_without_recording_the_credential(
@@ -317,7 +317,7 @@ class TestAdd:
         from arcstore.ingest import WORM_ACTIVE_FILENAME
 
         _answer_prompts(monkeypatch)
-        run("add", _EXTENSION, "--instance", _INSTANCE)
+        run("add", _EXTENSION, "--name", _INSTANCE, "--agents", _AGENT)
 
         chain = tmp_path / "data" / "worm" / WORM_ACTIVE_FILENAME
         assert chain.exists(), "connector verdicts must reach the operator-signed chain"
@@ -328,7 +328,7 @@ class TestAdd:
     def test_a_failed_probe_names_the_step_and_persists_nothing(
         self,
         run: Callable[..., None],
-        agent_dir: Path,
+        arc_dir: Path,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
@@ -339,28 +339,28 @@ class TestAdd:
         _answer_prompts(monkeypatch)
 
         with pytest.raises(SystemExit) as exited:
-            run("add", _EXTENSION, "--instance", _INSTANCE)
+            run("add", _EXTENSION, "--name", _INSTANCE, "--agents", _AGENT)
 
         assert exited.value.code == 1
         assert "probe" in capsys.readouterr().err
-        assert "extensions" not in _config(agent_dir)
+        assert _connections(arc_dir) == {}
 
     def test_an_unknown_extension_names_the_resolve_step(
         self,
         run: Callable[..., None],
-        agent_dir: Path,
+        arc_dir: Path,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         _answer_prompts(monkeypatch)
         with pytest.raises(SystemExit):
-            run("add", "no_such_bundle", "--instance", _INSTANCE)
+            run("add", "no_such_bundle", "--name", _INSTANCE)
         assert "resolve" in capsys.readouterr().err
 
     def test_an_instance_name_that_is_not_a_legal_config_key_is_refused(
         self,
         run: Callable[..., None],
-        agent_dir: Path,
+        arc_dir: Path,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
@@ -370,23 +370,22 @@ class TestAdd:
         name nothing used to check.
         """
         _answer_prompts(monkeypatch)
-        before = (agent_dir / "arcagent.toml").read_bytes()
 
         with pytest.raises(SystemExit) as exited:
-            run("add", _HOSTED_EXTENSION, "--instance", "blackarc industrial email")
+            run("add", _HOSTED_EXTENSION, "--name", "blackarc industrial email")
 
         assert exited.value.code == 1
         assert "blackarc_industrial_email" in capsys.readouterr().err
-        assert (agent_dir / "arcagent.toml").read_bytes() == before
+        assert _connections(arc_dir) == {}
 
     def test_a_secret_given_on_the_command_line_is_refused(
-        self, run: Callable[..., None], agent_dir: Path, capsys: pytest.CaptureFixture[str]
+        self, run: Callable[..., None], arc_dir: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         # There is deliberately no --token flag: a credential on argv lands in the
         # shell history and in the process table, which is exactly what the hidden
         # prompt exists to avoid.
         with pytest.raises(SystemExit):
-            run("add", _EXTENSION, "--instance", _INSTANCE, "--api-token", _TOKEN)
+            run("add", _EXTENSION, "--name", _INSTANCE, "--api-token", _TOKEN)
         assert _TOKEN not in capsys.readouterr().out
 
 
@@ -396,12 +395,12 @@ class TestReadVerbs:
     def test_list_shows_an_installed_instance(
         self,
         run: Callable[..., None],
-        agent_dir: Path,
+        arc_dir: Path,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         _answer_prompts(monkeypatch)
-        run("add", _EXTENSION, "--instance", _INSTANCE)
+        run("add", _EXTENSION, "--name", _INSTANCE, "--agents", _AGENT)
         capsys.readouterr()
 
         run("list")
@@ -409,21 +408,21 @@ class TestReadVerbs:
         assert _INSTANCE in out
         assert _EXTENSION in out
 
-    def test_list_on_a_fresh_agent_says_so_without_failing(
-        self, run: Callable[..., None], agent_dir: Path, capsys: pytest.CaptureFixture[str]
+    def test_list_on_a_fresh_deployment_says_so_without_failing(
+        self, run: Callable[..., None], arc_dir: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         run("list")
-        assert "No connector" in capsys.readouterr().out
+        assert "No connections" in capsys.readouterr().out
 
     def test_tools_lists_the_verbs_the_instance_offers(
         self,
         run: Callable[..., None],
-        agent_dir: Path,
+        arc_dir: Path,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         _answer_prompts(monkeypatch)
-        run("add", _EXTENSION, "--instance", _INSTANCE)
+        run("add", _EXTENSION, "--name", _INSTANCE, "--agents", _AGENT)
         capsys.readouterr()
 
         run("tools", _INSTANCE)
@@ -432,22 +431,22 @@ class TestReadVerbs:
     def test_probe_reports_a_live_connection(
         self,
         run: Callable[..., None],
-        agent_dir: Path,
+        arc_dir: Path,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         _answer_prompts(monkeypatch)
-        run("add", _EXTENSION, "--instance", _INSTANCE)
+        run("add", _EXTENSION, "--name", _INSTANCE, "--agents", _AGENT)
         capsys.readouterr()
 
         run("probe", _INSTANCE)
         assert "acme 1.0.0" in capsys.readouterr().out
 
     def test_probe_exits_non_zero_when_unreachable(
-        self, run: Callable[..., None], agent_dir: Path, monkeypatch: pytest.MonkeyPatch
+        self, run: Callable[..., None], arc_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _answer_prompts(monkeypatch)
-        run("add", _EXTENSION, "--instance", _INSTANCE)
+        run("add", _EXTENSION, "--name", _INSTANCE, "--agents", _AGENT)
         monkeypatch.setattr(
             "arccli.commands.connector._attachment_factory",
             lambda: lambda _manifest, _bundle, _secrets: _UnreachableAttachment(),
@@ -459,12 +458,12 @@ class TestReadVerbs:
     def test_doctor_reports_credential_presence_without_the_value(
         self,
         run: Callable[..., None],
-        agent_dir: Path,
+        arc_dir: Path,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         _answer_prompts(monkeypatch)
-        run("add", _EXTENSION, "--instance", _INSTANCE)
+        run("add", _EXTENSION, "--name", _INSTANCE, "--agents", _AGENT)
         capsys.readouterr()
 
         run("doctor", _INSTANCE)
@@ -475,16 +474,16 @@ class TestReadVerbs:
     def test_doctor_names_a_missing_credential(
         self,
         run: Callable[..., None],
-        agent_dir: Path,
+        arc_dir: Path,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         _answer_prompts(monkeypatch)
-        run("add", _EXTENSION, "--instance", _INSTANCE)
+        run("add", _EXTENSION, "--name", _INSTANCE, "--agents", _AGENT)
         capsys.readouterr()
         # The credential is gone but the connection is still configured — the
         # shape an operator hits after a store is rotated or restored without it.
-        (agent_dir / "connectors.env").unlink()
+        (arc_dir / "connections.env").unlink()
 
         run("doctor", _INSTANCE)
         assert "missing" in capsys.readouterr().out.lower()
@@ -496,12 +495,12 @@ class TestAuthAndApprove:
     def test_auth_replaces_the_credential_through_a_hidden_prompt(
         self,
         run: Callable[..., None],
-        agent_dir: Path,
+        arc_dir: Path,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         _answer_prompts(monkeypatch)
-        run("add", _EXTENSION, "--instance", _INSTANCE)
+        run("add", _EXTENSION, "--name", _INSTANCE, "--agents", _AGENT)
         capsys.readouterr()
 
         asked = _answer_prompts(monkeypatch, "rotated-value")
@@ -510,7 +509,7 @@ class TestAuthAndApprove:
         assert asked, "auth must prompt, not read a flag"
         out = capsys.readouterr().out
         assert "rotated-value" not in out
-        env = (agent_dir / "connectors.env").read_text(encoding="utf-8")
+        env = (arc_dir / "connections.env").read_text(encoding="utf-8")
         assert "rotated-value" in env
         assert _TOKEN not in env
 
@@ -528,7 +527,7 @@ class TestAuthAndApprove:
         all. The manifest's ``authorize_command`` is the whole answer, so it has
         to reach stdout verbatim.
         """
-        run("add", _HOSTED_EXTENSION, "--instance", "hosted")
+        run("add", _HOSTED_EXTENSION, "--name", "hosted")
         capsys.readouterr()
 
         run("auth", "hosted")
@@ -542,12 +541,12 @@ class TestAuthAndApprove:
     def test_approve_records_the_current_tool_contract(
         self,
         run: Callable[..., None],
-        agent_dir: Path,
+        arc_dir: Path,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         _answer_prompts(monkeypatch)
-        run("add", _EXTENSION, "--instance", _INSTANCE)
+        run("add", _EXTENSION, "--name", _INSTANCE, "--agents", _AGENT)
         capsys.readouterr()
 
         run("approve", _INSTANCE)
@@ -560,21 +559,21 @@ class TestRemove:
     def test_remove_drops_the_block_and_the_credential(
         self,
         run: Callable[..., None],
-        agent_dir: Path,
+        arc_dir: Path,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         _answer_prompts(monkeypatch)
-        run("add", _EXTENSION, "--instance", _INSTANCE)
+        run("add", _EXTENSION, "--name", _INSTANCE, "--agents", _AGENT)
         capsys.readouterr()
 
         run("remove", _INSTANCE)
 
-        assert "extensions" not in _config(agent_dir)
-        assert _TOKEN not in (agent_dir / "connectors.env").read_text(encoding="utf-8")
+        assert _connections(arc_dir) == {}
+        assert _TOKEN not in (arc_dir / "connections.env").read_text(encoding="utf-8")
 
     def test_removing_an_unknown_instance_is_reported_not_crashed(
-        self, run: Callable[..., None], agent_dir: Path, capsys: pytest.CaptureFixture[str]
+        self, run: Callable[..., None], arc_dir: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         run("remove", "never_installed")
         assert "never_installed" in capsys.readouterr().out
@@ -595,12 +594,12 @@ class TestAuthorizeAndHostSetup:
     def test_authorize_prints_the_command_for_an_interactive_only_connector(
         self,
         run: Callable[..., None],
-        agent_dir: Path,
+        arc_dir: Path,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """No ``token_command`` means no button and no prompt — just the command."""
-        _connect_hosted(run, agent_dir)
+        _connect_hosted(run, arc_dir)
         prompted = _answer_prompts(monkeypatch, "unused")
 
         run("authorize", _HOSTED_INSTANCE)
@@ -612,14 +611,14 @@ class TestAuthorizeAndHostSetup:
     def test_authorize_prompts_for_the_token_when_arc_can_finish_the_login(
         self,
         run: Callable[..., None],
-        agent_dir: Path,
+        arc_dir: Path,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """Hidden prompt, never a ``--token`` flag: argv lands in shell history
         and in the process table, which is the exposure getpass exists to remove."""
-        marker = agent_dir / "signed-in"
-        _connect_hosted(run, agent_dir, token_login=_token_login_command(marker))
+        marker = arc_dir / "signed-in"
+        _connect_hosted(run, arc_dir, token_login=_token_login_command(marker))
         _answer_prompts(monkeypatch, _TOKEN)
 
         run("authorize", _HOSTED_INSTANCE)
@@ -630,12 +629,12 @@ class TestAuthorizeAndHostSetup:
     def test_host_setup_reports_a_refusal_and_the_manual_steps(
         self,
         run: Callable[..., None],
-        agent_dir: Path,
+        arc_dir: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """A bundle pinning no build cannot be installed, and says so with the
         steps a person runs instead rather than a bare failure."""
-        (agent_dir / "extensions" / _HOSTED_EXTENSION / "extension.toml").write_text(
+        (arc_dir / "extensions" / _HOSTED_EXTENSION / "extension.toml").write_text(
             _hosted_manifest(host="definitely_not_installed_xyz"), encoding="utf-8"
         )
 
@@ -649,9 +648,101 @@ class TestAuthorizeAndHostSetup:
     def test_host_setup_says_so_when_the_host_already_has_what_it_needs(
         self,
         run: Callable[..., None],
-        agent_dir: Path,
+        arc_dir: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         run("host-setup", _HOSTED_EXTENSION)
 
         assert "has what it needs here" in capsys.readouterr().out
+
+
+class TestGrantAndRevoke:
+    """Access control at the terminal: who holds this account, and who stops holding it.
+
+    Driven through the real handler and read back off the real deployment file, not
+    from a return value: the whole point of the verb is what the running agent will
+    later read, and a grant that prints and does not persist is the shape this
+    feature has already shipped.
+    """
+
+    def test_add_grants_in_the_same_pass(
+        self, run: Callable[..., None], arc_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """One command connects the account AND hands it over — no separate step."""
+        _answer_prompts(monkeypatch)
+
+        run("add", _EXTENSION, "--name", _INSTANCE, "--agents", _AGENT)
+
+        assert _connections(arc_dir)[_INSTANCE]["agents"] == [_AGENT]
+
+    def test_add_without_agents_connects_an_account_nobody_holds(
+        self, run: Callable[..., None], arc_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Deny by default: an account proven to work still reaches nobody untold."""
+        _answer_prompts(monkeypatch)
+
+        run("add", _EXTENSION, "--name", _INSTANCE)
+
+        assert _connections(arc_dir)[_INSTANCE]["agents"] == []
+
+    def test_grant_adds_an_agent_and_keeps_the_ones_already_holding_it(
+        self, run: Callable[..., None], arc_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _answer_prompts(monkeypatch)
+        run("add", _EXTENSION, "--name", _INSTANCE, "--agents", _AGENT)
+
+        run("grant", _INSTANCE, "--agents", "marketer")
+
+        assert _connections(arc_dir)[_INSTANCE]["agents"] == [_AGENT, "marketer"]
+
+    def test_revoke_removes_one_and_leaves_the_rest(
+        self, run: Callable[..., None], arc_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _answer_prompts(monkeypatch)
+        run("add", _EXTENSION, "--name", _INSTANCE, "--agents", f"{_AGENT},marketer")
+
+        run("revoke", _INSTANCE, "--agents", "marketer")
+
+        assert _connections(arc_dir)[_INSTANCE]["agents"] == [_AGENT]
+
+    def test_granting_a_connection_that_does_not_exist_exits_non_zero(
+        self, run: Callable[..., None], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A clear refusal, not a silent no-op that writes a row nobody reads."""
+        with pytest.raises(SystemExit) as exited:
+            run("grant", "no_such_account", "--agents", _AGENT)
+
+        assert exited.value.code == 1
+        assert "no_such_account" in capsys.readouterr().err
+
+    def test_list_shows_who_holds_each_connection(
+        self,
+        run: Callable[..., None],
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """ "Who can read my mail" answered in one table, for the whole deployment."""
+        _answer_prompts(monkeypatch)
+        run("add", _EXTENSION, "--name", _INSTANCE, "--agents", _AGENT)
+        capsys.readouterr()
+
+        run("list")
+
+        out = capsys.readouterr().out
+        assert _INSTANCE in out
+        assert _AGENT in out
+
+    def test_list_says_plainly_when_a_connection_reaches_nobody(
+        self,
+        run: Callable[..., None],
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """An empty column is something an operator has to interpret. This is not."""
+        _answer_prompts(monkeypatch)
+        run("add", _EXTENSION, "--name", _INSTANCE)
+        capsys.readouterr()
+
+        run("list")
+
+        assert "(nobody)" in capsys.readouterr().out

@@ -11,17 +11,11 @@ import {
 } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
 import { OperatorModeToggle } from '@/components/operator-mode-toggle'
+import { AgentGrantChips } from '@/components/connection-grants'
 import { ConnectorAuthorizePanel } from '@/components/connector-authorize-panel'
 import { ConnectorSecretsSheet } from '@/components/connector-secrets-sheet'
 import { HostRequirementLine } from '@/components/host-setup-panel'
 import { Button } from '@/components/ui/button'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import {
   Table,
   TableBody,
@@ -33,15 +27,15 @@ import {
 import { QueryState, EmptyState } from '@/components/states'
 import { useOperatorMode } from '@/hooks/use-operator-mode'
 import {
-  useAgentConnectors,
   useApproveConnector,
+  useConnections,
   useConnectorCatalog,
   useConnectorDoctor,
   useProbeConnector,
   useRemoveConnector,
   useRoster,
 } from '@/lib/queries'
-import type { CatalogBundle, ConnectorInstance } from '@/lib/types'
+import type { Agent, CatalogBundle, ConnectorInstance } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
 // `status` is whatever `arc connector doctor` prints, so this reads the row's
@@ -59,8 +53,8 @@ function doctorTone(status: string): string {
 
 // "Why is this one not working?" — the doctor rows exactly as the route
 // returns them, opened under the connection they belong to.
-function DoctorPanel({ agentId, instance }: { agentId: string; instance: string }) {
-  const doctor = useConnectorDoctor(agentId, instance, true)
+function DoctorPanel({ instance }: { instance: string }) {
+  const doctor = useConnectorDoctor(instance, true)
   return (
     <div className="rounded-md border border-border bg-muted/20 p-3">
       <QueryState
@@ -97,24 +91,43 @@ function DoctorPanel({ agentId, instance }: { agentId: string; instance: string 
   )
 }
 
+/**
+ * Where bundles were read from, under the list it explains — one quiet line.
+ *
+ * An operator reads this for exactly one reason: a bundle they expected is not
+ * on the page. So the ordinary case names the single directory to go and look
+ * in, and the rare multi-root case says how many places were searched rather
+ * than printing a row of absolute paths nobody scans — the full list is on
+ * hover, where it costs nothing to carry.
+ */
+function SearchPathLine({ roots }: { roots: string[] }) {
+  if (roots.length === 0) return null
+  return (
+    <p className="font-mono text-[11px] text-muted-foreground/70" title={roots.join('\n')}>
+      {roots.length === 1 ? `read from ${roots[0]}` : `read from ${roots.length} locations`}
+    </p>
+  )
+}
+
 function ConnectionRow({
-  agentId,
   inst,
   bundle,
+  agents,
   operatorMode,
   onReauth,
 }: {
-  agentId: string
   inst: ConnectorInstance
   /** The catalog entry backing this instance, absent if the bundle has left
    *  the extension search path. */
   bundle: CatalogBundle | undefined
+  /** The whole fleet, so the row can show who does NOT hold this as well. */
+  agents: Agent[]
   operatorMode: boolean
   onReauth: (bundle: CatalogBundle, instance: string) => void
 }) {
-  const probe = useProbeConnector(agentId, inst.instance)
-  const approve = useApproveConnector(agentId, inst.instance)
-  const remove = useRemoveConnector(agentId)
+  const probe = useProbeConnector(inst.instance)
+  const approve = useApproveConnector(inst.instance)
+  const remove = useRemoveConnector()
   const [showDoctor, setShowDoctor] = useState(false)
   const [showAuth, setShowAuth] = useState(false)
   const [confirmRemove, setConfirmRemove] = useState(false)
@@ -133,7 +146,14 @@ function ConnectionRow({
             {inst.extension}
           </span>
         </TableCell>
-        <TableCell className="text-xs text-muted-foreground">{inst.approval}</TableCell>
+        <TableCell className="min-w-64">
+          <AgentGrantChips
+            instance={inst.instance}
+            agents={agents}
+            holders={inst.agents}
+            operatorMode={operatorMode}
+          />
+        </TableCell>
         <TableCell className="min-w-48">
           {probe.isPending ? (
             <span className="text-xs text-muted-foreground">Checking…</span>
@@ -143,7 +163,9 @@ function ConnectionRow({
             <span
               className={cn(
                 'text-xs',
-                probe.data.reachable ? 'text-emerald-600 dark:text-emerald-400' : 'text-destructive',
+                probe.data.reachable
+                  ? 'text-emerald-600 dark:text-emerald-400'
+                  : 'text-destructive',
               )}
             >
               {probe.data.reachable ? 'Reachable' : 'Unreachable'}
@@ -242,14 +264,15 @@ function ConnectionRow({
               {approve.data.approved.length === 1 ? '' : 's'}.
             </p>
           )}
-          {remove.isError && <p className="mt-1 text-xs text-destructive">{remove.error.message}</p>}
+          {remove.isError && (
+            <p className="mt-1 text-xs text-destructive">{remove.error.message}</p>
+          )}
         </TableCell>
       </TableRow>
       {showAuth && (
         <TableRow className="hover:bg-transparent">
           <TableCell colSpan={5} className="p-3">
             <ConnectorAuthorizePanel
-              agentId={agentId}
               instance={inst.instance}
               extension={inst.extension}
               operatorMode={operatorMode}
@@ -260,7 +283,7 @@ function ConnectionRow({
       {showDoctor && (
         <TableRow className="hover:bg-transparent">
           <TableCell colSpan={5} className="p-3">
-            <DoctorPanel agentId={agentId} instance={inst.instance} />
+            <DoctorPanel instance={inst.instance} />
           </TableCell>
         </TableRow>
       )}
@@ -280,7 +303,15 @@ function BundleCard({
   onConnect: (bundle: CatalogBundle) => void
 }) {
   return (
-    <div className="flex flex-col rounded-lg border border-border bg-card p-4 shadow-xs">
+    // The bundle's directory is on the card as a hover title rather than a line
+    // of its own. It matters exactly twice — telling two same-named bundles
+    // apart, and working out why an expected one is missing — and neither is a
+    // reason to put an absolute path in front of an operator who is choosing
+    // what to connect.
+    <div
+      title={`from ${bundle.root}`}
+      className="flex flex-col rounded-lg border border-border bg-card p-4 shadow-xs"
+    >
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
         <span className="font-semibold text-foreground">{bundle.name}</span>
         <span className="font-mono text-[11px] text-muted-foreground">v{bundle.version}</span>
@@ -316,7 +347,6 @@ function BundleCard({
           </>
         )}
       </p>
-      <p className="mt-1 font-mono text-[11px] text-muted-foreground/70">from {bundle.root}</p>
       {bundle.host_requires.length > 0 && (
         <div className="mt-2">
           <HostRequirementLine requirements={bundle.host_requires} />
@@ -338,171 +368,147 @@ function BundleCard({
 }
 
 /**
- * Connections (SPEC-064). Answers, in order: what is connected for this agent,
- * what could be connected, and — per connection — why one is not working.
+ * Connections (SPEC-064). Answers, in order: what this deployment is connected
+ * to and which agents hold each one, what else could be connected, and — per
+ * connection — why one is not working.
+ *
+ * There is no agent selector, and that is the point. A connected account belongs
+ * to the deployment; the agent-scoped thing is the GRANT, and the operator's
+ * question was about several agents at once — *"maybe 2 agents can access jira
+ * and 2 don't have the connection. maybe only 1 has gmail. and maybe all 4 have
+ * confluence."* A per-agent page can only answer that by being visited four
+ * times and the answers held in someone's head.
+ *
  * Every mutating control is operator-only; the server is the real gate.
  */
 export function ConnectionsPage() {
   const roster = useRoster()
   const agents = (roster.data?.agents ?? []).filter((a) => !a.hidden)
-  const [picked, setPicked] = useState<string | null>(null)
-  const agentId = picked ?? agents[0]?.agent_id ?? null
   const [operatorMode] = useOperatorMode()
 
   const catalog = useConnectorCatalog()
-  const connectors = useAgentConnectors(agentId)
+  const connections = useConnections()
 
   // One sheet drives both flows: no instance = install, instance = rotation.
-  const [sheet, setSheet] = useState<{ bundle: CatalogBundle; instance?: string } | null>(null)
+  const [sheet, setSheet] = useState<{
+    bundle: CatalogBundle
+    instance?: string
+  } | null>(null)
 
   const bundles = catalog.data?.available ?? []
-  const instances = connectors.data?.instances ?? []
+  const instances = connections.data?.connections ?? []
   const bundleFor = (name: string) => bundles.find((b) => b.name === name)
-  const currentAgent = agents.find((a) => a.agent_id === agentId)
-  const agentName =
-    currentAgent?.display_name || currentAgent?.name || currentAgent?.agent_id || 'this agent'
 
   return (
     <div className="flex h-full flex-col">
       <PageHeader
         title="Connections"
-        description={`What ${agentName} is connected to, and what it could connect. Credentials are written straight to the agent; this surface never displays one.`}
-        actions={
-          <>
-            <OperatorModeToggle />
-            <Select value={agentId ?? ''} onValueChange={setPicked}>
-              <SelectTrigger className="w-52">
-                <SelectValue placeholder="Select agent" />
-              </SelectTrigger>
-              <SelectContent>
-                {agents.map((a) => (
-                  <SelectItem key={a.agent_id} value={a.agent_id ?? ''}>
-                    {a.display_name || a.name || a.agent_id}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </>
-        }
+        description="Every connected account on this computer, and which agents can use each one. Credentials are stored once and never displayed here."
+        actions={<OperatorModeToggle />}
       />
-      {!agentId ? (
-        <div className="flex-1 overflow-auto p-6">
-          <EmptyState
-            title="No agent selected"
-            description="Pick an agent from the selector to see its connections."
-          />
-        </div>
-      ) : (
-        <div className="flex-1 space-y-8 overflow-auto p-6">
-          <section className="space-y-3">
-            <div>
-              <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Connected
-              </h2>
-              {/* The agent-local root only. The search path is ordered and
-                  plural (D-584); a bundle's own root shows on its card. */}
-              {connectors.data?.extensions_root && (
-                <p className="mt-0.5 text-[11px] text-muted-foreground/70">
-                  agent-local root{' '}
-                  <span className="font-mono">{connectors.data.extensions_root}</span>
-                </p>
-              )}
-            </div>
-            <QueryState
-              query={connectors}
-              isEmpty={(data) => data.instances.length === 0}
-              empty={
-                <EmptyState
-                  icon={<Cable className="size-7" />}
-                  title="No connections yet"
-                  description={`${agentName} is not connected to anything. Pick a bundle from Available below to connect one.`}
-                />
-              }
-            >
-              {(data) => (
-                <div className="rounded-lg border border-border bg-card">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Instance</TableHead>
-                        <TableHead>Extension</TableHead>
-                        <TableHead>Approval</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {data.instances.map((inst) => (
-                        <ConnectionRow
-                          key={inst.instance}
-                          agentId={agentId}
-                          inst={inst}
-                          bundle={bundleFor(inst.extension)}
-                          operatorMode={operatorMode}
-                          onReauth={(bundle, instance) => setSheet({ bundle, instance })}
-                        />
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-            </QueryState>
-          </section>
-
-          <section className="space-y-3">
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Available
-            </h2>
-            <QueryState
-              query={catalog}
-              isEmpty={(data) => data.available.length === 0 && data.unreadable.length === 0}
-              empty={
-                <EmptyState
-                  icon={<Plug className="size-7" />}
-                  title="No bundles found"
-                  description="Nothing on the extension search path. Install a connector bundle to see it here."
-                />
-              }
-            >
-              {(data) => (
-                <div className="space-y-3">
-                  <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-                    {data.available.map((b) => (
-                      <BundleCard
-                        key={b.name}
-                        bundle={b}
-                        connectedCount={instances.filter((i) => i.extension === b.name).length}
+      <div className="flex-1 space-y-8 overflow-auto p-6">
+        <section className="space-y-3">
+          {/* No search path here. Where bundles are read from is a fact about
+              bundles, not about a connected account, and it belongs beside the
+              list it explains. */}
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Connected
+          </h2>
+          <QueryState
+            query={connections}
+            isEmpty={(data) => data.connections.length === 0}
+            empty={
+              <EmptyState
+                icon={<Cable className="size-7" />}
+                title="No connections yet"
+                description="Nothing is connected on this computer. Pick a bundle from Available below to connect one."
+              />
+            }
+          >
+            {(data) => (
+              <div className="rounded-lg border border-border bg-card">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Connection</TableHead>
+                      <TableHead>Extension</TableHead>
+                      <TableHead>Who can use it</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {data.connections.map((inst) => (
+                      <ConnectionRow
+                        key={inst.instance}
+                        inst={inst}
+                        bundle={bundleFor(inst.extension)}
+                        agents={agents}
                         operatorMode={operatorMode}
-                        onConnect={(bundle) => setSheet({ bundle })}
+                        onReauth={(bundle, instance) => setSheet({ bundle, instance })}
                       />
                     ))}
-                  </div>
-                  {data.unreadable.length > 0 && (
-                    <div className="space-y-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-                      <p className="flex items-center gap-2 font-medium">
-                        <TriangleAlert className="size-4 shrink-0" />
-                        Bundles found but not readable
-                      </p>
-                      {data.unreadable.map((u) => (
-                        <p key={u.name}>
-                          <span className="font-mono text-foreground">{u.name}</span> — {u.reason}
-                        </p>
-                      ))}
-                    </div>
-                  )}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </QueryState>
+        </section>
+
+        <section className="space-y-3">
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Available
+          </h2>
+          <QueryState
+            query={catalog}
+            isEmpty={(data) => data.available.length === 0 && data.unreadable.length === 0}
+            empty={
+              <EmptyState
+                icon={<Plug className="size-7" />}
+                title="No bundles found"
+                description="Nothing on the extension search path. Install a connector bundle to see it here."
+              />
+            }
+          >
+            {(data) => (
+              <div className="space-y-3">
+                <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                  {data.available.map((b) => (
+                    <BundleCard
+                      key={b.name}
+                      bundle={b}
+                      connectedCount={instances.filter((i) => i.extension === b.name).length}
+                      operatorMode={operatorMode}
+                      onConnect={(bundle) => setSheet({ bundle })}
+                    />
+                  ))}
                 </div>
-              )}
-            </QueryState>
-          </section>
-        </div>
-      )}
-      {sheet && agentId && (
+                {data.unreadable.length > 0 && (
+                  <div className="space-y-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                    <p className="flex items-center gap-2 font-medium">
+                      <TriangleAlert className="size-4 shrink-0" />
+                      Bundles found but not readable
+                    </p>
+                    {data.unreadable.map((u) => (
+                      <p key={u.name}>
+                        <span className="font-mono text-foreground">{u.name}</span> — {u.reason}
+                      </p>
+                    ))}
+                  </div>
+                )}
+                <SearchPathLine roots={connections.data?.extensions_roots ?? []} />
+              </div>
+            )}
+          </QueryState>
+        </section>
+      </div>
+      {sheet && (
         <ConnectorSecretsSheet
           // Remount per target so no credential state survives a switch.
           key={`${sheet.bundle.name}:${sheet.instance ?? ''}`}
-          agentId={agentId}
           bundle={sheet.bundle}
           instance={sheet.instance}
+          agents={agents}
           open
           onOpenChange={(o) => !o && setSheet(null)}
         />

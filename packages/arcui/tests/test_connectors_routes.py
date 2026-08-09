@@ -23,12 +23,22 @@ import tarfile
 import tomllib
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 from arcagent.connections import HostPrerequisiteDirector
+from arcagent.core.config import ToolConfig, ToolsConfig
+from arcagent.core.module_bus import ModuleBus
+from arcagent.core.tool_registry import ToolRegistry
+from arcagent.extension.grants import ConnectionRegistry
 from arcagent.extension.platforms import host_platform
+from arcagent.modules.connectors import _runtime
+from arcagent.modules.connectors.capabilities import Connectors
+from arcagent.tools.human_gate import HumanGate
 from arcgateway import team_roster
 from arctrust.identity import AgentIdentity
+from arctrust.signer import InProcessSigner
+from nacl.signing import SigningKey
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
@@ -338,6 +348,13 @@ instruction = "brew install definitely-not-installed-xyz"
 )
 
 
+#: The agent directory name — the coordinate a grant is matched against when the
+#: agent starts. Deliberately not the same string as the roster's ``agent_id``
+#: ("acme"), so a route that granted the id instead of the name writes a grant
+#: that is listed and effective for nobody, and fails here.
+_AGENT = "acme_agent"
+
+
 @pytest.fixture
 def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Redirect the whole Arc world into ``tmp_path``.
@@ -351,15 +368,34 @@ def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
-def _agent(tmp_path: Path) -> tuple[TestClient, str, Path]:
-    """A one-agent fleet, an app carrying only the connector routes, two tokens."""
+def _arc_dir(world: Path) -> Path:
+    """The deployment root: connections, credentials, bundles and the fleet config."""
+    return world / "arc"
+
+
+def _bundles(world: Path) -> Path:
+    """The deployment's bundle root. There is deliberately no agent-local one."""
+    return _arc_dir(world) / "extensions"
+
+
+def _env_file(world: Path) -> Path:
+    """The one owner-only file every connector credential is written to."""
+    return _arc_dir(world) / "connections.env"
+
+
+def _agent(world: Path) -> tuple[TestClient, str, Path]:
+    """A one-agent fleet, an app carrying only the connector routes, two tokens.
+
+    The agent lives under ``<arc_dir>/team`` because that is where the grant model
+    reads an agent's tier from — the stringency a connection granted to it must
+    be served at.
+    """
     identity = AgentIdentity.generate(org="arc", agent_type="exec")
-    key_dir = tmp_path / "keys"
+    key_dir = world / "keys"
     identity.save_keys(key_dir)
-    team_root = tmp_path / "team"
-    agent_dir = team_root / "acme_agent"
+    team_root = _arc_dir(world) / "team"
+    agent_dir = team_root / _AGENT
     (agent_dir / "workspace").mkdir(parents=True)
-    (agent_dir / "extensions").mkdir(parents=True)
     (agent_dir / "arcagent.toml").write_text(
         '[agent]\nname = "acme"\norg = "arc"\ntype = "exec"\n'
         f'workspace = "{agent_dir / "workspace"}"\n'
@@ -394,28 +430,32 @@ def _headers(token: str = "operator") -> dict[str, str]:
 
 def _install(
     client: TestClient,
-    agent_id: str,
     *,
     instance: str = _INSTANCE,
     secrets: dict[str, str] | None = None,
+    agents: list[str] | None = None,
     token: str = "operator",
 ) -> Any:
     return client.post(
-        f"/api/agents/{agent_id}/connectors",
+        "/api/connections",
         json={
             "extension": _EXTENSION,
             "instance": instance,
+            "agents": [_AGENT] if agents is None else agents,
             "secrets": {"api_token": _SENTINEL} if secrets is None else secrets,
         },
         headers=_headers(token),
     )
 
 
-def _instance_blocks(agent_dir: Path) -> dict[str, Any]:
-    raw = tomllib.loads((agent_dir / "arcagent.toml").read_text(encoding="utf-8"))
-    blocks = raw.get("extensions", {})
-    assert isinstance(blocks, dict)
-    return blocks
+def _defined(world: Path) -> dict[str, Any]:
+    """The deployment's connections, read off disk exactly as the runtime reads them."""
+    path = _arc_dir(world) / "connections.toml"
+    if not path.is_file():
+        return {}
+    table = tomllib.loads(path.read_text(encoding="utf-8")).get("connections", {})
+    assert isinstance(table, dict)
+    return table
 
 
 # --- catalog ---------------------------------------------------------------
@@ -461,17 +501,25 @@ def test_catalog_reports_an_unparseable_bundle_instead_of_500ing(
     assert broken["reason"]
 
 
-# --- agent-scoped listing --------------------------------------------------
+# --- listings ---------------------------------------------------------------
 
 
-def test_agent_connectors_is_empty_before_anything_is_installed(world: Path) -> None:
-    client, agent_id, agent_dir = _agent(world)
-    resp = client.get(f"/api/agents/{agent_id}/connectors", headers=_headers("viewer"))
+def test_the_deployment_listing_is_empty_before_anything_is_connected(world: Path) -> None:
+    _write_bundle(_bundles(world))
+    client, _agent_id, _dir = _agent(world)
+    resp = client.get("/api/connections", headers=_headers("viewer"))
     assert resp.status_code == 200
     assert resp.json() == {
-        "instances": [],
-        "extensions_root": str(agent_dir / "extensions"),
+        "connections": [],
+        "extensions_roots": [str(_bundles(world))],
     }
+
+
+def test_agent_connectors_is_empty_before_anything_is_granted(world: Path) -> None:
+    client, agent_id, _dir = _agent(world)
+    resp = client.get(f"/api/agents/{agent_id}/connectors", headers=_headers("viewer"))
+    assert resp.status_code == 200
+    assert resp.json() == {"instances": [], "extensions_roots": []}
 
 
 def test_agent_connectors_is_404_for_an_unknown_agent(world: Path) -> None:
@@ -485,42 +533,75 @@ def test_agent_connectors_is_404_for_an_unknown_agent(world: Path) -> None:
 
 def test_install_goes_through_the_real_path_and_persists(world: Path) -> None:
     client, agent_id, agent_dir = _agent(world)
-    _write_bundle(agent_dir / "extensions")
+    _write_bundle(_bundles(world))
 
-    resp = _install(client, agent_id)
+    resp = _install(client)
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["instance"] == _INSTANCE
     assert body["extension"] == _EXTENSION
     assert body["tools"] == ["ping"]
+    assert body["agents"] == [_AGENT]
 
-    blocks = _instance_blocks(agent_dir)
-    assert blocks[_INSTANCE] == {"extension": _EXTENSION, "approval": "outbound"}
-    env = (agent_dir / "connectors.env").read_text(encoding="utf-8")
+    assert _defined(world)[_INSTANCE] == {
+        "extension": _EXTENSION,
+        "approval": "outbound",
+        "agents": [_AGENT],
+    }
+    assert not (agent_dir / "connections.toml").exists(), "nothing is written into the agent"
+    env = _env_file(world).read_text(encoding="utf-8")
     assert _SENTINEL in env, "the credential belongs in the owner-only env file"
 
-    listing = client.get(f"/api/agents/{agent_id}/connectors", headers=_headers("viewer")).json()
-    assert listing["instances"] == [
-        {"instance": _INSTANCE, "extension": _EXTENSION, "approval": "outbound"}
+    listing = client.get("/api/connections", headers=_headers("viewer")).json()
+    assert listing["connections"] == [
+        {
+            "instance": _INSTANCE,
+            "extension": _EXTENSION,
+            "approval": "outbound",
+            "agents": [_AGENT],
+        }
     ]
+
+    # The other direction: the agent's own view is the grant read from its side,
+    # which is exactly what its connector module will attach at the next start.
+    held = client.get(f"/api/agents/{agent_id}/connectors", headers=_headers("viewer")).json()
+    assert [row["instance"] for row in held["instances"]] == [_INSTANCE]
+
+
+def test_a_connection_granted_to_nobody_reaches_nobody(world: Path) -> None:
+    """Deny by default, proven through the route rather than asserted about it.
+
+    An operator may connect an account before deciding who gets it, and that
+    account must work and serve no one. A listing that showed it under an agent
+    anyway would be the failure this whole model exists to remove.
+    """
+    client, agent_id, _dir = _agent(world)
+    _write_bundle(_bundles(world))
+
+    assert _install(client, agents=[]).status_code == 200
+
+    deployment = client.get("/api/connections", headers=_headers("viewer")).json()
+    assert deployment["connections"][0]["agents"] == []
+    held = client.get(f"/api/agents/{agent_id}/connectors", headers=_headers("viewer")).json()
+    assert held["instances"] == []
 
 
 def test_the_install_response_carries_no_credential(world: Path) -> None:
     """Asserted on the serialized body — a dict the test built proves nothing."""
-    client, agent_id, agent_dir = _agent(world)
-    _write_bundle(agent_dir / "extensions")
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(_bundles(world))
 
-    resp = _install(client, agent_id)
+    resp = _install(client)
     assert resp.status_code == 200, resp.text
     assert _SENTINEL not in resp.text
     assert "api_token" not in resp.text
 
 
 def test_an_unsatisfied_host_prerequisite_is_400_and_writes_nothing(world: Path) -> None:
-    client, agent_id, agent_dir = _agent(world)
-    _write_bundle(agent_dir / "extensions", manifest=_MANIFEST_NEEDS_HOST)
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(_bundles(world), manifest=_MANIFEST_NEEDS_HOST)
 
-    resp = _install(client, agent_id)
+    resp = _install(client)
     assert resp.status_code == 400
     body = resp.json()
     assert body["unsatisfied_host"] == [
@@ -530,28 +611,28 @@ def test_an_unsatisfied_host_prerequisite_is_400_and_writes_nothing(world: Path)
             "satisfied": False,
         }
     ]
-    assert _instance_blocks(agent_dir) == {}
-    assert not (agent_dir / "connectors.env").exists()
+    assert _defined(world) == {}
+    assert not _env_file(world).exists()
     assert _SENTINEL not in resp.text
 
 
 def test_a_missing_declared_secret_is_422_and_writes_nothing(world: Path) -> None:
-    client, agent_id, agent_dir = _agent(world)
-    _write_bundle(agent_dir / "extensions")
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(_bundles(world))
 
-    resp = _install(client, agent_id, secrets={})
+    resp = _install(client, secrets={})
     assert resp.status_code == 422
     assert "api_token" in resp.json()["error"]
-    assert _instance_blocks(agent_dir) == {}
-    assert not (agent_dir / "connectors.env").exists()
+    assert _defined(world) == {}
+    assert not _env_file(world).exists()
 
 
 def test_a_duplicate_instance_is_409(world: Path) -> None:
-    client, agent_id, agent_dir = _agent(world)
-    _write_bundle(agent_dir / "extensions")
-    assert _install(client, agent_id).status_code == 200
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(_bundles(world))
+    assert _install(client).status_code == 200
 
-    resp = _install(client, agent_id)
+    resp = _install(client)
     assert resp.status_code == 409
 
 
@@ -560,25 +641,23 @@ def test_an_instance_name_with_a_space_is_400_and_leaves_the_config_byte_identic
 ) -> None:
     """The defect an operator hit: a name with a space became a bare TOML key.
 
-    ``[extensions.blackarc industrial email]`` does not parse, so the agent
-    vanished from the roster and every one of its routes began answering 404.
-    The bundle here declares NO ``[[secrets]]`` on purpose — that is the shape
-    (``google_workspace``, ``dropbox``) where nothing ever built a
-    ``SecretRef`` and so nothing ever checked the name.
+    ``[connections."blackarc industrial email"]`` written unquoted does not
+    parse, and that file is now the whole deployment's grant list — so every
+    agent loses every connection, not just this one. The bundle here declares NO
+    ``[[secrets]]`` on purpose: that is the shape (``google_workspace``,
+    ``dropbox``) where nothing ever built a ``SecretRef`` and so nothing ever
+    checked the name.
     """
-    client, agent_id, agent_dir = _agent(world)
-    _write_bundle(agent_dir / "extensions", manifest=_MANIFEST_HOSTED)
-    before = (agent_dir / "arcagent.toml").read_bytes()
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(_bundles(world), manifest=_MANIFEST_HOSTED)
 
-    resp = _install(
-        client, agent_id, instance="blackarc industrial email", secrets={}
-    )
+    resp = _install(client, instance="blackarc industrial email", secrets={})
 
     assert resp.status_code == 400, resp.text
     error = resp.json()["error"]
     assert "blackarc industrial email" in error
     assert "blackarc_industrial_email" in error
-    assert (agent_dir / "arcagent.toml").read_bytes() == before
+    assert _defined(world) == {}
 
 
 #: A name the coordinate rule refuses. A hyphen is legal in a bare TOML key, so a
@@ -588,12 +667,13 @@ def test_an_instance_name_with_a_space_is_400_and_leaves_the_config_byte_identic
 _REFUSED_INSTANCE = "personal-dropbox"
 
 
-def _handwritten_block(agent_dir: Path, instance: str) -> None:
-    """An instance block no surface would have written — hand-edited into place."""
-    config = agent_dir / "arcagent.toml"
-    config.write_text(
-        config.read_text(encoding="utf-8")
-        + f'\n[extensions."{instance}"]\nextension = "{_EXTENSION}"\napproval = "outbound"\n',
+def _handwritten_connection(world: Path, instance: str) -> None:
+    """A connection block no surface would have written — hand-edited into place."""
+    path = _arc_dir(world) / "connections.toml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f'[connections."{instance}"]\nextension = "{_EXTENSION}"\n'
+        f'approval = "outbound"\nagents = ["{_AGENT}"]\n',
         encoding="utf-8",
     )
 
@@ -607,79 +687,290 @@ def test_a_connection_whose_name_the_rule_rejects_can_still_be_removed(
     created. This is the exit the strict rule needs so refusing a name can
     never be worse than accepting it.
     """
-    client, agent_id, agent_dir = _agent(world)
-    _write_bundle(agent_dir / "extensions", manifest=_MANIFEST_HOSTED)
-    _handwritten_block(agent_dir, _REFUSED_INSTANCE)
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(_bundles(world), manifest=_MANIFEST_HOSTED)
+    _handwritten_connection(world, _REFUSED_INSTANCE)
 
-    resp = client.delete(
-        f"/api/agents/{agent_id}/connectors/{_REFUSED_INSTANCE}", headers=_headers()
-    )
+    resp = client.delete(f"/api/connections/{_REFUSED_INSTANCE}", headers=_headers())
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["removed_config"] is True
-    assert _REFUSED_INSTANCE not in _instance_blocks(agent_dir)
+    assert _REFUSED_INSTANCE not in _defined(world)
 
 
 def test_a_connection_whose_name_the_rule_rejects_is_still_listed(world: Path) -> None:
     """It has to be visible before an operator can delete it."""
-    client, agent_id, agent_dir = _agent(world)
-    _write_bundle(agent_dir / "extensions", manifest=_MANIFEST_HOSTED)
-    _handwritten_block(agent_dir, _REFUSED_INSTANCE)
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(_bundles(world), manifest=_MANIFEST_HOSTED)
+    _handwritten_connection(world, _REFUSED_INSTANCE)
 
-    resp = client.get(f"/api/agents/{agent_id}/connectors", headers=_headers("viewer"))
+    resp = client.get("/api/connections", headers=_headers("viewer"))
 
-    assert [row["instance"] for row in resp.json()["instances"]] == [_REFUSED_INSTANCE]
+    assert [row["instance"] for row in resp.json()["connections"]] == [_REFUSED_INSTANCE]
 
 
 def test_creating_a_new_connection_under_that_same_name_is_still_400(world: Path) -> None:
     """Reading an existing name is not permission to create another one."""
-    client, agent_id, agent_dir = _agent(world)
-    _write_bundle(agent_dir / "extensions", manifest=_MANIFEST_HOSTED)
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(_bundles(world), manifest=_MANIFEST_HOSTED)
 
-    resp = _install(client, agent_id, instance=_REFUSED_INSTANCE, secrets={})
+    resp = _install(client, instance=_REFUSED_INSTANCE, secrets={})
 
     assert resp.status_code == 400, resp.text
     assert "personal_dropbox" in resp.json()["error"]
 
 
 def test_an_unknown_extension_is_400(world: Path) -> None:
-    client, agent_id, _dir = _agent(world)
-    resp = _install(client, agent_id)
+    client, _agent_id, _dir = _agent(world)
+    resp = _install(client)
     assert resp.status_code == 400
     assert "acme_tickets" in resp.json()["error"]
+
+
+def test_granting_to_an_agent_this_deployment_does_not_have_is_refused(world: Path) -> None:
+    """A grant to a name nothing matches is written, listed, and effective for no one.
+
+    Not a security hole — it hands out nothing. It is the silent no-op that
+    leaves an operator staring at a connection their agent still cannot see, so
+    it is refused where it is typed, naming the name.
+    """
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(_bundles(world))
+
+    resp = _install(client, agents=["not_an_agent"])
+
+    assert resp.status_code == 400, resp.text
+    assert "not_an_agent" in resp.json()["error"]
+    assert _defined(world) == {}
+
+
+# --- grants: the only thing that decides access ------------------------------
+
+
+def _grant(client: TestClient, agents: list[str], *, token: str = "operator") -> Any:
+    return client.post(
+        f"/api/connections/{_INSTANCE}/grant", json={"agents": agents}, headers=_headers(token)
+    )
+
+
+def _revoke(client: TestClient, agents: list[str], *, token: str = "operator") -> Any:
+    return client.request(
+        "DELETE",
+        f"/api/connections/{_INSTANCE}/grant",
+        json={"agents": agents},
+        headers=_headers(token),
+    )
+
+
+def _second_agent(world: Path, name: str = "second_agent") -> str:
+    """Another agent in the same fleet, so a grant to one is provably not a grant to both."""
+    agent_dir = _arc_dir(world) / "team" / name
+    (agent_dir / "workspace").mkdir(parents=True)
+    (agent_dir / "arcagent.toml").write_text(
+        f'[agent]\nname = "{name}"\norg = "arc"\ntype = "exec"\n'
+        f'workspace = "{agent_dir / "workspace"}"\n[security]\ntier = "personal"\n',
+        encoding="utf-8",
+    )
+    return name
+
+
+async def _start_agent(world: Path, agent: str) -> ToolRegistry:
+    """Start one agent's connectors capability exactly as a running agent starts it.
+
+    This is the far end of the seam. The route writes a grant; THIS is what reads
+    it, and what it produces is the catalog the model is offered. Anything short
+    of it — the response body, the TOML file, even ``granted_to`` — is a claim
+    about an intermediate, and every defect this feature shipped lived in an
+    intermediate that was correct.
+    """
+    did = f"did:arc:arc:exec/{agent}"
+    identity = MagicMock()
+    identity.did = did
+    gate = HumanGate(
+        operator_signer=InProcessSigner(bytes(SigningKey.generate())),
+        agent_did=did,
+        tier="personal",
+    )
+    registry = ToolRegistry(
+        config=ToolsConfig(policy=ToolConfig()),
+        bus=ModuleBus(),
+        telemetry=MagicMock(),
+        human_gate=gate,
+    )
+    _runtime.reset()
+    _runtime.configure(
+        config={
+            "data_dir": str(world / "data"),
+            "extensions_root": str(_bundles(world)),
+            "arc_dir": str(_arc_dir(world)),
+        },
+        telemetry=None,
+        workspace=_arc_dir(world) / "team" / agent / "workspace",
+        identity=identity,
+        config_path=_arc_dir(world) / "team" / agent / "arcagent.toml",
+        tool_registry=registry,
+        tier="personal",
+        human_gate=gate,
+    )
+    try:
+        await Connectors().setup(None)
+    finally:
+        _runtime.reset()
+    return registry
+
+
+async def test_granting_through_the_route_registers_the_tools_for_exactly_that_agent(
+    world: Path,
+) -> None:
+    """The grant made in the browser is the grant the running agent enforces.
+
+    Driven all the way through: the route writes it, and the real
+    :class:`~arcagent.modules.connectors.capabilities.Connectors` capability then
+    starts for each agent and answers with its real ``ToolRegistry``. A route
+    that wrote a correct-looking grant into a file the runtime does not read
+    would satisfy every assertion about its own body and hand the agent nothing.
+    """
+    second = _second_agent(world)
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(_bundles(world))
+    assert _install(client, agents=[]).status_code == 200
+
+    resp = _grant(client, [_AGENT])
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["agents"] == [_AGENT]
+    assert "ping" in (await _start_agent(world, _AGENT)).tools
+    assert "ping" not in (await _start_agent(world, second)).tools, (
+        "a grant to one agent is not a grant to the fleet"
+    )
+
+
+async def test_revoking_through_the_route_takes_the_tools_away(world: Path) -> None:
+    """The mirror, and the half an operator has to be able to trust.
+
+    A revoke that removed the row and left the agent serving the verbs would be
+    invisible in every listing and completely ineffective, which is the worst
+    shape an access-control change can have.
+    """
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(_bundles(world))
+    assert _install(client).status_code == 200
+    assert "ping" in (await _start_agent(world, _AGENT)).tools
+
+    assert _revoke(client, [_AGENT]).status_code == 200
+
+    assert "ping" not in (await _start_agent(world, _AGENT)).tools
+
+
+def test_the_listing_shows_holders_after_a_grant_and_after_a_revoke(world: Path) -> None:
+    """Four agents, three connections, one glance: the operator's actual question.
+
+    'Maybe 2 agents can access jira and 2 don't have the connection.' The listing
+    is where that is answered, so it has to be right immediately after both verbs
+    — a stale holder list is how an operator concludes a revoke did not work and
+    revokes something else.
+    """
+    second = _second_agent(world)
+    client, agent_id, _dir = _agent(world)
+    _write_bundle(_bundles(world))
+    assert _install(client).status_code == 200
+
+    assert _grant(client, [second]).status_code == 200
+    listing = client.get("/api/connections", headers=_headers("viewer")).json()
+    assert listing["connections"][0]["agents"] == [_AGENT, second]
+
+    assert _revoke(client, [_AGENT]).json()["agents"] == [second]
+    listing = client.get("/api/connections", headers=_headers("viewer")).json()
+    assert listing["connections"][0]["agents"] == [second]
+
+    # And the agent that lost it says so from its own side.
+    held = client.get(f"/api/agents/{agent_id}/connectors", headers=_headers("viewer")).json()
+    assert held["instances"] == []
+
+
+def test_revoking_from_an_agent_that_never_held_it_is_not_an_error(world: Path) -> None:
+    """An operator making sure nobody has something must not be stopped by a name
+    that already does not."""
+    second = _second_agent(world)
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(_bundles(world))
+    assert _install(client).status_code == 200
+
+    resp = _revoke(client, [second])
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["agents"] == [_AGENT]
+
+
+def test_a_grant_naming_no_connection_is_404(world: Path) -> None:
+    """Not a 400: a surface distinguishing "no such connection" from "refused"
+    branches on the status, not on the message text."""
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(_bundles(world))
+
+    assert _grant(client, [_AGENT]).status_code == 404
+
+
+def test_an_empty_agent_list_is_refused_rather_than_silently_doing_nothing(
+    world: Path,
+) -> None:
+    """A grant that changes nothing and answers 200 reads as a grant that worked."""
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(_bundles(world))
+    assert _install(client).status_code == 200
+
+    assert _grant(client, []).status_code == 400
+    assert _revoke(client, []).status_code == 400
+
+
+def test_a_viewer_is_refused_grant_and_revoke(world: Path) -> None:
+    """Both are access-control decisions, so both are the operator's alone.
+
+    Checked against the registry the runtime reads, because a 403 that had
+    already written the grant would be a refusal in the response only.
+    """
+    second = _second_agent(world)
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(_bundles(world))
+    assert _install(client).status_code == 200
+
+    assert _grant(client, [second], token="viewer").status_code == 403
+    assert _revoke(client, [_AGENT], token="viewer").status_code == 403
+
+    registry = ConnectionRegistry(_arc_dir(world))
+    assert registry.granted_to(second) == {}, "a refused grant must not have been written"
+    assert list(registry.granted_to(_AGENT)) == [_INSTANCE], "a refused revoke must change nothing"
 
 
 # --- the rest of the verbs -------------------------------------------------
 
 
 def test_auth_rotates_and_names_only_the_fields(world: Path) -> None:
-    client, agent_id, agent_dir = _agent(world)
-    _write_bundle(agent_dir / "extensions")
-    assert _install(client, agent_id).status_code == 200
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(_bundles(world))
+    assert _install(client).status_code == 200
 
     rotated = "zzz-rotated-sentinel-8822"
     resp = client.put(
-        f"/api/agents/{agent_id}/connectors/{_INSTANCE}/auth",
+        f"/api/connections/{_INSTANCE}/auth",
         json={"secrets": {"api_token": rotated}},
         headers=_headers(),
     )
     assert resp.status_code == 200
     assert resp.json() == {"instance": _INSTANCE, "updated": ["api_token"]}
     assert rotated not in resp.text
-    env = (agent_dir / "connectors.env").read_text(encoding="utf-8")
+    env = _env_file(world).read_text(encoding="utf-8")
     assert rotated in env
     assert _SENTINEL not in env
 
 
 def test_the_auth_view_names_the_credential_fields_and_never_a_value(world: Path) -> None:
     """The panel has to know which form to draw before it draws one."""
-    client, agent_id, agent_dir = _agent(world)
-    _write_bundle(agent_dir / "extensions")
-    assert _install(client, agent_id).status_code == 200
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(_bundles(world))
+    assert _install(client).status_code == 200
 
-    resp = client.get(
-        f"/api/agents/{agent_id}/connectors/{_INSTANCE}/auth", headers=_headers("viewer")
-    )
+    resp = client.get(f"/api/connections/{_INSTANCE}/auth", headers=_headers("viewer"))
 
     assert resp.status_code == 200
     body = resp.json()
@@ -700,13 +991,11 @@ def test_the_auth_view_of_a_credential_less_connector_names_the_host_command(
     render and nothing to say. The command that authorises the binary is what the
     operator actually needs, and it has to reach the browser.
     """
-    client, agent_id, agent_dir = _agent(world)
-    _write_bundle(agent_dir / "extensions", manifest=_MANIFEST_HOSTED)
-    assert _install(client, agent_id, secrets={}).status_code == 200
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(_bundles(world), manifest=_MANIFEST_HOSTED)
+    assert _install(client, secrets={}).status_code == 200
 
-    resp = client.get(
-        f"/api/agents/{agent_id}/connectors/{_INSTANCE}/auth", headers=_headers("viewer")
-    )
+    resp = client.get(f"/api/connections/{_INSTANCE}/auth", headers=_headers("viewer"))
 
     assert resp.status_code == 200
     body = resp.json()
@@ -715,11 +1004,11 @@ def test_the_auth_view_of_a_credential_less_connector_names_the_host_command(
 
 
 def test_probe_reports_a_live_connection(world: Path) -> None:
-    client, agent_id, agent_dir = _agent(world)
-    _write_bundle(agent_dir / "extensions")
-    assert _install(client, agent_id).status_code == 200
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(_bundles(world))
+    assert _install(client).status_code == 200
 
-    resp = client.post(f"/api/agents/{agent_id}/connectors/{_INSTANCE}/probe", headers=_headers())
+    resp = client.post(f"/api/connections/{_INSTANCE}/probe", headers=_headers())
     assert resp.status_code == 200
     body = resp.json()
     assert body["reachable"] is True
@@ -727,13 +1016,11 @@ def test_probe_reports_a_live_connection(world: Path) -> None:
 
 
 def test_doctor_reports_the_credential_as_present_without_its_value(world: Path) -> None:
-    client, agent_id, agent_dir = _agent(world)
-    _write_bundle(agent_dir / "extensions")
-    assert _install(client, agent_id).status_code == 200
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(_bundles(world))
+    assert _install(client).status_code == 200
 
-    resp = client.get(
-        f"/api/agents/{agent_id}/connectors/{_INSTANCE}/doctor", headers=_headers("viewer")
-    )
+    resp = client.get(f"/api/connections/{_INSTANCE}/doctor", headers=_headers("viewer"))
     assert resp.status_code == 200
     checks = {row["check"]: row for row in resp.json()["checks"]}
     assert checks["api_token"]["status"] == "present"
@@ -742,34 +1029,32 @@ def test_doctor_reports_the_credential_as_present_without_its_value(world: Path)
 
 
 def test_approve_records_the_contract_served_now(world: Path) -> None:
-    client, agent_id, agent_dir = _agent(world)
-    _write_bundle(agent_dir / "extensions")
-    assert _install(client, agent_id).status_code == 200
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(_bundles(world))
+    assert _install(client).status_code == 200
 
-    resp = client.post(
-        f"/api/agents/{agent_id}/connectors/{_INSTANCE}/approve", headers=_headers()
-    )
+    resp = client.post(f"/api/connections/{_INSTANCE}/approve", headers=_headers())
     assert resp.status_code == 200
     assert resp.json() == {"instance": _INSTANCE, "approved": ["ping"]}
 
 
 def test_remove_drops_the_credential_and_the_config_block(world: Path) -> None:
-    client, agent_id, agent_dir = _agent(world)
-    _write_bundle(agent_dir / "extensions")
-    assert _install(client, agent_id).status_code == 200
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(_bundles(world))
+    assert _install(client).status_code == 200
 
-    resp = client.delete(f"/api/agents/{agent_id}/connectors/{_INSTANCE}", headers=_headers())
+    resp = client.delete(f"/api/connections/{_INSTANCE}", headers=_headers())
     assert resp.status_code == 200
     body = resp.json()
     assert body["removed_secrets"] == ["api_token"]
     assert body["removed_config"] is True
-    assert _instance_blocks(agent_dir) == {}
-    assert _SENTINEL not in (agent_dir / "connectors.env").read_text(encoding="utf-8")
+    assert _defined(world) == {}
+    assert _SENTINEL not in _env_file(world).read_text(encoding="utf-8")
 
 
 def test_removing_an_instance_that_does_not_exist_is_not_an_error(world: Path) -> None:
-    client, agent_id, _dir = _agent(world)
-    resp = client.delete(f"/api/agents/{agent_id}/connectors/ghost", headers=_headers())
+    client, _agent_id, _dir = _agent(world)
+    resp = client.delete("/api/connections/ghost", headers=_headers())
     assert resp.status_code == 200
     body = resp.json()
     assert body["removed_config"] is False
@@ -780,44 +1065,33 @@ def test_removing_an_instance_that_does_not_exist_is_not_an_error(world: Path) -
 
 
 def test_a_viewer_is_refused_every_mutation(world: Path) -> None:
-    client, agent_id, agent_dir = _agent(world)
-    _write_bundle(agent_dir / "extensions")
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(_bundles(world))
     viewer = _headers("viewer")
 
-    assert _install(client, agent_id, token="viewer").status_code == 403
+    assert _install(client, token="viewer").status_code == 403
     assert (
         client.put(
-            f"/api/agents/{agent_id}/connectors/{_INSTANCE}/auth",
+            f"/api/connections/{_INSTANCE}/auth",
             json={"secrets": {"api_token": _SENTINEL}},
             headers=viewer,
         ).status_code
         == 403
     )
-    assert (
-        client.post(
-            f"/api/agents/{agent_id}/connectors/{_INSTANCE}/probe", headers=viewer
-        ).status_code
-        == 403
-    )
-    assert (
-        client.post(
-            f"/api/agents/{agent_id}/connectors/{_INSTANCE}/approve", headers=viewer
-        ).status_code
-        == 403
-    )
-    assert (
-        client.delete(f"/api/agents/{agent_id}/connectors/{_INSTANCE}", headers=viewer).status_code
-        == 403
-    )
-    assert _instance_blocks(agent_dir) == {}
-    assert not (agent_dir / "connectors.env").exists()
+    assert client.post(f"/api/connections/{_INSTANCE}/probe", headers=viewer).status_code == 403
+    assert client.post(f"/api/connections/{_INSTANCE}/approve", headers=viewer).status_code == 403
+    assert client.delete(f"/api/connections/{_INSTANCE}", headers=viewer).status_code == 403
+    assert _grant(client, [_AGENT], token="viewer").status_code == 403
+    assert _revoke(client, [_AGENT], token="viewer").status_code == 403
+    assert _defined(world) == {}
+    assert not _env_file(world).exists()
 
 
 def test_an_oversized_install_body_is_413(world: Path) -> None:
-    client, agent_id, agent_dir = _agent(world)
-    _write_bundle(agent_dir / "extensions")
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(_bundles(world))
     resp = client.post(
-        f"/api/agents/{agent_id}/connectors",
+        "/api/connections",
         content=b'{"extension": "acme_tickets", "instance": "work", "secrets": {"api_token": "'
         + b"x" * 70_000
         + b'"}}',
@@ -831,15 +1105,13 @@ def test_an_oversized_install_body_is_413(world: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _auth_status(client: TestClient, agent_id: str, *, token: str = "viewer") -> Any:
-    return client.get(
-        f"/api/agents/{agent_id}/connectors/{_INSTANCE}/auth-status", headers=_headers(token)
-    )
+def _auth_status(client: TestClient, *, token: str = "viewer") -> Any:
+    return client.get(f"/api/connections/{_INSTANCE}/auth-status", headers=_headers(token))
 
 
-def _authorize(client: TestClient, agent_id: str, body: dict[str, Any], *, token: str = "operator") -> Any:
+def _authorize(client: TestClient, body: dict[str, Any], *, token: str = "operator") -> Any:
     return client.post(
-        f"/api/agents/{agent_id}/connectors/{_INSTANCE}/authorize",
+        f"/api/connections/{_INSTANCE}/authorize",
         json=body,
         headers=_headers(token),
     )
@@ -861,7 +1133,7 @@ def _connect_signin(
     answers yes, which is the ``dbxcli version`` shape.
     """
     client, agent_id, agent_dir = _agent(world)
-    bundle = _write_bundle(agent_dir / "extensions", manifest=_MANIFEST)
+    bundle = _write_bundle(_bundles(world), manifest=_MANIFEST)
     manifest = _signin_manifest(
         host=sys.executable,
         authorize=f"{sys.executable} -m acme_login",
@@ -871,7 +1143,7 @@ def _connect_signin(
     )
     (bundle / "extension.toml").write_text(manifest, encoding="utf-8")
     (bundle / _SIGNED_IN_MARKER).write_text("ok", encoding="utf-8")
-    resp = _install(client, agent_id, secrets={})
+    resp = _install(client, secrets={})
     assert resp.status_code == 200, resp.text
     (bundle / _SIGNED_IN_MARKER).unlink()
     return client, agent_id, agent_dir, bundle
@@ -887,9 +1159,9 @@ def test_auth_status_reports_the_real_state_of_an_interactive_only_connector(
     answer carries the exact command a person runs on this host. That command is
     the honest dead end the panel renders.
     """
-    client, agent_id, _dir, _bundle = _connect_signin(world, token_login=False)
+    client, _agent_id, _dir, _bundle = _connect_signin(world, token_login=False)
 
-    resp = _auth_status(client, agent_id)
+    resp = _auth_status(client)
 
     assert resp.status_code == 200
     body = resp.json()
@@ -903,19 +1175,19 @@ def test_auth_status_offers_no_terminal_command_when_arc_can_sign_in_itself(
 ) -> None:
     """The mirror-image lie: telling an operator to open a terminal for a login
     Arc can finish sends them away from the button that works."""
-    client, agent_id, _dir, _bundle = _connect_signin(world, token_login=True)
+    client, _agent_id, _dir, _bundle = _connect_signin(world, token_login=True)
 
-    body = _auth_status(client, agent_id).json()
+    body = _auth_status(client).json()
 
     assert body["sign_in"] == "signed_out"
     assert body["command"] == ""
 
 
 def test_auth_status_reports_a_signed_in_connector_as_authorized(world: Path) -> None:
-    client, agent_id, _dir, bundle = _connect_signin(world, token_login=True)
+    client, _agent_id, _dir, bundle = _connect_signin(world, token_login=True)
     (bundle / _SIGNED_IN_MARKER).write_text("ok", encoding="utf-8")
 
-    body = _auth_status(client, agent_id).json()
+    body = _auth_status(client).json()
 
     assert body["sign_in"] == "signed_in"
 
@@ -931,11 +1203,11 @@ def test_a_binary_that_runs_but_is_signed_out_is_never_reported_as_signed_in(
     the always-reachable one and the authorisation check fails: reachable must
     stay true and the sign-in must read ``signed_out``.
     """
-    client, agent_id, _dir, _bundle = _connect_signin(
+    client, _agent_id, _dir, _bundle = _connect_signin(
         world, token_login=False, entrypoint="acme_hosted_attachment"
     )
 
-    body = _auth_status(client, agent_id).json()
+    body = _auth_status(client).json()
 
     assert body["reachable"] is True
     assert body["sign_in"] == "signed_out"
@@ -948,13 +1220,13 @@ def test_doctor_reports_the_sign_in_separately_from_the_connection(world: Path) 
     the two facts get two rows: a single "reachable" row read as "all fine" is
     the same conflation the panel made.
     """
-    client, agent_id, _dir, _bundle = _connect_signin(
+    client, _agent_id, _dir, _bundle = _connect_signin(
         world, token_login=False, entrypoint="acme_hosted_attachment"
     )
 
-    checks = client.get(
-        f"/api/agents/{agent_id}/connectors/{_INSTANCE}/doctor", headers=_headers("viewer")
-    ).json()["checks"]
+    checks = client.get(f"/api/connections/{_INSTANCE}/doctor", headers=_headers("viewer")).json()[
+        "checks"
+    ]
 
     rows = {row["check"]: row["status"] for row in checks}
     assert rows["connection"] == "reachable"
@@ -964,11 +1236,11 @@ def test_doctor_reports_the_sign_in_separately_from_the_connection(world: Path) 
 def test_a_bundle_declaring_no_authorisation_check_reports_unknown(world: Path) -> None:
     """Not known is the honest answer. Reported as signed in it is the defect;
     reported as signed out it sends an operator to redo a login already done."""
-    client, agent_id, _dir, _bundle = _connect_signin(
+    client, _agent_id, _dir, _bundle = _connect_signin(
         world, token_login=False, verify=False, entrypoint="acme_hosted_attachment"
     )
 
-    body = _auth_status(client, agent_id).json()
+    body = _auth_status(client).json()
 
     assert body["reachable"] is True
     assert body["sign_in"] == "unknown"
@@ -982,10 +1254,10 @@ def test_the_evidence_line_names_the_command_that_was_actually_run(world: Path) 
     the proof that it was signed in. Nothing was run and nothing was checked, so
     the sentence and the badge contradicted each other.
     """
-    client, agent_id, _dir, bundle = _connect_signin(world, token_login=False)
+    client, _agent_id, _dir, bundle = _connect_signin(world, token_login=False)
     (bundle / _SIGNED_IN_MARKER).write_text("ok", encoding="utf-8")
 
-    body = _auth_status(client, agent_id).json()
+    body = _auth_status(client).json()
 
     assert body["sign_in"] == "signed_in"
     assert body["detail"].startswith(_verify_command(bundle))
@@ -995,11 +1267,11 @@ def test_the_evidence_line_names_the_command_that_was_actually_run(world: Path) 
 def test_an_unknown_sign_in_offers_no_evidence_at_all(world: Path) -> None:
     """Nothing was checked, so there is nothing to show. A probe line here would
     be evidence for a question it does not answer."""
-    client, agent_id, _dir, _bundle = _connect_signin(
+    client, _agent_id, _dir, _bundle = _connect_signin(
         world, token_login=False, verify=False, entrypoint="acme_hosted_attachment"
     )
 
-    assert _auth_status(client, agent_id).json()["detail"] == ""
+    assert _auth_status(client).json()["detail"] == ""
 
 
 def test_authorize_with_a_token_runs_the_login_and_reports_the_real_result(
@@ -1010,9 +1282,9 @@ def test_authorize_with_a_token_runs_the_login_and_reports_the_real_result(
     Asserted through the marker the login itself writes, so a route that stored
     the token, or answered without running anything, fails here.
     """
-    client, agent_id, _dir, bundle = _connect_signin(world, token_login=True)
+    client, _agent_id, _dir, bundle = _connect_signin(world, token_login=True)
 
-    resp = _authorize(client, agent_id, {"token": _SENTINEL})
+    resp = _authorize(client, {"token": _SENTINEL})
 
     assert resp.status_code == 200
     assert (bundle / _SIGNED_IN_MARKER).exists()
@@ -1025,21 +1297,19 @@ def test_authorize_never_returns_the_token(world: Path) -> None:
     The sign-in is asserted to have really happened, so this cannot pass by the
     route having done nothing with the token at all.
     """
-    client, agent_id, _dir, bundle = _connect_signin(world, token_login=True)
+    client, _agent_id, _dir, bundle = _connect_signin(world, token_login=True)
 
-    resp = _authorize(client, agent_id, {"token": _SENTINEL})
+    resp = _authorize(client, {"token": _SENTINEL})
 
     assert (bundle / _SIGNED_IN_MARKER).exists()
     assert _SENTINEL not in resp.text
 
 
-def test_authorize_never_logs_the_token(
-    world: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    client, agent_id, _dir, bundle = _connect_signin(world, token_login=True)
+def test_authorize_never_logs_the_token(world: Path, caplog: pytest.LogCaptureFixture) -> None:
+    client, _agent_id, _dir, bundle = _connect_signin(world, token_login=True)
 
     with caplog.at_level("DEBUG"):
-        _authorize(client, agent_id, {"token": _SENTINEL})
+        _authorize(client, {"token": _SENTINEL})
 
     assert (bundle / _SIGNED_IN_MARKER).exists()
     assert _SENTINEL not in caplog.text
@@ -1048,9 +1318,9 @@ def test_authorize_never_logs_the_token(
 def test_authorize_never_writes_the_token_into_the_agents_world(world: Path) -> None:
     """A host binary owns its own credential; Arc storing a copy would be a
     second place to leak it from and a second place to forget to remove it."""
-    client, agent_id, agent_dir, _bundle = _connect_signin(world, token_login=True)
+    client, _agent_id, agent_dir, _bundle = _connect_signin(world, token_login=True)
 
-    _authorize(client, agent_id, {"token": _SENTINEL})
+    _authorize(client, {"token": _SENTINEL})
 
     leaked = [
         path
@@ -1065,9 +1335,9 @@ def test_authorize_on_an_interactive_only_connector_claims_nothing_and_runs_noth
 ) -> None:
     """The whole constraint: a button that claims to have finished a browser
     hand-off is worse than no button, because the operator stops looking."""
-    client, agent_id, _dir, bundle = _connect_signin(world, token_login=False)
+    client, _agent_id, _dir, bundle = _connect_signin(world, token_login=False)
 
-    resp = _authorize(client, agent_id, {"token": _SENTINEL})
+    resp = _authorize(client, {"token": _SENTINEL})
 
     assert resp.status_code == 200
     body = resp.json()
@@ -1077,20 +1347,20 @@ def test_authorize_on_an_interactive_only_connector_claims_nothing_and_runs_noth
 
 
 def test_authorize_without_a_token_does_not_pretend_to_have_signed_in(world: Path) -> None:
-    client, agent_id, _dir, bundle = _connect_signin(world, token_login=True)
+    client, _agent_id, _dir, bundle = _connect_signin(world, token_login=True)
 
-    body = _authorize(client, agent_id, {}).json()
+    body = _authorize(client, {}).json()
 
     assert body["sign_in"] == "signed_out"
     assert not (bundle / _SIGNED_IN_MARKER).exists()
 
 
 def test_auth_status_for_an_instance_that_is_not_connected_is_404(world: Path) -> None:
-    client, agent_id, agent_dir = _agent(world)
-    _write_bundle(agent_dir / "extensions")
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(_bundles(world))
 
-    assert _auth_status(client, agent_id).status_code == 404
-    assert _authorize(client, agent_id, {}).status_code == 404
+    assert _auth_status(client).status_code == 404
+    assert _authorize(client, {}).status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -1153,9 +1423,7 @@ default = "outbound"
 
 
 @pytest.fixture
-def host_setup(
-    world: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> Any:
+def host_setup(world: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
     """A home directory and a PATH that exist only for this test.
 
     ``HOME`` is redirected so the route's real default install directory —
@@ -1170,10 +1438,8 @@ def host_setup(
     return install_dir
 
 
-def _setup_host(client: TestClient, agent_id: str, *, token: str = "operator") -> Any:
-    return client.post(
-        f"/api/agents/{agent_id}/connectors/{_EXTENSION}/host-setup", headers=_headers(token)
-    )
+def _setup_host(client: TestClient, *, token: str = "operator") -> Any:
+    return client.post(f"/api/connections/{_EXTENSION}/host-setup", headers=_headers(token))
 
 
 def _serving(payload: bytes, monkeypatch: pytest.MonkeyPatch) -> list[str]:
@@ -1200,15 +1466,15 @@ def test_host_setup_installs_a_verified_binary_into_the_user_writable_directory(
 ) -> None:
     payload = _helper_tarball()
     _serving(payload, monkeypatch)
-    client, agent_id, agent_dir = _agent(world)
+    client, _agent_id, _dir = _agent(world)
     _write_bundle(
-        agent_dir / "extensions",
+        _bundles(world),
         manifest=_host_setup_manifest(
             platform=host_platform(), digest=hashlib.sha256(payload).hexdigest()
         ),
     )
 
-    resp = _setup_host(client, agent_id)
+    resp = _setup_host(client)
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -1222,13 +1488,13 @@ def test_host_setup_refuses_a_digest_mismatch_and_installs_nothing(
     """A digest mismatch is a hard refusal, never a warning — and the operator is
     handed the manual steps rather than a dead end."""
     _serving(_helper_tarball(), monkeypatch)
-    client, agent_id, agent_dir = _agent(world)
+    client, _agent_id, _dir = _agent(world)
     _write_bundle(
-        agent_dir / "extensions",
+        _bundles(world),
         manifest=_host_setup_manifest(platform=host_platform(), digest="b" * 64),
     )
 
-    body = _setup_host(client, agent_id).json()
+    body = _setup_host(client).json()
 
     assert body["installed"] is False
     assert not host_setup.exists() or list(host_setup.iterdir()) == []
@@ -1241,13 +1507,13 @@ def test_host_setup_refuses_a_platform_with_no_pinned_digest_without_downloading
     """Installing unverified because THIS platform was not pinned is the exact
     supply-chain hole a per-platform digest exists to close."""
     requested = _serving(_helper_tarball(), monkeypatch)
-    client, agent_id, agent_dir = _agent(world)
+    client, _agent_id, _dir = _agent(world)
     _write_bundle(
-        agent_dir / "extensions",
+        _bundles(world),
         manifest=_host_setup_manifest(platform="sunos/sparc", digest="c" * 64),
     )
 
-    body = _setup_host(client, agent_id).json()
+    body = _setup_host(client).json()
 
     assert body["installed"] is False
     assert requested == []
@@ -1261,9 +1527,9 @@ def test_host_setup_never_writes_outside_the_install_directory(
     """``member`` is a path a manifest chose, so it is placed by basename alone."""
     payload = _helper_tarball(member=f"../../../../{_HELPER}")
     _serving(payload, monkeypatch)
-    client, agent_id, agent_dir = _agent(world)
+    client, _agent_id, _dir = _agent(world)
     _write_bundle(
-        agent_dir / "extensions",
+        _bundles(world),
         manifest=_host_setup_manifest(
             platform=host_platform(),
             digest=hashlib.sha256(payload).hexdigest(),
@@ -1271,7 +1537,7 @@ def test_host_setup_never_writes_outside_the_install_directory(
         ),
     )
 
-    _setup_host(client, agent_id)
+    _setup_host(client)
 
     assert (host_setup / _HELPER).is_file()
     assert not (tmp_path / _HELPER).exists()
@@ -1283,33 +1549,31 @@ def test_host_setup_reports_a_bundle_with_nothing_to_install_rather_than_failing
 ) -> None:
     """``jira`` and ``confluence`` need no host binary at all; the button must
     say so rather than 500 or claim to have installed something."""
-    client, agent_id, agent_dir = _agent(world)
-    _write_bundle(agent_dir / "extensions")
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(_bundles(world))
 
-    body = _setup_host(client, agent_id).json()
+    body = _setup_host(client).json()
 
     assert body["installed"] is True
     assert body["detail"]
 
 
 def test_host_setup_refuses_a_bundle_that_does_not_exist(world: Path) -> None:
-    client, agent_id, agent_dir = _agent(world)
-    _write_bundle(agent_dir / "extensions")
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(_bundles(world))
 
-    resp = client.post(
-        f"/api/agents/{agent_id}/connectors/nosuchbundle/host-setup", headers=_headers()
-    )
+    resp = client.post("/api/connections/nosuchbundle/host-setup", headers=_headers())
 
     assert resp.status_code == 400
 
 
 def test_a_viewer_is_refused_the_sign_in_and_the_host_install(world: Path) -> None:
     """Both mutations reach the host: one runs a program, the other puts one there."""
-    client, agent_id, agent_dir = _agent(world)
-    _write_bundle(agent_dir / "extensions")
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(_bundles(world))
 
-    assert _authorize(client, agent_id, {"token": _SENTINEL}, token="viewer").status_code == 403
-    assert _setup_host(client, agent_id, token="viewer").status_code == 403
+    assert _authorize(client, {"token": _SENTINEL}, token="viewer").status_code == 403
+    assert _setup_host(client, token="viewer").status_code == 403
 
 
 # ---------------------------------------------------------------------------
@@ -1333,9 +1597,7 @@ def _catalog_with_director(
     )
     resp = client.get("/api/connectors/catalog", headers=_headers("viewer"))
     assert resp.status_code == 200
-    entry: dict[str, Any] = next(
-        e for e in resp.json()["available"] if e["name"] == _EXTENSION
-    )
+    entry: dict[str, Any] = next(e for e in resp.json()["available"] if e["name"] == _EXTENSION)
     return entry
 
 

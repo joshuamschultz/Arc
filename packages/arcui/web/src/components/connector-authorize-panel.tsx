@@ -13,18 +13,16 @@ import { useAuthorizeConnector, useConnectorAuthStatus } from '@/lib/queries'
  * and offers the one action that changes it.
  */
 export function ConnectorAuthorizePanel({
-  agentId,
   instance,
   extension,
   operatorMode,
 }: {
-  agentId: string
   instance: string
   extension: string
   operatorMode: boolean
 }) {
-  const status = useConnectorAuthStatus(agentId, instance, true)
-  const authorize = useAuthorizeConnector(agentId, instance)
+  const status = useConnectorAuthStatus(instance, true)
+  const authorize = useAuthorizeConnector(instance)
   const [token, setToken] = useState('')
   const [showToken, setShowToken] = useState(false)
 

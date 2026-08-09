@@ -1,12 +1,8 @@
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-  type UseQueryResult,
-} from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from './api'
 import type {
   AgentConnectorsResponse,
+  ConnectionsResponse,
   ConnectorApproveResponse,
   ConnectorAuthResponse,
   ConnectorAuthStatusResponse,
@@ -14,6 +10,7 @@ import type {
   ConnectorCatalogResponse,
   ConnectorDoctorResponse,
   ConnectorInstallResponse,
+  ConnectorInstance,
   ConnectorProbeResponse,
   ConnectorRemoveResponse,
   HostSetupResponse,
@@ -80,8 +77,7 @@ function useApiQuery<T>(key: unknown[], path: string): UseQueryResult<T> {
 
 // --- Fleet (team) ----------------------------------------------------------
 
-export const useRoster = () =>
-  useApiQuery<AgentsListResponse>(['roster'], '/api/team/roster')
+export const useRoster = () => useApiQuery<AgentsListResponse>(['roster'], '/api/team/roster')
 
 // Polls every 4s so live todo -> in_progress -> done transitions and newly
 // dispatched tasks surface on the board without a manual refresh. The board's
@@ -162,7 +158,10 @@ export const useTaskActivity = (taskId: string | null, limit = 100) =>
   useQuery<AuditEventsResponse>({
     queryKey: ['task', taskId, 'activity'],
     queryFn: ({ signal }) =>
-      apiGet(`/api/team/audit?limit=${limit}&target=${encodeURIComponent(`task:${taskId}`)}`, signal),
+      apiGet(
+        `/api/team/audit?limit=${limit}&target=${encodeURIComponent(`task:${taskId}`)}`,
+        signal,
+      ),
     enabled: !!taskId,
   })
 
@@ -189,11 +188,9 @@ export const useChannelMessages = (name: string | null) =>
 
 // --- Config (settings) -----------------------------------------------------
 
-export const useViewerConfig = () =>
-  useApiQuery<Dict>(['config'], '/api/config')
+export const useViewerConfig = () => useApiQuery<Dict>(['config'], '/api/config')
 
-export const useArcllmConfig = () =>
-  useApiQuery<Dict>(['arcllm-config'], '/api/arcllm-config')
+export const useArcllmConfig = () => useApiQuery<Dict>(['arcllm-config'], '/api/arcllm-config')
 
 // Per-agent, per-file config editor (arcagent / arcllm / arcrun). Each file's
 // top-level TOML tables come back as `sections`; the Settings page renders one
@@ -314,8 +311,7 @@ export const useAgentDailyNotes = (agentId: string | null) =>
 export const useAgentDailyNote = (agentId: string | null, day: string | null) =>
   useQuery<DailyNoteDetail>({
     queryKey: ['agent', agentId, 'knowledge', 'daily-notes', day],
-    queryFn: ({ signal }) =>
-      apiGet(`/api/agents/${agentId}/knowledge/daily-notes/${day}`, signal),
+    queryFn: ({ signal }) => apiGet(`/api/agents/${agentId}/knowledge/daily-notes/${day}`, signal),
     enabled: !!agentId && !!day,
   })
 
@@ -355,8 +351,7 @@ export const useTimeseries = (window = '24h') =>
 export const useCircuitBreakers = () =>
   useApiQuery<{ circuit_breakers: Dict[] }>(['circuit-breakers'], '/api/circuit-breakers')
 
-export const useBudgets = () =>
-  useApiQuery<{ budgets: Dict[] }>(['budgets'], '/api/budget')
+export const useBudgets = () => useApiQuery<{ budgets: Dict[] }>(['budgets'], '/api/budget')
 
 export interface PerformanceResponse {
   window: string
@@ -375,7 +370,10 @@ export interface CostEfficiencyResponse {
   potential_savings_pct: number
 }
 export const useCostEfficiency = (window = '24h') =>
-  useApiQuery<CostEfficiencyResponse>(['cost-efficiency', window], `/api/cost-efficiency?window=${window}`)
+  useApiQuery<CostEfficiencyResponse>(
+    ['cost-efficiency', window],
+    `/api/cost-efficiency?window=${window}`,
+  )
 
 export const useTraces = (limit = 200) =>
   useApiQuery<TracesResponse>(['traces', limit], `/api/traces?limit=${limit}`)
@@ -399,7 +397,10 @@ export const useAgentTraces = (agentId: string, limit = 200) =>
   )
 
 export const useAgentSessions = (agentId: string) =>
-  useApiQuery<SessionsListResponse>(['agent', agentId, 'sessions'], `/api/agents/${agentId}/sessions`)
+  useApiQuery<SessionsListResponse>(
+    ['agent', agentId, 'sessions'],
+    `/api/agents/${agentId}/sessions`,
+  )
 
 export const useAgentStats = (agentId: string, window = '24h') =>
   useApiQuery<StatsResponse>(
@@ -417,7 +418,10 @@ export const useAgentTasks = (agentId: string) =>
   useApiQuery<TasksResponse>(['agent', agentId, 'tasks'], `/api/agents/${agentId}/tasks`)
 
 export const useAgentSchedules = (agentId: string) =>
-  useApiQuery<SchedulesResponse>(['agent', agentId, 'schedules'], `/api/agents/${agentId}/schedules`)
+  useApiQuery<SchedulesResponse>(
+    ['agent', agentId, 'schedules'],
+    `/api/agents/${agentId}/schedules`,
+  )
 
 export interface DeliveryChannel {
   target: string
@@ -427,7 +431,10 @@ export interface AgentChannelsResponse {
   channels: DeliveryChannel[]
 }
 export const useAgentChannels = (agentId: string) =>
-  useApiQuery<AgentChannelsResponse>(['agent', agentId, 'channels'], `/api/agents/${agentId}/channels`)
+  useApiQuery<AgentChannelsResponse>(
+    ['agent', agentId, 'channels'],
+    `/api/agents/${agentId}/channels`,
+  )
 
 export const useAgentSessionReplay = (agentId: string, sid: string, page = 1) =>
   useApiQuery<SessionReplayResponse>(
@@ -480,10 +487,7 @@ export const useAgentPromptDetail = (
 // COMP-010 — structured rubric editor. The arcskill/judge_rubric prompt's body
 // is YAML; this lazy hook (enabled only when that prompt is selected) fetches it
 // parsed into dimensions so the drawer renders a form, not a textarea.
-export const useRubric = (
-  agentId: string,
-  prompt: { package: string; name: string } | null,
-) =>
+export const useRubric = (agentId: string, prompt: { package: string; name: string } | null) =>
   useQuery<RubricResponse>({
     queryKey: ['agent', agentId, 'rubric', prompt?.package, prompt?.name],
     queryFn: ({ signal }) =>
@@ -517,7 +521,9 @@ export const useSaveRubric = (agentId: string) => {
         queryClient.invalidateQueries({
           queryKey: ['agent', agentId, 'prompt', prompt.package, prompt.name],
         }),
-        queryClient.invalidateQueries({ queryKey: ['agent', agentId, 'prompts'] }),
+        queryClient.invalidateQueries({
+          queryKey: ['agent', agentId, 'prompts'],
+        }),
       ]),
   })
 }
@@ -534,7 +540,10 @@ export const useAgentPolicy = (agentId: string) =>
   useApiQuery<PolicyResponse>(['agent', agentId, 'policy'], `/api/agents/${agentId}/policy`)
 
 export const useAgentPolicyStats = (agentId: string) =>
-  useApiQuery<PolicyStatsResponse>(['agent', agentId, 'policy', 'stats'], `/api/agents/${agentId}/policy/stats`)
+  useApiQuery<PolicyStatsResponse>(
+    ['agent', agentId, 'policy', 'stats'],
+    `/api/agents/${agentId}/policy/stats`,
+  )
 
 export const useAgentConfig = (agentId: string) =>
   useApiQuery<ConfigResponse>(['agent', agentId, 'config'], `/api/agents/${agentId}/config`)
@@ -571,7 +580,10 @@ export const useSpawnTree = (root: string | null) =>
   )
 
 export const useIdentityCost = (window = '24h') =>
-  useApiQuery<IdentityCostResponse>(['stats', 'by-identity', window], `/api/stats/by-identity?window=${window}`)
+  useApiQuery<IdentityCostResponse>(
+    ['stats', 'by-identity', window],
+    `/api/stats/by-identity?window=${window}`,
+  )
 
 // --- SPEC-061 ArcFlow (COMP-020/023) — thin client over the workflow routes.
 //
@@ -610,8 +622,7 @@ export const useWorkflowRun = (runId: string | null, refetchIntervalMs?: number)
 export const useRequestSignature = (workflowId: string) => {
   const queryClient = useQueryClient()
   return useMutation<Dict, Error, void>({
-    mutationFn: () =>
-      apiPost(`/api/workflows/${encodeURIComponent(workflowId)}/request-signature`),
+    mutationFn: () => apiPost(`/api/workflows/${encodeURIComponent(workflowId)}/request-signature`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['approvals'] })
       queryClient.invalidateQueries({ queryKey: ['workflow', workflowId] })
@@ -643,7 +654,9 @@ export const useWriteWorkflowFile = (workflowId: string) => {
       }),
     onSuccess: (_d, vars) => {
       queryClient.invalidateQueries({ queryKey: ['workflow', workflowId] })
-      queryClient.invalidateQueries({ queryKey: ['workflow-file', workflowId, vars.path] })
+      queryClient.invalidateQueries({
+        queryKey: ['workflow-file', workflowId, vars.path],
+      })
     },
   })
 }
@@ -723,8 +736,14 @@ export const useResolveGate = (taskId: string) => {
   const queryClient = useQueryClient()
   return useMutation<Dict, Error, { decision: string; notes?: string }>({
     mutationFn: ({ decision, notes }) =>
-      apiPost(`/api/workflow-tasks/${encodeURIComponent(taskId)}/gate`, { decision, notes }),
-    onSuccess: () => queryClient.invalidateQueries({ predicate: (q) => q.queryKey[0] === 'workflow-run' }),
+      apiPost(`/api/workflow-tasks/${encodeURIComponent(taskId)}/gate`, {
+        decision,
+        notes,
+      }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({
+        predicate: (q) => q.queryKey[0] === 'workflow-run',
+      }),
   })
 }
 
@@ -741,8 +760,7 @@ export const useKeys = () => useApiQuery<KeysResponse>(KEYS_KEY, '/api/keys')
 export const useSetKey = () => {
   const queryClient = useQueryClient()
   return useMutation<KeyWriteResponse, Error, { envVar: string; value: string }>({
-    mutationFn: ({ envVar, value }) =>
-      apiPut(`/api/keys/${encodeURIComponent(envVar)}`, { value }),
+    mutationFn: ({ envVar, value }) => apiPut(`/api/keys/${encodeURIComponent(envVar)}`, { value }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: KEYS_KEY }),
   })
 }
@@ -755,163 +773,170 @@ export const useClearKey = () => {
   })
 }
 
-// --- Connectors (SPEC-064) -------------------------------------------------
+// --- Connections and grants (SPEC-064) -------------------------------------
+//
+// Two scopes, and the keys say which. A CONNECTION belongs to the deployment —
+// one account, one credential, connected once — so every verb below is keyed by
+// instance with no agent in it. A GRANT is the agent-scoped thing, and it is the
+// only thing that decides access, so granting and revoking invalidate BOTH the
+// deployment listing and the per-agent one: those are two views of one fact, and
+// a stale second view is how an operator concludes a revoke did not work.
 
-const connectorsKey = (agentId: string | null) => ['agent', agentId, 'connectors']
-const doctorKey = (agentId: string, instance: string) => [
-  'agent',
-  agentId,
-  'connectors',
-  instance,
-  'doctor',
-]
+const CONNECTIONS_KEY = ['connections']
+const agentConnectorsKey = (agentId: string | null) => ['agent', agentId, 'connectors']
+const doctorKey = (instance: string) => ['connections', instance, 'doctor']
+const authStatusKey = (instance: string) => ['connections', instance, 'auth-status']
+
+const connectionPath = (instance: string, verb = '') =>
+  `/api/connections/${encodeURIComponent(instance)}${verb}`
 
 // What this deployment could connect. Bundles whose manifest would not parse
 // come back under `unreadable` rather than failing the listing.
 export const useConnectorCatalog = () =>
   useApiQuery<ConnectorCatalogResponse>(['connectors', 'catalog'], '/api/connectors/catalog')
 
+// Every connection and who holds it — the whole "who can reach what" question.
+export const useConnections = () =>
+  useApiQuery<ConnectionsResponse>(CONNECTIONS_KEY, '/api/connections')
+
+// The other direction: what one agent can reach. Same rows, its grants only.
 export const useAgentConnectors = (agentId: string | null) =>
   useQuery<AgentConnectorsResponse>({
-    queryKey: connectorsKey(agentId),
+    queryKey: agentConnectorsKey(agentId),
     queryFn: ({ signal }) =>
       apiGet(`/api/agents/${encodeURIComponent(agentId!)}/connectors`, signal),
     enabled: !!agentId,
   })
 
-// Secrets are consumed by the route and dropped; the response names tools, not
-// credentials, so nothing sensitive reaches the cache.
-export const useInstallConnector = (agentId: string) => {
+// Every view of who holds what, refreshed together after a change.
+const useGrantInvalidator = () => {
   const queryClient = useQueryClient()
+  return () => {
+    queryClient.invalidateQueries({ queryKey: CONNECTIONS_KEY })
+    queryClient.invalidateQueries({ queryKey: ['agent'] })
+  }
+}
+
+// Secrets are consumed by the route and dropped; the response names tools and
+// grantees, not credentials, so nothing sensitive reaches the cache.
+export const useInstallConnector = () => {
+  const invalidate = useGrantInvalidator()
   return useMutation<
     ConnectorInstallResponse,
     Error,
-    { extension: string; instance: string; secrets: Record<string, string> }
+    {
+      extension: string
+      instance: string
+      agents: string[]
+      secrets: Record<string, string>
+    }
   >({
-    mutationFn: (body) => apiPost(`/api/agents/${encodeURIComponent(agentId)}/connectors`, body),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: connectorsKey(agentId) }),
+    mutationFn: (body) => apiPost('/api/connections', body),
+    onSuccess: invalidate,
   })
 }
 
-// Rotation. The response lists field names only.
-export const useReauthConnector = (agentId: string, instance: string) => {
+// Hand one connected account to more agents. Nothing is copied — the credential
+// stays at its one coordinate and every grantee reads it through the same store.
+export const useGrantConnection = (instance: string) => {
+  const invalidate = useGrantInvalidator()
+  return useMutation<ConnectorInstance, Error, string[]>({
+    mutationFn: (agents) => apiPost(connectionPath(instance, '/grant'), { agents }),
+    onSuccess: invalidate,
+  })
+}
+
+export const useRevokeConnection = (instance: string) => {
+  const invalidate = useGrantInvalidator()
+  return useMutation<ConnectorInstance, Error, string[]>({
+    mutationFn: (agents) => apiDelete(connectionPath(instance, '/grant'), { agents }),
+    onSuccess: invalidate,
+  })
+}
+
+// Rotation. The response lists field names only. One write serves every agent
+// granted this connection, because there is only ever one copy of the credential.
+export const useReauthConnector = (instance: string) => {
   const queryClient = useQueryClient()
   return useMutation<ConnectorAuthResponse, Error, Record<string, string>>({
-    mutationFn: (secrets) =>
-      apiPut(
-        `/api/agents/${encodeURIComponent(agentId)}/connectors/${encodeURIComponent(instance)}/auth`,
-        { secrets },
-      ),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: doctorKey(agentId, instance) }),
+    mutationFn: (secrets) => apiPut(connectionPath(instance, '/auth'), { secrets }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: doctorKey(instance) }),
   })
 }
 
 // Opens a live connection, so it is a mutation (and operator-only server side).
 // Its result is the row's live status — deliberately not cached.
-export const useProbeConnector = (agentId: string, instance: string) =>
+export const useProbeConnector = (instance: string) =>
   useMutation<ConnectorProbeResponse, Error, void>({
-    mutationFn: () =>
-      apiPost(
-        `/api/agents/${encodeURIComponent(agentId)}/connectors/${encodeURIComponent(instance)}/probe`,
-      ),
+    mutationFn: () => apiPost(connectionPath(instance, '/probe')),
   })
 
-export const useConnectorDoctor = (agentId: string, instance: string, enabled: boolean) =>
+export const useConnectorDoctor = (instance: string, enabled: boolean) =>
   useQuery<ConnectorDoctorResponse>({
-    queryKey: doctorKey(agentId, instance),
-    queryFn: ({ signal }) =>
-      apiGet(
-        `/api/agents/${encodeURIComponent(agentId)}/connectors/${encodeURIComponent(instance)}/doctor`,
-        signal,
-      ),
+    queryKey: doctorKey(instance),
+    queryFn: ({ signal }) => apiGet(connectionPath(instance, '/doctor'), signal),
     enabled,
   })
 
 // Records the tool contract served right now (rug-pull defense, REQ-291).
-export const useApproveConnector = (agentId: string, instance: string) => {
+export const useApproveConnector = (instance: string) => {
   const queryClient = useQueryClient()
   return useMutation<ConnectorApproveResponse, Error, void>({
-    mutationFn: () =>
-      apiPost(
-        `/api/agents/${encodeURIComponent(agentId)}/connectors/${encodeURIComponent(instance)}/approve`,
-      ),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: doctorKey(agentId, instance) }),
+    mutationFn: () => apiPost(connectionPath(instance, '/approve')),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: doctorKey(instance) }),
   })
 }
 
 // Installs the host binaries a bundle declares, so an operator never has to
 // open a terminal. Keyed by extension, not instance: the prerequisite belongs
 // to the bundle and is missing before any instance exists.
-export const useHostSetup = (agentId: string, extension: string) => {
+export const useHostSetup = (extension: string) => {
   const queryClient = useQueryClient()
   return useMutation<HostSetupResponse, Error, void>({
-    mutationFn: () =>
-      apiPost(
-        `/api/agents/${encodeURIComponent(agentId)}/connectors/${encodeURIComponent(extension)}/host-setup`,
-      ),
+    mutationFn: () => apiPost(connectionPath(extension, '/host-setup')),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['connectors', 'catalog'] }),
   })
 }
-
-const authStatusKey = (agentId: string, instance: string) => [
-  'agent',
-  agentId,
-  'connectors',
-  instance,
-  'auth-status',
-]
 
 // What one connected instance was configured with. Read when a rotation form
 // opens, so the non-sensitive fields can be shown filled in rather than blank.
 // Nothing here can carry a credential: the server populates a value only for a
 // field the bundle declared non-sensitive.
-export const useConnectorAuthorization = (agentId: string, instance: string, enabled: boolean) =>
+export const useConnectorAuthorization = (instance: string, enabled: boolean) =>
   useQuery<ConnectorAuthorizationResponse>({
-    queryKey: ['agents', agentId, 'connectors', instance, 'auth'],
-    queryFn: ({ signal }) =>
-      apiGet(
-        `/api/agents/${encodeURIComponent(agentId)}/connectors/${encodeURIComponent(instance)}/auth`,
-        signal,
-      ),
+    queryKey: ['connections', instance, 'auth'],
+    queryFn: ({ signal }) => apiGet(connectionPath(instance, '/auth'), signal),
     enabled,
     retry: false,
   })
 
 // Is the host binary behind this connection signed in? Only meaningful for
 // bundles that declare no secrets — those hold their own credential.
-export const useConnectorAuthStatus = (agentId: string, instance: string, enabled: boolean) =>
+export const useConnectorAuthStatus = (instance: string, enabled: boolean) =>
   useQuery<ConnectorAuthStatusResponse>({
-    queryKey: authStatusKey(agentId, instance),
-    queryFn: ({ signal }) =>
-      apiGet(
-        `/api/agents/${encodeURIComponent(agentId)}/connectors/${encodeURIComponent(instance)}/auth-status`,
-        signal,
-      ),
+    queryKey: authStatusKey(instance),
+    queryFn: ({ signal }) => apiGet(connectionPath(instance, '/auth-status'), signal),
     enabled,
     retry: false,
   })
 
 // Runs the bundle's login command. `token` is optional — some binaries take one
 // non-interactively; the rest answer with the command a person must run.
-export const useAuthorizeConnector = (agentId: string, instance: string) => {
+export const useAuthorizeConnector = (instance: string) => {
   const queryClient = useQueryClient()
   return useMutation<ConnectorAuthStatusResponse, Error, { token?: string }>({
-    mutationFn: (body) =>
-      apiPost(
-        `/api/agents/${encodeURIComponent(agentId)}/connectors/${encodeURIComponent(instance)}/authorize`,
-        body,
-      ),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: authStatusKey(agentId, instance) }),
+    mutationFn: (body) => apiPost(connectionPath(instance, '/authorize'), body),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: authStatusKey(instance) }),
   })
 }
 
-export const useRemoveConnector = (agentId: string) => {
-  const queryClient = useQueryClient()
+// Disconnects the account for everyone: its credential, its definition, and
+// every grant on it. There is no per-agent removal, because a connection left
+// standing for one agent and gone for another is a credential nobody thinks is live.
+export const useRemoveConnector = () => {
+  const invalidate = useGrantInvalidator()
   return useMutation<ConnectorRemoveResponse, Error, string>({
-    mutationFn: (instance) =>
-      apiDelete(
-        `/api/agents/${encodeURIComponent(agentId)}/connectors/${encodeURIComponent(instance)}`,
-      ),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: connectorsKey(agentId) }),
+    mutationFn: (instance) => apiDelete(connectionPath(instance)),
+    onSuccess: invalidate,
   })
 }

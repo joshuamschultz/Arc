@@ -709,26 +709,43 @@ class ConnectorCatalogResponse(BaseModel):
 
 
 class ConnectorInstance(BaseModel):
-    """One ``[extensions.<instance>]`` block, as a listing row."""
+    """One connected account, as a listing row — including who may use it.
+
+    ``agents`` is the grant list and the only thing that decides access, so it
+    travels on every row. A row without it renders a connected account as
+    available to everyone, which is the opposite of what deny-by-default means:
+    an operator reading such a row has no way to see that their agent holds
+    nothing.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     instance: str
     extension: str
     approval: str
+    agents: list[str]
+
+
+class ConnectionsResponse(BaseModel):
+    """Body of ``GET /api/connections`` — every connection, and who holds it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    connections: list[ConnectorInstance]
+    extensions_roots: list[str]
 
 
 class AgentConnectorsResponse(BaseModel):
-    """Body of ``GET /api/agents/{id}/connectors``."""
+    """Body of ``GET /api/agents/{id}/connectors`` — what this agent can reach."""
 
     model_config = ConfigDict(extra="forbid")
 
     instances: list[ConnectorInstance]
-    extensions_root: str
+    extensions_roots: list[str]
 
 
 class ConnectorInstallResponse(BaseModel):
-    """Body of ``POST /api/agents/{id}/connectors`` — what the install produced."""
+    """Body of ``POST /api/connections`` — what the install produced, and who got it."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -736,6 +753,7 @@ class ConnectorInstallResponse(BaseModel):
     extension: str
     tools: list[str]
     detail: str
+    agents: list[str]
 
 
 class ConnectorHostBlockedResponse(BaseModel):
@@ -748,7 +766,7 @@ class ConnectorHostBlockedResponse(BaseModel):
 
 
 class ConnectorAuthResponse(BaseModel):
-    """Body of ``PUT /api/agents/{id}/connectors/{instance}/auth`` — field names only."""
+    """Body of ``PUT /api/connections/{instance}/auth`` — field names only."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -805,7 +823,7 @@ class ConnectorAuthStatusResponse(BaseModel):
 
 
 class ConnectorHostSetupResponse(BaseModel):
-    """Body of ``POST /api/agents/{id}/connectors/{extension}/host-setup``.
+    """Body of ``POST /api/connections/{extension}/host-setup``.
 
     A refusal is a 200 with ``installed: false``: the reason and the steps a
     person runs instead are both operator-facing text, and an operator left with
@@ -820,7 +838,7 @@ class ConnectorHostSetupResponse(BaseModel):
 
 
 class ConnectorAuthorizationResponse(BaseModel):
-    """Body of ``GET /api/agents/{id}/connectors/{instance}/auth`` — how to connect this.
+    """Body of ``GET /api/connections/{instance}/auth`` — how to connect this.
 
     ``credentials`` non-empty means render the form; ``hosts`` non-empty means
     render the command the operator runs on the machine instead. A connector whose
@@ -839,7 +857,7 @@ class ConnectorAuthorizationResponse(BaseModel):
 
 
 class ConnectorProbeResponse(BaseModel):
-    """Body of ``POST /api/agents/{id}/connectors/{instance}/probe``."""
+    """Body of ``POST /api/connections/{instance}/probe``."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -859,7 +877,7 @@ class ConnectorDoctorCheck(BaseModel):
 
 
 class ConnectorDoctorResponse(BaseModel):
-    """Body of ``GET /api/agents/{id}/connectors/{instance}/doctor``."""
+    """Body of ``GET /api/connections/{instance}/doctor``."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -867,7 +885,7 @@ class ConnectorDoctorResponse(BaseModel):
 
 
 class ConnectorApproveResponse(BaseModel):
-    """Body of ``POST /api/agents/{id}/connectors/{instance}/approve`` (REQ-291)."""
+    """Body of ``POST /api/connections/{instance}/approve`` (REQ-291)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -876,7 +894,7 @@ class ConnectorApproveResponse(BaseModel):
 
 
 class ConnectorRemoveResponse(BaseModel):
-    """Body of ``DELETE /api/agents/{id}/connectors/{instance}`` — what was dropped."""
+    """Body of ``DELETE /api/connections/{instance}`` — what was dropped."""
 
     model_config = ConfigDict(extra="forbid")
 

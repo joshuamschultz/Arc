@@ -434,12 +434,16 @@ enabled = true
 priority = 100
 
 [modules.connectors.config]
-# Connected accounts (SPEC-062): every [extensions.<instance>] block below is
-# attached at startup — the bundle is verified, its approval mode bound to the
-# human gate, and its verbs registered as individually named tools. Declared
-# here because an undeclared module sits dead: `arc connector add` would write
-# the credential and the config block, and the agent would serve none of it.
-extensions_root = ""  # ONE bundle root; empty = search <agent>/extensions,
+# Connected accounts (SPEC-062, SPEC-064): every connection this agent has been
+# GRANTED is attached at startup — the bundle is verified, its approval mode
+# bound to the human gate, and its verbs registered as individually named tools.
+# A newly created agent holds no grant, so it starts with no connections until an
+# operator runs `arc connector grant`; creating an agent can never widen access.
+# Declared here because an undeclared module sits dead: the grant would exist and
+# the agent would serve none of it.
+arc_dir = ""          # deployment root holding connections.toml + connections.env;
+                      # empty = ~/.arc (honours $ARC_CONFIG_DIR)
+extensions_root = ""  # ONE bundle root; empty = search <arc_dir>/extensions,
                       # $ARC_EXTENSIONS_ROOT, then ~/.arc/extensions
 data_dir = ""         # empty defers to arcstore.resolve_data_dir (approved tool contracts)
 

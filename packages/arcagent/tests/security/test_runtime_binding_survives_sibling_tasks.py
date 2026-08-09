@@ -121,6 +121,26 @@ def _fake_run_stream_recording(observed: dict[str, _Observation], key: str) -> C
     return _fake
 
 
+async def _await_record(
+    observed: dict[str, _Observation], key: str, timeout: float = 5.0
+) -> _Observation:
+    """Wait until the dispatch actually recorded, rather than guessing a duration.
+
+    A fixed sleep here made this suite order-dependent: warm, it passed; run
+    alone with cold imports, the record had not landed and the assertion died on
+    a KeyError that said nothing about the real failure. Yielding until the key
+    exists is deterministic when the dispatch is fast, and the deadline turns a
+    genuine hang into a message that names what never arrived.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while key not in observed:
+        if loop.time() >= deadline:
+            raise AssertionError(f"no observation recorded for {key!r} within {timeout}s")
+        await asyncio.sleep(0)
+    return observed[key]
+
+
 class _PreSeededAgentFactory:
     """Mirrors bootstrap._make_agent_factory + arcui.embedded_agents's
     caching contract, but every entry is pre-seeded by the test (already
@@ -184,7 +204,7 @@ class TestSameAgentTwoSiblingTurns:
             side_effect=_fake_run_stream_recording(observed, "turn1"),
         ):
             await router.handle(_make_event(agent_did=real_did, session_key="s1", message="turn1"))
-            await asyncio.sleep(0.05)
+            await _await_record(observed, "turn1")
 
         with patch(
             "arcagent.core.agent_dispatch.arcrun_run_stream",
@@ -194,7 +214,7 @@ class TestSameAgentTwoSiblingTurns:
             # spawns a fresh one per turn; this is NOT a child of turn 1's
             # task, which already completed.
             await router.handle(_make_event(agent_did=real_did, session_key="s2", message="turn2"))
-            await asyncio.sleep(0.05)
+            await _await_record(observed, "turn2")
 
         assert "error" not in observed["turn1"], f"turn 1 unexpectedly failed: {observed['turn1']}"
         assert "error" not in observed["turn2"], (
@@ -252,7 +272,7 @@ class TestTwoAgentsInterleaved:
             await router.handle(
                 _make_event(agent_did=josh_did, session_key="josh-1", message="josh turn")
             )
-            await asyncio.sleep(0.05)
+            await _await_record(observed, "josh_turn")
 
         with patch(
             "arcagent.core.agent_dispatch.arcrun_run_stream",
@@ -261,7 +281,7 @@ class TestTwoAgentsInterleaved:
             await router.handle(
                 _make_event(agent_did=coder_did, session_key="coder-1", message="coder turn")
             )
-            await asyncio.sleep(0.05)
+            await _await_record(observed, "coder_turn")
 
         assert "error" not in observed["josh_turn"], observed["josh_turn"]
         assert "error" not in observed["coder_turn"], observed["coder_turn"]

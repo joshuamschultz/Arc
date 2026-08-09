@@ -143,7 +143,7 @@ def env_file(agent_home: Path) -> Path:
 
 @pytest.fixture
 def ref() -> SecretRef:
-    return SecretRef(agent="coder", instance="atlassian_work", field="access_token")
+    return SecretRef(connection="atlassian_work", field="access_token")
 
 
 @pytest.fixture
@@ -284,7 +284,7 @@ async def test_child_process_never_sees_the_credential(
 async def test_issue_refuses_when_no_credential_is_stored(env_file: Path) -> None:
     """Nothing to hold means no grant — never a grant that resolves to nothing."""
     store = SecretStore(LocalFileSecretBackend(env_file))
-    unstored = SecretRef(agent="coder", instance="never_authorized", field="access_token")
+    unstored = SecretRef(connection="never_authorized", field="access_token")
 
     async with CredentialBroker(store) as broker:
         with pytest.raises(ExtensionError) as excinfo:

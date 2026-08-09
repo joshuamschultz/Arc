@@ -264,9 +264,7 @@ async def test_every_request_carries_client_capabilities_in_meta(
     assert _META_CAPABILITIES in transport.last("tools/list")["params"]["_meta"]
 
 
-async def test_requests_identify_the_client(
-    mcp: McpAttachment, transport: _FakeTransport
-) -> None:
+async def test_requests_identify_the_client(mcp: McpAttachment, transport: _FakeTransport) -> None:
     transport.reply("tools/list", _result(tools=[_WEATHER]))
 
     await mcp.describe_tools()
