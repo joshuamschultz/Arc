@@ -341,6 +341,24 @@ async def test_a_401_names_the_two_fields_that_have_to_match(bundle: str) -> Non
 
 
 @pytest.mark.parametrize("bundle", BUNDLE_IDS)
+async def test_a_401_names_the_scoped_token_that_this_adapter_cannot_use(bundle: str) -> None:
+    """The third thing a 401 now means, and the one nobody could have guessed.
+
+    Atlassian has begun issuing SCOPED API tokens, which are refused at
+    ``{site}.atlassian.net`` however correct they are — they work only against
+    ``api.atlassian.com/ex/confluence/{cloudId}``, which this adapter does not
+    speak. An operator holding one and reading "check the email, or reissue the
+    token" reissues it, gets the identical 401, and has no way out. That is the
+    afternoon the sibling connector already cost, so the sentence has to name it
+    for as long as this bundle stays on basic auth.
+    """
+    detail = await _detail(bundle, 401)
+
+    assert "scoped" in detail.lower()
+    assert "api.atlassian.com" in detail
+
+
+@pytest.mark.parametrize("bundle", BUNDLE_IDS)
 async def test_a_403_is_about_permission_and_not_about_the_credential(bundle: str) -> None:
     """403 is authenticated-but-not-permitted. Sending them to reissue a working
     token is the wrong instruction, so the two must not read alike."""

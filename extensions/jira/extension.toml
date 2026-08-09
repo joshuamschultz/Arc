@@ -21,6 +21,7 @@
 
 [extension]
 name = "jira"
+display_name = "Jira"
 version = "2.0.0"
 description = "Search, read, create, comment on, and transition Jira issues."
 attachment = "cli"

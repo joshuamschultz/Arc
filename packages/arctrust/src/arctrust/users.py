@@ -305,9 +305,7 @@ class UserStore:
         if external_id:
             owner = self.by_pairing(platform, external_id)
             if owner is not None and owner.email != user.email:
-                raise ValueError(
-                    f"{platform} id {external_id} is already paired to {owner.email}"
-                )
+                raise ValueError(f"{platform} id {external_id} is already paired to {owner.email}")
         merged = dict(user.pairings)
         if external_id:
             merged[platform] = external_id

@@ -14,6 +14,7 @@
 
 [extension]
 name = "github"
+display_name = "GitHub"
 version = "1.0.0"
 description = "Read pull requests, issues, repositories, releases, and CI runs on GitHub."
 attachment = "cli"

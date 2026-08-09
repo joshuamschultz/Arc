@@ -142,8 +142,11 @@ function ConnectionRow({
       <TableRow>
         <TableCell className="font-medium text-foreground">{inst.instance}</TableCell>
         <TableCell>
-          <span className="rounded-sm border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-foreground">
-            {inst.extension}
+          <span
+            title={inst.extension}
+            className="rounded-sm border border-border bg-muted/40 px-1.5 py-0.5 text-[11px] text-foreground"
+          >
+            {inst.extension_display_name}
           </span>
         </TableCell>
         <TableCell className="min-w-64">
@@ -207,7 +210,7 @@ function ConnectionRow({
                     variant="outline"
                     size="xs"
                     onClick={() => setShowAuth(!showAuth)}
-                    title={`Check or renew the ${inst.extension} sign-in on this computer`}
+                    title={`Check or renew the ${inst.extension_display_name} sign-in on this computer`}
                   >
                     <LogIn /> {showAuth ? 'Hide sign-in' : 'Sign in'}
                   </Button>
@@ -220,7 +223,7 @@ function ConnectionRow({
                     title={
                       bundle
                         ? 'Replace this connection’s credentials'
-                        : `${inst.extension} is no longer on the extension search path`
+                        : `${inst.extension_display_name} is no longer on the extension search path`
                     }
                   >
                     Re-auth
@@ -313,7 +316,9 @@ function BundleCard({
       className="flex flex-col rounded-lg border border-border bg-card p-4 shadow-xs"
     >
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        <span className="font-semibold text-foreground">{bundle.name}</span>
+        <span className="font-semibold text-foreground" title={bundle.name}>
+          {bundle.display_name}
+        </span>
         <span className="font-mono text-[11px] text-muted-foreground">v{bundle.version}</span>
         <span className="rounded-sm border border-border bg-muted/40 px-1.5 py-0.5 text-[11px] text-muted-foreground">
           {bundle.attachment}

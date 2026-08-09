@@ -548,4 +548,30 @@ def test_a_command_argv_naming_a_credential_is_refused() -> None:
 def test_a_command_argv_naming_a_field_the_bundle_never_declares_is_refused() -> None:
     """It would reach the binary literally and read as a vault named '{vault}'."""
     with pytest.raises(ValidationError, match="vault"):
-        _manifest_with('[[secrets]]\nname = "other"\nprompt = "p"\nsensitive = false\n' + _CLI_BLOCK)
+        _manifest_with(
+            '[[secrets]]\nname = "other"\nprompt = "p"\nsensitive = false\n' + _CLI_BLOCK
+        )
+
+
+# --- the name a person reads ---------------------------------------------------
+
+
+def test_a_declared_display_name_is_what_a_surface_shows() -> None:
+    manifest = load_manifest(
+        '[extension]\nname = "onepassword"\nversion = "1.0.0"\n'
+        'attachment = "cli"\ndisplay_name = "1Password"\n',
+        tier=Tier.PERSONAL,
+    )
+
+    assert manifest.extension.label == "1Password"
+    assert manifest.extension.name == "onepassword", "the coordinate is untouched"
+
+
+def test_a_bundle_that_declares_none_still_renders_something() -> None:
+    """A third-party bundle must not appear as a blank row."""
+    manifest = load_manifest(
+        '[extension]\nname = "acme_corp"\nversion = "1.0.0"\nattachment = "cli"\n',
+        tier=Tier.PERSONAL,
+    )
+
+    assert manifest.extension.label == "acme_corp"

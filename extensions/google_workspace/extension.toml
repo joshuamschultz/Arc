@@ -31,6 +31,7 @@
 
 [extension]
 name = "google_workspace"
+display_name = "Google Workspace"
 version = "1.0.0"
 description = "Read and draft Gmail, list Drive files, and check Google Calendar."
 attachment = "cli"

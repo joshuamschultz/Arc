@@ -675,6 +675,9 @@ class ConnectorCatalogEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str
+    #: The product's own name, for a person to read. ``name`` stays the coordinate
+    #: every request is keyed by; this is only ever rendered.
+    display_name: str
     version: str
     description: str
     attachment: str
@@ -722,6 +725,9 @@ class ConnectorInstance(BaseModel):
 
     instance: str
     extension: str
+    #: What to call ``extension`` in front of a person. Falls back to the
+    #: coordinate for a bundle that declares none, never blank.
+    extension_display_name: str
     approval: str
     agents: list[str]
 
@@ -850,6 +856,9 @@ class ConnectorAuthorizationResponse(BaseModel):
 
     instance: str
     extension: str
+    #: The heading the connect panel shows. Same rule as everywhere else: a name
+    #: for a person, never a substitute for the coordinate beside it.
+    extension_display_name: str
     credentials: list[ConnectorSecretField]
     hosts: list[ConnectorHostAuthorization]
     reachable: bool

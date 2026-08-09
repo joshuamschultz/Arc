@@ -146,6 +146,20 @@ async def test_an_issue_key_that_looks_like_a_flag_stays_behind_the_terminator(
     assert argv[-2:] == ["--", "--web"]
 
 
+@pytest.mark.parametrize("key", ["-KAN-1", "--web", "-", "--json", "-o/etc/passwd"])
+async def test_a_key_beginning_with_a_dash_is_read_as_the_key(spawn: _Recorder, key: str) -> None:
+    """The `--` is what makes this true, and it is why the terminator is required.
+
+    Without it every one of these occupies a flag position: `--web` would open a
+    browser, `--json` would be consumed as the flag, and `-o` families become file
+    writes on CLIs that have them.
+    """
+    argv = await _argv_for("jira_get_issue", {"issue_key": key}, spawn)
+
+    assert argv[-2:] == ["--", key]
+    assert argv.count("--") == 1
+
+
 async def test_listing_projects_takes_only_a_limit(spawn: _Recorder) -> None:
     argv = await _argv_for("jira_list_projects", {"limit": "50"}, spawn)
 

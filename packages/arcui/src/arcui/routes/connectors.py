@@ -40,7 +40,7 @@ and is why nothing here has a sink to close.
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -134,14 +134,37 @@ def _refused(exc: ExtensionError) -> JSONResponse:
     return _error(exc.message, 404 if _not_found(exc) else 400)
 
 
-def _row(instance: str, connection: Connection) -> ConnectorInstance:
+def _row(
+    instance: str, connection: Connection, labels: Mapping[str, str] | None = None
+) -> ConnectorInstance:
     """One listing row, carrying the grant list that decides who may use it."""
     return ConnectorInstance(
         instance=instance,
         extension=connection.extension,
+        extension_display_name=(labels or {}).get(connection.extension, connection.extension),
         approval=connection.approval,
         agents=list(connection.agents),
     )
+
+
+def _labels(connections: Connections) -> dict[str, str]:
+    """Extension name to the name a person reads, read from the bundles themselves.
+
+    A listing row names an extension the operator connected, and the only place
+    that bundle's own spelling of itself lives is its manifest. A bundle that has
+    since been removed from the search path simply has no entry, and ``_row``
+    falls back to the coordinate rather than rendering a blank.
+    """
+    try:
+        return {
+            entry.name: entry.display_name or entry.name
+            for entry in connections.catalog()
+            if not entry.error
+        }
+    except ExtensionError:
+        # A listing must not fail because a bundle directory is unreadable; the
+        # coordinate is a correct, if plainer, answer.
+        return {}
 
 
 def _tools(specs: Sequence[ToolSpec]) -> list[ConnectorTool]:
@@ -260,6 +283,7 @@ def _catalog_entry(
     """One listing row: what connecting this bundle would give the agents granted it."""
     return ConnectorCatalogEntry(
         name=entry.name,
+        display_name=entry.display_name or entry.name,
         version=entry.version,
         description=entry.description,
         attachment=entry.attachment,
@@ -312,12 +336,13 @@ async def get_connections(request: Request) -> JSONResponse:
     try:
         connections = _connections(request)
         defined = connections.connections()
+        labels = _labels(connections)
     except ExtensionError as exc:
         return _refused(exc)
 
     return JSONResponse(
         ConnectionsResponse(
-            connections=[_row(name, cfg) for name, cfg in sorted(defined.items())],
+            connections=[_row(name, cfg, labels) for name, cfg in sorted(defined.items())],
             extensions_roots=[str(root) for root in connections.world.extension_roots],
         ).model_dump(mode="json")
     )
@@ -337,12 +362,13 @@ async def get_agent_connectors(request: Request) -> JSONResponse:
     try:
         connections = _connections(request)
         granted = connections.registry.granted_to(agent_dir.name)
+        labels = _labels(connections)
     except ExtensionError as exc:
         return _refused(exc)
 
     return JSONResponse(
         AgentConnectorsResponse(
-            instances=[_row(name, cfg) for name, cfg in sorted(granted.items())],
+            instances=[_row(name, cfg, labels) for name, cfg in sorted(granted.items())],
             extensions_roots=[str(root) for root in connections.world.extension_roots],
         ).model_dump(mode="json")
     )
@@ -532,7 +558,9 @@ async def _change_grant(request: Request, *, granting: bool) -> JSONResponse:
         outcome="applied",
         detail=",".join(agents),
     )
-    return JSONResponse(_row(instance, connection).model_dump(mode="json"))
+    return JSONResponse(
+        _row(instance, connection, _labels(_connections(request))).model_dump(mode="json")
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -558,6 +586,9 @@ async def get_connector_auth(request: Request) -> JSONResponse:
         ConnectorAuthorizationResponse(
             instance=auth.instance,
             extension=auth.extension,
+            extension_display_name=_labels(_connections(request)).get(
+                auth.extension, auth.extension
+            ),
             credentials=[
                 # ``value`` is whatever the seam resolved, which is the empty string
                 # for every sensitive field — this route neither decides that nor can

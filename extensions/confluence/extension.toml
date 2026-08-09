@@ -1,20 +1,51 @@
-# Confluence Cloud through this bundle's own REST adapter — D-562.
+# Confluence Cloud through this bundle's own REST adapter.
 #
-# Same reasoning as the jira bundle, and a separate bundle rather than a shared
-# one: an operator who wants an agent reading the wiki should not have to grant
-# it the issue tracker, and each bundle carries its own credential and its own
-# approval mode.
+# D-588 ranks a connector's options: the vendor's own CLI first, a maintained MCP
+# server second, an adapter we write only as a last resort — and a bundle taking
+# the last option has to say what it checked. This one did, and this is it.
 #
-# The implementation is in arc_ext_confluence/, a subdirectory, for the reason
-# spelled out in the jira manifest: bundle-root .py files are scanned as agent
-# capabilities and are import-policy-gated by tier.
-
-# Top-level, ahead of every table: TOML would fold a bare key written after a
-# [header] into that table, and `requires` belongs to the manifest itself.
-requires = ["httpx>=0.27,<1.0"]
+# OPTION 1, the vendor's CLI: checked against `acli` 1.3.22, the same binary the
+# sibling `jira` bundle now runs on, on the deployment. It does not cover this
+# connector. Its entire Confluence surface is:
+#
+#     acli confluence page   -> view                                (only)
+#     acli confluence space  -> archive, create, list, restore, update, view
+#     acli confluence blog   -> create, list, view
+#
+# Of the five tools declared below, `confluence_get_page` maps to `page view --id`
+# and `confluence_list_spaces` maps to `space list`. The other three —
+# `confluence_search_pages` (CQL), `confluence_create_page` and
+# `confluence_update_page` — have no acli verb at all, and that includes BOTH
+# verbs tagged `network_egress`, which are the reason this bundle has an approval
+# mode. Rebuilding on acli would delete three of five tools, so it was not done.
+# Re-check when acli grows `confluence page search|create|update`; nothing else
+# about this bundle needs to change first.
+#
+# OPTION 2, an MCP server: sooperset/mcp-atlassian carries 35 advisories including
+# a critical arbitrary-file-write to RCE, and Atlassian's own hosted MCP endpoint
+# states it does not meet FedRAMP. Neither is adoptable here.
+#
+# So option 3, and the transport is ~300 lines of httpx living inside this folder.
+#
+# KNOWN LIMIT, recorded rather than discovered later: this adapter speaks basic
+# auth with an UNSCOPED API token against `{site}.atlassian.net`. Atlassian is
+# moving to SCOPED tokens, which are accepted only at
+# `api.atlassian.com/ex/confluence/{cloudId}`. That is the deprecation that cost an
+# afternoon on `jira`, and acli absorbed it there. Here it has not been built: the
+# site's cloud id is fetchable unauthenticated (verified —
+# `https://<site>/_edge/tenant_info` answers `{"cloudId":"…"}`), and Atlassian's
+# own KB confirms basic auth still applies at the gateway, but nothing on this
+# deployment holds a scoped token to test the path against, and shipping an
+# unverified auth path is exactly the mistake being corrected. Until it is built,
+# the 401 an operator sees names the scoped-token case explicitly instead of
+# sending them to reissue a token that would fail the same way.
+#
+# The implementation is in arc_ext_confluence/, a subdirectory, because bundle-root
+# .py files are scanned as agent capabilities and are import-policy-gated by tier.
 
 [extension]
 name = "confluence"
+display_name = "Confluence"
 version = "1.0.0"
 description = "Search, read, and write Confluence pages in your team's spaces."
 attachment = "native"

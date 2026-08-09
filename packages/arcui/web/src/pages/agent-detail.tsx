@@ -1009,7 +1009,7 @@ function AgentReachCard({ agentId }: { agentId: string }) {
             <li key={c.instance} className="flex flex-wrap items-baseline gap-x-2 text-sm">
               <span className="font-medium text-foreground">{c.instance}</span>
               <span className="rounded-sm border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
-                {c.extension}
+                {c.extension_display_name}
               </span>
               <span className="text-xs text-muted-foreground">approval: {c.approval}</span>
             </li>

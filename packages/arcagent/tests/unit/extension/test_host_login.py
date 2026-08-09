@@ -285,6 +285,36 @@ async def test_a_filled_value_can_never_become_a_second_argv_token(tmp_path: Pat
     assert argv[-1] == "--site=a b --token /etc/passwd"
 
 
+@pytest.mark.parametrize(
+    "value",
+    ["one; touch /tmp/pwned", "a b", "--token", "$(whoami)", "`id`", "a\nb"],
+)
+async def test_no_filled_value_can_add_a_token_or_a_command(tmp_path: Path, value: str) -> None:
+    """One declared field, one argv token, whatever the operator typed into it.
+
+    Parametrised over the shapes that would break a shell, because nothing here is
+    a shell: the value is substituted into a token that ``shlex.split`` already
+    produced, so there is no second parse for a ``;`` to be meaningful to.
+    """
+    recorded = tmp_path / "argv.txt"
+    requirement = _argv_recording_requirement(recorded, "--site={site}")
+
+    await run_token_login(
+        requirement,
+        token=_SENTINEL,
+        caller_did=_CALLER,
+        audit_sink=_RecordingSink(),
+        tier=Tier.PERSONAL,
+        values={"site": value},
+    )
+
+    # The child sees ``["-c", "--site=…"]`` — python drops the script text from
+    # argv — so two tokens is the whole command line, and a third would be a value
+    # that had split itself in two.
+    argv = ast.literal_eval(recorded.read_text())
+    assert argv == ["-c", f"--site={value}"]
+
+
 async def test_a_value_carrying_a_placeholder_is_not_expanded_again(tmp_path: Path) -> None:
     """One pass, so a supplied value cannot reach a field it was not given."""
     recorded = tmp_path / "argv.txt"

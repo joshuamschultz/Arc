@@ -1,7 +1,7 @@
 ---
 name: onepassword
 description: When and how to use the 1Password connector — listing what credentials exist, reading an item's non-secret fields, and resolving a single op:// reference when a secret value is genuinely needed. TRIGGER when a request needs to know which credential exists, or needs one specific secret to complete a task the operator asked for. SKIP for storing, changing, or deleting anything; this connection only reads, and only one vault.
-version: 1.0.0
+version: 2.0.0
 ---
 
 # 1Password
@@ -53,8 +53,12 @@ or a summary. If a task needs the secret in a file, the operator puts it there.
 ## Steps
 
 1. Ask what the request actually needs: existence, a non-secret field, or a value.
-2. `onepassword_list_items` to find the item and its id.
-3. `onepassword_get_item` when a username, URL, or note answers the question.
+2. `onepassword_list_items` to find the item and its id — it takes no
+   arguments, because the vault it reads is the operator's choice and not yours.
+3. `onepassword_get_item(item=...)` when a username, URL, or note answers the
+   question. It takes the item's title or its id, and returns concealed fields as
+   labels with the values withheld — so it is safe to call to find out WHETHER a
+   password exists.
 4. `onepassword_resolve_secret` only when a specific value is required by a
    specific operator request — one reference, once.
 5. Use the value for the task and do not repeat it in your answer.
@@ -89,7 +93,7 @@ Does a credential exist:
 
 What account is that login for:
 
-    onepassword_get_item(item_id="abcd1234...")
+    onepassword_get_item(item="abcd1234...")
     # username and URL come back; the password field is named, not returned.
 
 The operator asked you to call an API that needs its key:

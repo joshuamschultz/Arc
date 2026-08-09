@@ -426,6 +426,7 @@ class CatalogEntry:
     name: str
     path: Path
     official: bool
+    display_name: str = ""
     version: str = ""
     description: str = ""
     error: str = ""
@@ -467,6 +468,7 @@ def _catalog_entry(resolution: ExtensionResolution, tier: Tier) -> CatalogEntry:
         name=resolution.name,
         path=resolution.path,
         official=resolution.official,
+        display_name=resolution.display_name or resolution.name,
         version=resolution.version,
         description=resolution.description,
         error=resolution.error,
@@ -481,6 +483,7 @@ def _catalog_entry(resolution: ExtensionResolution, tier: Tier) -> CatalogEntry:
             name=resolution.name,
             path=resolution.path,
             official=resolution.official,
+            display_name=resolution.name,
             error=f"{type(exc).__name__}: {exc}",
         )
     header = manifest.extension
@@ -488,6 +491,7 @@ def _catalog_entry(resolution: ExtensionResolution, tier: Tier) -> CatalogEntry:
         name=resolution.name,
         path=resolution.path,
         official=resolution.official,
+        display_name=header.label,
         version=header.version,
         description=header.description,
         attachment=header.attachment,

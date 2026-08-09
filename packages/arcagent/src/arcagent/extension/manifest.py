@@ -110,6 +110,14 @@ class ExtensionHeader(_ManifestModel):
 
     name: str
     version: str
+    #: The product's own name, spelled the way its vendor spells it — with the
+    #: capitals, digits and spaces a real product name has. ``name`` is a
+    #: COORDINATE: it is validated, and config keys, secret refs, CLI arguments and
+    #: paths are built from it, so it can carry none of those. Every surface was
+    #: therefore showing an operator a lowercased identifier rather than the name
+    #: they know the product by. Optional, and empty means a surface falls back to
+    #: the coordinate rather than rendering a blank row.
+    display_name: str = ""
     #: One line, written for a person choosing from a list: what connecting this
     #: lets the agent do. Read by ``ExtensionCatalog.available`` and shown by every
     #: picker, so a bundle without one is a row an operator cannot choose from.
@@ -119,6 +127,11 @@ class ExtensionHeader(_ManifestModel):
     #: :func:`load_manifest`'s refusal, and by nothing that resolves policy —
     #: which is what keeps a bundle author from raising the operator's tier.
     tier_floor: Tier = Tier.PERSONAL
+
+    @property
+    def label(self) -> str:
+        """What to show a person. Never empty, and never a substitute for ``name``."""
+        return self.display_name or self.name
 
 
 class PlatformArtifact(_ManifestModel):
@@ -362,31 +375,60 @@ class ExtensionManifest(_ManifestModel):
         return _strip_denied(config)
 
     @model_validator(mode="after")
-    def _a_login_may_only_name_this_bundles_visible_fields(self) -> ExtensionManifest:
-        """A ``token_command`` names fields, and both ways of naming a wrong one lie.
+    def _a_declared_command_may_only_name_this_bundles_visible_fields(self) -> ExtensionManifest:
+        """A command names fields, and both ways of naming a wrong one lie.
 
-        A field the bundle never declares is never supplied, so the login would run
-        with a literal ``{region}`` and fail in the binary's words about a flag
-        nobody set. A field that IS a credential is worse: ``token_command`` becomes
-        a second route onto argv, which is the process table every other user on the
-        box can read — and the one thing this whole path exists to prevent is a
-        credential going anywhere but stdin.
+        A field the bundle never declares is never supplied, so the command would run
+        with a literal ``{region}`` and fail in the binary's words about a flag nobody
+        set. A field that IS a credential is worse: the command becomes a route onto
+        argv, which is the process table every other user on the box can read — and the
+        one thing this whole path exists to prevent is a credential going anywhere but
+        stdin or the child's environment.
+
+        Both places a manifest can write one are checked here, because they are the
+        same mistake: a ``token_command``, and the fixed ``argv`` of a declared CLI
+        command (where a bundle puts a blast-radius value the model must not choose).
         """
         visible = {declared.name for declared in self.secrets if not declared.sensitive}
         declared_names = {declared.name for declared in self.secrets}
-        for required in self.host_requires:
-            for field in placeholders(required.token_command):
+        for source, command in self._commands_naming_fields():
+            for field in placeholders(command):
                 if field in visible:
                     continue
                 reason = (
-                    "is a credential and may only cross on stdin"
+                    "is a credential and may never reach argv"
                     if field in declared_names
                     else "is not a field this bundle declares"
                 )
-                raise ValueError(
-                    f"{required.name}'s token_command names '{field}', which {reason}"
-                )
+                raise ValueError(f"{source} names '{field}', which {reason}")
         return self
+
+    def fields_named_by_commands(self) -> set[str]:
+        """Every declared field some command carries on its own argv or stdin.
+
+        A field here HAS a destination even with no ``[secrets.placement]``: the
+        command delivers it. Read by the install path, which otherwise refuses a
+        spawning bundle's unplaced credential — correctly, since a stored value
+        nothing delivers is the defect that rule exists for.
+        """
+        return {
+            field
+            for _, command in self._commands_naming_fields()
+            for field in placeholders(command)
+        }
+
+    def _commands_naming_fields(self) -> list[tuple[str, str]]:
+        """Every manifest string that may name a field, labelled for the refusal."""
+        sources = [
+            (f"{required.name}'s token_command", required.token_command)
+            for required in self.host_requires
+        ]
+        declared: Any = self.config.get("cli", {}).get("commands", [])
+        for command in declared if isinstance(declared, list) else []:
+            tool = command.get("tool", "a command") if isinstance(command, dict) else "a command"
+            argv = command.get("argv", []) if isinstance(command, dict) else []
+            sources += [(f"{tool}'s argv", token) for token in argv if isinstance(token, str)]
+        return sources
 
 
 def load_manifest(text: str, *, tier: Tier) -> ExtensionManifest:

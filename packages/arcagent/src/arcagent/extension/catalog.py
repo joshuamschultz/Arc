@@ -146,6 +146,8 @@ class ExtensionResolution:
         official: True when the name is on :data:`OFFICIAL_EXTENSIONS`. False
             means the bundle loaded on an audited warning and is untrusted
             upstream — the loader keeps its trust gate regardless.
+        display_name: The product's own name, as its vendor spells it. Falls back
+            to ``name`` so a listing row is never blank. Empty unless read.
         version: The manifest's declared version. Empty unless the manifest was read.
         description: The manifest's one-line description, written for a person
             choosing from a list. Empty unless the manifest was read.
@@ -155,6 +157,7 @@ class ExtensionResolution:
     name: str
     path: Path
     official: bool
+    display_name: str = ""
     version: str = ""
     description: str = ""
     error: str = ""
@@ -291,7 +294,12 @@ class ExtensionCatalog:
             header = _read_header(path, self._tier)
         except (OSError, ValueError, ValidationError, ExtensionError) as exc:
             return replace(entry, error=f"{type(exc).__name__}: {exc}")
-        return replace(entry, version=header.version, description=header.description)
+        return replace(
+            entry,
+            display_name=header.label,
+            version=header.version,
+            description=header.description,
+        )
 
     def _judge_unlisted(self, name: str) -> None:
         """Refuse an unlisted bundle at federal; allow it with a recorded warning below."""

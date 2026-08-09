@@ -39,7 +39,7 @@ from arcagent.extension.cli_attachment import CliCommand
 from arcagent.extension.field_formats import normalize
 from arcagent.extension.grants import ConnectionRegistry
 from arcagent.extension.host_login import authorization_verdict
-from arcagent.extension.manifest import ExtensionManifest, load_manifest, placeholders
+from arcagent.extension.manifest import ExtensionManifest, load_manifest
 from arcagent.extension.platforms import ANY_PLATFORM
 from arcagent.extension.secrets import LocalFileSecretBackend, SecretStore
 from arcagent.extension.state import open_connection_state
@@ -166,17 +166,30 @@ def test_no_read_only_tool_claims_to_send(manifest: ExtensionManifest) -> None:
             assert tool.classification == "state_modifying", tool.name
 
 
-def test_a_third_party_artifact_is_pinned_to_one_build(manifest: ExtensionManifest) -> None:
+def test_a_third_party_artifact_is_pinned_to_one_build(
+    bundle: Path, manifest: ExtensionManifest
+) -> None:
     """Every bundle naming a third-party artifact pins a version and a digest.
 
     ``ArtifactPin`` enforces the shapes; this asserts the bundle bothered to
     declare one. Bundles whose only dependency is Arc's own httpx have nothing
     third-party to pin and are exempt.
+
+    D-588 made a host binary the normal case, and not every vendor publishes bytes
+    Arc can verify: 1Password ships ``op`` through apt/brew/msi with no digest
+    beside the download. A bundle in that position directs the install and pins
+    nothing — ``host-setup`` then answers "pins no downloadable build" and hands
+    over the manual steps, which is correct. But silence must be a decision, so the
+    manifest has to say so in as many words, exactly as a missing ``verify_command``
+    does.
     """
     if manifest.artifact is None:
-        assert not manifest.host_requires, (
-            f"{manifest.extension.name} directs a host install but pins no artifact"
-        )
+        if manifest.host_requires:
+            text = (bundle / "extension.toml").read_text(encoding="utf-8")
+            assert "NO `[artifact]`" in text, (
+                f"{manifest.extension.name} directs a host install, pins no artifact, and "
+                f"gives no reason; an operator gets a button that cannot work and no why"
+            )
         return
     assert manifest.artifact.version and manifest.artifact.platforms
 
@@ -279,15 +292,11 @@ def test_every_credential_a_spawning_bundle_declares_has_somewhere_to_go(
     """
     if manifest.extension.attachment == "native":
         return
-    delivered_by_login = {
-        field
-        for required in manifest.host_requires
-        for field in placeholders(required.token_command)
-    }
+    delivered_by_a_command = manifest.fields_named_by_commands()
     unplaced = [
         declared.name
         for declared in manifest.secrets
-        if declared.placement is None and declared.name not in delivered_by_login
+        if declared.placement is None and declared.name not in delivered_by_a_command
     ]
     assert not unplaced, (
         f"{manifest.extension.name} attaches as {manifest.extension.attachment!r} and "
@@ -404,14 +413,24 @@ def test_a_bundle_asking_for_a_web_address_accepts_one_typed_by_a_person(
 def test_a_sign_in_check_invokes_the_binary_it_belongs_to(
     manifest: ExtensionManifest,
 ) -> None:
-    """The same bound the login takes: the field authorises one program."""
+    """The same bound the login takes: the field authorises one program.
+
+    A check also has to come with a way to DO the sign-in, and there are two of
+    those — the same two ``Authorization`` models. A bundle whose binary holds its
+    own credential answers with ``authorize_command``, the thing an operator types.
+    A bundle Arc holds the credential for answers with ``[[secrets]]``: the operator
+    pastes a token and Arc places it in the binary's environment on every call, and
+    for a 1Password service account there IS no host command to name. Requiring one
+    anyway would put a command in front of an operator that does not exist.
+    """
     for required in manifest.host_requires:
         if required.verify_command:
             assert required.verify_command.split()[0] == required.name, (
                 f"{required.name}'s verify_command must invoke {required.name} and nothing else"
             )
-            assert required.authorize_command, (
-                f"{required.name} declares a way to check a sign-in but no way to do one"
+            assert required.authorize_command or manifest.secrets, (
+                f"{required.name} declares a way to check a sign-in but no way to do one — "
+                f"neither an authorize_command nor a credential for the operator to supply"
             )
 
 
@@ -445,6 +464,19 @@ _RECORDED_OUTPUT: dict[str, tuple[tuple[int, str], tuple[int, str]]] = {
         (1, "You are not logged into any GitHub hosts. To log in, run: gh auth login"),
         # (m)
         (0, "github.com\n  ✓ Logged in to github.com account joshuamschultz (keyring)"),
+    ),
+    "onepassword": (
+        # (m) Both refusals measured on the deployment; op separates them by exit
+        # code too (1 with no session, 9 with an unusable token). The signed-in body
+        # is the one state the deployment could not produce — it holds no valid
+        # service-account token — so it is taken from op 2.35.0's own output structs
+        # and the pattern matches the identity field of either account shape.
+        (1, "[ERROR] 2026/08/09 14:36:55 no active session found for account joshuaschultz"),
+        (
+            0,
+            '{"URL":"https://my.1password.com","IntegrationID":"6P4HHXFVGVCE7",'
+            '"UserType":"SERVICE_ACCOUNT"}',
+        ),
     ),
     "jira": (
         # (m) Both states measured on the deployment, minutes apart: signed out
@@ -814,3 +846,28 @@ async def test_a_read_only_bundle_clears_the_federal_egress_gate(
         )
     except ExtensionError as refused:
         assert refused.details["step"] != "manifest"
+
+
+def test_every_bundle_calls_itself_what_its_vendor_calls_it(
+    manifest: ExtensionManifest,
+) -> None:
+    """SPEC-064 — ``onepassword`` is a coordinate, ``1Password`` is a product.
+
+    ``name`` is validated, lowercase, and used for paths, config keys, secret refs
+    and CLI arguments, so it cannot carry a capital or a space — which is why every
+    surface was showing an operator ``onepassword``, ``google_workspace`` and
+    ``microsoft365``. A person recognises a product's own spelling or they do not.
+
+    Asserted per bundle rather than left to review because the fallback is silent:
+    a bundle that forgets renders its coordinate and nothing looks broken.
+    """
+    label = manifest.extension.display_name
+    assert label, f"{manifest.extension.name} declares no display_name"
+    assert label == label.strip()
+    assert manifest.extension.label == label
+
+
+def test_a_display_name_never_replaces_the_coordinate(manifest: ExtensionManifest) -> None:
+    """The two are different things and a surface must not be able to confuse them."""
+    assert manifest.extension.name == manifest.extension.name.lower()
+    assert " " not in manifest.extension.name

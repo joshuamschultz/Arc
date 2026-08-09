@@ -1,10 +1,19 @@
-# 1Password through the official Python SDK, service-account, ONE vault, read-only.
+# 1Password through `op`, the vendor's own CLI — D-588.
 #
-# NOT the `op` CLI, and that is the whole design decision: `op` authenticates a
-# session and every child process it spawns inherits it, so handing an agent the
-# CLI hands it the operator's whole 1Password session. The SDK holds the
-# credential inside this process, and a service-account token is scoped in
-# 1Password itself to the single vault named in `vault_id`.
+# This bundle imported `onepassword-sdk`, a Python package nothing ever installed,
+# so the first thing an operator saw was `No module named 'onepassword'`. D-588 is
+# the general answer: the vendor's CLI first, and `op` is a host prerequisite the
+# director already checks.
+#
+# The header this replaces argued AGAINST `op` on a real security ground, and it
+# deserves an answer rather than deletion. It said: `op` authenticates a session
+# that every child process inherits, so handing an agent the CLI hands it the
+# operator's whole 1Password session. That is true of an INTERACTIVE session, and
+# it is not what happens here. Measured on the deployment, with both an ambient
+# `OP_SESSION_*` variable and `OP_SERVICE_ACCOUNT_TOKEN` set, `op` authenticated
+# as the service account — it reported the service-account credential error, not
+# the session one. The placed token wins, and its scope is whatever 1Password
+# granted the service account: one vault, read only.
 #
 # THREE VERBS, DELIBERATELY SPLIT (D-570). Listing items, reading an item's
 # non-secret fields, and resolving one secret value are three separate grants. An
@@ -13,44 +22,97 @@
 # verb would make every listing a secret disclosure.
 #
 # No write verbs exist here at all. Read-only is not a flag on this bundle; it is
-# what the bundle contains.
-
-# Top-level, ahead of every table: TOML would fold a bare key written after a
-# [header] into that table, and `requires` belongs to the manifest itself.
-# DependencyResolver checks it against every other installed extension.
-requires = ["onepassword-sdk==0.4.1"]
+# what the bundle contains. `op` has `item create`, `item edit` and `item delete`;
+# none of them is declared, so none of them can be called.
 
 [extension]
 name = "onepassword"
-version = "1.0.0"
+display_name = "1Password"
+version = "2.0.0"
 description = "Look up items in a 1Password vault and resolve a secret when one is needed."
-attachment = "native"
+attachment = "cli"
 tier_floor = "personal"
 
-[config.native]
-entrypoint = "arc_ext_onepassword"
+# NO `[artifact]`, and that is a decision rather than an omission. 1Password
+# publishes `op` through its own apt/brew/msi channels and a per-platform zip
+# whose digests it does not publish beside the download, so there is nothing here
+# Arc could pin and verify the way it pins `gh` and `acli`. `arc connector
+# host-setup` therefore answers "pins no downloadable build, so Arc cannot install
+# it" and hands over the steps below — which is the honest outcome, and better
+# than installing bytes against a digest nobody published. The deployment already
+# has op 2.35.0 at /usr/bin/op.
 
-# The SDK, pinned to the sdist digest published on PyPI. Keyed `any` because an
-# sdist is the same bytes everywhere, and carrying no `member` because pip
-# installs it — this bundle declares no [[host_requires]] at all, so there was
-# never a binary for Arc to place.
-[artifact]
-package = "onepassword-sdk"
-version = "0.4.1"
-
-[artifact.platforms.any]
-url = "https://files.pythonhosted.org/packages/df/06/989f5b40e802e11e37c44bc72faabcdd362dcba3392fbfc48be6da49e147/onepassword_sdk-0.4.1.tar.gz"
-sha256 = "4b9224208aa6e35e13bad8534e6521d3abf5ba166ea4efd370fcdc918c4a4d26"
-
+# The credential is a SERVICE ACCOUNT token, and it reaches `op` through the
+# environment — which is what `[secrets.placement]` is for. Not an interactive
+# `op signin`: that needs a TTY and the 1Password desktop app, and this box has
+# neither. `OP_SERVICE_ACCOUNT_TOKEN` is the variable `op` reads it from, and that
+# name is this bundle's knowledge, not core's.
 [[secrets]]
 name = "service_account_token"
 prompt = "1Password service account token. In 1Password open Developer, then Service Accounts, then Create Service Account; give it access to ONE vault and set that access to read only. Copy the token it shows once — it starts with ops_ and is never shown again."
 format = "api_token"
 
+[secrets.placement]
+variable = "OP_SERVICE_ACCOUNT_TOKEN"
+
+# Written into the fixed argv of the two vault verbs as `--vault={vault_id}`, and
+# never offered as a tool argument: which vault this connection may read is the
+# operator's decision and the blast radius of every call. `op` requires it — a
+# service account that omits `--vault` is refused with "a vault query must be
+# provided when this command is called by a service account".
 [[secrets]]
 name = "vault_id"
 prompt = "Which vault this connection may read. Open that vault in 1Password, and the id is the last part of the web address — a 26-character string of letters and digits. Its name works too."
 sensitive = false
+
+# NO `authorize_command`: there is no host command that signs this in. A service
+# account is authorised by pasting its token into Arc, which is what `[[secrets]]`
+# above is, and Arc places it in `op`'s environment on every call. Offering a
+# terminal command here would send an operator to run something that does not
+# exist.
+#
+# The sign-in check is `op whoami`, and it needs the placed token to answer — the
+# check runs in the same environment the verbs do, which is why it reports this
+# connection and not the machine.
+#
+# Measured on the deployment, SIGNED OUT:
+#   $ op whoami --format json
+#   [ERROR] 2026/08/09 14:36:55 no active session found for account joshuaschultz
+#   exit 1, nothing on stdout
+# and with a token that is present but unusable, exit 9 and
+#   [ERROR] failed to DecodeSACredentials: illegal base64 data at input byte 4
+#
+# The signed-in body is the one state this bundle could NOT observe — the
+# deployment holds no valid service-account token yet. `verify_pattern` is
+# therefore taken from op 2.35.0's own output structs rather than from a live run:
+# a service account answers `{"URL":…,"IntegrationID":…,"UserType":"SERVICE_ACCOUNT"}`
+# and a user answers `{"url":…,"user_uuid":…}`. The pattern matches the identity
+# field of either shape, and no refusal above can produce one, so a signed-out host
+# cannot read as green even if a future op starts exiting 0.
+[[host_requires]]
+name = "op"
+minimum_version = "2.35.0"
+verify_command = "op whoami --format json"
+verify_pattern = "UserType|user_uuid|user_type"
+instruction = """
+Install 1Password's CLI on this host, then give Arc a service-account token:
+
+  1. Install op from 1Password's own channel for this machine:
+       Debian/Ubuntu   https://developer.1password.com/docs/cli/get-started/#install
+       macOS           brew install 1password-cli
+     Arc cannot install it for you: 1Password publishes no per-platform digest
+     beside the download, so there is nothing to verify the bytes against.
+  2. op --version                              # confirm it is on PATH
+  3. In 1Password: Developer, then Service Accounts, then Create Service Account.
+     Grant it exactly ONE vault, and set that vault's access to READ ONLY.
+  4. Copy the token it shows you once. It starts with ops_.
+  5. Paste it into Arc when you connect this bundle, together with the vault.
+
+Do NOT run `op signin` for this. That is an interactive session for a person at a
+terminal, it needs the 1Password desktop app, and Arc would not use it: every call
+this connection makes carries the service-account token in its own environment,
+which is what keeps the agent's reach to the one vault you granted in step 3.
+"""
 
 [tools]
 allow = ["onepassword_list_items", "onepassword_get_item", "onepassword_resolve_secret"]
@@ -86,3 +148,55 @@ capability_tags = ["user_profile"]
 # `outbound` to catch.
 [approval]
 default = "all"
+
+[config.cli]
+binary = "op"
+probe_argv = ["--version"]
+install_instruction = "See [[host_requires]] in this bundle's extension.toml."
+
+[[config.cli.commands]]
+tool = "onepassword_list_items"
+argv = ["item", "list", "--format=json", "--vault={vault_id}"]
+description = "List the items in the connected vault — titles and ids only, never a value."
+classification = "read_only"
+capability_tags = ["user_profile"]
+
+# `--reveal` is absent, and its absence is the whole difference between this verb
+# and the next one. Without it `op` returns concealed fields as their labels with
+# the values withheld, which is exactly the split D-570 asks for: an agent can see
+# that an item has a password without being given it.
+[[config.cli.commands]]
+tool = "onepassword_get_item"
+argv = ["item", "get", "--format=json", "--vault={vault_id}", "--"]
+description = "Read one item by title or id. Secret fields are named, not returned."
+classification = "read_only"
+capability_tags = ["user_profile"]
+
+[[config.cli.commands.arguments]]
+name = "item"
+description = "The item's title or its id, as onepassword_list_items reported it."
+
+# `op read` is the only declared command in any shipped bundle whose output is not
+# JSON, and it cannot be: it has no `--format` flag at all, because its entire
+# answer IS the secret. `output = "text"` is how a manifest says so, and only a
+# command that declares it is exempt from the JSON check — every other verb here
+# still gets it.
+#
+# The reference names its own vault, so unlike the two verbs above this one cannot
+# be pinned to `{vault_id}` in argv. It is not unbounded: the service-account token
+# is scoped in 1Password to the single vault the operator granted in step 3, so a
+# reference naming another vault is refused by 1Password itself. That boundary is
+# stronger than the one it replaces, because it also binds anything else that ever
+# holds this token — but it is enforced there, not here, and an operator who grants
+# the service account a second vault has widened this connection.
+[[config.cli.commands]]
+tool = "onepassword_resolve_secret"
+argv = ["read", "--"]
+output = "text"
+description = "Resolve one op://vault/item/field reference to its value. This returns a live credential."
+classification = "read_only"
+capability_tags = ["user_profile"]
+
+[[config.cli.commands.arguments]]
+name = "reference"
+description = "A secret reference, e.g. op://Engineering/Deploy key/password."

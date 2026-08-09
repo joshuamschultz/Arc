@@ -557,6 +557,9 @@ def test_install_goes_through_the_real_path_and_persists(world: Path) -> None:
         {
             "instance": _INSTANCE,
             "extension": _EXTENSION,
+            # The bundle this test writes declares no display_name, so the row
+            # falls back to the coordinate — never to a blank.
+            "extension_display_name": _EXTENSION,
             "approval": "outbound",
             "agents": [_AGENT],
         }

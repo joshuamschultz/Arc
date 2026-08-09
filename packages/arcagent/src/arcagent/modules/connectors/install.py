@@ -59,12 +59,7 @@ from arcagent.extension.field_formats import normalize
 from arcagent.extension.grants import Connection, ConnectionRegistry
 from arcagent.extension.host import HostPrerequisiteDirector, HostVerdict
 from arcagent.extension.loader import ExtensionLoader
-from arcagent.extension.manifest import (
-    ExtensionManifest,
-    SecretRequirement,
-    load_manifest,
-    placeholders,
-)
+from arcagent.extension.manifest import ExtensionManifest, SecretRequirement, load_manifest
 from arcagent.extension.native_attachment import NativeAttachment
 from arcagent.extension.secrets import Secret, SecretRef, SecretStore
 from arcagent.extension.state import ConnectionRecord, ConnectionStateStore
@@ -497,6 +492,23 @@ def placement_environment(
     }
 
 
+def visible_values(manifest: ExtensionManifest, secrets: Mapping[str, Secret]) -> dict[str, str]:
+    """The bundle's non-sensitive fields, for the argv tokens its manifest names.
+
+    Only ``sensitive = false`` fields, and that is the whole safety rule rather than a
+    convenience: these values are written into a command line, and a command line is
+    readable by every other user on the box. A credential reaches a child through
+    ``[secrets.placement]`` — its environment — or through a login's stdin, and never
+    through here. The manifest parser refuses a placeholder naming a sensitive field,
+    so a bundle cannot ask; this makes it so a bundle could not be served if it did.
+    """
+    return {
+        declared.name: secrets[declared.name].reveal()
+        for declared in manifest.secrets
+        if not declared.sensitive and declared.name in secrets
+    }
+
+
 def shape_supplied(plan: ConnectorPlan, values: Mapping[str, str]) -> dict[str, str]:
     """Put every supplied value into the shape its bundle declared for that field.
 
@@ -532,17 +544,15 @@ def _unplaced_secrets(manifest: ExtensionManifest) -> list[str]:
     would store a credential and deliver it nowhere — a connection that probes green
     and 401s on the first real verb.
 
-    A field a ``token_command`` names is the exception, and it is not a loophole: that
-    command carries the field on its own argv and the binary writes it into its own
-    configuration, which is why ``acli`` reads a site and an address from no
-    environment variable at all. Refusing those would leave a bundle unable to declare
-    the very fields its sign-in cannot run without.
+    A field some declared command NAMES is the exception, and it is not a loophole:
+    that command carries the field on its own argv or stdin, which is why one CLI
+    reads its site and address from no environment variable at all and another
+    requires its vault on every call. Refusing those would leave a bundle unable to
+    declare the very fields its commands cannot run without. The manifest parser
+    already refuses a command naming a SENSITIVE field, so nothing exempted here can
+    be a credential.
     """
-    delivered = {
-        field
-        for required in manifest.host_requires
-        for field in placeholders(required.token_command)
-    }
+    delivered = manifest.fields_named_by_commands()
     return [
         declared.name
         for declared in manifest.secrets
@@ -595,6 +605,7 @@ def build_attachment(
             install_instruction=declared.install_instruction,
             resilience=declared.resilience,
             env=placement_environment(manifest, secrets),
+            values=visible_values(manifest, secrets),
         )
     raise _refuse("probe", f"unknown attachment kind {kind!r}", attachment=kind)
 

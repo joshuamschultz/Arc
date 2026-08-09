@@ -231,13 +231,25 @@ def _refused(status: int, base_url: str) -> str:
     a perfectly valid token can still be the wrong one, so both fields are named.
     403 means the sign-in worked and the account may not use this API. 404 means
     the address is not a Confluence site, which is a third field entirely.
+
+    The 401 also names the THIRD thing it can now mean, because that one cost an
+    operator an afternoon on the sibling connector: Atlassian has begun issuing
+    SCOPED API tokens, and a scoped token is refused at ``{site}.atlassian.net``
+    however correct it is. It only works against
+    ``api.atlassian.com/ex/confluence/{cloudId}``, which this adapter does not yet
+    speak. Sending someone to reissue a perfectly good token is the worst possible
+    instruction, so the message says which kind of token this address accepts.
     """
     if status == 401:
         return (
-            "Atlassian refused the email and the API token together. They have to belong "
-            "to the same account: check the email is the one you sign in to Atlassian "
-            "with, and if the token may have been revoked, create a new one at "
-            "id.atlassian.com/manage-profile/security/api-tokens."
+            "Atlassian refused the email and the API token together. Three things do "
+            "this. The email may not be the one you sign in to Atlassian with — they "
+            "have to be the same account. The token may have been revoked, in which "
+            "case create a new one at id.atlassian.com/manage-profile/security/"
+            "api-tokens. Or it may be one of Atlassian's newer SCOPED tokens: this "
+            "connection can only use an UNSCOPED one, because a scoped token is "
+            "accepted only at api.atlassian.com and not at your site address. When "
+            "you create the token, do not add scopes to it."
         )
     if status == 403:
         return (

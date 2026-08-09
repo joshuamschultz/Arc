@@ -134,11 +134,11 @@ export function ConnectorSecretsSheet({
       >
         <SheetHeader className="border-b border-border px-5 py-4">
           <SheetTitle className="text-sm">
-            {rotating ? `Re-authenticate ${instance}` : `Connect ${bundle.name}`}
+            {rotating ? `Re-authenticate ${instance}` : `Connect ${bundle.display_name}`}
           </SheetTitle>
           <SheetDescription>
             {rotating
-              ? `Supply fresh credentials for ${bundle.name}. The old ones are replaced.`
+              ? `Supply fresh credentials for ${bundle.display_name}. The old ones are replaced.`
               : bundle.description}
           </SheetDescription>
         </SheetHeader>
@@ -150,7 +150,7 @@ export function ConnectorSecretsSheet({
           )}
           {(unsatisfied.length > 0 || bundle.host_requires.length > 0) && (
             <HostSetupPanel
-              extension={bundle.name}
+              extension={bundle.display_name}
               requirements={unsatisfied.length > 0 ? unsatisfied : bundle.host_requires}
               operatorMode={operatorMode}
               blocking={unsatisfied.length > 0}
@@ -172,7 +172,7 @@ export function ConnectorSecretsSheet({
                 autoComplete="off"
               />
               <p className="text-[11px] text-muted-foreground">
-                What this account of {bundle.name} is called. One deployment can hold several.
+                What this account of {bundle.display_name} is called. One deployment can hold several.
               </p>
             </div>
           )}
@@ -248,7 +248,7 @@ export function ConnectorSecretsSheet({
           ))}
           {bundle.secrets.length === 0 && (
             <p className="rounded-md border border-border bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground">
-              There is nothing to type here. {bundle.name} keeps its own sign-in on this computer,
+              There is nothing to type here. {bundle.display_name} keeps its own sign-in on this computer,
               so Arc just points at it. Use{' '}
               <span className="font-medium text-foreground">Sign in</span> on the connection row to
               check or renew that sign-in.

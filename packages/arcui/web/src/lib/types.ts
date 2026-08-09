@@ -806,7 +806,11 @@ export interface ConnectorTool {
 }
 
 export interface CatalogBundle {
+  /** The coordinate: what every request is keyed by, and what a path is built from. */
   name: string
+  /** What the product calls itself — `1Password`, not `onepassword`. Never blank:
+   *  a bundle declaring none falls back to the coordinate server-side. */
+  display_name: string
   version: string
   description: string
   attachment: string
@@ -836,6 +840,8 @@ export interface ConnectorCatalogResponse {
 export interface ConnectorInstance {
   instance: string
   extension: string
+  /** What to call `extension` in front of a person. Falls back to the coordinate. */
+  extension_display_name: string
   approval: string
   agents: string[]
 }
@@ -870,6 +876,7 @@ export interface ConnectorInstallResponse {
 export interface ConnectorAuthorizationResponse {
   instance: string
   extension: string
+  extension_display_name: string
   credentials: ConnectorSecret[]
   reachable: boolean
   detail: string
