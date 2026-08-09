@@ -785,9 +785,17 @@ export interface KeyWriteResponse {
 }
 
 /** A credential a bundle declares; `prompt` is the operator-facing ask. */
+/** One value the connect form asks for. `sensitive` is the bundle's own word for
+ *  whether it is a credential: an API token is, a base URL and an account address
+ *  are not, and masking those hid the one thing an operator needed to check.
+ *  It defaults to true server-side, so a field that says nothing stays masked.
+ *  `value` is what is configured now, and the server populates it only for a
+ *  non-sensitive field — a credential is never read back out of the store. */
 export interface ConnectorSecret {
   name: string
   prompt: string
+  sensitive: boolean
+  value: string
 }
 
 /** A binary (or similar) the bundle needs on this host. `satisfied` is this
@@ -850,6 +858,19 @@ export interface ConnectorInstallResponse {
 }
 
 /** Rotation result — field names only, never values. */
+/** How one connected instance is authorised. `credentials` is the same field list
+ *  the catalog carries, except that a non-sensitive field arrives with the value
+ *  that is configured now — which is what lets a rotation form show an operator the
+ *  URL they already set instead of making them retype it blind. A sensitive field
+ *  always arrives empty; the server never reads one out of the store. */
+export interface ConnectorAuthorizationResponse {
+  instance: string
+  extension: string
+  credentials: ConnectorSecret[]
+  reachable: boolean
+  detail: string
+}
+
 export interface ConnectorAuthResponse {
   instance: string
   updated: string[]

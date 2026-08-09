@@ -10,6 +10,7 @@ import type {
   ConnectorApproveResponse,
   ConnectorAuthResponse,
   ConnectorAuthStatusResponse,
+  ConnectorAuthorizationResponse,
   ConnectorCatalogResponse,
   ConnectorDoctorResponse,
   ConnectorInstallResponse,
@@ -859,6 +860,22 @@ const authStatusKey = (agentId: string, instance: string) => [
   instance,
   'auth-status',
 ]
+
+// What one connected instance was configured with. Read when a rotation form
+// opens, so the non-sensitive fields can be shown filled in rather than blank.
+// Nothing here can carry a credential: the server populates a value only for a
+// field the bundle declared non-sensitive.
+export const useConnectorAuthorization = (agentId: string, instance: string, enabled: boolean) =>
+  useQuery<ConnectorAuthorizationResponse>({
+    queryKey: ['agents', agentId, 'connectors', instance, 'auth'],
+    queryFn: ({ signal }) =>
+      apiGet(
+        `/api/agents/${encodeURIComponent(agentId)}/connectors/${encodeURIComponent(instance)}/auth`,
+        signal,
+      ),
+    enabled,
+    retry: false,
+  })
 
 // Is the host binary behind this connection signed in? Only meaningful for
 // bundles that declare no secrets — those hold their own credential.

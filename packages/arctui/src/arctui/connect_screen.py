@@ -17,6 +17,9 @@ change is the operator's decision and the TUI never makes it (REQ-262).
 read once, handed to the install, and the field is cleared. It never reaches the
 transcript, a log line, an exception message, or the composer's command history —
 which is the reason a modal exists rather than ``/connect <extension> <token>``.
+Only fields the bundle declares sensitive are masked: a base URL typed behind dots
+is a typo nobody can see until the probe fails, and there is no secret there to
+protect.
 """
 
 from __future__ import annotations
@@ -236,12 +239,16 @@ class ConnectScreen(ModalScreen[ConnectOutcome | None]):
         await self._ask_for_credentials(plan)
 
     async def _ask_for_credentials(self, plan: ConnectorPlan) -> None:
-        """Mount one masked field per declared credential and arm the install."""
+        """Mount one field per declared value, masking the ones that are credentials.
+
+        The manifest decides which, per field. Masking a base URL protects nothing
+        and hides the only thing an operator can check before the probe runs.
+        """
         container = self.query_one("#connect-secrets", Vertical)
         for declared in plan.secrets:
             field = Input(
                 placeholder=declared.prompt or f"Value for {declared.name}",
-                password=True,
+                password=declared.sensitive,
                 id=f"connect-secret-{_ID_UNSAFE.sub('-', declared.name)}",
             )
             self._fields.append((declared.name, field))
@@ -251,7 +258,7 @@ class ConnectScreen(ModalScreen[ConnectOutcome | None]):
         self.query_one("#connect-bundles", OptionList).disabled = True
         self.query_one("#connect-instance", Input).disabled = True
         self.query_one("#connect-install", Button).disabled = False
-        self._status("Fill the fields, then Connect. Values are hidden and never shown again.")
+        self._status("Fill the fields, then Connect. Credentials are hidden and not shown again.")
 
     def _start_install(self) -> None:
         """Read the fields once, clear them, and hand the values to the worker."""

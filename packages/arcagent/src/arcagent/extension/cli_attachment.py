@@ -29,7 +29,7 @@ import asyncio
 import json
 import logging
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -44,6 +44,8 @@ from arcagent.extension.attachment import (
     ToolResult,
     ToolSpec,
 )
+from arcagent.extension.environment import scrubbed_environment
+from arcagent.extension.secrets import Secret, redact
 
 _logger = logging.getLogger(__name__)
 
@@ -188,12 +190,17 @@ class CliAttachment:
         probe_argv: Sequence[str] = ("--version",),
         install_instruction: str = "",
         resilience: CliResilience | None = None,
+        env: Mapping[str, Secret] | None = None,
     ) -> None:
         self._binary = binary
         self._commands = {command.tool: command for command in commands}
         self._probe_argv = list(probe_argv)
         self._install_instruction = install_instruction
         self._resilience = resilience or CliResilience()
+        # The credentials this bundle's ``[secrets.placement]`` entries asked for, kept
+        # wrapped so a traceback or a ``vars()`` dump of this object renders
+        # ``Secret(***)``. They are revealed at the spawn and nowhere else.
+        self._env = dict(env or {})
         self._breaker = _CircuitBreaker(
             self._resilience.failure_threshold, self._resilience.reset_after_seconds
         )
@@ -225,10 +232,12 @@ class CliAttachment:
         if returncode != 0:
             return ProbeResult(
                 reachable=False,
-                detail=f"{self._binary} exited {returncode}: {stderr or stdout}",
+                detail=self._redacted(f"{self._binary} exited {returncode}: {stderr or stdout}"),
             )
         return ProbeResult(
-            reachable=True, tools=await self.describe_tools(), detail=(stdout or stderr).strip()
+            reachable=True,
+            tools=await self.describe_tools(),
+            detail=self._redacted((stdout or stderr).strip()),
         )
 
     async def invoke(self, tool: str, args: dict[str, Any]) -> ToolResult:
@@ -275,6 +284,11 @@ class CliAttachment:
         """
         process = await asyncio.create_subprocess_exec(
             *argv,
+            # The one place a placed credential is unwrapped: straight into the child's
+            # environment, never onto argv, which every other user on the box can read.
+            env=scrubbed_environment(
+                {name: secret.reveal() for name, secret in self._env.items()}
+            ),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -319,10 +333,21 @@ class CliAttachment:
 
     # --- results -------------------------------------------------------------
 
+    def _redacted(self, text: str) -> str:
+        """The binary's own words with any placed credential taken back out.
+
+        Applied to everything this class renders, because several CLIs echo the
+        credential they were given into their error output — and that output is
+        logged, shown to an operator, and put in front of the model as a tool
+        result (LLM02).
+        """
+        return redact(text, (secret.reveal() for secret in self._env.values()))
+
     def _result(
         self, command: CliCommand, returncode: int, stdout: str, stderr: str
     ) -> ToolResult:
         """Turn one finished run into a result the agent can act on."""
+        stdout, stderr = self._redacted(stdout), self._redacted(stderr)
         if stderr:
             # Countless CLIs write progress and warnings here on a perfectly good run,
             # so stderr is captured and surfaced to the operator but never itself

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Sheet,
   SheetContent,
@@ -10,13 +10,19 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { HostSetupPanel } from '@/components/host-setup-panel'
 import { useOperatorMode } from '@/hooks/use-operator-mode'
-import { useInstallConnector, useReauthConnector } from '@/lib/queries'
+import {
+  useConnectorAuthorization,
+  useInstallConnector,
+  useReauthConnector,
+} from '@/lib/queries'
 import { ApiError } from '@/lib/api'
 import { asUnsatisfiedHost, type CatalogBundle, type HostRequirement } from '@/lib/types'
 
-// A connector's credentials, one masked field per declared secret. Every input
-// is a password field with autocomplete off; no value is ever rendered back,
-// put in a URL, or kept after the request lands.
+// A connector's connect form: one input per declared field. The bundle says which
+// of them are credentials, and only those are masked — a base URL rendered as
+// password dots protects nothing and hides the one thing an operator needs to
+// check. A sensitive value is never rendered back, put in a URL, or kept after the
+// request lands; a non-sensitive one may be shown, because it is not a secret.
 export function ConnectorSecretsSheet({
   agentId,
   bundle,
@@ -45,6 +51,26 @@ export function ConnectorSecretsSheet({
   const busy = install.isPending || reauth.isPending
   const complete = bundle.secrets.every((s) => (values[s.name] ?? '').length > 0)
   const canSubmit = complete && (rotating || name.trim().length > 0) && !busy
+
+  // On a rotation, fill the non-sensitive fields with what is already configured.
+  // Only those come back with a value — a credential is never read out of the
+  // store — so this can prefill a base URL and can never prefill a token. Without
+  // it an operator rotating a token must retype a URL they cannot see and never
+  // changed, and one typo in it fails the probe with nothing to look at.
+  const configured = useConnectorAuthorization(agentId, instance ?? '', rotating && open)
+  useEffect(() => {
+    const known = configured.data?.credentials
+    if (!known) return
+    setValues((current) => {
+      const seeded = { ...current }
+      for (const field of known) {
+        if (!field.sensitive && field.value && seeded[field.name] === undefined) {
+          seeded[field.name] = field.value
+        }
+      }
+      return seeded
+    })
+  }, [configured.data])
 
   const clear = () => {
     setValues({})
@@ -145,12 +171,12 @@ export function ConnectorSecretsSheet({
               </label>
               <Input
                 id={`connector-secret-${s.name}`}
-                type="password"
+                type={s.sensitive ? 'password' : 'text'}
                 autoComplete="off"
                 spellCheck={false}
                 value={values[s.name] ?? ''}
                 onChange={(e) => setValues({ ...values, [s.name]: e.target.value })}
-                placeholder="••••••••"
+                placeholder={s.sensitive ? '••••••••' : 'https://…'}
               />
               <p className="text-[11px] text-muted-foreground">{s.prompt}</p>
             </div>

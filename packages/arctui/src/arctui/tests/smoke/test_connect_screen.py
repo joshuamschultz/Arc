@@ -57,6 +57,14 @@ entrypoint = "acme_tui_attachment"
 name = "api_token"
 prompt = "Paste the Acme API token"
 
+# Configuration, not a credential — declared here so the modal's masking branch is
+# exercised in BOTH directions. A suite where every field is sensitive passes
+# against a screen that masks unconditionally, which is the shipped defect.
+[[secrets]]
+name = "base_url"
+prompt = "Your Acme web address, as it appears in the browser bar"
+sensitive = false
+
 [tools]
 allow = ["ping"]
 
@@ -205,6 +213,12 @@ async def _fill_and_install(
     field = screen.query_one("#connect-secret-api_token", Input)
     assert field.password is True, "a credential must be collected into a masked field"
     field.value = token
+
+    # The other direction: a base URL typed behind password dots is a typo nobody
+    # can see until the probe fails, and there is no secret there to protect.
+    configuration = screen.query_one("#connect-secret-base_url", Input)
+    assert configuration.password is False, "configuration must be visible as it is typed"
+    configuration.value = "https://acme.example.net"
 
     screen.query_one("#connect-install", Button).press()
     await pilot.pause()

@@ -205,7 +205,11 @@ def _catalog_entry(
         tier_floor=entry.tier_floor,
         approval_default=entry.approval_default,
         secrets=[
-            ConnectorSecretField(name=declared.name, prompt=declared.prompt)
+            # No ``value`` here and there could not be one: the catalog describes a
+            # bundle nobody has connected yet, so there is nothing configured to show.
+            ConnectorSecretField(
+                name=declared.name, prompt=declared.prompt, sensitive=declared.sensitive
+            )
             for declared in entry.secrets
         ],
         host_requires=[
@@ -378,7 +382,15 @@ async def get_connector_auth(request: Request) -> JSONResponse:
             instance=auth.instance,
             extension=auth.extension,
             credentials=[
-                ConnectorSecretField(name=required.name, prompt=required.prompt)
+                # ``value`` is whatever the seam resolved, which is the empty string
+                # for every sensitive field — this route neither decides that nor can
+                # ask for anything else.
+                ConnectorSecretField(
+                    name=required.name,
+                    prompt=required.prompt,
+                    sensitive=required.sensitive,
+                    value=required.value,
+                )
                 for required in auth.credentials
             ],
             hosts=[

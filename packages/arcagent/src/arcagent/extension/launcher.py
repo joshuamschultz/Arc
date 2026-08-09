@@ -15,12 +15,10 @@ processes with no host setup at all (Composability, audience 2). Stricter confin
 
 Two controls ride the same single path:
 
-* **Environment scrubbing (REQ-273).** ``LD_*`` and ``DYLD_*`` let an attacker load a
-  shared object into a process Arc spawned on an extension's behalf; ``PYTHONSTARTUP``
-  and ``NODE_OPTIONS`` do the same one layer up, inside the interpreter the extension's
-  own runtime is about to start. The child is given an explicitly rebuilt environment,
-  and the scrub is applied *after* the manifest's own variables are merged in, so a
-  bundle cannot smuggle a scrubbed name back through its own ``env`` table.
+* **Environment scrubbing (REQ-273).** Applied through
+  :func:`~arcagent.extension.environment.scrubbed_environment`, which every path that
+  starts a child on an extension's behalf shares — this launcher, the CLI attachment,
+  and the sign-in check — so a variable refused on one is refused on all three.
 * **Artifact pinning (REQ-290).** A definition naming a third-party artifact is
   verified against its pin before *every* start, not once at install. With no verifier
   configured, such a definition is refused rather than waved through.
@@ -33,7 +31,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -42,17 +39,10 @@ from typing import Protocol, runtime_checkable
 
 from arcagent.core.errors import ExtensionError
 from arcagent.core.tier import Tier
+from arcagent.extension.environment import scrubbed_environment
 from arcagent.extension.pin import ArtifactPinVerifier, PinnedArtifact
 
 _logger = logging.getLogger("arcagent.extension.launcher")
-
-#: Dynamic-loader families. Matched by prefix rather than by name: the loader reads a
-#: whole family, and a fixed list goes stale the moment a new member is added.
-_LOADER_PREFIXES = ("LD_", "DYLD_")
-
-#: Interpreter-startup hooks — each one executes attacker-chosen code before the
-#: extension's own entry point runs.
-_INTERPRETER_VARIABLES = frozenset({"PYTHONSTARTUP", "NODE_OPTIONS"})
 
 #: How long an unused process is kept before :meth:`ProcessLauncher.reap_idle` stops it.
 DEFAULT_IDLE_TIMEOUT_SECONDS = 300.0
@@ -301,29 +291,6 @@ class ProcessLauncher:
             await process.wait()
 
 
-def scrubbed_environment(declared: Mapping[str, str]) -> dict[str, str]:
-    """Build the child's environment: inherit, merge the manifest's, then scrub (REQ-273).
-
-    The scrub runs last on purpose. Scrubbing the inherited environment and then merging
-    a manifest's own table would let a bundle reintroduce exactly the variable that was
-    just removed.
-
-    Args:
-        declared: The variables the manifest asked for.
-
-    Returns:
-        The environment the child is actually given — never inherited implicitly, so a
-        variable that survives here is one this function chose to keep.
-    """
-    merged = {**os.environ, **declared}
-    return {name: value for name, value in merged.items() if not _is_scrubbed(name)}
-
-
-def _is_scrubbed(name: str) -> bool:
-    """True for a loader or interpreter-startup variable."""
-    return name.startswith(_LOADER_PREFIXES) or name in _INTERPRETER_VARIABLES
-
-
 __all__ = [
     "DEFAULT_IDLE_TIMEOUT_SECONDS",
     "NoConfinement",
@@ -333,5 +300,4 @@ __all__ = [
     "SandboxPolicy",
     "register_sandbox_policy",
     "sandbox_policy_for",
-    "scrubbed_environment",
 ]

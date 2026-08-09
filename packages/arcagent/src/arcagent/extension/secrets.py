@@ -34,6 +34,7 @@ import asyncio
 import logging
 import os
 import stat
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -54,6 +55,27 @@ _ENV_PREFIX = "ARC_SECRET"
 
 #: Root of the vault namespace this store owns.
 _VAULT_ROOT = "arc/connectors"
+
+
+#: What a credential is replaced with wherever a third party's own words are rendered.
+REDACTED = "***"
+
+
+def redact(text: str, values: Iterable[str]) -> str:
+    """Take known credential values back out of text Arc did not write.
+
+    Not belt-and-braces. Every place this is used renders the output of a program
+    Arc started on an extension's behalf, and several CLIs echo the credential they
+    were given straight back — into a line that is logged, shown in a browser, and
+    (for a tool result) put in front of a model (LLM02).
+
+    An empty value is skipped: replacing ``""`` would insert the placeholder between
+    every character.
+    """
+    for value in values:
+        if value:
+            text = text.replace(value, REDACTED)
+    return text
 
 
 class Secret:
@@ -405,6 +427,7 @@ def select_secret_backend(
 
 
 __all__ = [
+    "REDACTED",
     "EnvFile",
     "LocalFileSecretBackend",
     "Secret",
@@ -413,5 +436,6 @@ __all__ = [
     "SecretStore",
     "VaultSecretBackend",
     "WritableVault",
+    "redact",
     "select_secret_backend",
 ]

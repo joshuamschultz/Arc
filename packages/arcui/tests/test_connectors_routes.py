@@ -435,7 +435,11 @@ def test_catalog_lists_a_readable_bundle(world: Path, monkeypatch: pytest.Monkey
     assert entry["description"] == "Open and read Acme tickets."
     assert entry["attachment"] == "native"
     assert entry["approval_default"] == "outbound"
-    assert entry["secrets"] == [{"name": "api_token", "prompt": "Paste the Acme API token"}]
+    assert entry["secrets"] == [
+        # ``sensitive`` defaults true and the catalog carries no value: nothing is
+        # connected yet, so there is nothing configured to read back.
+        {"name": "api_token", "prompt": "Paste the Acme API token", "sensitive": True, "value": ""}
+    ]
     assert entry["root"] == str(fleet)
     assert body["unreadable"] == []
 

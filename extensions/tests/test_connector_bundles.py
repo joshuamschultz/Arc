@@ -36,6 +36,7 @@ from arcagent.core.errors import ExtensionError
 from arcagent.core.session_internal.capability_ledger import TAG_TO_LEGS
 from arcagent.core.tier import Tier
 from arcagent.extension.cli_attachment import CliCommand
+from arcagent.extension.field_formats import normalize
 from arcagent.extension.host_login import authorization_verdict
 from arcagent.extension.manifest import ExtensionManifest, load_manifest
 from arcagent.extension.platforms import ANY_PLATFORM
@@ -258,6 +259,128 @@ def test_a_bundle_arc_holds_no_credential_for_names_the_command_that_authorises_
         f"{manifest.extension.name} declares no [[secrets]] and no authorize_command, "
         f"so nothing can tell an operator how to authorise it"
     )
+
+
+def test_every_credential_a_spawning_bundle_declares_has_somewhere_to_go(
+    manifest: ExtensionManifest,
+) -> None:
+    """A stored credential that reaches no program is the defect this seam closed.
+
+    A ``native`` bundle receives its credentials in its own adapter code, so it
+    needs no placement. Every other kind reaches its service by starting a program,
+    and a program takes a credential from its environment or from nowhere — which
+    is why ``build_attachment`` refused a ``cli`` bundle declaring one at all
+    before ``[secrets.placement]`` existed.
+
+    Asserted over the manifests rather than only in the refusal, because the
+    refusal fires at install: a bundle shipped without a placement would be
+    discovered by an operator halfway through connecting it.
+    """
+    if manifest.extension.attachment == "native":
+        return
+    unplaced = [declared.name for declared in manifest.secrets if declared.placement is None]
+    assert not unplaced, (
+        f"{manifest.extension.name} attaches as {manifest.extension.attachment!r} and "
+        f"declares credential(s) {unplaced} with no [secrets.placement], so nothing "
+        f"would deliver them to the program that needs them"
+    )
+
+
+def test_every_credential_is_prompted_for_in_words_a_person_can_follow(
+    manifest: ExtensionManifest,
+) -> None:
+    """The prompt IS the interface: it is the only text beside the paste field.
+
+    A field labelled "Entra ID tenant ID" tells a non-technical operator nothing
+    about where to find one, and every connector that stalled half-connected
+    stalled there. A ``[[secrets]]`` entry is by definition something Arc asks a
+    person for, so its prompt has to name the screen it comes from and say what to
+    click — which no length check can prove, but a one-clause label always fails.
+    """
+    for declared in manifest.secrets:
+        assert len(declared.prompt) > 80, (
+            f"{manifest.extension.name}.{declared.name} prompts with "
+            f"{declared.prompt!r}, which does not tell anyone where to get one"
+        )
+
+
+#: Word fragments that mean a field carries a credential. A bundle may decide that
+#: its base URL is not secret; it may not decide that about something called a
+#: token. Kept in the test suite rather than in core on purpose — core must hold no
+#: opinion about what a service's fields are called (REQ-280) — but the reverse
+#: mistake is the catastrophic one, so it is caught before a bundle ships.
+_CREDENTIAL_WORDS = ("token", "secret", "password", "passphrase", "credential", "api_key")
+
+
+def test_nothing_that_reads_like_a_credential_is_declared_visible(
+    manifest: ExtensionManifest,
+) -> None:
+    """``sensitive = false`` is an opt-out, and it must never be taken on a token.
+
+    The flag exists so a base URL is not hidden behind password dots. Applied to a
+    credential it does the opposite of its purpose: it un-masks the input, and it
+    opens the read-back path, so the value would come back on a response.
+    """
+    for declared in manifest.secrets:
+        if declared.sensitive:
+            continue
+        offending = [word for word in _CREDENTIAL_WORDS if word in declared.name.lower()]
+        assert not offending, (
+            f"{manifest.extension.name}.{declared.name} is declared non-sensitive but its "
+            f"name says it is a credential ({offending[0]!r})"
+        )
+
+
+def test_a_bundle_that_asks_for_values_asks_for_at_least_one_credential(
+    manifest: ExtensionManifest,
+) -> None:
+    """Otherwise the opt-out was taken on the field that authorises the connection.
+
+    ``[[secrets]]`` exists so Arc can authenticate. A bundle whose every field is
+    configuration has nothing to authenticate with — which in practice means the
+    credential is in that list and was marked visible by mistake.
+    """
+    if not manifest.secrets:
+        return
+    assert any(declared.sensitive for declared in manifest.secrets), (
+        f"{manifest.extension.name} declares only non-sensitive fields, so nothing it "
+        f"asks for could authorise the connection"
+    )
+
+
+#: The address the operator really typed, and what it must become. A bundle asking
+#: for a web address must accept it: a bare hostname is what a browser bar shows a
+#: person, and the failure it produced — httpx's "Request URL is missing an
+#: 'http://' or 'https://' protocol", surfaced raw at probe time — is unactionable
+#: for the person who typed it.
+_TYPED_ADDRESS = "ctgfederal.com.atlassian.net"
+
+
+def test_a_bundle_asking_for_a_web_address_accepts_one_typed_by_a_person(
+    manifest: ExtensionManifest,
+) -> None:
+    """Driven through the shipped normaliser, with the reported input.
+
+    Asserted per bundle rather than once on the function, because the defect was a
+    bundle that asked for a URL and declared no shape for it. A field NAME ending in
+    ``_url`` / ``_uri`` / ``_endpoint`` and declaring no format fails here — the name
+    is the bundle author's own word for what they are asking for, and it does not
+    catch a field like ``vault_id`` whose value is merely found in an address.
+    """
+    for declared in manifest.secrets:
+        if declared.format != "https_url":
+            assert not declared.name.lower().endswith(("_url", "_uri", "_endpoint")), (
+                f"{manifest.extension.name}.{declared.name} asks for a web address but "
+                f"declares no format, so a bare hostname would reach the connector unusable"
+            )
+            continue
+        assert normalize(declared.format, declared.name, _TYPED_ADDRESS) == (
+            f"https://{_TYPED_ADDRESS}"
+        )
+        assert not declared.sensitive, (
+            f"{manifest.extension.name}.{declared.name} is a web address, and hiding it "
+            f"behind password dots is what stopped an operator seeing their own typo"
+        )
 
 
 def test_a_sign_in_check_invokes_the_binary_it_belongs_to(
