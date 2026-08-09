@@ -105,6 +105,25 @@ async def _index(request: Request) -> HTMLResponse:
     )
 
 
+async def _spa_fallback(request: Request) -> Response:
+    """Serve the dashboard shell for any path the browser router owns.
+
+    The routes live in the React router, so ``/connections`` exists in a loaded
+    page and nowhere on the server. Without this, opening or refreshing a deep
+    link — or sharing one — answered 404, and the only way in was the home page
+    followed by clicking. An operator reasonably read that as the page being
+    broken.
+
+    Registered last, so every real route wins first. ``/api`` and ``/ws`` are
+    excluded because a mistyped API path must stay a 404 an integrator can see,
+    not HTML that parses as success.
+    """
+    path = request.url.path
+    if path.startswith(("/api/", "/ws/")):
+        return JSONResponse({"error": "Not Found"}, status_code=404)
+    return await _index(request)
+
+
 async def _service_worker(request: Request) -> Response:
     """Serve sw.js with `{{ARC_BUILD_ID}}` substituted at startup.
 
@@ -434,6 +453,10 @@ def create_app(
                             "lifespan: error disconnecting adapter %s",
                             getattr(adapter, "name", "unknown"),
                         )
+
+    # Last, so it catches only what no real route claimed: the browser router's
+    # own paths, which must load directly and not just via in-app navigation.
+    routes.append(Route("/{spa_path:path}", _spa_fallback))
 
     app = Starlette(routes=routes, lifespan=lifespan)
     app.add_middleware(AuthMiddleware, auth_config=auth)

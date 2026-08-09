@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from starlette.testclient import TestClient
+
 from arcui.server import create_app
 
 
@@ -117,3 +119,51 @@ def test_roster_provider_overridable_by_tests():
 
     app.state.roster_provider = stub
     assert app.state.roster_provider() == [sentinel]
+
+
+# ---------------------------------------------------------------------------
+# Deep links — every path the browser router owns must also load directly
+# ---------------------------------------------------------------------------
+
+
+def _client() -> TestClient:
+    from arcui.auth import AuthConfig
+
+    auth = AuthConfig({"viewer_token": "viewer", "operator_token": "operator"})
+    app = create_app(auth_config=auth)
+    app.state.auth_config = auth
+    return TestClient(app)
+
+
+def test_refreshing_a_router_path_serves_the_dashboard() -> None:
+    """Opening or refreshing /connections must work, not 404.
+
+    The routes live in the React router, so the server has never had one for
+    ``/connections``. Reaching it by clicking worked; refreshing it, opening it
+    in a new tab, or sharing the URL returned "Not Found" — which reads as the
+    feature being broken rather than as a routing gap.
+    """
+    resp = _client().get("/connections")
+
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+
+
+def test_a_nested_router_path_serves_the_dashboard() -> None:
+    """The same has to hold for a path with segments, e.g. an agent's own page."""
+    resp = _client().get("/agents/coder_agent/connections")
+
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+
+
+def test_an_unknown_api_path_is_still_a_404() -> None:
+    """A mistyped API route must stay a 404 an integrator can see.
+
+    Serving the dashboard shell here would answer 200 with HTML that parses as
+    success, turning a typo into a silent, confusing failure.
+    """
+    resp = _client().get("/api/nope", headers={"Authorization": "Bearer operator"})
+
+    assert resp.status_code == 404
+    assert "text/html" not in resp.headers.get("content-type", "")
