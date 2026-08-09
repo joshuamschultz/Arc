@@ -258,20 +258,26 @@ description = "The issue key, e.g. KAN-68."
 
 [[config.cli.commands]]
 tool = "jira_list_projects"
-# --paginate is in the FIXED argv, not left to the model. acli refuses this verb
-# unless one of [recent limit paginate] is present, and an omitted argument
-# contributes no token — so a call that simply does not pass `limit` exits 1 with
-# acli's own flag-group error. Measured on a live site. Pinning it here means the
-# verb cannot be invoked in a shape acli rejects; `limit` stays available to cap
-# the result.
+# --paginate is in the FIXED argv, and this verb declares NO arguments at all.
+# Both halves are required, because acli's `[recent limit paginate]` is a flag
+# group that is at-least-one AND mutually exclusive, measured on the live site:
+#
+#   acli jira project list --json                     exit 1
+#     ✗ at least one of the flags in the group [recent limit paginate] is required
+#   acli jira project list --json --paginate --limit=2   exit 1
+#     ✗ if any flags in the group [recent limit paginate] are set none of the
+#       others can be; [limit paginate] were all set
+#   acli jira project list --json --paginate          exit 0, 12 projects
+#
+# An omitted argument contributes no token, so leaving `limit` to the model broke
+# every call that did not pass it. Pinning `--paginate` and KEEPING `limit` breaks
+# every call that does. There is no third flag this verb can be given, so the only
+# shape that works for every call a model can make is the one with no argument at
+# all — which is right anyway: a project list is bounded, and `--paginate` returns
+# what the account can see rather than a page of it.
 argv = ["jira", "project", "list", "--json", "--paginate"]
-description = "List the projects this account can see. Use it to find a project key before searching or creating."
+description = "List every project this account can see. Use it to find a project key before searching or creating."
 classification = "read_only"
-
-[[config.cli.commands.arguments]]
-name = "limit"
-flag = "--limit"
-description = "Maximum number of projects to return."
 
 [[config.cli.commands]]
 tool = "jira_create_issue"

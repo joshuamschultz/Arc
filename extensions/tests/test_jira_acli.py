@@ -160,23 +160,73 @@ async def test_a_key_beginning_with_a_dash_is_read_as_the_key(spawn: _Recorder, 
     assert argv.count("--") == 1
 
 
-async def test_listing_projects_takes_only_a_limit(spawn: _Recorder) -> None:
-    argv = await _argv_for("jira_list_projects", {"limit": "50"}, spawn)
+async def test_listing_projects_works_with_no_arguments_at_all(spawn: _Recorder) -> None:
+    """The shape a model reaches for first, and this verb takes nothing else.
 
-    assert argv == ["acli", "jira", "project", "list", "--json", "--paginate", "--limit=50"]
-
-
-async def test_listing_projects_works_when_the_model_passes_no_limit(spawn: _Recorder) -> None:
-    """acli refuses this verb without one of [recent limit paginate].
-
-    Measured against the live site: an omitted argument contributes no token, so a
-    call that simply does not pass `limit` exited 1 with acli's own flag-group
-    error. `--paginate` is pinned in the fixed argv so the verb cannot be invoked
-    in a shape acli rejects, whatever the model does or does not supply.
+    ``acli project list`` refuses unless one of ``[recent limit paginate]`` is
+    present, so leaving that to a model argument meant a bare call exited 1. The
+    flag is pinned and the verb declares no arguments — see the next test for why
+    the second half is not optional.
     """
     argv = await _argv_for("jira_list_projects", {}, spawn)
 
-    assert "--paginate" in argv
+    assert argv == ["acli", "jira", "project", "list", "--json", "--paginate"]
+
+
+#: acli flag groups that are BOTH at-least-one AND mutually exclusive, measured on
+#: the deployment. Such a group is a trap in two directions, and fixing one direction
+#: opens the other:
+#:
+#:   acli jira project list --json                        exit 1
+#:     ✗ at least one of the flags in the group [recent limit paginate] is required
+#:   acli jira project list --json --paginate --limit=2   exit 1
+#:     ✗ if any flags in the group [recent limit paginate] are set none of the
+#:       others can be; [limit paginate] were all set
+#:
+#: Recorded here because neither half is visible in `--help`; only the two errors
+#: say it.
+_EXCLUSIVE_GROUPS: tuple[frozenset[str], ...] = (frozenset({"--recent", "--limit", "--paginate"}),)
+
+
+def test_no_command_declares_an_argument_that_fights_its_own_fixed_argv() -> None:
+    """The general form of the defect, and the one a green suite hides.
+
+    A flag pinned in ``argv`` and a declared argument from the same exclusive group
+    cannot both reach acli — and a declared argument is present exactly when a model
+    chooses to supply it. That is invisible to any test which always supplies the
+    same arguments, which is how this shipped twice: the first suite asserted the
+    argv WITH ``limit`` so the bare call was never exercised, and the fix for that
+    added a bare-call test while KEEPING the first, so the suite went green
+    asserting a command line acli rejects outright.
+    """
+    for command in _manifest().config["cli"]["commands"]:
+        pinned = {token.split("=", 1)[0] for token in command["argv"] if token.startswith("--")}
+        declared = {
+            argument["flag"] for argument in command.get("arguments", []) if argument.get("flag")
+        }
+        for group in _EXCLUSIVE_GROUPS:
+            assert not ((pinned & group) and (declared & group)), (
+                f"{command['tool']} pins {sorted(pinned & group)} and also offers "
+                f"{sorted(declared & group)} from the same mutually exclusive group; "
+                f"acli refuses every call that supplies the argument"
+            )
+
+
+async def test_every_verb_builds_an_argv_when_the_model_supplies_nothing(
+    spawn: _Recorder,
+) -> None:
+    """Minimum-argument invocation is the shape a suite forgets to cover.
+
+    This does not claim acli ACCEPTS every bare call — several genuinely need input,
+    and acli refusing "create with no summary" is correct behaviour the agent reads
+    as a tool error. It asserts the weaker, still-useful thing: every declared verb
+    builds an argv from an empty argument set, so nothing raises before the binary
+    is even reached. The verbs that must SUCCEED bare are asserted individually.
+    """
+    for tool in _manifest().tools.allow or []:
+        argv = await _argv_for(tool, {}, spawn)
+
+        assert argv[0] == "acli", tool
 
 
 async def test_creating_an_issue_names_the_project_and_the_type(spawn: _Recorder) -> None:
