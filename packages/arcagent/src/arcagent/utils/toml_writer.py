@@ -15,7 +15,14 @@ depend on ``arc-agent``; the dependency arrow keeps pointing down.
 
 from __future__ import annotations
 
+import re
 from typing import Any
+
+#: A key TOML accepts unquoted. Anything else is written as a quoted key, because
+#: an emitter able to produce a file that will not re-parse is a landmine
+#: regardless of who validates upstream: a config the agent cannot read is an
+#: agent that does not start.
+_BARE_KEY = re.compile(r"[A-Za-z0-9_-]+")
 
 
 def dumps_toml(data: dict[str, Any]) -> str:
@@ -34,20 +41,33 @@ def _emit_table(table: dict[str, Any], path: list[str], lines: list[str]) -> Non
     scalars = [(k, v) for k, v in table.items() if not isinstance(v, dict)]
     subtables = [(k, v) for k, v in table.items() if isinstance(v, dict)]
     if path:
-        lines.append(f"[{'.'.join(path)}]")
+        lines.append(f"[{'.'.join(_key(part) for part in path)}]")
     for key, val in scalars:
-        lines.append(f"{key} = {_scalar(val)}")
+        lines.append(f"{_key(key)} = {_scalar(val)}")
     if path:
         lines.append("")
     for key, val in subtables:
         _emit_table(val, [*path, key], lines)
 
 
+def _key(key: str) -> str:
+    """One key, bare when TOML allows it and quoted when it does not."""
+    return key if _BARE_KEY.fullmatch(key) else _quote(key)
+
+
+def _quote(text: str) -> str:
+    """A TOML basic string: escapes and control characters both handled."""
+    escaped = text.replace("\\", "\\\\").replace('"', '\\"')
+    escaped = escaped.replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+    body = "".join(c if c >= " " and c != "\x7f" else f"\\u{ord(c):04X}" for c in escaped)
+    return f'"{body}"'
+
+
 def _scalar(val: Any) -> str:
     if isinstance(val, bool):
         return "true" if val else "false"
     if isinstance(val, str):
-        return '"' + val.replace("\\", "\\\\").replace('"', '\\"') + '"'
+        return _quote(val)
     if isinstance(val, (int, float)):
         return str(val)
     if isinstance(val, list):

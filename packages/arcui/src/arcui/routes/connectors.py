@@ -464,16 +464,29 @@ async def post_connector_probe(request: Request) -> JSONResponse:
 
 
 def _auth_status(auth: Authorization) -> JSONResponse:
-    """The sign-in as the panel renders it: the probe, and the honest next step.
+    """The sign-in as the panel renders it: two live answers and the honest next step.
 
-    ``authorized`` is the live probe rather than a stored flag — the only answer
-    to "is this signed in" that cannot be stale. ``command`` is
-    :attr:`~arcagent.connections.Authorization.manual_command`, which is empty
-    whenever Arc could finish the login itself.
+    ``sign_in`` is the manifest's own authorisation check, run now — never the
+    probe. The probe said "the binary ran", the panel drew "Signed in", and a
+    ``dbxcli`` with no saved credentials was reported to its operator as a
+    connected account. ``reachable`` still carries the probe, because a panel
+    needs to distinguish "not signed in" from "not answering at all".
+
+    ``detail`` is the sign-in evidence and only that: the command that was run and
+    what it answered, empty when nothing was checked. It is NOT the probe's line —
+    the probe's was rendered beside "Signed in" and for a connector Arc cannot log
+    in read "signs in on this host; Arc ran nothing", which is a green tick citing
+    a check nobody performed.
+
+    ``command`` is :attr:`~arcagent.connections.Authorization.manual_command`,
+    which is empty whenever Arc could finish the login itself.
     """
     return JSONResponse(
         ConnectorAuthStatusResponse(
-            authorized=auth.reachable, detail=auth.detail, command=auth.manual_command
+            sign_in=auth.sign_in,
+            reachable=auth.reachable,
+            detail=auth.sign_in_detail,
+            command=auth.manual_command,
         ).model_dump(mode="json")
     )
 
@@ -529,7 +542,7 @@ async def post_connector_authorize(request: Request) -> JSONResponse:
         request,
         target=f"connector:{connections.world.agent}/{instance}",
         operation="connector.authorize",
-        outcome="applied" if auth.reachable else "denied",
+        outcome="applied" if auth.working else "denied",
         detail=auth.extension,
     )
     return _auth_status(auth)

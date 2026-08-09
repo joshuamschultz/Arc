@@ -252,13 +252,23 @@ def build_native_attachment(context: dict[str, Any]) -> SignInAttachment:
 _SIGNED_IN_MARKER = ".acme-signed-in"
 
 
-def _signin_manifest(*, host: str, authorize: str, token_login: str = "") -> str:
+def _signin_manifest(
+    *,
+    host: str,
+    authorize: str,
+    token_login: str = "",
+    verify: str = "",
+    entrypoint: str = "acme_signin_attachment",
+) -> str:
     """A no-secrets bundle whose reachability follows a real sign-in.
 
     ``token_login`` empty is the interactive-only shape — ``dbxcli login``,
     ``gog auth add`` — where the honest answer is the command and nothing else.
+    ``verify`` empty is the bundle that declares no way to prove a sign-in, whose
+    only honest answer is "not known".
     """
     token_clause = f"token_command = {json.dumps(token_login)}\n" if token_login else ""
+    verify_clause = f"verify_command = {json.dumps(verify)}\n" if verify else ""
     return f"""
 [extension]
 name = "{_EXTENSION}"
@@ -267,12 +277,12 @@ attachment = "native"
 description = "Acme through a binary that keeps its own token."
 
 [config.native]
-entrypoint = "acme_signin_attachment"
+entrypoint = "{entrypoint}"
 
 [[host_requires]]
 name = {json.dumps(host)}
 authorize_command = {json.dumps(authorize)}
-{token_clause}instruction = "Install the acme CLI on this host, then authorise it."
+{token_clause}{verify_clause}instruction = "Install the acme CLI on this host, then authorise it."
 
 [tools]
 allow = ["ping"]
@@ -299,6 +309,21 @@ def _token_login_command(bundle: Path) -> str:
         " token = sys.stdin.read().strip();"
         f" pathlib.Path({str(bundle / _SIGNED_IN_MARKER)!r}).write_text('ok') if token else None;"
         " sys.exit(0 if token else 1)"
+    )
+    return f"{sys.executable} -c {shlex.quote(script)}"
+
+
+def _verify_command(bundle: Path) -> str:
+    """The real second question: is this binary signed in *right now*?
+
+    Stands in for ``dbxcli account`` / ``gh auth status``. It reads the same
+    marker the login writes, so a route that reported the PROBE instead of this
+    — which is the shipped defect — fails here rather than passing against a
+    binary that merely starts.
+    """
+    script = (
+        "import pathlib, sys;"
+        f" sys.exit(0 if pathlib.Path({str(bundle / _SIGNED_IN_MARKER)!r}).exists() else 1)"
     )
     return f"{sys.executable} -c {shlex.quote(script)}"
 
@@ -526,6 +551,93 @@ def test_a_duplicate_instance_is_409(world: Path) -> None:
     assert resp.status_code == 409
 
 
+def test_an_instance_name_with_a_space_is_400_and_leaves_the_config_byte_identical(
+    world: Path,
+) -> None:
+    """The defect an operator hit: a name with a space became a bare TOML key.
+
+    ``[extensions.blackarc industrial email]`` does not parse, so the agent
+    vanished from the roster and every one of its routes began answering 404.
+    The bundle here declares NO ``[[secrets]]`` on purpose — that is the shape
+    (``google_workspace``, ``dropbox``) where nothing ever built a
+    ``SecretRef`` and so nothing ever checked the name.
+    """
+    client, agent_id, agent_dir = _agent(world)
+    _write_bundle(agent_dir / "extensions", manifest=_MANIFEST_HOSTED)
+    before = (agent_dir / "arcagent.toml").read_bytes()
+
+    resp = _install(
+        client, agent_id, instance="blackarc industrial email", secrets={}
+    )
+
+    assert resp.status_code == 400, resp.text
+    error = resp.json()["error"]
+    assert "blackarc industrial email" in error
+    assert "blackarc_industrial_email" in error
+    assert (agent_dir / "arcagent.toml").read_bytes() == before
+
+
+#: A name the coordinate rule refuses. A hyphen is legal in a bare TOML key, so a
+#: hand-edited config can contain one; it can never be created through any
+#: surface, because the name also becomes an env-var segment where a hyphen is
+#: not a legal shell variable name.
+_REFUSED_INSTANCE = "personal-dropbox"
+
+
+def _handwritten_block(agent_dir: Path, instance: str) -> None:
+    """An instance block no surface would have written — hand-edited into place."""
+    config = agent_dir / "arcagent.toml"
+    config.write_text(
+        config.read_text(encoding="utf-8")
+        + f'\n[extensions."{instance}"]\nextension = "{_EXTENSION}"\napproval = "outbound"\n',
+        encoding="utf-8",
+    )
+
+
+def test_a_connection_whose_name_the_rule_rejects_can_still_be_removed(
+    world: Path,
+) -> None:
+    """A hand-edited config must never leave an undeletable connection.
+
+    Not legacy accommodation — the name is refused everywhere it could be
+    created. This is the exit the strict rule needs so refusing a name can
+    never be worse than accepting it.
+    """
+    client, agent_id, agent_dir = _agent(world)
+    _write_bundle(agent_dir / "extensions", manifest=_MANIFEST_HOSTED)
+    _handwritten_block(agent_dir, _REFUSED_INSTANCE)
+
+    resp = client.delete(
+        f"/api/agents/{agent_id}/connectors/{_REFUSED_INSTANCE}", headers=_headers()
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["removed_config"] is True
+    assert _REFUSED_INSTANCE not in _instance_blocks(agent_dir)
+
+
+def test_a_connection_whose_name_the_rule_rejects_is_still_listed(world: Path) -> None:
+    """It has to be visible before an operator can delete it."""
+    client, agent_id, agent_dir = _agent(world)
+    _write_bundle(agent_dir / "extensions", manifest=_MANIFEST_HOSTED)
+    _handwritten_block(agent_dir, _REFUSED_INSTANCE)
+
+    resp = client.get(f"/api/agents/{agent_id}/connectors", headers=_headers("viewer"))
+
+    assert [row["instance"] for row in resp.json()["instances"]] == [_REFUSED_INSTANCE]
+
+
+def test_creating_a_new_connection_under_that_same_name_is_still_400(world: Path) -> None:
+    """Reading an existing name is not permission to create another one."""
+    client, agent_id, agent_dir = _agent(world)
+    _write_bundle(agent_dir / "extensions", manifest=_MANIFEST_HOSTED)
+
+    resp = _install(client, agent_id, instance=_REFUSED_INSTANCE, secrets={})
+
+    assert resp.status_code == 400, resp.text
+    assert "personal_dropbox" in resp.json()["error"]
+
+
 def test_an_unknown_extension_is_400(world: Path) -> None:
     client, agent_id, _dir = _agent(world)
     resp = _install(client, agent_id)
@@ -730,12 +842,19 @@ def _authorize(client: TestClient, agent_id: str, body: dict[str, Any], *, token
 
 
 def _connect_signin(
-    world: Path, *, token_login: bool
+    world: Path,
+    *,
+    token_login: bool,
+    verify: bool = True,
+    entrypoint: str = "acme_signin_attachment",
 ) -> tuple[TestClient, str, Path, Path]:
     """An installed connector whose binary holds its own credential.
 
     ``token_login`` picks which of the two real shapes it is: a binary that
     completes its login from stdin, or one whose login only a person can finish.
+    ``verify`` picks whether its manifest declares the command that proves a
+    sign-in; ``entrypoint`` picks whether the probe tracks the sign-in or always
+    answers yes, which is the ``dbxcli version`` shape.
     """
     client, agent_id, agent_dir = _agent(world)
     bundle = _write_bundle(agent_dir / "extensions", manifest=_MANIFEST)
@@ -743,6 +862,8 @@ def _connect_signin(
         host=sys.executable,
         authorize=f"{sys.executable} -m acme_login",
         token_login=_token_login_command(bundle) if token_login else "",
+        verify=_verify_command(bundle) if verify else "",
+        entrypoint=entrypoint,
     )
     (bundle / "extension.toml").write_text(manifest, encoding="utf-8")
     (bundle / _SIGNED_IN_MARKER).write_text("ok", encoding="utf-8")
@@ -755,11 +876,12 @@ def _connect_signin(
 def test_auth_status_reports_the_real_state_of_an_interactive_only_connector(
     world: Path,
 ) -> None:
-    """Readable by a viewer, and it reports the PROBE — not a stored flag.
+    """Readable by a viewer, and it reports the AUTHORISATION CHECK — not a
+    stored flag, and not the probe.
 
-    The connector is not signed in, so ``authorized`` is false and the answer
-    carries the exact command a person runs on this host. That command is the
-    honest dead end the panel renders.
+    The connector is not signed in, so ``sign_in`` is ``signed_out`` and the
+    answer carries the exact command a person runs on this host. That command is
+    the honest dead end the panel renders.
     """
     client, agent_id, _dir, _bundle = _connect_signin(world, token_login=False)
 
@@ -767,7 +889,7 @@ def test_auth_status_reports_the_real_state_of_an_interactive_only_connector(
 
     assert resp.status_code == 200
     body = resp.json()
-    assert body["authorized"] is False
+    assert body["sign_in"] == "signed_out"
     assert body["detail"]
     assert body["command"] == f"{sys.executable} -m acme_login"
 
@@ -781,7 +903,7 @@ def test_auth_status_offers_no_terminal_command_when_arc_can_sign_in_itself(
 
     body = _auth_status(client, agent_id).json()
 
-    assert body["authorized"] is False
+    assert body["sign_in"] == "signed_out"
     assert body["command"] == ""
 
 
@@ -791,7 +913,89 @@ def test_auth_status_reports_a_signed_in_connector_as_authorized(world: Path) ->
 
     body = _auth_status(client, agent_id).json()
 
-    assert body["authorized"] is True
+    assert body["sign_in"] == "signed_in"
+
+
+def test_a_binary_that_runs_but_is_signed_out_is_never_reported_as_signed_in(
+    world: Path,
+) -> None:
+    """The shipped defect, reproduced exactly.
+
+    ``dbxcli`` declares ``probe_argv = ["version"]``, so it answers happily with
+    no saved credentials at all — and that answer was rendered to the operator as
+    a green tick reading **Signed in — dbxcli version: 3.7.1**. Here the probe is
+    the always-reachable one and the authorisation check fails: reachable must
+    stay true and the sign-in must read ``signed_out``.
+    """
+    client, agent_id, _dir, _bundle = _connect_signin(
+        world, token_login=False, entrypoint="acme_hosted_attachment"
+    )
+
+    body = _auth_status(client, agent_id).json()
+
+    assert body["reachable"] is True
+    assert body["sign_in"] == "signed_out"
+
+
+def test_doctor_reports_the_sign_in_separately_from_the_connection(world: Path) -> None:
+    """Doctor is where an operator goes to find out what is wrong.
+
+    A connection that answers but has no account signed in is precisely that, so
+    the two facts get two rows: a single "reachable" row read as "all fine" is
+    the same conflation the panel made.
+    """
+    client, agent_id, _dir, _bundle = _connect_signin(
+        world, token_login=False, entrypoint="acme_hosted_attachment"
+    )
+
+    checks = client.get(
+        f"/api/agents/{agent_id}/connectors/{_INSTANCE}/doctor", headers=_headers("viewer")
+    ).json()["checks"]
+
+    rows = {row["check"]: row["status"] for row in checks}
+    assert rows["connection"] == "reachable"
+    assert rows["sign-in"] == "signed_out"
+
+
+def test_a_bundle_declaring_no_authorisation_check_reports_unknown(world: Path) -> None:
+    """Not known is the honest answer. Reported as signed in it is the defect;
+    reported as signed out it sends an operator to redo a login already done."""
+    client, agent_id, _dir, _bundle = _connect_signin(
+        world, token_login=False, verify=False, entrypoint="acme_hosted_attachment"
+    )
+
+    body = _auth_status(client, agent_id).json()
+
+    assert body["reachable"] is True
+    assert body["sign_in"] == "unknown"
+
+
+def test_the_evidence_line_names_the_command_that_was_actually_run(world: Path) -> None:
+    """The panel prints this next to "Signed in", so it has to be the evidence.
+
+    It used to be the probe's own line, which for a connector Arc cannot log in
+    read "signs in on this host; Arc ran nothing" — offered inside a green box as
+    the proof that it was signed in. Nothing was run and nothing was checked, so
+    the sentence and the badge contradicted each other.
+    """
+    client, agent_id, _dir, bundle = _connect_signin(world, token_login=False)
+    (bundle / _SIGNED_IN_MARKER).write_text("ok", encoding="utf-8")
+
+    body = _auth_status(client, agent_id).json()
+
+    assert body["sign_in"] == "signed_in"
+    assert body["detail"].startswith(_verify_command(bundle))
+    assert "Arc ran nothing" not in body["detail"]
+
+
+def test_an_unknown_sign_in_offers_no_evidence_at_all(world: Path) -> None:
+    """Nothing was checked, so there is nothing to show. A probe line here would
+    be evidence for a question it does not answer."""
+    client, agent_id, _dir, _bundle = _connect_signin(
+        world, token_login=False, verify=False, entrypoint="acme_hosted_attachment"
+    )
+
+    assert _auth_status(client, agent_id).json()["detail"] == ""
 
 
 def test_authorize_with_a_token_runs_the_login_and_reports_the_real_result(
@@ -808,7 +1012,7 @@ def test_authorize_with_a_token_runs_the_login_and_reports_the_real_result(
 
     assert resp.status_code == 200
     assert (bundle / _SIGNED_IN_MARKER).exists()
-    assert resp.json()["authorized"] is True
+    assert resp.json()["sign_in"] == "signed_in"
 
 
 def test_authorize_never_returns_the_token(world: Path) -> None:
@@ -863,7 +1067,7 @@ def test_authorize_on_an_interactive_only_connector_claims_nothing_and_runs_noth
 
     assert resp.status_code == 200
     body = resp.json()
-    assert body["authorized"] is False
+    assert body["sign_in"] == "signed_out"
     assert body["command"] == f"{sys.executable} -m acme_login"
     assert not (bundle / _SIGNED_IN_MARKER).exists()
 
@@ -873,7 +1077,7 @@ def test_authorize_without_a_token_does_not_pretend_to_have_signed_in(world: Pat
 
     body = _authorize(client, agent_id, {}).json()
 
-    assert body["authorized"] is False
+    assert body["sign_in"] == "signed_out"
     assert not (bundle / _SIGNED_IN_MARKER).exists()
 
 

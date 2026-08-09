@@ -46,6 +46,14 @@ instruction = "Install Node.js 20 or newer on this host; the Readwise CLI is a N
 # `readwise login-with-token` takes the token from piped stdin — the package's
 # own README documents `echo "$READWISE_TOKEN" | readwise login-with-token` —
 # so it is one of the two shipped logins Arc can complete on its own.
+#
+# NO `verify_command`, deliberately. This CLI publishes no local command that
+# distinguishes signed-in from signed-out: `readwise config show` prints the same
+# `readonly = ...` either way, and every other candidate is a live authenticated
+# API read taken on each panel view. So Arc reports this connector's sign-in as
+# NOT KNOWN. That is the honest answer and it is why the state exists: claiming
+# "Signed in" here would be the dropbox defect, and claiming "Not signed in"
+# would send an operator to redo a login that is already done.
 [[host_requires]]
 name = "readwise"
 minimum_version = "0.5.9"

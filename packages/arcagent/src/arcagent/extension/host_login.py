@@ -1,22 +1,33 @@
-"""SPEC-064 — the one connector sign-in Arc can finish without a human.
+"""SPEC-064 — the two things Arc runs on a connector's own host binary.
 
-Most CLI logins cannot be completed by a button. ``gog auth add`` opens a
-browser, ``dbxcli login`` waits at a prompt, ``ms-365-mcp-server --login`` prints
-a device code. A surface offering those a button would hang on the prompt and
-then report a sign-in that never happened — worse than no button, because the
-operator stops looking. So the manifest declares which kind a binary has
-(:attr:`~arcagent.extension.manifest.HostRequirement.token_command`) and only
+**Signing in.** Most CLI logins cannot be completed by a button. ``gog auth add``
+opens a browser, ``dbxcli login`` waits at a prompt, ``ms-365-mcp-server
+--login`` prints a device code. A surface offering those a button would hang on
+the prompt and then report a sign-in that never happened — worse than no button,
+because the operator stops looking. So the manifest declares which kind a binary
+has (:attr:`~arcagent.extension.manifest.HostRequirement.token_command`) and only
 that kind is ever run here. Everything else is directed, never attempted.
 
-Three bounds keep a manifest string from becoming a way to run anything on the
-host — the hole :mod:`arcagent.extension.host` keeps shut by never running
+**Asking whether it is signed in.** A connector's probe answers "does this
+program run", and a bundle probing with a ``version`` subcommand answers it
+happily on a binary holding no credential at all. Rendering that as *Signed in*
+told an operator their account was connected when it was not, and sent them away
+from the one action that would have connected it. So a manifest declares
+:attr:`~arcagent.extension.manifest.HostRequirement.verify_command` separately —
+``dbxcli account``, ``gh auth status``, ``gog auth list`` — and a bundle that
+declares none reports :attr:`AuthorizationCheck.known` false rather than a guess.
+
+Both verbs run a manifest-declared string, so both take the same three bounds,
+which is why they live in one module: a second copy of these would be a second
+set to keep in step, and the one that drifts is the one an attacker uses. They
+close the hole :mod:`arcagent.extension.host` keeps shut by never running
 ``instruction`` at all:
 
 * the command is split with :func:`shlex.split` and spawned with
   ``create_subprocess_exec``, so no shell parses it and ``;`` is an argument;
 * ``argv[0]`` must be the very binary the requirement declares, so the field
   authorises one program and not a program of the manifest's choosing;
-* the login is killed if it does not end, because a command mis-declared as
+* the command is killed if it does not end, because one mis-declared as
   non-interactive would otherwise wait forever.
 
 **The token crosses on stdin and nowhere else.** Never on argv — that is the
@@ -29,6 +40,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import shlex
 from dataclasses import dataclass
 
@@ -47,10 +59,17 @@ _LOGIN_TIMEOUT_SECONDS = 60.0
 #: What a binary's own output is truncated to before an operator reads it.
 _DETAIL_LIMIT = 400
 
+#: How long an authorisation check may take. Shorter than a login: it is taken on
+#: every panel view, and a binary that has not answered in this long is one whose
+#: state is unknown rather than one worth waiting on.
+_CHECK_TIMEOUT_SECONDS = 20.0
+
 #: What the token is replaced with wherever it would otherwise be shown.
 _REDACTED = "***"
 
 _ACTION = "extension.host.authorize"
+
+_CHECK_ACTION = "extension.host.verify"
 
 
 @dataclass(frozen=True)
@@ -62,6 +81,22 @@ class LoginResult:
     """
 
     completed: bool
+    detail: str
+
+
+@dataclass(frozen=True)
+class AuthorizationCheck:
+    """Whether this binary is signed in — and whether that could be established.
+
+    ``known`` false is a real answer, not a failure: a bundle declaring no
+    ``verify_command``, or one whose command names a different binary, leaves Arc
+    with no evidence either way. Collapsing that into ``authorized`` would be the
+    defect this type exists to close, and collapsing it into "signed out" would
+    send an operator to redo a login that is already done.
+    """
+
+    authorized: bool
+    known: bool
     detail: str
 
 
@@ -90,8 +125,8 @@ async def run_token_login(
         The verdict. Never raises for a failed sign-in: an operator needs the
         reason, and a login that did not work is an answer, not an exception.
     """
-    argv = shlex.split(requirement.token_command)
-    if not argv or argv[0] != requirement.name:
+    argv = _argv(requirement.token_command, requirement.name)
+    if argv is None:
         return _record(
             requirement,
             caller_did=caller_did,
@@ -112,8 +147,140 @@ async def run_token_login(
     )
 
 
-async def _spawn(argv: list[str], *, token: str, timeout: float) -> LoginResult:
-    """Run the login with the token on stdin, killing it if it does not end."""
+def _argv(command: str, binary: str) -> list[str] | None:
+    """The token list to exec, or ``None`` when this manifest string may not run.
+
+    Three refusals, one place: nothing declared, a string no shell grammar parses
+    (an unbalanced quote raises rather than yielding a guess), and a command whose
+    ``argv[0]`` is not the very binary the requirement declares — the field
+    authorises one program, not a program of the manifest's choosing.
+    """
+    try:
+        argv = shlex.split(command)
+    except ValueError:
+        return None
+    return argv if argv and argv[0] == binary else None
+
+
+def authorization_verdict(requirement: HostRequirement, returncode: int, output: str) -> bool:
+    """Read one finished check the way its manifest says to read it.
+
+    Exit code first, because most binaries say it there: ``gh auth status`` and
+    ``dbxcli account`` both exit non-zero when logged out. ``verify_pattern``
+    covers the ones that do not — ``gog auth list`` exits zero with an empty
+    listing, ``ms-365-mcp-server --verify-login`` exits zero and prints
+    ``{"success":false}`` — and a check read on its exit code alone would call
+    both of those signed in.
+
+    Separate from running it so a bundle's recorded real output can be replayed
+    through the very predicate the deployment uses.
+    """
+    if returncode != 0:
+        return False
+    if not requirement.verify_pattern:
+        return True
+    return re.search(requirement.verify_pattern, output) is not None
+
+
+async def run_authorization_check(
+    requirement: HostRequirement,
+    *,
+    caller_did: str,
+    audit_sink: AuditSink,
+    tier: Tier,
+    timeout: float = _CHECK_TIMEOUT_SECONDS,
+) -> AuthorizationCheck:
+    """Ask one host binary whether it is signed in, or say plainly that Arc cannot.
+
+    Args:
+        requirement: The declared prerequisite. Its ``verify_command`` is the only
+            command that runs, and only when ``argv[0]`` is ``name``.
+        caller_did: The operator recorded as the actor on the verdict (Pillar 1).
+        audit_sink: Where the verdict is recorded, either way.
+        tier: Deployment stringency, stamped on the record.
+        timeout: Seconds before the check is killed and reported as unknown.
+
+    Returns:
+        The verdict, with ``known`` false whenever nothing was established. Never
+        raises: a connector that cannot be checked is an answer an operator needs,
+        not an exception a panel turns into a 500.
+    """
+    argv = _argv(requirement.verify_command, requirement.name)
+    if argv is None:
+        return _record_check(
+            requirement,
+            caller_did=caller_did,
+            sink=audit_sink,
+            tier=tier,
+            result=AuthorizationCheck(
+                authorized=False,
+                known=False,
+                detail=f"{requirement.name} declares no way to check whether it is signed in",
+            ),
+        )
+
+    run = await _capture(argv, stdin_data="", timeout=timeout, timeout_hint="")
+    if run.returncode is None:
+        result = AuthorizationCheck(authorized=False, known=False, detail=run.text)
+    else:
+        result = AuthorizationCheck(
+            authorized=authorization_verdict(requirement, run.returncode, run.text),
+            known=True,
+            # No fallback to the binary's name: a caller names the command it ran,
+            # and a check that printed nothing must not have that gap filled in
+            # with something that reads like output.
+            detail=_readable(run.text, ""),
+        )
+    return _record_check(
+        requirement, caller_did=caller_did, sink=audit_sink, tier=tier, result=result
+    )
+
+
+def _record_check(
+    requirement: HostRequirement,
+    *,
+    caller_did: str,
+    sink: AuditSink,
+    tier: Tier,
+    result: AuthorizationCheck,
+) -> AuthorizationCheck:
+    """Hand one sign-in verdict to the single emission point. Coordinates only."""
+    emit(
+        AuditEvent(
+            actor_did=caller_did,
+            action=_CHECK_ACTION,
+            target=f"host:{requirement.name}",
+            outcome="allow" if result.authorized else "deny",
+            tier=tier.value,
+            extra={"binary": requirement.name, "known": result.known},
+        ),
+        sink,
+    )
+    return result
+
+
+@dataclass(frozen=True)
+class _Run:
+    """One finished (or unfinished) subprocess.
+
+    ``returncode`` is ``None`` when the binary never produced one — it could not
+    be started, or it outran its deadline and was killed — and ``text`` is then
+    the reason rather than the binary's output.
+    """
+
+    returncode: int | None
+    text: str
+
+
+async def _capture(
+    argv: list[str], *, stdin_data: str, timeout: float, timeout_hint: str
+) -> _Run:
+    """Run ``argv`` to completion, killing it if it does not end.
+
+    ``stdin_data`` is written to the child and nowhere else. The raw output comes
+    back untruncated, because a caller matching a declared pattern against it must
+    see all of it; truncation belongs to the line an operator reads.
+    """
     try:
         process = await asyncio.create_subprocess_exec(
             *argv,
@@ -122,29 +289,41 @@ async def _spawn(argv: list[str], *, token: str, timeout: float) -> LoginResult:
             stderr=asyncio.subprocess.STDOUT,
         )
     except OSError as exc:  # reason: a binary that is not on this host is a verdict, not a crash
-        return LoginResult(completed=False, detail=f"{argv[0]} could not be run — {exc}")
+        return _Run(returncode=None, text=f"{argv[0]} could not be run — {exc}")
 
     try:
-        output, _ = await asyncio.wait_for(process.communicate(token.encode()), timeout)
+        output, _ = await asyncio.wait_for(process.communicate(stdin_data.encode()), timeout)
     except TimeoutError:
         process.kill()
         await process.wait()
-        return LoginResult(
-            completed=False,
-            detail=f"{argv[0]} did not finish in {timeout:g}s — its sign-in needs a person",
+        return _Run(
+            returncode=None, text=f"{argv[0]} did not finish in {timeout:g}s{timeout_hint}"
         )
+    return _Run(returncode=process.returncode or 0, text=output.decode("utf-8", "replace"))
+
+
+async def _spawn(argv: list[str], *, token: str, timeout: float) -> LoginResult:
+    """Run the login with the token on stdin, killing it if it does not end."""
+    run = await _capture(
+        argv,
+        stdin_data=token,
+        timeout=timeout,
+        timeout_hint=" — its sign-in needs a person",
+    )
+    if run.returncode is None:
+        return LoginResult(completed=False, detail=run.text)
     return LoginResult(
-        completed=process.returncode == 0, detail=_readable(output, token) or argv[0]
+        completed=run.returncode == 0, detail=_readable(run.text, token) or argv[0]
     )
 
 
-def _readable(output: bytes, token: str) -> str:
+def _readable(output: str, token: str) -> str:
     """The binary's own words, one block, truncated, with the token taken back out.
 
     Redaction is not belt-and-braces: several CLIs echo what they were given, and
     that output is rendered in a browser and written to a log.
     """
-    text = " ".join(output.decode("utf-8", errors="replace").split())
+    text = " ".join(output.split())
     if token:
         text = text.replace(token, _REDACTED)
     return text if len(text) <= _DETAIL_LIMIT else f"{text[: _DETAIL_LIMIT - 1]}…"
@@ -176,4 +355,10 @@ def _record(
     return result
 
 
-__all__ = ["LoginResult", "run_token_login"]
+__all__ = [
+    "AuthorizationCheck",
+    "LoginResult",
+    "authorization_verdict",
+    "run_authorization_check",
+    "run_token_login",
+]

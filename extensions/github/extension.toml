@@ -53,11 +53,21 @@ member = "gh_2.97.0_macOS_amd64/bin/gh"
 # stdin and exits, so Arc can finish it and `token_command` says so. Every other
 # CLI connector shipped here leaves that field empty, which is the honest "only a
 # person at this host can do this".
+#
+# `gh auth status` is the sign-in check. `probe_argv = ["--version"]` below tells
+# you a binary exists; this tells you an account is connected. Measured on the
+# deployment, a signed-in host answers exit 0 with
+# "✓ Logged in to github.com account <name>"; logged out it exits non-zero and
+# says "You are not logged into any GitHub hosts". Both are required to match, so
+# neither a future exit-code change nor a wording change alone can turn a logged-
+# out host green.
 [[host_requires]]
 name = "gh"
 minimum_version = "2.97.0"
 authorize_command = "gh auth login --scopes repo,read:org"
 token_command = "gh auth login --with-token"
+verify_command = "gh auth status"
+verify_pattern = "Logged in"
 instruction = """
 Install the GitHub CLI on this host, then authorise it:
 

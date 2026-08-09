@@ -28,7 +28,7 @@ identical dict that JSONResponse re-serializes byte-identically.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -762,6 +762,22 @@ class ConnectorHostAuthorization(BaseModel):
 class ConnectorAuthStatusResponse(BaseModel):
     """Body of the ``auth-status`` and ``authorize`` verbs — the sign-in, honestly.
 
+    ``sign_in`` and ``reachable`` are two questions with two answers and the panel
+    needs both. ``reachable`` is "does this connection answer at all";
+    ``sign_in`` is "is this account connected". They were one field, taken from
+    the probe, and a ``dbxcli`` that had never been signed in reported
+    **Signed in — dbxcli version: 3.7.1** because ``dbxcli version`` runs
+    perfectly well with no credential.
+
+    ``unknown`` is a real value, not a placeholder: a bundle declaring no way to
+    check must not be drawn as a green tick, and must not be drawn as a failure
+    either — that would send an operator to redo a login already done.
+
+    ``detail`` is the evidence for ``sign_in`` and nothing else: the command that
+    ran, and what it answered. Empty means nothing was checked. It used to be the
+    probe's line, which put "signs in on this host; Arc ran nothing" inside a
+    green "Signed in" box — a badge citing a check nobody had performed.
+
     ``command`` is present ONLY when Arc cannot finish the sign-in itself: the
     panel renders it under "someone with terminal access can type this", so
     returning one for a login the button would have completed sends the operator
@@ -770,7 +786,8 @@ class ConnectorAuthStatusResponse(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    authorized: bool
+    sign_in: Literal["signed_in", "signed_out", "unknown"]
+    reachable: bool
     detail: str
     command: str
 

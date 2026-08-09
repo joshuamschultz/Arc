@@ -32,7 +32,7 @@ import tomllib
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from arctrust.audit import AuditEvent, AuditSink, NullSink
 from pydantic import ValidationError
@@ -49,7 +49,7 @@ from arcagent.extension.catalog import (
 )
 from arcagent.extension.host import HostPrerequisiteDirector, HostVerdict
 from arcagent.extension.host_install import host_install_dir, install_pinned_binary
-from arcagent.extension.host_login import run_token_login
+from arcagent.extension.host_login import run_authorization_check, run_token_login
 from arcagent.extension.manifest import (
     ArtifactPin,
     DeclaredTool,
@@ -418,6 +418,13 @@ class HostSetupReport:
     manual_steps: str = ""
 
 
+#: Whether this connection's account is actually connected. Three states, not two,
+#: because "Arc cannot tell" is a real answer and both collapses of it are lies: a
+#: bundle reported signed in when it is not is the defect that shipped, and one
+#: reported signed out sends an operator to redo a login already done.
+SignInState = Literal["signed_in", "signed_out", "unknown"]
+
+
 @dataclass(frozen=True)
 class Authorization:
     """How one connection is authorised, and whether it currently answers.
@@ -432,6 +439,14 @@ class Authorization:
     ``credentials`` carries the declared field and its prompt — a
     :class:`~arcagent.extension.manifest.SecretRequirement` has no field able to
     hold a value, so a surface rendering one cannot leak one (LLM02, LLM07).
+
+    **``reachable`` and ``sign_in`` are different questions.** ``reachable`` is
+    the probe: does this connection answer at all. ``sign_in`` is the account:
+    has anyone signed this binary in. A bundle that probes with a ``version``
+    subcommand answers reachable with no saved credential whatever — and a
+    surface that rendered that probe as *Signed in* told an operator a
+    security-relevant thing was done when it was not, and sent them away from the
+    one action that would have done it. No surface may derive one from the other.
     """
 
     instance: str
@@ -440,6 +455,20 @@ class Authorization:
     hosts: tuple[HostAuthorization, ...]
     reachable: bool
     detail: str
+    sign_in: SignInState = "unknown"
+    sign_in_detail: str = ""
+
+    @property
+    def working(self) -> bool:
+        """The best evidence this connection is usable, in one word.
+
+        The declared sign-in check when there is one, the probe when there is
+        not — never the probe in place of a check that exists, which is the
+        substitution that reported an empty ``dbxcli`` as a connected account.
+        """
+        if self.sign_in == "unknown":
+            return self.reachable
+        return self.sign_in == "signed_in"
 
     @property
     def supplied_to_arc(self) -> bool:
@@ -474,7 +503,12 @@ class Authorization:
 
 
 def _authorization(
-    instance: str, plan: ConnectorPlan, probe: DoctorCheck, *, note: str = ""
+    instance: str,
+    plan: ConnectorPlan,
+    probe: DoctorCheck,
+    sign_in: tuple[SignInState, str],
+    *,
+    note: str = "",
 ) -> Authorization:
     """The one shape both the read and the sign-in answer with.
 
@@ -483,6 +517,7 @@ def _authorization(
     copies of this mapping would let a surface see a host command on one verb and
     not the other.
     """
+    state, sign_in_detail = sign_in
     return Authorization(
         instance=instance,
         extension=plan.extension,
@@ -499,6 +534,8 @@ def _authorization(
         ),
         reachable=probe.status == "reachable",
         detail=f"{note} {probe.detail}".strip() if note else probe.detail,
+        sign_in=state,
+        sign_in_detail=sign_in_detail,
     )
 
 
@@ -578,7 +615,10 @@ class Connections:
         field is filled in.
 
         Raises:
-            ExtensionError: The bundle was refused; ``.message`` names the step.
+            ExtensionError: The name cannot be used, or the bundle was refused;
+                ``.message`` names the step. The name check belongs to
+                ``plan_connector`` — one rule on every path — so a surface refuses
+                an unusable name here, before asking an operator for a credential.
         """
         with self._audit.open() as sink:
             return self._plan(extension, instance, sink)
@@ -621,7 +661,8 @@ class Connections:
         with self._audit.open() as sink:
             plan = self._plan_for(instance, sink)
             probe = await self._reachability(plan, sink)
-        return _authorization(instance, plan, probe)
+            sign_in = await self._sign_in_state(plan, sink)
+        return _authorization(instance, plan, probe, sign_in)
 
     async def authorize(self, instance: str, *, token: str = "") -> Authorization:
         """Sign this connection's host binary in — when that can be done without a human.
@@ -652,9 +693,10 @@ class Connections:
         """
         with self._audit.open() as sink:
             plan = self._plan_for(instance, sink)
-            note = await self._sign_in(plan, token, sink)
+            note = await self._run_login(plan, token, sink)
             probe = await self._reachability(plan, sink)
-        return _authorization(instance, plan, probe, note=note)
+            sign_in = await self._sign_in_state(plan, sink)
+        return _authorization(instance, plan, probe, sign_in, note=note)
 
     async def setup_host(self, extension: str) -> HostSetupReport:
         """Put the host binaries a bundle pins on this machine, verified before they land.
@@ -727,7 +769,43 @@ class Connections:
             True, f"Installed {path}, verified against its published digest.", steps
         )
 
-    async def _sign_in(self, plan: ConnectorPlan, token: str, sink: AuditSink) -> str:
+    async def _sign_in_state(
+        self, plan: ConnectorPlan, sink: AuditSink
+    ) -> tuple[SignInState, str]:
+        """Ask every binary that declares a check whether this account is connected.
+
+        Separate from :meth:`_reachability` because they are separate questions.
+        The probe runs the connector; this runs the command the manifest says
+        proves an account is signed in (``dbxcli account``, ``gh auth status``).
+        A bundle declaring none reports ``unknown`` — the one honest answer when
+        there is no evidence, and never a green tick over an empty account.
+        """
+        checks = [
+            required for required in plan.manifest.host_requires if required.verify_command
+        ]
+        if not checks:
+            return ("unknown", "")
+
+        detail = ""
+        for required in checks:
+            result = await run_authorization_check(
+                required,
+                caller_did=self._world.did,
+                audit_sink=sink,
+                tier=self._world.tier,
+            )
+            # The command, then what it said. A surface renders this beside the
+            # badge, so it has to be the evidence FOR that badge: the probe's own
+            # line ("signs in on this host; Arc ran nothing") sat inside a green
+            # "Signed in" box describing something nobody had run.
+            detail = f"{required.verify_command}: {result.detail}".strip().rstrip(":")
+            if not result.known:
+                return ("unknown", detail)
+            if not result.authorized:
+                return ("signed_out", detail)
+        return ("signed_in", detail)
+
+    async def _run_login(self, plan: ConnectorPlan, token: str, sink: AuditSink) -> str:
         """Run the one login Arc can finish, or say plainly why it did not run one."""
         accepting = next(
             (required for required in plan.manifest.host_requires if required.token_command),
@@ -752,7 +830,10 @@ class Connections:
         """Everything that could be wrong with one connection, without fixing any of it.
 
         Unmet prerequisites, whether each declared credential is present (never its
-        value), and whether the connection answers.
+        value), whether the connection answers, and — as its own row — whether an
+        account is actually signed in. Two rows because they are two facts: a
+        connection whose binary starts and whose account was never connected is
+        reachable and useless, and one row reading "reachable" is read as "fine".
         """
         with self._audit.open() as sink:
             plan = self._plan_for(instance, sink)
@@ -762,6 +843,8 @@ class Connections:
             ]
             checks += await self._credential_checks(plan, instance, sink)
             checks.append(await self._reachability(plan, sink))
+            state, detail = await self._sign_in_state(plan, sink)
+            checks.append(DoctorCheck("sign-in", state, detail))
         return tuple(checks)
 
     # --- writing ---------------------------------------------------------
@@ -1017,6 +1100,7 @@ __all__ = [
     "ProbeResult",
     "RemovalReport",
     "SecretRequirement",
+    "SignInState",
     "Tier",
     "ToolSpec",
     "agent_tier",
