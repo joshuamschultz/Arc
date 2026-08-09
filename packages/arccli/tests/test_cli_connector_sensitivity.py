@@ -96,35 +96,19 @@ _ANSWERS = {"api_token": _TOKEN, "base_url": _URL}
 
 
 @pytest.fixture
-def agent_dir(tmp_path: Path) -> Path:
-    agent = tmp_path / "sales_agent"
-    agent.mkdir()
-    (agent / "arcagent.toml").write_text(
-        '[agent]\nname = "sales_agent"\n\n[llm]\nmodel = "none"\n\n'
-        '[identity]\ndid = "did:arc:local:executor/7e3e"\n\n[security]\ntier = "personal"\n',
-        encoding="utf-8",
-    )
-    bundle = agent / "extensions" / _EXTENSION
+def arc_dir(tmp_path: Path) -> Path:
+    root = tmp_path / "arc"
+    bundle = root / "extensions" / _EXTENSION
     bundle.mkdir(parents=True)
     (bundle / "extension.toml").write_text(_MANIFEST, encoding="utf-8")
     (bundle / "acme_fields_attachment.py").write_text(_ADAPTER, encoding="utf-8")
-    return agent
+    return root
 
 
 @pytest.fixture
-def run(agent_dir: Path, tmp_path: Path) -> Callable[..., None]:
+def run(arc_dir: Path, tmp_path: Path) -> Callable[..., None]:
     def _run(*args: str) -> None:
-        connector_handler(
-            [
-                *args,
-                "--agent",
-                str(agent_dir),
-                "--arc-dir",
-                str(tmp_path / "arc"),
-                "--data-dir",
-                str(tmp_path / "data"),
-            ]
-        )
+        connector_handler([*args, "--arc-dir", str(arc_dir), "--data-dir", str(tmp_path / "data")])
 
     return _run
 
@@ -165,7 +149,7 @@ def test_a_credential_is_asked_for_hidden_and_configuration_is_not(
     reach the hidden one — an operator who cannot see the URL they typed is the
     person this was reported by.
     """
-    run("add", _EXTENSION, "--instance", _INSTANCE)
+    run("add", _EXTENSION, "--name", _INSTANCE)
 
     assert "api_token" in _prompt_text(prompts, "hidden")
     assert "base_url" not in _prompt_text(prompts, "hidden")
@@ -177,14 +161,14 @@ def test_the_prompts_are_the_bundles_own_sentences(
     run: Callable[..., None], prompts: dict[str, list[str]]
 ) -> None:
     """Whichever channel a field goes down, the words come from the manifest."""
-    run("add", _EXTENSION, "--instance", _INSTANCE)
+    run("add", _EXTENSION, "--name", _INSTANCE)
 
     assert "Acme console" in _prompt_text(prompts, "hidden")
     assert "browser bar" in _prompt_text(prompts, "visible")
 
 
 def test_neither_value_is_echoed_into_the_config_or_the_terminal(
-    agent_dir: Path,
+    arc_dir: Path,
     run: Callable[..., None],
     prompts: dict[str, list[str]],
     capsys: pytest.CaptureFixture[str],
@@ -195,13 +179,13 @@ def test_neither_value_is_echoed_into_the_config_or_the_terminal(
     the config file still records only which bundle and which approval mode, and
     the terminal still reports field names.
     """
-    run("add", _EXTENSION, "--instance", _INSTANCE)
+    run("add", _EXTENSION, "--name", _INSTANCE)
 
     captured = capsys.readouterr()
     config: dict[str, Any] = tomllib.loads(
-        (agent_dir / "arcagent.toml").read_text(encoding="utf-8")
+        (arc_dir / "connections.toml").read_text(encoding="utf-8")
     )
-    assert config["extensions"][_INSTANCE]["extension"] == _EXTENSION
+    assert config["connections"][_INSTANCE]["extension"] == _EXTENSION
     for rendered in (captured.out + captured.err, str(config)):
         assert _TOKEN not in rendered
         assert _URL not in rendered

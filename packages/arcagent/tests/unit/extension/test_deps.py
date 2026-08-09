@@ -42,9 +42,7 @@ def test_plan_install_does_not_recount_a_package_another_extension_already_decla
     resolver: DependencyResolver,
 ) -> None:
     """A package another extension already declared is not "new" to the environment."""
-    plan = resolver.plan_install(
-        "acme_tickets", ["httpx>=0.27"], {"other_ext": ["httpx>=0.27"]}
-    )
+    plan = resolver.plan_install("acme_tickets", ["httpx>=0.27"], {"other_ext": ["httpx>=0.27"]})
 
     assert plan.to_install == ()
 

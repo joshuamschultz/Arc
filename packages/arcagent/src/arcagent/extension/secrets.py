@@ -1,10 +1,10 @@
 """SPEC-062 COMP-010 — the secret store seam for connector credentials.
 
-One interface, :class:`SecretStore`, keyed by ``(agent, instance, field)``. Which
-store backs it is a tier decision made once in :func:`select_secret_backend`, never
-a branch at a call site (REQ-294): personal keeps credentials in the agent's own
-``arc.env`` at owner-only permissions, enterprise and federal point the same calls
-at an external vault.
+One interface, :class:`SecretStore`, keyed by ``(connection, field)``. Which store
+backs it is a tier decision made once in :func:`select_secret_backend`, never a
+branch at a call site (REQ-294): personal keeps credentials in the deployment's
+owner-only ``connections.env``, enterprise and federal point the same calls at an
+external vault.
 
 Three properties are load-bearing rather than tidy:
 
@@ -106,18 +106,21 @@ class Secret:
 
 @dataclass(frozen=True)
 class SecretRef:
-    """Where one credential lives: which agent, which connected instance, which field."""
+    """Where one credential lives: which connection, which field.
 
-    agent: str
-    instance: str
+    Keyed by the connection and NOT by the agent, which is the property that makes
+    a grant a grant. One connected account has one credential: granting it to a
+    second agent copies nothing, so there is no second copy to rotate and none to
+    leave behind on a revoke. An agent never appears in this coordinate at all,
+    so there is no path by which "which agent is asking" could select a different
+    stored value.
+    """
+
+    connection: str
     field: str
 
     def __post_init__(self) -> None:
-        for name, value in (
-            ("agent", self.agent),
-            ("instance", self.instance),
-            ("field", self.field),
-        ):
+        for name, value in (("connection", self.connection), ("field", self.field)):
             if not is_coordinate(value):
                 raise ExtensionError(
                     code="SECRET_REF_INVALID",
@@ -127,16 +130,16 @@ class SecretRef:
 
     @property
     def env_key(self) -> str:
-        """The env-file key for this coordinate, as ``arc.env`` stores it."""
-        return f"{_ENV_PREFIX}_{self.agent}_{self.instance}_{self.field}".upper()
+        """The env-file key for this coordinate, as the store writes it."""
+        return f"{_ENV_PREFIX}_{self.connection}_{self.field}".upper()
 
     @property
     def vault_path(self) -> str:
         """The vault path for this coordinate."""
-        return f"{_VAULT_ROOT}/{self.agent}/{self.instance}/{self.field}"
+        return f"{_VAULT_ROOT}/{self.connection}/{self.field}"
 
     def __str__(self) -> str:
-        return f"{self.agent}/{self.instance}/{self.field}"
+        return f"{self.connection}/{self.field}"
 
 
 class SecretBackend(Protocol):
@@ -274,10 +277,12 @@ class EnvFile:
 
 
 class LocalFileSecretBackend:
-    """The default store: one owner-only env file in the agent's own home (D-555).
+    """The default store: one owner-only env file for the deployment (D-555).
 
-    Each agent owns its own file, so contention on it is an operator running the
-    CLI against a live agent rather than routine.
+    One file rather than one per agent, because a connection is one account: two
+    agents granted it read the same entry, so a rotation is one write and a revoke
+    leaves nothing behind. Contention is an operator running the CLI while agents
+    are up, which the atomic rewrite already survives.
     """
 
     def __init__(self, env_file: Path) -> None:
@@ -415,7 +420,7 @@ def select_secret_backend(
     if env_file is None:
         raise ExtensionError(
             code="SECRET_STORE_UNCONFIGURED",
-            message="no vault and no per-agent secret file were configured",
+            message="no vault and no deployment secret file were configured",
             details={"tier": str(tier)},
         )
     if tier is Tier.ENTERPRISE:

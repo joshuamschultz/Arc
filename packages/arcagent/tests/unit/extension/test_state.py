@@ -2,7 +2,7 @@
 
 Covers REQ-295 (health, last successful use, credential expiry recorded in the
 operational data plane so surfaces report status without probing) and REQ-291
-(approved tool-contract hashes per (instance, tool) — the rug-pull defence's
+(approved tool-contract hashes per (connection, tool) — the rug-pull defence's
 read/write side).
 
 Every test drives the REAL SQLite mutable plane, never a mock of it, so a
@@ -40,8 +40,7 @@ if TYPE_CHECKING:
     from arcagent.extension.state import ConnectionStateStore
 
 _ACTOR = "did:arc:test:human/operator"
-_AGENT = "josh_agent"
-_INSTANCE = "jira_primary"
+_CONNECTION = "jira_primary"
 
 # Any of these appearing as a field name would mean the schema can hold a
 # credential VALUE. REQ-265/REQ-277: coordinates (issuer, audience, expiry)
@@ -183,12 +182,10 @@ async def store(backend: SqliteBackend) -> ConnectionStateStore:
     return ConnectionStateStore(backend)
 
 
-async def _create(
-    store: ConnectionStateStore, *, agent: str = _AGENT, instance: str = _INSTANCE
-) -> Any:
+async def _create(store: ConnectionStateStore, *, connection: str = _CONNECTION) -> Any:
     from arcagent.extension.state import ConnectionRecord
 
-    return await store.create(ConnectionRecord(agent=agent, instance=instance), actor_did=_ACTOR)
+    return await store.create(ConnectionRecord(connection=connection), actor_did=_ACTOR)
 
 
 # --- schema: coordinates, never values (REQ-265, REQ-277) -------------------
@@ -199,8 +196,7 @@ def test_record_rejects_an_unmodeled_credential_field() -> None:
 
     with pytest.raises(ValidationError):
         ConnectionRecord(
-            agent=_AGENT,
-            instance=_INSTANCE,
+            connection=_CONNECTION,
             access_token="sekrit",  # type: ignore[call-arg]  # reason: unmodeled key
         )
 
@@ -225,7 +221,7 @@ async def test_persisted_row_carries_only_schema_keys(
     from arcagent.extension.state import CONNECTION_COLLECTION, ConnectionRecord
 
     await _create(store)
-    row = await backend.mutable_read(CONNECTION_COLLECTION, f"{_AGENT}/{_INSTANCE}")
+    row = await backend.mutable_read(CONNECTION_COLLECTION, _CONNECTION)
 
     assert row is not None
     assert set(row) <= set(ConnectionRecord.model_fields)
@@ -236,10 +232,10 @@ async def test_persisted_row_carries_only_schema_keys(
 
 async def test_create_then_get_round_trips(store: ConnectionStateStore) -> None:
     created = await _create(store)
-    fetched = await store.get(_AGENT, _INSTANCE)
+    fetched = await store.get(_CONNECTION)
 
     assert fetched is not None
-    assert (fetched.agent, fetched.instance) == (_AGENT, _INSTANCE)
+    assert fetched.connection == _CONNECTION
     assert fetched.health == "unknown"
     assert created.created_at is not None
 
@@ -249,17 +245,15 @@ async def test_recreating_a_connection_keeps_its_approved_hashes(
 ) -> None:
     """A repeated install must not silently discard what the operator approved."""
     await _create(store)
-    await store.approve_tool_contract(
-        _AGENT, _INSTANCE, "create_issue", "sha256:aaa", actor_did=_ACTOR
-    )
+    await store.approve_tool_contract(_CONNECTION, "create_issue", "sha256:aaa", actor_did=_ACTOR)
 
     await _create(store)
 
-    assert await store.approved_hash(_AGENT, _INSTANCE, "create_issue") == "sha256:aaa"
+    assert await store.approved_hash(_CONNECTION, "create_issue") == "sha256:aaa"
 
 
 async def test_get_returns_none_for_unknown_connection(store: ConnectionStateStore) -> None:
-    assert await store.get(_AGENT, "never_installed") is None
+    assert await store.get("never_installed") is None
 
 
 async def test_mark_healthy_records_health_and_last_successful_use(
@@ -267,8 +261,8 @@ async def test_mark_healthy_records_health_and_last_successful_use(
 ) -> None:
     await _create(store)
 
-    assert await store.mark_healthy(_AGENT, _INSTANCE, actor_did=_ACTOR) is True
-    fetched = await store.get(_AGENT, _INSTANCE)
+    assert await store.mark_healthy(_CONNECTION, actor_did=_ACTOR) is True
+    fetched = await store.get(_CONNECTION)
 
     assert fetched is not None
     assert fetched.health == "healthy"
@@ -280,8 +274,8 @@ async def test_set_health_marks_a_connection_needing_attention(
 ) -> None:
     await _create(store)
 
-    await store.set_health(_AGENT, _INSTANCE, "needs_attention", actor_did=_ACTOR)
-    fetched = await store.get(_AGENT, _INSTANCE)
+    await store.set_health(_CONNECTION, "needs_attention", actor_did=_ACTOR)
+    fetched = await store.get(_CONNECTION)
 
     assert fetched is not None
     assert fetched.health == "needs_attention"
@@ -294,21 +288,20 @@ async def test_credential_metadata_records_coordinates_not_the_value(
 
     await _create(store)
     await store.record_credential_metadata(
-        _AGENT,
-        _INSTANCE,
+        _CONNECTION,
         expires_at="2026-09-01T00:00:00+00:00",
         issuer="https://auth.example.test",
         audience="api://jira",
         actor_did=_ACTOR,
     )
 
-    fetched = await store.get(_AGENT, _INSTANCE)
+    fetched = await store.get(_CONNECTION)
     assert fetched is not None
     assert fetched.credential_expires_at == "2026-09-01T00:00:00+00:00"
     assert fetched.credential_issuer == "https://auth.example.test"
     assert fetched.credential_audience == "api://jira"
 
-    row = await backend.mutable_read(CONNECTION_COLLECTION, f"{_AGENT}/{_INSTANCE}")
+    row = await backend.mutable_read(CONNECTION_COLLECTION, _CONNECTION)
     assert row is not None
     assert not any(word in str(row).lower() for word in ("ghp_", "bearer ", "refresh_token"))
 
@@ -318,9 +311,9 @@ async def test_credential_last_refresh_is_recorded(store: ConnectionStateStore) 
     await _create(store)
 
     await store.record_credential_metadata(
-        _AGENT, _INSTANCE, last_refresh_at="2026-08-04T09:00:00+00:00", actor_did=_ACTOR
+        _CONNECTION, last_refresh_at="2026-08-04T09:00:00+00:00", actor_did=_ACTOR
     )
-    fetched = await store.get(_AGENT, _INSTANCE)
+    fetched = await store.get(_CONNECTION)
 
     assert fetched is not None
     assert fetched.credential_last_refresh_at == "2026-08-04T09:00:00+00:00"
@@ -330,39 +323,42 @@ async def test_last_refresh_survives_unrelated_activity(store: ConnectionStateSt
     """``updated_at`` is not a substitute — any write moves it, a refresh does not."""
     await _create(store)
     await store.record_credential_metadata(
-        _AGENT, _INSTANCE, last_refresh_at="2026-08-04T09:00:00+00:00", actor_did=_ACTOR
+        _CONNECTION, last_refresh_at="2026-08-04T09:00:00+00:00", actor_did=_ACTOR
     )
 
-    await store.mark_healthy(_AGENT, _INSTANCE, actor_did=_ACTOR)
-    fetched = await store.get(_AGENT, _INSTANCE)
+    await store.mark_healthy(_CONNECTION, actor_did=_ACTOR)
+    fetched = await store.get(_CONNECTION)
 
     assert fetched is not None
     assert fetched.credential_last_refresh_at == "2026-08-04T09:00:00+00:00"
     assert fetched.updated_at != fetched.credential_last_refresh_at
 
 
-async def test_list_reports_every_connection_for_an_agent(store: ConnectionStateStore) -> None:
-    await _create(store, instance="jira_primary")
-    await _create(store, instance="gmail_primary")
-    await _create(store, agent="other_agent", instance="jira_primary")
+async def test_list_reports_every_connection_in_the_deployment(
+    store: ConnectionStateStore,
+) -> None:
+    """One deployment, one list. A connection is not an agent's, so it is not filtered
+    by one — the grant list in ``connections.toml`` is what says who reaches it."""
+    await _create(store, connection="jira_primary")
+    await _create(store, connection="gmail_primary")
 
-    instances = sorted(record.instance for record in await store.list(agent=_AGENT))
+    names = sorted(record.connection for record in await store.list())
 
-    assert instances == ["gmail_primary", "jira_primary"]
+    assert names == ["gmail_primary", "jira_primary"]
 
 
 async def test_updating_a_missing_connection_creates_nothing(
     store: ConnectionStateStore,
 ) -> None:
-    assert await store.mark_healthy(_AGENT, "never_installed", actor_did=_ACTOR) is False
-    assert await store.get(_AGENT, "never_installed") is None
+    assert await store.mark_healthy("never_installed", actor_did=_ACTOR) is False
+    assert await store.get("never_installed") is None
 
 
 async def test_forget_removes_the_connection(store: ConnectionStateStore) -> None:
     await _create(store)
 
-    assert await store.forget(_AGENT, _INSTANCE, actor_did=_ACTOR) is True
-    assert await store.get(_AGENT, _INSTANCE) is None
+    assert await store.forget(_CONNECTION, actor_did=_ACTOR) is True
+    assert await store.get(_CONNECTION) is None
 
 
 # --- REQ-291: approved tool-contract hashes ---------------------------------
@@ -371,25 +367,19 @@ async def test_forget_removes_the_connection(store: ConnectionStateStore) -> Non
 async def test_approved_hash_round_trips_per_tool(store: ConnectionStateStore) -> None:
     await _create(store)
 
-    await store.approve_tool_contract(
-        _AGENT, _INSTANCE, "create_issue", "sha256:aaa", actor_did=_ACTOR
-    )
+    await store.approve_tool_contract(_CONNECTION, "create_issue", "sha256:aaa", actor_did=_ACTOR)
 
-    assert await store.approved_hash(_AGENT, _INSTANCE, "create_issue") == "sha256:aaa"
-    assert await store.approved_hash(_AGENT, _INSTANCE, "delete_issue") is None
+    assert await store.approved_hash(_CONNECTION, "create_issue") == "sha256:aaa"
+    assert await store.approved_hash(_CONNECTION, "delete_issue") is None
 
 
 async def test_reapproving_a_tool_replaces_its_hash(store: ConnectionStateStore) -> None:
     await _create(store)
 
-    await store.approve_tool_contract(
-        _AGENT, _INSTANCE, "create_issue", "sha256:aaa", actor_did=_ACTOR
-    )
-    await store.approve_tool_contract(
-        _AGENT, _INSTANCE, "create_issue", "sha256:bbb", actor_did=_ACTOR
-    )
+    await store.approve_tool_contract(_CONNECTION, "create_issue", "sha256:aaa", actor_did=_ACTOR)
+    await store.approve_tool_contract(_CONNECTION, "create_issue", "sha256:bbb", actor_did=_ACTOR)
 
-    assert await store.approved_hash(_AGENT, _INSTANCE, "create_issue") == "sha256:bbb"
+    assert await store.approved_hash(_CONNECTION, "create_issue") == "sha256:bbb"
 
 
 async def test_concurrent_approvals_of_two_tools_both_persist(
@@ -404,16 +394,12 @@ async def test_concurrent_approvals_of_two_tools_both_persist(
     barrier = asyncio.Barrier(2)
     racing = ConnectionStateStore(_BarrierBackend(backend, barrier))
     await asyncio.gather(
-        racing.approve_tool_contract(
-            _AGENT, _INSTANCE, "create_issue", "sha256:aaa", actor_did=_ACTOR
-        ),
-        racing.approve_tool_contract(
-            _AGENT, _INSTANCE, "add_comment", "sha256:bbb", actor_did=_ACTOR
-        ),
+        racing.approve_tool_contract(_CONNECTION, "create_issue", "sha256:aaa", actor_did=_ACTOR),
+        racing.approve_tool_contract(_CONNECTION, "add_comment", "sha256:bbb", actor_did=_ACTOR),
     )
 
-    assert await seed.approved_hash(_AGENT, _INSTANCE, "create_issue") == "sha256:aaa"
-    assert await seed.approved_hash(_AGENT, _INSTANCE, "add_comment") == "sha256:bbb"
+    assert await seed.approved_hash(_CONNECTION, "create_issue") == "sha256:aaa"
+    assert await seed.approved_hash(_CONNECTION, "add_comment") == "sha256:bbb"
 
 
 # --- dependency declarations (reference-counted removal, later) -------------
@@ -423,9 +409,9 @@ async def test_dependency_declarations_round_trip(store: ConnectionStateStore) -
     await _create(store)
 
     await store.declare_dependencies(
-        _AGENT, _INSTANCE, ["httpx>=0.27", "atlassian-api"], actor_did=_ACTOR
+        _CONNECTION, ["httpx>=0.27", "atlassian-api"], actor_did=_ACTOR
     )
-    fetched = await store.get(_AGENT, _INSTANCE)
+    fetched = await store.get(_CONNECTION)
 
     assert fetched is not None
     assert fetched.dependency_declarations == ["httpx>=0.27", "atlassian-api"]
@@ -448,12 +434,12 @@ async def test_every_mutation_is_a_single_backend_call(backend: SqliteBackend) -
     await _create(store)
 
     operations: tuple[Callable[[], Awaitable[bool]], ...] = (
-        lambda: store.mark_healthy(_AGENT, _INSTANCE, actor_did=_ACTOR),
-        lambda: store.set_health(_AGENT, _INSTANCE, "degraded", actor_did=_ACTOR),
+        lambda: store.mark_healthy(_CONNECTION, actor_did=_ACTOR),
+        lambda: store.set_health(_CONNECTION, "degraded", actor_did=_ACTOR),
         lambda: store.approve_tool_contract(
-            _AGENT, _INSTANCE, "create_issue", "sha256:aaa", actor_did=_ACTOR
+            _CONNECTION, "create_issue", "sha256:aaa", actor_did=_ACTOR
         ),
-        lambda: store.declare_dependencies(_AGENT, _INSTANCE, ["httpx>=0.27"], actor_did=_ACTOR),
+        lambda: store.declare_dependencies(_CONNECTION, ["httpx>=0.27"], actor_did=_ACTOR),
     )
     for operation in operations:
         counting.calls.clear()
@@ -482,15 +468,15 @@ async def test_get_on_an_unreadable_row_raises_naming_the_connection(
 
     await backend.mutable_write(
         CONNECTION_COLLECTION,
-        f"{_AGENT}/{_INSTANCE}",
+        _CONNECTION,
         {"not": "a connection record"},
         actor_did=_ACTOR,
     )
 
     with pytest.raises(ExtensionError) as excinfo:
-        await store.get(_AGENT, _INSTANCE)
+        await store.get(_CONNECTION)
 
-    assert _INSTANCE in str(excinfo.value)
+    assert _CONNECTION in str(excinfo.value)
 
 
 async def test_list_survives_one_unreadable_row_and_logs_it(
@@ -500,23 +486,23 @@ async def test_list_survives_one_unreadable_row_and_logs_it(
 ) -> None:
     from arcagent.extension.state import CONNECTION_COLLECTION
 
-    await _create(store, instance="jira_primary")
-    await _create(store, instance="gmail_primary")
+    await _create(store, connection="jira_primary")
+    await _create(store, connection="gmail_primary")
     # Schema drift on one row — the shape a poisoned record actually takes.
     await backend.mutable_write(
         CONNECTION_COLLECTION,
-        f"{_AGENT}/poisoned",
-        {"agent": _AGENT, "instance": "poisoned", "health": "on fire"},
+        "poisoned",
+        {"connection": "poisoned", "health": "on fire"},
         actor_did=_ACTOR,
     )
 
     with caplog.at_level(logging.ERROR):
-        records = await store.list(agent=_AGENT)
+        records = await store.list()
 
     # Every healthy row still reported, the bad one excluded and named in the
     # log — one corrupt record must never blind a surface to the rest.
-    assert sorted(r.instance for r in records) == ["gmail_primary", "jira_primary"]
-    assert "poisoned" not in {r.instance for r in records}
+    assert sorted(r.connection for r in records) == ["gmail_primary", "jira_primary"]
+    assert "poisoned" not in {r.connection for r in records}
     assert any("poisoned" in message for message in caplog.messages)
 
 
@@ -537,4 +523,4 @@ async def test_open_connection_state_uses_the_shared_operational_db(tmp_path: Pa
     await _create(store)
 
     assert store_db_path().exists()
-    assert await store.get(_AGENT, _INSTANCE) is not None
+    assert await store.get(_CONNECTION) is not None

@@ -72,7 +72,7 @@ _SIGNED_OUT_BY_EXIT = "import sys; sys.stderr.write('not logged in\\n'); sys.exi
 _SIGNED_IN = "print('joshua@blackarc.example')"
 
 #: The shape ``gog auth list`` has when signed out: exit 0, and an empty listing.
-_EMPTY_LISTING = 'print(\'{"accounts":[]}\')'
+_EMPTY_LISTING = "print('{\"accounts\":[]}')"
 
 #: …and when signed in.
 _FULL_LISTING = 'print(\'{"accounts":[{"email":"joshua@blackarc.example"}]}\')'
@@ -236,7 +236,7 @@ def test_the_verdict_reads_the_exit_code_and_the_output_together(
 
 async def test_a_command_no_shell_grammar_parses_is_refused_rather_than_raising() -> None:
     """An unbalanced quote in a manifest is a refusal, not a 500 in the panel."""
-    requirement = HostRequirement(name="acme", verify_command="acme auth \"list")
+    requirement = HostRequirement(name="acme", verify_command='acme auth "list')
 
     result = await _check(requirement, _RecordingSink())
 

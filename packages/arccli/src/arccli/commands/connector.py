@@ -1,12 +1,17 @@
-"""``arc connector`` — connect an agent to an external system, and manage it.
+"""``arc connector`` — connect this deployment to an external system, and manage it.
 
-SPEC-062 COMP-016, SPEC-064 T-011. Eleven verbs make up the COMPLETE management
-surface (REQ-293): ``available``, ``add``, ``auth``, ``authorize``,
-``host-setup``, ``list``, ``tools``, ``probe``, ``doctor``, ``approve``, and
-``remove``. The terminal is sufficient for all of them; the web panel is a
-convenience that is required for nothing (D-561). ``available`` is the one verb
-that needs no agent — an operator asking what can be connected has not chosen one
-yet.
+SPEC-062 COMP-016, SPEC-064 T-011. Thirteen verbs make up the COMPLETE management
+surface (REQ-293): ``available``, ``add``, ``grant``, ``revoke``, ``auth``,
+``authorize``, ``host-setup``, ``list``, ``tools``, ``probe``, ``doctor``,
+``approve``, and ``remove``. The terminal is sufficient for all of them; the web
+panel is a convenience that is required for nothing (D-561).
+
+**A connection is the deployment's; a grant hands it to an agent.** There is no
+``--agent`` flag, because an account is not an agent's property: ``add`` connects
+it once and ``--agents`` names who gets it, ``grant``/``revoke`` change that
+afterwards, and ``list`` answers "who can reach what" for the whole fleet in one
+table. An agent nobody has named holds nothing, so creating one can never widen
+access.
 
 ``authorize`` and ``host-setup`` are the two verbs that touch the machine, and
 both stay honest about what they can do: a login only a person can finish is
@@ -30,8 +35,8 @@ backend, the ordering, the rollback, the config write — is
 drive one path rather than three copies of it (D-587).
 
 Paths are explicit and overridable — ``--extensions-root``, ``--env-file``,
-``--arc-dir``, ``--data-dir`` — because an operator running a fleet needs to
-point a command at one agent's world without disturbing another's.
+``--arc-dir``, ``--data-dir`` — because an operator running more than one
+deployment on a box needs to point a command at one without disturbing another.
 """
 
 from __future__ import annotations
@@ -52,12 +57,11 @@ from arcagent.connections import (
     Connections,
     ConnectorPlan,
     ExtensionError,
-    Tier,
     ToolSpec,
-    agent_tier,
     catalog,
+    deployment_tier,
+    resolve_deployment,
     resolve_roots,
-    resolve_world,
 )
 
 from arccli.commands._shared import dispatch, err
@@ -76,7 +80,7 @@ def _attachment_factory() -> AttachmentFactory | None:
 
 
 def _connections(args: argparse.Namespace) -> Connections:
-    """Bind one agent's world to the operator-signed chain, or exit naming what is wrong.
+    """Bind this deployment to the operator-signed chain, or exit naming what is wrong.
 
     The chain is described, never held: every verb opens and closes its own through
     :class:`~arcagent.connections.AuditChain`, because a ``WormSink`` keeps an
@@ -91,8 +95,7 @@ def _connections(args: argparse.Namespace) -> Connections:
     from arccli.commands.operator import operator_worm_sink
 
     try:
-        world = resolve_world(
-            args.agent,
+        world = resolve_deployment(
             arc_dir=getattr(args, "arc_dir", None) or Path.home() / ".arc",
             data_dir=getattr(args, "data_dir", None),
             extensions_root=getattr(args, "extensions_root", None),
@@ -119,23 +122,55 @@ def _fail(message: str) -> NoReturn:
 
 
 def _add(args: argparse.Namespace) -> None:
-    """Install one connected account: prompt, probe, and persist only on success."""
+    """Connect one account: prompt, probe, persist and grant only on success."""
     connections = _connections(args)
     world = connections.world
+    agents = _agents(args)
     try:
-        plan = connections.plan(args.extension, args.instance)
+        plan = connections.plan(args.extension, args.name, agents=agents)
         _refuse_unsatisfied_host(plan)
-        report = asyncio.run(connections.install(plan, _prompt_secrets(plan)))
+        report = asyncio.run(connections.install(plan, _prompt_secrets(plan), agents=agents))
     except ExtensionError as exc:
         _fail(exc.message)
 
-    _out(f"Connected {report.extension} as instance '{report.instance}'.")
-    _out(f"  agent          : {world.agent}")
+    _out(f"Connected {report.extension} as '{report.instance}'.")
+    _out(f"  granted to     : {', '.join(agents) or '(no agent yet — run: arc connector grant)'}")
     _out(f"  approval mode  : {plan.approval_mode}")
     _out(f"  credentials in : {world.env_file}  (owner-only)")
     if report.detail:
         _out(f"  probe          : {report.detail}")
     _out(f"  tools          : {', '.join(report.tools) or '(none served)'}")
+    if agents:
+        _out("  Restart those agents for the connection to attach.")
+
+
+def _grant(args: argparse.Namespace) -> None:
+    """Hand one connected account to more agents."""
+    connections = _connections(args)
+    agents = _agents(args)
+    try:
+        granted = connections.grant(args.instance, agents)
+    except ExtensionError as exc:
+        _fail(exc.message)
+    _out(f"'{args.instance}' is now granted to: {', '.join(granted.agents) or '(nobody)'}")
+    _out("  Restart those agents for the connection to attach.")
+
+
+def _revoke(args: argparse.Namespace) -> None:
+    """Take one connected account back from agents. The account itself is untouched."""
+    connections = _connections(args)
+    try:
+        remaining = connections.revoke(args.instance, _agents(args))
+    except ExtensionError as exc:
+        _fail(exc.message)
+    _out(f"'{args.instance}' is now granted to: {', '.join(remaining.agents) or '(nobody)'}")
+    _out("  Restart the agents that lost it; a running agent keeps what it attached.")
+
+
+def _agents(args: argparse.Namespace) -> list[str]:
+    """The ``--agents a,b`` list, split once so every verb reads it the same way."""
+    raw = getattr(args, "agents", "") or ""
+    return [name.strip() for name in raw.split(",") if name.strip()]
 
 
 def _auth(args: argparse.Namespace) -> None:
@@ -152,6 +187,7 @@ def _auth(args: argparse.Namespace) -> None:
         _fail(exc.message)
     env_file = connections.world.env_file
     _out(f"Updated {len(updated)} credential(s) for '{args.instance}' in {env_file}.")
+    _out("  Every agent granted this connection uses the new value at its next start.")
 
 
 #: How each sign-in state reads in a terminal. "not known" is its own line rather
@@ -237,18 +273,16 @@ def _host_setup(args: argparse.Namespace) -> None:
 def _available(args: argparse.Namespace) -> None:
     """Show every bundle the search path holds — the answer to "what can I connect?".
 
-    Works without ``--agent`` because there is a fleet-wide answer; with one, that
-    agent's own bundles are searched first, which is the order every other verb
-    resolves in. Nothing is installed, nothing is written, and nothing is
-    audited — no verdict is taken here, and the refusal an operator acts on is
-    taken (and recorded) by ``add``.
+    Nothing is installed, nothing is written, and nothing is audited — no verdict
+    is taken here, and the refusal an operator acts on is taken (and recorded) by
+    ``add``.
     """
-    agent_dir = Path(args.agent).expanduser().resolve() if args.agent else None
+    arc_dir = Path(args.arc_dir).expanduser() if args.arc_dir else None
     try:
-        tier = agent_tier(agent_dir) if agent_dir else Tier.PERSONAL
+        tier = deployment_tier(arc_dir)
     except ExtensionError as exc:
         _fail(exc.message)
-    roots = resolve_roots(agent_dir, extensions_root=args.extensions_root)
+    roots = resolve_roots(arc_dir, extensions_root=args.extensions_root)
     entries = catalog(roots=roots, tier=tier)
 
     if args.json:
@@ -265,19 +299,27 @@ def _available(args: argparse.Namespace) -> None:
 
 
 def _list(args: argparse.Namespace) -> None:
-    """Show every connected account this agent has."""
+    """Show every connected account and the agents that hold it.
+
+    The one place "who can read my mail" is answered, for the whole deployment at
+    once. A connection nobody holds says so rather than showing an empty column an
+    operator has to interpret.
+    """
     connections = _connections(args)
     try:
-        instances = connections.installed()
+        defined = connections.connections()
     except ExtensionError as exc:
         _fail(exc.message)
-    if not instances:
-        _out(f"No connector instances configured for {connections.world.agent}.")
+    if not defined:
+        _out("No connections on this deployment.")
         _out(f"  bundles are read from: {_roots_line(connections.world.extension_roots)}")
         return
     _print_table(
-        ["Instance", "Extension", "Approval"],
-        [[name, cfg.extension, cfg.approval] for name, cfg in sorted(instances.items())],
+        ["Connection", "Extension", "Approval", "Granted to"],
+        [
+            [name, cfg.extension, cfg.approval, ", ".join(cfg.agents) or "(nobody)"]
+            for name, cfg in sorted(defined.items())
+        ],
     )
 
 
@@ -333,7 +375,7 @@ def _approve(args: argparse.Namespace) -> None:
 
 
 def _remove(args: argparse.Namespace) -> None:
-    """Drop one connected account: its credentials, its config block, its state.
+    """Disconnect one account: its credential, its definition, and every grant on it.
 
     Never an error when there is nothing to remove — an operator cleaning up
     after a failed install must not be blocked by a step with no work to do.
@@ -343,9 +385,9 @@ def _remove(args: argparse.Namespace) -> None:
         report = asyncio.run(connections.remove(args.instance))
     except ExtensionError as exc:
         _fail(exc.message)
-    _out(f"Removed connector instance '{report.instance}'.")
+    _out(f"Disconnected '{report.instance}'.")
     _out(f"  credentials dropped : {', '.join(report.removed_secrets) or '(none)'}")
-    _out(f"  config block removed: {'yes' if report.removed_config else 'no'}")
+    _out(f"  connection removed  : {'yes' if report.removed_config else 'no'}")
 
 
 # ---------------------------------------------------------------------------
@@ -429,8 +471,7 @@ def _roots_line(roots: Sequence[Path]) -> str:
 
 
 def _add_common(parser: argparse.ArgumentParser) -> None:
-    """The flags every verb shares: which agent, and where its world lives."""
-    parser.add_argument("--agent", required=True, help="Path to the agent directory.")
+    """The flags every verb shares: where this deployment's connections live."""
     parser.add_argument(
         "--extensions-root",
         default=None,
@@ -439,49 +480,69 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--env-file",
         default=None,
-        help="Owner-only credential store (default: <agent>/connectors.env).",
+        help="Owner-only credential store (default: <arc-dir>/connections.env).",
     )
     parser.add_argument("--arc-dir", default=None, help="Arc config dir (default: ~/.arc).")
     parser.add_argument("--data-dir", default=None, help="Operational data dir for audit/state.")
+
+
+def _add_agents(parser: argparse.ArgumentParser, *, required: bool) -> None:
+    """``--agents a,b`` — who may use this connection. The whole of access control."""
+    parser.add_argument(
+        "--agents",
+        required=required,
+        default="",
+        help="Comma-separated agent names granted this connection.",
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="arc connector",
         description=(
-            "Connect an agent to an external system — available, add, auth, "
-            "authorize, host-setup, list, tools, probe, doctor, approve, remove."
+            "Connect this deployment to an external system — available, add, grant, "
+            "revoke, auth, authorize, host-setup, list, tools, probe, doctor, "
+            "approve, remove."
         ),
         add_help=True,
     )
     subs = parser.add_subparsers(dest="subcmd", metavar="<subcommand>")
 
     p = subs.add_parser("available", help="List the bundles this deployment can connect.")
-    # --agent is optional here and required everywhere else: the fleet-wide search
-    # path has an answer before an operator has chosen which agent to connect.
-    p.add_argument("--agent", default=None, help="Also search this agent's own bundles.")
     p.add_argument(
         "--extensions-root",
         default=None,
         help="Use exactly this bundle root (default: the deployment search path).",
     )
+    p.add_argument("--arc-dir", default=None, help="Arc config dir (default: ~/.arc).")
     p.add_argument("--json", action="store_true", help="Emit JSON instead of a table.")
 
-    p = subs.add_parser("add", help="Install a connection: prompt, probe, then persist.")
+    p = subs.add_parser("add", help="Connect an account: prompt, probe, persist, grant.")
     p.add_argument("extension", help="Extension bundle name.")
-    p.add_argument("--instance", required=True, help="Name for this connected account.")
+    p.add_argument("--name", required=True, help="Name for this connected account.")
+    _add_agents(p, required=False)
+    _add_common(p)
+
+    p = subs.add_parser("grant", help="Let more agents use a connected account.")
+    p.add_argument("instance", help="Connection name.")
+    _add_agents(p, required=True)
+    _add_common(p)
+
+    p = subs.add_parser("revoke", help="Take a connected account back from agents.")
+    p.add_argument("instance", help="Connection name.")
+    _add_agents(p, required=True)
     _add_common(p)
 
     p = subs.add_parser(
         "auth", help="Authorise an instance: hidden prompt, or the host command to run."
     )
-    p.add_argument("instance", help="Connected account name.")
+    p.add_argument("instance", help="Connection name.")
     _add_common(p)
 
     p = subs.add_parser(
         "authorize", help="Sign in a connector whose own binary holds the credential."
     )
-    p.add_argument("instance", help="Connected account name.")
+    p.add_argument("instance", help="Connection name.")
     _add_common(p)
 
     p = subs.add_parser(
@@ -490,27 +551,27 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("extension", help="Extension bundle name.")
     _add_common(p)
 
-    p = subs.add_parser("list", help="List this agent's connected accounts.")
+    p = subs.add_parser("list", help="List every connected account and who holds it.")
     _add_common(p)
 
     p = subs.add_parser("tools", help="Show the verbs an instance offers.")
-    p.add_argument("instance", help="Connected account name.")
+    p.add_argument("instance", help="Connection name.")
     _add_common(p)
 
     p = subs.add_parser("probe", help="Prove an instance is reachable right now.")
-    p.add_argument("instance", help="Connected account name.")
+    p.add_argument("instance", help="Connection name.")
     _add_common(p)
 
     p = subs.add_parser("doctor", help="Report prerequisites, credentials, and reachability.")
-    p.add_argument("instance", help="Connected account name.")
+    p.add_argument("instance", help="Connection name.")
     _add_common(p)
 
     p = subs.add_parser("approve", help="Approve the tool contract an instance serves now.")
-    p.add_argument("instance", help="Connected account name.")
+    p.add_argument("instance", help="Connection name.")
     _add_common(p)
 
-    p = subs.add_parser("remove", help="Remove an instance, its credentials, and its state.")
-    p.add_argument("instance", help="Connected account name.")
+    p = subs.add_parser("remove", help="Disconnect an account, its credential, its grants.")
+    p.add_argument("instance", help="Connection name.")
     _add_common(p)
 
     return parser
@@ -519,6 +580,8 @@ def _build_parser() -> argparse.ArgumentParser:
 _SUBCOMMAND_MAP = {
     "available": _available,
     "add": _add,
+    "grant": _grant,
+    "revoke": _revoke,
     "auth": _auth,
     "authorize": _authorize,
     "host-setup": _host_setup,

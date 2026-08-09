@@ -115,14 +115,30 @@ def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
-def _agent(tmp_path: Path) -> tuple[TestClient, str, Path]:
+#: The agent directory name — the coordinate a grant is written against.
+_AGENT = "acme_agent"
+
+
+def _arc_dir(world: Path) -> Path:
+    """The deployment root: connections, credentials and the bundle search path."""
+    return world / "arc"
+
+
+def _bundles(world: Path) -> Path:
+    return _arc_dir(world) / "extensions"
+
+
+def _env_file(world: Path) -> Path:
+    return _arc_dir(world) / "connections.env"
+
+
+def _agent(world: Path) -> tuple[TestClient, str, Path]:
     identity = AgentIdentity.generate(org="arc", agent_type="exec")
-    key_dir = tmp_path / "keys"
+    key_dir = world / "keys"
     identity.save_keys(key_dir)
-    team_root = tmp_path / "team"
-    agent_dir = team_root / "acme_agent"
+    team_root = _arc_dir(world) / "team"
+    agent_dir = team_root / _AGENT
     (agent_dir / "workspace").mkdir(parents=True)
-    (agent_dir / "extensions").mkdir(parents=True)
     (agent_dir / "arcagent.toml").write_text(
         '[agent]\nname = "acme"\norg = "arc"\ntype = "exec"\n'
         f'workspace = "{agent_dir / "workspace"}"\n'
@@ -142,7 +158,7 @@ def _agent(tmp_path: Path) -> tuple[TestClient, str, Path]:
 
 
 def _write_bundle_at(root: Path) -> Path:
-    """Write the bundle into one search root — an agent's own, or the fleet's."""
+    """Write the bundle into one search root — the deployment's, or a fleet override."""
     bundle = root / _EXTENSION
     bundle.mkdir(parents=True, exist_ok=True)
     (bundle / "extension.toml").write_text(_MANIFEST, encoding="utf-8")
@@ -150,21 +166,20 @@ def _write_bundle_at(root: Path) -> Path:
     return bundle
 
 
-def _write_bundle(agent_dir: Path) -> Path:
-    return _write_bundle_at(agent_dir / "extensions")
-
-
 def _headers(token: str = "operator") -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _install(client: TestClient, agent_id: str) -> Any:
+def _install(client: TestClient, secrets: dict[str, str] | None = None) -> Any:
     return client.post(
-        f"/api/agents/{agent_id}/connectors",
+        "/api/connections",
         json={
             "extension": _EXTENSION,
             "instance": _INSTANCE,
-            "secrets": {"api_token": _SENSITIVE, "base_url": _TYPED},
+            "agents": [_AGENT],
+            "secrets": {"api_token": _SENSITIVE, "base_url": _TYPED}
+            if secrets is None
+            else secrets,
         },
         headers=_headers(),
     )
@@ -172,8 +187,8 @@ def _install(client: TestClient, agent_id: str) -> Any:
 
 def _connected(world: Path) -> tuple[TestClient, str, Path]:
     client, agent_id, agent_dir = _agent(world)
-    _write_bundle(agent_dir)
-    assert _install(client, agent_id).status_code == 200
+    _write_bundle_at(_bundles(world))
+    assert _install(client).status_code == 200
     return client, agent_id, agent_dir
 
 
@@ -214,11 +229,9 @@ def test_the_credential_is_absent_from_the_same_response_that_carries_the_url(
     coming back therefore proves the filter, rather than proving that no value was
     ever read.
     """
-    client, agent_id, _dir = _connected(world)
+    client, _agent_id, _dir = _connected(world)
 
-    resp = client.get(
-        f"/api/agents/{agent_id}/connectors/{_INSTANCE}/auth", headers=_headers("viewer")
-    )
+    resp = client.get(f"/api/connections/{_INSTANCE}/auth", headers=_headers("viewer"))
     fields = _fields(resp.json()["credentials"])
 
     assert fields["base_url"]["value"] == _PUBLIC
@@ -238,11 +251,9 @@ def test_no_other_verb_carries_either_value_and_none_carries_the_credential(
     client, agent_id, _dir = _connected(world)
 
     with caplog.at_level(logging.DEBUG):
-        doctor = client.get(
-            f"/api/agents/{agent_id}/connectors/{_INSTANCE}/doctor", headers=_headers("viewer")
-        )
+        doctor = client.get(f"/api/connections/{_INSTANCE}/doctor", headers=_headers("viewer"))
         status = client.get(
-            f"/api/agents/{agent_id}/connectors/{_INSTANCE}/auth-status",
+            f"/api/connections/{_INSTANCE}/auth-status",
             headers=_headers("viewer"),
         )
         listing = client.get(f"/api/agents/{agent_id}/connectors", headers=_headers("viewer"))
@@ -260,19 +271,17 @@ def test_replacing_only_the_credential_leaves_the_configuration_alone(world: Pat
     verb above can send the token the operator changed and the URL they did not,
     and the connection keeps working.
     """
-    client, agent_id, _dir = _connected(world)
+    client, _agent_id, _dir = _connected(world)
 
     updated = client.put(
-        f"/api/agents/{agent_id}/connectors/{_INSTANCE}/auth",
+        f"/api/connections/{_INSTANCE}/auth",
         json={"secrets": {"api_token": "zzz-rotated-8811"}},
         headers=_headers(),
     )
 
     assert updated.status_code == 200
     assert updated.json()["updated"] == ["api_token"]
-    body = client.get(
-        f"/api/agents/{agent_id}/connectors/{_INSTANCE}/auth", headers=_headers("viewer")
-    ).json()
+    body = client.get(f"/api/connections/{_INSTANCE}/auth", headers=_headers("viewer")).json()
     assert _fields(body["credentials"])["base_url"]["value"] == _PUBLIC
 
 
@@ -287,11 +296,9 @@ def test_the_address_the_operator_typed_installs_and_is_stored_usable(world: Pat
     and the value that comes back is the one the connector will actually use — so
     the operator can see what Arc made of what they typed.
     """
-    client, agent_id, _dir = _connected(world)
+    client, _agent_id, _dir = _connected(world)
 
-    body = client.get(
-        f"/api/agents/{agent_id}/connectors/{_INSTANCE}/auth", headers=_headers("viewer")
-    ).json()
+    body = client.get(f"/api/connections/{_INSTANCE}/auth", headers=_headers("viewer")).json()
 
     assert _fields(body["credentials"])["base_url"]["value"] == f"https://{_TYPED}"
 
@@ -302,25 +309,17 @@ def test_a_plaintext_address_is_refused_in_words_the_operator_can_act_on(world: 
     And in Arc's own sentence: the httpx line that reached the operator named a
     protocol and a "Request URL", neither of which tells them what to change.
     """
-    client, agent_id, agent_dir = _agent(world)
-    _write_bundle(agent_dir)
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle_at(_bundles(world))
 
-    resp = client.post(
-        f"/api/agents/{agent_id}/connectors",
-        json={
-            "extension": _EXTENSION,
-            "instance": _INSTANCE,
-            "secrets": {"api_token": _SENSITIVE, "base_url": f"http://{_TYPED}"},
-        },
-        headers=_headers(),
-    )
+    resp = _install(client, secrets={"api_token": _SENSITIVE, "base_url": f"http://{_TYPED}"})
 
     assert resp.status_code == 400
     error = resp.json()["error"]
     assert "base_url" in error
     assert "https://" in error
     assert "Request URL" not in error, "that phrasing is httpx's, not ours"
-    assert not (agent_dir / "connectors.env").exists(), "a refused install must write nothing"
+    assert not _env_file(world).exists(), "a refused install must write nothing"
 
 
 def test_rotating_the_token_does_not_have_to_retype_the_address(world: Path) -> None:
@@ -329,17 +328,15 @@ def test_rotating_the_token_does_not_have_to_retype_the_address(world: Path) -> 
     A rotation posts the URL it read back, unchanged. It must be accepted and
     shaped identically, or the second save of an unchanged field would refuse.
     """
-    client, agent_id, _dir = _connected(world)
+    client, _agent_id, _dir = _connected(world)
 
     updated = client.put(
-        f"/api/agents/{agent_id}/connectors/{_INSTANCE}/auth",
+        f"/api/connections/{_INSTANCE}/auth",
         json={"secrets": {"api_token": "zzz-rotated-9902", "base_url": _PUBLIC}},
         headers=_headers(),
     )
 
     assert updated.status_code == 200
     assert sorted(updated.json()["updated"]) == ["api_token", "base_url"]
-    body = client.get(
-        f"/api/agents/{agent_id}/connectors/{_INSTANCE}/auth", headers=_headers("viewer")
-    ).json()
+    body = client.get(f"/api/connections/{_INSTANCE}/auth", headers=_headers("viewer")).json()
     assert _fields(body["credentials"])["base_url"]["value"] == _PUBLIC

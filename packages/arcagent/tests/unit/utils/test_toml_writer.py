@@ -124,7 +124,7 @@ def test_a_key_needing_quotes_round_trips_as_a_table_header(key: str) -> None:
 def test_a_bare_key_is_still_written_bare() -> None:
     """Quoting only what needs it: every existing config keeps its current bytes."""
     assert dumps_toml({"extensions": {"work_email": {"approval": "outbound"}}}) == (
-        "[extensions]\n\n[extensions.work_email]\napproval = \"outbound\"\n"
+        '[extensions]\n\n[extensions.work_email]\napproval = "outbound"\n'
     )
 
 

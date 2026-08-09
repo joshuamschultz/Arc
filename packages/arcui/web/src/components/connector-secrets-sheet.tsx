@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import {
   Sheet,
   SheetContent,
@@ -15,62 +15,73 @@ import {
   useInstallConnector,
   useReauthConnector,
 } from '@/lib/queries'
+import { agentLabel, grantName } from '@/lib/agent-names'
 import { ApiError } from '@/lib/api'
-import { asUnsatisfiedHost, type CatalogBundle, type HostRequirement } from '@/lib/types'
+import {
+  asUnsatisfiedHost,
+  type Agent,
+  type CatalogBundle,
+  type HostRequirement,
+} from '@/lib/types'
+import { cn } from '@/lib/utils'
 
-// A connector's connect form: one input per declared field. The bundle says which
-// of them are credentials, and only those are masked — a base URL rendered as
+// A connector's connect form: one input per declared field, plus the question a
+// connection is useless without — who gets to use it. The bundle says which
+// fields are credentials, and only those are masked — a base URL rendered as
 // password dots protects nothing and hides the one thing an operator needs to
 // check. A sensitive value is never rendered back, put in a URL, or kept after the
 // request lands; a non-sensitive one may be shown, because it is not a secret.
 export function ConnectorSecretsSheet({
-  agentId,
   bundle,
   instance,
+  agents,
   open,
   onOpenChange,
 }: {
-  agentId: string
   bundle: CatalogBundle
   /** Set for a rotation; omitted when installing a new instance. */
   instance?: string
+  /** The fleet, so the connect form can ask who this account is for. */
+  agents: Agent[]
   open: boolean
   onOpenChange: (o: boolean) => void
 }) {
   // Both mutations are constructed (rules of hooks); `instance` picks which
   // one actually runs.
-  const install = useInstallConnector(agentId)
-  const reauth = useReauthConnector(agentId, instance ?? '')
+  const install = useInstallConnector()
+  const reauth = useReauthConnector(instance ?? '')
   const [name, setName] = useState(instance ?? '')
   const [values, setValues] = useState<Record<string, string>>({})
+  const [granted, setGranted] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
   const [unsatisfied, setUnsatisfied] = useState<HostRequirement[]>([])
   const [operatorMode] = useOperatorMode()
 
   const rotating = instance !== undefined
   const busy = install.isPending || reauth.isPending
-  const complete = bundle.secrets.every((s) => (values[s.name] ?? '').length > 0)
-  const canSubmit = complete && (rotating || name.trim().length > 0) && !busy
 
-  // On a rotation, fill the non-sensitive fields with what is already configured.
-  // Only those come back with a value — a credential is never read out of the
-  // store — so this can prefill a base URL and can never prefill a token. Without
-  // it an operator rotating a token must retype a URL they cannot see and never
+  // On a rotation, show the non-sensitive fields as already configured. Only
+  // those come back with a value — a credential is never read out of the store —
+  // so this can fill in a base URL and can never fill in a token. Without it an
+  // operator rotating a token must retype a URL they cannot see and never
   // changed, and one typo in it fails the probe with nothing to look at.
-  const configured = useConnectorAuthorization(agentId, instance ?? '', rotating && open)
-  useEffect(() => {
-    const known = configured.data?.credentials
-    if (!known) return
-    setValues((current) => {
-      const seeded = { ...current }
-      for (const field of known) {
-        if (!field.sensitive && field.value && seeded[field.name] === undefined) {
-          seeded[field.name] = field.value
-        }
-      }
-      return seeded
-    })
-  }, [configured.data])
+  //
+  // Derived rather than copied into state: `values` holds what the operator
+  // TYPED, and everything else falls through to what the server says is
+  // configured. Seeding state from the response instead meant one render with
+  // empty inputs and a second that replaced them, which is a cascade the moment
+  // the query refetches under a half-typed form.
+  const configured = useConnectorAuthorization(instance ?? '', rotating && open)
+  const stored = (field: string) => {
+    const known = configured.data?.credentials.find((c) => c.name === field)
+    return known && !known.sensitive ? known.value : ''
+  }
+  const valueFor = (field: string) => values[field] ?? stored(field)
+  const submitted = () =>
+    Object.fromEntries(bundle.secrets.map((s) => [s.name, valueFor(s.name)]))
+
+  const complete = bundle.secrets.every((s) => valueFor(s.name).length > 0)
+  const canSubmit = complete && (rotating || name.trim().length > 0) && !busy
 
   const clear = () => {
     setValues({})
@@ -83,8 +94,14 @@ export function ConnectorSecretsSheet({
     if (!o) {
       clear()
       setName(instance ?? '')
+      setGranted([])
     }
   }
+
+  const toggleAgent = (agent: string) =>
+    setGranted((current) =>
+      current.includes(agent) ? current.filter((n) => n !== agent) : [...current, agent],
+    )
 
   const fail = (e: Error) => {
     setError(e.message)
@@ -100,11 +117,11 @@ export function ConnectorSecretsSheet({
     setError(null)
     setUnsatisfied([])
     if (rotating) {
-      reauth.mutate(values, { onSuccess: done, onError: fail })
+      reauth.mutate(submitted(), { onSuccess: done, onError: fail })
       return
     }
     install.mutate(
-      { extension: bundle.name, instance: name.trim(), secrets: values },
+      { extension: bundle.name, instance: name.trim(), agents: granted, secrets: submitted() },
       { onSuccess: done, onError: fail },
     )
   }
@@ -133,7 +150,6 @@ export function ConnectorSecretsSheet({
           )}
           {(unsatisfied.length > 0 || bundle.host_requires.length > 0) && (
             <HostSetupPanel
-              agentId={agentId}
               extension={bundle.name}
               requirements={unsatisfied.length > 0 ? unsatisfied : bundle.host_requires}
               operatorMode={operatorMode}
@@ -156,8 +172,57 @@ export function ConnectorSecretsSheet({
                 autoComplete="off"
               />
               <p className="text-[11px] text-muted-foreground">
-                How this agent refers to this account of {bundle.name}. One agent can hold
-                several.
+                What this account of {bundle.name} is called. One deployment can hold several.
+              </p>
+            </div>
+          )}
+          {!rotating && (
+            // Asked here, on the way in, rather than left as a second step an
+            // operator has to know exists. Deny by default means a connection
+            // handed to nobody works perfectly and serves nobody, and the person
+            // most likely to meet that state is the one who did not know there
+            // was a question.
+            <div className="space-y-1.5">
+              <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                Who can use it
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {agents.map((agent) => {
+                  const key = grantName(agent)
+                  const picked = granted.includes(key)
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => toggleAgent(key)}
+                      className={cn(
+                        'rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors',
+                        picked
+                          ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+                          : 'border-dashed border-border text-muted-foreground hover:border-foreground/40',
+                      )}
+                    >
+                      {agentLabel(agent)}
+                    </button>
+                  )
+                })}
+                {agents.length === 0 && (
+                  <p className="text-[11px] text-muted-foreground">
+                    No agents on this deployment yet.
+                  </p>
+                )}
+              </div>
+              <p
+                className={cn(
+                  'text-[11px]',
+                  granted.length === 0
+                    ? 'text-amber-700 dark:text-amber-400'
+                    : 'text-muted-foreground',
+                )}
+              >
+                {granted.length === 0
+                  ? 'Nobody selected — this will connect and no agent will be able to use it. You can grant it later.'
+                  : 'Only these agents get its tools. You can change this at any time.'}
               </p>
             </div>
           )}
@@ -174,7 +239,7 @@ export function ConnectorSecretsSheet({
                 type={s.sensitive ? 'password' : 'text'}
                 autoComplete="off"
                 spellCheck={false}
-                value={values[s.name] ?? ''}
+                value={valueFor(s.name)}
                 onChange={(e) => setValues({ ...values, [s.name]: e.target.value })}
                 placeholder={s.sensitive ? '••••••••' : 'https://…'}
               />

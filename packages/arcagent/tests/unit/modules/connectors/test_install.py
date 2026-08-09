@@ -19,7 +19,6 @@ code the CLI drives instead of reimplementing the order of operations.
 
 from __future__ import annotations
 
-import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -35,23 +34,22 @@ from arcagent.extension.attachment import (
     ToolResult,
     ToolSpec,
 )
+from arcagent.extension.grants import Connection, ConnectionRegistry
 from arcagent.extension.secrets import LocalFileSecretBackend, SecretRef, SecretStore
 from arcagent.extension.state import ConnectionStateStore
 from arcagent.modules.connectors.install import (
     ConnectorPlan,
     install_connector,
-    load_instances,
     plan_connector,
     remove_connector,
 )
 
-_AGENT = "sales_agent"
 _INSTANCE = "sales"
 _EXTENSION = "acme_tickets"
 _CALLER = "did:arc:example:org:agent:abc"
 
 #: A name the coordinate rule refuses. Hyphens are legal in a bare TOML key, so a
-#: block carrying one can exist on disk; it is refused because the name also
+#: connection carrying one can exist on disk; it is refused because the name also
 #: becomes an env-var segment, where a hyphen is not a legal shell variable name.
 _ILLEGAL_INSTANCE = "personal-mail"
 
@@ -218,13 +216,9 @@ def _bundle(root: Path, *, manifest: str = _MANIFEST) -> Path:
     return folder
 
 
-def _agent_dir(tmp_path: Path) -> Path:
-    agent = tmp_path / _AGENT
-    agent.mkdir(parents=True, exist_ok=True)
-    (agent / "arcagent.toml").write_text(
-        '[agent]\nname = "sales_agent"\n\n[llm]\nmodel = "none"\n', encoding="utf-8"
-    )
-    return agent
+def _connections(tmp_path: Path) -> ConnectionRegistry:
+    """The deployment's connections — where an install writes and a grant lives."""
+    return ConnectionRegistry(tmp_path / "arc")
 
 
 def _store(tmp_path: Path) -> tuple[SecretStore, Path]:
@@ -246,11 +240,8 @@ def _plan(
     )
 
 
-def _blocks(agent_dir: Path) -> dict[str, Any]:
-    raw = tomllib.loads((agent_dir / "arcagent.toml").read_text(encoding="utf-8"))
-    extensions = raw.get("extensions", {})
-    assert isinstance(extensions, dict)
-    return extensions
+def _defined(connections: ConnectionRegistry) -> dict[str, Connection]:
+    return connections.all()
 
 
 class TestPlan:
@@ -318,9 +309,7 @@ class TestPlan:
     ) -> None:
         """Whoever reads this typed something perfectly reasonable."""
         with pytest.raises(ExtensionError) as caught:
-            _plan(
-                tmp_path, manifest=_MANIFEST_NO_SECRETS, instance="blackarc industrial email"
-            )
+            _plan(tmp_path, manifest=_MANIFEST_NO_SECRETS, instance="blackarc industrial email")
         message = caught.value.message
         assert "blackarc industrial email" in message
         assert "blackarc_industrial_email" in message
@@ -331,18 +320,16 @@ class TestPlan:
     ) -> None:
         assert _plan(tmp_path, instance=instance).instance == instance
 
-    def test_a_refused_name_is_refused_before_anything_is_written(
-        self, tmp_path: Path
-    ) -> None:
-        """Byte-identical, not merely "no ``[extensions]`` block": the file an agent
-        starts from must be untouched by a refusal."""
-        agent_dir = _agent_dir(tmp_path)
-        before = (agent_dir / "arcagent.toml").read_bytes()
+    def test_a_refused_name_is_refused_before_anything_is_written(self, tmp_path: Path) -> None:
+        """Nothing is defined, and no file appears: a refusal leaves the deployment
+        exactly as it found it."""
+        connections = _connections(tmp_path)
 
         with pytest.raises(ExtensionError):
             _plan(tmp_path, manifest=_MANIFEST_NO_SECRETS, instance="work email")
 
-        assert (agent_dir / "arcagent.toml").read_bytes() == before
+        assert _defined(connections) == {}
+        assert not connections.path.exists()
 
 
 @pytest.mark.asyncio
@@ -352,14 +339,14 @@ class TestInstall:
     async def test_a_successful_install_writes_secret_config_and_state(
         self, tmp_path: Path
     ) -> None:
-        agent_dir = _agent_dir(tmp_path)
+        connections = _connections(tmp_path)
         state = _state()
         store, env_file = _store(tmp_path)
 
         report = await install_connector(
             _plan(tmp_path),
-            agent_dir=agent_dir,
-            agent=_AGENT,
+            connections=connections,
+            agents=["sales_agent"],
             secret_values={"api_token": "s3cr3t"},
             store=store,
             caller_did=_CALLER,
@@ -370,41 +357,42 @@ class TestInstall:
         assert report.instance == _INSTANCE
         assert "create_issue" in report.tools
         stored = await store.get(
-            SecretRef(agent=_AGENT, instance=_INSTANCE, field="api_token"), caller_did=_CALLER
+            SecretRef(connection=_INSTANCE, field="api_token"), caller_did=_CALLER
         )
         assert stored is not None
         assert stored.reveal() == "s3cr3t"
-        assert _blocks(agent_dir)[_INSTANCE]["extension"] == _EXTENSION
-        assert _blocks(agent_dir)[_INSTANCE]["approval"] == "outbound"
+        assert _defined(connections)[_INSTANCE].extension == _EXTENSION
+        assert _defined(connections)[_INSTANCE].approval == "outbound"
         # Connecting registers the connection AND approves the contract it just
         # probed: without the record the approval is a merge against nothing, and
         # without the approval every tool it serves is suspended at the next start.
-        record = await state.get(_AGENT, _INSTANCE)
+        record = await state.get(_INSTANCE)
         assert record is not None
         assert record.health == "healthy"
         assert list(record.approved_tool_hashes) == ["create_issue"]
         # The secret is in the store and nowhere else.
-        assert "s3cr3t" not in (agent_dir / "arcagent.toml").read_text(encoding="utf-8")
+        assert "s3cr3t" not in connections.path.read_text(encoding="utf-8")
         assert "s3cr3t" in env_file.read_text(encoding="utf-8")
 
     async def test_the_written_block_is_readable_back(self, tmp_path: Path) -> None:
         # A write nothing can read is dead wiring; the reader ships with the writer.
-        agent_dir = _agent_dir(tmp_path)
+        connections = _connections(tmp_path)
         state = _state()
         store, _env = _store(tmp_path)
         await install_connector(
             _plan(tmp_path),
-            agent_dir=agent_dir,
-            agent=_AGENT,
+            connections=connections,
+            agents=["sales_agent"],
             secret_values={"api_token": "s3cr3t"},
             store=store,
             caller_did=_CALLER,
             state=state,
             attachment_factory=lambda _m, _b, _s: FakeAttachment(),
         )
-        instances = load_instances(agent_dir)
-        assert instances[_INSTANCE].extension == _EXTENSION
-        assert instances[_INSTANCE].approval == "outbound"
+        defined = connections.all()
+        assert defined[_INSTANCE].extension == _EXTENSION
+        assert defined[_INSTANCE].approval == "outbound"
+        assert defined[_INSTANCE].agents == ("sales_agent",)
 
     async def test_an_unsigned_bundle_is_refused_before_its_code_runs(
         self, tmp_path: Path
@@ -414,7 +402,7 @@ class TestInstall:
         # and before the credential is written. Recording whether the factory ran
         # is the assertion that matters: an install can fail for unrelated reasons
         # and still have executed the bundle, which makes a broken gate look shut.
-        agent_dir = _agent_dir(tmp_path)
+        connections = _connections(tmp_path)
         state = _state()
         store, env_file = _store(tmp_path)
         root = tmp_path / "extensions"
@@ -435,8 +423,8 @@ class TestInstall:
         with pytest.raises(ExtensionError) as caught:
             await install_connector(
                 plan,
-                agent_dir=agent_dir,
-                agent=_AGENT,
+                connections=connections,
+                agents=["sales_agent"],
                 secret_values={"api_token": "s3cr3t"},
                 store=store,
                 caller_did=_CALLER,
@@ -447,21 +435,21 @@ class TestInstall:
         assert caught.value.details["step"] == "verify"
         assert built == [], "an unverified bundle's code was executed"
         assert not env_file.exists()
-        assert _blocks(agent_dir) == {}
-        assert await state.get(_AGENT, _INSTANCE) is None
+        assert _defined(connections) == {}
+        assert await state.get(_INSTANCE) is None
 
     async def test_a_missing_secret_names_the_secrets_step_and_writes_nothing(
         self, tmp_path: Path
     ) -> None:
-        agent_dir = _agent_dir(tmp_path)
+        connections = _connections(tmp_path)
         state = _state()
         store, env_file = _store(tmp_path)
 
         with pytest.raises(ExtensionError) as caught:
             await install_connector(
                 _plan(tmp_path),
-                agent_dir=agent_dir,
-                agent=_AGENT,
+                connections=connections,
+                agents=["sales_agent"],
                 secret_values={},
                 store=store,
                 caller_did=_CALLER,
@@ -471,22 +459,22 @@ class TestInstall:
 
         assert caught.value.details["step"] == "secrets"
         assert not env_file.exists()
-        assert _blocks(agent_dir) == {}
-        assert await state.get(_AGENT, _INSTANCE) is None
+        assert _defined(connections) == {}
+        assert await state.get(_INSTANCE) is None
 
     async def test_an_unsatisfied_host_prerequisite_names_the_host_step(
         self, tmp_path: Path
     ) -> None:
         manifest = _MANIFEST + '\n[[host_requires]]\nname = "definitely_not_installed_xyz"\n'
-        agent_dir = _agent_dir(tmp_path)
+        connections = _connections(tmp_path)
         state = _state()
         store, env_file = _store(tmp_path)
 
         with pytest.raises(ExtensionError) as caught:
             await install_connector(
                 _plan(tmp_path, manifest=manifest),
-                agent_dir=agent_dir,
-                agent=_AGENT,
+                connections=connections,
+                agents=["sales_agent"],
                 secret_values={"api_token": "s3cr3t"},
                 store=store,
                 caller_did=_CALLER,
@@ -497,21 +485,21 @@ class TestInstall:
         assert caught.value.details["step"] == "host"
         assert "definitely_not_installed_xyz" in str(caught.value)
         assert not env_file.exists()
-        assert _blocks(agent_dir) == {}
-        assert await state.get(_AGENT, _INSTANCE) is None
+        assert _defined(connections) == {}
+        assert await state.get(_INSTANCE) is None
 
     async def test_a_failed_probe_rolls_the_secret_back(self, tmp_path: Path) -> None:
         # The step that most often fails is the one that runs AFTER the secret is
         # written, so this is the rollback that actually has to work.
-        agent_dir = _agent_dir(tmp_path)
+        connections = _connections(tmp_path)
         state = _state()
         store, _env = _store(tmp_path)
 
         with pytest.raises(ExtensionError) as caught:
             await install_connector(
                 _plan(tmp_path),
-                agent_dir=agent_dir,
-                agent=_AGENT,
+                connections=connections,
+                agents=["sales_agent"],
                 secret_values={"api_token": "s3cr3t"},
                 store=store,
                 caller_did=_CALLER,
@@ -524,16 +512,16 @@ class TestInstall:
         assert caught.value.details["step"] == "probe"
         assert "acme: command not found" in str(caught.value)
         left = await store.get(
-            SecretRef(agent=_AGENT, instance=_INSTANCE, field="api_token"), caller_did=_CALLER
+            SecretRef(connection=_INSTANCE, field="api_token"), caller_did=_CALLER
         )
         assert left is None
-        assert _blocks(agent_dir) == {}
-        assert await state.get(_AGENT, _INSTANCE) is None
+        assert _defined(connections) == {}
+        assert await state.get(_INSTANCE) is None
 
     async def test_an_attachment_that_cannot_be_built_rolls_the_secret_back(
         self, tmp_path: Path
     ) -> None:
-        agent_dir = _agent_dir(tmp_path)
+        connections = _connections(tmp_path)
         state = _state()
         store, _env = _store(tmp_path)
 
@@ -543,8 +531,8 @@ class TestInstall:
         with pytest.raises(ExtensionError) as caught:
             await install_connector(
                 _plan(tmp_path),
-                agent_dir=agent_dir,
-                agent=_AGENT,
+                connections=connections,
+                agents=["sales_agent"],
                 secret_values={"api_token": "s3cr3t"},
                 store=store,
                 caller_did=_CALLER,
@@ -554,16 +542,16 @@ class TestInstall:
 
         assert caught.value.details["step"] == "probe"
         left = await store.get(
-            SecretRef(agent=_AGENT, instance=_INSTANCE, field="api_token"), caller_did=_CALLER
+            SecretRef(connection=_INSTANCE, field="api_token"), caller_did=_CALLER
         )
         assert left is None
-        assert _blocks(agent_dir) == {}
-        assert await state.get(_AGENT, _INSTANCE) is None
+        assert _defined(connections) == {}
+        assert await state.get(_INSTANCE) is None
 
     async def test_a_second_instance_of_one_bundle_is_independent(self, tmp_path: Path) -> None:
         # One bundle backs several named accounts (SDD data model), so installing
         # the second must not disturb the first's block or its credential.
-        agent_dir = _agent_dir(tmp_path)
+        connections = _connections(tmp_path)
         state = _state()
         store, _env = _store(tmp_path)
         root = tmp_path / "extensions"
@@ -579,8 +567,8 @@ class TestInstall:
             )
             await install_connector(
                 plan,
-                agent_dir=agent_dir,
-                agent=_AGENT,
+                connections=connections,
+                agents=["sales_agent"],
                 secret_values={"api_token": value},
                 store=store,
                 caller_did=_CALLER,
@@ -588,9 +576,9 @@ class TestInstall:
                 attachment_factory=lambda _m, _b, _s: FakeAttachment(),
             )
 
-        assert set(_blocks(agent_dir)) == {"sales", "support"}
+        assert set(_defined(connections)) == {"sales", "support"}
         first = await store.get(
-            SecretRef(agent=_AGENT, instance="sales", field="api_token"), caller_did=_CALLER
+            SecretRef(connection="sales", field="api_token"), caller_did=_CALLER
         )
         assert first is not None
         assert first.reveal() == "one"
@@ -601,14 +589,14 @@ class TestRemove:
     """Removing a connection leaves nothing behind either."""
 
     async def test_remove_drops_the_secret_and_the_block(self, tmp_path: Path) -> None:
-        agent_dir = _agent_dir(tmp_path)
+        connections = _connections(tmp_path)
         state = _state()
         store, _env = _store(tmp_path)
         plan = _plan(tmp_path)
         await install_connector(
             plan,
-            agent_dir=agent_dir,
-            agent=_AGENT,
+            connections=connections,
+            agents=["sales_agent"],
             secret_values={"api_token": "s3cr3t"},
             store=store,
             caller_did=_CALLER,
@@ -617,8 +605,7 @@ class TestRemove:
         )
 
         report = await remove_connector(
-            agent_dir=agent_dir,
-            agent=_AGENT,
+            connections=connections,
             instance=_INSTANCE,
             store=store,
             caller_did=_CALLER,
@@ -630,21 +617,19 @@ class TestRemove:
         assert report.removed_state is True
         # A record that outlives its account hands the next install under this name
         # the approvals an operator minted for the connection they disconnected.
-        assert await state.get(_AGENT, _INSTANCE) is None
-        assert _blocks(agent_dir) == {}
-        assert load_instances(agent_dir) == {}
+        assert await state.get(_INSTANCE) is None
+        assert _defined(connections) == {}
         left = await store.get(
-            SecretRef(agent=_AGENT, instance=_INSTANCE, field="api_token"), caller_did=_CALLER
+            SecretRef(connection=_INSTANCE, field="api_token"), caller_did=_CALLER
         )
         assert left is None
 
     async def test_removing_an_unknown_instance_is_not_an_error(self, tmp_path: Path) -> None:
-        agent_dir = _agent_dir(tmp_path)
+        connections = _connections(tmp_path)
         state = _state()
         store, _env = _store(tmp_path)
         report = await remove_connector(
-            agent_dir=agent_dir,
-            agent=_AGENT,
+            connections=connections,
             instance="never_installed",
             store=store,
             caller_did=_CALLER,
@@ -658,29 +643,27 @@ class TestRemove:
     ) -> None:
         """The strict path must have an exit, or the rule creates the undeletable.
 
-        A block carrying a name ``plan_connector`` now refuses can exist — an
-        operator hand-edited the config, or it predates the rule. Removal reads a
+        A connection carrying a name ``plan_connector`` now refuses can exist — an
+        operator hand-edited the file, or it predates the rule. Removal reads a
         connection's credential fields through the planner, so that read refuses;
-        it must be treated as "no fields to delete" and the block and the record
-        dropped anyway.
+        it must be treated as "no fields to delete" and the connection and its
+        record dropped anyway.
 
         Sound rather than an exception to the rule: ``SecretRef`` applies the very
         same coordinate check, so no credential can ever have been stored under
         this name, and there is nothing left behind to strand.
         """
-        agent_dir = _agent_dir(tmp_path)
+        connections = _connections(tmp_path)
         state = _state()
         store, _env = _store(tmp_path)
-        config = agent_dir / "arcagent.toml"
-        config.write_text(
-            config.read_text(encoding="utf-8")
-            + f'\n[extensions."{_ILLEGAL_INSTANCE}"]\nextension = "{_EXTENSION}"\n',
+        connections.path.parent.mkdir(parents=True, exist_ok=True)
+        connections.path.write_text(
+            f'[connections."{_ILLEGAL_INSTANCE}"]\nextension = "{_EXTENSION}"\n',
             encoding="utf-8",
         )
 
         report = await remove_connector(
-            agent_dir=agent_dir,
-            agent=_AGENT,
+            connections=connections,
             instance=_ILLEGAL_INSTANCE,
             store=store,
             caller_did=_CALLER,
@@ -691,5 +674,4 @@ class TestRemove:
         )
 
         assert report.removed_config is True
-        assert _blocks(agent_dir) == {}
-        assert load_instances(agent_dir) == {}
+        assert _defined(connections) == {}

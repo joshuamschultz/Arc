@@ -37,6 +37,7 @@ from arcagent.core.session_internal.capability_ledger import TAG_TO_LEGS
 from arcagent.core.tier import Tier
 from arcagent.extension.cli_attachment import CliCommand
 from arcagent.extension.field_formats import normalize
+from arcagent.extension.grants import ConnectionRegistry
 from arcagent.extension.host_login import authorization_verdict
 from arcagent.extension.manifest import ExtensionManifest, load_manifest
 from arcagent.extension.platforms import ANY_PLATFORM
@@ -678,12 +679,13 @@ async def test_an_egress_bundle_is_refused_at_federal_before_anything_is_written
     """
     manifest = _manifest_at(path, Tier.FEDERAL)
     store = SecretStore(LocalFileSecretBackend(tmp_path / "arc.env"))
+    registry = ConnectionRegistry(tmp_path)
 
     with pytest.raises(ExtensionError) as raised:
         await install_connector(
             _plan(path, manifest, Tier.FEDERAL),
-            agent_dir=tmp_path,
-            agent="bundle_agent",
+            connections=registry,
+            agents=("bundle_agent",),
             secret_values={secret.name: "unused" for secret in manifest.secrets},
             store=store,
             caller_did=_CALLER,
@@ -696,31 +698,38 @@ async def test_an_egress_bundle_is_refused_at_federal_before_anything_is_written
     assert error.details["tool"] in sending
     assert "federal" in error.message
     assert not (tmp_path / "arc.env").exists(), "a refused install must write nothing"
+    # The grant list is the other thing an install writes, and the one that
+    # decides access: a refused install leaving one behind would be a connection
+    # nobody approved, already handed to an agent.
+    assert not registry.path.exists(), "a refused install must define no connection"
 
 
 @pytest.mark.parametrize("path", EGRESS_BUNDLES, ids=[p.name for p in EGRESS_BUNDLES])
 async def test_the_same_bundle_passes_the_gate_at_personal(path: Path, tmp_path: Path) -> None:
     """The refusal above must be the tier's, not the bundle being malformed.
 
-    Personal permits egress from any origin, so the gate lets this through and the
-    install fails later — at ``verify`` or ``probe`` — for reasons that are not the
-    egress verdict.
+    Personal permits egress from any origin, so the egress gate — which is the
+    ``manifest`` step, and the first thing ``install_connector`` runs — is never
+    what stops this. Whether the install then completes or fails at a later step
+    depends on whether a fabricated credential happens to reach the real service,
+    which is not this test's subject: the assertion is that ``manifest`` is not
+    the reason.
     """
     manifest = _manifest_at(path, Tier.PERSONAL)
     store = SecretStore(LocalFileSecretBackend(tmp_path / "arc.env"))
 
-    with pytest.raises(ExtensionError) as raised:
+    try:
         await install_connector(
             _plan(path, manifest, Tier.PERSONAL),
-            agent_dir=tmp_path,
-            agent="bundle_agent",
+            connections=ConnectionRegistry(tmp_path),
+            agents=("bundle_agent",),
             secret_values={secret.name: "unused" for secret in manifest.secrets},
             store=store,
             caller_did=_CALLER,
             state=await open_connection_state(str(tmp_path / "data")),
         )
-
-    assert raised.value.details["step"] != "manifest"
+    except ExtensionError as refused:
+        assert refused.details["step"] != "manifest"
 
 
 @pytest.mark.parametrize(
@@ -735,15 +744,15 @@ async def test_a_read_only_bundle_clears_the_federal_egress_gate(
     manifest = _manifest_at(path, Tier.FEDERAL)
     store = SecretStore(LocalFileSecretBackend(tmp_path / "arc.env"))
 
-    with pytest.raises(ExtensionError) as raised:
+    try:
         await install_connector(
             _plan(path, manifest, Tier.FEDERAL),
-            agent_dir=tmp_path,
-            agent="bundle_agent",
+            connections=ConnectionRegistry(tmp_path),
+            agents=("bundle_agent",),
             secret_values={secret.name: "unused" for secret in manifest.secrets},
             store=store,
             caller_did=_CALLER,
             state=await open_connection_state(str(tmp_path / "data")),
         )
-
-    assert raised.value.details["step"] != "manifest"
+    except ExtensionError as refused:
+        assert refused.details["step"] != "manifest"

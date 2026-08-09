@@ -121,9 +121,10 @@ class ConnectScreen(ModalScreen[ConnectOutcome | None]):
 
     BINDINGS: ClassVar[list[Any]] = [("escape", "cancel", "Cancel")]
 
-    def __init__(self, connections: Connections) -> None:
+    def __init__(self, connections: Connections, agent: str) -> None:
         super().__init__()
         self._connections = connections
+        self._agent = agent
         self._bundles: tuple[CatalogEntry, ...] = ()
         self._plan: ConnectorPlan | None = None
         self._fields: list[tuple[str, Input]] = []
@@ -209,7 +210,11 @@ class ConnectScreen(ModalScreen[ConnectOutcome | None]):
             return
 
         try:
-            plan = self._connections.plan(choice.name, instance)
+            # Planned for the agent this TUI is attached to, because that agent's
+            # tier decides how the manifest is parsed and where the credential may
+            # be held — planning at the deployment floor and granting afterwards
+            # is what ``install`` refuses as too lax.
+            plan = self._connections.plan(choice.name, instance, agents=(self._agent,))
         except ExtensionError as exc:
             self.dismiss(
                 ConnectOutcome(False, (f"Could not connect {choice.name}: {exc.message}",))
@@ -280,7 +285,7 @@ class ConnectScreen(ModalScreen[ConnectOutcome | None]):
         status line honest about what is happening.
         """
         try:
-            report = await self._connections.install(plan, values)
+            report = await self._connections.install(plan, values, agents=(self._agent,))
         except ExtensionError as exc:
             self._finish(
                 ConnectOutcome(False, (f"Could not connect {plan.extension}: {exc.message}",))
@@ -298,7 +303,11 @@ class ConnectScreen(ModalScreen[ConnectOutcome | None]):
                 )
             )
             return
-        self._finish(ConnectOutcome(True, connect.install_summary(report, self._connections)))
+        self._finish(
+            ConnectOutcome(
+                True, connect.install_summary(report, self._connections, (self._agent,))
+            )
+        )
 
     def _finish(self, outcome: ConnectOutcome) -> None:
         """Close with a result, unless the operator already closed the screen."""
@@ -316,15 +325,22 @@ class ConnectScreen(ModalScreen[ConnectOutcome | None]):
 
 
 class ConnectionsScreen(ModalScreen[None]):
-    """List what this agent already has connected, and prove one is live."""
+    """List this deployment's connected accounts, say who holds each, and prove one is live.
+
+    Every connection is listed, not only the attached agent's, because "who can
+    reach what" is the question a per-agent listing cannot answer — and an
+    operator wondering why their agent still cannot see an account needs to read
+    the grant that is missing, not an empty list.
+    """
 
     CSS: ClassVar[str] = _MODAL_CSS
 
     BINDINGS: ClassVar[list[Any]] = [("escape", "cancel", "Close")]
 
-    def __init__(self, connections: Connections) -> None:
+    def __init__(self, connections: Connections, agent: str) -> None:
         super().__init__()
         self._connections = connections
+        self._agent = agent
         self._instances: tuple[str, ...] = ()
 
     def compose(self) -> ComposeResult:
@@ -337,18 +353,23 @@ class ConnectionsScreen(ModalScreen[None]):
                 yield Button("Close", id="connections-close")
 
     def on_mount(self) -> None:
-        """Read the agent's own config — the same blocks the connector runtime binds."""
+        """Read the deployment's connections — the same grants the runtime enforces."""
         try:
-            configured = self._connections.installed()
+            defined = self._connections.connections()
         except ExtensionError as exc:
             self._status(exc.message)
             return
 
-        self._instances = tuple(sorted(configured))
+        self._instances = tuple(sorted(defined))
         options = self.query_one("#connections-list", OptionList)
         for name in self._instances:
-            block = configured[name]
-            options.add_option(f"{name}  ·  {block.extension}  ·  approval {block.approval}")
+            connection = defined[name]
+            held = ", ".join(connection.agents) or "nobody"
+            mine = " ← this agent" if self._agent in connection.agents else ""
+            options.add_option(
+                f"{name}  ·  {connection.extension}  ·  approval {connection.approval}"
+                f"  ·  granted to {held}{mine}"
+            )
         if not self._instances:
             self._status("Nothing connected yet. Use /connect to add one.")
             self.query_one("#connections-probe", Button).disabled = True

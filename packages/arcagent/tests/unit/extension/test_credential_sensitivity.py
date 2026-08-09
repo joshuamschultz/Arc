@@ -140,22 +140,14 @@ def test_a_field_that_says_nothing_is_treated_as_a_credential() -> None:
 
 @pytest.fixture
 def connected(tmp_path: Path) -> Connections:
-    """One agent with the acme bundle installed and both fields supplied."""
-    agent = tmp_path / "acme_agent"
-    agent.mkdir()
-    (agent / "arcagent.toml").write_text(
-        '[agent]\nname = "acme_agent"\n\n[identity]\ndid = "did:arc:local:executor/7e3e"\n\n'
-        '[security]\ntier = "personal"\n',
-        encoding="utf-8",
-    )
-    bundle = agent / "extensions" / _EXTENSION
+    """One deployment with the acme bundle available and both fields supplied."""
+    arc_dir = tmp_path / "arc"
+    bundle = arc_dir / "extensions" / _EXTENSION
     bundle.mkdir(parents=True)
     (bundle / "extension.toml").write_text(_MANIFEST, encoding="utf-8")
     (bundle / "acme_fields_attachment.py").write_text(_ADAPTER, encoding="utf-8")
 
-    return Connections.for_agent(
-        agent, arc_dir=tmp_path / "arc", data_dir=tmp_path / "data"
-    )
+    return Connections.for_deployment(arc_dir=arc_dir, data_dir=tmp_path / "data")
 
 
 async def _install(connections: Connections) -> None:

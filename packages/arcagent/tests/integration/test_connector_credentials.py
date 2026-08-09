@@ -43,6 +43,7 @@ from arcagent.connections import AuditChain, Connections
 from arcagent.core.errors import ExtensionError
 from arcagent.core.tier import Tier
 from arcagent.extension.attachment import ExtensionAttachment
+from arcagent.extension.grants import ConnectionRegistry
 from arcagent.extension.manifest import ExtensionManifest
 from arcagent.extension.secrets import (
     LocalFileSecretBackend,
@@ -105,31 +106,16 @@ def _bundle_root(tmp_path: Path) -> Path:
     return root
 
 
-def _agent_dir(tmp_path: Path) -> Path:
-    """A real agent directory: the install writes its instance block into a real config."""
-    agent = tmp_path / _AGENT
-    workspace = agent / "workspace"
-    workspace.mkdir(parents=True, exist_ok=True)
-    (agent / "arcagent.toml").write_text(
-        "[agent]\n"
-        'name = "credential-agent"\n'
-        'org = "testorg"\n'
-        'type = "executor"\n'
-        f'workspace = "{workspace}"\n\n'
-        "[llm]\n"
-        'model = "test/model"\n\n'
-        "[identity]\n"
-        f'did = "{_CALLER}"\n\n'
-        "[security]\n"
-        'tier = "personal"\n',
-        encoding="utf-8",
-    )
-    return agent
+def _arc_dir(tmp_path: Path) -> Path:
+    """The deployment root: where this test's connections and credentials live."""
+    root = tmp_path / "arc"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
 
 
-def _store(agent_dir: Path, sink: _RecordingSink | None = None) -> SecretStore:
-    """The store the shipped surfaces use: this agent's own owner-only file."""
-    return SecretStore(LocalFileSecretBackend(connector_env_file(agent_dir)), sink=sink)
+def _store(arc_dir: Path, sink: _RecordingSink | None = None) -> SecretStore:
+    """The store the shipped surfaces use: the deployment's owner-only file."""
+    return SecretStore(LocalFileSecretBackend(connector_env_file(arc_dir)), sink=sink)
 
 
 def _plan(root: Path) -> ConnectorPlan:
@@ -147,20 +133,17 @@ async def _state(tmp_path: Path) -> ConnectionStateStore:
     return await open_connection_state(str(tmp_path / "data"))
 
 
-async def _stored(agent_dir: Path, value: str = _TOKEN) -> SecretStore:
+async def _stored(arc_dir: Path, value: str = _TOKEN) -> SecretStore:
     """A store already holding the credential an operator supplied."""
-    store = _store(agent_dir)
-    await store.put(
-        SecretRef(agent=_AGENT, instance=_INSTANCE, field=_FIELD), value, caller_did=_CALLER
-    )
+    store = _store(arc_dir)
+    await store.put(SecretRef(connection=_INSTANCE, field=_FIELD), value, caller_did=_CALLER)
     return store
 
 
-def _connections(tmp_path: Path, agent_dir: Path, root: Path, sink: _RecordingSink) -> Connections:
+def _connections(tmp_path: Path, root: Path, sink: _RecordingSink) -> Connections:
     """The façade every surface drives, pointed entirely inside the test's own tree."""
-    return Connections.for_agent(
-        agent_dir,
-        arc_dir=tmp_path / "arc",
+    return Connections.for_deployment(
+        arc_dir=_arc_dir(tmp_path),
         data_dir=tmp_path / "data",
         extensions_root=root,
         audit=AuditChain.held(sink),
@@ -182,13 +165,13 @@ async def test_a_native_attachment_receives_its_declared_secrets_from_the_store(
     matching it proves the exact stored credential arrived, not merely that
     something did.
     """
-    agent_dir = _agent_dir(tmp_path)
+    arc_dir = _arc_dir(tmp_path)
     root = _bundle_root(tmp_path)
-    store = await _stored(agent_dir)
+    store = await _stored(arc_dir)
     plan = _plan(root)
 
     secrets = await resolve_secrets(
-        plan.manifest, agent=_AGENT, instance=_INSTANCE, store=store, caller_did=_CALLER
+        plan.manifest, connection=_INSTANCE, store=store, caller_did=_CALLER
     )
     attachment = build_attachment(plan.manifest, plan.bundle, secrets)
     answer = await attachment.invoke(_ECHO, {"message": _FINGERPRINT_KEY})
@@ -210,7 +193,7 @@ async def test_the_install_path_hands_the_stored_credential_to_the_attachment_it
     resolved. A probe against an attachment holding no credential is the failure an
     operator actually hit: three credentials supplied, ``jira is not configured``.
     """
-    agent_dir = _agent_dir(tmp_path)
+    arc_dir = _arc_dir(tmp_path)
     root = _bundle_root(tmp_path)
     handed: list[dict[str, str]] = []
 
@@ -222,10 +205,10 @@ async def test_the_install_path_hands_the_stored_credential_to_the_attachment_it
 
     report = await install_connector(
         _plan(root),
-        agent_dir=agent_dir,
-        agent=_AGENT,
+        connections=ConnectionRegistry(arc_dir),
+        agents=[_AGENT],
         secret_values={_FIELD: _TOKEN},
-        store=_store(agent_dir),
+        store=_store(arc_dir),
         caller_did=_CALLER,
         state=await _state(tmp_path),
         attachment_factory=_recording,
@@ -246,20 +229,20 @@ async def test_the_facade_probes_a_connection_that_holds_its_credential(
     "does this work", so a probe that answers from a credential-less attachment is a
     surface reporting on a connection nobody has.
     """
-    agent_dir = _agent_dir(tmp_path)
+    arc_dir = _arc_dir(tmp_path)
     root = _bundle_root(tmp_path)
     sink = _RecordingSink()
     await install_connector(
         _plan(root),
-        agent_dir=agent_dir,
-        agent=_AGENT,
+        connections=ConnectionRegistry(arc_dir),
+        agents=[_AGENT],
         secret_values={_FIELD: _TOKEN},
-        store=_store(agent_dir),
+        store=_store(arc_dir),
         caller_did=_CALLER,
         state=await _state(tmp_path),
     )
 
-    result = await _connections(tmp_path, agent_dir, root, sink).probe(_INSTANCE)
+    result = await _connections(tmp_path, root, sink).probe(_INSTANCE)
 
     assert result.reachable
     assert "authenticated" in result.detail
@@ -280,20 +263,20 @@ async def test_a_revealed_credential_never_reaches_a_rendered_string(
     presence. ``reveal()`` is the one call that ends the ``Secret(***)`` protection,
     so a second call site anywhere upstream shows up here.
     """
-    agent_dir = _agent_dir(tmp_path)
+    arc_dir = _arc_dir(tmp_path)
     root = _bundle_root(tmp_path)
     sink = _RecordingSink()
     report = await install_connector(
         _plan(root),
-        agent_dir=agent_dir,
-        agent=_AGENT,
+        connections=ConnectionRegistry(arc_dir),
+        agents=[_AGENT],
         secret_values={_FIELD: _TOKEN},
-        store=_store(agent_dir, sink),
+        store=_store(arc_dir, sink),
         caller_did=_CALLER,
         state=await _state(tmp_path),
         audit_sink=sink,
     )
-    connections = _connections(tmp_path, agent_dir, root, sink)
+    connections = _connections(tmp_path, root, sink)
 
     specs = await connections.tools(_INSTANCE)
     checks = await connections.doctor(_INSTANCE)
@@ -319,17 +302,13 @@ async def test_a_refusal_names_the_missing_credential_and_never_its_value(
     deleted, a vault that lost it — which is the one state where a connection would
     otherwise attach and serve verbs that answer 401.
     """
-    agent_dir = _agent_dir(tmp_path)
+    arc_dir = _arc_dir(tmp_path)
     root = _bundle_root(tmp_path)
-    store = _store(agent_dir)
+    store = _store(arc_dir)
 
     with pytest.raises(ExtensionError) as caught:
         await resolve_secrets(
-            _plan(root).manifest,
-            agent=_AGENT,
-            instance=_INSTANCE,
-            store=store,
-            caller_did=_CALLER,
+            _plan(root).manifest, connection=_INSTANCE, store=store, caller_did=_CALLER
         )
 
     error = caught.value
@@ -349,7 +328,7 @@ async def test_a_bundle_declaring_no_credential_needs_no_store(tmp_path: Path) -
     manifest = _cli_manifest(secrets=False)
 
     resolved = await resolve_secrets(
-        manifest, agent=_AGENT, instance=_INSTANCE, store=None, caller_did=_CALLER
+        manifest, connection=_INSTANCE, store=None, caller_did=_CALLER
     )
 
     assert resolved == {}

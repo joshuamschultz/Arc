@@ -103,7 +103,7 @@ def env_file(agent_home: Path) -> Path:
 
 @pytest.fixture
 def ref() -> SecretRef:
-    return SecretRef(agent="coder", instance="atlassian_work", field="refresh_token")
+    return SecretRef(connection="atlassian_work", field="refresh_token")
 
 
 @pytest.fixture
@@ -215,18 +215,21 @@ async def test_a_newline_cannot_forge_a_second_entry(
 
 
 # ---------------------------------------------------------------------------
-# Keying — (agent, instance, field)
+# Keying — (connection, field)
 # ---------------------------------------------------------------------------
 
 
-async def test_secrets_are_keyed_by_agent_instance_and_field(
+async def test_secrets_are_keyed_by_connection_and_field(
     local_store: SecretStore, ref: SecretRef
 ) -> None:
-    """Three coordinates, three distinct slots — nothing shares a cell."""
+    """Two coordinates, distinct slots — nothing shares a cell.
+
+    No agent appears in the key, which is what makes a grant a grant: two agents
+    granted one account read the same entry rather than each holding a copy.
+    """
     others = [
-        SecretRef(agent="marketer", instance="atlassian_work", field="refresh_token"),
-        SecretRef(agent="coder", instance="atlassian_personal", field="refresh_token"),
-        SecretRef(agent="coder", instance="atlassian_work", field="client_secret"),
+        SecretRef(connection="atlassian_personal", field="refresh_token"),
+        SecretRef(connection="atlassian_work", field="client_secret"),
     ]
     await local_store.put(ref, SECRET_VALUE, caller_did=CALLER)
     for index, other in enumerate(others):
@@ -257,29 +260,27 @@ async def test_delete_removes_the_value_from_the_store(
 
 
 @pytest.mark.parametrize(
-    "agent,instance,field",
+    "connection,field",
     [
-        ("coder", "../../etc", "refresh_token"),
-        ("coder", "atlassian work", "refresh_token"),
-        ("coder", "atlassian=work", "refresh_token"),
-        ("coder", "atlassian\nwork", "refresh_token"),
-        ("", "atlassian_work", "refresh_token"),
-        ("coder", "atlassian_work", ""),
-        ("coder", "a" * 65, "refresh_token"),
+        ("../../etc", "refresh_token"),
+        ("atlassian work", "refresh_token"),
+        ("atlassian=work", "refresh_token"),
+        ("atlassian\nwork", "refresh_token"),
+        ("", "refresh_token"),
+        ("atlassian_work", ""),
+        ("a" * 65, "refresh_token"),
     ],
 )
-def test_coordinates_that_could_escape_their_cell_are_refused(
-    agent: str, instance: str, field: str
-) -> None:
+def test_coordinates_that_could_escape_their_cell_are_refused(connection: str, field: str) -> None:
     """A coordinate becomes a filesystem path and an env key — it is untrusted input."""
     with pytest.raises(ExtensionError):
-        SecretRef(agent=agent, instance=instance, field=field)
+        SecretRef(connection=connection, field=field)
 
 
 def test_case_variants_cannot_collide_into_one_cell() -> None:
     """Uppercase would fold onto the same env key and read another connection's secret."""
     with pytest.raises(ExtensionError):
-        SecretRef(agent="coder", instance="Atlassian_Work", field="refresh_token")
+        SecretRef(connection="Atlassian_Work", field="refresh_token")
 
 
 # ---------------------------------------------------------------------------
@@ -290,7 +291,7 @@ def test_case_variants_cannot_collide_into_one_cell() -> None:
 async def test_a_second_write_preserves_the_first(
     local_store: SecretStore, ref: SecretRef
 ) -> None:
-    other = SecretRef(agent="coder", instance="atlassian_work", field="client_secret")
+    other = SecretRef(connection="atlassian_work", field="client_secret")
     await local_store.put(ref, SECRET_VALUE, caller_did=CALLER)
     await local_store.put(other, "client-secret-value", caller_did=CALLER)
 
@@ -310,7 +311,7 @@ async def test_a_failed_write_leaves_the_previous_store_intact(
         raise OSError("interrupted before the rename landed")
 
     monkeypatch.setattr(os, "replace", boom)
-    other = SecretRef(agent="coder", instance="atlassian_work", field="client_secret")
+    other = SecretRef(connection="atlassian_work", field="client_secret")
     with pytest.raises(OSError, match="interrupted"):
         await local_store.put(other, "client-secret-value", caller_did=CALLER)
 
@@ -327,7 +328,7 @@ async def test_concurrent_writes_do_not_lose_each_other(
     two coroutines reach their write together; without it ``gather`` runs them one
     after the other and a lost update never fires.
     """
-    other = SecretRef(agent="coder", instance="atlassian_work", field="client_secret")
+    other = SecretRef(connection="atlassian_work", field="client_secret")
     barrier = asyncio.Barrier(2)
 
     async def write(target: SecretRef, value: str) -> None:
@@ -397,7 +398,7 @@ def test_federal_without_a_vault_refuses_rather_than_falling_back(env_file: Path
     assert "vault" in excinfo.value.message.lower()
 
 
-async def test_vault_backend_keeps_the_three_coordinates_in_its_path(
+async def test_vault_backend_keeps_both_coordinates_in_its_path(
     ref: SecretRef,
 ) -> None:
     vault = FakeVault()
@@ -406,7 +407,6 @@ async def test_vault_backend_keeps_the_three_coordinates_in_its_path(
     await store.put(ref, SECRET_VALUE, caller_did=CALLER)
 
     (path,) = list(vault.items)
-    assert "coder" in path
     assert "atlassian_work" in path
     assert "refresh_token" in path
 

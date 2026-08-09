@@ -20,6 +20,7 @@ and appear in no return value, no log line, and no exception message raised here
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 from arcagent.connections import (
@@ -29,25 +30,25 @@ from arcagent.connections import (
     ConnectionWorld,
     ConnectorPlan,
     InstallReport,
-    resolve_world,
+    resolve_deployment,
 )
 
 
-def open_connections(agent_dir: Path) -> Connections:
-    """Resolve the attached agent's connector world and bind it to the audit chain.
+def open_connections() -> Connections:
+    """Resolve this deployment's connector world and bind it to the audit chain.
 
-    Args:
-        agent_dir: The agent directory holding ``arcagent.toml`` — the one arctui
-            already resolved from the roster to decide what it attached to.
+    There is no agent here: a connected account belongs to the deployment, and the
+    agent the TUI is attached to enters only as the name a grant is written
+    against. So the screens take that name separately, and connecting from a TUI
+    attached to one agent cannot write anything into another's directory.
 
     Returns:
         The seam every screen drives.
 
     Raises:
-        ExtensionError: No agent config, an unparseable one, or no DID to record
-            as the actor on the credential write. ``.message`` names which.
+        ExtensionError: The deployment's config will not parse. ``.message`` says which.
     """
-    world = resolve_world(agent_dir)
+    world = resolve_deployment()
     return Connections(world, audit=AuditChain.opened_by(lambda: _worm_sink(world)))
 
 
@@ -89,15 +90,22 @@ def host_refusal(plan: ConnectorPlan) -> tuple[str, ...]:
     )
 
 
-def install_summary(report: InstallReport, connections: Connections) -> tuple[str, ...]:
-    """What the install produced. Coordinates only — never a value the operator typed."""
-    world = connections.world
+def install_summary(
+    report: InstallReport, connections: Connections, agents: Sequence[str]
+) -> tuple[str, ...]:
+    """What the install produced. Coordinates only — never a value the operator typed.
+
+    ``granted to`` is on the summary because deny-by-default makes it the line that
+    decides whether anything can use this: an account connected, probed and handed
+    to nobody is a working connection no agent can see.
+    """
     return (
         f"Connected {report.extension} as instance '{report.instance}'.",
-        f"  agent          : {world.agent}",
-        f"  credentials in : {world.env_file}  (owner-only)",
+        f"  granted to     : {', '.join(agents) or '(nobody — nothing can use it yet)'}",
+        f"  credentials in : {connections.world.env_file}  (owner-only)",
         f"  probe          : {report.detail or '(reachable)'}",
         f"  tools          : {', '.join(report.tools) or '(none served)'}",
+        "  Restart the agent for the connection to attach.",
     )
 
 

@@ -26,9 +26,12 @@ handed to a bundle that may be refused (REQ-282).
 stops the install with the instruction to run, because a machine-level change is
 the host's decision and must be visible.
 
-The instance reader ships alongside the writer on purpose. A component that
-writes a config block nothing reads is this project's known failure mode, so
-:func:`load_instances` is here and typed, and the connector runtime binds it.
+**A connection is the deployment's, not an agent's.** The definition and its
+grants are written to :class:`~arcagent.extension.grants.ConnectionRegistry` under
+``arc_home()``, and the credential to one owner-only file beside it. An install
+therefore hands nothing to any agent: the account exists, and the agents named in
+``agents`` may use it. An agent not named gets no verb and no credential, which is
+what makes adding an agent incapable of widening access.
 """
 
 from __future__ import annotations
@@ -36,7 +39,6 @@ from __future__ import annotations
 import contextlib
 import logging
 import sys
-import tomllib
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -54,6 +56,7 @@ from arcagent.extension.contract_ledger import ToolContractLedger
 from arcagent.extension.coordinates import is_coordinate
 from arcagent.extension.coordinates import refusal as coordinate_refusal
 from arcagent.extension.field_formats import normalize
+from arcagent.extension.grants import Connection, ConnectionRegistry
 from arcagent.extension.host import HostPrerequisiteDirector, HostVerdict
 from arcagent.extension.loader import ExtensionLoader
 from arcagent.extension.manifest import ExtensionManifest, SecretRequirement, load_manifest
@@ -61,19 +64,14 @@ from arcagent.extension.native_attachment import NativeAttachment
 from arcagent.extension.secrets import Secret, SecretRef, SecretStore
 from arcagent.extension.state import ConnectionRecord, ConnectionStateStore
 from arcagent.tools._egress_policy import first_forbidden_egress
-from arcagent.utils.toml_writer import dumps_toml
 
 if TYPE_CHECKING:
     from arcagent.capabilities.capability_registry import CapabilityRegistry
 
 _logger = logging.getLogger("arcagent.modules.connectors.install")
 
-#: The agent-config table connected instances live in. One bundle can back several
-#: distinctly named instances bound to different accounts.
-CONFIG_TABLE = "extensions"
-
-#: The agent's own owner-only credential file (D-555).
-CONNECTOR_ENV_FILENAME = "connectors.env"
+#: The deployment's owner-only credential file, beside its connections (D-555).
+CONNECTOR_ENV_FILENAME = "connections.env"
 
 #: The ordered steps an install runs, and the vocabulary a failure reports in.
 INSTALL_STEPS: tuple[str, ...] = (
@@ -98,19 +96,6 @@ def _refuse(step: str, message: str, **details: Any) -> ExtensionError:
         message=f"{step}: {message}",
         details={"step": step, **details},
     )
-
-
-class InstanceConfig(BaseModel):
-    """One ``[extensions.<instance>]`` block: which bundle, and how gated.
-
-    ``extra="forbid"`` so a hand-edited key is a loud error rather than a setting
-    the operator believes is in force and which nothing reads.
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    extension: str
-    approval: str = "outbound"
 
 
 @dataclass(frozen=True)
@@ -194,7 +179,7 @@ def plan_connector(
             happens to be installed on the machine running it.
         egress_allow: ``tools.policy.egress_allow`` — the tools this operator
             permits to send data out (D-580). Read from the agent config by
-            :func:`load_egress_allow`.
+            :attr:`~arcagent.extension.grants.Deployment.egress_allow`.
 
     Returns:
         The plan, including any host prerequisite the operator must satisfy first.
@@ -241,8 +226,8 @@ def plan_connector(
 async def install_connector(
     plan: ConnectorPlan,
     *,
-    agent_dir: Path,
-    agent: str,
+    connections: ConnectionRegistry,
+    agents: Sequence[str],
     secret_values: Mapping[str, str],
     store: SecretStore,
     caller_did: str,
@@ -256,8 +241,11 @@ async def install_connector(
 
     Args:
         plan: The result of :func:`plan_connector`.
-        agent_dir: The agent directory holding ``arcagent.toml``.
-        agent: The agent's slug, which keys the secret store.
+        connections: The deployment's connections and grants — where this account
+            is defined, and the only thing that decides who may use it.
+        agents: The agents granted this connection. Empty is legal and means an
+            account nothing can reach yet, which is the honest state of a
+            connection an operator has proved works and not yet handed out.
         secret_values: One value per declared secret, collected by the surface.
         store: Where credentials are written — and nowhere else.
         caller_did: Recorded as the actor on every credential operation, and the
@@ -295,19 +283,13 @@ async def install_connector(
         plan, audit_sink=audit_sink, trusted_public_key=trusted_public_key, registry=registry
     )
 
-    written = await _write_secrets(
-        plan, agent=agent, values=secret_values, store=store, did=caller_did
-    )
+    written = await _write_secrets(plan, values=secret_values, store=store, did=caller_did)
     try:
         # Read back out of the store rather than reusing ``secret_values``: what the
         # probe proves must be the credential the running agent will later resolve,
         # not the one this call happened to be handed.
         secrets = await resolve_secrets(
-            plan.manifest,
-            agent=agent,
-            instance=plan.instance,
-            store=store,
-            caller_did=caller_did,
+            plan.manifest, connection=plan.instance, store=store, caller_did=caller_did
         )
         probe = await _probe(plan, attachment_factory, secrets)
         _refuse_probed_egress(plan, probe)
@@ -315,14 +297,12 @@ async def install_connector(
         await _forget_secrets(written, store=store, did=caller_did)
         raise
 
-    write_instance(
-        agent_dir,
+    connections.define(
         plan.instance,
-        InstanceConfig(extension=plan.extension, approval=plan.approval_mode),
+        Connection(extension=plan.extension, approval=plan.approval_mode, agents=tuple(agents)),
     )
     await state.create(
-        ConnectionRecord(agent=agent, instance=plan.instance, health="healthy"),
-        actor_did=caller_did,
+        ConnectionRecord(connection=plan.instance, health="healthy"), actor_did=caller_did
     )
     # Connecting IS approving (REQ-291). An operator who supplied this account's
     # credentials and completed its probe has consented to the contract it just
@@ -331,7 +311,7 @@ async def install_connector(
     # untouched — it exists to catch a contract that moves AFTER approval, and
     # this is the moment there is finally something for it to move away from.
     await ToolContractLedger(
-        state, agent=agent, instance=plan.instance, sink=audit_sink or NullSink()
+        state, connection=plan.instance, sink=audit_sink or NullSink()
     ).approve(probe.tools, actor_did=caller_did)
     return InstallReport(
         instance=plan.instance,
@@ -343,15 +323,18 @@ async def install_connector(
 
 async def remove_connector(
     *,
-    agent_dir: Path,
-    agent: str,
+    connections: ConnectionRegistry,
     instance: str,
     store: SecretStore,
     caller_did: str,
     secret_fields: Sequence[str],
     state: ConnectionStateStore,
 ) -> RemovalReport:
-    """Drop one connected account: its credentials, its config block, its state.
+    """Drop one connected account: its credential, its definition, its grants, its state.
+
+    Removing the definition removes every grant on it in the same write, so there
+    is no state in which an agent still holds a grant for an account that no
+    longer exists.
 
     ``state`` is required for the same reason it is on the install: a removal that
     leaves the record behind hands the next install of that name the approvals an
@@ -363,97 +346,34 @@ async def remove_connector(
     """
     removed: list[str] = []
     for field in secret_fields:
-        ref = SecretRef(agent=agent, instance=instance, field=field)
+        ref = SecretRef(connection=instance, field=field)
         if await store.delete(ref, caller_did=caller_did):
             removed.append(field)
 
     return RemovalReport(
         instance=instance,
         removed_secrets=tuple(removed),
-        removed_config=delete_instance(agent_dir, instance),
-        removed_state=await state.forget(agent, instance, actor_did=caller_did),
+        removed_config=connections.forget(instance),
+        removed_state=await state.forget(instance, actor_did=caller_did),
     )
 
 
-# --- the agent-config seam: both halves ------------------------------------
+# --- where a credential lives ----------------------------------------------
 
 
-def connector_env_file(agent_dir: Path) -> Path:
-    """The owner-only file this agent's connector credentials live in (D-555).
+def connector_env_file(arc_dir: Path) -> Path:
+    """The owner-only file this deployment's connector credentials live in (D-555).
 
     One resolver rather than a filename constant per surface: the CLI, the TUI,
-    and the web all hand this path to ``select_secret_backend``, and a surface
-    spelling it differently would write a credential the other two cannot read.
+    the web and the running agent all hand this path to
+    ``select_secret_backend``, and a surface spelling it differently would write a
+    credential the others cannot read.
+
+    One file for the deployment, beside ``connections.toml``, because a connection
+    is one account. Per-agent files were the shape that made "grant" mean "type
+    the token again", and left a copy behind on every revoke.
     """
-    return Path(agent_dir) / CONNECTOR_ENV_FILENAME
-
-
-def load_instances(agent_dir: Path) -> dict[str, InstanceConfig]:
-    """Read every ``[extensions.<instance>]`` block the agent config declares.
-
-    Args:
-        agent_dir: The agent directory holding ``arcagent.toml``.
-
-    Returns:
-        Instance name to its configuration. Empty when the agent has no
-        connections, which is the ordinary case and never an error.
-
-    Raises:
-        ExtensionError: A block is malformed. Refused loudly rather than skipped,
-            because a connection an operator configured and the agent silently
-            ignores is worse than one that fails to start.
-    """
-    blocks = _read_config(agent_dir).get(CONFIG_TABLE, {})
-    if not isinstance(blocks, dict):
-        raise _refuse("persist", f"[{CONFIG_TABLE}] in {agent_dir} is not a table")
-    instances: dict[str, InstanceConfig] = {}
-    for name, block in blocks.items():
-        try:
-            instances[name] = InstanceConfig.model_validate(block)
-        except ValidationError as exc:
-            raise _refuse("persist", f"[{CONFIG_TABLE}.{name}] is invalid — {exc}") from exc
-    return instances
-
-
-def load_egress_allow(agent_dir: Path) -> tuple[str, ...]:
-    """Read ``[tools.policy] egress_allow`` — the tools permitted to send out (D-580).
-
-    Args:
-        agent_dir: The agent directory holding ``arcagent.toml``.
-
-    Returns:
-        The permitted tool names. Empty when unset, which is the fail-closed
-        posture: an operator who has permitted no send has permitted no send.
-    """
-    tools = _read_config(agent_dir).get("tools", {})
-    policy = tools.get("policy", {}) if isinstance(tools, dict) else {}
-    allow = policy.get("egress_allow", []) if isinstance(policy, dict) else []
-    if not isinstance(allow, list):
-        raise _refuse("persist", f"[tools.policy] egress_allow in {agent_dir} is not a list")
-    return tuple(str(name) for name in allow)
-
-
-def write_instance(agent_dir: Path, instance: str, config: InstanceConfig) -> None:
-    """Add or replace one instance block, leaving the rest of the config alone."""
-    document = _read_config(agent_dir)
-    table = document.setdefault(CONFIG_TABLE, {})
-    if not isinstance(table, dict):
-        raise _refuse("persist", f"[{CONFIG_TABLE}] in {agent_dir} is not a table")
-    table[instance] = config.model_dump()
-    _write_config(agent_dir, document)
-
-
-def delete_instance(agent_dir: Path, instance: str) -> bool:
-    """Remove one instance block. False when there was nothing to remove."""
-    document = _read_config(agent_dir)
-    table = document.get(CONFIG_TABLE)
-    if not isinstance(table, dict) or instance not in table:
-        return False
-    table.pop(instance)
-    if not table:
-        document.pop(CONFIG_TABLE)
-    _write_config(agent_dir, document)
-    return True
+    return Path(arc_dir) / CONNECTOR_ENV_FILENAME
 
 
 @contextlib.contextmanager
@@ -481,8 +401,7 @@ def _importable(bundle: Path) -> Iterator[None]:
 async def resolve_secrets(
     manifest: ExtensionManifest,
     *,
-    agent: str,
-    instance: str,
+    connection: str,
     store: SecretStore | None,
     caller_did: str,
 ) -> dict[str, Secret]:
@@ -494,10 +413,10 @@ async def resolve_secrets(
 
     Args:
         manifest: What the bundle declares it needs.
-        agent: The agent's directory name, which keys the store. Every surface must
-            spell it the same way or one writes a credential the others cannot read.
-        instance: The connected account. Credentials are per-instance, which is what
-            lets one bundle back two accounts without either seeing the other's.
+        connection: The connected account, which keys the store. Credentials are
+            per-connection, which is what lets one bundle back two accounts without
+            either seeing the other's — and what lets two agents share one account
+            without either holding a copy of its credential.
         store: Where credentials live. ``None`` is not a failure for a bundle that
             declares none — a ``cli`` connector whose binary owns its own auth needs
             no store at all — and is a refusal for one that does.
@@ -519,12 +438,12 @@ async def resolve_secrets(
             f"{manifest.extension.name} needs a stored credential and this deployment "
             f"has no secret store configured",
             extension=manifest.extension.name,
-            instance=instance,
+            connection=connection,
         )
     resolved: dict[str, Secret] = {}
     missing: list[str] = []
     for declared in manifest.secrets:
-        ref = SecretRef(agent=agent, instance=instance, field=declared.name)
+        ref = SecretRef(connection=connection, field=declared.name)
         secret = await store.get(ref, caller_did=caller_did)
         if secret is None:
             missing.append(declared.name)
@@ -533,10 +452,10 @@ async def resolve_secrets(
     if missing:
         raise _refuse(
             "secrets",
-            f"{instance} has no stored credential for {', '.join(missing)} — "
-            f"run 'arc connector auth {instance}'",
+            f"{connection} has no stored credential for {', '.join(missing)} — "
+            f"run 'arc connector auth {connection}'",
             extension=manifest.extension.name,
-            instance=instance,
+            connection=connection,
             missing=missing,
         )
     return resolved
@@ -719,12 +638,7 @@ async def _verify_bundle(
 
 
 async def _write_secrets(
-    plan: ConnectorPlan,
-    *,
-    agent: str,
-    values: Mapping[str, str],
-    store: SecretStore,
-    did: str,
+    plan: ConnectorPlan, *, values: Mapping[str, str], store: SecretStore, did: str
 ) -> list[SecretRef]:
     """Store every declared value, unwinding this call's own writes on failure.
 
@@ -736,7 +650,7 @@ async def _write_secrets(
     written: list[SecretRef] = []
     for declared in plan.secrets:
         value = shaped.get(declared.name, "")
-        ref = SecretRef(agent=agent, instance=plan.instance, field=declared.name)
+        ref = SecretRef(connection=plan.instance, field=declared.name)
         try:
             if not value:
                 raise ValueError(f"no value supplied for required secret {declared.name!r}")
@@ -813,44 +727,19 @@ def _refuse_egress(
         raise _refuse(step, refusal.message, extension=plan.extension, tool=refusal.tool)
 
 
-def _config_path(agent_dir: Path) -> Path:
-    path = Path(agent_dir) / "arcagent.toml"
-    if not path.is_file():
-        raise _refuse("persist", f"no arcagent.toml at {path} — is that an agent directory?")
-    return path
-
-
-def _read_config(agent_dir: Path) -> dict[str, Any]:
-    path = _config_path(agent_dir)
-    try:
-        return tomllib.loads(path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError) as exc:
-        raise _refuse("persist", f"{path} — {exc}") from exc
-
-
-def _write_config(agent_dir: Path, document: dict[str, Any]) -> None:
-    _config_path(agent_dir).write_text(dumps_toml(document), encoding="utf-8")
-
-
 __all__ = [
-    "CONFIG_TABLE",
     "CONNECTOR_ENV_FILENAME",
     "INSTALL_STEPS",
     "AttachmentFactory",
     "ConnectorPlan",
     "InstallReport",
-    "InstanceConfig",
     "RemovalReport",
     "build_attachment",
     "connector_env_file",
-    "delete_instance",
     "install_connector",
-    "load_egress_allow",
-    "load_instances",
     "placement_environment",
     "plan_connector",
     "remove_connector",
     "resolve_secrets",
     "shape_supplied",
-    "write_instance",
 ]

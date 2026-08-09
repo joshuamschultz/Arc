@@ -33,9 +33,7 @@ def client(auth, users):
 
 
 def test_login_returns_a_session_that_names_the_person(client):
-    resp = client.post(
-        "/api/auth/login", json={"email": "boss@example.com", "password": GOOD}
-    )
+    resp = client.post("/api/auth/login", json={"email": "boss@example.com", "password": GOOD})
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["role"] == "operator"
@@ -96,9 +94,7 @@ def test_repeated_failures_get_locked_out(client):
         client.post(
             "/api/auth/login", json={"email": "boss@example.com", "password": "wrong-wrong-wrong"}
         )
-    resp = client.post(
-        "/api/auth/login", json={"email": "boss@example.com", "password": GOOD}
-    )
+    resp = client.post("/api/auth/login", json={"email": "boss@example.com", "password": GOOD})
     assert resp.status_code == 429
 
 

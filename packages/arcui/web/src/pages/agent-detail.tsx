@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Input } from '@/components/ui/input'
@@ -44,6 +44,7 @@ import {
   useAgentSessions,
   useAgentStats,
   useAgentTasks,
+  useAgentConnectors,
   useAgentTimeseries,
   useAgentTools,
   useAgentTraces,
@@ -743,6 +744,46 @@ function PromptsTab({ agentId }: { agentId: string }) {
   )
 }
 
+/**
+ * What this one agent can actually reach.
+ *
+ * Read from its own side — the grants naming it — because that is the set its
+ * connector module attaches at startup. An agent showing every connection the
+ * deployment has would be the exact confusion deny-by-default exists to remove:
+ * the account is connected and this agent still cannot use it. Granting happens
+ * on the Connections page, where every agent is visible at once.
+ */
+function AgentReachCard({ agentId }: { agentId: string }) {
+  const reach = useAgentConnectors(agentId)
+  const held = reach.data?.instances ?? []
+
+  return (
+    <InfoCard title="Can reach">
+      {held.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          Nothing yet. Connected accounts are granted on the{' '}
+          <Link to="/connections" className="underline underline-offset-2">
+            Connections
+          </Link>{' '}
+          page — an agent only gets what it is granted.
+        </p>
+      ) : (
+        <ul className="space-y-1.5">
+          {held.map((c) => (
+            <li key={c.instance} className="flex flex-wrap items-baseline gap-x-2 text-sm">
+              <span className="font-medium text-foreground">{c.instance}</span>
+              <span className="rounded-sm border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+                {c.extension}
+              </span>
+              <span className="text-xs text-muted-foreground">approval: {c.approval}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </InfoCard>
+  )
+}
+
 function ConnectTab({ agentId }: { agentId: string }) {
   const [operatorMode] = useOperatorMode()
   const [token, setToken] = useState('')
@@ -772,7 +813,8 @@ function ConnectTab({ agentId }: { agentId: string }) {
   }
 
   return (
-    <div className="max-w-xl">
+    <div className="max-w-xl space-y-4">
+      <AgentReachCard agentId={agentId} />
       <InfoCard title="Connect Telegram">
         {!operatorMode && (
           <p className="mb-3 rounded-md border border-border bg-muted/40 p-2 text-sm text-muted-foreground">

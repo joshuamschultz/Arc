@@ -839,15 +839,27 @@ export interface ConnectorCatalogResponse {
   unreadable: UnreadableBundle[]
 }
 
+/** One connected account. `agents` is the grant list and the only thing that
+ *  decides access: an agent not named here gets no verb and no path to the
+ *  credential, so a row rendered without it says nothing about who can use it. */
 export interface ConnectorInstance {
   instance: string
   extension: string
   approval: string
+  agents: string[]
 }
 
+/** Every connection this deployment has, and who holds each one — the answer to
+ *  "who can reach what" for the whole fleet in a single read. */
+export interface ConnectionsResponse {
+  connections: ConnectorInstance[]
+  extensions_roots: string[]
+}
+
+/** What one agent can reach: the same rows, filtered to its grants. */
 export interface AgentConnectorsResponse {
   instances: ConnectorInstance[]
-  extensions_root: string
+  extensions_roots: string[]
 }
 
 export interface ConnectorInstallResponse {
@@ -855,6 +867,7 @@ export interface ConnectorInstallResponse {
   extension: string
   tools: string[]
   detail: string
+  agents: string[]
 }
 
 /** Rotation result — field names only, never values. */

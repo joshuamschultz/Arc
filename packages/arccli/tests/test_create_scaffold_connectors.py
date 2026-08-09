@@ -32,6 +32,7 @@ def test_default_config_declares_connectors_module_enabled() -> None:
     assert connectors["enabled"] is True
     # Both paths default to empty: bundles come from the search path and the
     # contract store from arcstore, which is what an unconfigured agent needs.
+    assert connectors["config"]["arc_dir"] == ""
     assert connectors["config"]["extensions_root"] == ""
     assert connectors["config"]["data_dir"] == ""
 
@@ -52,6 +53,7 @@ def test_default_config_connectors_block_round_trips_through_real_config_model()
     assert entry.enabled is True
 
     config = ConnectorsConfig.model_validate(entry.config)
+    assert config.arc_dir == ""
     assert config.extensions_root == ""
     assert config.data_dir == ""
 
