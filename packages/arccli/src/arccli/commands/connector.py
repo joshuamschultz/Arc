@@ -154,12 +154,25 @@ def _auth(args: argparse.Namespace) -> None:
     _out(f"Updated {len(updated)} credential(s) for '{args.instance}' in {env_file}.")
 
 
+#: How each sign-in state reads in a terminal. "not known" is its own line rather
+#: than a silence, because the terminal must not imply either answer.
+_SIGN_IN_LINE = {
+    "signed_in": "SIGNED IN",
+    "signed_out": "NOT signed in",
+    "unknown": "sign-in not known (this bundle declares no way to check it)",
+}
+
+
 def _direct_host_authorization(auth: Authorization) -> None:
     """Print the exact command that authorises a connector whose binary owns its token.
 
     "declares no credentials; nothing to supply" was true and useless: ``gh`` does
     need authorising, just not by Arc, and an operator who reads that has nowhere
     to go. Every line here is something to type or something already done.
+
+    The sign-in and the probe are printed as separate lines because they are
+    separate facts: ``dbxcli version`` answers on a ``dbxcli`` that has never been
+    signed in, so "answering" alone once read as a connected account.
     """
     _out(f"{auth.extension} keeps its own credential; Arc never holds one for it.")
     if not auth.hosts:
@@ -168,6 +181,8 @@ def _direct_host_authorization(auth: Authorization) -> None:
         _out(f"  Run on this host: {host.command}")
     if auth.token_binary:
         _out(f"  Or let Arc do it: arc connector authorize {auth.instance}")
+    detail = f" — {auth.sign_in_detail}" if auth.sign_in_detail else ""
+    _out(f"  {_SIGN_IN_LINE[auth.sign_in]}{detail}")
     _out(f"  {'answering' if auth.reachable else 'NOT answering'}: {auth.detail}")
 
 
@@ -192,7 +207,7 @@ def _authorize(args: argparse.Namespace) -> None:
         _fail(exc.message)
 
     _direct_host_authorization(auth)
-    if not auth.reachable:
+    if not auth.working:
         sys.exit(1)
 
 

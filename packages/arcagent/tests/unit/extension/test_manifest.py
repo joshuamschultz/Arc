@@ -303,6 +303,62 @@ def test_a_host_requirement_defaults_to_no_non_interactive_login() -> None:
     assert load_manifest(_FULL, tier=Tier.PERSONAL).host_requires[0].token_command == ""
 
 
+def test_a_host_requirement_declares_what_proves_it_is_signed_in() -> None:
+    """SPEC-064 — the probe answers "does this program run", which is not the
+    question the operator is being shown the answer to.
+
+    ``dbxcli version`` succeeds on a ``dbxcli`` with no saved credentials at all,
+    and that success was rendered as "Signed in". So the command that proves an
+    account is connected is declared separately, and its pattern says what the
+    output must contain when the exit code alone cannot tell the two apart.
+    """
+    text = _FULL.replace(
+        '[[host_requires]]\nname = "node"\nminimum_version = "20.0.0"\n',
+        '[[host_requires]]\nname = "acme"\nauthorize_command = "acme auth login"\n'
+        'verify_command = "acme auth list"\nverify_pattern = "@"\n',
+        1,
+    )
+
+    requirement = load_manifest(text, tier=Tier.PERSONAL).host_requires[0]
+
+    assert requirement.verify_command == "acme auth list"
+    assert requirement.verify_pattern == "@"
+
+
+def test_a_host_requirement_defaults_to_no_authorisation_check() -> None:
+    """Silence means "Arc cannot tell", which a surface must render as unknown —
+    never as signed in, and never as signed out."""
+    requirement = load_manifest(_FULL, tier=Tier.PERSONAL).host_requires[0]
+
+    assert requirement.verify_command == ""
+    assert requirement.verify_pattern == ""
+
+
+def test_an_uncompilable_verify_pattern_is_refused_at_load() -> None:
+    """A broken pattern must not become a runtime verdict in either direction."""
+    text = _FULL.replace(
+        '[[host_requires]]\nname = "node"\nminimum_version = "20.0.0"\n',
+        '[[host_requires]]\nname = "acme"\nverify_command = "acme auth list"\n'
+        'verify_pattern = "(unclosed"\n',
+        1,
+    )
+
+    with pytest.raises(ValidationError, match="verify_pattern"):
+        load_manifest(text, tier=Tier.PERSONAL)
+
+
+def test_a_verify_pattern_without_a_verify_command_is_refused() -> None:
+    """A pattern nothing runs is a control the operator believes is in force."""
+    text = _FULL.replace(
+        '[[host_requires]]\nname = "node"\nminimum_version = "20.0.0"\n',
+        '[[host_requires]]\nname = "acme"\nverify_pattern = "@"\n',
+        1,
+    )
+
+    with pytest.raises(ValidationError, match="verify_pattern"):
+        load_manifest(text, tier=Tier.PERSONAL)
+
+
 def test_manifest_parses_the_full_declaration() -> None:
     """Every clause the loader, bridge, launcher, and CLI depend on round-trips."""
     manifest = load_manifest(_FULL, tier=Tier.PERSONAL)

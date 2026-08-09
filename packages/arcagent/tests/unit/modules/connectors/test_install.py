@@ -50,6 +50,11 @@ _INSTANCE = "sales"
 _EXTENSION = "acme_tickets"
 _CALLER = "did:arc:example:org:agent:abc"
 
+#: A name the coordinate rule refuses. Hyphens are legal in a bare TOML key, so a
+#: block carrying one can exist on disk; it is refused because the name also
+#: becomes an env-var segment, where a hyphen is not a legal shell variable name.
+_ILLEGAL_INSTANCE = "personal-mail"
+
 _MANIFEST = """
 [extension]
 name = "acme_tickets"
@@ -62,6 +67,32 @@ entrypoint = "acme_attachment"
 [[secrets]]
 name = "api_token"
 prompt = "Paste the API token"
+
+[tools]
+allow = ["create_issue"]
+
+[[tools.declared]]
+name = "create_issue"
+description = "Open a ticket."
+classification = "state_modifying"
+
+[approval]
+default = "outbound"
+"""
+
+
+#: The shape that got past every check: a bundle declaring NO ``[[secrets]]``, so
+#: no :class:`~arcagent.extension.secrets.SecretRef` is ever constructed and the
+#: only validator on the path never runs. ``google_workspace`` and ``dropbox``
+#: are exactly this.
+_MANIFEST_NO_SECRETS = """
+[extension]
+name = "acme_tickets"
+version = "1.0.0"
+attachment = "native"
+
+[config.native]
+entrypoint = "acme_attachment"
 
 [tools]
 allow = ["create_issue"]
@@ -201,13 +232,15 @@ def _store(tmp_path: Path) -> tuple[SecretStore, Path]:
     return SecretStore(LocalFileSecretBackend(env_file)), env_file
 
 
-def _plan(tmp_path: Path, *, manifest: str = _MANIFEST) -> ConnectorPlan:
+def _plan(
+    tmp_path: Path, *, manifest: str = _MANIFEST, instance: str = _INSTANCE
+) -> ConnectorPlan:
     root = tmp_path / "extensions"
     _bundle(root, manifest=manifest)
     return plan_connector(
         extensions_root=[root],
         extension=_EXTENSION,
-        instance=_INSTANCE,
+        instance=instance,
         tier=Tier.PERSONAL,
         audit_sink=RecordingSink(),
     )
@@ -251,6 +284,65 @@ class TestPlan:
         plan = _plan(tmp_path, manifest=manifest)
         assert [v.name for v in plan.unsatisfied_host] == ["definitely_not_installed_xyz"]
         assert plan.unsatisfied_host[0].instruction
+
+    @pytest.mark.parametrize(
+        "instance",
+        [
+            "blackarc industrial email",
+            "Work Email",
+            "../../etc",
+            "work.email",
+            "personal-dropbox",
+            "a" * 65,
+            "_leading",
+        ],
+    )
+    def test_plan_refuses_a_name_that_is_not_a_legal_coordinate(
+        self, tmp_path: Path, instance: str
+    ) -> None:
+        """One check, on the one function every path comes through.
+
+        ``blackarc industrial email`` is the one that happened: written as the
+        bare key ``[extensions.blackarc industrial email]``, ``arcagent.toml``
+        stopped parsing, the agent vanished from the roster, and every one of its
+        routes answered 404. The bundle here declares NO ``[[secrets]]`` — the
+        shape whose name nothing else on the path ever looks at, and therefore
+        the shape that got through.
+        """
+        with pytest.raises(ExtensionError) as caught:
+            _plan(tmp_path, manifest=_MANIFEST_NO_SECRETS, instance=instance)
+        assert caught.value.details["step"] == "resolve"
+
+    def test_the_refusal_tells_a_non_technical_operator_what_to_type_instead(
+        self, tmp_path: Path
+    ) -> None:
+        """Whoever reads this typed something perfectly reasonable."""
+        with pytest.raises(ExtensionError) as caught:
+            _plan(
+                tmp_path, manifest=_MANIFEST_NO_SECRETS, instance="blackarc industrial email"
+            )
+        message = caught.value.message
+        assert "blackarc industrial email" in message
+        assert "blackarc_industrial_email" in message
+
+    @pytest.mark.parametrize("instance", ["work_email", "work2", "a", "0account"])
+    def test_plan_accepts_the_names_an_operator_would_reasonably_choose(
+        self, tmp_path: Path, instance: str
+    ) -> None:
+        assert _plan(tmp_path, instance=instance).instance == instance
+
+    def test_a_refused_name_is_refused_before_anything_is_written(
+        self, tmp_path: Path
+    ) -> None:
+        """Byte-identical, not merely "no ``[extensions]`` block": the file an agent
+        starts from must be untouched by a refusal."""
+        agent_dir = _agent_dir(tmp_path)
+        before = (agent_dir / "arcagent.toml").read_bytes()
+
+        with pytest.raises(ExtensionError):
+            _plan(tmp_path, manifest=_MANIFEST_NO_SECRETS, instance="work email")
+
+        assert (agent_dir / "arcagent.toml").read_bytes() == before
 
 
 @pytest.mark.asyncio
@@ -560,3 +652,44 @@ class TestRemove:
             secret_fields=[],
         )
         assert report.removed_config is False
+
+    async def test_a_connection_whose_name_the_rule_now_rejects_can_still_be_removed(
+        self, tmp_path: Path
+    ) -> None:
+        """The strict path must have an exit, or the rule creates the undeletable.
+
+        A block carrying a name ``plan_connector`` now refuses can exist — an
+        operator hand-edited the config, or it predates the rule. Removal reads a
+        connection's credential fields through the planner, so that read refuses;
+        it must be treated as "no fields to delete" and the block and the record
+        dropped anyway.
+
+        Sound rather than an exception to the rule: ``SecretRef`` applies the very
+        same coordinate check, so no credential can ever have been stored under
+        this name, and there is nothing left behind to strand.
+        """
+        agent_dir = _agent_dir(tmp_path)
+        state = _state()
+        store, _env = _store(tmp_path)
+        config = agent_dir / "arcagent.toml"
+        config.write_text(
+            config.read_text(encoding="utf-8")
+            + f'\n[extensions."{_ILLEGAL_INSTANCE}"]\nextension = "{_EXTENSION}"\n',
+            encoding="utf-8",
+        )
+
+        report = await remove_connector(
+            agent_dir=agent_dir,
+            agent=_AGENT,
+            instance=_ILLEGAL_INSTANCE,
+            store=store,
+            caller_did=_CALLER,
+            # What Connections._declared_secret_fields resolves to when the planner
+            # refuses the name: nothing to delete, because nothing could be stored.
+            secret_fields=[],
+            state=state,
+        )
+
+        assert report.removed_config is True
+        assert _blocks(agent_dir) == {}
+        assert load_instances(agent_dir) == {}

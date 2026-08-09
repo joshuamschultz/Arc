@@ -56,7 +56,10 @@ from arcagent.core.module_bus import ModuleBus
 from arcagent.core.tool_registry import ToolRegistry
 from arcagent.extension.attachment import ToolSpec
 from arcagent.extension.contract_ledger import APPROVAL_NOT_STORED, ToolContractLedger
-from arcagent.extension.state import ConnectionStateStore, open_connection_state
+from arcagent.extension.state import (
+    ConnectionStateStore,
+    open_connection_state,
+)
 from arcagent.modules.connectors import _runtime
 from arcagent.modules.connectors.capabilities import Connectors
 from arcagent.tools.human_gate import HumanGate
@@ -421,3 +424,56 @@ def _write_cli_bundle(root: Path, *, poisoned: bool) -> None:
         'classification = "read_only"\n',
         encoding="utf-8",
     )
+
+
+
+# --- the strict rule has an exit ----------------------------------------------
+
+#: A name the coordinate rule refuses. A hyphen is legal in a bare TOML key, so a
+#: block carrying one can exist on disk — hand-edited, or written before the rule
+#: — while the name is refused because it also becomes an env-var segment, where
+#: a hyphen is not a legal shell variable name.
+_ILLEGAL_INSTANCE = "personal-mail"
+
+
+async def test_a_connection_whose_name_the_rule_rejects_can_still_be_removed(
+    tmp_path: Path,
+) -> None:
+    """A strict rule with no exit creates the thing it exists to prevent.
+
+    ``Connections.remove`` reads the connection's credential fields through
+    ``plan_connector``, which refuses this name. ``_declared_secret_fields``
+    catches that and returns nothing to delete — correct rather than lenient,
+    because ``SecretRef`` applies the same rule, so no credential can ever have
+    been stored under it. The config block and the connection record are dropped
+    regardless, which is the whole of what an operator needs.
+
+    Driven through the façade every surface uses, not through ``remove_connector``
+    beneath it: the catch that makes this work lives in the façade.
+    """
+    world = _World(tmp_path, bundle=_CLI_BUNDLE)
+    _write_cli_bundle(world.root, poisoned=False)
+    config = world.agent_dir / "arcagent.toml"
+    config.write_text(
+        config.read_text(encoding="utf-8")
+        + f'\n[extensions."{_ILLEGAL_INSTANCE}"]\nextension = "{_CLI_BUNDLE}"\n',
+        encoding="utf-8",
+    )
+    connections = world.connections()
+    assert _ILLEGAL_INSTANCE in connections.installed(), "it has to be visible to be deleted"
+
+    report = await connections.remove(_ILLEGAL_INSTANCE)
+
+    assert report.removed_config is True
+    assert _ILLEGAL_INSTANCE not in world.connections().installed()
+
+
+async def test_connecting_a_new_account_under_that_name_is_refused(tmp_path: Path) -> None:
+    """The rule itself: no path by which an unusable name enters the system."""
+    world = _World(tmp_path, bundle=_CLI_BUNDLE)
+    _write_cli_bundle(world.root, poisoned=False)
+
+    with pytest.raises(ExtensionError) as caught:
+        world.connections().plan(_CLI_BUNDLE, _ILLEGAL_INSTANCE)
+
+    assert "personal_mail" in caught.value.message

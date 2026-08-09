@@ -368,3 +368,31 @@ async def test_connect_without_an_agent_says_so(tmp_path: Path) -> None:
         text = _rendered(transcript)
 
     assert "no agent" in text.lower()
+
+
+async def test_a_name_that_would_break_the_agent_config_is_refused_here_too(
+    agent_dir: Path,
+) -> None:
+    """Every surface refuses it, because every surface plans before it installs.
+
+    A space is not a legal bare TOML key: written into
+    ``[extensions.<instance>]`` it stops ``arcagent.toml`` parsing, and the agent
+    disappears from the roster with every one of its routes answering 404.
+    """
+    _write_bundle(agent_dir)
+    before = (agent_dir / "arcagent.toml").read_bytes()
+
+    app = ArcTUI(transport=None, agent_label="acme_agent", agent_dir=agent_dir)
+    async with app.run_test() as pilot:
+        transcript = pilot.app.query_one("#transcript", TranscriptView)
+        screen = await _open_connect(pilot)
+        screen.query_one("#connect-instance", Input).value = "blackarc industrial email"
+        screen.query_one("#connect-review", Button).press()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        text = _rendered(transcript)
+
+    assert "blackarc_industrial_email" in text
+    assert (agent_dir / "arcagent.toml").read_bytes() == before

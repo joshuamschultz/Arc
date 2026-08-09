@@ -357,6 +357,28 @@ class TestAdd:
             run("add", "no_such_bundle", "--instance", _INSTANCE)
         assert "resolve" in capsys.readouterr().err
 
+    def test_an_instance_name_that_is_not_a_legal_config_key_is_refused(
+        self,
+        run: Callable[..., None],
+        agent_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Every surface refuses it, and the terminal says what to type instead.
+
+        The bundle is the credential-less one on purpose: that is the shape whose
+        name nothing used to check.
+        """
+        _answer_prompts(monkeypatch)
+        before = (agent_dir / "arcagent.toml").read_bytes()
+
+        with pytest.raises(SystemExit) as exited:
+            run("add", _HOSTED_EXTENSION, "--instance", "blackarc industrial email")
+
+        assert exited.value.code == 1
+        assert "blackarc_industrial_email" in capsys.readouterr().err
+        assert (agent_dir / "arcagent.toml").read_bytes() == before
+
     def test_a_secret_given_on_the_command_line_is_refused(
         self, run: Callable[..., None], agent_dir: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:

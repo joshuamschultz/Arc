@@ -36,6 +36,7 @@ from arcagent.core.errors import ExtensionError
 from arcagent.core.session_internal.capability_ledger import TAG_TO_LEGS
 from arcagent.core.tier import Tier
 from arcagent.extension.cli_attachment import CliCommand
+from arcagent.extension.host_login import authorization_verdict
 from arcagent.extension.manifest import ExtensionManifest, load_manifest
 from arcagent.extension.platforms import ANY_PLATFORM
 from arcagent.extension.secrets import LocalFileSecretBackend, SecretStore
@@ -256,6 +257,106 @@ def test_a_bundle_arc_holds_no_credential_for_names_the_command_that_authorises_
     assert [command for command in commands if command], (
         f"{manifest.extension.name} declares no [[secrets]] and no authorize_command, "
         f"so nothing can tell an operator how to authorise it"
+    )
+
+
+def test_a_sign_in_check_invokes_the_binary_it_belongs_to(
+    manifest: ExtensionManifest,
+) -> None:
+    """The same bound the login takes: the field authorises one program."""
+    for required in manifest.host_requires:
+        if required.verify_command:
+            assert required.verify_command.split()[0] == required.name, (
+                f"{required.name}'s verify_command must invoke {required.name} and nothing else"
+            )
+            assert required.authorize_command, (
+                f"{required.name} declares a way to check a sign-in but no way to do one"
+            )
+
+
+#: What each shipped bundle's declared sign-in check really prints: the exit code
+#: and the output a host produces in each of the two states.
+#:
+#: This table is the point of the field, and its entries are evidence rather than
+#: illustration. ``dbxcli version`` succeeds on a dbxcli with no credential at
+#: all, and the panel rendered that success as "Signed in"; a replacement command
+#: that ALSO fails to tell the two states apart would be the same defect wearing
+#: a new name.
+#:
+#: ``gog auth list`` is that trap and the reason ``verify_pattern`` exists.
+#: Measured on the deployment: SIGNED OUT it prints "No tokens stored" and exits
+#: **0** — the identical exit code to success. Any check reading only the exit
+#: code reports an unauthorised Google Workspace as signed in, which is what the
+#: operator is looking at right now. ``ms-365-mcp-server --verify-login`` has the
+#: same shape: it calls process.exit(0) unconditionally and puts the answer in
+#: its JSON.
+#:
+#: (m) marks output measured on the deployment host; the rest is taken from the
+#: upstream that publishes the command.
+_RECORDED_OUTPUT: dict[str, tuple[tuple[int, str], tuple[int, str]]] = {
+    # bundle: (signed out, signed in)
+    "dropbox": (
+        # (m) exit 2, not 1 — another reason the verdict tests "not zero".
+        (2, 'Error: no saved Dropbox credentials; run "dbxcli login" first'),
+        (0, "Joshua Schultz\njoshua@blackarc.example\nBusiness"),
+    ),
+    "github": (
+        (1, "You are not logged into any GitHub hosts. To log in, run: gh auth login"),
+        # (m)
+        (0, "github.com\n  ✓ Logged in to github.com account joshuamschultz (keyring)"),
+    ),
+    "google_workspace": (
+        # (m) THE case that breaks an exit-code-only check: signed out, exit 0.
+        (0, "No tokens stored"),
+        (0, "joshua@blackarc.example\tdefault\tgmail,drive,calendar\t2026-07-14\toauth"),
+    ),
+    "microsoft365": (
+        (0, '{"success":false,"message":"Login failed - no token received"}'),
+        (0, '{"success":true,"userData":{"displayName":"Joshua Schultz"}}'),
+    ),
+}
+
+
+def test_a_declared_sign_in_check_really_tells_the_two_states_apart(
+    manifest: ExtensionManifest,
+) -> None:
+    """Replayed through :func:`authorization_verdict` — the deployment's own predicate.
+
+    A bundle whose check cannot distinguish signed-in from signed-out is a bundle
+    that will report one of them wrongly, and reporting "connected" over an empty
+    account is the failure this whole field exists to end.
+    """
+    checked = [required for required in manifest.host_requires if required.verify_command]
+    if not checked:
+        return
+    recorded = _RECORDED_OUTPUT.get(manifest.extension.name)
+    assert recorded is not None, (
+        f"{manifest.extension.name} declares a verify_command with no recorded output to "
+        f"prove it distinguishes the two states — add its real output to _RECORDED_OUTPUT"
+    )
+    (out_code, out_text), (in_code, in_text) = recorded
+    for required in checked:
+        assert not authorization_verdict(required, out_code, out_text)
+        assert authorization_verdict(required, in_code, in_text)
+
+
+def test_a_bundle_with_no_sign_in_check_is_recorded_as_a_deliberate_choice(
+    bundle: Path, manifest: ExtensionManifest
+) -> None:
+    """Silence must be a decision, not an omission.
+
+    A no-credential bundle with no ``verify_command`` reports its sign-in as
+    unknown forever, so the manifest has to say why nothing can check it —
+    ``readwise`` publishes no local command that distinguishes the two states.
+    """
+    if manifest.secrets or not any(r.authorize_command for r in manifest.host_requires):
+        return
+    if any(required.verify_command for required in manifest.host_requires):
+        return
+    text = (bundle / "extension.toml").read_text(encoding="utf-8")
+    assert "NO `verify_command`" in text, (
+        f"{manifest.extension.name} declares no verify_command and no comment saying why; "
+        f"its sign-in will read as not known in every surface"
     )
 
 

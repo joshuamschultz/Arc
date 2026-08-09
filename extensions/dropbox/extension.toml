@@ -58,10 +58,17 @@ member = "dbxcli_3.7.1_darwin_amd64/dbxcli"
 # No `token_command`: `dbxcli login` prints a Dropbox OAuth URL and waits at a
 # prompt for the code a person pastes back. Nothing can be piped in, so Arc
 # shows the command and does not pretend it can run it.
+#
+# `verify_command` is what the panel's "Signed in" actually means. It cannot be
+# the probe: `probe_argv = ["version"]` below runs happily on a dbxcli holding no
+# credential at all, and reporting that as a connected account is exactly what
+# this bundle did. `dbxcli account` returns an error from its command function,
+# which cobra turns into a non-zero exit — so no verify_pattern is needed.
 [[host_requires]]
 name = "dbxcli"
 minimum_version = "3.7.1"
 authorize_command = "dbxcli login"
+verify_command = "dbxcli account"
 instruction = """
 Install dbxcli on this host, then authorise it:
 

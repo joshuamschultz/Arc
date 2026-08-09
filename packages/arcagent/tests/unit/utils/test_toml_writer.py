@@ -80,6 +80,54 @@ def test_key_insertion_order_drives_output_order() -> None:
     assert dumps_toml({"b": 2, "a": 1}) == "b = 2\na = 1\n"
 
 
+#: Keys a bare-key emitter would write straight into a file that no longer parses.
+#: The space is the one an operator actually typed — ``blackarc industrial email``
+#: took a whole agent off a live fleet — and the rest are the neighbouring shapes
+#: the same emitter would mangle just as silently.
+_AWKWARD_KEYS = [
+    "blackarc industrial email",
+    "dotted.name",
+    'quoted"name',
+    "back\\slash",
+    "dash-name",
+    "UPPER",
+    "hash#name",
+    "[bracket]",
+    "equals=name",
+    "new\nline",
+    "",
+]
+
+
+@pytest.mark.parametrize("key", _AWKWARD_KEYS)
+def test_a_key_needing_quotes_round_trips_as_a_scalar_key(key: str) -> None:
+    """An emitter that can write a file which will not re-parse is a landmine.
+
+    Whoever validates upstream, no caller may be able to produce a config that
+    ``tomllib`` then refuses — that is an agent that will not start.
+    """
+    document: dict[str, Any] = {key: "google_workspace"}
+
+    assert tomllib.loads(dumps_toml(document)) == document
+
+
+@pytest.mark.parametrize("key", _AWKWARD_KEYS)
+def test_a_key_needing_quotes_round_trips_as_a_table_header(key: str) -> None:
+    """The shape the connector install writes: ``[extensions.<instance>]``."""
+    document: dict[str, Any] = {
+        "extensions": {key: {"extension": "google_workspace", "approval": "outbound"}}
+    }
+
+    assert tomllib.loads(dumps_toml(document)) == document
+
+
+def test_a_bare_key_is_still_written_bare() -> None:
+    """Quoting only what needs it: every existing config keeps its current bytes."""
+    assert dumps_toml({"extensions": {"work_email": {"approval": "outbound"}}}) == (
+        "[extensions]\n\n[extensions.work_email]\napproval = \"outbound\"\n"
+    )
+
+
 def test_unsupported_value_type_raises_value_error() -> None:
     with pytest.raises(ValueError, match="unsupported TOML value type: NoneType"):
         dumps_toml({"nothing": None})

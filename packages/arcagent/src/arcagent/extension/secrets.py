@@ -33,7 +33,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import re
 import stat
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,13 +43,10 @@ from arctrust.audit import AuditEvent, AuditSink, emit
 from arcagent.core.errors import ExtensionError
 from arcagent.core.tier import Tier
 from arcagent.core.vault import VaultBackend, VaultUnreachable
+from arcagent.extension.coordinates import is_coordinate
+from arcagent.extension.coordinates import refusal as coordinate_refusal
 
 _logger = logging.getLogger("arcagent.extension.secrets")
-
-#: A coordinate must survive becoming an env key and a vault path segment. Lowercase
-#: only, because the local backend upper-cases it and case folding would collide two
-#: connections into one cell.
-_COORDINATE = re.compile(r"[a-z0-9][a-z0-9_]{0,63}")
 
 #: Prefix for the env keys this store owns, so an operator can see at a glance which
 #: entries in ``arc.env`` are connector credentials.
@@ -100,13 +96,10 @@ class SecretRef:
             ("instance", self.instance),
             ("field", self.field),
         ):
-            if not _COORDINATE.fullmatch(value):
+            if not is_coordinate(value):
                 raise ExtensionError(
                     code="SECRET_REF_INVALID",
-                    message=(
-                        f"secret {name} must be 1-64 lowercase characters "
-                        f"(a-z, 0-9, _) starting with a letter or digit"
-                    ),
+                    message=coordinate_refusal(f"secret {name}", value),
                     details={"coordinate": name},
                 )
 

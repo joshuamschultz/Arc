@@ -894,10 +894,21 @@ export interface HostSetupResponse {
 }
 
 /** Sign-in state of a connector that holds its own credentials (no declared
- *  secrets — the host binary owns the token). `command` is present when the
+ *  secrets — the host binary owns the token).
+ *
+ *  `sign_in` and `reachable` are two questions. `reachable` is "does this
+ *  connection answer at all"; `sign_in` is "is this account connected". They
+ *  used to be one field, taken from the probe, and a `dbxcli` that had never
+ *  been signed in was drawn with a green tick reading "Signed in — dbxcli
+ *  version: 3.7.1", because `dbxcli version` runs fine with no credential.
+ *  `unknown` means the bundle declares no way to check: it must never be drawn
+ *  as success, and never as a failure either. `command` is present when the
  *  login can only be completed by a person at a terminal. */
+export type ConnectorSignIn = 'signed_in' | 'signed_out' | 'unknown'
+
 export interface ConnectorAuthStatusResponse {
-  authorized: boolean
+  sign_in: ConnectorSignIn
+  reachable: boolean
   detail: string
   command?: string
 }

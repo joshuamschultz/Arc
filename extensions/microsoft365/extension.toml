@@ -51,10 +51,16 @@ instruction = "Install Node.js 20 or newer on this host; the MCP server is a Nod
 # No `token_command`: `--login` runs the Entra ID device-code flow, which prints
 # a code and waits for a person to enter it in a browser. There is no token to
 # pipe in, so the command is shown and never attempted.
+#
+# `--verify-login` is the sign-in check. It needs a `verify_pattern` because it
+# exits 0 either way: it prints the JSON its own testLogin() returned, which is
+# {"success":false,...} when there is no usable token.
 [[host_requires]]
 name = "ms-365-mcp-server"
 minimum_version = "0.136.0"
 authorize_command = "ms-365-mcp-server --login"
+verify_command = "ms-365-mcp-server --verify-login"
+verify_pattern = '"success"\s*:\s*true'
 instruction = """
 Install the server on this host, verify it, then authorise it:
 
