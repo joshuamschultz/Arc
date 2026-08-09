@@ -333,3 +333,86 @@ async def test_the_sign_in_check_audits_the_coordinate_and_never_the_value() -> 
     assert sink.events
     for event in sink.events:
         assert _SENTINEL not in str(event.model_dump())
+
+
+# --- a field the login itself delivers ----------------------------------------
+#
+# A `cli` bundle's credential reaches its binary through the environment, so one
+# with no `[secrets.placement]` is refused: it would be stored and delivered
+# nowhere. That premise has one exception, and `acli` is it. `acli jira auth login
+# --site <site> --email <email> --token` takes the site and the address on its own
+# argv and writes them into its own config; they are configuration the LOGIN
+# delivers, and there is no environment variable acli would read them from.
+#
+# So a field named by a `token_command` is placed — by that command — and refusing
+# it would leave the bundle unable to declare the two fields its sign-in needs.
+
+_SIGN_IN_BUNDLE = f"""
+[extension]
+name = "acme"
+version = "1.0.0"
+description = "Acme from the command line."
+attachment = "cli"
+
+[[secrets]]
+name = "site"
+prompt = "Acme site"
+sensitive = false
+
+[[host_requires]]
+name = "acme"
+instruction = "Install acme, then sign it in with the command above."
+authorize_command = "acme auth login"
+token_command = "acme auth login --site={{site}} --token"
+
+[config.cli]
+binary = "{sys.executable}"
+probe_argv = ["-c", "print('{{}}')"]
+
+[[config.cli.commands]]
+tool = "acme_whoami"
+argv = ["-c", "{_WITNESS}"]
+classification = "read_only"
+
+[tools]
+allow = ["acme_whoami"]
+
+[[tools.declared]]
+name = "acme_whoami"
+classification = "read_only"
+"""
+
+
+def test_a_field_the_login_command_delivers_needs_no_environment_placement(
+    tmp_path: Path,
+) -> None:
+    """It has somewhere to go — the login's own argv — so the refusal must not fire."""
+    manifest = load_manifest(_SIGN_IN_BUNDLE, tier=Tier.PERSONAL)
+
+    attachment = build_attachment(manifest, tmp_path, {"site": Secret("acme.example")})
+
+    assert attachment is not None
+
+
+def test_a_field_no_placement_and_no_login_command_names_is_still_refused(
+    tmp_path: Path,
+) -> None:
+    """The original defect is untouched: a stored value nothing delivers."""
+    manifest = load_manifest(
+        _SIGN_IN_BUNDLE.replace('token_command = "acme auth login --site={site} --token"', ""),
+        tier=Tier.PERSONAL,
+    )
+
+    with pytest.raises(ExtensionError) as raised:
+        build_attachment(manifest, tmp_path, {"site": Secret("acme.example")})
+
+    assert "site" in raised.value.message
+
+
+def test_a_field_the_login_delivers_is_not_also_put_in_the_child_environment(
+    tmp_path: Path,
+) -> None:
+    """It is configuration for the sign-in, not something the verbs read."""
+    manifest = load_manifest(_SIGN_IN_BUNDLE, tier=Tier.PERSONAL)
+
+    assert placement_environment(manifest, {"site": Secret("acme.example")}) == {}

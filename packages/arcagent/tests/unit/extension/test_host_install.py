@@ -360,3 +360,60 @@ def test_the_default_install_directory_is_user_writable_and_never_a_system_path(
     assert target == Path.home() / ".local" / "bin"
     assert not str(target).startswith(("/usr", "/opt", "/bin", "/sbin"))
     assert os.access(target.parent.parent, os.W_OK)
+
+
+# --- a release that is the binary itself -------------------------------------
+#
+# `gh` publishes archives; Atlassian's `acli` publishes the executable itself, at
+# https://acli.atlassian.com/linux/latest/acli_linux_arm64/acli. An installer that
+# can only read a member out of an archive verifies those bytes, then refuses them
+# as "verified but could not be unpacked" — a bundle that pins its build correctly
+# and still cannot be installed.
+#
+# The digest is what makes this safe, and it is unchanged: the payload is hashed
+# before anything is written either way. `member` still names what lands, so the
+# basename rule that keeps a traversal inside the install directory still governs.
+
+
+async def test_a_release_that_is_the_binary_itself_is_installed_unwrapped(
+    tmp_path: Path,
+) -> None:
+    """The download IS the executable — there is no archive to look inside."""
+    fetch = _Fetch(_BINARY)
+    pin = _pin(_BINARY, url="https://example.invalid/latest/acme_linux_arm64/acme", member="acme")
+
+    path = await _install(pin, tmp_path, fetch)
+
+    assert path == tmp_path / "acme"
+    assert path.read_bytes() == _BINARY
+    assert os.access(path, os.X_OK)
+
+
+async def test_a_bare_binary_whose_digest_is_wrong_is_refused_and_nothing_lands(
+    tmp_path: Path,
+) -> None:
+    """Verification is the same gate whether the bytes are wrapped or not."""
+    fetch = _Fetch(_BINARY)
+    pin = _pin(
+        _BINARY,
+        url="https://example.invalid/latest/acme_linux_arm64/acme",
+        member="acme",
+        digest="0" * 64,
+    )
+
+    with pytest.raises(ExtensionError):
+        await _install(pin, tmp_path, fetch)
+
+    assert list(tmp_path.iterdir()) == []
+    assert [event.extra["reason"] for event in fetch.denials()] == ["hash_mismatch"]
+
+
+async def test_an_archive_url_is_still_read_as_an_archive(tmp_path: Path) -> None:
+    """The suffix decides, so a real archive never lands as one opaque file."""
+    payload = _tarball()
+    fetch = _Fetch(payload)
+
+    path = await _install(pin := _pin(payload), tmp_path, fetch)
+
+    assert pin.for_host(host_platform()) is not None
+    assert path.read_bytes() == _BINARY

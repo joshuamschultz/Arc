@@ -474,3 +474,78 @@ class TestTierFloorRefusesButCannotRaise:
         )
 
         assert readers == [Path("connections.py"), Path("extension/manifest.py")]
+
+
+# --- what a token_command may name --------------------------------------------
+
+
+def _manifest_with(body: str) -> ExtensionManifest:
+    return load_manifest(
+        '[extension]\nname = "acme"\nversion = "1.0.0"\nattachment = "cli"\n' + body,
+        tier=Tier.PERSONAL,
+    )
+
+
+_SITE_FIELD = (
+    '[[secrets]]\nname = "site"\nprompt = "p"\nsensitive = false\n'
+    '[[secrets]]\nname = "api_token"\nprompt = "p"\n'
+)
+
+_HOST = (
+    '[[host_requires]]\nname = "acme"\nauthorize_command = "acme login"\n'
+    'token_command = "acme login --site={site} --token"\n'
+)
+
+
+def test_a_token_command_may_name_a_non_sensitive_declared_field() -> None:
+    """The seam that lets a three-input login be finished without a person."""
+    manifest = _manifest_with(_SITE_FIELD + _HOST)
+
+    assert manifest.host_requires[0].token_command.endswith("--token")
+
+
+def test_a_token_command_naming_a_field_the_bundle_never_declares_is_refused() -> None:
+    """It would run with a literal ``{site}`` and fail in the binary's own words."""
+    with pytest.raises(ValidationError, match="region"):
+        _manifest_with(
+            _SITE_FIELD + '[[host_requires]]\nname = "acme"\nauthorize_command = "acme login"\n'
+            'token_command = "acme login --region={region} --token"\n'
+        )
+
+
+def test_a_token_command_naming_a_credential_is_refused() -> None:
+    """argv is the process table. A sensitive field may only ever cross on stdin."""
+    with pytest.raises(ValidationError, match="api_token"):
+        _manifest_with(
+            _SITE_FIELD + '[[host_requires]]\nname = "acme"\nauthorize_command = "acme login"\n'
+            'token_command = "acme login --token={api_token}"\n'
+        )
+
+
+# --- what a command's fixed argv may name --------------------------------------
+
+_CLI_BLOCK = (
+    '[config.cli]\nbinary = "acme"\n\n'
+    '[[config.cli.commands]]\ntool = "acme_list"\nargv = ["list", "--vault={vault}"]\n'
+)
+
+
+def test_a_command_argv_may_name_a_non_sensitive_declared_field() -> None:
+    """The seam that keeps a blast-radius value out of the model's hands."""
+    manifest = _manifest_with(
+        '[[secrets]]\nname = "vault"\nprompt = "p"\nsensitive = false\n' + _CLI_BLOCK
+    )
+
+    assert manifest.config["cli"]["commands"][0]["argv"][-1] == "--vault={vault}"
+
+
+def test_a_command_argv_naming_a_credential_is_refused() -> None:
+    """Every verb's argv is in the process table, not just the login's."""
+    with pytest.raises(ValidationError, match="vault"):
+        _manifest_with('[[secrets]]\nname = "vault"\nprompt = "p"\n' + _CLI_BLOCK)
+
+
+def test_a_command_argv_naming_a_field_the_bundle_never_declares_is_refused() -> None:
+    """It would reach the binary literally and read as a vault named '{vault}'."""
+    with pytest.raises(ValidationError, match="vault"):
+        _manifest_with('[[secrets]]\nname = "other"\nprompt = "p"\nsensitive = false\n' + _CLI_BLOCK)

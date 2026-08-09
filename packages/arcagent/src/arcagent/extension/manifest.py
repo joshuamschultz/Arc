@@ -30,6 +30,7 @@ import copy
 import logging
 import re
 import tomllib
+from collections.abc import Mapping
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -319,6 +320,30 @@ class ApprovalPolicy(_ManifestModel):
     default: Literal["none", "outbound", "all"] = "outbound"
 
 
+#: A bundle field named inside a declared command. Deliberately narrow — the same
+#: shape a ``[[secrets]]`` name has — so nothing else in a command reads as one.
+_PLACEHOLDER = re.compile(r"\{([a-z][a-z0-9_]*)\}")
+
+
+def placeholders(command: str) -> list[str]:
+    """The bundle fields a declared command names, in the order they first appear.
+
+    Public because three call sites read the same rule: the manifest refuses a name
+    that is wrong, the install path asks which fields a login already delivers, and
+    the login fills them in. Three copies is three places for the rule to drift.
+    """
+    return list(dict.fromkeys(_PLACEHOLDER.findall(command)))
+
+
+def fill_placeholders(token: str, values: Mapping[str, str]) -> str:
+    """One argv token with its named fields filled in — a single pass, never nested.
+
+    One pass matters: a value that happens to look like a placeholder is left as the
+    operator typed it rather than being expanded into a field it was not given.
+    """
+    return _PLACEHOLDER.sub(lambda found: values.get(found[1], found[0]), token)
+
+
 class ExtensionManifest(_ManifestModel):
     """A parsed, denied-key-stripped ``extension.toml``."""
 
@@ -335,6 +360,33 @@ class ExtensionManifest(_ManifestModel):
     @classmethod
     def _drop_denied_keys(cls, config: dict[str, Any]) -> dict[str, Any]:
         return _strip_denied(config)
+
+    @model_validator(mode="after")
+    def _a_login_may_only_name_this_bundles_visible_fields(self) -> ExtensionManifest:
+        """A ``token_command`` names fields, and both ways of naming a wrong one lie.
+
+        A field the bundle never declares is never supplied, so the login would run
+        with a literal ``{region}`` and fail in the binary's words about a flag
+        nobody set. A field that IS a credential is worse: ``token_command`` becomes
+        a second route onto argv, which is the process table every other user on the
+        box can read — and the one thing this whole path exists to prevent is a
+        credential going anywhere but stdin.
+        """
+        visible = {declared.name for declared in self.secrets if not declared.sensitive}
+        declared_names = {declared.name for declared in self.secrets}
+        for required in self.host_requires:
+            for field in placeholders(required.token_command):
+                if field in visible:
+                    continue
+                reason = (
+                    "is a credential and may only cross on stdin"
+                    if field in declared_names
+                    else "is not a field this bundle declares"
+                )
+                raise ValueError(
+                    f"{required.name}'s token_command names '{field}', which {reason}"
+                )
+        return self
 
 
 def load_manifest(text: str, *, tier: Tier) -> ExtensionManifest:
@@ -387,5 +439,7 @@ __all__ = [
     "PlatformArtifact",
     "SecretRequirement",
     "ToolPolicy",
+    "fill_placeholders",
     "load_manifest",
+    "placeholders",
 ]

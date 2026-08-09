@@ -57,6 +57,9 @@ _FETCH_TIMEOUT_SECONDS = 300.0
 #: the agent runs next, so the group and other write bits are never set.
 _BINARY_MODE = 0o755
 
+#: URL endings that mean the download wraps the executable rather than being it.
+_ARCHIVE_SUFFIXES = (".zip", ".tar.gz", ".tgz", ".tar", ".tar.xz", ".tar.bz2")
+
 _ACTION = "extension.host.install"
 
 _REFUSED = "HOST_INSTALL_REFUSED"
@@ -210,7 +213,14 @@ def _member_bytes(
 
     Never ``extractall``: only the single named member is read, so no other entry
     in the archive can put a file anywhere.
+
+    Not every release is an archive. Some vendors publish the executable itself, and
+    bytes that verified against their pinned digest and then failed to untar are a
+    build correctly pinned and impossible to install. So the URL's own suffix
+    decides: an archive is opened, and anything else already IS the binary.
     """
+    if not build.url.endswith(_ARCHIVE_SUFFIXES):
+        return payload
     read = _zip_member if build.url.endswith(".zip") else _tar_member
     try:
         return read(payload, build.member)

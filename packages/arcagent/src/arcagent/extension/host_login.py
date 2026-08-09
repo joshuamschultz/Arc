@@ -47,9 +47,11 @@ from dataclasses import dataclass
 
 from arctrust.audit import AuditEvent, AuditSink, emit
 
+from arcagent.core.errors import ExtensionError
 from arcagent.core.tier import Tier
 from arcagent.extension.environment import scrubbed_environment
-from arcagent.extension.manifest import HostRequirement
+from arcagent.extension.field_formats import normalize
+from arcagent.extension.manifest import HostRequirement, fill_placeholders, placeholders
 from arcagent.extension.secrets import Secret, redact
 
 _logger = logging.getLogger("arcagent.extension.host_login")
@@ -107,6 +109,7 @@ async def run_token_login(
     caller_did: str,
     audit_sink: AuditSink,
     tier: Tier,
+    values: Mapping[str, str] | None = None,
     timeout: float = _LOGIN_TIMEOUT_SECONDS,
 ) -> LoginResult:
     """Complete one host binary's sign-in with a token, or say plainly why it did not.
@@ -119,13 +122,52 @@ async def run_token_login(
         caller_did: The operator recorded as the actor on the verdict (Pillar 1).
         audit_sink: Where the verdict is recorded, either way.
         tier: Deployment stringency, stamped on the record.
+        values: The bundle's own non-sensitive fields, for a login that needs more
+            than a token — several take the site and the account address on argv
+            beside it. Only the fields the manifest names are read, and the
+            manifest may only name fields declared ``sensitive = false``, so this
+            cannot become a second route for a credential onto argv.
         timeout: Seconds before the login is killed and reported as unfinished.
 
     Returns:
         The verdict. Never raises for a failed sign-in: an operator needs the
         reason, and a login that did not work is an answer, not an exception.
     """
-    argv = _argv(requirement.token_command, requirement.name)
+    # The shape is applied HERE because there is nowhere else it could be. A token
+    # that crosses on stdin is stored under no declared field, so it declares no
+    # format — and a paste out of a browser dialog carries a trailing newline or a
+    # non-breaking space nobody can see. That is the 401 an operator could not
+    # explain, and `echo <token> |` — the vendor's own documented form — produces it
+    # every time.
+    try:
+        token = normalize("api_token", "token", token) if token else token
+    except ExtensionError as refusal:
+        return _record(
+            requirement,
+            caller_did=caller_did,
+            sink=audit_sink,
+            tier=tier,
+            result=LoginResult(completed=False, detail=refusal.message),
+        )
+
+    supplied = dict(values or {})
+    missing = [name for name in placeholders(requirement.token_command) if not supplied.get(name)]
+    if missing:
+        return _record(
+            requirement,
+            caller_did=caller_did,
+            sink=audit_sink,
+            tier=tier,
+            result=LoginResult(
+                completed=False,
+                detail=(
+                    f"{requirement.name} needs {', '.join(missing)} as well as the token — "
+                    f"supply {'them' if len(missing) > 1 else 'it'} and try again"
+                ),
+            ),
+        )
+
+    argv = _argv(requirement.token_command, requirement.name, supplied)
     if argv is None:
         return _record(
             requirement,
@@ -145,19 +187,26 @@ async def run_token_login(
     return _record(requirement, caller_did=caller_did, sink=audit_sink, tier=tier, result=result)
 
 
-def _argv(command: str, binary: str) -> list[str] | None:
+def _argv(command: str, binary: str, values: Mapping[str, str]) -> list[str] | None:
     """The token list to exec, or ``None`` when this manifest string may not run.
 
     Three refusals, one place: nothing declared, a string no shell grammar parses
     (an unbalanced quote raises rather than yielding a guess), and a command whose
     ``argv[0]`` is not the very binary the requirement declares — the field
     authorises one program, not a program of the manifest's choosing.
+
+    Fields are filled in AFTER the split and within a single token, so a value
+    carrying spaces, quotes or a leading ``--`` becomes part of the argument it was
+    substituted into and can never become an argument of its own. One pass, so a
+    value that happens to look like a placeholder is left as it was typed rather
+    than reaching a field it was not given.
     """
     try:
         argv = shlex.split(command)
     except ValueError:
         return None
-    return argv if argv and argv[0] == binary else None
+    filled = [fill_placeholders(token, values) for token in argv]
+    return filled if filled and filled[0] == binary else None
 
 
 def authorization_verdict(requirement: HostRequirement, returncode: int, output: str) -> bool:
@@ -209,7 +258,7 @@ async def run_authorization_check(
         raises: a connector that cannot be checked is an answer an operator needs,
         not an exception a panel turns into a 500.
     """
-    argv = _argv(requirement.verify_command, requirement.name)
+    argv = _argv(requirement.verify_command, requirement.name, {})
     if argv is None:
         return _record_check(
             requirement,

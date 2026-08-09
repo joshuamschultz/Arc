@@ -971,7 +971,14 @@ class Connections:
         return ("signed_in", detail)
 
     async def _run_login(self, plan: ConnectorPlan, token: str, sink: AuditSink) -> str:
-        """Run the one login Arc can finish, or say plainly why it did not run one."""
+        """Run the one login Arc can finish, or say plainly why it did not run one.
+
+        A login needing more than a token — ``acli`` needs the site and the address
+        on its own argv — is filled in from the fields the operator already supplied.
+        Only the non-sensitive ones are readable at all (:meth:`_supplied` never
+        reads a credential out of the store), so the rule that a credential crosses
+        on stdin and nowhere else holds here by construction rather than by care.
+        """
         accepting = next(
             (required for required in plan.manifest.host_requires if required.token_command),
             None,
@@ -986,6 +993,7 @@ class Connections:
             caller_did=self._world.did,
             audit_sink=sink,
             tier=self._world.tier,
+            values={field.name: field.value for field in await self._supplied(plan, sink)},
         )
         return result.detail
 

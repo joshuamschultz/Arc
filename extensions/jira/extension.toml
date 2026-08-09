@@ -1,54 +1,146 @@
-# Jira Cloud through this bundle's own REST adapter — D-562.
+# Jira Cloud through `acli`, Atlassian's own CLI — D-562 revisited.
 #
-# No third-party Atlassian server is adopted: sooperset/mcp-atlassian carries 35
-# advisories including a critical arbitrary-file-write to RCE, and Atlassian's
-# hosted endpoint states it does not meet FedRAMP. The know-how was already
-# written; only the transport was missing, and the transport is 250 lines of
-# httpx living inside this folder.
+# This bundle used to be a hand-rolled httpx client doing HTTP basic auth with an
+# email and an API token, and it is the only connector here that was. `gh`, `gog`
+# and `dbxcli` all delegate to the vendor's own client, which owns its own
+# authentication — and Jira was the one that did not work: Atlassian is retiring
+# unscoped-token basic auth, and a scoped token additionally requires the
+# `api.atlassian.com/ex/jira/{cloudId}/…` URL form the adapter had never heard of.
+# The manifest recorded rejecting a third-party Atlassian MCP server on security
+# grounds and then never considered Atlassian's own tool.
 #
-# The implementation is in arc_ext_jira/, a SUBDIRECTORY. That placement is
-# deliberate: the capability scanner picks up top-level .py files as agent tools
-# and subjects them to the tier's import policy (federal allows only __future__
-# and arcagent), so adapter code at the bundle root would be refused at federal.
-# In a subdirectory it is D-567 category three — implementation the extension
-# owns, referenced by its entrypoint, signature-verified like every other byte,
-# and never registered as an agent capability.
-
-# Top-level, ahead of every table: TOML would fold a bare key written after a
-# [header] into that table, and `requires` belongs to the manifest itself. It is
-# the adapter's only dependency, checked against every other installed
-# extension by DependencyResolver before this install proceeds.
-requires = ["httpx>=0.27,<1.0"]
+# `acli` removes the whole question. It is signed by Atlassian, it tracks its own
+# API deprecations, and its `--token` login reads stdin and exits — no browser, on
+# a box that has none.
+#
+# Nothing about the previous classification is relaxed. The same six tool names
+# register, so a connection already granted does not change shape; the read/write
+# split is unchanged; and `network_egress` stays on exactly the two verbs that put
+# agent-authored text in front of a project's audience, so the federal refusal
+# still fires at install because those lines exist.
 
 [extension]
 name = "jira"
-version = "1.0.0"
+version = "2.0.0"
 description = "Search, read, create, comment on, and transition Jira issues."
-attachment = "native"
+attachment = "cli"
 tier_floor = "personal"
 
-[config.native]
-# A unique top-level module name, not a generic one. NativeAttachment imports by
-# bare dotted name and sys.modules caches process-wide, so two bundles both
-# shipping "adapter" would resolve to whichever loaded first.
-entrypoint = "arc_ext_jira"
+# Atlassian publishes `acli` as the executable itself rather than inside an
+# archive, and — unlike `gh` — publishes NO versioned URL and NO checksums file:
+# https://acli.atlassian.com/linux/1.3.22/… answers 403, only `/latest/` is served.
+#
+# So these digests are not transcribed from a vendor manifest; they are the sha256
+# of the bytes each of these four URLs actually served, taken together. The
+# linux/arm64 digest below is byte-identical to the `acli` already installed on the
+# deployment, which reports `acli version 1.3.22-stable` — that is what `version`
+# records.
+#
+# The consequence is deliberate and is the safe direction: when Atlassian publishes
+# a new build behind the same `/latest/` URL, `arc connector host-setup` refuses
+# with a digest mismatch and installs nothing, rather than executing bytes nobody
+# approved. Bumping this bundle is then a one-line change, and the refusal is what
+# tells an operator to make it.
+[artifact]
+package = "atlassian/acli"
+version = "1.3.22"
+
+[artifact.platforms."linux/arm64"]
+url = "https://acli.atlassian.com/linux/latest/acli_linux_arm64/acli"
+sha256 = "8cdf3c4ae6e74ce57f7a7b59b1b321b4a4719e011d0d4ec194d909adc1a2b962"
+member = "acli"
+
+[artifact.platforms."linux/amd64"]
+url = "https://acli.atlassian.com/linux/latest/acli_linux_amd64/acli"
+sha256 = "302ad6322e3152d18c47821548e2a09c045c035e01ee90c5536e52f83202e874"
+member = "acli"
+
+[artifact.platforms."darwin/arm64"]
+url = "https://acli.atlassian.com/darwin/latest/acli_darwin_arm64/acli"
+sha256 = "3847457a4dec0f690fb97fc77b882a158523121ab77c492e8263449358c530ea"
+member = "acli"
+
+[artifact.platforms."darwin/amd64"]
+url = "https://acli.atlassian.com/darwin/latest/acli_darwin_amd64/acli"
+sha256 = "4112195aaa9883c3c16db2c4ff7b3b3acb7e55a237452f5e3f8fa821ad4e4b69"
+member = "acli"
+
+# Two fields, and NO `api_token`. That absence is the point: `acli` keeps the token
+# in its own configuration, so Arc holding a second copy would be a second place to
+# leak it from. The token crosses once, on the sign-in verb, straight to the stdin
+# of the command below.
+#
+# The site and the address are not credentials — they are the two things `acli`
+# cannot start a login without, and it takes both on argv. They have no
+# `[secrets.placement]` because there is no environment variable `acli` reads them
+# from; `token_command` is where they go, which is why the install path treats a
+# field a login names as placed.
 
 [[secrets]]
-name = "api_token"
-prompt = "Jira API token. Go to id.atlassian.com/manage-profile/security/api-tokens, click Create API token, give it any name, then copy the string it shows you — Atlassian will not show it again."
-format = "api_token"
+name = "site"
+prompt = "Your Jira address WITHOUT https:// — just the part ending in .atlassian.net, exactly as it appears in your browser bar when you are looking at Jira. For example: yourcompany.atlassian.net"
+sensitive = false
 
 [[secrets]]
 name = "email"
-prompt = "The email address you signed in to Atlassian with. It must be the same account that created the API token above, or Jira will reject both."
+prompt = "The email address you sign in to Atlassian with. It must be the same account that created the API token, or Atlassian will refuse both together."
 sensitive = false
 format = "email"
 
-[[secrets]]
-name = "base_url"
-prompt = "Your Jira web address, exactly as it appears in the browser bar when you are looking at Jira. It ends in .atlassian.net — for example https://yourcompany.atlassian.net"
-sensitive = false
-format = "https_url"
+# `acli` is one of the few CLIs whose login has BOTH shapes. `acli jira auth login
+# --web` runs the OAuth consent flow and needs a browser; `--token` reads the token
+# on stdin and exits, so Arc can finish it, and `token_command` says so.
+#
+# The token is on STDIN and the two visible fields are on argv, which is the split
+# that matters: argv is the process table and every other user on the box can read
+# it. `run_token_login` fills `{site}` and `{email}` in after the command is split,
+# within one token each, and the manifest may only name fields declared
+# `sensitive = false` — so this path cannot become a second route for a credential.
+#
+# The sign-in check is measured on the deployment, in both states, and both are
+# needed. SIGNED IN, `acli jira auth status` exits 0 and prints, on stdout:
+#
+#     ✓ Authenticated
+#       Site: ctgfederal.atlassian.net
+#       Email: jschultz@ctgfederal.com
+#       Authentication Type: api_token
+#
+# SIGNED OUT it exits 1 with
+# `✗ Error: unauthorized: use 'acli jira auth login' to authenticate`.
+#
+# The exit code does separate the two here — unlike `gog auth list`, which was the
+# trap — but `verify_pattern` is still declared, on `Authentication Type:`. That
+# line is printed only where an account exists to describe, and it cannot be
+# reached by any refusal: the signed-out sentence says "authenticate", lowercase
+# and with no such label. So neither a future exit-code change nor a reworded error
+# alone can turn a signed-out host green.
+[[host_requires]]
+name = "acli"
+minimum_version = "1.3.22"
+authorize_command = "acli jira auth login --site <your-site> --email <your-email> --token"
+token_command = "acli jira auth login --site={site} --email={email} --token"
+verify_command = "acli jira auth status"
+verify_pattern = "Authentication Type:"
+instruction = """
+Install Atlassian's CLI on this host, then sign it in:
+
+  1. curl -fsSLo acli https://acli.atlassian.com/linux/latest/acli_linux_arm64/acli
+  2. echo '8cdf3c4ae6e74ce57f7a7b59b1b321b4a4719e011d0d4ec194d909adc1a2b962  acli' | sha256sum -c -
+  3. install -m 0755 acli ~/.local/bin/acli
+  4. Create an API token at id.atlassian.com/manage-profile/security/api-tokens
+     and save it to a file — Atlassian will not show it to you again.
+  5. acli jira auth login --site yourcompany.atlassian.net \\
+       --email you@yourcompany.com --token < token-file
+  6. acli jira auth status        # confirm the site and the account
+  7. rm token-file
+
+Steps 1 and 2 are for linux/arm64; [artifact] holds the digest for each of the
+four platforms Arc can install for you, and Arc will do steps 1-3 itself.
+
+Step 5 is the login Arc can also run for you from the connection panel — the
+token goes to that command's standard input and is never written to a file, put
+on a command line, or stored by Arc.
+"""
 
 [tools]
 allow = [
@@ -100,3 +192,149 @@ classification = "state_modifying"
 
 [approval]
 default = "outbound"
+
+[config.cli]
+binary = "acli"
+probe_argv = ["--version"]
+install_instruction = "See [[host_requires]] in this bundle's extension.toml."
+
+# `--json` is in every argv below and it is NOT cosmetic. On a data command `acli`
+# prints `Authenticated site: <site>` to STDOUT before its payload, and a
+# CliAttachment reports any stdout that is not the declared JSON as a tool ERROR —
+# so without it every verb here would fail on success. That banner is suppressed
+# only when one of `--json`, `--csv`, `--web`, `--from-json` or `--generate-json`
+# is set (read out of `console.(*Console).PrintSiteInfo` in the shipped 1.3.22
+# binary, and confirmed against the live command).
+#
+# The `--fields` lists are manifest data, fixed in argv: the model chooses which
+# issues to read, never which fields come back. `search` accepts a narrower set
+# than `view` — `created`, `updated`, `project`, `resolution` and `duedate` are
+# each refused there with "field 'x' is not allowed", measured — so the two lists
+# differ on purpose rather than by oversight.
+
+[[config.cli.commands]]
+tool = "jira_search_issues"
+argv = [
+  "jira",
+  "workitem",
+  "search",
+  "--json",
+  "--fields=issuetype,key,assignee,priority,status,summary,reporter,labels",
+]
+description = "Search issues with a JQL query. Jira refuses an unbounded query, so always constrain it — by project, assignee, status or a date."
+classification = "read_only"
+
+[[config.cli.commands.arguments]]
+name = "jql"
+flag = "--jql"
+description = "JQL query, e.g. 'project = KAN AND status = \"In Progress\" ORDER BY created DESC'."
+
+[[config.cli.commands.arguments]]
+name = "limit"
+flag = "--limit"
+description = "Maximum number of issues to return."
+
+# The one verb that cannot be reached with flags: `acli jira workitem view` takes
+# the key POSITIONALLY and answers `--key` with "unknown flag: --key". The `--`
+# ending this argv is what makes that safe — after it nothing the model supplies
+# can be read as a flag.
+[[config.cli.commands]]
+tool = "jira_get_issue"
+argv = [
+  "jira",
+  "workitem",
+  "view",
+  "--json",
+  "--fields=key,issuetype,summary,status,assignee,reporter,priority,created,updated,labels,description",
+  "--",
+]
+description = "Read one issue in full by its key."
+classification = "read_only"
+
+[[config.cli.commands.arguments]]
+name = "issue_key"
+description = "The issue key, e.g. KAN-68."
+
+[[config.cli.commands]]
+tool = "jira_list_projects"
+argv = ["jira", "project", "list", "--json"]
+description = "List the projects this account can see. Use it to find a project key before searching or creating."
+classification = "read_only"
+
+[[config.cli.commands.arguments]]
+name = "limit"
+flag = "--limit"
+description = "Maximum number of projects to return."
+
+[[config.cli.commands]]
+tool = "jira_create_issue"
+argv = ["jira", "workitem", "create", "--json"]
+description = "Create an issue. Everyone watching the project will see it."
+classification = "state_modifying"
+capability_tags = ["network_egress"]
+
+[[config.cli.commands.arguments]]
+name = "project"
+flag = "--project"
+description = "Project key, e.g. KAN."
+
+[[config.cli.commands.arguments]]
+name = "type"
+flag = "--type"
+description = "Issue type, e.g. Task, Bug, Story, Epic."
+
+[[config.cli.commands.arguments]]
+name = "summary"
+flag = "--summary"
+description = "One-line summary — this is the issue's title."
+
+[[config.cli.commands.arguments]]
+name = "description"
+flag = "--description"
+description = "Body of the issue, in plain text."
+
+[[config.cli.commands.arguments]]
+name = "assignee"
+flag = "--assignee"
+description = "Assignee's email address, or '@me'."
+
+# `comment create` and `transition` exit 0 even when Jira refuses the issue, and
+# put the refusal in their JSON as {"status": "FAILURE", "message": …}. That is
+# reported to the agent as it stands rather than being turned into a tool error:
+# the JSON says plainly what happened, and a bulk verb can succeed on one key and
+# fail on another.
+[[config.cli.commands]]
+tool = "jira_add_comment"
+argv = ["jira", "workitem", "comment", "create", "--json"]
+description = "Comment on an issue. Everyone watching it will see the comment."
+classification = "state_modifying"
+capability_tags = ["network_egress"]
+
+[[config.cli.commands.arguments]]
+name = "key"
+flag = "--key"
+description = "The issue key to comment on, e.g. KAN-68."
+
+[[config.cli.commands.arguments]]
+name = "body"
+flag = "--body"
+description = "The comment text, in plain text."
+
+# `--yes` is fixed in argv, not offered: without it `acli` asks for confirmation
+# at the terminal, and there is nobody at this one — the command would wait until
+# it was killed and report a transition that never happened.
+[[config.cli.commands]]
+tool = "jira_transition_issue"
+argv = ["jira", "workitem", "transition", "--json", "--yes"]
+description = "Move an issue to another status by name, e.g. 'In Progress' or 'Done'."
+classification = "state_modifying"
+
+[[config.cli.commands.arguments]]
+name = "key"
+flag = "--key"
+description = "The issue key to transition, e.g. KAN-68."
+
+[[config.cli.commands.arguments]]
+name = "status"
+flag = "--status"
+description = "The status to move it to, spelled as the project's workflow spells it."

@@ -446,3 +446,219 @@ async def test_probe_reports_unreachable_rather_than_raising_when_the_binary_is_
 
     assert result.reachable is False
     assert _BINARY in result.detail
+
+
+# --- positional arguments (SPEC-064) ----------------------------------------
+#
+# `acli jira workitem view` takes the work item key POSITIONALLY: `--key` is
+# rejected outright ("unknown flag: --key", measured on the deployment). A
+# connector that could only emit `--flag=value` could not express that verb at
+# all, so the bundle would ship without `jira_get_issue`.
+#
+# The module's guarantee is that a value can never be read as syntax, and a bare
+# token would break it — `--other-flag` in a positional slot IS a flag to the
+# downstream parser. So a positional is legal only after a `--` the MANIFEST
+# declares, which ends flag parsing for everything that follows; and a command
+# using one may declare no flag arguments, because a flag token emitted after
+# `--` would silently become a positional.
+
+
+def _positional_attachment() -> CliAttachment:
+    """One command taking its only argument positionally, after a declared ``--``."""
+    module = _module()
+    view = module.CliCommand(
+        tool="view_item",
+        argv=["workitem", "view", "--json", "--"],
+        arguments=[module.CliArgument(name="issue_key", description="Work item key")],
+        description="Read one work item",
+        classification="read_only",
+    )
+    return module.CliAttachment(binary="acli", commands=[view], probe_argv=["--version"])
+
+
+async def test_a_positional_argument_is_placed_bare_after_the_declared_terminator(
+    spawn: _SpawnRecorder,
+) -> None:
+    """The value is its own token, with no flag in front of it and nothing joined to it."""
+    await _positional_attachment().invoke("view_item", {"issue_key": "KAN-68"})
+
+    assert spawn.argv == ["acli", "workitem", "view", "--json", "--", "KAN-68"]
+
+
+@pytest.mark.parametrize("value", _HOSTILE_VALUES)
+async def test_a_positional_value_the_parser_would_read_as_syntax_stays_a_value(
+    spawn: _SpawnRecorder, value: str
+) -> None:
+    """The declared ``--`` is what makes a bare token safe; it is always in front."""
+    await _positional_attachment().invoke("view_item", {"issue_key": value})
+
+    argv = spawn.argv
+    assert argv == ["acli", "workitem", "view", "--json", "--", value]
+    assert argv.index("--") < len(argv) - 1
+
+
+def test_a_positional_argument_with_no_declared_terminator_is_refused_at_load() -> None:
+    """Without ``--`` the value occupies a flag position, which is the injection."""
+    module = _module()
+    with pytest.raises(ValueError, match="--"):
+        module.CliCommand(
+            tool="view_item",
+            argv=["workitem", "view", "--json"],
+            arguments=[module.CliArgument(name="issue_key")],
+        )
+
+
+def test_a_terminator_that_is_not_the_last_fixed_token_is_refused_at_load() -> None:
+    """A token after ``--`` is already a positional, so the value would be the second one."""
+    module = _module()
+    with pytest.raises(ValueError, match="--"):
+        module.CliCommand(
+            tool="view_item",
+            argv=["workitem", "view", "--", "--json"],
+            arguments=[module.CliArgument(name="issue_key")],
+        )
+
+
+def test_a_command_may_not_mix_a_positional_argument_with_a_flag_one() -> None:
+    """Everything after ``--`` is a positional, so a flag token there is read as one."""
+    module = _module()
+    with pytest.raises(ValueError, match="positional"):
+        module.CliCommand(
+            tool="view_item",
+            argv=["workitem", "view", "--"],
+            arguments=[
+                module.CliArgument(name="issue_key"),
+                module.CliArgument(name="fields", flag="--fields"),
+            ],
+        )
+
+
+# --- a fixed argv token the bundle configures (SPEC-064) ----------------------
+#
+# `op item list` refuses to run for a service account without `--vault`, and the
+# vault must NOT be a model argument: which vault this connection may read is the
+# operator's decision and the blast radius of every verb. So the manifest writes
+# `--vault={vault_id}` into its FIXED argv and Arc fills it from the bundle's own
+# non-sensitive field — the same rule `token_command` uses, and the same reason it
+# is restricted to `sensitive = false`: argv is the process table.
+#
+# Filling happens once, at construction, over manifest data only. A model's value
+# is never a substitution input and never a substitution target.
+
+
+def _configured_attachment(values: dict[str, str]) -> CliAttachment:
+    module = _module()
+    listing = module.CliCommand(
+        tool="list_items",
+        argv=["item", "list", "--format=json", "--vault={vault_id}"],
+        arguments=[module.CliArgument(name="tags", flag="--tags")],
+        classification="read_only",
+    )
+    return module.CliAttachment(
+        binary="op", commands=[listing], probe_argv=["--version"], values=values
+    )
+
+
+async def test_a_configured_value_is_filled_into_the_fixed_argv(
+    spawn: _SpawnRecorder,
+) -> None:
+    await _configured_attachment({"vault_id": "Engineering"}).invoke("list_items", {})
+
+    assert spawn.argv == ["op", "item", "list", "--format=json", "--vault=Engineering"]
+
+
+async def test_a_configured_value_with_spaces_stays_one_argv_token(
+    spawn: _SpawnRecorder,
+) -> None:
+    """A vault named by a person can contain anything a vault name can contain."""
+    await _configured_attachment({"vault_id": "Shared Ops; rm -rf /"}).invoke("list_items", {})
+
+    assert spawn.argv == ["op", "item", "list", "--format=json", "--vault=Shared Ops; rm -rf /"]
+
+
+async def test_a_model_argument_is_never_a_substitution_target(
+    spawn: _SpawnRecorder,
+) -> None:
+    """A model writing ``{vault_id}`` must not thereby read the configured value."""
+    await _configured_attachment({"vault_id": "Engineering"}).invoke(
+        "list_items", {"tags": "{vault_id}"}
+    )
+
+    assert spawn.argv[-1] == "--tags={vault_id}"
+
+
+async def test_an_unfilled_placeholder_is_left_alone_rather_than_guessed(
+    spawn: _SpawnRecorder,
+) -> None:
+    """The binary's own refusal names the flag; a blank would silently read every vault."""
+    await _configured_attachment({}).invoke("list_items", {})
+
+    assert spawn.argv[-1] == "--vault={vault_id}"
+
+
+# --- a verb whose whole payload is one opaque value ---------------------------
+#
+# `op read` prints the secret itself and has no `--format` at all. Every other
+# declared command answers JSON, and a CliAttachment reports non-JSON stdout as a
+# tool ERROR — correctly, because for those verbs it means something went wrong.
+# For this one it is the answer. So a command may DECLARE that its output is text,
+# and only a command that declares it is exempt.
+
+
+def _text_attachment() -> CliAttachment:
+    module = _module()
+    read = module.CliCommand(
+        tool="resolve_secret",
+        argv=["read", "--"],
+        arguments=[module.CliArgument(name="reference")],
+        output="text",
+        classification="read_only",
+    )
+    return module.CliAttachment(binary="op", commands=[read], probe_argv=["--version"])
+
+
+async def test_a_command_declaring_text_output_returns_what_it_printed(
+    spawn: _SpawnRecorder,
+) -> None:
+    spawn.stdout = b"correct-horse-battery-staple\n"
+
+    result = await _text_attachment().invoke("resolve_secret", {"reference": "op://v/i/password"})
+
+    assert result.outcome.value == "ok"
+    assert result.content == "correct-horse-battery-staple"
+
+
+async def test_a_command_that_did_not_declare_text_output_still_demands_json(
+    cli: CliAttachment, spawn: _SpawnRecorder
+) -> None:
+    """The exemption is opt-in, so no other verb loses the check it depends on."""
+    spawn.stdout = b"https://github.com/o/r/pull/1\n"
+
+    result = await cli.invoke("list_issues", {})
+
+    assert result.outcome.value == "error"
+    assert "not the declared JSON" in result.content
+
+
+async def test_a_text_command_that_printed_nothing_is_never_a_silent_success(
+    spawn: _SpawnRecorder,
+) -> None:
+    """An empty answer from a secret resolve is a failure wearing a success's clothes."""
+    spawn.stdout = b""
+
+    result = await _text_attachment().invoke("resolve_secret", {"reference": "op://v/i/password"})
+
+    assert result.outcome.value == "error"
+
+
+async def test_a_text_command_that_exited_non_zero_is_still_an_error(
+    spawn: _SpawnRecorder,
+) -> None:
+    spawn.returncode = 1
+    spawn.stdout = b""
+    spawn.stderr = b"[ERROR] could not read secret"
+
+    result = await _text_attachment().invoke("resolve_secret", {"reference": "op://v/i/x"})
+
+    assert result.outcome.value == "error"
+    assert "could not read secret" in result.content

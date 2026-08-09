@@ -59,7 +59,12 @@ from arcagent.extension.field_formats import normalize
 from arcagent.extension.grants import Connection, ConnectionRegistry
 from arcagent.extension.host import HostPrerequisiteDirector, HostVerdict
 from arcagent.extension.loader import ExtensionLoader
-from arcagent.extension.manifest import ExtensionManifest, SecretRequirement, load_manifest
+from arcagent.extension.manifest import (
+    ExtensionManifest,
+    SecretRequirement,
+    load_manifest,
+    placeholders,
+)
 from arcagent.extension.native_attachment import NativeAttachment
 from arcagent.extension.secrets import Secret, SecretRef, SecretStore
 from arcagent.extension.state import ConnectionRecord, ConnectionStateStore
@@ -526,8 +531,23 @@ def _unplaced_secrets(manifest: ExtensionManifest) -> list[str]:
     declares is deliverable only through ``[secrets.placement]``. Accepting one without
     would store a credential and deliver it nowhere — a connection that probes green
     and 401s on the first real verb.
+
+    A field a ``token_command`` names is the exception, and it is not a loophole: that
+    command carries the field on its own argv and the binary writes it into its own
+    configuration, which is why ``acli`` reads a site and an address from no
+    environment variable at all. Refusing those would leave a bundle unable to declare
+    the very fields its sign-in cannot run without.
     """
-    return [declared.name for declared in manifest.secrets if declared.placement is None]
+    delivered = {
+        field
+        for required in manifest.host_requires
+        for field in placeholders(required.token_command)
+    }
+    return [
+        declared.name
+        for declared in manifest.secrets
+        if declared.placement is None and declared.name not in delivered
+    ]
 
 
 def build_attachment(

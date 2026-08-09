@@ -1,5 +1,12 @@
 """What Atlassian actually receives, and what an operator is told when it refuses.
 
+Confluence only, and that is the point of the file now. Jira used to be here, and
+the failure below is Jira's; the answer to it was not a better basic-auth header
+but Atlassian's own client, so that bundle wraps ``acli`` and its credential
+never crosses a socket Arc opened. Confluence still owns its transport — ``acli``
+1.3.22 offers ``confluence page view`` and nothing that searches, creates or
+updates a page — so every property below still has to hold for it.
+
 The live failure this exists for. An operator connected Jira through arcui with a
 real token, a real email and the correct address, and got:
 
@@ -69,8 +76,14 @@ _TOKEN = "ATATT3xFfGF0-sentinel-Rk9SQklEREVO-000"
 
 #: What each Atlassian bundle's probe asks for, and the body a live site answers
 #: it with. Keyed by bundle name so a third Atlassian bundle joins by adding a row.
+#:
+#: ``jira`` is deliberately absent and its absence is the fix, not a gap: that
+#: bundle no longer speaks this API. It runs ``acli``, which owns its own
+#: authentication, so there is no basic-auth header of ours to decode — its
+#: equivalent assertions are in ``test_connector_bundles`` (the argv each verb
+#: becomes, and its sign-in check replayed against both real states) and in
+#: ``test_host_login`` (the token reaching stdin, shaped, and never argv).
 _PROBE_PATHS: dict[str, tuple[str, dict[str, Any]]] = {
-    "jira": ("/rest/api/3/myself", {"displayName": "Real Person"}),
     "confluence": ("/wiki/rest/api/space", {"results": []}),
 }
 

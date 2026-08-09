@@ -39,7 +39,7 @@ from arcagent.extension.cli_attachment import CliCommand
 from arcagent.extension.field_formats import normalize
 from arcagent.extension.grants import ConnectionRegistry
 from arcagent.extension.host_login import authorization_verdict
-from arcagent.extension.manifest import ExtensionManifest, load_manifest
+from arcagent.extension.manifest import ExtensionManifest, load_manifest, placeholders
 from arcagent.extension.platforms import ANY_PLATFORM
 from arcagent.extension.secrets import LocalFileSecretBackend, SecretStore
 from arcagent.extension.state import open_connection_state
@@ -279,7 +279,16 @@ def test_every_credential_a_spawning_bundle_declares_has_somewhere_to_go(
     """
     if manifest.extension.attachment == "native":
         return
-    unplaced = [declared.name for declared in manifest.secrets if declared.placement is None]
+    delivered_by_login = {
+        field
+        for required in manifest.host_requires
+        for field in placeholders(required.token_command)
+    }
+    unplaced = [
+        declared.name
+        for declared in manifest.secrets
+        if declared.placement is None and declared.name not in delivered_by_login
+    ]
     assert not unplaced, (
         f"{manifest.extension.name} attaches as {manifest.extension.attachment!r} and "
         f"declares credential(s) {unplaced} with no [secrets.placement], so nothing "
@@ -340,8 +349,16 @@ def test_a_bundle_that_asks_for_values_asks_for_at_least_one_credential(
     ``[[secrets]]`` exists so Arc can authenticate. A bundle whose every field is
     configuration has nothing to authenticate with — which in practice means the
     credential is in that list and was marked visible by mistake.
+
+    Unless the credential is deliberately not in that list. A bundle whose binary
+    holds its own token — ``jira``, whose ``acli`` writes it into its own config —
+    stores none, so its declared fields SHOULD all be configuration, and the token
+    crosses once on the stdin of ``token_command``. That is the stronger position,
+    not the weaker one: Arc keeps no second copy to leak.
     """
     if not manifest.secrets:
+        return
+    if any(required.token_command for required in manifest.host_requires):
         return
     assert any(declared.sensitive for declared in manifest.secrets), (
         f"{manifest.extension.name} declares only non-sensitive fields, so nothing it "
@@ -428,6 +445,19 @@ _RECORDED_OUTPUT: dict[str, tuple[tuple[int, str], tuple[int, str]]] = {
         (1, "You are not logged into any GitHub hosts. To log in, run: gh auth login"),
         # (m)
         (0, "github.com\n  ✓ Logged in to github.com account joshuamschultz (keyring)"),
+    ),
+    "jira": (
+        # (m) Both states measured on the deployment, minutes apart: signed out
+        # first, then again after a token landed. `acli` does separate them by exit
+        # code, but `Authentication Type:` is asserted as well — it is printed only
+        # where there is an account to describe, and the refusal's own "authenticate"
+        # is lowercase and carries no such label, so neither signal alone decides.
+        (1, "✗ Error: unauthorized: use 'acli jira auth login' to authenticate"),
+        (
+            0,
+            "✓ Authenticated\n  Site: ctgfederal.atlassian.net\n"
+            "  Email: jschultz@ctgfederal.com\n  Authentication Type: api_token",
+        ),
     ),
     "google_workspace": (
         # (m) THE case that breaks an exit-code-only check: signed out, exit 0.
@@ -517,18 +547,30 @@ def test_a_cli_bundle_builds_and_its_commands_match_its_declarations(
         )
 
 
-def test_a_cli_command_never_takes_a_bare_positional(manifest: ExtensionManifest) -> None:
-    """Every declared argument is passed under a ``--flag``.
+def test_a_cli_command_takes_a_positional_only_behind_a_declared_terminator(
+    manifest: ExtensionManifest,
+) -> None:
+    """A bare value is legal only where the binary leaves no alternative, and only after ``--``.
 
-    ``CliArgument.token`` renders ``--flag=value`` and nothing else, so a manifest
-    that expects a positional produces a token the binary reads as a flag. The
-    bundles are written around that; this keeps them there.
+    ``--flag=value`` is the rule, because a model's value can then never be read as
+    syntax. One shipped verb cannot use it: ``acli jira workitem view`` takes the
+    work item key positionally and answers ``--key`` with "unknown flag: --key".
+    ``CliCommand`` refuses a positional that is not behind a ``--``, and this
+    asserts the same thing over the bundles as they ship — a manifest is where the
+    mistake would be made.
     """
     if manifest.extension.attachment != "cli":
         pytest.skip("not a CLI bundle")
     for command in _cli_commands(manifest):
-        for argument in command.arguments:
-            assert argument.flag.startswith("--"), f"{command.tool}: {argument.name}"
+        positional = [argument.name for argument in command.arguments if not argument.flag]
+        if not positional:
+            for argument in command.arguments:
+                assert argument.flag.startswith("--"), f"{command.tool}: {argument.name}"
+            continue
+        assert command.argv[-1] == "--", (
+            f"{command.tool} takes {positional} positionally without ending its argv "
+            f"in '--', so the value occupies a flag position"
+        )
 
 
 async def test_a_native_bundle_serves_exactly_what_its_manifest_declares(

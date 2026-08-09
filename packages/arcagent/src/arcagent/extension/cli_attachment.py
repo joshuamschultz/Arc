@@ -30,9 +30,9 @@ import json
 import logging
 import time
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from arcagent.core.errors import ExtensionError
 from arcagent.extension.attachment import (
@@ -45,9 +45,14 @@ from arcagent.extension.attachment import (
     ToolSpec,
 )
 from arcagent.extension.environment import scrubbed_environment
+from arcagent.extension.manifest import fill_placeholders
 from arcagent.extension.secrets import Secret, redact
 
 _logger = logging.getLogger(__name__)
+
+#: The token that ends flag parsing. A manifest puts it last in a command's fixed
+#: ``argv`` to make that command's positional arguments unreadable as flags.
+_TERMINATOR = "--"
 
 
 class _Declaration(BaseModel):
@@ -57,10 +62,18 @@ class _Declaration(BaseModel):
 
 
 class CliArgument(_Declaration):
-    """One declared argument of a command, and the flag it is passed under."""
+    """One declared argument of a command, and the flag it is passed under.
+
+    An empty ``flag`` is a POSITIONAL argument, which some verbs are only reachable
+    through: a shipped connector wraps a binary whose read verb takes its record id
+    positionally and answers the obvious flag with "unknown flag". It is legal only
+    behind the ``--`` its command declares (:meth:`CliCommand.tokens`), because a
+    bare token is otherwise read as syntax — ``--other-flag`` in a positional slot
+    IS a flag to the parser.
+    """
 
     name: str
-    flag: str
+    flag: str = ""
     description: str = ""
 
     def token(self, value: object) -> str:
@@ -68,8 +81,10 @@ class CliArgument(_Declaration):
 
         ``--flag=value`` is a single token, so a value that looks like a flag can only
         ever be read as this flag's value — the downstream parser has no other reading.
+        A positional carries no flag; what makes it unambiguous is the terminator its
+        command is required to declare, not the token itself.
         """
-        return f"{self.flag}={value}"
+        return f"{value}" if not self.flag else f"{self.flag}={value}"
 
 
 class CliCommand(_Declaration):
@@ -85,6 +100,36 @@ class CliCommand(_Declaration):
     description: str = ""
     classification: Classification = "state_modifying"
     capability_tags: list[str] = Field(default_factory=list)
+    #: What this command prints on success. ``json`` is the default and is checked;
+    #: ``text`` is for the rare verb whose entire payload is one opaque value that
+    #: no format flag can wrap — a secret resolve. Declared per command, so no other
+    #: verb loses a check it depends on.
+    output: Literal["json", "text"] = "json"
+
+    @model_validator(mode="after")
+    def _a_positional_is_only_legal_behind_a_terminator(self) -> CliCommand:
+        """A bare value must be unreachable as syntax, and only ``--`` makes it so.
+
+        Refused at load rather than at dispatch: a command that would place a model's
+        value in a flag position is a defect in the manifest, and discovering it on
+        the call that exploits it is discovering it too late.
+
+        Flag arguments may not accompany a positional one, because everything after
+        ``--`` is a positional — a ``--fields=…`` token emitted there would be read as
+        a second positional value rather than refused, which is a silently wrong call.
+        """
+        if all(argument.flag for argument in self.arguments):
+            return self
+        if [argument.name for argument in self.arguments if argument.flag]:
+            raise ValueError(
+                f"{self.tool} mixes a positional argument with a flag one; after the "
+                f"'--' terminator every token is a positional"
+            )
+        if _TERMINATOR not in self.argv:
+            raise ValueError(f"{self.tool} takes a positional argument but declares no '--'")
+        if self.argv[-1] != _TERMINATOR:
+            raise ValueError(f"{self.tool} declares tokens after its '--', which are positionals")
+        return self
 
     def spec(self) -> ToolSpec:
         """The registry-facing description, schema included.
@@ -191,9 +236,19 @@ class CliAttachment:
         install_instruction: str = "",
         resilience: CliResilience | None = None,
         env: Mapping[str, Secret] | None = None,
+        values: Mapping[str, str] | None = None,
     ) -> None:
         self._binary = binary
-        self._commands = {command.tool: command for command in commands}
+        # Configured fields are filled into the FIXED argv once, here, over manifest
+        # data only. Doing it at construction rather than per call is what makes it
+        # impossible for a model's value to be a substitution input or a target: by
+        # the time a call arrives there is nothing left to expand.
+        self._commands = {
+            command.tool: command.model_copy(
+                update={"argv": [fill_placeholders(token, values or {}) for token in command.argv]}
+            )
+            for command in commands
+        }
         self._probe_argv = list(probe_argv)
         self._install_instruction = install_instruction
         self._resilience = resilience or CliResilience()
@@ -363,10 +418,13 @@ class CliAttachment:
 
         text = stdout.strip()
         if not text:
-            return ToolResult(
-                tool=command.tool,
-                content=f"{self._binary} {command.tool} completed and wrote no output",
+            return self._error(
+                command.tool,
+                f"{self._binary} {command.tool} exited 0 and wrote nothing, so there is "
+                f"no answer to report",
             )
+        if command.output == "text":
+            return ToolResult(tool=command.tool, outcome=ToolOutcome.OK, content=text)
         try:
             json.loads(text)  # parsed to validate the shape, not to transform it
         except ValueError:
