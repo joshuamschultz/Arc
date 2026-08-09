@@ -18,7 +18,17 @@
 # the three verbs below plus a root-relative recursive listing. Dropbox is the
 # connector the positional gap costs the most; see the report.
 #
-# No `[[secrets]]` — `dbxcli login` keeps a refreshable OAuth token on the host.
+# TWO WAYS IN, AND WHY BOTH:
+#
+#   `dbxcli login` prints an OAuth URL and waits at a prompt for a code, which
+#   only a person sitting at this host can finish. That left every non-technical
+#   operator stuck, so this bundle also declares the credential dbxcli reads
+#   without any prompt at all: DBXCLI_ACCESS_TOKEN. Paste a token into Arc and
+#   the connection is done from the browser.
+#
+#   The [secrets.placement] below is the whole of Arc's knowledge of that, and it
+#   lives here rather than in Arc: if this vendor renames the variable, this file
+#   is the only file that changes.
 
 [extension]
 name = "dropbox"
@@ -80,9 +90,24 @@ Install dbxcli on this host, then authorise it:
   4. dbxcli login
   5. dbxcli account --output json    # confirm the account
 
+Steps 4 and 5 are only for signing in AT this host. To connect from Arc instead,
+paste an access token into the connector panel and skip them.
+
 Scope the Dropbox app to the narrowest permissions the agent needs. These verbs
 only read.
 """
+
+# The token dbxcli reads with no prompt of any kind, which is what makes this
+# connector finishable from a browser. It is a long-lived access token, so Arc
+# holds it in the agent's own secret store (a vault above personal tier) and puts
+# it in the environment of each dbxcli run — never on the command line, and never
+# in a file on this host.
+[[secrets]]
+name = "access_token"
+prompt = "Dropbox access token. Go to dropbox.com/developers/apps, open your app (or click Create app, choose Scoped access and Full Dropbox), open the Permissions tab and tick files.metadata.read plus account_info.read, click Submit, then go back to Settings and click Generate under 'Generated access token'. Copy the long string it shows and paste it here."
+
+[secrets.placement]
+variable = "DBXCLI_ACCESS_TOKEN"
 
 [tools]
 allow = ["dropbox_list", "dropbox_account", "dropbox_usage"]

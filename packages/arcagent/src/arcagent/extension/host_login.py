@@ -42,12 +42,15 @@ import asyncio
 import logging
 import re
 import shlex
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from arctrust.audit import AuditEvent, AuditSink, emit
 
 from arcagent.core.tier import Tier
+from arcagent.extension.environment import scrubbed_environment
 from arcagent.extension.manifest import HostRequirement
+from arcagent.extension.secrets import Secret, redact
 
 _logger = logging.getLogger("arcagent.extension.host_login")
 
@@ -63,9 +66,6 @@ _DETAIL_LIMIT = 400
 #: every panel view, and a binary that has not answered in this long is one whose
 #: state is unknown rather than one worth waiting on.
 _CHECK_TIMEOUT_SECONDS = 20.0
-
-#: What the token is replaced with wherever it would otherwise be shown.
-_REDACTED = "***"
 
 _ACTION = "extension.host.authorize"
 
@@ -188,6 +188,7 @@ async def run_authorization_check(
     caller_did: str,
     audit_sink: AuditSink,
     tier: Tier,
+    env: Mapping[str, Secret] | None = None,
     timeout: float = _CHECK_TIMEOUT_SECONDS,
 ) -> AuthorizationCheck:
     """Ask one host binary whether it is signed in, or say plainly that Arc cannot.
@@ -198,6 +199,11 @@ async def run_authorization_check(
         caller_did: The operator recorded as the actor on the verdict (Pillar 1).
         audit_sink: Where the verdict is recorded, either way.
         tier: Deployment stringency, stamped on the record.
+        env: The connection's ``[secrets.placement]`` entries. A binary that reads
+            its credential from its environment — ``dbxcli`` does — answers "signed
+            out" without them, so a check taken outside the placed environment
+            reports a just-connected account as not connected. The values are
+            handed to the child and appear in no verdict, log line, or audit event.
         timeout: Seconds before the check is killed and reported as unknown.
 
     Returns:
@@ -219,7 +225,7 @@ async def run_authorization_check(
             ),
         )
 
-    run = await _capture(argv, stdin_data="", timeout=timeout, timeout_hint="")
+    run = await _capture(argv, stdin_data="", timeout=timeout, timeout_hint="", env=env)
     if run.returncode is None:
         result = AuthorizationCheck(authorized=False, known=False, detail=run.text)
     else:
@@ -273,17 +279,29 @@ class _Run:
 
 
 async def _capture(
-    argv: list[str], *, stdin_data: str, timeout: float, timeout_hint: str
+    argv: list[str],
+    *,
+    stdin_data: str,
+    timeout: float,
+    timeout_hint: str,
+    env: Mapping[str, Secret] | None = None,
 ) -> _Run:
     """Run ``argv`` to completion, killing it if it does not end.
 
-    ``stdin_data`` is written to the child and nowhere else. The raw output comes
-    back untruncated, because a caller matching a declared pattern against it must
-    see all of it; truncation belongs to the line an operator reads.
+    ``stdin_data`` is written to the child and nowhere else. ``env`` carries the
+    bundle's own ``[secrets.placement]`` entries, so a check reads the same
+    credential the connection's verbs do; those stay wrapped until this call and
+    are unwrapped straight into the child. The raw output comes back untruncated,
+    because a caller matching a declared pattern against it must see all of it;
+    truncation belongs to the line an operator reads.
     """
+    placed = env or {}
     try:
         process = await asyncio.create_subprocess_exec(
             *argv,
+            env=scrubbed_environment(
+                {name: secret.reveal() for name, secret in placed.items()}
+            ),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
@@ -299,7 +317,15 @@ async def _capture(
         return _Run(
             returncode=None, text=f"{argv[0]} did not finish in {timeout:g}s{timeout_hint}"
         )
-    return _Run(returncode=process.returncode or 0, text=output.decode("utf-8", "replace"))
+    # Redacted before the text leaves this function, not at the render: a binary that
+    # echoes what it was handed would otherwise put it in a pattern match, a detail
+    # line an operator reads in a browser, and a log record.
+    return _Run(
+        returncode=process.returncode or 0,
+        text=redact(
+            output.decode("utf-8", "replace"), (secret.reveal() for secret in placed.values())
+        ),
+    )
 
 
 async def _spawn(argv: list[str], *, token: str, timeout: float) -> LoginResult:
@@ -323,9 +349,7 @@ def _readable(output: str, token: str) -> str:
     Redaction is not belt-and-braces: several CLIs echo what they were given, and
     that output is rendered in a browser and written to a log.
     """
-    text = " ".join(output.split())
-    if token:
-        text = text.replace(token, _REDACTED)
+    text = redact(" ".join(output.split()), (token,))
     return text if len(text) <= _DETAIL_LIMIT else f"{text[: _DETAIL_LIMIT - 1]}…"
 
 

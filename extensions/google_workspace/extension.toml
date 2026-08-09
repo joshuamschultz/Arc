@@ -5,10 +5,25 @@
 # names every command as its own tool and is what grants authority. Part 3 is
 # `skills/google_workspace/SKILL.md`, which teaches when to use which.
 #
-# No `[[secrets]]` — and that absence is the point. `gog auth add` puts an OAuth
-# refresh token in the platform keyring (encrypted-file backend on headless
-# Linux) and Arc never sees, stores, or forwards it. A connector that needs no
-# credential from Arc is the strongest posture the mechanism can express.
+# No `[[secrets]]`, and this one is a LIMIT, not a posture. `gog auth add` puts an
+# OAuth refresh token in the platform keyring and Arc never sees it, which is the
+# strongest thing the mechanism can express — but it also means this connector
+# cannot be finished from a browser, and there is no `[secrets.placement]` that
+# would change that:
+#
+#   * gog reads no environment variable for a credential. Checked against its
+#     published flag and command reference: the only env override is GOG_HOME,
+#     which relocates its whole config tree rather than carrying a credential.
+#   * Its one headless path is a service-account key file, registered by running
+#     `gog auth service-account set <workspace-admin> --key <file>`. That is a
+#     command with an operator-specific argument, not a value Arc can place.
+#
+# AND IT WOULD NOT HELP A PERSONAL ACCOUNT ANYWAY. gog documents service accounts
+# as "Workspace only; domain-wide delegation" — the impersonation that makes them
+# work is a Workspace-domain admin setting. A plain @gmail.com address has no
+# domain to delegate in, so for a personal Google account `gog auth add` at this
+# host is the only way in, full stop. Said here so nobody builds a paste field
+# that cannot work.
 #
 # Multi-account routing (D-550/D-571) is `--account`. It is declared as a tool
 # ARGUMENT rather than pinned per instance because nothing in the mechanism
@@ -78,6 +93,16 @@ Install the gogcli binary on this host, then authorise the accounts:
   3. tar xzf gogcli_0.34.1_linux_arm64.tar.gz && install -m 0755 gog ~/.local/bin/gog
   4. gog auth add            # once per Google account you want reachable
   5. gog auth list           # confirm the accounts and note their addresses
+
+Step 4 has to be run BY A PERSON AT THIS HOST: it opens a Google consent page in
+a browser. Arc cannot finish it for you and does not pretend to. There is no
+token you can paste into Arc instead — gog keeps its credential in this machine's
+keyring and reads it from no environment variable.
+
+A service-account key is the only unattended alternative, it needs a Google
+Workspace domain whose admin has granted domain-wide delegation, and it is
+registered with `gog auth service-account set <admin@yourdomain> --key <file>`.
+It does NOT work for a personal @gmail.com account.
 
 Step 2 is not optional: it is the pin in [artifact] being checked. Steps 1 and 2
 are for linux/arm64; for another platform take that asset and its line from the

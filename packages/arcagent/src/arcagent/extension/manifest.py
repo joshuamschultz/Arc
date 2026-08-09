@@ -37,6 +37,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from arcagent.core.errors import ExtensionError
 from arcagent.core.tier import Tier
 from arcagent.extension.attachment import Classification
+from arcagent.extension.environment import refuses_placement
+from arcagent.extension.field_formats import SuppliedFormat
 from arcagent.extension.platforms import ANY_PLATFORM
 from arcagent.tiers import tier_rank
 
@@ -68,6 +70,11 @@ _HTTPS_URL = r"^https://"
 
 #: The allowlist entry that asks for every tool the upstream cares to serve.
 _WILDCARD = "*"
+
+#: A POSIX environment name. A placement becomes an entry in a spawned child's
+#: environment, and anything outside this either cannot be exported or is folded onto a
+#: neighbouring name — both of which deliver the credential nowhere.
+_ENV_NAME = r"^[A-Z][A-Z0-9_]*$"
 
 
 def _strip_denied(config: dict[str, Any]) -> dict[str, Any]:
@@ -211,11 +218,70 @@ class HostRequirement(_ManifestModel):
         return self
 
 
+class CredentialPlacement(_ManifestModel):
+    """``[secrets.placement]`` — where this bundle's own tool reads this credential.
+
+    The seam that lets a connector whose tool holds its own credential be finished
+    by pasting one. Before it, a ``cli`` bundle declaring ``[[secrets]]`` was refused
+    outright, because no table said which of that binary's inputs a credential would
+    become — so storing one would have delivered it nowhere.
+
+    ``variable`` is the environment name the *bundle's tool* reads, and it is the
+    bundle's knowledge alone: which variable a given binary takes its credential from
+    is declared in that bundle's manifest and moves when its upstream moves it, so an
+    upstream change is a one-bundle fix and never a core edit. Arc exports the stored
+    value into every process that attachment starts and nowhere else — never onto argv,
+    which is the process table, and never onto the host filesystem, so two connected
+    accounts of one bundle stay separate rather than sharing whatever single file the
+    upstream's own login would have written.
+
+    A name that would steer the child rather than carry a value is refused
+    (:func:`~arcagent.extension.environment.refuses_placement`): ``PATH`` chooses which
+    binary runs, and the loader and interpreter families are scrubbed on the way in, so
+    a placement naming one would parse, place nothing, and still be reported as done.
+    """
+
+    variable: str = Field(pattern=_ENV_NAME)
+
+    @field_validator("variable")
+    @classmethod
+    def _must_only_carry_a_value(cls, name: str) -> str:
+        if refuses_placement(name):
+            raise ValueError(
+                f"{name} decides what the process runs or loads and cannot carry a credential"
+            )
+        return name
+
+
 class SecretRequirement(_ManifestModel):
-    """``[[secrets]]`` — a credential the operator supplies, and under which key."""
+    """``[[secrets]]`` — a credential the operator supplies, and under which key.
+
+    ``placement`` is optional and its absence is not an error: a bundle whose own
+    adapter code receives the value has nothing to place. It is required only of a
+    bundle whose attachment reaches its service by starting a program, because that is
+    the only shape with somewhere to put it.
+
+    ``sensitive`` says whether the value is actually a credential. Several of these
+    entries are configuration — a base URL, an account address, a tenant identifier —
+    and a form that masked them bought no protection while costing an operator the
+    ability to see whether they had typed a URL correctly. It defaults to true so a
+    field that forgets to say is masked; declaring ``sensitive = false`` is a bundle
+    author's deliberate act, made in the bundle, because core has no business
+    guessing which of a service's fields happen to be secret.
+
+    ``format`` is the SHAPE the value must be in, put there where it enters
+    (:func:`~arcagent.extension.field_formats.normalize`). A person types a web
+    address without a scheme, because that is what a browser bar shows them;
+    knowing it needs one is the tool's job. Empty means the value is stored exactly
+    as typed, which is the right answer for a token whose characters are all
+    significant.
+    """
 
     name: str
     prompt: str = ""
+    placement: CredentialPlacement | None = None
+    sensitive: bool = True
+    format: SuppliedFormat = ""
 
 
 class DeclaredTool(_ManifestModel):
@@ -313,6 +379,7 @@ def load_manifest(text: str, *, tier: Tier) -> ExtensionManifest:
 __all__ = [
     "ApprovalPolicy",
     "ArtifactPin",
+    "CredentialPlacement",
     "DeclaredTool",
     "ExtensionHeader",
     "ExtensionManifest",

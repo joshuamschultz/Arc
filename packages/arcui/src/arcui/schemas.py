@@ -622,12 +622,24 @@ class ProviderKeyDeleteResponse(BaseModel):
 
 
 class ConnectorSecretField(BaseModel):
-    """A credential the operator must supply: its field name and its prompt."""
+    """One value the operator must supply: its field name, its prompt, and its kind.
+
+    ``sensitive`` tells the form whether to mask the input. Not everything a bundle
+    asks for is a credential — a base URL and an account address are configuration —
+    and masking those bought no protection while hiding the one thing an operator
+    needed to check, on a form where a mistyped URL fails at probe with no clue why.
+
+    ``value`` is populated ONLY for a non-sensitive field, and only by the verb that
+    reports one connected instance. A sensitive value is never read out of the store,
+    so this field cannot carry one whatever a caller does.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     name: str
     prompt: str
+    sensitive: bool = True
+    value: str = ""
 
 
 class ConnectorHostRequirement(BaseModel):

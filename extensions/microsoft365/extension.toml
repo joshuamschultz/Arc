@@ -67,22 +67,46 @@ Install the server on this host, verify it, then authorise it:
   1. npm pack @softeria/ms-365-mcp-server@0.136.0
   2. echo 'bf953dae54cef1c2ea616b964f5b72beb8910f22b6e84c60cd94c14b6935b232  softeria-ms-365-mcp-server-0.136.0.tgz' | sha256sum -c -
   3. npm install -g ./softeria-ms-365-mcp-server-0.136.0.tgz
-  4. Register an Entra ID application, then export
-     MS365_MCP_CLIENT_ID and MS365_MCP_TENANT_ID for the agent process.
-  5. ms-365-mcp-server --login    # completes the device-code flow once
+  4. Register an Entra ID application. You do not need to export anything: paste
+     its client ID, tenant ID and client secret into the connector panel and Arc
+     puts them in this server's environment for you.
+  5. ms-365-mcp-server --login    # only if you are signing in AT this host
 
 Install it, do not `npx` it. `npx -y <pkg>` resolves and executes whatever the
 registry serves at the moment of launch, which makes the digest in [artifact]
 describe bytes that are not the bytes that ran.
 """
 
+# These three were declared and delivered nowhere: the server reads them from its
+# own environment and nothing put them there. [secrets.placement] is that missing
+# half. The variable names are this server's, taken from its README, and they live
+# here so that a rename upstream is a change to this file and to no other.
+#
+# STILL BLOCKED, AND NOT ON CREDENTIALS: `build_attachment` has no `mcp` branch,
+# so this bundle is refused at probe with "unknown attachment kind 'mcp'" however
+# it is authorised. MCP dispatch is the remaining work; the credentials are done.
 [[secrets]]
 name = "client_id"
-prompt = "Entra ID application (client) ID for the Microsoft Graph app registration"
+prompt = "Application (client) ID of your app registration. In the Azure portal open Microsoft Entra ID, then App registrations, then your app; it is the 'Application (client) ID' on the Overview page. Looks like 11111111-2222-3333-4444-555555555555."
+sensitive = false
+
+[secrets.placement]
+variable = "MS365_MCP_CLIENT_ID"
 
 [[secrets]]
 name = "tenant_id"
-prompt = "Entra ID tenant ID, or 'common' for multi-tenant"
+prompt = "Directory (tenant) ID, on the same Overview page as the client ID. If this app should work for any organisation, type: common"
+sensitive = false
+
+[secrets.placement]
+variable = "MS365_MCP_TENANT_ID"
+
+[[secrets]]
+name = "client_secret"
+prompt = "Client secret for that app registration. In the Azure portal open your app, then 'Certificates & secrets', click 'New client secret', give it any description, and copy the VALUE column (not Secret ID) immediately — Azure never shows it again."
+
+[secrets.placement]
+variable = "MS365_MCP_CLIENT_SECRET"
 
 [tools]
 # Nine names out of 324. Every one of them is a name this manifest chose; a verb

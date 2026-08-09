@@ -57,7 +57,7 @@ from arcagent.extension.manifest import (
     SecretRequirement,
     load_manifest,
 )
-from arcagent.extension.secrets import SecretRef, SecretStore, select_secret_backend
+from arcagent.extension.secrets import Secret, SecretRef, SecretStore, select_secret_backend
 from arcagent.extension.state import ConnectionStateStore, open_connection_state
 from arcagent.modules.connectors.install import (
     AttachmentFactory,
@@ -70,9 +70,11 @@ from arcagent.modules.connectors.install import (
     install_connector,
     load_egress_allow,
     load_instances,
+    placement_environment,
     plan_connector,
     remove_connector,
     resolve_secrets,
+    shape_supplied,
 )
 
 #: Refusal code for a verb aimed at an instance this agent has not connected. A
@@ -426,6 +428,30 @@ SignInState = Literal["signed_in", "signed_out", "unknown"]
 
 
 @dataclass(frozen=True)
+class SuppliedCredential:
+    """One value the operator supplies, and — when it is not secret — what it is now.
+
+    ``sensitive`` is the manifest's own declaration, and it decides two separate
+    things a surface must not decide for itself: whether the input is masked, and
+    whether ``value`` was read back at all.
+
+    ``value`` is a **deliberate, per-field narrowing of D-583** ("a key value is
+    write-only"). That rule exists to stop a credential reaching a surface; a base
+    URL is not a credential, and making an operator retype one they cannot see on
+    every rotation is how a typo becomes an install that fails at probe with
+    nothing to look at. So a non-sensitive field answers with what is stored, and a
+    sensitive one is never read out of the store at all — not read and blanked,
+    never read. It is empty for a field nothing has stored yet, which is the
+    ordinary first-time case and not an error.
+    """
+
+    name: str
+    prompt: str
+    sensitive: bool = True
+    value: str = ""
+
+
+@dataclass(frozen=True)
 class Authorization:
     """How one connection is authorised, and whether it currently answers.
 
@@ -436,9 +462,11 @@ class Authorization:
     with neither is one Arc cannot help with, and says so rather than rendering an
     empty form over a button that does nothing.
 
-    ``credentials`` carries the declared field and its prompt — a
-    :class:`~arcagent.extension.manifest.SecretRequirement` has no field able to
-    hold a value, so a surface rendering one cannot leak one (LLM02, LLM07).
+    ``credentials`` carries each declared field, its prompt, and whether it is
+    really secret. A sensitive one is never read out of the store, so a surface
+    rendering this list cannot leak a credential (LLM02, LLM07); a non-sensitive
+    one carries what is configured, which is what lets a rotation form show an
+    operator the URL they already set instead of asking them to retype it blind.
 
     **``reachable`` and ``sign_in`` are different questions.** ``reachable`` is
     the probe: does this connection answer at all. ``sign_in`` is the account:
@@ -451,7 +479,7 @@ class Authorization:
 
     instance: str
     extension: str
-    credentials: tuple[SecretRequirement, ...]
+    credentials: tuple[SuppliedCredential, ...]
     hosts: tuple[HostAuthorization, ...]
     reachable: bool
     detail: str
@@ -507,6 +535,7 @@ def _authorization(
     plan: ConnectorPlan,
     probe: DoctorCheck,
     sign_in: tuple[SignInState, str],
+    credentials: tuple[SuppliedCredential, ...],
     *,
     note: str = "",
 ) -> Authorization:
@@ -521,7 +550,7 @@ def _authorization(
     return Authorization(
         instance=instance,
         extension=plan.extension,
-        credentials=plan.secrets,
+        credentials=credentials,
         hosts=tuple(
             HostAuthorization(
                 binary=required.name,
@@ -662,7 +691,8 @@ class Connections:
             plan = self._plan_for(instance, sink)
             probe = await self._reachability(plan, sink)
             sign_in = await self._sign_in_state(plan, sink)
-        return _authorization(instance, plan, probe, sign_in)
+            supplied = await self._supplied(plan, sink)
+        return _authorization(instance, plan, probe, sign_in, supplied)
 
     async def authorize(self, instance: str, *, token: str = "") -> Authorization:
         """Sign this connection's host binary in — when that can be done without a human.
@@ -696,7 +726,8 @@ class Connections:
             note = await self._run_login(plan, token, sink)
             probe = await self._reachability(plan, sink)
             sign_in = await self._sign_in_state(plan, sink)
-        return _authorization(instance, plan, probe, sign_in, note=note)
+            supplied = await self._supplied(plan, sink)
+        return _authorization(instance, plan, probe, sign_in, supplied, note=note)
 
     async def setup_host(self, extension: str) -> HostSetupReport:
         """Put the host binaries a bundle pins on this machine, verified before they land.
@@ -786,6 +817,7 @@ class Connections:
         if not checks:
             return ("unknown", "")
 
+        placed = await self._placement(plan, sink)
         detail = ""
         for required in checks:
             result = await run_authorization_check(
@@ -793,6 +825,7 @@ class Connections:
                 caller_did=self._world.did,
                 audit_sink=sink,
                 tier=self._world.tier,
+                env=placed,
             )
             # The command, then what it said. A surface renders this beside the
             # badge, so it has to be the evidence FOR that badge: the probe's own
@@ -902,11 +935,15 @@ class Connections:
                 field=unknown[0],
             )
 
+        # Shaped on this path too, and by the same function the install uses: a rule
+        # applied only at creation is a connection that works when it is made and
+        # breaks the first time its credential is rotated.
+        shaped = shape_supplied(plan, secrets)
         written: list[str] = []
         with self._audit.open() as sink:
             store = self._store(sink)
             for required in plan.secrets:
-                value = secrets.get(required.name)
+                value = shaped.get(required.name)
                 if not value:
                     continue
                 ref = SecretRef(
@@ -1027,6 +1064,67 @@ class Connections:
         )
         return self._factory(plan.manifest, plan.bundle, secrets)
 
+    async def _supplied(
+        self, plan: ConnectorPlan, sink: AuditSink
+    ) -> tuple[SuppliedCredential, ...]:
+        """Every field the operator supplies, and the value of the ones that are not secret.
+
+        The manifest's ``sensitive`` flag is the ONLY input to that decision, and it
+        is read here — there is no parameter on any public method that could widen
+        it, so no call site can ask for "all the values" and no future one can be
+        added without deleting this comment first. A sensitive field is not read out
+        of the store and blanked; :meth:`SecretStore.get` is never called for it, so
+        there is no path for the value to be on even for a moment.
+
+        A field with nothing stored answers empty rather than being dropped: a form
+        built from this list must still draw the input on a connection that has
+        never been configured.
+        """
+        store = self._store(sink)
+        rows: list[SuppliedCredential] = []
+        for declared in plan.secrets:
+            value = ""
+            if not declared.sensitive:
+                ref = SecretRef(
+                    agent=self._world.agent, instance=plan.instance, field=declared.name
+                )
+                found = await store.get(ref, caller_did=self._world.did)
+                value = found.reveal() if found is not None else ""
+            rows.append(
+                SuppliedCredential(
+                    name=declared.name,
+                    prompt=declared.prompt,
+                    sensitive=declared.sensitive,
+                    value=value,
+                )
+            )
+        return tuple(rows)
+
+    async def _placement(self, plan: ConnectorPlan, sink: AuditSink) -> dict[str, Secret]:
+        """The credentials this connection's own binary reads from its environment.
+
+        The sign-in check runs the SAME program the connection's verbs run, so it has
+        to run it the same way. ``dbxcli account`` answers from ``DBXCLI_ACCESS_TOKEN``;
+        a check taken outside that environment reports "signed out" for an account that
+        was connected a moment ago, which sends an operator to redo a login that is
+        already done — the mirror of the green tick over an empty account.
+
+        A connection whose credentials are not in the store yet is not an error here:
+        it is a connection that is genuinely signed out, and reporting that is the
+        whole job. The refusal belongs to the verbs, which is where it already is.
+        """
+        try:
+            secrets = await resolve_secrets(
+                plan.manifest,
+                agent=self._world.agent,
+                instance=plan.instance,
+                store=self._store(sink),
+                caller_did=self._world.did,
+            )
+        except ExtensionError:
+            return {}
+        return placement_environment(plan.manifest, secrets)
+
     def _store(self, sink: AuditSink) -> SecretStore:
         """The one place a connector credential is written or read."""
         backend = select_secret_backend(self._world.tier, env_file=self._world.env_file)
@@ -1101,6 +1199,7 @@ __all__ = [
     "RemovalReport",
     "SecretRequirement",
     "SignInState",
+    "SuppliedCredential",
     "Tier",
     "ToolSpec",
     "agent_tier",
