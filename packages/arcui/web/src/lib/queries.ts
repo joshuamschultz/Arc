@@ -1,9 +1,4 @@
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-  type UseQueryResult,
-} from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from './api'
 import type {
   AgentConnectorsResponse,
@@ -82,8 +77,7 @@ function useApiQuery<T>(key: unknown[], path: string): UseQueryResult<T> {
 
 // --- Fleet (team) ----------------------------------------------------------
 
-export const useRoster = () =>
-  useApiQuery<AgentsListResponse>(['roster'], '/api/team/roster')
+export const useRoster = () => useApiQuery<AgentsListResponse>(['roster'], '/api/team/roster')
 
 // Polls every 4s so live todo -> in_progress -> done transitions and newly
 // dispatched tasks surface on the board without a manual refresh. The board's
@@ -164,7 +158,10 @@ export const useTaskActivity = (taskId: string | null, limit = 100) =>
   useQuery<AuditEventsResponse>({
     queryKey: ['task', taskId, 'activity'],
     queryFn: ({ signal }) =>
-      apiGet(`/api/team/audit?limit=${limit}&target=${encodeURIComponent(`task:${taskId}`)}`, signal),
+      apiGet(
+        `/api/team/audit?limit=${limit}&target=${encodeURIComponent(`task:${taskId}`)}`,
+        signal,
+      ),
     enabled: !!taskId,
   })
 
@@ -191,11 +188,9 @@ export const useChannelMessages = (name: string | null) =>
 
 // --- Config (settings) -----------------------------------------------------
 
-export const useViewerConfig = () =>
-  useApiQuery<Dict>(['config'], '/api/config')
+export const useViewerConfig = () => useApiQuery<Dict>(['config'], '/api/config')
 
-export const useArcllmConfig = () =>
-  useApiQuery<Dict>(['arcllm-config'], '/api/arcllm-config')
+export const useArcllmConfig = () => useApiQuery<Dict>(['arcllm-config'], '/api/arcllm-config')
 
 // Per-agent, per-file config editor (arcagent / arcllm / arcrun). Each file's
 // top-level TOML tables come back as `sections`; the Settings page renders one
@@ -316,8 +311,7 @@ export const useAgentDailyNotes = (agentId: string | null) =>
 export const useAgentDailyNote = (agentId: string | null, day: string | null) =>
   useQuery<DailyNoteDetail>({
     queryKey: ['agent', agentId, 'knowledge', 'daily-notes', day],
-    queryFn: ({ signal }) =>
-      apiGet(`/api/agents/${agentId}/knowledge/daily-notes/${day}`, signal),
+    queryFn: ({ signal }) => apiGet(`/api/agents/${agentId}/knowledge/daily-notes/${day}`, signal),
     enabled: !!agentId && !!day,
   })
 
@@ -357,8 +351,7 @@ export const useTimeseries = (window = '24h') =>
 export const useCircuitBreakers = () =>
   useApiQuery<{ circuit_breakers: Dict[] }>(['circuit-breakers'], '/api/circuit-breakers')
 
-export const useBudgets = () =>
-  useApiQuery<{ budgets: Dict[] }>(['budgets'], '/api/budget')
+export const useBudgets = () => useApiQuery<{ budgets: Dict[] }>(['budgets'], '/api/budget')
 
 export interface PerformanceResponse {
   window: string
@@ -377,7 +370,10 @@ export interface CostEfficiencyResponse {
   potential_savings_pct: number
 }
 export const useCostEfficiency = (window = '24h') =>
-  useApiQuery<CostEfficiencyResponse>(['cost-efficiency', window], `/api/cost-efficiency?window=${window}`)
+  useApiQuery<CostEfficiencyResponse>(
+    ['cost-efficiency', window],
+    `/api/cost-efficiency?window=${window}`,
+  )
 
 export const useTraces = (limit = 200) =>
   useApiQuery<TracesResponse>(['traces', limit], `/api/traces?limit=${limit}`)
@@ -401,7 +397,10 @@ export const useAgentTraces = (agentId: string, limit = 200) =>
   )
 
 export const useAgentSessions = (agentId: string) =>
-  useApiQuery<SessionsListResponse>(['agent', agentId, 'sessions'], `/api/agents/${agentId}/sessions`)
+  useApiQuery<SessionsListResponse>(
+    ['agent', agentId, 'sessions'],
+    `/api/agents/${agentId}/sessions`,
+  )
 
 export const useAgentStats = (agentId: string, window = '24h') =>
   useApiQuery<StatsResponse>(
@@ -419,7 +418,10 @@ export const useAgentTasks = (agentId: string) =>
   useApiQuery<TasksResponse>(['agent', agentId, 'tasks'], `/api/agents/${agentId}/tasks`)
 
 export const useAgentSchedules = (agentId: string) =>
-  useApiQuery<SchedulesResponse>(['agent', agentId, 'schedules'], `/api/agents/${agentId}/schedules`)
+  useApiQuery<SchedulesResponse>(
+    ['agent', agentId, 'schedules'],
+    `/api/agents/${agentId}/schedules`,
+  )
 
 export interface DeliveryChannel {
   target: string
@@ -429,7 +431,10 @@ export interface AgentChannelsResponse {
   channels: DeliveryChannel[]
 }
 export const useAgentChannels = (agentId: string) =>
-  useApiQuery<AgentChannelsResponse>(['agent', agentId, 'channels'], `/api/agents/${agentId}/channels`)
+  useApiQuery<AgentChannelsResponse>(
+    ['agent', agentId, 'channels'],
+    `/api/agents/${agentId}/channels`,
+  )
 
 export const useAgentSessionReplay = (agentId: string, sid: string, page = 1) =>
   useApiQuery<SessionReplayResponse>(
@@ -482,10 +487,7 @@ export const useAgentPromptDetail = (
 // COMP-010 — structured rubric editor. The arcskill/judge_rubric prompt's body
 // is YAML; this lazy hook (enabled only when that prompt is selected) fetches it
 // parsed into dimensions so the drawer renders a form, not a textarea.
-export const useRubric = (
-  agentId: string,
-  prompt: { package: string; name: string } | null,
-) =>
+export const useRubric = (agentId: string, prompt: { package: string; name: string } | null) =>
   useQuery<RubricResponse>({
     queryKey: ['agent', agentId, 'rubric', prompt?.package, prompt?.name],
     queryFn: ({ signal }) =>
@@ -519,7 +521,9 @@ export const useSaveRubric = (agentId: string) => {
         queryClient.invalidateQueries({
           queryKey: ['agent', agentId, 'prompt', prompt.package, prompt.name],
         }),
-        queryClient.invalidateQueries({ queryKey: ['agent', agentId, 'prompts'] }),
+        queryClient.invalidateQueries({
+          queryKey: ['agent', agentId, 'prompts'],
+        }),
       ]),
   })
 }
@@ -536,7 +540,10 @@ export const useAgentPolicy = (agentId: string) =>
   useApiQuery<PolicyResponse>(['agent', agentId, 'policy'], `/api/agents/${agentId}/policy`)
 
 export const useAgentPolicyStats = (agentId: string) =>
-  useApiQuery<PolicyStatsResponse>(['agent', agentId, 'policy', 'stats'], `/api/agents/${agentId}/policy/stats`)
+  useApiQuery<PolicyStatsResponse>(
+    ['agent', agentId, 'policy', 'stats'],
+    `/api/agents/${agentId}/policy/stats`,
+  )
 
 export const useAgentConfig = (agentId: string) =>
   useApiQuery<ConfigResponse>(['agent', agentId, 'config'], `/api/agents/${agentId}/config`)
@@ -573,7 +580,10 @@ export const useSpawnTree = (root: string | null) =>
   )
 
 export const useIdentityCost = (window = '24h') =>
-  useApiQuery<IdentityCostResponse>(['stats', 'by-identity', window], `/api/stats/by-identity?window=${window}`)
+  useApiQuery<IdentityCostResponse>(
+    ['stats', 'by-identity', window],
+    `/api/stats/by-identity?window=${window}`,
+  )
 
 // --- SPEC-061 ArcFlow (COMP-020/023) — thin client over the workflow routes.
 //
@@ -612,8 +622,7 @@ export const useWorkflowRun = (runId: string | null, refetchIntervalMs?: number)
 export const useRequestSignature = (workflowId: string) => {
   const queryClient = useQueryClient()
   return useMutation<Dict, Error, void>({
-    mutationFn: () =>
-      apiPost(`/api/workflows/${encodeURIComponent(workflowId)}/request-signature`),
+    mutationFn: () => apiPost(`/api/workflows/${encodeURIComponent(workflowId)}/request-signature`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['approvals'] })
       queryClient.invalidateQueries({ queryKey: ['workflow', workflowId] })
@@ -645,7 +654,9 @@ export const useWriteWorkflowFile = (workflowId: string) => {
       }),
     onSuccess: (_d, vars) => {
       queryClient.invalidateQueries({ queryKey: ['workflow', workflowId] })
-      queryClient.invalidateQueries({ queryKey: ['workflow-file', workflowId, vars.path] })
+      queryClient.invalidateQueries({
+        queryKey: ['workflow-file', workflowId, vars.path],
+      })
     },
   })
 }
@@ -725,8 +736,14 @@ export const useResolveGate = (taskId: string) => {
   const queryClient = useQueryClient()
   return useMutation<Dict, Error, { decision: string; notes?: string }>({
     mutationFn: ({ decision, notes }) =>
-      apiPost(`/api/workflow-tasks/${encodeURIComponent(taskId)}/gate`, { decision, notes }),
-    onSuccess: () => queryClient.invalidateQueries({ predicate: (q) => q.queryKey[0] === 'workflow-run' }),
+      apiPost(`/api/workflow-tasks/${encodeURIComponent(taskId)}/gate`, {
+        decision,
+        notes,
+      }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({
+        predicate: (q) => q.queryKey[0] === 'workflow-run',
+      }),
   })
 }
 
@@ -743,8 +760,7 @@ export const useKeys = () => useApiQuery<KeysResponse>(KEYS_KEY, '/api/keys')
 export const useSetKey = () => {
   const queryClient = useQueryClient()
   return useMutation<KeyWriteResponse, Error, { envVar: string; value: string }>({
-    mutationFn: ({ envVar, value }) =>
-      apiPut(`/api/keys/${encodeURIComponent(envVar)}`, { value }),
+    mutationFn: ({ envVar, value }) => apiPut(`/api/keys/${encodeURIComponent(envVar)}`, { value }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: KEYS_KEY }),
   })
 }

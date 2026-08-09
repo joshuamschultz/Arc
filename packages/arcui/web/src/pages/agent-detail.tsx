@@ -66,7 +66,19 @@ import type { ColumnDef } from '@tanstack/react-table'
 import type { CapabilityInventoryItem, Dict, Task } from '@/lib/types'
 
 const TABS = [
-  'overview', 'identity', 'sessions', 'llm', 'skills', 'tools', 'prompts', 'tasks', 'schedules', 'policy', 'workspace', 'files', 'connect',
+  'overview',
+  'identity',
+  'sessions',
+  'llm',
+  'skills',
+  'tools',
+  'prompts',
+  'tasks',
+  'schedules',
+  'policy',
+  'workspace',
+  'files',
+  'connect',
 ] as const
 type TabId = (typeof TABS)[number]
 
@@ -75,14 +87,24 @@ type TabId = (typeof TABS)[number]
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="space-y-2">
-      <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">{title}</h3>
+      <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+        {title}
+      </h3>
       {children}
     </section>
   )
 }
 
 /** Titled card used across the detail tabs. */
-function InfoCard({ title, extra, children }: { title: string; extra?: ReactNode; children: ReactNode }) {
+function InfoCard({
+  title,
+  extra,
+  children,
+}: {
+  title: string
+  extra?: ReactNode
+  children: ReactNode
+}) {
   return (
     <div className="rounded-lg border border-border bg-card p-4 shadow-xs">
       <div className="mb-3 flex items-center justify-between gap-2">
@@ -99,9 +121,16 @@ function KVList({ rows }: { rows: Array<[string, ReactNode]> }) {
   return (
     <dl className="divide-y divide-border/60">
       {rows.map(([k, v], i) => (
-        <div key={i} className="flex items-center justify-between gap-3 py-1.5 text-sm first:pt-0 last:pb-0">
-          <dt className="shrink-0 text-[11px] uppercase tracking-[0.06em] text-muted-foreground">{k}</dt>
-          <dd className="min-w-0 truncate text-right font-mono tabular-nums text-foreground">{v ?? '—'}</dd>
+        <div
+          key={i}
+          className="flex items-center justify-between gap-3 py-1.5 text-sm first:pt-0 last:pb-0"
+        >
+          <dt className="shrink-0 text-[11px] uppercase tracking-[0.06em] text-muted-foreground">
+            {k}
+          </dt>
+          <dd className="min-w-0 truncate text-right font-mono tabular-nums text-foreground">
+            {v ?? '—'}
+          </dd>
         </div>
       ))}
     </dl>
@@ -125,7 +154,12 @@ function Pill({ tone, children }: { tone: 'online' | 'neutral'; children: ReactN
 
 function MiniBar({ pct, tone = 'online' }: { pct: number; tone?: 'online' | 'warning' | 'error' }) {
   const w = Math.max(0, Math.min(100, pct))
-  const bg = tone === 'error' ? 'bg-status-error' : tone === 'warning' ? 'bg-status-warning' : 'bg-status-online'
+  const bg =
+    tone === 'error'
+      ? 'bg-status-error'
+      : tone === 'warning'
+        ? 'bg-status-warning'
+        : 'bg-status-online'
   return (
     <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
       <div className={cn('h-full rounded-full transition-all', bg)} style={{ width: `${w}%` }} />
@@ -133,12 +167,24 @@ function MiniBar({ pct, tone = 'online' }: { pct: number; tone?: 'online' | 'war
   )
 }
 
-function MetricTile({ label, value, pct, tone }: { label: string; value: string; pct: number; tone?: 'online' | 'warning' | 'error' }) {
+function MetricTile({
+  label,
+  value,
+  pct,
+  tone,
+}: {
+  label: string
+  value: string
+  pct: number
+  tone?: 'online' | 'warning' | 'error'
+}) {
   return (
     <div className="space-y-1.5 text-center">
       <div className="text-lg font-semibold tabular-nums text-foreground">{value}</div>
       <MiniBar pct={pct} tone={tone} />
-      <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">{label}</div>
+      <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+        {label}
+      </div>
     </div>
   )
 }
@@ -184,7 +230,8 @@ function OverviewTab({ agentId }: { agentId: string }) {
   const used = Number(latest?.prompt_tokens ?? latest?.input_tokens ?? 0)
   const available = Math.max(0, totalCtx - used)
   const ctxPct = totalCtx > 0 ? Math.min(100, Math.round((used / totalCtx) * 100)) : 0
-  const ctxTone = ctxPct >= emergencyThr * 100 ? 'error' : ctxPct >= compactThr * 100 ? 'warning' : 'online'
+  const ctxTone =
+    ctxPct >= emergencyThr * 100 ? 'error' : ctxPct >= compactThr * 100 ? 'warning' : 'online'
 
   // O2: prompt-cache accounting for the latest trace — None/None means the
   // provider reported no cache fields at all (never touched, not zero-hit).
@@ -192,7 +239,9 @@ function OverviewTab({ agentId }: { agentId: string }) {
   const cacheWrite = latest?.cache_write_tokens != null ? Number(latest.cache_write_tokens) : null
   const cacheOutput = latest?.output_tokens != null ? Number(latest.output_tokens) : null
   const cacheHitRate =
-    cacheRead != null && used + cacheRead > 0 ? Math.round((cacheRead / (used + cacheRead)) * 100) : null
+    cacheRead != null && used + cacheRead > 0
+      ? Math.round((cacheRead / (used + cacheRead)) * 100)
+      : null
 
   const calls = Number(s.request_count ?? 0)
   const errorCount = Number(s.error_count ?? 0)
@@ -201,12 +250,16 @@ function OverviewTab({ agentId }: { agentId: string }) {
   const totalCost = Number(s.total_cost ?? 0)
   const successPct = calls > 0 ? Math.round(((calls - errorCount) / calls) * 100) : 0
   const uptimePct = online ? 100 : calls > 0 ? successPct : 0
-  const responsePct = latencyAvg > 0 ? Math.max(5, Math.min(100, Math.round(100 - (latencyAvg / 5000) * 100))) : 0
+  const responsePct =
+    latencyAvg > 0 ? Math.max(5, Math.min(100, Math.round(100 - (latencyAvg / 5000) * 100))) : 0
   const responseLabel = latencyAvg > 0 ? fmtLatency(latencyAvg) : '—'
 
   const buckets = ts.data?.buckets ?? []
   const labels = bucketLabels(ts.data?.window ?? '24h', buckets.length)
-  const volume = buckets.map((b, i) => ({ label: labels[i], tokens: b.total_tokens }))
+  const volume = buckets.map((b, i) => ({
+    label: labels[i],
+    tokens: b.total_tokens,
+  }))
 
   const sessionRows = (sessions.data?.sessions ?? []).slice(0, 6)
   const taskList = tasks.data?.tasks ?? []
@@ -220,7 +273,9 @@ function OverviewTab({ agentId }: { agentId: string }) {
           <div className="space-y-4">
             <InfoCard
               title="Cryptographic Identity"
-              extra={<Pill tone={online ? 'online' : 'neutral'}>{online ? 'live' : 'offline'}</Pill>}
+              extra={
+                <Pill tone={online ? 'online' : 'neutral'}>{online ? 'live' : 'offline'}</Pill>
+              }
             >
               <KVList
                 rows={[
@@ -228,7 +283,12 @@ function OverviewTab({ agentId }: { agentId: string }) {
                   ['Organization', String(a.org ?? '—')],
                   ['Agent Type', String(a.type ?? '—')],
                   ['Display Name', String(a.display_name ?? a.name ?? '—')],
-                  ['Status', <Pill tone={online ? 'online' : 'neutral'}>{online ? 'online' : 'offline'}</Pill>],
+                  [
+                    'Status',
+                    <Pill tone={online ? 'online' : 'neutral'}>
+                      {online ? 'online' : 'offline'}
+                    </Pill>,
+                  ],
                   ['Workspace', String(a.workspace_path ?? '—')],
                 ]}
               />
@@ -242,14 +302,20 @@ function OverviewTab({ agentId }: { agentId: string }) {
                   ['Max Tokens', llm.max_tokens != null ? fmtNumber(Number(llm.max_tokens)) : '—'],
                   ['Temperature', llm.temperature != null ? String(llm.temperature) : '—'],
                   ['Context Window', totalCtx ? fmtNumber(totalCtx) : '—'],
-                  ['Tool Timeout', toolsPolicy.timeout_seconds != null ? `${toolsPolicy.timeout_seconds}s` : '—'],
+                  [
+                    'Tool Timeout',
+                    toolsPolicy.timeout_seconds != null ? `${toolsPolicy.timeout_seconds}s` : '—',
+                  ],
                   ['Telemetry', tel.enabled ? 'enabled' : '—'],
                   ['Service', String(tel.service_name ?? '—')],
                 ]}
               />
             </InfoCard>
 
-            <InfoCard title="Context Window" extra={<span className="text-xs text-muted-foreground">last prompt</span>}>
+            <InfoCard
+              title="Context Window"
+              extra={<span className="text-xs text-muted-foreground">last prompt</span>}
+            >
               <div className="mb-1.5 flex justify-between text-xs text-muted-foreground">
                 <span>Last prompt size</span>
                 <span className="tabular-nums">{totalCtx ? `${ctxPct}%` : '—'}</span>
@@ -257,23 +323,43 @@ function OverviewTab({ agentId }: { agentId: string }) {
               <MiniBar pct={ctxPct} tone={ctxTone} />
               <div className="mt-3 grid grid-cols-3 gap-3 text-sm">
                 <div>
-                  <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Used</div>
-                  <div className="font-semibold tabular-nums text-foreground">{totalCtx ? fmtNumber(used) : '—'}</div>
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                    Used
+                  </div>
+                  <div className="font-semibold tabular-nums text-foreground">
+                    {totalCtx ? fmtNumber(used) : '—'}
+                  </div>
                 </div>
                 <div>
-                  <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Available</div>
-                  <div className="font-semibold tabular-nums text-foreground">{totalCtx ? fmtNumber(available) : '—'}</div>
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                    Available
+                  </div>
+                  <div className="font-semibold tabular-nums text-foreground">
+                    {totalCtx ? fmtNumber(available) : '—'}
+                  </div>
                 </div>
                 <div>
-                  <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Total</div>
-                  <div className="font-semibold tabular-nums text-foreground">{totalCtx ? fmtNumber(totalCtx) : '—'}</div>
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                    Total
+                  </div>
+                  <div className="font-semibold tabular-nums text-foreground">
+                    {totalCtx ? fmtNumber(totalCtx) : '—'}
+                  </div>
                 </div>
               </div>
               <div className="mt-3 flex flex-wrap gap-3 rounded-lg border border-border/60 bg-muted/40 p-2 text-xs">
                 <span className="text-muted-foreground">Thresholds</span>
-                <span><span className="text-status-online">●</span> Prune {Math.round(pruneThr * 100)}%</span>
-                <span><span className="text-status-warning">●</span> Compact {Math.round(compactThr * 100)}%</span>
-                <span><span className="text-status-error">●</span> Emergency {Math.round(emergencyThr * 100)}%</span>
+                <span>
+                  <span className="text-status-online">●</span> Prune {Math.round(pruneThr * 100)}%
+                </span>
+                <span>
+                  <span className="text-status-warning">●</span> Compact{' '}
+                  {Math.round(compactThr * 100)}%
+                </span>
+                <span>
+                  <span className="text-status-error">●</span> Emergency{' '}
+                  {Math.round(emergencyThr * 100)}%
+                </span>
               </div>
               <div className="mt-2 flex flex-wrap gap-3 rounded-lg border border-border/60 bg-muted/40 p-2 text-xs">
                 <span className="text-muted-foreground">Cache</span>
@@ -281,11 +367,33 @@ function OverviewTab({ agentId }: { agentId: string }) {
                   <span className="text-muted-foreground">—</span>
                 ) : (
                   <>
-                    <span>Input <span className="font-mono text-foreground">{fmtNumber(used)}</span></span>
-                    <span>Read <span className="font-mono text-foreground">{cacheRead != null ? fmtNumber(cacheRead) : '—'}</span></span>
-                    <span>Write <span className="font-mono text-foreground">{cacheWrite != null ? fmtNumber(cacheWrite) : '—'}</span></span>
-                    <span>Output <span className="font-mono text-foreground">{cacheOutput != null ? fmtNumber(cacheOutput) : '—'}</span></span>
-                    <span>Hit rate <span className="font-mono text-foreground">{cacheHitRate != null ? `${cacheHitRate}%` : '—'}</span></span>
+                    <span>
+                      Input <span className="font-mono text-foreground">{fmtNumber(used)}</span>
+                    </span>
+                    <span>
+                      Read{' '}
+                      <span className="font-mono text-foreground">
+                        {cacheRead != null ? fmtNumber(cacheRead) : '—'}
+                      </span>
+                    </span>
+                    <span>
+                      Write{' '}
+                      <span className="font-mono text-foreground">
+                        {cacheWrite != null ? fmtNumber(cacheWrite) : '—'}
+                      </span>
+                    </span>
+                    <span>
+                      Output{' '}
+                      <span className="font-mono text-foreground">
+                        {cacheOutput != null ? fmtNumber(cacheOutput) : '—'}
+                      </span>
+                    </span>
+                    <span>
+                      Hit rate{' '}
+                      <span className="font-mono text-foreground">
+                        {cacheHitRate != null ? `${cacheHitRate}%` : '—'}
+                      </span>
+                    </span>
                   </>
                 )}
               </div>
@@ -298,7 +406,12 @@ function OverviewTab({ agentId }: { agentId: string }) {
               <div className="grid grid-cols-3 gap-4">
                 <MetricTile label="Uptime" value={`${uptimePct}%`} pct={uptimePct} />
                 <MetricTile label="Avg Response" value={responseLabel} pct={responsePct} />
-                <MetricTile label="Tool Success" value={`${successPct}%`} pct={successPct} tone={successPct >= 90 ? 'online' : successPct >= 70 ? 'warning' : 'error'} />
+                <MetricTile
+                  label="Tool Success"
+                  value={`${successPct}%`}
+                  pct={successPct}
+                  tone={successPct >= 90 ? 'online' : successPct >= 70 ? 'warning' : 'error'}
+                />
               </div>
               <div className="mt-4">
                 <div className="mb-1 text-xs text-muted-foreground">Token usage (24h)</div>
@@ -307,7 +420,9 @@ function OverviewTab({ agentId }: { agentId: string }) {
                     <AreaSeries data={volume} dataKey="tokens" />
                   </div>
                 ) : (
-                  <div className="flex h-20 items-center justify-center rounded-lg border border-border/60 bg-muted/40 text-xs text-muted-foreground">No 24h activity</div>
+                  <div className="flex h-20 items-center justify-center rounded-lg border border-border/60 bg-muted/40 text-xs text-muted-foreground">
+                    No 24h activity
+                  </div>
                 )}
               </div>
               <div className="mt-3 text-xs text-muted-foreground">
@@ -317,7 +432,9 @@ function OverviewTab({ agentId }: { agentId: string }) {
               </div>
             </InfoCard>
 
-            <InfoCard title={`Recent Sessions${sessionRows.length ? ` (${sessionRows.length})` : ''}`}>
+            <InfoCard
+              title={`Recent Sessions${sessionRows.length ? ` (${sessionRows.length})` : ''}`}
+            >
               {sessionRows.length === 0 ? (
                 <p className="text-xs text-muted-foreground">No sessions yet</p>
               ) : (
@@ -329,9 +446,15 @@ function OverviewTab({ agentId }: { agentId: string }) {
                       onClick={() => setActiveSession(sess.sid)}
                       className="flex w-full cursor-pointer items-center justify-between gap-3 py-1.5 text-left first:pt-0 last:pb-0 hover:text-foreground"
                     >
-                      <span className="truncate font-mono text-xs text-primary">{shortId(sess.sid, 22)}</span>
-                      <span className="shrink-0 text-xs text-muted-foreground">{relativeTime(sess.mtime)}</span>
-                      <span className="shrink-0 font-mono text-xs text-muted-foreground">{fmtBytes(sess.size)}</span>
+                      <span className="truncate font-mono text-xs text-primary">
+                        {shortId(sess.sid, 22)}
+                      </span>
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {relativeTime(sess.mtime)}
+                      </span>
+                      <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                        {fmtBytes(sess.size)}
+                      </span>
                     </button>
                   ))}
                 </div>
@@ -345,9 +468,13 @@ function OverviewTab({ agentId }: { agentId: string }) {
                 <div className="space-y-1.5">
                   {taskList.slice(0, 8).map((t, i) => (
                     <div key={i} className="flex items-center justify-between gap-3 text-sm">
-                      <span className="min-w-0 truncate text-foreground">{String(t.title ?? t.id ?? 'task')}</span>
+                      <span className="min-w-0 truncate text-foreground">
+                        {String(t.title ?? t.id ?? 'task')}
+                      </span>
                       {t.status != null && (
-                        <span className="shrink-0 rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">{String(t.status)}</span>
+                        <span className="shrink-0 rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+                          {String(t.status)}
+                        </span>
                       )}
                     </div>
                   ))}
@@ -364,9 +491,13 @@ function OverviewTab({ agentId }: { agentId: string }) {
                     const sched = sc as Dict
                     return (
                       <div key={i} className="flex items-center justify-between gap-3 text-sm">
-                        <span className="min-w-0 truncate text-foreground">{String(sched.name ?? sched.id ?? 'schedule')}</span>
+                        <span className="min-w-0 truncate text-foreground">
+                          {String(sched.name ?? sched.id ?? 'schedule')}
+                        </span>
                         {(sched.cron ?? sched.schedule ?? sched.next_run) != null && (
-                          <span className="shrink-0 font-mono text-[11px] text-muted-foreground">{String(sched.cron ?? sched.schedule ?? sched.next_run)}</span>
+                          <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
+                            {String(sched.cron ?? sched.schedule ?? sched.next_run)}
+                          </span>
                         )}
                       </div>
                     )
@@ -425,7 +556,10 @@ function IdentityTab({ agentId }: { agentId: string }) {
             rows={[
               ['Allow', allow.length ? allow.join(', ') : '∅ (deny-all)'],
               ['Deny', deny.length ? deny.join(', ') : '∅'],
-              ['Timeout', toolsPolicy.timeout_seconds != null ? `${toolsPolicy.timeout_seconds}s` : '—'],
+              [
+                'Timeout',
+                toolsPolicy.timeout_seconds != null ? `${toolsPolicy.timeout_seconds}s` : '—',
+              ],
             ]}
           />
         </InfoCard>
@@ -436,7 +570,10 @@ function IdentityTab({ agentId }: { agentId: string }) {
               [
                 'Color',
                 <span className="inline-flex items-center gap-1.5">
-                  <span className="inline-block size-3.5 rounded-sm border border-border" style={{ background: color || '#888' }} />
+                  <span
+                    className="inline-block size-3.5 rounded-sm border border-border"
+                    style={{ background: color || '#888' }}
+                  />
                   <span>{color || '—'}</span>
                 </span>,
               ],
@@ -450,9 +587,29 @@ function IdentityTab({ agentId }: { agentId: string }) {
 }
 
 const sessionColumns: ColumnDef<Dict, unknown>[] = [
-  { accessorKey: 'sid', header: 'Session', cell: (c) => <span className="font-mono text-xs text-primary">{shortId(c.getValue() as string, 18)}</span> },
-  { accessorKey: 'size', header: 'Size', cell: (c) => <span className="font-mono text-xs tabular-nums text-muted-foreground">{fmtBytes(c.getValue() as number)}</span> },
-  { accessorKey: 'mtime', header: 'Updated', cell: (c) => <span className="text-xs text-muted-foreground">{relativeTime(c.getValue() as number)}</span> },
+  {
+    accessorKey: 'sid',
+    header: 'Session',
+    cell: (c) => (
+      <span className="font-mono text-xs text-primary">{shortId(c.getValue() as string, 18)}</span>
+    ),
+  },
+  {
+    accessorKey: 'size',
+    header: 'Size',
+    cell: (c) => (
+      <span className="font-mono text-xs tabular-nums text-muted-foreground">
+        {fmtBytes(c.getValue() as number)}
+      </span>
+    ),
+  },
+  {
+    accessorKey: 'mtime',
+    header: 'Updated',
+    cell: (c) => (
+      <span className="text-xs text-muted-foreground">{relativeTime(c.getValue() as number)}</span>
+    ),
+  },
 ]
 
 function SessionsTab({ agentId }: { agentId: string }) {
@@ -461,14 +618,28 @@ function SessionsTab({ agentId }: { agentId: string }) {
   const rows = (q.data?.sessions ?? []) as unknown as Dict[]
   return (
     <>
-      <QueryState query={q} isEmpty={() => rows.length === 0}
-        empty={<EmptyState title="No sessions for this agent yet" />}>
+      <QueryState
+        query={q}
+        isEmpty={() => rows.length === 0}
+        empty={<EmptyState title="No sessions for this agent yet" />}
+      >
         {() => (
-          <DataTable columns={sessionColumns} data={rows} searchable searchPlaceholder="Search sessions…"
-            onRowClick={(r) => setActive(String(r.sid))} emptyTitle="No sessions" />
+          <DataTable
+            columns={sessionColumns}
+            data={rows}
+            searchable
+            searchPlaceholder="Search sessions…"
+            onRowClick={(r) => setActive(String(r.sid))}
+            emptyTitle="No sessions"
+          />
         )}
       </QueryState>
-      <RunReplayDrawer agentId={agentId} sid={active} open={!!active} onOpenChange={(o) => !o && setActive(null)} />
+      <RunReplayDrawer
+        agentId={agentId}
+        sid={active}
+        open={!!active}
+        onOpenChange={(o) => !o && setActive(null)}
+      />
     </>
   )
 }
@@ -485,8 +656,16 @@ function SkillsTab({ agentId }: { agentId: string }) {
   const [selected, setSelected] = useState<string | null>(null)
   return (
     <>
-      <QueryState query={q} isEmpty={() => skills.length === 0}
-        empty={<EmptyState title="No skills" description="No skill loaded from any of the four scan roots." />}>
+      <QueryState
+        query={q}
+        isEmpty={() => skills.length === 0}
+        empty={
+          <EmptyState
+            title="No skills"
+            description="No skill loaded from any of the four scan roots."
+          />
+        }
+      >
         {() => (
           <CapabilityTable
             items={skills}
@@ -512,13 +691,20 @@ function ToolsTab({ agentId }: { agentId: string }) {
   const tools = (q.data?.tools ?? []) as Dict[]
   const allow = q.data?.allowlist ?? []
   const deny = q.data?.denylist ?? []
-  const policyLabel = deny.length ? `deny ${deny.length}` : allow.length ? `allow ${allow.length}` : 'allow-all'
+  const policyLabel = deny.length
+    ? `deny ${deny.length}`
+    : allow.length
+      ? `allow ${allow.length}`
+      : 'allow-all'
   const capTools = (caps.data?.items ?? []).filter((i) => i.kind === 'tool')
   const [selected, setSelected] = useState<string | null>(null)
   return (
     <>
-      <QueryState query={q} isEmpty={() => tools.length === 0}
-        empty={<EmptyState title="No tools registered" />}>
+      <QueryState
+        query={q}
+        isEmpty={() => tools.length === 0}
+        empty={<EmptyState title="No tools registered" />}
+      >
         {() => (
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -530,7 +716,11 @@ function ToolsTab({ agentId }: { agentId: string }) {
               <QueryState
                 query={caps}
                 isEmpty={() => capTools.length === 0}
-                empty={<p className="text-xs text-muted-foreground">No capability tools scanned across the four roots.</p>}
+                empty={
+                  <p className="text-xs text-muted-foreground">
+                    No capability tools scanned across the four roots.
+                  </p>
+                }
               >
                 {() => (
                   <CapabilityTable
@@ -579,15 +769,12 @@ function TasksTab({ agentId }: { agentId: string }) {
 
   return (
     <>
-      <QueryState query={q} isEmpty={() => rows.length === 0}
-        empty={<EmptyState title="No tasks" description="This agent has no owned tasks." />}>
-        {() => (
-          <TaskBoard
-            tasks={rows}
-            resolveOwner={resolveOwner}
-            onSelectTask={setSelected}
-          />
-        )}
+      <QueryState
+        query={q}
+        isEmpty={() => rows.length === 0}
+        empty={<EmptyState title="No tasks" description="This agent has no owned tasks." />}
+      >
+        {() => <TaskBoard tasks={rows} resolveOwner={resolveOwner} onSelectTask={setSelected} />}
       </QueryState>
       <TaskDrawer
         task={selected}
@@ -602,10 +789,30 @@ function TasksTab({ agentId }: { agentId: string }) {
 }
 
 const scheduleColumns: ColumnDef<Dict, unknown>[] = [
-  { id: 'title', header: 'Schedule', accessorFn: (r) => scheduleTitle(r), cell: (c) => <span className="text-xs text-foreground">{c.getValue() as string}</span> },
-  { accessorKey: 'type', header: 'Type', cell: (c) => <span className="text-xs text-muted-foreground">{String(c.getValue())}</span> },
-  { id: 'timing', header: 'Runs', accessorFn: (r) => scheduleTiming(r), cell: (c) => <span className="text-xs text-muted-foreground">{c.getValue() as string}</span> },
-  { accessorKey: 'enabled', header: 'Enabled', cell: (c) => <span className="text-xs text-foreground">{c.getValue() === false ? 'no' : 'yes'}</span> },
+  {
+    id: 'title',
+    header: 'Schedule',
+    accessorFn: (r) => scheduleTitle(r),
+    cell: (c) => <span className="text-xs text-foreground">{c.getValue() as string}</span>,
+  },
+  {
+    accessorKey: 'type',
+    header: 'Type',
+    cell: (c) => <span className="text-xs text-muted-foreground">{String(c.getValue())}</span>,
+  },
+  {
+    id: 'timing',
+    header: 'Runs',
+    accessorFn: (r) => scheduleTiming(r),
+    cell: (c) => <span className="text-xs text-muted-foreground">{c.getValue() as string}</span>,
+  },
+  {
+    accessorKey: 'enabled',
+    header: 'Enabled',
+    cell: (c) => (
+      <span className="text-xs text-foreground">{c.getValue() === false ? 'no' : 'yes'}</span>
+    ),
+  },
 ]
 
 function SchedulesTab({ agentId }: { agentId: string }) {
@@ -615,11 +822,20 @@ function SchedulesTab({ agentId }: { agentId: string }) {
   const [operatorMode] = useOperatorMode()
   return (
     <>
-      <QueryState query={q} isEmpty={() => rows.length === 0}
-        empty={<EmptyState title="No schedules" description="This agent has no scheduled tasks." />}>
+      <QueryState
+        query={q}
+        isEmpty={() => rows.length === 0}
+        empty={<EmptyState title="No schedules" description="This agent has no scheduled tasks." />}
+      >
         {() => (
-          <DataTable columns={scheduleColumns} data={rows} searchable searchPlaceholder="Search schedules…"
-            onRowClick={(r) => setSelected(r)} emptyTitle="No schedules" />
+          <DataTable
+            columns={scheduleColumns}
+            data={rows}
+            searchable
+            searchPlaceholder="Search schedules…"
+            onRowClick={(r) => setSelected(r)}
+            emptyTitle="No schedules"
+          />
         )}
       </QueryState>
       <ScheduleDrawer
@@ -658,11 +874,18 @@ function PolicyTab({ agentId }: { agentId: string }) {
       <PolicyConfigCards config={cfg} />
       <SystemPolicyRules config={cfg} />
 
-      <QueryState query={policy} isEmpty={() => bullets.length === 0}
-        empty={<EmptyState title="No policy bullets" />}>
+      <QueryState
+        query={policy}
+        isEmpty={() => bullets.length === 0}
+        empty={<EmptyState title="No policy bullets" />}
+      >
         {() => (
           <Section title="Active bullets">
-            <div className="space-y-2">{bullets.map((b, i) => <PolicyBulletCard key={i} bullet={b} />)}</div>
+            <div className="space-y-2">
+              {bullets.map((b, i) => (
+                <PolicyBulletCard key={i} bullet={b} />
+              ))}
+            </div>
           </Section>
         )}
       </QueryState>
@@ -681,7 +904,10 @@ function PolicyTab({ agentId }: { agentId: string }) {
 function PromptsTab({ agentId }: { agentId: string }) {
   const q = useAgentPrompts(agentId)
   const items = q.data?.items ?? []
-  const [selected, setSelected] = useState<{ package: string; name: string } | null>(null)
+  const [selected, setSelected] = useState<{
+    package: string
+    name: string
+  } | null>(null)
 
   const byPackage = new Map<string, typeof items>()
   for (const item of items) {
@@ -692,8 +918,16 @@ function PromptsTab({ agentId }: { agentId: string }) {
 
   return (
     <>
-      <QueryState query={q} isEmpty={() => items.length === 0}
-        empty={<EmptyState title="No prompts" description="No stock prompts found across installed packages." />}>
+      <QueryState
+        query={q}
+        isEmpty={() => items.length === 0}
+        empty={
+          <EmptyState
+            title="No prompts"
+            description="No stock prompts found across installed packages."
+          />
+        }
+      >
         {() => (
           <div className="space-y-6">
             {[...byPackage.entries()].map(([pkg, prompts]) => (
@@ -708,7 +942,9 @@ function PromptsTab({ agentId }: { agentId: string }) {
                     >
                       <div className="min-w-0">
                         <div className="truncate font-mono text-xs text-foreground">{p.name}</div>
-                        <div className="truncate text-[11px] text-muted-foreground">{p.description}</div>
+                        <div className="truncate text-[11px] text-muted-foreground">
+                          {p.description}
+                        </div>
                       </div>
                       <span
                         className={cn(
@@ -860,7 +1096,10 @@ function ConnectTab({ agentId }: { agentId: string }) {
           </Button>
           {done && (
             <p className="text-sm text-foreground">
-              {done} <span className="text-muted-foreground">Restart the gateway to bring the bot live.</span>
+              {done}{' '}
+              <span className="text-muted-foreground">
+                Restart the gateway to bring the bot live.
+              </span>
             </p>
           )}
           {error && <p className="text-sm text-destructive">{error}</p>}
@@ -893,8 +1132,19 @@ const TAB_RENDER: Record<TabId, (agentId: string) => ReactNode> = {
 }
 
 const TAB_LABEL: Record<TabId, string> = {
-  overview: 'Overview', identity: 'Identity', sessions: 'Sessions', llm: 'LLM', skills: 'Skills',
-  tools: 'Tools', prompts: 'Prompts', tasks: 'Tasks', schedules: 'Schedules', policy: 'Policy', workspace: 'Workspace', files: 'Files', connect: 'Connect',
+  overview: 'Overview',
+  identity: 'Identity',
+  sessions: 'Sessions',
+  llm: 'LLM',
+  skills: 'Skills',
+  tools: 'Tools',
+  prompts: 'Prompts',
+  tasks: 'Tasks',
+  schedules: 'Schedules',
+  policy: 'Policy',
+  workspace: 'Workspace',
+  files: 'Files',
+  connect: 'Connect',
 }
 
 export function AgentDetailPage() {
@@ -934,10 +1184,16 @@ export function AgentDetailPage() {
         <StatusDot online={Boolean(a.online)} />
       </div>
 
-      <Tabs value={current} onValueChange={(v) => navigate(`/agents/${id}/${v}`)} className="border-b border-border px-6">
+      <Tabs
+        value={current}
+        onValueChange={(v) => navigate(`/agents/${id}/${v}`)}
+        className="border-b border-border px-6"
+      >
         <TabsList className="my-2 h-auto flex-wrap">
           {TABS.map((t) => (
-            <TabsTrigger key={t} value={t}>{TAB_LABEL[t]}</TabsTrigger>
+            <TabsTrigger key={t} value={t}>
+              {TAB_LABEL[t]}
+            </TabsTrigger>
           ))}
         </TabsList>
       </Tabs>

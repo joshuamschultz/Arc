@@ -628,24 +628,13 @@ export interface ToolDetail {
 export type WorkflowStatus = 'draft' | 'signed' | 'archived'
 export type WorkflowNodeKind = 'agent' | 'tool' | 'script' | 'router' | 'gate'
 export type WorkflowRunStatus =
-  | 'pending'
-  | 'running'
-  | 'waiting_gate'
-  | 'done'
-  | 'failed'
-  | 'cancelled'
+  'pending' | 'running' | 'waiting_gate' | 'done' | 'failed' | 'cancelled'
 // Per-node run status. `skipped` = an untaken branch; `looping` = an
 // in-progress loop iteration. Both are sourced from the Run's path taken —
 // with lazy materialization there are no task rows for unreached nodes, so
 // this status is NEVER read from a task row for those two states.
 export type WorkflowNodeStatus =
-  | 'pending'
-  | 'running'
-  | 'waiting_gate'
-  | 'done'
-  | 'failed'
-  | 'skipped'
-  | 'looping'
+  'pending' | 'running' | 'waiting_gate' | 'done' | 'failed' | 'skipped' | 'looping'
 
 export interface WorkflowNode {
   [key: string]: unknown
@@ -757,7 +746,9 @@ export type GateDecision = 'approve' | 'fail_run' | 'return_for_revision'
 /** `ApiError.errors` arrives as untyped `Record<string, unknown>[]` (the
  * shared HTTP client has no workflow-specific knowledge); this is the one
  * place that casts it back to the typed wire contract for rendering. */
-export function asWorkflowFieldErrors(errors?: Array<Record<string, unknown>>): WorkflowFieldError[] {
+export function asWorkflowFieldErrors(
+  errors?: Array<Record<string, unknown>>,
+): WorkflowFieldError[] {
   return (errors ?? []) as unknown as WorkflowFieldError[]
 }
 

@@ -10,11 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { HostSetupPanel } from '@/components/host-setup-panel'
 import { useOperatorMode } from '@/hooks/use-operator-mode'
-import {
-  useConnectorAuthorization,
-  useInstallConnector,
-  useReauthConnector,
-} from '@/lib/queries'
+import { useConnectorAuthorization, useInstallConnector, useReauthConnector } from '@/lib/queries'
 import { agentLabel, grantName } from '@/lib/agent-names'
 import { ApiError } from '@/lib/api'
 import {
@@ -77,8 +73,7 @@ export function ConnectorSecretsSheet({
     return known && !known.sensitive ? known.value : ''
   }
   const valueFor = (field: string) => values[field] ?? stored(field)
-  const submitted = () =>
-    Object.fromEntries(bundle.secrets.map((s) => [s.name, valueFor(s.name)]))
+  const submitted = () => Object.fromEntries(bundle.secrets.map((s) => [s.name, valueFor(s.name)]))
 
   const complete = bundle.secrets.every((s) => valueFor(s.name).length > 0)
   const canSubmit = complete && (rotating || name.trim().length > 0) && !busy
@@ -121,7 +116,12 @@ export function ConnectorSecretsSheet({
       return
     }
     install.mutate(
-      { extension: bundle.name, instance: name.trim(), agents: granted, secrets: submitted() },
+      {
+        extension: bundle.name,
+        instance: name.trim(),
+        agents: granted,
+        secrets: submitted(),
+      },
       { onSuccess: done, onError: fail },
     )
   }

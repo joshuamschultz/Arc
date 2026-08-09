@@ -91,6 +91,24 @@ function DoctorPanel({ instance }: { instance: string }) {
   )
 }
 
+/**
+ * Where bundles were read from, under the list it explains — one quiet line.
+ *
+ * An operator reads this for exactly one reason: a bundle they expected is not
+ * on the page. So the ordinary case names the single directory to go and look
+ * in, and the rare multi-root case says how many places were searched rather
+ * than printing a row of absolute paths nobody scans — the full list is on
+ * hover, where it costs nothing to carry.
+ */
+function SearchPathLine({ roots }: { roots: string[] }) {
+  if (roots.length === 0) return null
+  return (
+    <p className="font-mono text-[11px] text-muted-foreground/70" title={roots.join('\n')}>
+      {roots.length === 1 ? `read from ${roots[0]}` : `read from ${roots.length} locations`}
+    </p>
+  )
+}
+
 function ConnectionRow({
   inst,
   bundle,
@@ -145,7 +163,9 @@ function ConnectionRow({
             <span
               className={cn(
                 'text-xs',
-                probe.data.reachable ? 'text-emerald-600 dark:text-emerald-400' : 'text-destructive',
+                probe.data.reachable
+                  ? 'text-emerald-600 dark:text-emerald-400'
+                  : 'text-destructive',
               )}
             >
               {probe.data.reachable ? 'Reachable' : 'Unreachable'}
@@ -244,7 +264,9 @@ function ConnectionRow({
               {approve.data.approved.length === 1 ? '' : 's'}.
             </p>
           )}
-          {remove.isError && <p className="mt-1 text-xs text-destructive">{remove.error.message}</p>}
+          {remove.isError && (
+            <p className="mt-1 text-xs text-destructive">{remove.error.message}</p>
+          )}
         </TableCell>
       </TableRow>
       {showAuth && (
@@ -281,7 +303,15 @@ function BundleCard({
   onConnect: (bundle: CatalogBundle) => void
 }) {
   return (
-    <div className="flex flex-col rounded-lg border border-border bg-card p-4 shadow-xs">
+    // The bundle's directory is on the card as a hover title rather than a line
+    // of its own. It matters exactly twice — telling two same-named bundles
+    // apart, and working out why an expected one is missing — and neither is a
+    // reason to put an absolute path in front of an operator who is choosing
+    // what to connect.
+    <div
+      title={`from ${bundle.root}`}
+      className="flex flex-col rounded-lg border border-border bg-card p-4 shadow-xs"
+    >
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
         <span className="font-semibold text-foreground">{bundle.name}</span>
         <span className="font-mono text-[11px] text-muted-foreground">v{bundle.version}</span>
@@ -317,7 +347,6 @@ function BundleCard({
           </>
         )}
       </p>
-      <p className="mt-1 font-mono text-[11px] text-muted-foreground/70">from {bundle.root}</p>
       {bundle.host_requires.length > 0 && (
         <div className="mt-2">
           <HostRequirementLine requirements={bundle.host_requires} />
@@ -361,7 +390,10 @@ export function ConnectionsPage() {
   const connections = useConnections()
 
   // One sheet drives both flows: no instance = install, instance = rotation.
-  const [sheet, setSheet] = useState<{ bundle: CatalogBundle; instance?: string } | null>(null)
+  const [sheet, setSheet] = useState<{
+    bundle: CatalogBundle
+    instance?: string
+  } | null>(null)
 
   const bundles = catalog.data?.available ?? []
   const instances = connections.data?.connections ?? []
@@ -375,106 +407,100 @@ export function ConnectionsPage() {
         actions={<OperatorModeToggle />}
       />
       <div className="flex-1 space-y-8 overflow-auto p-6">
-          <section className="space-y-3">
-            <div>
-              <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Connected
-              </h2>
-              {(connections.data?.extensions_roots ?? []).length > 0 && (
-                <p className="mt-0.5 text-[11px] text-muted-foreground/70">
-                  bundles read from{' '}
-                  <span className="font-mono">
-                    {connections.data?.extensions_roots.join('  ·  ')}
-                  </span>
-                </p>
-              )}
-            </div>
-            <QueryState
-              query={connections}
-              isEmpty={(data) => data.connections.length === 0}
-              empty={
-                <EmptyState
-                  icon={<Cable className="size-7" />}
-                  title="No connections yet"
-                  description="Nothing is connected on this computer. Pick a bundle from Available below to connect one."
-                />
-              }
-            >
-              {(data) => (
-                <div className="rounded-lg border border-border bg-card">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Connection</TableHead>
-                        <TableHead>Extension</TableHead>
-                        <TableHead>Who can use it</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {data.connections.map((inst) => (
-                        <ConnectionRow
-                          key={inst.instance}
-                          inst={inst}
-                          bundle={bundleFor(inst.extension)}
-                          agents={agents}
-                          operatorMode={operatorMode}
-                          onReauth={(bundle, instance) => setSheet({ bundle, instance })}
-                        />
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-            </QueryState>
-          </section>
-
-          <section className="space-y-3">
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Available
-            </h2>
-            <QueryState
-              query={catalog}
-              isEmpty={(data) => data.available.length === 0 && data.unreadable.length === 0}
-              empty={
-                <EmptyState
-                  icon={<Plug className="size-7" />}
-                  title="No bundles found"
-                  description="Nothing on the extension search path. Install a connector bundle to see it here."
-                />
-              }
-            >
-              {(data) => (
-                <div className="space-y-3">
-                  <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-                    {data.available.map((b) => (
-                      <BundleCard
-                        key={b.name}
-                        bundle={b}
-                        connectedCount={instances.filter((i) => i.extension === b.name).length}
+        <section className="space-y-3">
+          {/* No search path here. Where bundles are read from is a fact about
+              bundles, not about a connected account, and it belongs beside the
+              list it explains. */}
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Connected
+          </h2>
+          <QueryState
+            query={connections}
+            isEmpty={(data) => data.connections.length === 0}
+            empty={
+              <EmptyState
+                icon={<Cable className="size-7" />}
+                title="No connections yet"
+                description="Nothing is connected on this computer. Pick a bundle from Available below to connect one."
+              />
+            }
+          >
+            {(data) => (
+              <div className="rounded-lg border border-border bg-card">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Connection</TableHead>
+                      <TableHead>Extension</TableHead>
+                      <TableHead>Who can use it</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {data.connections.map((inst) => (
+                      <ConnectionRow
+                        key={inst.instance}
+                        inst={inst}
+                        bundle={bundleFor(inst.extension)}
+                        agents={agents}
                         operatorMode={operatorMode}
-                        onConnect={(bundle) => setSheet({ bundle })}
+                        onReauth={(bundle, instance) => setSheet({ bundle, instance })}
                       />
                     ))}
-                  </div>
-                  {data.unreadable.length > 0 && (
-                    <div className="space-y-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-                      <p className="flex items-center gap-2 font-medium">
-                        <TriangleAlert className="size-4 shrink-0" />
-                        Bundles found but not readable
-                      </p>
-                      {data.unreadable.map((u) => (
-                        <p key={u.name}>
-                          <span className="font-mono text-foreground">{u.name}</span> — {u.reason}
-                        </p>
-                      ))}
-                    </div>
-                  )}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </QueryState>
+        </section>
+
+        <section className="space-y-3">
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Available
+          </h2>
+          <QueryState
+            query={catalog}
+            isEmpty={(data) => data.available.length === 0 && data.unreadable.length === 0}
+            empty={
+              <EmptyState
+                icon={<Plug className="size-7" />}
+                title="No bundles found"
+                description="Nothing on the extension search path. Install a connector bundle to see it here."
+              />
+            }
+          >
+            {(data) => (
+              <div className="space-y-3">
+                <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                  {data.available.map((b) => (
+                    <BundleCard
+                      key={b.name}
+                      bundle={b}
+                      connectedCount={instances.filter((i) => i.extension === b.name).length}
+                      operatorMode={operatorMode}
+                      onConnect={(bundle) => setSheet({ bundle })}
+                    />
+                  ))}
                 </div>
-              )}
-            </QueryState>
-          </section>
+                {data.unreadable.length > 0 && (
+                  <div className="space-y-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                    <p className="flex items-center gap-2 font-medium">
+                      <TriangleAlert className="size-4 shrink-0" />
+                      Bundles found but not readable
+                    </p>
+                    {data.unreadable.map((u) => (
+                      <p key={u.name}>
+                        <span className="font-mono text-foreground">{u.name}</span> — {u.reason}
+                      </p>
+                    ))}
+                  </div>
+                )}
+                <SearchPathLine roots={connections.data?.extensions_roots ?? []} />
+              </div>
+            )}
+          </QueryState>
+        </section>
       </div>
       {sheet && (
         <ConnectorSecretsSheet

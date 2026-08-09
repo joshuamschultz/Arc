@@ -7,8 +7,7 @@ import { cn } from '@/lib/utils'
 const CHIP =
   'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors'
 
-const HELD =
-  'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+const HELD = 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
 
 const NOT_HELD = 'border-dashed border-border bg-transparent text-muted-foreground/70'
 
@@ -89,7 +88,10 @@ export function AgentGrantChips({
         {orphaned.map((name) => (
           <span
             key={name}
-            className={cn(CHIP, 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400')}
+            className={cn(
+              CHIP,
+              'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400',
+            )}
             title="Granted to a name this deployment has no agent for"
           >
             {name} — unknown agent
