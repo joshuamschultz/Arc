@@ -6413,3 +6413,70 @@ _(none)_
 **Priority**: simplicity
 **Alternatives**: judge each service on its merits with no default; prefer a native adapter for dependency control; prefer MCP first for a uniform tool surface
 **Rationale**: The operator lost an afternoon to a Jira 401 that traced entirely to this. Five bundles wrap a vendor CLI (`gh`, `gog`, `dbxcli`, `readwise`) and work; the three hand-rolled ones are the three that failed. The Jira adapter implemented HTTP basic auth with an unscoped API token — a scheme Atlassian is actively deprecating in favour of scoped tokens against `api.atlassian.com/ex/jira/{cloudId}`, a change `acli` absorbs and 250 lines of our `httpx` does not. The bundle's own header documents rejecting a third-party MCP server on security grounds and never considered Atlassian's own tool. That is the general case: a vendor CLI already solves auth, token rotation, deprecations, and pagination, and it keeps that knowledge in the vendor's release cycle rather than ours. `onepassword` failed differently and for the same reason — it imported a Python SDK that nothing installed, where the `op` CLI is a host prerequisite the existing director already checks. Options 2 and 3 remain available because not every service ships a usable CLI, and the security work an MCP server needs (pinned artifact, contract ledger, sandbox) is already built. The cost is a host prerequisite per connector, which the manifest already models and which `host-setup` can now install from a per-platform pinned digest.
+
+---
+
+## ArcRun Strategies — Build Decisions (2026-08-09)
+
+**Phase**: build | **Status**: complete | **Total decisions**: 6 (6 user, 0 auto-applied)
+**ID range**: D-589 to D-594
+**Priority framework**: simplicity → modularity → security → scalability
+
+Two new arcrun strategies: a recursive strategy for reading very long documents without
+muddling context, and a dynamic strategy where the model builds its own agent graph at
+runtime. ArcFlow's static signed workflow DAGs stay exactly as they are — a different
+tool for a different job — and these strategies do not touch them.
+
+### Auto-Applied (Compliance Mandates)
+
+_No compliance regime is declared for this repo (`.claude/steering/compliance-mandates.json` is absent), so only the OWASP baseline applies: secrets never in code or plaintext on disk, TLS in transit, input validation at trust boundaries. No decision below was mandated._
+
+### Architecture
+
+#### D-589: The recursive strategy is an RLM, not chunk-and-summarise
+**Decision**: The document is held in a sandbox REPL variable and never enters the prompt. The model writes code to slice, regex and partition it, and calls `llm_query()` on the pieces, assembling the answer from results. Nothing is summarised at any level.
+**Priority**: simplicity
+**Alternatives**: map-reduce chunk→summarise→combine; ship both and route by document size; RLM first and add map-reduce only if a real case demands it
+**Rationale**: Summarisation is lossy at every level and a detail dropped in an early pass cannot be recovered — which is precisely the "muddling" this strategy exists to prevent. The measured gap is large and consistent: CodeQA 62% vs 41% for a summarisation agent, BrowseComp-Plus (6–11M tokens) 91.33% vs 70.47%, and on quadratic-complexity tasks 58% F1 against under 0.1%. Prompt size becomes independent of the context window, so the same strategy serves a memo and a 900-page corpus. Arc is unusually well placed: `arcrun/sandbox.py` (docker/vm/local backends) and the existing `code` strategy already provide the REPL substrate, so this is a strategy over built parts rather than new infrastructure. Two documented failure modes are accepted and must be bounded: cost has a long tail on pathological trajectories, and RLM underperforms a direct call on inputs that already fit the window, so the strategy needs a size threshold below which it declines to engage.
+
+#### D-590: The dynamic graph is emergent from tool calls, not a declared spec
+**Decision**: There is no graph object. The model calls `spawn(role, task)` and reads results as ordinary tools, in whatever order it reasons to. The graph is what happened, recovered from the run trace afterwards.
+**Priority**: security
+**Alternatives**: model emits a nodes-and-edges spec that arcrun validates then executes; a spec amendable mid-run; a fixed menu of orchestration shapes the model selects from
+**Rationale**: A declared graph is model-authored structure, which is untrusted input by definition and would need its own schema, validator and gate — the same treatment a dynamically-created tool gets. Expressing the graph as tool calls means the existing envelope already covers it: signed `ToolCall`, policy pipeline, human gate, audit. Nothing new to secure. It is also more faithful to "let the LLM decide": a spec forces the model to commit to a shape before it knows what it will find, whereas emergent structure lets it fan out after the planner reports. The cost is that the graph cannot be inspected or signed before it runs, which is exactly why ArcFlow continues to exist for the cases that need that.
+
+#### D-591: Teammates share a run scratchpad AND message each other directly
+**Decision**: One structured store per run — a teammate writes findings under its own key and the orchestrator sees everything — plus direct teammate-to-teammate messaging, as other harnesses provide.
+**Priority**: modularity
+**Alternatives**: scratchpad only; messages only; orchestrator relays everything
+**Rationale**: The scratchpad alone is simplest and gives one place to audit, one place to look, and partial work surviving a teammate that dies. But findings-in-a-shared-store is not the same as teammates coordinating, and the operator was explicit that agents should be able to talk to each other the way other harnesses allow. Orchestrator-relays-everything was rejected for a specific reason: it makes the orchestrator re-read every result, which reintroduces the context bloat the recursive strategy exists to remove.
+
+#### D-592: Ephemeral teammates are not arcteam agents
+**Decision**: Teammates spawned inside a run have no DID in the registry, no mailbox, and no persistent identity. They exist for one run and vanish, running under the parent's authority.
+**Priority**: simplicity
+**Alternatives**: register each teammate as a real agent for the run's duration; give them scoped temporary identities
+**Rationale**: The operator drew this line directly — arcteam is static agents with specific identities that already talk to each other; this is dynamic helpers spawned to get a better answer. Conflating them would put registry churn, mailbox lifecycle and DID issuance on the hot path of every run, and would mean a crashed run leaks registry entries. The distinction also keeps the security story simple: there is no new principal to authorise, because there is no new principal.
+
+### Security
+
+#### D-593: A teammate inherits the parent's tools minus spawn
+**Decision**: A teammate gets exactly the parent agent's toolset with spawning removed. Only the orchestrator spawns, so the graph is one level deep. Same policy pipeline, same human gate, same `caller_did`.
+**Priority**: security
+**Alternatives**: the orchestrator names each teammate's tools at spawn time; teammates read-only with writes returned to the orchestrator; teammates may spawn, bounded by a depth cap
+**Rationale**: Least privilege per teammate is theoretically better and was rejected on who chooses the grant: the model would be deciding its own helper's authority, and a model that under-grants produces a teammate that fails halfway for reasons invisible to it. Inheriting the parent's authority adds no new path — a teammate can do nothing the agent could not already do, and every call still crosses the same gate with the same identity. Removing spawn from teammates is what keeps the shape bounded without a depth-tracking mechanism: recursion cannot run away if only one node can branch. Read-only teammates were rejected because plan-execute-validate stops working when the executor cannot execute.
+
+#### D-594: Bounded by depth and fan-out; token spend is already bounded
+**Decision**: The new limits are structural — how deep recursion goes and how many teammates may be spawned. Token spend is **not** new work: `arcagent/orchestration/token_budget.py` already provides a shared budget across a root run and all spawned children with a `budget_exhausted` state, and the two compose.
+**Priority**: scalability
+**Alternatives**: a run-wide token budget as the primary limit; wall-clock timeout; budget plus structural caps as new work
+**Rationale**: A token budget was the initial recommendation and turned out to be the wrong thing to *build*, because it already exists — spend is bounded today and the gap is shape. Depth and fan-out are what stop a pathological decomposition from spawning breadth-first forever, and they are cheap to enforce and predictable to explain. RLM's documented cost profile makes both necessary rather than optional: median runs are cheaper than a base model call, but outlier trajectories spike hard, and models differ enormously in sub-call behaviour (one model makes ~10 sub-calls per task where another makes hundreds to thousands under identical instructions).
+
+### Open Questions
+
+- Where does the RLM size threshold sit — below what input length should the strategy decline and hand back to `react`?
+- Sub-LM calls are sequential in the published RLM implementation; Arc has `parallel_dispatch.py`. Is parallelising them v1 or v2?
+- Does the recursive strategy feed `arcmemory`'s entity graph (`Entity` + `Fact` triples already exist), or return an answer and forget? `Fact` currently carries no source pointer, so citing an extracted claim back to its span needs a provenance field either way.
+- What does a teammate-to-teammate message cost against the shared token budget, and does an unread message block a run from finishing?
+
+### Related Solutions
+_(none)_
