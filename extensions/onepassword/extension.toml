@@ -44,11 +44,12 @@ sha256 = "4b9224208aa6e35e13bad8534e6521d3abf5ba166ea4efd370fcdc918c4a4d26"
 
 [[secrets]]
 name = "service_account_token"
-prompt = "1Password service-account token, scoped read-only to ONE vault"
+prompt = "1Password service account token. In 1Password open Developer, then Service Accounts, then Create Service Account; give it access to ONE vault and set that access to read only. Copy the token it shows once — it starts with ops_ and is never shown again."
 
 [[secrets]]
 name = "vault_id"
-prompt = "The id of the single vault this connection may read"
+prompt = "Which vault this connection may read. Open that vault in 1Password, and the id is the last part of the web address — a 26-character string of letters and digits. Its name works too."
+sensitive = false
 
 [tools]
 allow = ["onepassword_list_items", "onepassword_get_item", "onepassword_resolve_secret"]

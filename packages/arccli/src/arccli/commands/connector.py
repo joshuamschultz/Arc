@@ -354,11 +354,18 @@ def _remove(args: argparse.Namespace) -> None:
 
 
 def _prompt_secrets(plan: ConnectorPlan) -> dict[str, str]:
-    """Collect every declared credential with a non-echoing prompt."""
+    """Ask for every declared value, hiding the ones that are actually credentials.
+
+    The manifest decides, per field. A hidden prompt is the right protection for a
+    token and the wrong one for a base URL: it protects nothing there and
+    guarantees that a typo stays invisible until the probe fails with no clue why.
+    """
     values: dict[str, str] = {}
     for declared in plan.secrets:
-        label = declared.prompt or f"Value for {declared.name}"
-        values[declared.name] = getpass.getpass(f"{label} (hidden): ")
+        label = f"{declared.prompt or f'Value for {declared.name}'} [{declared.name}]"
+        values[declared.name] = (
+            getpass.getpass(f"{label} (hidden): ") if declared.sensitive else input(f"{label}: ")
+        )
     return values
 
 

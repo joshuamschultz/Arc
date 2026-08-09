@@ -53,6 +53,7 @@ from arcagent.extension.cli_attachment import CliAttachment, CliCommand, CliResi
 from arcagent.extension.contract_ledger import ToolContractLedger
 from arcagent.extension.coordinates import is_coordinate
 from arcagent.extension.coordinates import refusal as coordinate_refusal
+from arcagent.extension.field_formats import normalize
 from arcagent.extension.host import HostPrerequisiteDirector, HostVerdict
 from arcagent.extension.loader import ExtensionLoader
 from arcagent.extension.manifest import ExtensionManifest, SecretRequirement, load_manifest
@@ -541,6 +542,75 @@ async def resolve_secrets(
     return resolved
 
 
+def placement_environment(
+    manifest: ExtensionManifest, secrets: Mapping[str, Secret]
+) -> dict[str, Secret]:
+    """The child-process environment this bundle's declared placements ask for.
+
+    One mapping, built in one place, and used by everything that starts a program on
+    this connection's behalf: the attachment's own verbs and probe, and the sign-in
+    check behind ``verify_command``. A second copy would let a connection whose tools
+    work report itself as signed out, because the check ran without the credential the
+    tools had.
+
+    Values stay wrapped: the caller that starts the process unwraps them into that
+    process's environment and nothing before it does. So a mapping held on an
+    attachment, or dumped by a traceback on the way to one, still renders
+    ``Secret(***)``.
+
+    Args:
+        manifest: What the bundle declares. A credential with no
+            ``[secrets.placement]`` contributes nothing.
+        secrets: The credentials :func:`resolve_secrets` read out of the store.
+
+    Returns:
+        Environment variable to credential, empty when the bundle places nothing.
+    """
+    return {
+        declared.placement.variable: secrets[declared.name]
+        for declared in manifest.secrets
+        if declared.placement is not None and declared.name in secrets
+    }
+
+
+def shape_supplied(plan: ConnectorPlan, values: Mapping[str, str]) -> dict[str, str]:
+    """Put every supplied value into the shape its bundle declared for that field.
+
+    One place, called by both paths a value can enter through — the install and the
+    re-auth — because a rule applied on one of them is a connection that works when
+    it was created and breaks when its credential is rotated.
+
+    Args:
+        plan: What the bundle declares. A field with no ``format`` is untouched.
+        values: What the operator typed, keyed by field name.
+
+    Returns:
+        The same mapping with each declared field shaped. Undeclared keys are
+        carried through unchanged; refusing them belongs to the caller that knows
+        whether an undeclared key is an error (``reauth``) or ignorable.
+
+    Raises:
+        ExtensionError: A value cannot be put in its declared shape. The message is
+            written for the person who typed it and never echoes the value.
+    """
+    declared = {field.name: field for field in plan.secrets}
+    return {
+        name: normalize(declared[name].format, name, value) if name in declared else value
+        for name, value in values.items()
+    }
+
+
+def _unplaced_secrets(manifest: ExtensionManifest) -> list[str]:
+    """Declared credentials this bundle gives no destination for.
+
+    A ``cli`` attachment reaches its service by spawning a binary, so a credential it
+    declares is deliverable only through ``[secrets.placement]``. Accepting one without
+    would store a credential and deliver it nowhere — a connection that probes green
+    and 401s on the first real verb.
+    """
+    return [declared.name for declared in manifest.secrets if declared.placement is None]
+
+
 def build_attachment(
     manifest: ExtensionManifest, bundle: Path, secrets: Mapping[str, Secret]
 ) -> ExtensionAttachment:
@@ -551,11 +621,13 @@ def build_attachment(
     package supplies. A third party adds a kind by supplying a factory, which is
     why this function refuses an unknown kind rather than guessing at one.
 
-    **This is where a credential is revealed, and it is the only place.** A
+    **This is where a credential is revealed, and it is the only place here.** A
     :class:`~arcagent.extension.secrets.Secret` renders ``Secret(***)`` wherever it
     is formatted, and ``reveal()`` ends that protection — so the value crosses
     exactly one boundary, from the store into the extension's own factory, with no
-    log line, audit event, or refusal between the two.
+    log line, audit event, or refusal between the two. A placed credential is not
+    unwrapped here at all: it stays a ``Secret`` until the attachment spawns the
+    process it belongs to.
     """
     kind = manifest.extension.attachment
     if kind == "native":
@@ -565,19 +637,16 @@ def build_attachment(
         with _importable(bundle):
             return NativeAttachment(entrypoint, context)
     if kind == "cli":
-        if manifest.secrets:
-            # A CLI attachment reaches its service by spawning a binary, and no
-            # manifest table says which of that binary's inputs a credential would
-            # become. Accepting the declaration would store a credential and deliver
-            # it nowhere, which is precisely the failure this argument exists to fix.
+        unplaced = _unplaced_secrets(manifest)
+        if unplaced:
             raise _refuse(
                 "probe",
-                f"{manifest.extension.name} declares credential(s) "
-                f"{', '.join(secret.name for secret in manifest.secrets)} and attaches "
-                f"as 'cli', which has no way to receive one — a CLI connector's binary "
-                f"owns its own authentication",
+                f"{manifest.extension.name} declares credential(s) {', '.join(unplaced)} "
+                f"with no [secrets.placement], and attaches as 'cli', which can only "
+                f"deliver a credential the bundle names a destination for",
                 extension=manifest.extension.name,
                 attachment=kind,
+                unplaced=unplaced,
             )
         declared = _CliConfig.model_validate(manifest.config.get("cli", {}))
         return CliAttachment(
@@ -586,6 +655,7 @@ def build_attachment(
             probe_argv=declared.probe_argv,
             install_instruction=declared.install_instruction,
             resilience=declared.resilience,
+            env=placement_environment(manifest, secrets),
         )
     raise _refuse("probe", f"unknown attachment kind {kind!r}", attachment=kind)
 
@@ -656,10 +726,16 @@ async def _write_secrets(
     store: SecretStore,
     did: str,
 ) -> list[SecretRef]:
-    """Store every declared credential, unwinding this call's own writes on failure."""
+    """Store every declared value, unwinding this call's own writes on failure.
+
+    Shapes are applied to all of them BEFORE the first write, so a value that cannot
+    work is refused with nothing yet stored and nothing to unwind — and the refusal
+    reaches the operator in its own words rather than as a rolled-back install step.
+    """
+    shaped = shape_supplied(plan, values)
     written: list[SecretRef] = []
     for declared in plan.secrets:
-        value = values.get(declared.name, "")
+        value = shaped.get(declared.name, "")
         ref = SecretRef(agent=agent, instance=plan.instance, field=declared.name)
         try:
             if not value:
@@ -771,8 +847,10 @@ __all__ = [
     "install_connector",
     "load_egress_allow",
     "load_instances",
+    "placement_environment",
     "plan_connector",
     "remove_connector",
     "resolve_secrets",
+    "shape_supplied",
     "write_instance",
 ]

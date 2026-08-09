@@ -35,15 +35,18 @@ entrypoint = "arc_ext_jira"
 
 [[secrets]]
 name = "api_token"
-prompt = "Jira Cloud API token (id.atlassian.com/manage-profile/security/api-tokens)"
+prompt = "Jira API token. Go to id.atlassian.com/manage-profile/security/api-tokens, click Create API token, give it any name, then copy the string it shows you — Atlassian will not show it again."
 
 [[secrets]]
 name = "email"
-prompt = "The Atlassian account email the API token belongs to"
+prompt = "The email address you signed in to Atlassian with. It must be the same account that created the API token above, or Jira will reject both."
+sensitive = false
 
 [[secrets]]
 name = "base_url"
-prompt = "Jira base URL, e.g. https://yourcompany.atlassian.net"
+prompt = "Your Jira web address, exactly as it appears in the browser bar when you are looking at Jira. It ends in .atlassian.net — for example https://yourcompany.atlassian.net"
+sensitive = false
+format = "https_url"
 
 [tools]
 allow = [
