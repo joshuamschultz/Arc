@@ -51,6 +51,8 @@ from arcagent.extension.attachment import ExtensionAttachment, ProbeResult
 from arcagent.extension.catalog import MANIFEST_NAME, ExtensionCatalog
 from arcagent.extension.cli_attachment import CliAttachment, CliCommand, CliResilience
 from arcagent.extension.contract_ledger import ToolContractLedger
+from arcagent.extension.coordinates import is_coordinate
+from arcagent.extension.coordinates import refusal as coordinate_refusal
 from arcagent.extension.host import HostPrerequisiteDirector, HostVerdict
 from arcagent.extension.loader import ExtensionLoader
 from arcagent.extension.manifest import ExtensionManifest, SecretRequirement, load_manifest
@@ -170,7 +172,20 @@ def plan_connector(
             hiding the rest of the fleet. :func:`~arcagent.extension.catalog.
             resolve_extension_roots` composes the deployment's order.
         extension: The bundle name the operator asked for.
-        instance: The name this connected account will be known by.
+        instance: The name this connected account will be known by, validated
+            against the one coordinate rule (:mod:`arcagent.extension.
+            coordinates`). Checked HERE, and only here, because every path — the
+            CLI, the web, the TUI, and every read verb behind them — comes
+            through this function: one check, and no route by which an unusable
+            name survives anywhere. It covers a bundle declaring no
+            ``[[secrets]]``, which is the shape whose name nothing else on the
+            path ever looks at.
+
+            A name this refuses is still removable: ``remove`` reads its
+            credential fields through here, treats a refusal as "no fields to
+            delete" — correct, because ``SecretRef`` applies the same rule, so no
+            credential can exist under such a name — and drops the config block
+            and the connection record regardless. The strict path has an exit.
         tier: The deployment tier — decides the unlisted-bundle verdict, the
             unbounded-allowlist refusal, and the egress verdict.
         audit_sink: Where the catalog records its verdicts.
@@ -191,6 +206,9 @@ def plan_connector(
             reports a connection, and a planner that refuses would strand the
             credentials of a connection the tier has since turned forbidden.
     """
+    if not is_coordinate(instance):
+        raise _refuse("resolve", coordinate_refusal("connection name", instance))
+
     roots = tuple(Path(root) for root in extensions_root)
     catalog = ExtensionCatalog(roots=roots, tier=tier, audit_sink=audit_sink)
     try:

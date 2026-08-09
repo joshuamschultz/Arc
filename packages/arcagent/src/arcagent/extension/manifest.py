@@ -28,10 +28,11 @@ from __future__ import annotations
 
 import copy
 import logging
+import re
 import tomllib
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from arcagent.core.errors import ExtensionError
 from arcagent.core.tier import Tier
@@ -164,6 +165,18 @@ class HostRequirement(_ManifestModel):
     a sign-in that never happened. Empty is the honest "only a person at this host
     can finish it", and it is the default, because silence must never read as
     "try it and see".
+
+    ``verify_command`` answers the question the probe does not: not "does this
+    program run" but "is this account connected". ``dbxcli version`` succeeds on a
+    ``dbxcli`` holding no credential at all, and rendering that success as
+    **Signed in** told an operator a security-relevant thing was done when it was
+    not. ``verify_pattern`` is a regex the output must match for the two states
+    that a command's exit code cannot tell apart — ``gog auth list`` exits zero
+    with an empty listing, ``ms-365-mcp-server --verify-login`` exits zero and
+    prints ``{"success":false}``. Empty ``verify_command`` means Arc cannot tell,
+    which every surface must render as unknown: never as signed in, which is the
+    defect, and never as signed out, which sends an operator to redo a login they
+    already completed.
     """
 
     name: str
@@ -171,6 +184,31 @@ class HostRequirement(_ManifestModel):
     instruction: str = ""
     authorize_command: str = ""
     token_command: str = ""
+    verify_command: str = ""
+    verify_pattern: str = ""
+
+    @field_validator("verify_pattern")
+    @classmethod
+    def _pattern_must_compile(cls, pattern: str) -> str:
+        """A pattern that will not compile must not become a runtime verdict.
+
+        Refused here rather than caught at check time: either fallback would be a
+        lie — "signed out" sends an operator to fix nothing, "signed in" is the
+        defect this field exists to close.
+        """
+        if pattern:
+            try:
+                re.compile(pattern)
+            except re.error as exc:
+                raise ValueError(f"verify_pattern is not a valid regex: {exc}") from exc
+        return pattern
+
+    @model_validator(mode="after")
+    def _pattern_needs_a_command(self) -> HostRequirement:
+        """A pattern nothing runs is a control an operator believes is in force."""
+        if self.verify_pattern and not self.verify_command:
+            raise ValueError("verify_pattern is set but no verify_command runs it")
+        return self
 
 
 class SecretRequirement(_ManifestModel):

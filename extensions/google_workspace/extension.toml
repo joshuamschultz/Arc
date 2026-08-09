@@ -53,10 +53,23 @@ member = "gog"
 # opens a browser and waits for a person. There is no token to pipe in, so Arc
 # must not offer a button that would hang at the prompt and then report a
 # sign-in nobody completed.
+#
+# `gog auth list` is the sign-in check, and this bundle is WHY `verify_pattern`
+# exists. Measured on the deployment: with no account stored it prints
+# "No tokens stored" and exits 0 — the same exit code as success. A check read on
+# its exit code alone would report every unauthorised install here as signed in,
+# which is the defect moved rather than fixed.
+#
+# An account row is TSV opening with the account's email address, so requiring an
+# "@" separates the two states on the real output of the real command. Arc merges
+# the binary's stderr into what it reads, so the empty-store line is seen and
+# correctly matches nothing.
 [[host_requires]]
 name = "gog"
 minimum_version = "0.34.1"
 authorize_command = "gog auth add"
+verify_command = "gog auth list"
+verify_pattern = "@"
 instruction = """
 Install the gogcli binary on this host, then authorise the accounts:
 
