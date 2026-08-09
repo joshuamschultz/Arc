@@ -648,6 +648,22 @@ def _plan(bundle: Path, manifest: ExtensionManifest, tier: Tier) -> ConnectorPla
     )
 
 
+#: A value each declared shape accepts. The subject of the tests below is the
+#: egress gate, so a placeholder that a field's own format would refuse would stop
+#: them at the ``secrets`` step and prove nothing about the gate.
+_SHAPED_PLACEHOLDER: dict[str, str] = {
+    "": "unused",
+    "https_url": "unused.example.net",
+    "api_token": "unused",
+    "email": "unused@example.net",
+}
+
+
+def _placeholders(manifest: ExtensionManifest) -> dict[str, str]:
+    """One acceptable value per declared credential, keyed by field name."""
+    return {declared.name: _SHAPED_PLACEHOLDER[declared.format] for declared in manifest.secrets}
+
+
 def _egress_bundles() -> list[Path]:
     """Bundles declaring at least one sending verb."""
     sending = []
@@ -686,7 +702,7 @@ async def test_an_egress_bundle_is_refused_at_federal_before_anything_is_written
             _plan(path, manifest, Tier.FEDERAL),
             connections=registry,
             agents=("bundle_agent",),
-            secret_values={secret.name: "unused" for secret in manifest.secrets},
+            secret_values=_placeholders(manifest),
             store=store,
             caller_did=_CALLER,
             state=await open_connection_state(str(tmp_path / "data")),
@@ -723,7 +739,7 @@ async def test_the_same_bundle_passes_the_gate_at_personal(path: Path, tmp_path:
             _plan(path, manifest, Tier.PERSONAL),
             connections=ConnectionRegistry(tmp_path),
             agents=("bundle_agent",),
-            secret_values={secret.name: "unused" for secret in manifest.secrets},
+            secret_values=_placeholders(manifest),
             store=store,
             caller_did=_CALLER,
             state=await open_connection_state(str(tmp_path / "data")),
@@ -749,7 +765,7 @@ async def test_a_read_only_bundle_clears_the_federal_egress_gate(
             _plan(path, manifest, Tier.FEDERAL),
             connections=ConnectionRegistry(tmp_path),
             agents=("bundle_agent",),
-            secret_values={secret.name: "unused" for secret in manifest.secrets},
+            secret_values=_placeholders(manifest),
             store=store,
             caller_did=_CALLER,
             state=await open_connection_state(str(tmp_path / "data")),

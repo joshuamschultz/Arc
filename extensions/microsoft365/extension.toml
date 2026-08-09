@@ -104,6 +104,7 @@ variable = "MS365_MCP_TENANT_ID"
 [[secrets]]
 name = "client_secret"
 prompt = "Client secret for that app registration. In the Azure portal open your app, then 'Certificates & secrets', click 'New client secret', give it any description, and copy the VALUE column (not Secret ID) immediately — Azure never shows it again."
+format = "api_token"
 
 [secrets.placement]
 variable = "MS365_MCP_CLIENT_SECRET"

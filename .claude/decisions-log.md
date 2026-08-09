@@ -6397,3 +6397,19 @@ _(none)_
 **Priority**: modularity
 **Alternatives**: leave the three surfaces each importing eleven arcagent modules; push the orchestration down into the install module; give each surface its own adapter
 **Rationale**: SPEC-062 already intended one path — "the ordering, the rollback, and the config write live in the install module so arctui and arcui drive the same code rather than re-deriving the sequence" — and all three surfaces re-derived the sequence anyway, because the install module is one layer too low to be the seam a surface holds: it knows nothing about resolving an agent's world, opening the operator chain, or selecting a secret backend for the tier, so each caller rebuilt all three. That is three instances of one pattern, which is the repo's own threshold for extracting. Two properties are why the façade exists rather than a shared helper module: a `WormSink` holds an exclusive `flock` for its lifetime, so `AuditChain` makes forgetting to close it impossible instead of a rule three surfaces must each remember; and no return type can hold a credential, so a surface that renders one cannot leak one (LLM02, LLM07). The arch-test widening is honest, not a loosening: arcui stopped being only a view of agents when SPEC-064 made it a control surface for connection and key setup, and every other arcagent module stays forbidden — a route that needs one is the signal the façade is missing something.
+
+---
+
+## Connector Implementation Order (2026-08-09)
+
+**Phase**: implement | **Status**: accepted | **Total decisions**: 1
+**ID range**: D-588
+**Priority framework**: simplicity → modularity → security → scalability
+
+### Architecture
+
+#### D-588: A connector wraps the vendor's CLI first, MCP second, and is hand-rolled only as a last resort
+**Decision**: Every connector bundle reaches its service through, in order of preference: (1) the vendor's own official CLI, (2) a maintained MCP server, (3) an adapter this repo writes. A bundle taking option 3 must say in its manifest what it checked at options 1 and 2 and why neither served. Existing violations — `jira`, `confluence`, and `onepassword`, all `native` — are rebuilt onto `acli` and `op`.
+**Priority**: simplicity
+**Alternatives**: judge each service on its merits with no default; prefer a native adapter for dependency control; prefer MCP first for a uniform tool surface
+**Rationale**: The operator lost an afternoon to a Jira 401 that traced entirely to this. Five bundles wrap a vendor CLI (`gh`, `gog`, `dbxcli`, `readwise`) and work; the three hand-rolled ones are the three that failed. The Jira adapter implemented HTTP basic auth with an unscoped API token — a scheme Atlassian is actively deprecating in favour of scoped tokens against `api.atlassian.com/ex/jira/{cloudId}`, a change `acli` absorbs and 250 lines of our `httpx` does not. The bundle's own header documents rejecting a third-party MCP server on security grounds and never considered Atlassian's own tool. That is the general case: a vendor CLI already solves auth, token rotation, deprecations, and pagination, and it keeps that knowledge in the vendor's release cycle rather than ours. `onepassword` failed differently and for the same reason — it imported a Python SDK that nothing installed, where the `op` CLI is a host prerequisite the existing director already checks. Options 2 and 3 remain available because not every service ships a usable CLI, and the security work an MCP server needs (pinned artifact, contract ledger, sandbox) is already built. The cost is a host prerequisite per connector, which the manifest already models and which `host-setup` can now install from a per-platform pinned digest.

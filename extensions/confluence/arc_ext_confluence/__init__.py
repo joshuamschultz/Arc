@@ -73,6 +73,10 @@ class ConfluenceAttachment:
             )
         try:
             body = await self._get(f"{_API}/space", {"limit": "1"})
+        except httpx.HTTPStatusError as exc:
+            return ProbeResult(
+                reachable=False, detail=_refused(exc.response.status_code, self._base_url)
+            )
         except (httpx.HTTPError, ValueError) as exc:
             return ProbeResult(reachable=False, detail=f"{self._base_url} did not answer: {exc}")
         results = body.get("results")
@@ -213,6 +217,40 @@ class ConfluenceAttachment:
         """Which of the three credentials this attachment does not have."""
         held = {"base_url": self._base_url, "email": self._email, "api_token": self._api_token}
         return sorted(name for name, value in held.items() if not value)
+
+
+def _refused(status: int, base_url: str) -> str:
+    """What the operator should do about the status Atlassian answered the probe with.
+
+    The same three verdicts as the jira bundle's, and deliberately its own copy:
+    this folder imports nothing from Arc but the hook's value types, which is the
+    property that makes the bundle deletable. Sharing a helper between two bundles
+    would put a third thing in the middle that neither of them owns.
+
+    401 means the email and token are not one account (or the token is revoked) —
+    a perfectly valid token can still be the wrong one, so both fields are named.
+    403 means the sign-in worked and the account may not use this API. 404 means
+    the address is not a Confluence site, which is a third field entirely.
+    """
+    if status == 401:
+        return (
+            "Atlassian refused the email and the API token together. They have to belong "
+            "to the same account: check the email is the one you sign in to Atlassian "
+            "with, and if the token may have been revoked, create a new one at "
+            "id.atlassian.com/manage-profile/security/api-tokens."
+        )
+    if status == 403:
+        return (
+            f"Atlassian accepted the sign-in, but this account is not permitted to use "
+            f"the Confluence API on {base_url}. Ask a site administrator to give it access."
+        )
+    if status == 404:
+        return (
+            f"{base_url} answered, but there is no Confluence there. Check the address is "
+            f"the one your browser bar shows when you are looking at a page; it usually "
+            f"ends in .atlassian.net."
+        )
+    return f"Atlassian answered {status} for {base_url}, so the connection could not be checked."
 
 
 def _body(response: httpx.Response) -> dict[str, Any]:

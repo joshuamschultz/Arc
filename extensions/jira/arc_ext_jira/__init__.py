@@ -86,6 +86,10 @@ class JiraAttachment:
             )
         try:
             body = await self._get("/rest/api/3/myself", {})
+        except httpx.HTTPStatusError as exc:
+            return ProbeResult(
+                reachable=False, detail=_refused(exc.response.status_code, self._base_url)
+            )
         except (httpx.HTTPError, ValueError) as exc:
             return ProbeResult(reachable=False, detail=f"{self._base_url} did not answer: {exc}")
         who = body.get("displayName") or body.get("emailAddress") or "an account"
@@ -225,6 +229,42 @@ class JiraAttachment:
         """Which of the three credentials this attachment does not have."""
         held = {"base_url": self._base_url, "email": self._email, "api_token": self._api_token}
         return sorted(name for name, value in held.items() if not value)
+
+
+def _refused(status: int, base_url: str) -> str:
+    """What the operator should do about the status Atlassian answered the probe with.
+
+    httpx's own sentence — ``Client error '401 Unauthorized' for url … For more
+    information check <MDN>`` — was what an operator saw after pasting a token. It
+    names no field and no next step, and a reference page about HTTP status codes
+    is not an instruction.
+
+    The three that matter need three different actions, so they must not read
+    alike. 401 on ``/myself`` means the email and the token are not one account (or
+    the token is revoked) — both fields, and a valid token can still be the wrong
+    one. 403 means the sign-in worked and the account may not use this API, which
+    reissuing a perfectly good token would not fix. 404 means the address is not a
+    Jira site at all, which is a third field entirely.
+    """
+    if status == 401:
+        return (
+            "Atlassian refused the email and the API token together. They have to belong "
+            "to the same account: check the email is the one you sign in to Atlassian "
+            "with, and if the token may have been revoked, create a new one at "
+            "id.atlassian.com/manage-profile/security/api-tokens."
+        )
+    if status == 403:
+        return (
+            f"Atlassian accepted the sign-in, but this account is not permitted to use "
+            f"the Jira API on {base_url}. Ask a site administrator to give it access."
+        )
+    if status == 404:
+        return (
+            f"{base_url} answered, but there is no Jira there. Check the address is the "
+            f"one your browser bar shows when you are looking at Jira; it usually ends "
+            f"in .atlassian.net."
+        )
+    return f"Atlassian answered {status} for {base_url}, so the connection could not be checked."
 
 
 def _body(response: httpx.Response) -> dict[str, Any]:

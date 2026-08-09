@@ -105,6 +105,7 @@ only read.
 [[secrets]]
 name = "access_token"
 prompt = "Dropbox access token. Go to dropbox.com/developers/apps, open your app (or click Create app, choose Scoped access and Full Dropbox), open the Permissions tab and tick files.metadata.read plus account_info.read, click Submit, then go back to Settings and click Generate under 'Generated access token'. Copy the long string it shows and paste it here."
+format = "api_token"
 
 [secrets.placement]
 variable = "DBXCLI_ACCESS_TOKEN"

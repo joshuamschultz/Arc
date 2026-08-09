@@ -26,11 +26,13 @@ entrypoint = "arc_ext_confluence"
 [[secrets]]
 name = "api_token"
 prompt = "Atlassian API token. Go to id.atlassian.com/manage-profile/security/api-tokens, click Create API token, give it any name, then copy the string it shows you — Atlassian will not show it again."
+format = "api_token"
 
 [[secrets]]
 name = "email"
 prompt = "The email address you signed in to Atlassian with. It must be the same account that created the API token above, or Confluence will reject both."
 sensitive = false
+format = "email"
 
 [[secrets]]
 name = "base_url"

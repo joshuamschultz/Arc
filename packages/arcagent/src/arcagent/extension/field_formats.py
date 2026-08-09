@@ -24,22 +24,42 @@ host really does serve plaintext would get a connection that breaks later with
 nothing having told them why. A bundle whose service genuinely is plaintext
 declares no ``format`` and its value passes through untouched, so the escape
 hatch is a bundle's decision rather than a flag in core.
+
+The same boundary answers the second reported failure. An operator pasted a real
+API token beside a real sign-in address and got ``401 Unauthorized`` and a link to
+MDN. A token copied out of a browser dialog can carry a trailing newline, a space,
+or a zero-width character, none of which the operator can see and none of which is
+ever part of the value — and a field declaring no format is stored byte for byte,
+so the invisible character reached the service and came back as that 401.
+
+**Which fields that is true of is the bundle's word, not a guess.** A password may
+legitimately end in a space, so core does not trim by default; ``api_token`` and
+``email`` are the declarations by which a bundle says this field is not one of
+those. Both trim the ends and REFUSE anything invisible left in the middle: the
+ends are where a paste picks characters up, and the middle is where a character
+could still be meaningful.
 """
 
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Literal
 from urllib.parse import urlsplit
 
 from arcagent.core.errors import ExtensionError
 
 #: The shapes core knows how to enforce. An empty format is "whatever the operator
-#: typed, exactly" — the right answer for a token, whose leading and trailing
+#: typed, exactly" — the right answer for a password, whose leading and trailing
 #: characters may be significant and which normalising would corrupt into a 401
 #: nobody can explain. A closed set on purpose: a shape nothing enforces is a
 #: control an operator believes is in force, so an unknown one is a manifest error.
-SuppliedFormat = Literal["", "https_url"]
+SuppliedFormat = Literal["", "https_url", "api_token", "email"]
+
+#: Unicode categories carrying no visible mark: controls and format characters
+#: (where a browser's zero-width space and byte-order mark live) and every kind of
+#: space separator (where the non-breaking space a copied line brings along lives).
+_INVISIBLE_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Zl", "Zp", "Zs"})
 
 #: Refusal code every format failure carries, so a surface can branch on the kind
 #: of problem rather than on the wording an operator reads.
@@ -72,7 +92,54 @@ def normalize(supplied_format: str, field: str, value: str) -> str:
     """
     if supplied_format == "https_url":
         return _https_url(field, value)
+    if supplied_format == "api_token":
+        return _visible(field, value)
+    if supplied_format == "email":
+        return _email(field, value)
     return value
+
+
+def _visible(field: str, value: str) -> str:
+    """One run of visible characters: trimmed at the ends, refused in the middle.
+
+    Trimming is safe where a paste picks characters up; editing the middle is not,
+    because a character there could be part of the value. So the middle is refused
+    — and the refusal has to say a character is present, since it is the one thing
+    the operator cannot see for themselves.
+    """
+    trimmed = _trim_invisible(value)
+    if not trimmed:
+        return _refuse(field, "it is empty", "paste it again")
+    if any(_is_invisible(character) for character in trimmed):
+        return _refuse(
+            field,
+            "it has a space or an invisible character inside it",
+            "copy it again, selecting only the value itself",
+        )
+    return trimmed
+
+
+def _is_invisible(character: str) -> bool:
+    return unicodedata.category(character) in _INVISIBLE_CATEGORIES
+
+
+def _trim_invisible(value: str) -> str:
+    """Everything from the first visible character to the last."""
+    visible = [index for index, character in enumerate(value) if not _is_invisible(character)]
+    return value[visible[0] : visible[-1] + 1] if visible else ""
+
+
+def _email(field: str, value: str) -> str:
+    """An email address: visible characters, and the one ``@`` that makes it one."""
+    trimmed = _visible(field, value)
+    local, separator, host = trimmed.partition("@")
+    if not (separator and local and host) or "@" in host:
+        return _refuse(
+            field,
+            "it is not an email address",
+            "type the address you sign in with, like you@yourcompany.example.com",
+        )
+    return trimmed
 
 
 def _https_url(field: str, value: str) -> str:

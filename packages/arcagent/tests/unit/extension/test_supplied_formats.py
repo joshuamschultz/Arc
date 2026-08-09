@@ -28,6 +28,8 @@ no code of its own to normalise anything with — gets this by declaring it.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
 from pydantic import ValidationError
 
@@ -46,8 +48,13 @@ def _url(value: str) -> str:
 
 
 def _refusal(value: str) -> str:
+    return _refusal_for(_url, value)
+
+
+def _refusal_for(shape: Callable[[str], str], value: str) -> str:
+    """The message an operator reads when one shape refuses one value."""
     with pytest.raises(ExtensionError) as raised:
-        _url(value)
+        shape(value)
     return raised.value.message
 
 
@@ -162,6 +169,98 @@ def test_a_field_declaring_no_format_is_passed_through_exactly(value: str) -> No
     assert normalize("", "api_token", value) == value
 
 
+# --- a pasted credential ------------------------------------------------------
+#
+# The second live failure. An operator connected Jira with a real token, a real
+# email and the correct address, and got:
+#
+#     probe: jira did not answer — https://ctgfederal.atlassian.net did not answer:
+#     Client error '401 Unauthorized' for url '…/rest/api/3/myself'
+#
+# A value declaring no format is stored byte for byte, which is right for a
+# password and wrong for a token: an API token copied out of a browser dialog can
+# carry a trailing space or a zero-width character the operator cannot see, and
+# there is no character it could carry that is meant to be there. So the bundle
+# says which of its fields are that shape, and core acts only on the ones that do.
+
+#: A token as Atlassian shows it. The sentinel must never appear in a refusal.
+_TOKEN = "ATATT3xFfGF0-sentinel-000"
+
+
+def _token(value: str) -> str:
+    return normalize("api_token", "api_token", value)
+
+
+def _email(value: str) -> str:
+    return normalize("email", "email", value)
+
+
+@pytest.mark.parametrize(
+    "typed",
+    [
+        f"  {_TOKEN}  ",
+        f"{_TOKEN}\n",
+        f"\t{_TOKEN}\r\n",
+        f"\u200b{_TOKEN}\ufeff",
+        f"\u00a0{_TOKEN}\u00a0",
+    ],
+)
+def test_a_token_arrives_clean_however_the_paste_carried_it(typed: str) -> None:
+    """Every way a browser hands over a copied token, and the one value they mean.
+
+    The zero-width space and the byte-order mark are the cases that made this
+    unexplainable: they cost the operator a 401 while the field on screen looked
+    exactly right.
+    """
+    assert _token(typed) == _TOKEN
+
+
+@pytest.mark.parametrize("typed", [f"{_TOKEN} {_TOKEN}", f"AT\u200bATT{_TOKEN}", "one two"])
+def test_a_token_with_something_invisible_in_the_middle_is_refused(typed: str) -> None:
+    """Trimming the ends is safe; silently editing the middle is not.
+
+    A character inside the value could be significant, so it is refused rather
+    than removed — and the refusal says a character is there, which is the one
+    thing the operator cannot see for themselves.
+    """
+    message = _refusal_for(_token, typed)
+
+    assert "api_token" in message
+    assert _TOKEN not in message, "a refusal must not echo the credential"
+
+
+def test_a_token_that_was_nothing_but_whitespace_is_refused() -> None:
+    assert "api_token" in _refusal_for(_token, "   \n  ")
+
+
+@pytest.mark.parametrize(
+    ("typed", "expected"),
+    [
+        ("  operator@ctgfederal.example ", "operator@ctgfederal.example"),
+        ("operator@ctgfederal.example\n", "operator@ctgfederal.example"),
+        ("\u200boperator@ctgfederal.example", "operator@ctgfederal.example"),
+    ],
+)
+def test_an_email_arrives_clean_however_the_paste_carried_it(typed: str, expected: str) -> None:
+    """The other half of a basic credential, and the other half of the same 401."""
+    assert _email(typed) == expected
+
+
+@pytest.mark.parametrize("typed", ["operator", "operator@", "@ctgfederal.example", "a@b c@d"])
+def test_a_value_that_is_not_an_address_is_refused_before_anything_is_stored(typed: str) -> None:
+    """A refusal at the form beats a 401 after a credential has been written."""
+    assert "email" in _refusal_for(_email, typed)
+
+
+def test_the_shapes_are_only_applied_to_the_fields_that_declare_them() -> None:
+    """The safety rail on all of the above: silence still means byte for byte.
+
+    A password may legitimately end in a space. Core does not guess which of a
+    service's fields is which — the bundle says so, in the bundle.
+    """
+    assert normalize("", "password", "  hunter2  ") == "  hunter2  "
+
+
 # --- what a bundle may declare ------------------------------------------------
 
 
@@ -204,7 +303,15 @@ def test_a_field_declaring_nothing_has_no_format() -> None:
     )
 
 
+@pytest.mark.parametrize("shape", ["https_url", "api_token", "email"])
+def test_every_shape_core_enforces_can_be_declared_by_a_bundle(shape: str) -> None:
+    """A shape core implements and no manifest can ask for is a shape nothing uses."""
+    manifest = load_manifest(_MANIFEST.replace('"https_url"', f'"{shape}"'), tier=Tier.PERSONAL)
+
+    assert manifest.secrets[0].format == shape
+
+
 def test_a_format_core_does_not_implement_is_refused_at_parse_time() -> None:
     """A shape nothing enforces is a control an operator believes is in force."""
     with pytest.raises(ValidationError):
-        load_manifest(_MANIFEST.replace('"https_url"', '"email_address"'), tier=Tier.PERSONAL)
+        load_manifest(_MANIFEST.replace('"https_url"', '"iso_date"'), tier=Tier.PERSONAL)
