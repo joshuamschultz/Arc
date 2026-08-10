@@ -8,6 +8,14 @@ dependencies = [
     "arc-agent",
     "arccmd",
     "arcgateway",
+    # arcui backs `arc ui start` — the dashboard, the web-chat WebSocket, and the
+    # embedded gateway every deployment surface runs on (container ENTRYPOINT,
+    # cloud compose, the systemd unit, and `arc tui`'s attach-or-serve path).
+    # Nothing else depends on it, so without this edge a bare `uv sync` leaves it
+    # out and every one of those paths dies at startup on "No module named
+    # 'arcui'" — after the agents have already been built, which makes it read
+    # like an agent problem instead of a missing package.
+    "arcui",
     # arcmemory ships in the default workspace env so scaffolded agents
     # (brain = "arcmemory") have a working Brain out of the box. arc-agent
     # itself keeps it optional (no static import); this is the deployment env.

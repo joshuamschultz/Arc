@@ -1,0 +1,117 @@
+# Built-in blueprint — provenance-trusted (repo-root blueprints/).
+# Deep-merged UNDER your own arcagent.toml values; a blueprint is a starting point.
+#
+# Strategic CEO — counsel to the person who owns the direction. It holds the long arc
+# (theses, the assumptions holding them up, decisions and their tradeoffs, market
+# signals) so today's choice is made against everything already known instead of
+# against whatever is top of mind.
+#
+#   Spin it up:   arc init --team exec --blueprint strategic-ceo
+#
+# The bundled `strategy` verbs separate a THESIS from the ASSUMPTIONS it rests on,
+# which is what makes a bet falsifiable later. The weekly assumption sweep below is
+# the whole point: beliefs decay silently, and nobody schedules time to notice.
+
+[blueprint]
+name = "strategic-ceo"
+version = "1.0.0"
+tier = "personal"
+description = "Strategic counsel: long-horizon memory of bets, assumptions, decisions, and market signals."
+author = "blackarc"
+
+# ── top level → arcagent.toml (unchanged semantics) ──────────────────────────
+
+[security]
+tier = "personal"
+
+# Durable strategic memory — theses, assumptions, decisions, signals, interlinked.
+[modules.memory]
+enabled = true
+
+[modules.memory.config]
+brain = "arcmemory"
+
+# Backend-specific settings, forwarded verbatim to the selected brain's build_brain.
+# The distiller is the LLM seam that turns the raw event stream into durable curated
+# memory. Without it, consolidation is a no-op and only the zero-LLM daily stream is
+# written. Override to match your agent's provider/model.
+[modules.memory.config.backend]
+distill_provider = "anthropic"
+distill_model = "claude-sonnet-5"
+
+# A revisit trigger that nobody tracks is a decision to drift, so decisions with a
+# "revisit_on" become durable tasks. dispatch=true runs the auto-dispatch loop so an
+# assigned todo is claimed and worked without a manual claim.
+[modules.tasks]
+enabled = true
+
+[modules.tasks.config]
+dispatch = true
+
+# Drives the weekly assumption sweep seeded below.
+[modules.scheduler]
+enabled = true
+
+[modules.scheduler.config]
+store_path = "schedules.json"
+
+# The bundled strategy verbs + exec skills are agent-loaded from the agent root.
+[modules.skills]
+enabled = true
+
+[modules.skills.config]
+adapter = "arcskill"
+
+# ── sibling config → arcllm.toml / arcrun.toml (v2) ──────────────────────────
+
+[arcllm.llm]
+model = "anthropic/claude-sonnet-5"
+
+[arcllm.budget]
+# Runaway guardrail — protects the operator's own key from a loop.
+max_cost_usd = 3.00
+
+[arcrun]
+# Strategy work is read-heavy: an assumption audit walks every thesis card and every
+# linked assumption before it can report, so the turn budget runs above the default.
+max_turns = 50
+
+# ── declared schedules → seeded into workspace/schedules.json (v2) ───────────
+
+# Monday morning, before the week commits itself to anything.
+[[schedules]]
+type = "cron"
+expression = "0 7 * * 1"
+prompt = "Run the assumption audit. Lead with any thesis now resting on a challenged or untested assumption, and name the one action for each."
+timeout_seconds = 900
+
+# Month end — signals accumulate all month and are worth reading together, not one at a time.
+[[schedules]]
+type = "cron"
+expression = "0 16 28 * *"
+prompt = "Run a competitive read over this month's signals. Separate moves from conditions, dismiss the noise with reasons, and say plainly if no response is warranted."
+timeout_seconds = 900
+
+# ── guided onboarding schema → rendered by any surface (v2) ──────────────────
+
+[[questions]]
+id = "operator_name"
+prompt = "What should I call you?"
+type = "text"
+
+[[questions]]
+id = "company"
+prompt = "What company or business are we setting direction for?"
+type = "text"
+
+[[questions]]
+id = "current_bets"
+prompt = "What are the two or three big bets you are currently placing? I will hold them as theses and track what they rest on."
+type = "text"
+
+[[questions]]
+id = "llm_provider"
+prompt = "Which model provider is your API key for?"
+type = "choice"
+choices = ["anthropic", "openai"]
+sets = "arcllm.llm.model"

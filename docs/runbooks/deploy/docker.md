@@ -1,8 +1,8 @@
 # Docker Deployment
 
-> **Runbooks**  ·  Operate  ·  page 3 of 16  
+> **Runbooks**  ·  Operate  ·  page 3 of 17  
 > **For** Operators deploying and running Arc  
-> [← Local](local.md)  ·  [Docs home](../../README.md)  ·  [Firecracker →](firecracker.md)
+> [← Local](local.md)  ·  [Docs home](../../README.md)  ·  [Azure →](azure.md)
 
 ```mermaid
 flowchart LR

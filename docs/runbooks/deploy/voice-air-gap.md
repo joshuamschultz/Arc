@@ -1,6 +1,6 @@
 # Voice Air-Gap Setup: Whisper.cpp + Piper
 
-> **Runbooks**  ·  Operate  ·  page 6 of 16  
+> **Runbooks**  ·  Operate  ·  page 7 of 17  
 > **For** Operators deploying and running Arc  
 > [← Azure OpenAI](azure-openai.md)  ·  [Docs home](../../README.md)  ·  [Teams →](../operate/teams.md)
 

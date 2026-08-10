@@ -1,11 +1,24 @@
 # Built-in blueprint — provenance-trusted (repo-root blueprints/).
 # Deep-merged UNDER your own arcagent.toml values; a blueprint is a starting point.
+#
+# Personal assistant — one person's chief of staff. It remembers the people, the
+# promises in both directions, and the standing preferences, so that "what's going on
+# with the house" resolves to the contractor, the quote, and the call that was owed.
+#
+#   Spin it up:   arc init --blueprint personal-assistant
+#
+# The bundled `personal` verbs keep a promise's DIRECTION — you owe it, or someone owes
+# you — because those need opposite actions, and collapsing them is how people quietly
+# absorb other people's dropped promises.
 
 [blueprint]
 name = "personal-assistant"
-version = "1.0.0"
+version = "1.1.0"
 tier = "personal"
-description = "Personal assistant: memory + skills on, zero-config, no signing floors."
+description = "Personal chief of staff: people, promises, and preferences, with a short daily brief."
+author = "blackarc"
+
+# ── top level → arcagent.toml (unchanged semantics) ──────────────────────────
 
 [security]
 tier = "personal"
@@ -25,8 +38,78 @@ brain = "arcmemory"
 distill_provider = "anthropic"
 distill_model = "claude-sonnet-5"
 
+# A promise is a debt, so commitments become durable, tracked tasks (SPEC-056).
+# dispatch=true runs the auto-dispatch loop so an assigned todo is claimed and worked
+# without a manual claim.
+[modules.tasks]
+enabled = true
+
+[modules.tasks.config]
+dispatch = true
+
+# Drives the morning brief and the weekly sweep seeded below.
+[modules.scheduler]
+enabled = true
+
+[modules.scheduler.config]
+store_path = "schedules.json"
+
+# The bundled personal verbs + assistant skills are agent-loaded from the agent root.
 [modules.skills]
 enabled = true
 
 [modules.skills.config]
 adapter = "arcskill"
+
+# ── sibling config → arcllm.toml / arcrun.toml (v2) ──────────────────────────
+
+[arcllm.llm]
+model = "anthropic/claude-sonnet-5"
+
+[arcllm.budget]
+# Runaway guardrail — protects the operator's own key from a loop.
+max_cost_usd = 2.00
+
+[arcrun]
+max_turns = 40
+
+# ── declared schedules → seeded into workspace/schedules.json (v2) ───────────
+
+# The brief is deliberately early and deliberately short — one thing that matters, on
+# the day it matters.
+[[schedules]]
+type = "cron"
+expression = "0 7 * * *"
+prompt = "Give me the daily brief: anything due or breaking today, commitments going past their date, and anyone who has gone quiet. Five items maximum, and say so plainly if it is a quiet day."
+timeout_seconds = 600
+
+# Sunday evening — catch what never had a date and could not surface on its own.
+[[schedules]]
+type = "cron"
+expression = "0 18 * * 0"
+prompt = "Run the open-loop sweep. Close what is settled (ask me first), split what I owe from what is owed to me, and surface anything that never got a date."
+timeout_seconds = 900
+
+# ── guided onboarding schema → rendered by any surface (v2) ──────────────────
+
+[[questions]]
+id = "operator_name"
+prompt = "What should I call you?"
+type = "text"
+
+[[questions]]
+id = "close_people"
+prompt = "Who are the people I should know about — family, colleagues, anyone you deal with regularly?"
+type = "text"
+
+[[questions]]
+id = "standing_preferences"
+prompt = "Any standing rules I should follow? How you like to be spoken to, times you never want anything scheduled, things to never surface."
+type = "text"
+
+[[questions]]
+id = "llm_provider"
+prompt = "Which model provider is your API key for?"
+type = "choice"
+choices = ["anthropic", "openai"]
+sets = "arcllm.llm.model"

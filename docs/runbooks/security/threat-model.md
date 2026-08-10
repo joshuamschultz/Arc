@@ -1,6 +1,6 @@
 # Threat Model — ArcRun
 
-> **Runbooks**  ·  Operate  ·  page 12 of 16  
+> **Runbooks**  ·  Operate  ·  page 13 of 17  
 > **For** Operators deploying and running Arc  
 > [← Hardening](hardening.md)  ·  [Docs home](../../README.md)  ·  [Adversarial tests →](adversarial-tests.md)
 

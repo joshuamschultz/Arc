@@ -1,6 +1,6 @@
 # OWASP Top 10 for Agentic Applications — control mapping
 
-> **Runbooks**  ·  Operate  ·  page 16 of 16  
+> **Runbooks**  ·  Operate  ·  page 17 of 17  
 > **For** Operators deploying and running Arc  
 > [← OWASP LLM mapping](compliance-owasp-llm.md)  ·  [Docs home](../../README.md)
 
