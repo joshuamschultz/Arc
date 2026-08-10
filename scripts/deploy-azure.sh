@@ -37,7 +37,17 @@ VM="${ARC_AZ_VM:-vm-josh-agent}"
 ACR="${ARC_AZ_ACR:-acrarcctg}"
 REMOTE_DIR=/opt/arc
 SKIP_BUILD=0
-[ "${1:-}" = "--skip-build" ] && SKIP_BUILD=1
+TAG=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --skip-build) SKIP_BUILD=1 ;;
+    --tag) TAG="${2:-}"; shift; [ -n "$TAG" ] || { echo "--tag needs a value" >&2; exit 2; } ;;
+    -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
 
 log()  { echo "→ $*"; }
 ok()   { echo "  ✓ $*"; }
@@ -49,9 +59,9 @@ az account show >/dev/null 2>&1 || fail "not logged in — run 'az login'"
 # --- 1. what are we shipping ---------------------------------------------
 # The tag is the commit, so `docker image ls` on the box answers "what is
 # actually running" without trusting a deploy log.
-SHA="$(git rev-parse --short HEAD)"
+SHA="${TAG:-$(git rev-parse --short HEAD)}"
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
-if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+if [ "$SKIP_BUILD" = "0" ] && [ -n "$(git status --porcelain --untracked-files=no)" ]; then
   echo "  ! working tree has uncommitted changes — they WILL ship (build context is the working tree, not the commit)" >&2
 fi
 log "Deploying $BRANCH @ $SHA"
@@ -73,7 +83,19 @@ ok "target $HOST"
 # unset parameter. Pass it explicitly rather than weakening the Dockerfile, which
 # is still correct for the documented multi-arch buildx path.
 if [ "$SKIP_BUILD" = "1" ]; then
-  ok "skipping build (--skip-build)"
+  # --skip-build defaults the tag to HEAD, but HEAD moves on every commit —
+  # including doc-only ones that never triggered a build. Check the registry
+  # HERE rather than letting the VM discover it as a mid-deploy pull failure,
+  # which leaves the box logged in and the old container already stopped.
+  log "Checking $ACR for arc:$SHA ..."
+  if ! az acr repository show-tags -n "$ACR" --repository arc -o tsv 2>/dev/null | grep -qx "$SHA"; then
+    echo "  ✗ arc:$SHA is not in $ACR." >&2
+    echo "    Available tags:" >&2
+    az acr repository show-tags -n "$ACR" --repository arc --orderby time_desc -o tsv 2>/dev/null |
+      head -10 | sed 's/^/      /' >&2
+    fail "run without --skip-build to build this commit, or pass --tag <existing>"
+  fi
+  ok "arc:$SHA present — skipping build"
 else
   log "Building in ACR $ACR (linux/amd64) — several minutes on a cold cache..."
   az acr build \
@@ -126,8 +148,10 @@ if grep -q '^ARC_IMAGE=' .env; then
 else
   echo "ARC_IMAGE=$ARC_IMAGE" | sudo tee -a .env >/dev/null
 fi
-sudo docker compose pull
-sudo docker compose up -d --remove-orphans
+# --quiet-pull: a 3 GB pull emits hundreds of per-layer progress lines that bury
+# the two lines that matter (which image, and whether the container came up).
+sudo docker compose pull --quiet
+sudo docker compose up -d --remove-orphans --quiet-pull
 sudo docker logout "$ACR.azurecr.io" >/dev/null 2>&1 || true
 sudo docker image prune -f >/dev/null 2>&1 || true
 REMOTE
