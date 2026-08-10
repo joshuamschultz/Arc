@@ -262,6 +262,62 @@ def test_http_127_allowed():
     assert settings.base_url == "http://127.0.0.1:11434"
 
 
+def _settings(base_url: str) -> ProviderSettings:
+    return ProviderSettings(
+        api_format="test",
+        base_url=base_url,
+        api_key_env="TEST_KEY",
+        default_model="m",
+        default_temperature=0.7,
+    )
+
+
+def test_http_ipv6_loopback_allowed():
+    assert _settings("http://[::1]:8080").base_url == "http://[::1]:8080"
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    ["http://litellm:4000", "http://ollama", "http://proxy:8000/v1"],
+)
+def test_http_single_label_service_name_allowed(base_url):
+    """A name with no dot resolves only inside a container network or LAN.
+
+    Plain HTTP to it never leaves the private network the caller is already
+    inside, which is the risk the HTTPS rule exists to stop.
+    """
+    assert _settings(base_url).base_url == base_url
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://internal.example.com",
+        "http://litellm.evil.com",
+        "http://10.0.0.5:4000",
+    ],
+)
+def test_http_dotted_host_still_refused(base_url):
+    """A dotted host is resolvable and may route anywhere, so it needs TLS."""
+    with pytest.raises(Exception, match="HTTPS"):
+        _settings(base_url)
+
+
+def test_http_host_that_merely_starts_with_localhost_refused():
+    """``localhost.evil.com`` is an attacker-controlled public name.
+
+    A prefix check on the whole URL waves it through; matching the parsed
+    hostname does not.
+    """
+    with pytest.raises(Exception, match="HTTPS"):
+        _settings("http://localhost.evil.com/v1")
+
+
+def test_http_host_that_merely_starts_with_loopback_ip_refused():
+    with pytest.raises(Exception, match="HTTPS"):
+        _settings("http://127.0.0.1.evil.com")
+
+
 # --- Endpoint pool config (SPEC-017 Load Balancing) ---
 
 

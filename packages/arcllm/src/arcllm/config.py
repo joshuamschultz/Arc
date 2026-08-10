@@ -13,6 +13,7 @@ import re
 import tomllib
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from pydantic import (
     BaseModel,
@@ -59,11 +60,35 @@ def _enforce_https_for_remote(v: str) -> str:
     validation as the primary provider connection — one audited HTTPS rule,
     not two.
     """
-    if v.startswith("http://") and not any(
-        v.startswith(f"http://{host}") for host in ("localhost", "127.0.0.1", "[::1]")
-    ):
-        raise ValueError(f"base_url must use HTTPS for remote hosts. Got: {v}")
-    return v
+    if not v.startswith("http://"):
+        return v
+
+    host = (urlsplit(v).hostname or "").strip("[]")
+    if host in ("localhost", "127.0.0.1", "::1"):
+        return v
+
+    # A single-label host — "litellm", "ollama", "proxy" — is a name that only
+    # resolves inside a container network, a Kubernetes namespace, or a LAN. It
+    # cannot be a public DNS name, so plain HTTP to it never leaves the private
+    # network the caller is already inside, which is the risk this rule exists
+    # to stop.
+    #
+    # Without this, a model gateway deployed as a sibling service was
+    # unreachable: an agent pointed at `http://litellm:4000` failed config
+    # validation, and the only ways out were to weaken the rule for every host
+    # or to terminate TLS between two containers on the same bridge. Both are
+    # worse than naming the case.
+    #
+    # A dotted host is still required to use HTTPS. "internal.example.com" is a
+    # resolvable name and may route anywhere.
+    if "." not in host and ":" not in host:
+        return v
+
+    raise ValueError(
+        f"base_url must use HTTPS for remote hosts. Got: {v}. Plain HTTP is "
+        f"allowed only for localhost and for single-label service names such "
+        f"as http://litellm:4000, which cannot resolve outside a private network."
+    )
 
 
 class ProviderSettings(BaseModel):

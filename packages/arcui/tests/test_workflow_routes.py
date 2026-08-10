@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from arcteam.workflow.runner import node_task_id
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
@@ -437,6 +438,42 @@ class TestGateResolution:
         )
         assert resp.status_code == 200
         assert gate.calls[0][1] == "fail_run"
+
+    def test_resolve_gate_accepts_a_real_workflow_task_id(self) -> None:
+        """A real id is ``wf/{run_id}/{node_id}/{iteration}`` — it has slashes.
+
+        Every test above uses ``t-1``, a shape the runner never mints, so a
+        single-segment route matched them all while answering 404 to every id
+        a human could actually be asked to approve.
+        """
+        app, auth, _, gate = _make_app()
+        client = TestClient(app)
+        task_id = node_task_id("run-9", "review", 0)
+
+        resp = client.post(
+            f"/api/workflow-tasks/{task_id}/gate",
+            headers=_operator(auth),
+            json={"decision": "approve"},
+        )
+
+        assert resp.status_code == 200
+        assert gate.calls[0][0] == task_id
+
+    def test_resolve_gate_percent_encoded_task_id_reaches_the_same_route(self) -> None:
+        """uvicorn decodes ``%2F`` back to ``/`` before Starlette routes, so
+        encoding the id is not a way around a single-segment route."""
+        app, auth, _, gate = _make_app()
+        client = TestClient(app)
+        task_id = node_task_id("run-9", "review", 0)
+
+        resp = client.post(
+            f"/api/workflow-tasks/{task_id.replace('/', '%2F')}/gate",
+            headers=_operator(auth),
+            json={"decision": "approve"},
+        )
+
+        assert resp.status_code == 200
+        assert gate.calls[0][0] == task_id
 
     def test_resolve_gate_missing_decision_is_400(self) -> None:
         app, auth, _, gate = _make_app()

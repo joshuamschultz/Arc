@@ -624,3 +624,50 @@ class TestEmptyContentFallback:
         msg = Message(role="user", content=[])
         result = adapter._format_message(msg)
         assert result["content"] == ""
+
+
+class TestLitellmProxyProvider:
+    """LiteLLM is a proxy, not a vendor, so its config is shaped differently.
+
+    It is kept out of the parametrized provider table on purpose: those tests
+    assert every provider ships at least one ``[models.*]`` block, and this one
+    deliberately ships none.
+    """
+
+    def test_adapter_is_an_openai_shape_alias(self):
+        from arcllm.adapters.litellm import LitellmAdapter
+        from arcllm.adapters.openai import OpenaiAdapter
+
+        assert issubclass(LitellmAdapter, OpenaiAdapter)
+
+    def test_adapter_reports_its_own_name(self, monkeypatch):
+        monkeypatch.setenv("ARCLLM_TEST_KEY", "test-key")
+        from arcllm.adapters.litellm import LitellmAdapter
+
+        config = _make_fake_config("litellm", api_key_env="ARCLLM_TEST_KEY")
+        assert LitellmAdapter(config, "test-model").name == "litellm"
+
+    def test_toml_ships_no_models(self):
+        """The catalogue belongs to the operator's proxy, not to this package.
+
+        Enumerating models here would go stale the moment an operator adds one,
+        and would refuse a model that works.
+        """
+        assert load_provider_config("litellm").models == {}
+
+    def test_arbitrary_model_name_resolves_despite_empty_catalogue(self, monkeypatch):
+        """A symbolic alias the operator invented must load without a metadata entry."""
+        monkeypatch.setenv("LITELLM_API_KEY", "test-key")
+        assert load_model("litellm", "an-alias-only-this-deployment-knows") is not None
+
+    def test_default_base_url_is_a_single_label_service_name(self):
+        """Plain HTTP is only defensible because the host cannot resolve publicly."""
+        base_url = load_provider_config("litellm").provider.base_url
+        assert base_url.startswith("http://")
+        host = base_url.removeprefix("http://").split(":")[0]
+        assert "." not in host
+
+    def test_key_is_optional(self):
+        """A loopback or development proxy may be left open; requiring a key
+        would make that configuration impossible to run rather than merely unwise."""
+        assert load_provider_config("litellm").provider.api_key_required is False
