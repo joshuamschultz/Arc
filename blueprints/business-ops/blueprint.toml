@@ -2,19 +2,30 @@
 # Deep-merged UNDER your own arcagent.toml values; a blueprint is a starting point.
 #
 # Business Ops (COO) — the operator. It holds how the business actually runs: the
-# processes, the owners, the recurring commitments, and the things that keep
-# slipping. Where the CEO blueprint asks "is this the right direction", this one
-# asks "is it actually happening, and who has it".
+# processes, who owns what, the recurring commitments, and the steps that keep
+# slipping. Where strategic-ceo asks "is this the right direction", this one asks
+# "is it actually happening, and who has it".
+#
+#   Spin it up:   arc init --team ops --blueprint business-ops
+#
+# The bundled `ops` verbs keep BLOCKED and LATE as separate states, because they need
+# opposite responses — late needs a push to the owner, blocked needs a decision from
+# somebody else. Slips are logged against the process step so the third repeat is
+# visible as a defect instead of a third incident.
 
 [blueprint]
 name = "business-ops"
 version = "1.0.0"
 tier = "personal"
-description = "Business operations: process, owners, and follow-through memory for a COO."
+description = "Business operations: commitments, owners, blockers, and process-defect memory for a COO."
+author = "blackarc"
+
+# ── top level → arcagent.toml (unchanged semantics) ──────────────────────────
 
 [security]
 tier = "personal"
 
+# Durable operating memory — commitments, processes, blockers, slips, interlinked.
 [modules.memory]
 enabled = true
 
@@ -23,15 +34,86 @@ brain = "arcmemory"
 
 # Backend-specific settings, forwarded verbatim to the selected brain's build_brain.
 # The distiller is the LLM seam that turns the raw event stream into durable curated
-# memory (entity/person/place files, insights, daily summaries). Without it,
-# consolidation is a no-op and only the zero-LLM daily stream is written.
-# Override to match your agent's provider/model.
+# memory. Without it, consolidation is a no-op and only the zero-LLM daily stream is
+# written. Override to match your agent's provider/model.
 [modules.memory.config.backend]
 distill_provider = "anthropic"
 distill_model = "claude-sonnet-5"
 
+# Follow-through is the whole job, so commitments become durable, tracked tasks
+# (SPEC-056). dispatch=true runs the auto-dispatch loop so an assigned todo is claimed
+# and worked without a manual claim.
+[modules.tasks]
+enabled = true
+
+[modules.tasks.config]
+dispatch = true
+
+# Cadence is the job. Drives the sweeps and the weekly review seeded below.
+[modules.scheduler]
+enabled = true
+
+[modules.scheduler.config]
+store_path = "schedules.json"
+
+# The bundled ops verbs + operating skills are agent-loaded from the agent root.
 [modules.skills]
 enabled = true
 
 [modules.skills.config]
 adapter = "arcskill"
+
+# ── sibling config → arcllm.toml / arcrun.toml (v2) ──────────────────────────
+
+[arcllm.llm]
+model = "anthropic/claude-sonnet-5"
+
+[arcllm.budget]
+# Runaway guardrail — protects the operator's own key from a loop.
+max_cost_usd = 3.00
+
+[arcrun]
+# The weekly review walks every open commitment, every blocker, and the slip history
+# before it can report, so the turn budget runs above the default.
+max_turns = 50
+
+# ── declared schedules → seeded into workspace/schedules.json (v2) ───────────
+
+# Daily sweep — a blocker found on the day it appears is a decision; found a week later
+# it is just news.
+[[schedules]]
+type = "cron"
+expression = "30 7 * * 1-5"
+prompt = "Run the owner sweep. Lead with anything blocked and who must decide, then overdue, then commitments missing an owner or a date. One specific ask per item."
+timeout_seconds = 600
+
+# Weekly operating review, Monday morning.
+[[schedules]]
+type = "cron"
+expression = "0 9 * * 1"
+prompt = "Run the weekly cadence review. Open with the decisions needed this week, escalate any step at the repeat threshold to a process defect report, and end with at most five asks."
+timeout_seconds = 900
+
+# ── guided onboarding schema → rendered by any surface (v2) ──────────────────
+
+[[questions]]
+id = "operator_name"
+prompt = "What should I call you?"
+type = "text"
+
+[[questions]]
+id = "team_members"
+prompt = "Who is on the team, and what does each of them own? I use this to name owners instead of guessing."
+type = "text"
+
+[[questions]]
+id = "recurring_cadences"
+prompt = "What runs on a regular cadence — a monthly close, a weekly review, renewals? I will track them as processes."
+type = "text"
+
+[[questions]]
+id = "llm_provider"
+prompt = "Which model provider is your API key for?"
+type = "choice"
+choices = ["anthropic", "openai"]
+sets = "arcllm.llm.model"
