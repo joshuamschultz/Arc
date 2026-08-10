@@ -243,6 +243,7 @@ dependencies = [
     { name = "arcgateway-telegram" },
     { name = "arcmemory", extra = ["local"] },
     { name = "arcskill" },
+    { name = "arcui" },
     { name = "croniter" },
 ]
 
@@ -282,6 +283,7 @@ requires-dist = [
     { name = "arcgateway-telegram", editable = "packages/arcgateway-telegram" },
     { name = "arcmemory", extras = ["local"], editable = "packages/arcmemory" },
     { name = "arcskill", editable = "packages/arcskill" },
+    { name = "arcui", editable = "packages/arcui" },
     { name = "croniter", specifier = ">=6.2.2" },
 ]
 
