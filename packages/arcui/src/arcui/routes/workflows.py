@@ -638,7 +638,21 @@ routes = [
     Route("/api/workflows/{id}/runs", list_runs, methods=["GET"]),
     Route("/api/workflow-runs/{id}", get_run, methods=["GET"]),
     Route("/api/workflow-runs/{id}/cancel", cancel_run, methods=["POST"]),
-    Route("/api/workflow-tasks/{id}/gate", resolve_gate, methods=["POST"]),
+    # ``{id:path}``, not ``{id}``: a workflow task id is
+    # ``wf/{run_id}/{node_id}/{iteration}`` (``workflow.runner.node_task_id``),
+    # so it CONTAINS slashes and the default converter — which matches a single
+    # segment — could never match a real one. Every attempt to resolve a gate
+    # over this route answered 404, percent-encoded or not, because uvicorn
+    # decodes ``%2F`` back to ``/`` before Starlette routes. That made
+    # ``resolve_gate`` — the single implementation of the one operation only a
+    # human may perform (REQ-246) — unreachable over HTTP, which is the whole
+    # of the dashboard's gate surface and the only cross-process entry an app
+    # has to it.
+    #
+    # The greedy match is unambiguous here: ``node_task_id`` asserts that
+    # neither the run id nor the node id contains a slash, and the trailing
+    # ``/gate`` literal forces the split at the last segment.
+    Route("/api/workflow-tasks/{id:path}/gate", resolve_gate, methods=["POST"]),
 ]
 
 __all__ = [
