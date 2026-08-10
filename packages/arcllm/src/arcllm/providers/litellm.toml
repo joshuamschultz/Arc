@@ -1,0 +1,53 @@
+# LiteLLM proxy — one gateway in front of every provider.
+#
+# LiteLLM is not a model vendor. It is an OpenAI-compatible proxy that fronts
+# Anthropic, OpenAI, Ollama, Bedrock and the rest, and it is how a deployment
+# keeps routing, metering, key custody and spend in one place instead of in
+# every agent config. An agent addresses it exactly like any other
+# openai-chat provider:
+#
+#     [llm]
+#     model = "litellm/tier-balanced"      # a symbolic alias the proxy maps
+#     model = "litellm/claude-sonnet-5"    # or a model name the proxy serves
+#
+# Why there are no [models.*] blocks here, unlike every sibling file:
+#
+# The model list is not knowable at packaging time. It is whatever the
+# deployment's proxy is configured to serve — aliases an operator invented,
+# models added through the proxy's own admin UI minutes ago, models that exist
+# only inside one company. Enumerating them here would mean this file goes
+# stale the moment an operator adds a model, and an agent pointed at a real,
+# working model would be refused by its own config.
+#
+# So capability and cost come from the proxy at call time (LiteLLM reports
+# usage and cost on every response, and serves the catalogue at /model/info),
+# and this file supplies only what arcllm must know before the first request:
+# the wire format, where to reach it, and which key to present.
+#
+# base_url is overridden per deployment via LITELLM_BASE_URL — the default
+# below is the docker-compose service name, which is right inside a compose
+# network and wrong everywhere else.
+
+[provider]
+api_format = "openai-chat"
+# Loopback by default because arcllm's own validator refuses a plain-http
+# remote host, and rightly: an unencrypted call to another machine is not
+# something a default should permit. A deployment whose proxy is a service on
+# an internal network overrides this in
+# ${ARC_CONFIG_DIR:-~/.arc}/arcllm.toml, which is the sanctioned override
+# layer, rather than by loosening the rule for everyone.
+base_url = "http://litellm:4000"
+api_key_env = "LITELLM_API_KEY"
+
+# The proxy is normally deployed with a master key, but a loopback or
+# development proxy may be left open. Requiring a key here would make that
+# configuration impossible to run rather than merely unwise, so the key is
+# sent when present and omitted when not.
+api_key_required = false
+
+# Deliberately an alias, not a vendor model name. A deployment that has not
+# said which tier it wants gets the middle one, and the operator's routing
+# decides what that is — the same indirection the whole provider exists for.
+default_model = "tier-balanced"
+default_temperature = 0.7
+vault_path = ""
