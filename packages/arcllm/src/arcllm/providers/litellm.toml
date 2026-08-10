@@ -30,10 +30,11 @@
 
 [provider]
 api_format = "openai-chat"
-# Loopback by default because arcllm's own validator refuses a plain-http
-# remote host, and rightly: an unencrypted call to another machine is not
-# something a default should permit. A deployment whose proxy is a service on
-# an internal network overrides this in
+# The docker-compose service name, because that is where the proxy sits in the
+# only deployment shape this package can assume. It is a single-label host, so
+# it resolves only inside the container network and plain HTTP to it never
+# leaves that network. A deployment that reaches its proxy across a routable
+# name must use HTTPS and overrides this in
 # ${ARC_CONFIG_DIR:-~/.arc}/arcllm.toml, which is the sanctioned override
 # layer, rather than by loosening the rule for everyone.
 base_url = "http://litellm:4000"
