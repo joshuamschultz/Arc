@@ -1,6 +1,6 @@
 # Building a Team of Agents
 
-> **Runbooks**  ·  Operate  ·  page 7 of 16  
+> **Runbooks**  ·  Operate  ·  page 8 of 17  
 > **For** Operators deploying and running Arc  
 > [← Voice air-gap](../deploy/voice-air-gap.md)  ·  [Docs home](../../README.md)  ·  [Tasks →](tasks.md)
 

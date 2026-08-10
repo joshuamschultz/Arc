@@ -1,6 +1,6 @@
 # Azure OpenAI Setup Runbook
 
-> **Runbooks**  ·  Operate  ·  page 5 of 16  
+> **Runbooks**  ·  Operate  ·  page 6 of 17  
 > **For** Operators deploying and running Arc  
 > [← Firecracker](firecracker.md)  ·  [Docs home](../../README.md)  ·  [Voice air-gap →](voice-air-gap.md)
 

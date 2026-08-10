@@ -1,6 +1,6 @@
 # Single-Node Deployment (embedded gateway)
 
-> **Runbooks**  ·  Operate  ·  page 2 of 16  
+> **Runbooks**  ·  Operate  ·  page 2 of 17  
 > **For** Operators deploying and running Arc  
 > [← Overview](overview.md)  ·  [Docs home](../../README.md)  ·  [Docker →](docker.md)
 

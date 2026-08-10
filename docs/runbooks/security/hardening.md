@@ -1,6 +1,6 @@
 # ArcAgent Security Hardening Runbook
 
-> **Runbooks**  ·  Operate  ·  page 11 of 16  
+> **Runbooks**  ·  Operate  ·  page 12 of 17  
 > **For** Operators deploying and running Arc  
 > [← Policy and proactive engine](../operate/policy-and-proactive.md)  ·  [Docs home](../../README.md)  ·  [Threat model →](threat-model.md)
 

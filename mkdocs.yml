@@ -134,6 +134,7 @@ nav:
           - Overview: runbooks/deploy/overview.md
           - Local: runbooks/deploy/local.md
           - Docker: runbooks/deploy/docker.md
+          - Azure: runbooks/deploy/azure.md
           - Firecracker: runbooks/deploy/firecracker.md
           - Azure OpenAI: runbooks/deploy/azure-openai.md
           - Voice air-gap: runbooks/deploy/voice-air-gap.md

@@ -1,8 +1,8 @@
 # Firecracker Deployment Guide
 
-> **Runbooks**  ·  Operate  ·  page 4 of 16  
+> **Runbooks**  ·  Operate  ·  page 5 of 17  
 > **For** Operators deploying and running Arc  
-> [← Docker](docker.md)  ·  [Docs home](../../README.md)  ·  [Azure OpenAI →](azure-openai.md)
+> [← Azure](azure.md)  ·  [Docs home](../../README.md)  ·  [Azure OpenAI →](azure-openai.md)
 
 ```mermaid
 flowchart TB
