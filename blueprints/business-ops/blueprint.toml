@@ -1,0 +1,37 @@
+# Built-in blueprint — provenance-trusted (repo-root blueprints/).
+# Deep-merged UNDER your own arcagent.toml values; a blueprint is a starting point.
+#
+# Business Ops (COO) — the operator. It holds how the business actually runs: the
+# processes, the owners, the recurring commitments, and the things that keep
+# slipping. Where the CEO blueprint asks "is this the right direction", this one
+# asks "is it actually happening, and who has it".
+
+[blueprint]
+name = "business-ops"
+version = "1.0.0"
+tier = "personal"
+description = "Business operations: process, owners, and follow-through memory for a COO."
+
+[security]
+tier = "personal"
+
+[modules.memory]
+enabled = true
+
+[modules.memory.config]
+brain = "arcmemory"
+
+# Backend-specific settings, forwarded verbatim to the selected brain's build_brain.
+# The distiller is the LLM seam that turns the raw event stream into durable curated
+# memory (entity/person/place files, insights, daily summaries). Without it,
+# consolidation is a no-op and only the zero-LLM daily stream is written.
+# Override to match your agent's provider/model.
+[modules.memory.config.backend]
+distill_provider = "anthropic"
+distill_model = "claude-sonnet-5"
+
+[modules.skills]
+enabled = true
+
+[modules.skills.config]
+adapter = "arcskill"

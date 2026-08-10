@@ -8,10 +8,12 @@
 #
 # Env:
 #   <PROVIDER>_API_KEY              required for cloud providers — fails closed if absent
-#   ARC_AGENTS                      space-separated agent names (default: arc_agent)
+#   ARC_AGENTS                      space-separated "name" or "name:blueprint"
+#                                   entries (default: arc_agent)
 #   ARC_AGENT_MODEL                 default: anthropic/claude-sonnet-5
 #   ARC_PROVIDER                    default: anthropic
-#   ARC_BLUEPRINT                   optional — applied to each agent at creation
+#   ARC_BLUEPRINT                   optional — default blueprint for ARC_AGENTS
+#                                   entries that name none, applied at creation
 #   ARC_TIER                        default: personal
 #   ARC_UI_PORT                     default: 8420
 #   ARC_ENABLE_TELEGRAM             default: 0
@@ -36,7 +38,13 @@ UI_PORT="${ARC_UI_PORT:-8420}"
 ENABLE_TELEGRAM="${ARC_ENABLE_TELEGRAM:-0}"
 TELEGRAM_ALLOWED_USER_IDS="${ARC_TELEGRAM_ALLOWED_USER_IDS:-}"
 BLUEPRINT="${ARC_BLUEPRINT:-}"
-read -r -a AGENT_NAMES <<< "${ARC_AGENTS:-arc_agent}"
+# An ARC_AGENTS entry is "name" or "name:blueprint". A mixed fleet is the normal
+# case — an assistant, a rep, and an ops agent are different personas — so the
+# blueprint belongs to the agent, not to the deployment. ARC_BLUEPRINT remains the
+# default for entries that name no blueprint of their own.
+read -r -a AGENT_SPECS <<< "${ARC_AGENTS:-arc_agent}"
+AGENT_NAMES=()
+for _spec in "${AGENT_SPECS[@]}"; do AGENT_NAMES+=("${_spec%%:*}"); done
 
 log()  { echo "→ $*"; }
 ok()   { echo "  ✓ $*"; }
@@ -62,18 +70,21 @@ else
 fi
 
 # --- 2. secrets: fail closed before anything is written -------------------
-# Which key is required follows from the provider. `arc init` owns that mapping;
-# reading it here keeps one source of truth and lets an unknown provider fail
-# with its own name rather than a misleading complaint about Anthropic.
+# Which key is required follows from the provider. The provider registry in
+# arcllm declares it (api_key_env / api_key_required), so reading it here keeps
+# one source of truth and lets an unknown provider fail with its own name
+# rather than a misleading complaint about Anthropic.
 KEY_VAR="$("$VENV_PY" -c '
 import sys
-from arccli.commands.init import PROVIDER_ENV_VARS
-provider = sys.argv[1]
-if provider not in PROVIDER_ENV_VARS:
+from arcllm import load_provider_config
+from arcllm.exceptions import ArcLLMConfigError
+try:
+    provider = load_provider_config(sys.argv[1]).provider
+except ArcLLMConfigError:
     sys.exit(2)
-print(PROVIDER_ENV_VARS[provider])
+print(provider.api_key_env if provider.api_key_required else "")
 ' "$PROVIDER")" || fail "ARC_PROVIDER=$PROVIDER is not a provider Arc knows"
-# Local providers (ollama, lmstudio) map to an empty var name — no key needed.
+# Local providers (ollama, vllm) name a key var but do not require one.
 if [ -n "$KEY_VAR" ] && [ -z "${!KEY_VAR:-}" ]; then
   fail "$KEY_VAR is not set — required for ARC_PROVIDER=$PROVIDER; pass it via --env-file or -e"
 fi
@@ -132,7 +143,10 @@ fi
 "$VENV_PY" "$OVERLAYS" "${GATEWAY_ARGS[@]}"
 
 # --- 5. agents ------------------------------------------------------------
-for AGENT_NAME in "${AGENT_NAMES[@]}"; do
+for AGENT_SPEC in "${AGENT_SPECS[@]}"; do
+  AGENT_NAME="${AGENT_SPEC%%:*}"
+  AGENT_BLUEPRINT="$BLUEPRINT"
+  [ "$AGENT_SPEC" != "$AGENT_NAME" ] && AGENT_BLUEPRINT="${AGENT_SPEC#*:}"
   if [ -d "$TEAM_ROOT/$AGENT_NAME" ]; then
     ok "$TEAM_ROOT/$AGENT_NAME already exists"
   else
@@ -141,9 +155,9 @@ for AGENT_NAME in "${AGENT_NAMES[@]}"; do
     # Blueprints are materialized only at creation. Re-applying on every restart
     # would overwrite the persona, prompt overlays, and schedules the operator
     # has tuned since — the whole point of "pick a blueprint, then make it yours".
-    if [ -n "$BLUEPRINT" ]; then
-      log "Applying blueprint $BLUEPRINT to $AGENT_NAME..."
-      "$ARC_BIN" blueprint apply "$BLUEPRINT" --agent "$TEAM_ROOT/$AGENT_NAME"
+    if [ -n "$AGENT_BLUEPRINT" ]; then
+      log "Applying blueprint $AGENT_BLUEPRINT to $AGENT_NAME..."
+      "$ARC_BIN" blueprint apply "$AGENT_BLUEPRINT" --agent "$TEAM_ROOT/$AGENT_NAME"
     fi
   fi
   "$VENV_PY" "$OVERLAYS" agent-config \

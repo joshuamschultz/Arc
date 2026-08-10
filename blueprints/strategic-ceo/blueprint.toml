@@ -1,0 +1,36 @@
+# Built-in blueprint — provenance-trusted (repo-root blueprints/).
+# Deep-merged UNDER your own arcagent.toml values; a blueprint is a starting point.
+#
+# Strategic CEO — a thinking partner for the person who owns the direction. It holds
+# the long arc (bets placed, theses, competitive moves, what changed since) so that
+# today's decision is made against everything already known, not against memory.
+
+[blueprint]
+name = "strategic-ceo"
+version = "1.0.0"
+tier = "personal"
+description = "Strategic counsel: long-horizon memory of bets, theses, and market moves."
+
+[security]
+tier = "personal"
+
+[modules.memory]
+enabled = true
+
+[modules.memory.config]
+brain = "arcmemory"
+
+# Backend-specific settings, forwarded verbatim to the selected brain's build_brain.
+# The distiller is the LLM seam that turns the raw event stream into durable curated
+# memory (entity/person/place files, insights, daily summaries). Without it,
+# consolidation is a no-op and only the zero-LLM daily stream is written.
+# Override to match your agent's provider/model.
+[modules.memory.config.backend]
+distill_provider = "anthropic"
+distill_model = "claude-sonnet-5"
+
+[modules.skills]
+enabled = true
+
+[modules.skills.config]
+adapter = "arcskill"
