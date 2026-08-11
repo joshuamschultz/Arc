@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from conftest import LLMResponse, Message, MockModel, ToolCall
+from packages.arcrun.tests.conftest import LLMResponse, Message, MockModel, ToolCall
 
 from arcrun.checkpoint import LoopCheckpoint, apply_checkpoint, to_checkpoint
 from arcrun.events import EventBus

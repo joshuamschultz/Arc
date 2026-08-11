@@ -1,7 +1,7 @@
 """Integration tests — full end-to-end scenarios."""
 
 import pytest
-from conftest import LLMResponse, MockModel, ToolCall
+from packages.arcrun.tests.conftest import LLMResponse, MockModel, ToolCall
 
 from arcrun import StaticProvider
 from arcrun.types import SandboxConfig, Tool

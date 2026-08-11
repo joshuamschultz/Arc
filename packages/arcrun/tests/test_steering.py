@@ -3,7 +3,7 @@
 import asyncio
 
 import pytest
-from conftest import LLMResponse, MockModel, ToolCall
+from packages.arcrun.tests.conftest import LLMResponse, MockModel, ToolCall
 
 from arcrun import StaticProvider
 from arcrun.state import Injection

@@ -1,7 +1,7 @@
 """Integration tests for CodeExec: strategy selection + ExecuteTool + CodeExecStrategy."""
 
 import pytest
-from conftest import LLMResponse, MockModel, ToolCall
+from packages.arcrun.tests.conftest import LLMResponse, MockModel, ToolCall
 
 from arcrun import StaticProvider
 from arcrun.builtins import make_execute_tool

@@ -29,8 +29,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from arctrust import AgentIdentity
-
-from tests.unit.modules.tasks.conftest import (
+from packages.arcagent.tests.unit.modules.tasks.conftest import (
     make_operator_signer,
     make_peer_entity,
     make_registry,

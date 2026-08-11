@@ -6,9 +6,9 @@ import os
 
 from arctrust.artifact import sign_artifact
 from arctrust.keypair import KeyPair
+from packages.arcprompt.tests.conftest import SigningKey
 
 from arcprompt.verifier import SignatureVerifier
-from tests.conftest import SigningKey
 
 
 def test_valid_signature_against_pinned_key_verifies(signer: SigningKey) -> None:

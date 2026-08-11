@@ -183,7 +183,7 @@ async def test_valid_code_returns_pairing_code(
     signed_store: PairingStore, signing_key: SigningKey
 ) -> None:
     """verify_and_consume returns PairingCode for a valid, unexpired code."""
-    from tests.unit.conftest import _UNIT_TEST_DID
+    from packages.arcgateway.tests.unit.conftest import _UNIT_TEST_DID
 
     code = await signed_store.mint_code(platform="telegram", platform_user_id="bob")
     result = await _signed_consume(signed_store, code, signing_key, _UNIT_TEST_DID)
@@ -196,7 +196,7 @@ async def test_consumed_code_not_reusable(
     signed_store: PairingStore, signing_key: SigningKey
 ) -> None:
     """A code consumed once must return None on second attempt."""
-    from tests.unit.conftest import _UNIT_TEST_DID
+    from packages.arcgateway.tests.unit.conftest import _UNIT_TEST_DID
 
     code = await signed_store.mint_code(platform="telegram", platform_user_id="carol")
     first = await _signed_consume(signed_store, code, signing_key, _UNIT_TEST_DID)
@@ -223,7 +223,7 @@ async def test_is_approved_true_after_consume(
     signed_store: PairingStore, signing_key: SigningKey
 ) -> None:
     """After verify_and_consume succeeds, the minting user is approved."""
-    from tests.unit.conftest import _UNIT_TEST_DID
+    from packages.arcgateway.tests.unit.conftest import _UNIT_TEST_DID
 
     code = await signed_store.mint_code(platform="telegram", platform_user_id="frank")
     result = await _signed_consume(signed_store, code, signing_key, _UNIT_TEST_DID)
@@ -243,7 +243,7 @@ async def test_is_approved_survives_new_store_instance(
     the same SQLite file, and the live gateway's PairingStore (a different
     Python object, same db_path) must see the approval on its next check.
     """
-    from tests.unit.conftest import _UNIT_TEST_DID
+    from packages.arcgateway.tests.unit.conftest import _UNIT_TEST_DID
 
     trust_dir = tmp_path / "trust"
     trust_dir.mkdir()
@@ -281,7 +281,7 @@ async def test_is_approved_scoped_per_platform(
     signed_store: PairingStore, signing_key: SigningKey
 ) -> None:
     """Approval on one platform does not leak to the same raw ID on another."""
-    from tests.unit.conftest import _UNIT_TEST_DID
+    from packages.arcgateway.tests.unit.conftest import _UNIT_TEST_DID
 
     code = await signed_store.mint_code(platform="telegram", platform_user_id="shared_id")
     result = await _signed_consume(signed_store, code, signing_key, _UNIT_TEST_DID)
@@ -313,7 +313,7 @@ async def test_max_3_pending_consumed_allows_new(
     signed_store: PairingStore, signing_key: SigningKey
 ) -> None:
     """After consuming one, a 4th pending code should succeed."""
-    from tests.unit.conftest import _UNIT_TEST_DID
+    from packages.arcgateway.tests.unit.conftest import _UNIT_TEST_DID
 
     c1 = await signed_store.mint_code(platform="telegram", platform_user_id="u1")
     await signed_store.mint_code(platform="telegram", platform_user_id="u2")
@@ -523,7 +523,7 @@ async def test_cleanup_expired_sweep(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_list_pending(signed_store: PairingStore, signing_key: SigningKey) -> None:
     """list_pending returns only unexpired, unconsumed codes."""
-    from tests.unit.conftest import _UNIT_TEST_DID
+    from packages.arcgateway.tests.unit.conftest import _UNIT_TEST_DID
 
     c1 = await signed_store.mint_code(platform="telegram", platform_user_id="u1")
     c2 = await signed_store.mint_code(platform="telegram", platform_user_id="u2")

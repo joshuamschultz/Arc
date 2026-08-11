@@ -54,3 +54,11 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "A", "S", "T20", "RUF"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+addopts = "--import-mode=importlib"
+consider_namespace_packages = true
+# The workspace root, so a test importing a sibling helper by its full path
+# (`packages.arcui.tests.conftest`) resolves the same whether pytest was
+# pointed at this package or at the whole repo. Uniform across every package:
+# the moment one keeps prepend mode, a bare `tests` resolves again from its own
+# rootdir and the whole-repo run dies in collection.
+pythonpath = ["../.."]

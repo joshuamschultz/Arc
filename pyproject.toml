@@ -184,12 +184,32 @@ warn_unused_ignores = false
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-# importlib import mode keys test modules by full path. Several packages ship a
-# `tests` package with same-named submodules, so under the default prepend mode
-# `pytest packages/a/tests packages/b/tests` collides on `tests.integration.*`
-# and dies in collection — which is why the full cross-package matrix could never
-# be run in one command. Per-package runs were unaffected, so this stayed hidden.
+# Every package's test tree is addressed by its path from this directory —
+# `packages.arcagent.tests.conftest`, never a bare `tests.conftest`. Two things
+# are load-bearing and neither works alone:
+#
+#   --import-mode=importlib      derives that dotted name from the file's path
+#                                RELATIVE TO ROOTDIR, but only for a directory
+#                                that is not already an importable package. An
+#                                `__init__.py` under a `tests/` dir short-
+#                                circuits it to the package root, and every
+#                                package then claims the single name `tests`.
+#   consider_namespace_packages  makes those dotted paths importable, so a test
+#                                can import a sibling helper by its real path.
+#
+# So: no `__init__.py` at the ROOT of a test tree. Subdirectories below it may
+# still have one — those resolve through the repo-root anchor and stay unique —
+# but an `__init__.py` next to the `tests/` dir itself makes that package claim
+# the bare name `tests` alongside all seven others and the root `tests/` tree.
+# The whole-repo run then dies in collection with "Plugin already registered
+# under a different name" and silently drops the trees it could not name: it
+# reported 6027 tests where the real count is 11503. Per-package runs stay green
+# throughout and CI runs per package, so nothing caught it.
+# tests/architecture/test_test_tree_module_names.py guards both halves.
 addopts = "--strict-markers -v --import-mode=importlib"
+consider_namespace_packages = true
+# Rootdir on sys.path so those `packages.<pkg>.tests.*` paths actually import.
+pythonpath = ["."]
 markers = [
     "slow: end-to-end test that starts a real nats-server (skipped when the binary is absent)",
     "requires_docker: needs a reachable Docker daemon; skipped locally, required in CI",

@@ -43,6 +43,14 @@ artifacts = ["src/arcrun/**/*.md"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+addopts = "--import-mode=importlib"
+consider_namespace_packages = true
+# The workspace root, so a test importing a sibling helper by its full path
+# (`packages.arcrun.tests.conftest`) resolves the same whether pytest was
+# pointed at this package or at the whole repo. Those full paths are not
+# decoration: a bare `conftest` only ever resolved because prepend mode put the
+# test directory itself on sys.path, which the whole-repo run does not do.
+pythonpath = ["../.."]
 markers = [
     "slow: live-runtime tests (real docker / Firecracker) excluded from the fast unit run",
     "requires_docker: needs a reachable Docker daemon; skipped locally, required in CI",

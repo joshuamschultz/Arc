@@ -21,8 +21,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from arctrust import AgentIdentity
-
-from tests.unit.modules.tasks.conftest import make_registry
+from packages.arcagent.tests.unit.modules.tasks.conftest import make_registry
 
 _SCHEMA: dict[str, Any] = {
     "type": "object",

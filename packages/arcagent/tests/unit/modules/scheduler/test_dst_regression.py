@@ -19,9 +19,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
+from packages.arcagent.tests.unit.modules.scheduler.conftest import make_config
+
 from arcagent.modules.scheduler.models import ScheduleEntry, ScheduleMetadata
 from arcagent.modules.scheduler.scheduler import SchedulerEngine
-from tests.unit.modules.scheduler.conftest import make_config
 
 
 def _engine() -> SchedulerEngine:

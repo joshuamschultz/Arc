@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from freezegun import freeze_time
+from packages.arcagent.tests.unit.modules.scheduler.conftest import make_config, make_entry
 
 from arcagent.modules.scheduler.models import (
     ActiveHours,
@@ -17,7 +18,6 @@ from arcagent.modules.scheduler.models import (
 )
 from arcagent.modules.scheduler.scheduler import SchedulerEngine
 from arcagent.modules.scheduler.store import ScheduleStore
-from tests.unit.modules.scheduler.conftest import make_config, make_entry
 
 # --- should_fire evaluation ---
 

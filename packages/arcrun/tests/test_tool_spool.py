@@ -14,7 +14,7 @@ import json
 from unittest.mock import patch
 
 import pytest
-from conftest import ToolCall
+from packages.arcrun.tests.conftest import ToolCall
 
 import arcrun.events as events_mod
 from arcrun.events import EventBus

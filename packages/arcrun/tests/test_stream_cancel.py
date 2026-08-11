@@ -18,7 +18,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
-from conftest import LLMResponse, MockModel, ToolCall
+from packages.arcrun.tests.conftest import LLMResponse, MockModel, ToolCall
 
 from arcrun import StaticProvider, StreamEvent, TokenEvent, TurnEndEvent, run_stream
 from arcrun.loop import RunHandle

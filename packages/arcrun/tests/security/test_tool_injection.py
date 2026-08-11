@@ -16,7 +16,7 @@ class TestToolInjection:
     @pytest.mark.asyncio
     async def test_oversized_parameter_handled(self):
         """Extremely large code parameter should not crash."""
-        from security.conftest import make_ctx
+        from packages.arcrun.tests.security.conftest import make_ctx
 
         tool = make_execute_tool(
             timeout_seconds=5, max_output_bytes=1024, tier="personal", relax="local"
@@ -31,7 +31,7 @@ class TestToolInjection:
     @pytest.mark.asyncio
     async def test_command_injection_in_code_param(self):
         """Code parameter with shell metacharacters should not escape to shell."""
-        from security.conftest import make_ctx
+        from packages.arcrun.tests.security.conftest import make_ctx
 
         tool = make_execute_tool(timeout_seconds=5, tier="personal", relax="local")
         # This code is executed as Python, not shell
@@ -45,7 +45,7 @@ class TestToolInjection:
     @pytest.mark.asyncio
     async def test_unicode_in_code(self):
         """Unicode characters in code should be handled safely."""
-        from security.conftest import make_ctx
+        from packages.arcrun.tests.security.conftest import make_ctx
 
         tool = make_execute_tool(timeout_seconds=5, tier="personal", relax="local")
         code = "print('Hello \\u4e16\\u754c')"  # "Hello 世界"
@@ -56,10 +56,11 @@ class TestToolInjection:
     @pytest.mark.asyncio
     async def test_tool_name_validation_in_sandbox(self):
         """Sandbox checks tool names exactly — no fuzzy matching."""
+        from packages.arcrun.tests.security.conftest import LLMResponse, MockModel, ToolCall
+
         from arcrun import StaticProvider
         from arcrun.loop import run
         from arcrun.types import SandboxConfig, Tool
-        from security.conftest import LLMResponse, MockModel, ToolCall
 
         async def noop(params: dict, ctx: object) -> str:
             return "ok"

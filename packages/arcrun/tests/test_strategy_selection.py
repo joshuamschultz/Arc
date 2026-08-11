@@ -1,7 +1,7 @@
 """Tests for model-based strategy selection."""
 
 import pytest
-from conftest import LLMResponse, MockModel, ToolCall
+from packages.arcrun.tests.conftest import LLMResponse, MockModel, ToolCall
 
 from arcrun._messages import system_message, user_message
 from arcrun.events import EventBus

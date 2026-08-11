@@ -7,10 +7,10 @@ task text from being interpreted as instructions.
 from __future__ import annotations
 
 import pytest
+from packages.arcrun.tests.security.conftest import LLMResponse, MockModel, ToolCall
 
 from arcrun import StaticProvider
 from arcrun.types import SandboxConfig, Tool
-from security.conftest import LLMResponse, MockModel, ToolCall
 
 
 async def _record_execute(params: dict, ctx: object) -> str:

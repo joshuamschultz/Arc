@@ -54,7 +54,14 @@ warn_unused_configs = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "--strict-markers -v"
+addopts = "--strict-markers -v --import-mode=importlib"
+consider_namespace_packages = true
+# The workspace root, so a test importing a sibling helper by its full path
+# (`packages.arcstore.tests.conftest`) resolves the same whether pytest was
+# pointed at this package or at the whole repo. Those full paths are not
+# decoration: a bare `tests.conftest` makes all eight test-bearing packages
+# claim one module name, and the whole-repo run dies in collection.
+pythonpath = ["../.."]
 markers = [
     "slow: stress/soak test not run on every push (opt in via -m slow)",
 ]

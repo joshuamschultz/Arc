@@ -40,8 +40,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from arctrust import AgentIdentity
-
-from tests.unit.modules.tasks.conftest import make_peer_entity, make_registry
+from packages.arcagent.tests.unit.modules.tasks.conftest import make_peer_entity, make_registry
 
 
 @pytest.fixture

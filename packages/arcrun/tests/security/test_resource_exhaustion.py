@@ -18,7 +18,7 @@ class TestResourceExhaustion:
     @pytest.mark.asyncio
     async def test_infinite_loop_times_out(self):
         """Infinite loop should be killed by timeout."""
-        from security.conftest import make_ctx
+        from packages.arcrun.tests.security.conftest import make_ctx
 
         tool = make_execute_tool(timeout_seconds=2, tier="personal", relax="local")
         code = "while True: pass"
@@ -30,7 +30,7 @@ class TestResourceExhaustion:
     @pytest.mark.asyncio
     async def test_memory_bomb_contained(self):
         """Large memory allocation should be handled gracefully."""
-        from security.conftest import make_ctx
+        from packages.arcrun.tests.security.conftest import make_ctx
 
         tool = make_execute_tool(timeout_seconds=5, tier="personal", relax="local")
         code = """
@@ -47,7 +47,7 @@ except MemoryError:
     @pytest.mark.asyncio
     async def test_disk_fill_contained_to_tmpdir(self):
         """Writing large files should be limited to tmpdir."""
-        from security.conftest import make_ctx
+        from packages.arcrun.tests.security.conftest import make_ctx
 
         tool = make_execute_tool(timeout_seconds=5, tier="personal", relax="local")
         code = """
@@ -68,7 +68,7 @@ except Exception as e:
     @pytest.mark.asyncio
     async def test_subprocess_spawn_contained(self):
         """Spawning subprocesses from executed code should be limited."""
-        from security.conftest import make_ctx
+        from packages.arcrun.tests.security.conftest import make_ctx
 
         tool = make_execute_tool(timeout_seconds=5, tier="personal", relax="local")
         code = """
@@ -87,7 +87,7 @@ except Exception as e:
     @pytest.mark.asyncio
     async def test_output_truncation(self):
         """Excessive output should be truncated."""
-        from security.conftest import make_ctx
+        from packages.arcrun.tests.security.conftest import make_ctx
 
         tool = make_execute_tool(
             timeout_seconds=5, max_output_bytes=100, tier="personal", relax="local"

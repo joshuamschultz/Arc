@@ -6,13 +6,13 @@ from pathlib import Path
 
 from arctrust.artifact import sign_artifact
 from arctrust.audit import AuditEvent
+from packages.arcprompt.tests.conftest import DirCatalog, SigningKey, write_overlay, write_stock
 
 from arcprompt.catalog import PromptRef
 from arcprompt.document import render_prompt
 from arcprompt.resolver import PromptResolver
 from arcprompt.snapshot import PROVENANCE_ACTION, snapshot
 from arcprompt.verifier import TrustPosture
-from tests.conftest import DirCatalog, SigningKey, write_overlay, write_stock
 
 
 class _CollectingSink:

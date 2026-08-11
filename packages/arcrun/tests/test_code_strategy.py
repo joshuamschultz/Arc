@@ -1,7 +1,7 @@
 """Tests for CodeExecStrategy."""
 
 import pytest
-from conftest import LLMResponse, MockModel
+from packages.arcrun.tests.conftest import LLMResponse, MockModel
 
 from arcrun._messages import system_message, user_message
 from arcrun.events import EventBus

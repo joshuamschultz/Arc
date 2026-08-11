@@ -9,7 +9,7 @@ human-visible partial naming the operator, and a ``loop.cancelled`` audit event.
 import asyncio
 
 import pytest
-from conftest import LLMResponse, MockModel, ToolCall
+from packages.arcrun.tests.conftest import LLMResponse, MockModel, ToolCall
 
 from arcrun import StaticProvider
 from arcrun.types import Tool

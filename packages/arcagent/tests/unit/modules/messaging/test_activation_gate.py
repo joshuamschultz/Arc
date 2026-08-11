@@ -21,10 +21,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from arctrust import AgentIdentity
+from packages.arcagent.tests.unit.modules.messaging.conftest import (
+    make_config_dict,
+    make_operator_signer,
+)
 
 from arcagent.modules.messaging import _runtime
 from arcagent.modules.messaging.capabilities import _handle_incoming
-from tests.unit.modules.messaging.conftest import make_config_dict, make_operator_signer
 
 
 @pytest.fixture(autouse=True)

@@ -1,7 +1,7 @@
 """Tests for shared tool executor."""
 
 import pytest
-from conftest import Message, ToolCall
+from packages.arcrun.tests.conftest import Message, ToolCall
 
 from arcrun.events import EventBus
 from arcrun.registry import ToolRegistry

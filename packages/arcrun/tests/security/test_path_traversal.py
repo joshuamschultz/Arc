@@ -29,7 +29,7 @@ class TestPathTraversal:
     @pytest.mark.asyncio
     async def test_relative_path_traversal_in_code(self):
         """Code that tries to read ../../etc/passwd should fail or be contained."""
-        from security.conftest import make_ctx
+        from packages.arcrun.tests.security.conftest import make_ctx
 
         tool = make_execute_tool(timeout_seconds=5)
         code = """
@@ -50,7 +50,7 @@ except Exception as e:
     @pytest.mark.asyncio
     async def test_absolute_path_access_in_code(self):
         """Code trying to read /etc/hostname directly."""
-        from security.conftest import make_ctx
+        from packages.arcrun.tests.security.conftest import make_ctx
 
         tool = make_execute_tool(timeout_seconds=5)
         code = """
@@ -70,7 +70,7 @@ except Exception as e:
     @pytest.mark.asyncio
     async def test_null_byte_injection(self):
         """Null bytes in file paths should not bypass restrictions."""
-        from security.conftest import make_ctx
+        from packages.arcrun.tests.security.conftest import make_ctx
 
         tool = make_execute_tool(timeout_seconds=5)
         code = r"""
@@ -87,7 +87,7 @@ except Exception as e:
     @pytest.mark.asyncio
     async def test_symlink_escape_attempt(self):
         """Creating a symlink to escape tmpdir should be contained."""
-        from security.conftest import make_ctx
+        from packages.arcrun.tests.security.conftest import make_ctx
 
         tool = make_execute_tool(timeout_seconds=5)
         code = """

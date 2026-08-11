@@ -10,7 +10,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
-from conftest import LLMResponse, MockModel
+from packages.arcrun.tests.conftest import LLMResponse, MockModel
 
 import arcrun.events as events_mod
 from arcrun.events import EventBus

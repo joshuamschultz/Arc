@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import pytest
+from packages.arcteam.tests.unit.backends.fake_jetstream import FakeJetStream
 
 from arcteam.backends.nats import NatsBackend
 from arcteam.storage import StorageBackend
-from tests.unit.backends.fake_jetstream import FakeJetStream
 
 pytestmark = pytest.mark.asyncio
 

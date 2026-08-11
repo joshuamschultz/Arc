@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from arctrust.classification import Classification
+from packages.arcmemory.tests.conftest import StubEmbedder
 
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
@@ -12,7 +13,6 @@ from arcmemory.index.graph import WeightedGraph
 from arcmemory.retrieve import Retriever
 from arcmemory.stores.semantic import SemanticStore
 from arcmemory.types import Scope, Situation
-from tests.conftest import StubEmbedder
 
 
 async def test_recall_cards_carry_provenance_and_links(

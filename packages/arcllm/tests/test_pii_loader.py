@@ -55,20 +55,25 @@ class _NoDetectMethod:
 
 
 # Make the fixture classes importable under an allowlisted prefix by
-# attaching them to this test module, which lives under `tests.*` — NOT
-# allowlisted. Real allowlisted-path tests monkeypatch the allowlist
-# tuple directly so we can exercise the happy path without needing a
-# real package under arcllm.*/arcagent.*/arcpii.*.
+# attaching them to this test module, which is not allowlisted. Real
+# allowlisted-path tests monkeypatch the allowlist tuple directly so we can
+# exercise the happy path without needing a real package under
+# arcllm.*/arcagent.*/arcpii.*.
+#
+# The refs below go through `__name__` rather than a literal module path:
+# pytest keys this module by its location, so any literal would silently stop
+# matching the moment the test tree moves and every load here would fail as
+# "not installed".
 
 
 class TestValidDetectorClassLoads:
     def test_custom_detector_class_loads_and_runs(self):
         with patch(
             "arcllm.modules.security._ALLOWED_DETECTOR_PREFIXES",
-            ("tests.test_pii_loader",),
+            (__name__,),
         ):
             module = SecurityModule(
-                _base_config(pii_detector_class="tests.test_pii_loader:_AlwaysDetector"),
+                _base_config(pii_detector_class=f"{__name__}:_AlwaysDetector"),
                 _make_inner(),
             )
         assert isinstance(module._pii_detector, _AlwaysDetector)
@@ -76,11 +81,11 @@ class TestValidDetectorClassLoads:
     async def test_custom_detector_class_used_in_invoke(self):
         with patch(
             "arcllm.modules.security._ALLOWED_DETECTOR_PREFIXES",
-            ("tests.test_pii_loader",),
+            (__name__,),
         ):
             inner = _make_inner()
             module = SecurityModule(
-                _base_config(pii_detector_class="tests.test_pii_loader:_AlwaysDetector"),
+                _base_config(pii_detector_class=f"{__name__}:_AlwaysDetector"),
                 inner,
             )
             messages = [Message(role="user", content="anything")]
@@ -159,11 +164,11 @@ class TestMissingDetectMethod:
     def test_class_without_detect_raises(self):
         with patch(
             "arcllm.modules.security._ALLOWED_DETECTOR_PREFIXES",
-            ("tests.test_pii_loader",),
+            (__name__,),
         ):
             with pytest.raises(ArcLLMConfigError, match="does not implement"):
                 SecurityModule(
-                    _base_config(pii_detector_class="tests.test_pii_loader:_NoDetectMethod"),
+                    _base_config(pii_detector_class=f"{__name__}:_NoDetectMethod"),
                     _make_inner(),
                 )
 
@@ -172,12 +177,12 @@ class TestDetectorClassOverridesDetectorString:
     def test_pii_detector_class_wins_over_pii_detector(self):
         with patch(
             "arcllm.modules.security._ALLOWED_DETECTOR_PREFIXES",
-            ("tests.test_pii_loader",),
+            (__name__,),
         ):
             module = SecurityModule(
                 _base_config(
                     pii_detector="regex",
-                    pii_detector_class="tests.test_pii_loader:_AlwaysDetector",
+                    pii_detector_class=f"{__name__}:_AlwaysDetector",
                 ),
                 _make_inner(),
             )

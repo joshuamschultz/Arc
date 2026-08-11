@@ -8,6 +8,7 @@ from typing import Any
 
 from arcprompt import load_stock
 from arctrust.identity import AgentIdentity
+from packages.arcmemory.tests.unit.test_consolidate import FakeDistiller
 
 from arcmemory.agent_consolidate import run_agentic_consolidation
 from arcmemory.config import MemoryConfig
@@ -20,7 +21,6 @@ from arcmemory.stores.episodic import EpisodicStore
 from arcmemory.stores.semantic import SemanticStore
 from arcmemory.tools import MemoryTool
 from arcmemory.types import Event, Scope
-from tests.unit.test_consolidate import FakeDistiller
 
 _NOW = datetime(2026, 7, 7, tzinfo=UTC)
 

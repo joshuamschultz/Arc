@@ -5,11 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from packages.arcprompt.tests.conftest import DirCatalog, SigningKey, write_overlay, write_stock
 
 from arcprompt.errors import PromptMissing, PromptUnsigned
 from arcprompt.resolver import PromptResolver
 from arcprompt.verifier import TrustPosture
-from tests.conftest import DirCatalog, SigningKey, write_overlay, write_stock
 
 
 def _resolver(overlay_root: Path, stock_root: Path, signer: SigningKey) -> PromptResolver:

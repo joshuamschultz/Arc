@@ -13,8 +13,7 @@ import json
 from typing import Any
 
 import pytest
-
-from tests.unit.modules.workflows.conftest import (
+from packages.arcagent.tests.unit.modules.workflows.conftest import (
     FakeIssue,
     RecordingControlPlane,
     StaleEditError,

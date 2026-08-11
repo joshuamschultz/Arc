@@ -21,10 +21,9 @@ from typing import Any
 import pytest
 from arcstore.backends.sqlite import SqliteBackend
 from arcstore.tasks import Task, TaskStore
+from packages.arcteam.tests.unit.workflow.conftest import FlowRunStore, FlowTaskStore
 
 from arcteam.workflow.stores import WorkflowRunStore, WorkflowTaskStore
-
-from ..unit.workflow.conftest import FlowRunStore, FlowTaskStore
 
 RUNNER = "did:arc:local:workflow-runner/abcd1234"
 OWNER = "did:arc:local:agent/1111aaaa"

@@ -1,7 +1,7 @@
 """Tests for Strategy ABC and ReactStrategy wrapper."""
 
 import pytest
-from conftest import LLMResponse, MockModel
+from packages.arcrun.tests.conftest import LLMResponse, MockModel
 
 from arcrun.types import Tool
 

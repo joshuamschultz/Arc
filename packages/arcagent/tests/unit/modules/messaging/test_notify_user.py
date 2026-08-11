@@ -15,11 +15,14 @@ from unittest.mock import AsyncMock
 
 import pytest
 from arctrust import AgentIdentity
+from packages.arcagent.tests.unit.modules.messaging.conftest import (
+    make_config_dict,
+    make_operator_signer,
+)
 
 from arcagent.core import known_channels, turn_context
 from arcagent.modules.messaging import _runtime
 from arcagent.modules.messaging.capabilities import notify_user
-from tests.unit.modules.messaging.conftest import make_config_dict, make_operator_signer
 
 
 @pytest.fixture(autouse=True)

@@ -11,9 +11,9 @@ from pathlib import Path
 
 import pytest
 from arctrust import AgentIdentity, OperatorKey
+from packages.arcagent.tests.unit.modules.messaging.conftest import make_config_dict
 
 from arcagent.modules.messaging import _runtime
-from tests.unit.modules.messaging.conftest import make_config_dict
 
 
 def _identity() -> AgentIdentity:

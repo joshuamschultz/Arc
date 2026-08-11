@@ -1,7 +1,7 @@
 """Tests for run() and run_async() entry points."""
 
 import pytest
-from conftest import LLMResponse, MockModel, ToolCall
+from packages.arcrun.tests.conftest import LLMResponse, MockModel, ToolCall
 
 from arcrun import StaticProvider
 from arcrun.types import Tool

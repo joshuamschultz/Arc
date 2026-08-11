@@ -9,11 +9,11 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from packages.arcrun.tests.security.conftest import LLMResponse, MockModel
 
 from arcrun import StaticProvider
 from arcrun.events import EventBus, verify_chain
 from arcrun.types import Tool
-from security.conftest import LLMResponse, MockModel
 
 
 async def _noop(params: dict, ctx: object) -> str:
@@ -104,8 +104,9 @@ class TestTimingAttacks:
     @pytest.mark.asyncio
     async def test_cancel_during_tool_execution(self):
         """Cancelling a run during tool execution is handled gracefully."""
+        from packages.arcrun.tests.security.conftest import ToolCall as _TC
+
         from arcrun.loop import run_async
-        from security.conftest import ToolCall as _TC
 
         # Simulate a slow tool
         async def slow_tool(params: dict, ctx: object) -> str:

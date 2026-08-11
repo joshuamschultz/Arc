@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from conftest import LLMResponse, MockModel
+from packages.arcrun.tests.conftest import LLMResponse, MockModel
 
 from arcrun import StaticProvider
 from arcrun.types import Tool

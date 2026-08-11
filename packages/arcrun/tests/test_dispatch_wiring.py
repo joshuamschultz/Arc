@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from conftest import LLMResponse, Message, MockModel, ToolCall
+from packages.arcrun.tests.conftest import LLMResponse, Message, MockModel, ToolCall
 
 from arcrun.events import EventBus
 from arcrun.registry import ToolRegistry

@@ -113,7 +113,14 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "--strict-markers -v"
+addopts = "--strict-markers -v --import-mode=importlib"
+consider_namespace_packages = true
+# The workspace root, so a test importing a sibling helper by its full path
+# (`packages.arcagent.tests.conftest`) resolves the same whether pytest was
+# pointed at this package or at the whole repo. Those full paths are not
+# decoration: a bare `tests.conftest` makes all eight test-bearing packages
+# claim one module name, and the whole-repo run dies in collection.
+pythonpath = ["../.."]
 markers = [
     "slow: live-runtime tests (real docker) excluded from the fast unit run",
     "requires_docker: needs a reachable Docker daemon; skipped locally, required in CI",

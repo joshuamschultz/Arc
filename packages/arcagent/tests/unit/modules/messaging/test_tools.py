@@ -16,6 +16,11 @@ from unittest.mock import MagicMock
 
 import pytest
 from arctrust import AgentIdentity
+from packages.arcagent.tests.unit.modules.messaging.conftest import (
+    make_config_dict,
+    make_operator_signer,
+    make_peer_entity,
+)
 
 from arcagent.core import arcteam_bootstrap as _bootstrap
 from arcagent.modules.messaging import _runtime
@@ -26,11 +31,6 @@ from arcagent.modules.messaging.capabilities import (
     messaging_list_entities,
     messaging_send,
     store_team_file,
-)
-from tests.unit.modules.messaging.conftest import (
-    make_config_dict,
-    make_operator_signer,
-    make_peer_entity,
 )
 
 

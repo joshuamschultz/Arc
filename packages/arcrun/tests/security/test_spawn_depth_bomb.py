@@ -6,10 +6,10 @@ Tests that recursive spawning is properly limited by depth controls.
 from __future__ import annotations
 
 import pytest
+from packages.arcrun.tests.security.conftest import LLMResponse, MockModel, ToolCall
 
 from arcrun import StaticProvider
 from arcrun.types import Tool
-from security.conftest import LLMResponse, MockModel, ToolCall
 
 
 class TestSpawnDepthBomb:
