@@ -427,3 +427,48 @@ weight = 1
     with patch("arcllm.config._get_config_dir", return_value=tmp_path):
         config = load_provider_config("openpool")
     assert len(config.endpoints) == 1
+
+
+# --- Operator provider overrides (${ARC_CONFIG_DIR:-~/.arc}/arcllm.toml) ---
+
+
+def test_operator_override_replaces_provider_base_url(tmp_path, monkeypatch):
+    """A deployment repoints a provider at its own endpoint without editing the package."""
+    (tmp_path / "arcllm.toml").write_text(
+        '[providers.litellm.provider]\nbase_url = "http://my-proxy:4000"\napi_key_required = true\n'
+    )
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
+
+    config = load_provider_config("litellm")
+
+    assert config.provider.base_url == "http://my-proxy:4000"
+    assert config.provider.api_key_required is True
+    # Unmentioned keys keep their packaged values.
+    assert config.provider.api_key_env == "LITELLM_API_KEY"
+    assert config.provider.api_format == "openai-chat"
+
+
+def test_operator_override_leaves_other_providers_untouched(tmp_path, monkeypatch):
+    (tmp_path / "arcllm.toml").write_text(
+        '[providers.litellm.provider]\nbase_url = "http://my-proxy:4000"\n'
+    )
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
+
+    assert load_provider_config("anthropic").provider.base_url == "https://api.anthropic.com"
+
+
+def test_operator_override_is_validated(tmp_path, monkeypatch):
+    """An override is held to the same rules as a packaged file — plain HTTP to a routable host."""
+    (tmp_path / "arcllm.toml").write_text(
+        '[providers.litellm.provider]\nbase_url = "http://proxy.example.com:4000"\n'
+    )
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
+
+    with pytest.raises(ArcLLMConfigError, match="Invalid provider config"):
+        load_provider_config("litellm")
+
+
+def test_provider_config_unchanged_without_operator_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
+
+    assert load_provider_config("litellm").provider.base_url == "http://litellm:4000"

@@ -369,11 +369,27 @@ def load_provider_config(provider_name: str) -> ProviderConfig:
 
     Returns a typed ProviderConfig with connection settings, model metadata,
     and an optional load-balancing endpoint pool (SPEC-017 [[endpoints]]).
+
+    Layered like the global config: the packaged provider file is the base, and
+    a ``[providers.<name>]`` table in ${ARC_CONFIG_DIR:-~/.arc}/arcllm.toml
+    deep-merges over it. That is how a deployment points a provider at its own
+    endpoint — the packaged default cannot know a private host, and editing an
+    installed package to say so would put one machine's address in every
+    machine's copy. The merged result is validated like any other, so an
+    override cannot buy itself a rule the package would refuse.
+
     Raises ArcLLMConfigError on any failure.
     """
     _validate_provider_name(provider_name)
     config_path = _get_config_dir() / "providers" / f"{provider_name}.toml"
     data = _load_toml_file(config_path, f"provider config '{provider_name}'")
+
+    user_path = _user_config_path()
+    if user_path is not None:
+        user_data = _load_toml_file(user_path, f"user config ({user_path})")
+        overrides = user_data.get("providers", {})
+        if isinstance(overrides, dict) and provider_name in overrides:
+            data = _deep_merge(data, overrides[provider_name])
 
     try:
         provider_settings = ProviderSettings(**data.get("provider", {}))

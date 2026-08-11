@@ -24,9 +24,10 @@
 # and this file supplies only what arcllm must know before the first request:
 # the wire format, where to reach it, and which key to present.
 #
-# base_url is overridden per deployment via LITELLM_BASE_URL — the default
-# below is the docker-compose service name, which is right inside a compose
-# network and wrong everywhere else.
+# base_url is overridden per deployment in ${ARC_CONFIG_DIR:-~/.arc}/arcllm.toml
+# under [providers.litellm.provider] — the default below is the docker-compose
+# service name, which is right inside a compose network and wrong everywhere
+# else.
 
 [provider]
 api_format = "openai-chat"
