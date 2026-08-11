@@ -81,6 +81,7 @@ class ArcMemoryBrain:
         identity: AgentIdentity | None = None,
         policy_pipeline: PolicyPipeline | None = None,
         react_loop: ReactLoop = run_react_loop,
+        store_raw_bodies: bool = False,
     ) -> None:
         if not agent_did:
             raise ValueError("ArcMemoryBrain requires an agent_did (no memory without identity)")
@@ -97,6 +98,7 @@ class ArcMemoryBrain:
         self._identity = identity
         self._policy = policy_pipeline
         self._react_loop = react_loop
+        self._store_raw_bodies = store_raw_bodies
         self._db = MemoryDB(self._workspace)
         self._graph = WeightedGraph(self._db, self._cfg)
         self._bundles: dict[str, _ScopeBundle] = {}
@@ -281,6 +283,7 @@ class ArcMemoryBrain:
                 identity=self._identity,
                 policy_pipeline=self._policy,
                 react_loop=self._react_loop,
+                store_raw_bodies=self._store_raw_bodies,
             )
             if self._distiller is not None
             else None

@@ -102,6 +102,7 @@ async def run_react_loop(
     max_tokens: int,
     timeout_seconds: float,
     actor_did: str,
+    store_raw_bodies: bool = False,
 ) -> ReactOutcome:
     """Run one bounded ReAct loop over the memory tools; never raise, degrade instead.
 
@@ -109,6 +110,12 @@ async def run_react_loop(
     loop). The wall-clock cap is enforced with ``asyncio.timeout`` because arcrun
     has no run-level timeout param; a breach returns a failed ``completion_payload``
     rather than raising, so both paths funnel into the degrade signal.
+
+    ``store_raw_bodies`` is this internal loop's OWN capture setting, not
+    inherited from the caller's turn — arcrun defaults it False, so without
+    threading it explicitly every memory-tool call here (search_similar_entity,
+    list_procedures, ...) records only digests, never the args/result an
+    operator needs to see why a merge/search did or didn't fire.
     """
     if not _ARCRUN_AVAILABLE:
         return ReactOutcome(degraded=True, reason="arcrun-absent")
@@ -124,6 +131,7 @@ async def run_react_loop(
                 max_turns=max_turns,
                 max_tokens=max_tokens,
                 actor_did=actor_did,
+                store_raw_bodies=store_raw_bodies,
             )
     except TimeoutError:
         return ReactOutcome(degraded=True, reason="timeout")

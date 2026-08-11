@@ -54,6 +54,7 @@ async def run_agentic_consolidation(
     config: MemoryConfig,
     actor_did: str,
     react_loop: ReactLoop = run_react_loop,
+    store_raw_bodies: bool = False,
 ) -> AgenticResult:
     """Run one bounded agentic consolidation; never raise, degrade on breach/timeout.
 
@@ -72,6 +73,7 @@ async def run_agentic_consolidation(
         max_tokens=config.consolidate_agent_max_tokens,
         timeout_seconds=config.consolidate_agent_timeout_seconds,
         actor_did=actor_did,
+        store_raw_bodies=store_raw_bodies,
     )
     return AgenticResult(
         degraded=outcome.degraded,

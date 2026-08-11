@@ -62,6 +62,49 @@ async def test_arcrun_absent_degrades(monkeypatch: pytest.MonkeyPatch) -> None:
     assert out.reason == "arcrun-absent"
 
 
+async def test_store_raw_bodies_defaults_false_and_forwards_to_arcrun_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without an explicit True, memory-tool calls in this loop record only
+    digests — the same silent gap that left search_similar_entity/list_procedures
+    showing no input/output in the dashboard despite `capture_tool_io=true` on
+    the agent's own main loop (a SEPARATE arcrun.run() invocation from this one)."""
+    captured: dict[str, Any] = {}
+
+    async def _capture_run(*_a: Any, **kw: Any) -> _FakeResult:
+        captured.update(kw)
+        return _FakeResult("done", completion_payload={"status": "success"})
+
+    monkeypatch.setattr(react_adapter, "_ARCRUN_AVAILABLE", True)
+    monkeypatch.setattr(react_adapter, "run", _capture_run)
+    monkeypatch.setattr(react_adapter, "StaticProvider", lambda tools: object())
+
+    await run_react_loop(
+        model=object(),
+        tools=[],
+        system_prompt="s",
+        task="t",
+        max_turns=4,
+        max_tokens=1000,
+        timeout_seconds=5.0,
+        actor_did="did:arc:default:memory/abc",
+    )
+    assert captured["store_raw_bodies"] is False
+
+    await run_react_loop(
+        model=object(),
+        tools=[],
+        system_prompt="s",
+        task="t",
+        max_turns=4,
+        max_tokens=1000,
+        timeout_seconds=5.0,
+        actor_did="did:arc:default:memory/abc",
+        store_raw_bodies=True,
+    )
+    assert captured["store_raw_bodies"] is True
+
+
 async def test_timeout_degrades(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _hang(*_a: Any, **_k: Any) -> Any:
         import asyncio

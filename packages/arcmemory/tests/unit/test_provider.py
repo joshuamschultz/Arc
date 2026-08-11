@@ -63,6 +63,28 @@ def test_build_brain_threads_model_identity_and_pipeline(
     assert recorded["policy_pipeline"] is pipe
 
 
+def test_build_brain_capture_tool_io_threads_to_store_raw_bodies(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`[modules.memory.config.backend] capture_tool_io` is this loop's OWN
+    body-capture switch — it does not inherit the agent's main-loop
+    telemetry.capture_tool_io (a separate arcrun.run() invocation), so without
+    this thread every memory tool call records only digests, never a body."""
+    recorded: dict[str, object] = {}
+
+    class _SpyBrain:
+        def __init__(self, _workspace: Path, _agent_did: str, **kw: object) -> None:
+            recorded.update(kw)
+
+    monkeypatch.setattr("arcmemory.provider.ArcMemoryBrain", _SpyBrain)
+
+    build_brain(_context(tmp_path, embed_backend="none"))
+    assert recorded["store_raw_bodies"] is False
+
+    build_brain(_context(tmp_path, embed_backend="none", capture_tool_io=True))
+    assert recorded["store_raw_bodies"] is True
+
+
 def test_build_brain_dynamics_override_reaches_config(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
