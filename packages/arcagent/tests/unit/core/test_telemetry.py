@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterator
 
 import pytest
 from opentelemetry import trace
@@ -15,10 +16,27 @@ from arcagent.core.telemetry import AgentTelemetry
 
 
 @pytest.fixture(autouse=True)
-def _otel_setup() -> None:
-    """Set up a fresh in-memory OTel provider for each test."""
-    provider = TracerProvider()
-    trace.set_tracer_provider(provider)
+def _otel_setup() -> Iterator[None]:
+    """A fresh in-memory OTel provider per test, put back afterwards.
+
+    The tracer provider is process-global and ``set_tracer_provider`` is
+    guarded by a set-once latch: after the first call it logs "Overriding of
+    current TracerProvider is not allowed" and does nothing. So this fixture
+    gave the FIRST test a provider and every later one that same provider,
+    never a fresh one — and never gave it back, so every later test in the
+    process, in any package, inherited an SDK provider where the library
+    default is a proxy.
+
+    Assigning the module global is what makes both halves work: it sidesteps
+    the latch, so each test really does get a clean provider, and it is the
+    only way to put the previous one back. OTel exposes no public reset.
+    """
+    previous = trace._TRACER_PROVIDER
+    trace._TRACER_PROVIDER = TracerProvider()
+    try:
+        yield
+    finally:
+        trace._TRACER_PROVIDER = previous
 
 
 @pytest.fixture()

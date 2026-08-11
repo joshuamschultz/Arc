@@ -31,10 +31,20 @@ class TestBaseModuleTracer:
     """Tests for _tracer property."""
 
     def test_tracer_returns_tracer(self):
-        """_tracer returns an OTel Tracer instance."""
+        """_tracer returns a usable OTel tracer, configured provider or not.
+
+        Asserting ``ProxyTracer`` asserted that nothing had installed a real
+        SDK provider yet — process-global state this module does not own and
+        no arcllm behavior depends on. Any test anywhere in the process that
+        calls ``set_tracer_provider`` flipped this to an SDK ``Tracer`` and
+        failed it, which is exactly what happened once the whole repo could
+        run in one process.
+        """
         module = BaseModule({}, _make_inner())
         tracer = module._tracer
-        assert isinstance(tracer, trace.ProxyTracer)
+        assert isinstance(tracer, trace.Tracer)
+        with tracer.start_as_current_span("probe") as span:
+            assert span is not None
 
     def test_tracer_uses_arcllm_name(self):
         """_tracer calls get_tracer with 'arcllm'."""

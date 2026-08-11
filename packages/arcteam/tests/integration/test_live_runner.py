@@ -67,8 +67,16 @@ class Registry:
 
 
 @pytest.fixture
-async def deployment(tmp_path: Path) -> Any:
-    """A real workspace: operator key, workflow bundle, and store backend."""
+async def deployment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
+    """A real workspace: operator key, workflow bundle, and store backend.
+
+    ``ARC_CONFIG_DIR`` points at that workspace so the key the host resolves for
+    itself — ``<config dir>/operator/operator.key`` — is the one written here.
+    Left unset, the host reaches into the developer's real ``~/.arc`` and this
+    file's verdict depends on whether that machine happens to have a key, and on
+    whatever any earlier test in the process left the variable pointing at.
+    """
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
     key_path = tmp_path / "operator" / "operator.key"
     OperatorKey.generate().save(key_path)
 

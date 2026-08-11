@@ -37,11 +37,13 @@ federal supply-chain controls.
 
 ### Key findings
 
-1. **CRITICAL patched in the signing path.** `cryptography` was bumped `46.0.5 -> 46.0.7`,
-   closing **PYSEC-2026-36 (CVE-2026-39892, CVSS 9.8)**. This library underpins Arc's
-   "Sign" and "Identity" pillars (artifact verification, keypairs). One residual HIGH
-   (GHSA-537c-gmf6-5ccf, statically-linked OpenSSL) needs `48.0.1`, held back by the
-   `<47.0` FIPS-attribute cap in the `trace-encryption` extra.
+1. **The signing path is fully patched.** `cryptography` is at `50.0.0`, closing the
+   earlier CRITICAL (CVE-2026-39892) and every residual: the PKCS7 Bleichenbacher oracle,
+   the cert-chain-build DoS, the statically-linked-OpenSSL HIGH (GHSA-537c-gmf6-5ccf),
+   and the name-constraint wildcard escape (PYSEC-2026-3554) that let an invalid
+   certificate chain verify. This library underpins Arc's "Sign" and "Identity" pillars
+   (artifact verification, keypairs) and the mTLS trust path, so no cap is kept over it:
+   FIPS posture derives from the linked OpenSSL provider, never the package version.
 2. **Runtime attack surface is materially smaller than raw counts suggest.** Of
    3 vulnerable packages, only **1** ship in the
    deployed runtime. The 4 dev/build-only findings (from `pip-audit`'s own
@@ -316,9 +318,10 @@ License metadata extracted from installed distribution metadata
   import-only.
 
 ### Federal ATO / RMF assessors
-- The `cryptography` CRITICAL (CVE-2026-39892, CVSS 9.8) is **remediated** at 46.0.7; the
-  residual HIGH (GHSA-537c-gmf6-5ccf) remains a POA&M item, as it is a **runtime**
-  cryptographic component (relevant to SC-12/SC-13 and the platform's Sign pillar).
+- `cryptography` is **fully remediated** at 50.0.0 with no residual POA&M item: the
+  CRITICAL (CVE-2026-39892) and every subsequent advisory against this **runtime**
+  cryptographic component are closed (SC-12/SC-13, the Sign pillar, and the mTLS
+  certificate-validation path). The POA&M in `sbom/security-suppressions.txt` is empty.
 - The 4 dev/build-only findings should be documented as **not in the
   authorization boundary** of the deployed runtime, but **within the CI/CD boundary**
   (address per your pipeline's risk posture).

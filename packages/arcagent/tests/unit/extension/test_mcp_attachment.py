@@ -31,9 +31,11 @@ Three splits carry the rest of the file:
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import logging
+from functools import cached_property
 from types import ModuleType
 from typing import TYPE_CHECKING, Any
 
@@ -911,20 +913,37 @@ class _FakeStdin:
         return None
 
 
+def _fed_reader(payload: bytes) -> asyncio.StreamReader:
+    """A closed reader holding exactly ``payload``. Binds the running loop, so build it late."""
+    reader = asyncio.StreamReader()
+    reader.feed_data(payload)
+    reader.feed_eof()
+    return reader
+
+
 class _FakeProcess:
-    """A subprocess whose streams are real asyncio readers fed with fixed bytes."""
+    """A subprocess whose streams are real asyncio readers fed with fixed bytes.
+
+    The readers are built on first touch rather than in ``__init__``:
+    ``StreamReader()`` resolves the thread's current event loop, which a
+    synchronous test has none of once anything in the process has run
+    ``asyncio.run`` (it clears the loop on close). The sync tests here only
+    ever want the process object, never its streams.
+    """
 
     def __init__(self, stdout: bytes, stderr: bytes = b"") -> None:
-        import asyncio
-
         self.returncode: int | None = None
         self.stdin = _FakeStdin()
-        self.stdout = asyncio.StreamReader()
-        self.stdout.feed_data(stdout)
-        self.stdout.feed_eof()
-        self.stderr = asyncio.StreamReader()
-        self.stderr.feed_data(stderr)
-        self.stderr.feed_eof()
+        self._stdout_bytes = stdout
+        self._stderr_bytes = stderr
+
+    @cached_property
+    def stdout(self) -> asyncio.StreamReader:
+        return _fed_reader(self._stdout_bytes)
+
+    @cached_property
+    def stderr(self) -> asyncio.StreamReader:
+        return _fed_reader(self._stderr_bytes)
 
 
 class _FakeLauncher:

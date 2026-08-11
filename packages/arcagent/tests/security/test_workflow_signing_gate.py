@@ -66,16 +66,14 @@ def rogue() -> OperatorKey:
 def _configure(tmp_path: Path, tier: str, operator: OperatorKey) -> Any:
     """Bring up the workflows runtime exactly as the agent lifecycle does.
 
-    ``ARC_CONFIG_DIR`` is pinned to the tmp path because that is where bundles
-    now live — one deployment directory the operator signs into, shared by the
-    runner and every surface, not a per-agent workspace. A test that left it
-    unset would author into the developer's real ``~/.arc``.
+    ``ARC_CONFIG_DIR`` is pinned to this same tmp path by the autouse
+    ``_clean`` fixture, because that is where bundles now live — one deployment
+    directory the operator signs into, shared by the runner and every surface,
+    not a per-agent workspace. A test that left it unset would author into the
+    developer's real ``~/.arc``.
     """
-    import os
-
     from arcagent.modules.workflows import _runtime
 
-    os.environ["ARC_CONFIG_DIR"] = str(tmp_path)
     _runtime.reset()
     _runtime.configure(
         config={"enabled": True},

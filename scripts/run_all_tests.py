@@ -1,9 +1,27 @@
 """Run every Arc test suite in isolated pytest processes.
 
-Arc packages intentionally ship independently installable ``tests`` packages.
-Collecting all of them in one pytest process aliases their ``conftest`` modules,
-so the trustworthy monorepo gate is one process per package plus one for the
-repository-level integration and architecture tests.
+One process per package, plus one for the repository-level integration and
+architecture tests.
+
+This is no longer about collection. Module names used to alias, and a whole-repo
+run died in collection while silently dropping the trees it could not name; that
+is fixed, and ``uv run pytest`` from the root now collects the entire suite with
+zero errors. Keep running it — it is the only check that proves nothing is
+silently uncollected, which per-package runs structurally cannot tell you.
+
+Neither is it about process-global leakage any more. Three leaks did cross
+package boundaries in a shared interpreter, and all three are now fixed at the
+source rather than papered over by separate processes: the OpenTelemetry global
+tracer provider (set-once, never restored), the asyncio current event loop
+(``asyncio.run`` clears it, and a sync test built a loop-bound
+``StreamReader``), and ``ARC_CONFIG_DIR`` (assigned through raw ``os.environ``
+with no teardown, repointing the deployment root for every later package). A
+whole-repo run is green, so separate processes buy no isolation this suite
+depends on.
+
+What this script is now is the per-package gate: it proves each package's suite
+stands on its own, which is how CI runs them and what a standalone-installable
+package has to be able to claim.
 """
 
 from __future__ import annotations

@@ -50,14 +50,18 @@ class _RecordingPlane:
 
 
 @pytest.fixture
-def plane(tmp_path: Path) -> Iterator[_RecordingPlane]:
-    """Configure the workflows runtime with a recording control plane."""
+def plane(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[_RecordingPlane]:
+    """Configure the workflows runtime with a recording control plane.
+
+    ``ARC_CONFIG_DIR`` goes through monkeypatch so it is put back: a raw
+    ``os.environ`` assignment outlives this test and every package after it,
+    pointing the whole process's deployment root at a tmp dir with no operator
+    key in it.
+    """
     from arcagent.modules.workflows import _runtime
 
     recorder = _RecordingPlane()
-    import os
-
-    os.environ["ARC_CONFIG_DIR"] = str(tmp_path)
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
     _runtime.reset()
     _runtime.configure(
         config={"enabled": True},

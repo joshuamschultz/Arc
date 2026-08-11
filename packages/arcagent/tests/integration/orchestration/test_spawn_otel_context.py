@@ -176,14 +176,20 @@ class TestOTelWithRealOTel:
         from opentelemetry import trace
         from opentelemetry.sdk.trace import TracerProvider
 
-        provider = TracerProvider()
-        trace.set_tracer_provider(provider)
+        # Assign the process-global directly and put it back. set_tracer_provider
+        # is latched set-once, so it would silently no-op if anything already set
+        # one, and it offers no way to restore the previous value — leaving an SDK
+        # provider installed for every later test in the process, in any package.
+        previous = trace._TRACER_PROVIDER
+        trace._TRACER_PROVIDER = TracerProvider()
+        try:
+            span, token = _start_child_span("test-span", None, delegation_depth=2)
 
-        span, token = _start_child_span("test-span", None, delegation_depth=2)
+            if span is not None:
+                # Verify the attribute was set
+                attributes = span.attributes if hasattr(span, "attributes") else {}
+                assert attributes.get("arc.delegation.depth") == 2
 
-        if span is not None:
-            # Verify the attribute was set
-            attributes = span.attributes if hasattr(span, "attributes") else {}
-            assert attributes.get("arc.delegation.depth") == 2
-
-        _end_child_span(span, token, "completed")
+            _end_child_span(span, token, "completed")
+        finally:
+            trace._TRACER_PROVIDER = previous
