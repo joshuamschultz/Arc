@@ -57,12 +57,13 @@ See `.claude/steering/product.md#user-personas`. Primary: the operator running a
 - **REQ-315** (story US-8, Must): Every capability working before this feature SHALL work after it; changes SHALL be limited to addition, simplification, consolidation and re-routing, and SHALL NOT remove behaviour an operator depends on.
 - **REQ-316** (story US-8, Must): The agent SHALL continue to write each turn to its session history in the workspace, and that history SHALL remain listable and replayable through the existing dashboard surfaces.
 - **REQ-317** (story US-8, Must): WHEN re-routing leaves a module with no remaining caller THEN that module SHALL be deleted in the same change rather than left unreachable.
+- **REQ-318** (story US-8, Must): WHEN the dashboard replays a session turn containing a media part THEN it SHALL render that part as viewable media or a named file rather than as raw structured data.
 
 ## MoSCoW Priorities
 
 | Priority | Requirements |
 |---|---|
-| Must | REQ-296, REQ-297, REQ-298, REQ-299, REQ-300, REQ-301, REQ-302, REQ-303, REQ-304, REQ-305, REQ-306, REQ-307, REQ-308, REQ-309, REQ-310, REQ-311, REQ-312, REQ-313, REQ-314, REQ-315, REQ-316, REQ-317 |
+| Must | REQ-296, REQ-297, REQ-298, REQ-299, REQ-300, REQ-301, REQ-302, REQ-303, REQ-304, REQ-305, REQ-306, REQ-307, REQ-308, REQ-309, REQ-310, REQ-311, REQ-312, REQ-313, REQ-314, REQ-315, REQ-316, REQ-317, REQ-318 |
 | Should | _(none)_ |
 | Could | _(none)_ |
 | Won't | _(none)_ |
@@ -73,7 +74,7 @@ Framework: `.claude/steering/product.md#success-metrics-framework`. Targets for 
 
 ## Risks and Constraints
 
-Reworking the inbound path touches the only thing currently making agents reachable, so a regression is a total outage of the surface rather than a degraded feature — mitigated by the adapter contract suite and by leaving session, runner and web untouched in this pass. Media in the workspace grows unbounded without retention, which is deliberately out of scope here and flagged. Folding three adapter packages in-tree changes install shape for anyone depending on them as distributions. Broker auto-start introduces a child process into the gateway lifecycle, which must be supervised and torn down or it outlives the parent. Agent-to-agent traffic already depends on the broker, so broker auto-start becomes load-bearing for team coordination and not only for the arcui inbox.
+Reworking the inbound path touches the only thing currently making agents reachable, so a regression is a total outage of the surface rather than a degraded feature — mitigated by the adapter contract suite and by leaving session, runner and web untouched in this pass. Media in the workspace grows unbounded without retention, which is deliberately out of scope here and flagged. Folding three adapter packages in-tree changes install shape for anyone depending on them as distributions. Broker auto-start introduces a child process into the gateway lifecycle, which must be supervised and torn down or it outlives the parent. Agent-to-agent traffic already depends on the broker, so broker auto-start becomes load-bearing for team coordination and not only for the arcui inbox. The dashboard's replay renderer already falls back to raw JSON for block shapes it does not know, so media in history degrades to unreadable-but-present rather than breaking the view; REQ-318 turns that fallback into a real rendering instead of relying on it.
 
 ## Open Questions
 
