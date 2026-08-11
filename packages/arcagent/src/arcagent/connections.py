@@ -36,26 +36,19 @@ credential by writing a config block.
 
 from __future__ import annotations
 
-import contextlib
 import tomllib
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Any, Literal
 
-from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
-from pydantic import ValidationError
+from arctrust.audit import AuditEvent, AuditSink, emit
 
+from arcagent.connection_catalog import AuditChain, CatalogEntry, ClosableSink, catalog
 from arcagent.core.errors import ExtensionError
 from arcagent.core.tier import Tier
 from arcagent.extension.attachment import ExtensionAttachment, ProbeResult, ToolSpec
-from arcagent.extension.catalog import (
-    BUNDLES_DIRNAME,
-    MANIFEST_NAME,
-    ExtensionCatalog,
-    ExtensionResolution,
-    resolve_extension_roots,
-)
+from arcagent.extension.catalog import BUNDLES_DIRNAME, resolve_extension_roots
 from arcagent.extension.coordinates import is_coordinate
 from arcagent.extension.coordinates import refusal as coordinate_refusal
 from arcagent.extension.grants import (
@@ -72,7 +65,6 @@ from arcagent.extension.manifest import (
     DeclaredTool,
     HostRequirement,
     SecretRequirement,
-    load_manifest,
 )
 from arcagent.extension.secrets import Secret, SecretRef, SecretStore, select_secret_backend
 from arcagent.extension.state import ConnectionStateStore, open_connection_state
@@ -348,159 +340,6 @@ def _data_dir(given: Path | str | None) -> Path:
     from arcstore import resolve_data_dir
 
     return Path(resolve_data_dir(None))
-
-
-# ---------------------------------------------------------------------------
-# The audit chain
-# ---------------------------------------------------------------------------
-
-
-class ClosableSink(Protocol):
-    """An audit sink whose lifetime the caller hands to this module."""
-
-    def write(self, event: AuditEvent) -> None: ...
-
-    def close(self) -> None: ...
-
-
-class AuditChain:
-    """Where connector verdicts are recorded — and who is responsible for closing it.
-
-    A :class:`~arctrust.WormSink` holds an exclusive ``flock`` for its lifetime, so
-    one left open locks every later writer out of the deployment's chain. Which is
-    why a caller describes its chain once here and never holds an open sink: a
-    command-line surface hands in an opener and every verb opens and closes its own
-    (:meth:`opened_by`); a long-running server hands in the chain it already holds
-    and this module never closes it (:meth:`held`).
-
-    The default discards — the right answer for a read-only caller that takes no
-    verdict, and never a silent downgrade of one that does.
-    """
-
-    def __init__(
-        self,
-        *,
-        sink: AuditSink | None = None,
-        opener: Callable[[], ClosableSink] | None = None,
-    ) -> None:
-        self._sink = sink
-        self._opener = opener
-
-    @classmethod
-    def held(cls, sink: AuditSink) -> AuditChain:
-        """A chain the caller already holds open. Written to, never closed."""
-        return cls(sink=sink)
-
-    @classmethod
-    def opened_by(cls, opener: Callable[[], ClosableSink]) -> AuditChain:
-        """A chain opened for one verb and closed the moment that verb ends."""
-        return cls(opener=opener)
-
-    @contextlib.contextmanager
-    def open(self) -> Iterator[AuditSink]:
-        """Yield the sink one verb records into, closing it if this chain owns it."""
-        if self._opener is None:
-            yield self._sink if self._sink is not None else NullSink()
-            return
-        sink = self._opener()
-        try:
-            yield sink
-        finally:
-            sink.close()
-
-
-# ---------------------------------------------------------------------------
-# What could be connected
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class CatalogEntry:
-    """One bundle on the search path, and what connecting it would give the agent.
-
-    A directory that will not parse keeps its place with ``error`` saying why: one
-    broken bundle blanking a catalog is a far worse failure than a listed bundle an
-    operator cannot install. Every other field is empty on such an entry.
-    """
-
-    name: str
-    path: Path
-    official: bool
-    display_name: str = ""
-    version: str = ""
-    description: str = ""
-    error: str = ""
-    attachment: str = ""
-    tier_floor: str = ""
-    approval_default: str = ""
-    secrets: tuple[SecretRequirement, ...] = ()
-    host_requires: tuple[HostRequirement, ...] = ()
-    tools: tuple[DeclaredTool, ...] = ()
-
-
-def catalog(
-    *,
-    roots: Sequence[Path],
-    tier: Tier = Tier.PERSONAL,
-    audit_sink: AuditSink | None = None,
-) -> tuple[CatalogEntry, ...]:
-    """Every bundle the search path holds, in the order the path defines.
-
-    Args:
-        roots: The bundle search path — :func:`resolve_roots` composes it.
-        tier: The tier manifests are parsed at. A bundle this tier refuses is listed
-            with that refusal as its reason rather than advertised as installable.
-        audit_sink: Where the catalog would record a verdict. Listing takes none —
-            the refusal an operator acts on is taken (and recorded) by an install.
-
-    Returns:
-        One entry per name, never raising on a bundle it cannot read.
-    """
-    listing = ExtensionCatalog(
-        roots=roots, tier=tier, audit_sink=audit_sink if audit_sink is not None else NullSink()
-    )
-    return tuple(_catalog_entry(resolution, tier) for resolution in listing.available())
-
-
-def _catalog_entry(resolution: ExtensionResolution, tier: Tier) -> CatalogEntry:
-    """Read one resolved bundle into a listing entry, never raising."""
-    entry = CatalogEntry(
-        name=resolution.name,
-        path=resolution.path,
-        official=resolution.official,
-        display_name=resolution.display_name or resolution.name,
-        version=resolution.version,
-        description=resolution.description,
-        error=resolution.error,
-    )
-    if resolution.error:
-        return entry
-    try:
-        text = (resolution.path / MANIFEST_NAME).read_text(encoding="utf-8")
-        manifest = load_manifest(text, tier=tier)
-    except (OSError, ValueError, ValidationError, ExtensionError) as exc:
-        return CatalogEntry(
-            name=resolution.name,
-            path=resolution.path,
-            official=resolution.official,
-            display_name=resolution.name,
-            error=f"{type(exc).__name__}: {exc}",
-        )
-    header = manifest.extension
-    return CatalogEntry(
-        name=resolution.name,
-        path=resolution.path,
-        official=resolution.official,
-        display_name=header.label,
-        version=header.version,
-        description=header.description,
-        attachment=header.attachment,
-        tier_floor=header.tier_floor.value,
-        approval_default=manifest.approval.default,
-        secrets=tuple(manifest.secrets),
-        host_requires=tuple(manifest.host_requires),
-        tools=tuple(manifest.tools.declared),
-    )
 
 
 # ---------------------------------------------------------------------------

@@ -80,8 +80,8 @@ class TestExtCreate:
         """arc ext create produces a file stamped with the @tool decorator (SPEC-021)."""
         _arc("ext", "create", "my-ext", "--dir", str(tmp_path))
         content = (tmp_path / "my-ext.py").read_text()
-        assert "@tool(" in content
-        assert "from arcagent.tools import tool" in content
+        assert "@arcagent.tool(" in content
+        assert "import arcagent" in content
         # Legacy factory pattern must not reappear.
         assert "def extension(" not in content
 

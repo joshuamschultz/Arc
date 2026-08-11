@@ -175,6 +175,26 @@ class TestReplan:
 
 class TestAggregateBudget:
     @pytest.mark.asyncio
+    async def test_zero_reservations_fail_instead_of_spinning(self, tmp_path: Path) -> None:
+        sink = _CapturingSink()
+        store = _store(tmp_path, sink)
+        plan = _plan([PlanStep(step_id="a", description="a")], max_replans=0)
+        store.save(plan, action="plan.created")
+
+        class _NoHeadroom:
+            async def run_step(self, step: PlanStep, *, plan: Plan) -> StepOutcome:
+                raise AssertionError("concurrent executor should use run_ready")
+
+            async def run_ready(self, steps: list[PlanStep], *, plan: Plan) -> list[StepOutcome]:
+                return []
+
+        final = await PlanOrchestrator(store, _NoHeadroom(), replan_fn=_never_replan).execute(plan)
+
+        assert final.status is PlanStatus.FAILED
+        assert final.steps[0].status is StepStatus.FAILED
+        assert final.steps[0].failure_reason == "no ready step could reserve execution budget"
+
+    @pytest.mark.asyncio
     async def test_runaway_plan_stops_at_aggregate_ceiling(self, tmp_path: Path) -> None:
         """Cumulative step spend halts a multi-step plan — not per-step only."""
         sink = _CapturingSink()

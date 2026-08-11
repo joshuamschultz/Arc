@@ -21,7 +21,7 @@ import uuid
 from collections.abc import Iterable, Sequence
 from typing import Any, Protocol
 
-from arcllm import Message, Tool
+import arcrun
 from arcprompt import load_stock
 from pydantic import BaseModel, Field, ValidationError
 
@@ -62,8 +62,8 @@ class _PlanDraft(BaseModel):
     steps: list[_StepDraft]
 
 
-def _plan_tool() -> Tool:
-    return Tool(
+def _plan_tool() -> arcrun.ModelTool:
+    return arcrun.ModelTool(
         name=_TOOL_NAME,
         description=(
             "Emit a plan as a DAG of steps. Each step has a unique step_id, a "
@@ -74,7 +74,7 @@ def _plan_tool() -> Tool:
     )
 
 
-async def _invoke_for_draft(model: PlanModel, messages: list[Message]) -> _PlanDraft:
+async def _invoke_for_draft(model: PlanModel, messages: list[arcrun.Message]) -> _PlanDraft:
     """One forced structured call; validate the arguments into a plan draft."""
     response = await model.invoke(
         messages,
@@ -142,8 +142,8 @@ async def decompose(
 ) -> Plan:
     """Goal -> validated, grounded :class:`Plan` (ACTIVE) — never persisted here."""
     messages = [
-        Message(role="system", content=load_stock("arcagent", "planner_system")),
-        Message(role="user", content=f"Goal: {goal}"),
+        arcrun.Message(role="system", content=load_stock("arcagent", "planner_system")),
+        arcrun.Message(role="user", content=f"Goal: {goal}"),
     ]
     draft = await _invoke_for_draft(model, messages)
     steps = _steps_from_draft(draft)
@@ -184,8 +184,8 @@ async def replan(
     """
     succeeded = [s for s in plan.steps if s.status is StepStatus.SUCCEEDED]
     messages = [
-        Message(role="system", content=load_stock("arcagent", "planner_system")),
-        Message(
+        arcrun.Message(role="system", content=load_stock("arcagent", "planner_system")),
+        arcrun.Message(
             role="user",
             content=(
                 f"Goal: {plan.goal}\n\n"

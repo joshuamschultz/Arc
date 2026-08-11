@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from arcllm.types import ImageBlock, Message, TextBlock, Tool
+import arcrun
 
 _OUTPUT_TOOL = "emit_output"
 
@@ -39,16 +39,16 @@ def _arc_content(content: Any) -> str | list[Any]:
     for part in content:
         kind = getattr(part, "type", None)
         if kind == "text":
-            blocks.append(TextBlock(text=part.text))
+            blocks.append(arcrun.TextBlock(text=part.text))
         elif kind == "image_url":
             image = part.image_url
-            blocks.append(ImageBlock(source=image.url, media_type=image.media_type))
+            blocks.append(arcrun.ImageBlock(source=image.url, media_type=image.media_type))
     return blocks or ""
 
 
-def _to_arc_messages(bu_messages: list[Any]) -> list[Message]:
+def _to_arc_messages(bu_messages: list[Any]) -> list[arcrun.Message]:
     """Map browser-use messages to arcllm messages (role + content)."""
-    return [Message(role=m.role, content=_arc_content(m.content)) for m in bu_messages]
+    return [arcrun.Message(role=m.role, content=_arc_content(m.content)) for m in bu_messages]
 
 
 class ArcLLMChatModel:
@@ -95,7 +95,9 @@ class ArcLLMChatModel:
             completion=completion, usage=usage, stop_reason=resp.stop_reason
         )
 
-    async def _invoke_structured(self, arc_messages: list[Message], output_format: Any) -> Any:
+    async def _invoke_structured(
+        self, arc_messages: list[arcrun.Message], output_format: Any
+    ) -> Any:
         """Force a structured result and validate it into ``output_format``.
 
         Uses a single ``emit_output`` tool whose parameters are the target
@@ -103,7 +105,7 @@ class ArcLLMChatModel:
         adapters. Falls back to parsing the message content as JSON when a
         model answers in prose instead of calling the tool.
         """
-        tool = Tool(
+        tool = arcrun.ModelTool(
             name=_OUTPUT_TOOL,
             description="Return the structured result by calling this tool.",
             parameters=output_format.model_json_schema(),

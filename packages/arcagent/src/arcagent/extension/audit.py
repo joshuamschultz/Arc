@@ -30,7 +30,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from arcllm._pii import SECRETS_CATEGORY, RegexPiiDetector, redact_text
+import arctrust
 from arctrust.audit import AuditEvent, AuditSink, emit
 
 from arcagent.core.tier import Tier
@@ -59,7 +59,7 @@ class AuditRedactor:
         self._tier = tier
         # SECRETS only: the point of REQ-276 is reconstruction, so ordinary PII
         # stays. A leaked credential is the one thing that must not survive.
-        self._detector = RegexPiiDetector(entities={"allow": [SECRETS_CATEGORY]})
+        self._detector = arctrust.RegexPiiDetector(entities={"allow": [arctrust.SECRETS_CATEGORY]})
 
     def record_call(
         self,
@@ -166,7 +166,7 @@ class AuditRedactor:
         matches = self._detector.detect(text)
         if not matches:
             return text
-        return redact_text(text, matches)
+        return arctrust.redact_text(text, matches)
 
 
 __all__ = ["CREDENTIAL_READ_TAG", "AuditRedactor"]

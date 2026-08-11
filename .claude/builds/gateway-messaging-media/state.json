@@ -1,0 +1,28 @@
+{
+  "feature": "gateway-messaging-media",
+  "brainstorm_path": null,
+  "current_category": "architecture",
+  "current_decision": 2,
+  "decisions": {
+    "D-620": "Inbound envelope is a parts list (text is just a part), mirroring the arcllm content-block union",
+    "D-621": "arcagent translates a workspace MediaPart into a content block at its own boundary; reaches the types through the arcrun facade (import arcrun, qualified names), never arcllm directly"
+  },
+  "auto_applied": [],
+  "locked_decisions": [
+    "Adapters become in-tree optional modules of arcgateway, not separate packages (user directive)",
+    "Gateway never imports arcllm (user directive, CLAUDE.md line 23)"
+  ],
+  "open_questions": [
+    "arcui Messages requires a NATS broker; _connect_backend fails open to None and routes report unavailable. Verify nats-server is running on the DGX.",
+    "CLAUDE.md line 138 still says arcagent -> both, contradicting line 23.",
+    "Tree is red: 44 failures from the in-flight decoupling refactor."
+  ],
+  "notes": [
+    "Verified on current tree: telegram registers filters.TEXT only (photo never handled); InboundEvent.message is str; adapter send() is text-only; deliver_message only bus-published at agent.py:491.",
+    "Refactor introduced _run_coordinator replacing _active_runs."
+  ],
+  "meta": {
+    "last_updated": "2026-08-11",
+    "sessions": 1
+  }
+}

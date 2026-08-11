@@ -298,9 +298,13 @@ async def wired(tmp_path: Path, monkeypatch: Any) -> Any:
 
     monkeypatch.setattr(host_mod, "_resolve_runner_key_path", lambda: key_path)
     monkeypatch.setattr(host_mod, "_nats_url", lambda: "")
-    monkeypatch.setattr(
-        "arcagent.core.arcteam_bootstrap.make_backend", _shared_backend, raising=False
-    )
+    # Patch the name the host actually calls. The host reaches ArcAgent through
+    # its root facade (``arcagent.make_backend``), which binds the function at
+    # import time — patching the defining submodule leaves that binding alone.
+    # No ``raising=False``: a silent miss here degrades owners to "no registry"
+    # and the run fails at node 1 for a reason that looks nothing like a stale
+    # patch target.
+    monkeypatch.setattr("arcagent.make_backend", _shared_backend)
     monkeypatch.setattr("arcstore.config.store_db_path", lambda _: tmp_path / "store.db")
 
     yield tmp_path, key_path, team_backend, registry

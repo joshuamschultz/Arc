@@ -29,7 +29,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
-from arcagent.connections import CatalogEntry, Connections, ConnectorPlan, ExtensionError
+import arcagent
 from textual import work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -121,12 +121,12 @@ class ConnectScreen(ModalScreen[ConnectOutcome | None]):
 
     BINDINGS: ClassVar[list[Any]] = [("escape", "cancel", "Cancel")]
 
-    def __init__(self, connections: Connections, agent: str) -> None:
+    def __init__(self, connections: arcagent.Connections, agent: str) -> None:
         super().__init__()
         self._connections = connections
         self._agent = agent
-        self._bundles: tuple[CatalogEntry, ...] = ()
-        self._plan: ConnectorPlan | None = None
+        self._bundles: tuple[arcagent.CatalogEntry, ...] = ()
+        self._plan: arcagent.ConnectorPlan | None = None
         self._fields: list[tuple[str, Input]] = []
 
     def compose(self) -> ComposeResult:
@@ -148,7 +148,7 @@ class ConnectScreen(ModalScreen[ConnectOutcome | None]):
         """Fill the picker from the extension search path."""
         try:
             found = self._connections.catalog()
-        except ExtensionError as exc:
+        except arcagent.ExtensionError as exc:
             self.dismiss(ConnectOutcome(False, (f"Could not read the bundles: {exc.message}",)))
             return
         except Exception as exc:  # reason: a picker that cannot list has nothing to offer
@@ -173,7 +173,7 @@ class ConnectScreen(ModalScreen[ConnectOutcome | None]):
         else:
             self.query_one("#connect-review", Button).disabled = True
 
-    def _hint(self, found: tuple[CatalogEntry, ...]) -> str:
+    def _hint(self, found: tuple[arcagent.CatalogEntry, ...]) -> str:
         """Say where the bundles came from, and name any that would not parse."""
         roots = (
             ", ".join(str(root) for root in self._connections.world.extension_roots)
@@ -215,7 +215,7 @@ class ConnectScreen(ModalScreen[ConnectOutcome | None]):
             # be held — planning at the deployment floor and granting afterwards
             # is what ``install`` refuses as too lax.
             plan = self._connections.plan(choice.name, instance, agents=(self._agent,))
-        except ExtensionError as exc:
+        except arcagent.ExtensionError as exc:
             self.dismiss(
                 ConnectOutcome(False, (f"Could not connect {choice.name}: {exc.message}",))
             )
@@ -243,7 +243,7 @@ class ConnectScreen(ModalScreen[ConnectOutcome | None]):
         )
         await self._ask_for_credentials(plan)
 
-    async def _ask_for_credentials(self, plan: ConnectorPlan) -> None:
+    async def _ask_for_credentials(self, plan: arcagent.ConnectorPlan) -> None:
         """Mount one field per declared value, masking the ones that are credentials.
 
         The manifest decides which, per field. Masking a base URL protects nothing
@@ -277,7 +277,7 @@ class ConnectScreen(ModalScreen[ConnectOutcome | None]):
         self._run_install(self._plan, values)
 
     @work(exclusive=True)
-    async def _run_install(self, plan: ConnectorPlan, values: dict[str, str]) -> None:
+    async def _run_install(self, plan: arcagent.ConnectorPlan, values: dict[str, str]) -> None:
         """Drive the shared install path off the UI's critical path.
 
         An install opens a live connection, so it is the one step that can take
@@ -286,7 +286,7 @@ class ConnectScreen(ModalScreen[ConnectOutcome | None]):
         """
         try:
             report = await self._connections.install(plan, values, agents=(self._agent,))
-        except ExtensionError as exc:
+        except arcagent.ExtensionError as exc:
             self._finish(
                 ConnectOutcome(False, (f"Could not connect {plan.extension}: {exc.message}",))
             )
@@ -314,7 +314,7 @@ class ConnectScreen(ModalScreen[ConnectOutcome | None]):
         if self.is_running:
             self.dismiss(outcome)
 
-    def _chosen_bundle(self) -> CatalogEntry | None:
+    def _chosen_bundle(self) -> arcagent.CatalogEntry | None:
         index = self.query_one("#connect-bundles", OptionList).highlighted
         if index is None or index >= len(self._bundles):
             return None
@@ -337,7 +337,7 @@ class ConnectionsScreen(ModalScreen[None]):
 
     BINDINGS: ClassVar[list[Any]] = [("escape", "cancel", "Close")]
 
-    def __init__(self, connections: Connections, agent: str) -> None:
+    def __init__(self, connections: arcagent.Connections, agent: str) -> None:
         super().__init__()
         self._connections = connections
         self._agent = agent
@@ -356,7 +356,7 @@ class ConnectionsScreen(ModalScreen[None]):
         """Read the deployment's connections — the same grants the runtime enforces."""
         try:
             defined = self._connections.connections()
-        except ExtensionError as exc:
+        except arcagent.ExtensionError as exc:
             self._status(exc.message)
             return
 
@@ -397,7 +397,7 @@ class ConnectionsScreen(ModalScreen[None]):
         """Probing opens a live connection, so it runs off the UI's critical path."""
         try:
             result = await self._connections.probe(instance)
-        except ExtensionError as exc:
+        except arcagent.ExtensionError as exc:
             self._settle(f"'{instance}': {exc.message}")
             return
         except Exception as exc:  # reason: a probe reports failures, it does not raise them

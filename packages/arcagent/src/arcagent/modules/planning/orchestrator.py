@@ -99,6 +99,16 @@ class PlanOrchestrator:
             step.status = StepStatus.RUNNING
         self._store.save(plan, action="plan.frontier.started")
         outcomes = await run_ready(ready, plan=plan)
+        if not outcomes:
+            reason = "no ready step could reserve execution budget"
+            self._apply_outcome(
+                plan,
+                ready[0],
+                StepOutcome(StepStatus.FAILED, failure_reason=reason),
+            )
+            for step in ready[1:]:
+                step.status = StepStatus.PENDING
+            return reason
         first_failure: str | None = None
         for step, outcome in zip(ready, outcomes, strict=False):
             self._apply_outcome(plan, step, outcome)

@@ -11,7 +11,6 @@ map and calls ``cancel(caller_did, reason)`` — a cooperative, attributable sto
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
@@ -19,6 +18,7 @@ from arcstore.cancellations import CancelRequest
 
 from arcagent.modules.runcontrol import _runtime
 from arcagent.tools._decorator import background_task, hook
+from arcagent.utils.periodic import PeriodicRunner
 
 _logger = logging.getLogger("arcagent.modules.runcontrol.capabilities")
 
@@ -146,18 +146,14 @@ async def runcontrol_bind_agent(ctx: Any) -> None:
 async def runcontrol_watcher(_ctx: Any) -> None:
     """Background loop: apply operator cancel requests to live tracked runs.
 
-    The loader spawns this once (``register_task`` calls ``fn(None)`` a single
-    time), so the ``while True`` MUST live here or the watcher runs one tick and
-    dies (mirrors the tasks loops).
+    The loader spawns this once; the common periodic runner owns cadence and
+    cancellation for the lifetime of that supervised task.
     """
-    while True:
-        try:
-            await _watch_tick()
-        except asyncio.CancelledError:
-            raise
-        except Exception:  # reason: fail-open — a tick error must never crash the agent
-            _logger.warning("runcontrol watch tick failed", exc_info=True)
-        await asyncio.sleep(_WATCH_TICK)
+
+    def on_error(exc: BaseException, _failures: int) -> None:
+        _logger.warning("runcontrol watch tick failed: %s", exc)
+
+    await PeriodicRunner().run(_watch_tick, interval=_WATCH_TICK, on_error=on_error)
 
 
 __all__ = ["runcontrol_bind_agent", "runcontrol_watcher"]

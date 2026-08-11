@@ -8,6 +8,10 @@ from __future__ import annotations
 
 from arcagent.builtins.capabilities import _runtime
 from arcagent.tools._decorator import tool
+from arcagent.tools._secure_workspace_file import (
+    SecureWorkspaceFileError,
+    atomic_write_regular_file,
+)
 
 
 @tool(
@@ -26,11 +30,13 @@ async def write(file_path: str, content: str) -> str:
     resolved = _runtime.resolve_workspace_path(file_path, tool_name="write")
     _runtime.check_protected(resolved, file_path, tool_name="write")
     _runtime.check_secret_content(content, file_path, tool_name="write")
-    if resolved.exists() and not resolved.is_file():
-        return f"Error: Not a file: {file_path}"
-    resolved.parent.mkdir(parents=True, exist_ok=True)
     encoded = content.encode("utf-8")
-    resolved.write_text(content, encoding="utf-8")
+    try:
+        atomic_write_regular_file(resolved, _runtime.authorized_roots(), encoded)
+    except SecureWorkspaceFileError:
+        return f"Error: Not a file: {file_path}"
+    except OSError:
+        return f"Error: File could not be written safely: {file_path}"
     message = f"Written {len(encoded)} bytes to {file_path}"
     if _runtime.resign_if_previously_signed(resolved, encoded) is False:
         message += _runtime.audit_unsigned_artifact(resolved, tool_name="write")

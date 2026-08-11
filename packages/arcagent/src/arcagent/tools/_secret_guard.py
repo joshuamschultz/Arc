@@ -30,7 +30,7 @@ import logging
 import re
 from typing import Any
 
-from arcllm._secrets import SECRET_PATTERNS
+import arctrust
 
 from arcagent.core.errors import ToolError
 
@@ -56,7 +56,7 @@ _GENERIC_TOKEN_RE = re.compile(
 
 def find_secret(content: str) -> str | None:
     """Return a label for the first secret-shaped match in ``content``, else None."""
-    for secret_type, pattern in SECRET_PATTERNS:
+    for secret_type, pattern in arctrust.SECRET_PATTERNS:
         if pattern.search(content):
             return secret_type
     if _GENERIC_TOKEN_RE.search(content):

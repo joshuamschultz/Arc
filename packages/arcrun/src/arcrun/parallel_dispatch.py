@@ -14,16 +14,18 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, TypeVar, runtime_checkable
+
+ReadyItem = TypeVar("ReadyItem")
+ReadyOutcome = TypeVar("ReadyOutcome")
 
 
 @runtime_checkable
 class ClassificationRegistry(Protocol):
     """Registry able to report tool classifications.
 
-    Matches ``arcagent.core.tool_registry.ToolRegistry.get_classification``.
-    Any object with the same shape works — arcrun does not depend on
-    arcagent.
+    Any host registry with the same shape works; no concrete registry is
+    required.
     """
 
     def get_classification(self, name: str) -> str: ...
@@ -184,6 +186,27 @@ async def dispatch_batch(
     return await SequentialDispatcher().dispatch(calls, runner)
 
 
+async def dispatch_ready(
+    items: list[ReadyItem],
+    runner: Callable[[ReadyItem], Awaitable[ReadyOutcome]],
+    *,
+    max_parallel: int = 10,
+) -> list[ReadyOutcome | Exception]:
+    """Run independent ready items concurrently with bounded fan-out.
+
+    Outcomes retain submission order. A failure is returned in its item's slot
+    so callers that own a larger plan can decide whether and how to continue.
+    ArcRun does not inspect the item or outcome types.
+    """
+    dispatcher = ParallelDispatcher(max_parallel=max_parallel)
+
+    async def _run(item: ReadyItem) -> tuple[ReadyItem, ReadyOutcome]:
+        return item, await runner(item)
+
+    paired = await dispatcher.dispatch(items, _run)
+    return [outcome for _item, outcome in paired]
+
+
 __all__ = [
     "BatchClassifier",
     "BatchVerdict",
@@ -191,4 +214,5 @@ __all__ = [
     "ParallelDispatcher",
     "SequentialDispatcher",
     "dispatch_batch",
+    "dispatch_ready",
 ]

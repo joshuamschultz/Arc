@@ -58,6 +58,8 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
+import arcagent
+
 from arcgateway.commands import CommandRegistry, build_default_registry
 from arcgateway.delivery import DeliveryTarget
 from arcgateway.executor import Delta, Executor, InboundEvent
@@ -68,9 +70,6 @@ from arcgateway.stream_bridge import StreamBridge
 from arcgateway.telemetry import emit_audit, hash_user_did
 
 if TYPE_CHECKING:
-    # IdentityGraph is an optional integration dep; guard prevents circular import.
-    from arcagent.modules.session.identity_graph import IdentityGraph
-
     from arcgateway.adapters.base import BasePlatformAdapter
 
 _logger = logging.getLogger("arcgateway.session")
@@ -181,7 +180,7 @@ class SessionRouter:
         pairing_store: object | None = None,
         user_allowlist: set[str] | None = None,
         pairing_db_path: Path | None = None,
-        identity_graph: IdentityGraph | None = None,
+        identity_graph: arcagent.IdentityGraph | None = None,
         adapter: BasePlatformAdapter | None = None,
         adapter_map: dict[str, BasePlatformAdapter] | None = None,
         delivery_target_factory: Any | None = None,

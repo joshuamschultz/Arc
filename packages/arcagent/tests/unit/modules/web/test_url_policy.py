@@ -127,8 +127,6 @@ class TestPersonalTier:
         """No allowlist configured — any URL is reachable on personal."""
         for url in [
             "https://google.com",
-            "http://localhost:8080",
-            "https://192.168.1.1/api",
         ]:
             assert is_url_allowed(url, allowlist=[], tier="personal") is True
 
@@ -145,3 +143,30 @@ class TestTierCaseInsensitive:
     def test_personal_mixed_case_with_allowlist(self) -> None:
         allowlist = ["https://x.com"]
         assert is_url_allowed("https://x.com", allowlist=allowlist, tier="Personal") is True
+
+
+class TestCanonicalURLSecurity:
+    def test_credentials_and_control_characters_are_denied(self) -> None:
+        assert not is_url_allowed("https://user:pass@example.com", allowlist=[], tier="personal")
+        assert not is_url_allowed(
+            "https://example.com/\nHost: localhost", allowlist=[], tier="personal"
+        )
+
+    def test_private_and_metadata_addresses_are_denied_at_every_tier(self) -> None:
+        for url in ("http://127.0.0.1", "http://10.0.0.1", "http://169.254.169.254"):
+            assert not is_url_allowed(url, allowlist=[], tier="personal")
+
+    def test_dns_answers_are_checked_when_egress_is_imminent(self) -> None:
+        assert not is_url_allowed(
+            "https://example.com",
+            allowlist=[],
+            tier="personal",
+            resolve=True,
+            resolver=lambda _host: ["192.168.1.10"],
+        )
+
+    def test_allowlist_host_matching_is_label_exact(self) -> None:
+        allowlist = ["https://example.com/*"]
+        assert not is_url_allowed(
+            "https://example.com.attacker.test/path", allowlist=allowlist, tier="federal"
+        )

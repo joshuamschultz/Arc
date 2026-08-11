@@ -21,8 +21,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
-from arcrun.strategies.plan_execute import PlanExecuteStrategy
-from arcrun.types import LoopResult
+import arcrun
 
 from arcagent.modules.planning.models import Plan, PlanStep, StepStatus
 
@@ -33,7 +32,7 @@ BudgetGrant = tuple["int | None", "float | None"]
 # A callable that drives ONE bounded arcrun run and returns its LoopResult.
 # Production binds this to ``arcrun.run`` with the agent's policy-gated
 # capabilities + model; tests bind it to a real run or a scripted result.
-RunFn = Callable[..., Awaitable[LoopResult]]
+RunFn = Callable[..., Awaitable[arcrun.LoopResult]]
 
 
 @dataclass
@@ -58,7 +57,7 @@ class StepExecutor(Protocol):
     async def run_step(self, step: PlanStep, *, plan: Plan) -> StepOutcome: ...
 
 
-def classify_loop_result(result: LoopResult) -> StepOutcome:
+def classify_loop_result(result: arcrun.LoopResult) -> StepOutcome:
     """Map an arcrun ``LoopResult`` to a step outcome (REQ-023).
 
     Discriminator (per arcrun's ``_build_result``): a synthesized budget/turn
@@ -147,7 +146,6 @@ class ConcurrentStepExecutor:
         self._step_max_tokens = step_max_tokens
         self._step_max_cost = step_max_cost
         self._budget_lock = asyncio.Lock()
-        self._dispatcher = PlanExecuteStrategy()
 
     async def run_step(self, step: PlanStep, *, plan: Plan) -> StepOutcome:
         """Run ONE step bounded by the plan's available budget (Protocol compat)."""
@@ -180,7 +178,13 @@ class ConcurrentStepExecutor:
             branch_step, branch_grant = pair
             return await self._run_branch(branch_step, plan, branch_grant)
 
-        return await self._dispatcher.run_ready(reserved, _run, max_parallel=self._max_parallel)
+        outcomes = await arcrun.dispatch_ready(reserved, _run, max_parallel=self._max_parallel)
+        return [
+            outcome
+            if isinstance(outcome, StepOutcome)
+            else StepOutcome(StepStatus.FAILED, failure_reason=f"run error: {outcome}")
+            for outcome in outcomes
+        ]
 
     async def _run_branch(self, step: PlanStep, plan: Plan, grant: BudgetGrant) -> StepOutcome:
         """Run one bounded branch capped at its reservation, then settle (REQ-055).
@@ -274,7 +278,6 @@ def build_arcrun_run_fn(
     branch pauses for approval and fails closed with no grant, never runs
     un-gated.
     """
-    from arcrun import run as arcrun_run
 
     async def run_fn(
         *,
@@ -282,8 +285,8 @@ def build_arcrun_run_fn(
         max_tokens: int | None,
         max_cost_usd: float | None,
         actor_did: str,
-    ) -> LoopResult:
-        return await arcrun_run(
+    ) -> arcrun.LoopResult:
+        return await arcrun.run(
             model,
             capabilities,
             system_prompt,

@@ -188,8 +188,8 @@ class TestDidMismatchFailsClosed:
         mock_result.content = "real agent reply"
 
         with (
-            patch("arcagent.core.agent.ArcAgent", return_value=mock_agent),
-            patch("arccli.agent_worker.collect", AsyncMock(return_value=mock_result)),
+            patch("arcagent.ArcAgent", return_value=mock_agent),
+            patch("arcrun.collect", AsyncMock(return_value=mock_result)),
         ):
             deltas = await _run_with_arcagent(
                 "did:arc:agent:requested", "hello", "session-1", team_root=None

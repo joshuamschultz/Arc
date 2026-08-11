@@ -20,7 +20,7 @@ import asyncio
 from collections.abc import Awaitable, Callable, Iterable
 from typing import TYPE_CHECKING, Any
 
-from arcrun import SandboxConfig
+import arcrun
 
 from arcagent.tools._transport import RegisteredTool
 from arcagent.tools.checkpoint_signing import sign_record
@@ -117,7 +117,7 @@ def build_loop_controls(agent: ArcAgent, session: SessionManager) -> dict[str, A
         )
 
     sandbox = (
-        SandboxConfig(allowed_tools=run_cfg.sandbox.allowed_tools)
+        arcrun.SandboxConfig(allowed_tools=run_cfg.sandbox.allowed_tools)
         if run_cfg.sandbox.allowed_tools is not None
         else None
     )

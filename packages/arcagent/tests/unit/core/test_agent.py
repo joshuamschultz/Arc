@@ -61,7 +61,7 @@ def _patch_stream(*tokens: str) -> Any:
     async def _factory(*args: Any, **kwargs: Any) -> AsyncIterator[StreamEvent]:
         return _fake_stream(*tokens)
 
-    return patch("arcagent.core.agent_dispatch.arcrun_run_stream", side_effect=_factory)
+    return patch("arcagent.core.agent_dispatch.arcrun.run_stream", side_effect=_factory)
 
 
 async def _drive(agent: ArcAgent, task: str, key: str = "unit:test") -> None:
@@ -387,7 +387,7 @@ class TestErrorEvent:
         async def _boom(*args: Any, **kwargs: Any) -> AsyncIterator[StreamEvent]:
             raise RuntimeError("LLM call failed")
 
-        with patch("arcagent.core.agent_dispatch.arcrun_run_stream", side_effect=_boom):
+        with patch("arcagent.core.agent_dispatch.arcrun.run_stream", side_effect=_boom):
             await agent.startup()
             assert agent._bus is not None
             agent._bus.subscribe("agent:error", on_error)

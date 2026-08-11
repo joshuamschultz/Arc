@@ -18,7 +18,36 @@
 - `arcrun` must not own agent or LLM-provider logic.
 - Concern purity is what keeps standalone packages, turnkey composition, and federal hardening possible at once. Mixing layers collapses all three.
 
-### 2. Agent state stays in the workspace — never via LLM file tools (ADR-029)
+```text
+arcllm          standalone model adapter/router; knows nothing above it
+   ^
+arcrun          knows arcllm, owns the loop, does not know arcagent
+   ^
+arcagent        uses the arcrun facade only — never `import arcllm`
+   ^        ^
+arcgateway   arcui
+```
+
+- `arcgateway` funnels messaging into `arcagent`. `arcui` observes and operates it.
+- `arcagent` knows about neither, and must run headless without them.
+- Modules and extensions plug into `arcagent` through explicit typed contracts, never by reversing these arrows.
+
+The durable execution record for this boundary is [`ARCAGENT_REFACTOR_PLAN.md`](ARCAGENT_REFACTOR_PLAN.md).
+
+### 2. Components
+
+For all packages
+Module - An Arc plugin that adds a feature or capability that comes with arc and can be installed directly.
+Extension - Arc feature or capability that is created by external parties and can interact with Arc. It may include scripts to install, add files, etc
+
+All of these are
+- completely removeable from the directory with no loss of function to the package (except that specific capability). So fully optional.
+- the importing package has no need or knowledge off it other than the import.
+- optional installs at the cli level
+- optional imports, imported separately and specifically
+
+
+### 3. Agent state stays in the workspace — never via LLM file tools (ADR-029)
 
 An agent's own state — memory, sessions, `context.md`, identity, the audit chain — is written with **direct filesystem I/O to the agent's workspace** (its home). It must **never** be saved by calling the LLM-facing tools (`write` / `bash` / `edit`).
 
@@ -31,7 +60,7 @@ An agent's own state — memory, sessions, `context.md`, identity, the audit cha
 
 Breaking this re-couples "where the agent works" to "where the agent lives" and defeats the coding-agent model.
 
-### 3. No legacy / backward-compat shims
+### 4. No legacy / backward-compat shims
 
 This codebase is local-only and not deployed. **Never** add migration helpers, deprecation shims, vestigial methods, or "kept for compatibility" code.
 
@@ -39,10 +68,9 @@ This codebase is local-only and not deployed. **Never** add migration helpers, d
 - **One line beats five.** Don't replace a one-line fix with a multi-method "resolver + helper + warner." Smallest correct change wins.
 - No comments explaining what changed or why this is "the new way." Code is current reality; commit messages hold history.
 
-### 4. Leave it correct — no skipping pre-existing errors
+### 5. Leave it correct — no skipping pre-existing errors
 
-If `ruff check`, `mypy`, or any quality gate surfaces an error during your work, **fix it now** — regardless of who introduced it or when.
-
+- If `ruff check`, `mypy`, or any quality gate surfaces an error during your work, **fix it now** — regardless of who introduced it or when.
 - Never report "pre-existing — not my problem." The repo is left clean every session, commit, and PR. Inherited debt is paid when seen.
 - Applies to lint, types, dead code, broken tests, missing docstrings, ambiguous Unicode, mutable defaults — everything the tools flag.
 - If a fix is genuinely out of scope and you cannot land it, raise it to the user and ask before deferring. **Default is fix.**
@@ -56,7 +84,7 @@ If `ruff check`, `mypy`, or any quality gate surfaces an error during your work,
 The core must be easy to read, hard to break, robust, and unambiguous.
 
 - Prefer flat, explicit code over clever abstractions.
-- Core stays under **3,500 LOC** (ADR-004).
+- Core stays under **5,000 LOC** (ADR-004).
 - Complexity lives in extensions, plugins, and modules — never in the nucleus.
 - If you need a comment to explain control flow, refactor.
 - Nesting deeper than 2 levels → extract a named method.
@@ -107,23 +135,19 @@ No line of code may sacrifice one of these audiences for another:
 1. **Developer who wants one layer** — `pip install arcllm` (or `arcrun`) alone, with its own contract, without pulling higher layers.
 2. **Non-technical user who wants everything** — layers compose into a turnkey stack that works with **zero configuration**. Ease comes from unbreakable defaults, never from a required setup step.
 3. **Federal operator who hardens later** — personal → federal is a *stringency dial*, not a rewrite. Pillars already wired (see §2).
+4. **Maintainable** - we can isolate and completely rewrite a module and as long as input and output format is the same, it will still work (no crossed concerns to worry about)
 
-These stay compatible only when seams are clean. Intertwined concerns make all three impossible.
+These stay compatible only when seams are clean. Intertwined concerns make all four impossible.
 
-**How we keep all three open**
+**How we keep all four open**
 
 | Rule | Meaning |
 |------|---------|
-| **Dependencies point one way, never up** | `arcrun` → `arcllm`; `arcagent` → both; `arctrust` is a leaf. A lower layer never imports a higher one. Violate once and standalone dies. |
+| **Dependencies point one way, never up** | `arcrun` → `arcllm`; `arcagent` → `arcrun` **only**; `arcgateway`/`arcui` → `arcagent`; `arctrust` is a leaf. A lower layer never imports a higher one, and no layer reaches *past* its neighbour: `arcagent` consumes ArcLLM through the ArcRun facade, never `import arcllm`. Violate once and standalone dies. |
+| **One root import, qualified names** | A cross-package consumer writes exactly `import arcllm`, `import arcrun`, or `import arcagent`, then reaches public names off that root (`arcrun.run_stream`, `arcagent.KeyStore`). Deep imports are reserved for genuinely separate extras/extensions with an intentionally public submodule API. A package's own implementation may still use its internal modules. Enforced by `packages/arcagent/tests/architecture/test_dependency_boundaries.py` and the arcui seam guard in `packages/arcgateway/tests/architecture/test_imports.py`. |
 | **One contract per seam; default unbreakable** | Typed seam; base impl correct with zero config; native overrides opt-in. *Example (SPEC-059):* `StreamEvent` lives in `arcllm`; base `invoke_stream` yields a single-event fallback so any provider works; `arcrun` consumes that contract and knows nothing of provider wires. |
 | **Security seams from day one** | Identity (`caller_did`), Sign, Authorize, Audit at every seam at every tier — personal runs them at low stringency. **Never ship a path that would need pillars retrofitted for federal.** |
-| **Concern purity enables all three** | See Non-Negotiable §1. LLM-in-loop or loop-in-agent collapses the audience story into one tangled product. |
-
-**Accepted tradeoffs**
-
-- Per-seam contract vs raw SDK — small cost of standalone + turnkey + federal readiness. Not license to over-abstract; three-instances rule (§Abstractions) still governs.
-- Unbreakable default even when a provider will always override — keeps the simple case simple and the turnkey user unconfigured.
-- Pillars wired at personal tier — that cost *is* the federal option value; dropping it to save lines forecloses the project's purpose.
+| **Concern purity enables all four** | See Non-Negotiable §1. LLM-in-loop or loop-in-agent collapses the audience story into one tangled product. |
 
 ---
 
@@ -169,11 +193,11 @@ arcagent/
   adapters/                     # External system adapters
   utils/                        # Shared utilities
 tests/
-  unit/                         # 70%
+  unit/                         # 60%
   integration/                  # 20%
   e2e/                          # 10%
-  security/
-  performance/
+  security/                     # 5%
+  performance/                  # 5%
 ```
 
 ---
@@ -186,7 +210,7 @@ tests/
 2. **Read before writing** — understand existing code before modifying.
 3. **Verify before claiming** — fresh test output, not assumptions.
 4. **Root cause, not band-aids** — if a fix feels like a workaround, it is.
-5. **Three strikes** — after 3 failed fix attempts, question the architecture.
+5. **two strikes** — after 2 failed fix attempts, question the architecture.
 
 ### Done means
 
@@ -251,7 +275,7 @@ pip-audit                       # Dependency audit
 | Ruff errors | 0 |
 | mypy errors | 0 |
 | Critical/high vulnerabilities | 0 |
-| Core LOC | < 3,500 |
+| Core LOC | < 5,000 |
 
 ---
 

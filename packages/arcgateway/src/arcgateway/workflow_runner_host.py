@@ -199,12 +199,12 @@ async def _team_bindings(key_path: Path) -> tuple[Any, Any]:
     one that says plainly it cannot.
     """
     try:
-        from arcagent.core.arcteam_bootstrap import make_backend
+        import arcagent
         from arcteam.workflow.identity import RunnerIdentity
         from arcteam.workflow.stores import build_team_bindings
 
         identity = RunnerIdentity.load(key_path)
-        team_backend = await make_backend(_nats_url())
+        team_backend = await arcagent.make_backend(_nats_url())
         owners, narrator = await build_team_bindings(
             backend=team_backend,
             operator_signer=_operator_signer(key_path),
@@ -298,7 +298,7 @@ def _publish_to_agent_tools(runner: Any) -> None:
     combination means runs will be refused by a deployment that looks fine.
     """
     try:
-        from arcagent.modules.workflows import _runtime
+        import arcagent
     except ImportError:
         _logger.debug(
             "workflow runner started but arcagent's workflows module is absent; "
@@ -306,7 +306,7 @@ def _publish_to_agent_tools(runner: Any) -> None:
         )
         return
     try:
-        _runtime.set_runner(runner)
+        arcagent.set_workflow_runner(runner)
     except Exception:  # reason: publishing must not take down a healthy gateway
         _logger.warning(
             "workflow runner started but could not be published to the agent tool "

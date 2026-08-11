@@ -40,10 +40,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from arcagent.capabilities.artifact_signing import load_signature, verify_file
-from arcagent.core.config import _deep_merge
-from arcagent.tiers import stricter_tier, tier_rank
-from arcagent.utils.toml_writer import dumps_toml
+import arcagent
 
 _logger = logging.getLogger("arccli.blueprints")
 
@@ -54,6 +51,13 @@ _PERSONA_MD = "persona.md"
 # v2 sibling-config tables + declarative arrays, peeled out of the arcagent overlay.
 # Everything NOT in this set stays in the arcagent.toml overlay (unchanged semantics).
 _SIBLING_TABLES: tuple[str, ...] = ("arcllm", "arcrun")
+
+
+def dumps_toml(data: dict[str, Any]) -> str:
+    """Render TOML through ArcAgent's public configuration serializer."""
+    return arcagent.dumps_toml(data)
+
+
 _DECLARATIVE_ARRAYS: tuple[str, ...] = ("schedules", "questions")
 # v2 file-tree sub-directories under the blueprint folder.
 _PROMPTS_DIRNAME = "prompts"
@@ -197,10 +201,10 @@ def apply_blueprint(
     is ``max(deployment_tier, blueprint.tier, user_tier)`` — a blueprint can only raise it.
     """
     overlay = _strip_denied(blueprint.overlay)
-    merged = _deep_merge(overlay, base)  # base (user) overrides the blueprint overlay
-    floor = stricter_tier(deployment_tier, blueprint.tier)
+    merged = arcagent.deep_merge(overlay, base)  # base (user) overrides the blueprint overlay
+    floor = arcagent.stricter_tier(deployment_tier, blueprint.tier)
     user_tier = str(merged.get("security", {}).get("tier", floor))
-    effective = stricter_tier(floor, user_tier)
+    effective = arcagent.stricter_tier(floor, user_tier)
     merged.setdefault("security", {})["tier"] = effective
     return merged
 
@@ -239,7 +243,9 @@ def list_blueprints(
     if udir.is_dir():
         for toml_path in sorted(udir.glob(f"*/{_BLUEPRINT_TOML}")):
             content, meta, overlay, v2 = _parse(toml_path)
-            signed = verify_file(toml_path, content, trusted_public_key=operator_public_key)
+            signed = arcagent.verify_file(
+                toml_path, content, trusted_public_key=operator_public_key
+            )
             out.append(
                 _make(
                     meta,
@@ -289,14 +295,14 @@ def _resolve_from_toml(
             prompt_overlays=prompt_overlays,
         )
 
-    above_personal = tier_rank(tier) > tier_rank("personal")
+    above_personal = arcagent.tier_rank(tier) > arcagent.tier_rank("personal")
     if above_personal and operator_public_key is None:
         raise ValueError(
             f"blueprint {name!r} requires the deployment operator's public key to pin its "
             f"signature against, but it could not be resolved; refusing above the personal tier "
             f"(fail-closed — an unpinned signature gate accepts any self-signed preset, LLM03)"
         )
-    signed = verify_file(toml_path, content, trusted_public_key=operator_public_key)
+    signed = arcagent.verify_file(toml_path, content, trusted_public_key=operator_public_key)
     if above_personal and not signed:
         raise ValueError(
             f"blueprint {name!r} is unsigned or not signed by the deployment operator key; "
@@ -427,7 +433,7 @@ def _make(
 
 
 def _signer_did(path: Path) -> str:
-    manifest = load_signature(path)
+    manifest = arcagent.load_signature(path)
     return manifest.signer_did if manifest is not None else ""
 
 

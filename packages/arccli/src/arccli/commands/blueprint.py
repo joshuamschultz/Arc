@@ -103,11 +103,11 @@ def audit_apply(
     Shared by ``arc blueprint apply`` and ``arc init --blueprint`` so both surfaces emit the
     same audit through the same (WORM-or-log) sink. Both events flow through one callback.
     """
-    from arcagent.tiers import audit_tier_relaxations
+    import arcagent
 
     effective = str(merged.get("security", {}).get("tier", "personal"))
     sink = audit if audit is not None else _default_audit(arc_dir, effective)
-    audit_tier_relaxations(merged.get("security", {}), effective, audit=sink)
+    arcagent.audit_tier_relaxations(merged.get("security", {}), effective, audit=sink)
     sink(
         "blueprint.applied",
         {
@@ -322,7 +322,7 @@ def _sign(args: argparse.Namespace) -> None:
         sys.stderr.write(f"Error: file not found: {path}\n")
         sys.exit(1)
 
-    from arcagent.capabilities.artifact_signing import write_signature
+    import arcagent
 
     from arccli.commands.operator import load_operator_key
 
@@ -339,7 +339,9 @@ def _sign(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
     signer_did = f"operator:{operator.public_key.hex()[:16]}"
-    sidecar = write_signature(path, path.read_bytes(), signer_did=signer_did, private_key=seed)
+    sidecar = arcagent.write_signature(
+        path, path.read_bytes(), signer_did=signer_did, private_key=seed
+    )
     _write(f"Signed {path.name} -> {sidecar.name}")
 
 

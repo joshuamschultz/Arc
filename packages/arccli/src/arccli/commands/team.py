@@ -361,9 +361,9 @@ def _registration_identity(entity_type: str, workspace_path: str | None, root: P
     if entity_type == "agent" and workspace_path:
         config_path = Path(workspace_path).parent / "arcagent.toml"
         if config_path.exists():
-            from arcagent.core.config import load_config
+            import arcagent
 
-            config = load_config(config_path)
+            config = arcagent.load_config(config_path)
             return AgentIdentity.from_config(
                 config.identity,
                 org=config.agent.org,
@@ -706,7 +706,7 @@ async def _signer_for(registry: Any, sender_ref: str) -> Any:
     the persisted identity, and hand its Ed25519 seed to the messenger so every
     outgoing envelope is signed.
     """
-    from arcagent.core.config import load_config
+    import arcagent
     from arcteam.crypto import MessageSigner
     from arcteam.registry import UnknownHandle
     from arctrust import AgentIdentity
@@ -718,7 +718,7 @@ async def _signer_for(registry: Any, sender_ref: str) -> Any:
         raise ValueError(f"Sender {sender_ref!r} has no workspace; cannot locate signing identity")
 
     config_path = Path(entity.workspace_path).parent / "arcagent.toml"
-    config = load_config(config_path)
+    config = arcagent.load_config(config_path)
     identity = AgentIdentity.from_config(
         config.identity,
         org=config.agent.org,

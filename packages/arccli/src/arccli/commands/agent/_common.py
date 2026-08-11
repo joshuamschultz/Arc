@@ -25,6 +25,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import arcagent
+
 from arccli.commands._arcllm_surface import (
     BUDGET_BLOCK,
     EVAL_BLOCK,
@@ -617,10 +619,8 @@ def _crypto_posture(tier: str) -> dict[str, str]:
     Federal values come from ``SECURITY_CONFIG_KNOBS`` rather than being
     duplicated here, so moving a floor moves the template with it.
     """
-    from arcagent.tiers import SECURITY_CONFIG_KNOBS
-
     if tier == "federal":
-        floors = {k.name: k.federal_floor for k in SECURITY_CONFIG_KNOBS}
+        floors = {k.name: k.federal_floor for k in arcagent.SECURITY_CONFIG_KNOBS}
         return {
             "signing_algorithm": str(floors["signing_algorithm"]),
             "custody": str(floors["custody"]),
@@ -700,7 +700,7 @@ from __future__ import annotations
 import ast
 import operator
 
-from arcagent.tools import tool
+import arcagent
 
 _OPS = {
     ast.Add: operator.add,
@@ -732,7 +732,7 @@ def _safe_eval(node: ast.AST) -> float:
     raise ValueError(f"Unsupported expression: {ast.dump(node)}")
 
 
-@tool(
+@arcagent.tool(
     description="Evaluate a math expression. Supports +, -, *, /, %, **.",
     classification="read_only",
     capability_tags=["computation"],
@@ -873,15 +873,13 @@ def _discover_runtime_tools(agent_dir: Path) -> list[_DiscoveredTool]:
     tool via ``arc agent tools`` while ``arc ext inspect`` correctly showed
     ~15 (the builtins were never scanned).
     """
-    from arcagent.core.config import load_config
-
     from arccli.commands._capability_registry import build_capability_registry
 
     config_path = agent_dir / "arcagent.toml"
     if not config_path.is_file():
         return []
     try:
-        config = load_config(config_path)
+        config = arcagent.load_config(config_path)
     except Exception:  # reason: fail-open — a listing command must degrade, not crash
         return []
 
@@ -1023,16 +1021,13 @@ def _load_arcagent(agent_dir: Path) -> tuple[Any, Any, Path]:
     Exits 1 with a clear message if arcagent.toml is missing or
     ArcAgent / load_config cannot be imported.
     """
-    from arcagent.core.agent import ArcAgent
-    from arcagent.core.config import load_config
-
     config_path = agent_dir / "arcagent.toml"
     if not config_path.exists():
         sys.stderr.write(f"arc agent: no arcagent.toml in {agent_dir}\n")
         sys.exit(1)
 
-    config = load_config(config_path)
-    arc_agent = ArcAgent(config, config_path=config_path)
+    config = arcagent.load_config(config_path)
+    arc_agent = arcagent.ArcAgent(config, config_path=config_path)
     return arc_agent, config, config_path
 
 

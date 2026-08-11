@@ -8,7 +8,7 @@ Long-running daemon that makes ArcAgents reachable from chat platforms (and web)
 
 ## Layer
 
-**Surface / fleet service.** Depends on `arc-agent`, `arcstore`, `arcteam`. Imported by `arcui` (data plane), adapter plugins, `arccli`. Core has **zero** remote-platform SDKs — platforms are entry-point plugins.
+**Surface / fleet service.** Funnels messaging to `arcagent`; it does not bypass the agent to call ArcRun or ArcLLM. Imported by `arcui` (data plane), adapter plugins, and `arccli`. Core has **zero** remote-platform SDKs — platforms are entry-point plugins.
 
 ## Layout
 
@@ -32,6 +32,7 @@ Console script: `arcgateway` → `arcgateway.cli:main`.
 ## Package rules
 
 - **No pairing → no agent response.** User IDs hashed in allowlists.
+- Use `import arcagent` and its public facade; do not couple gateway code to ArcAgent's internal layout.
 - Only built-in remote-ish adapter is `web`. Telegram/Slack/Mattermost = separate packages registering on `arcgateway.adapters`.
 - Federal: block unofficial plugins / missing credentials as configured.
 - SPEC-022: sole read API for `team/<agent>/…` — **arcui must not touch `team/` directly**; go through `fs_reader`.

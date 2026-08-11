@@ -34,7 +34,9 @@ def _configure_with_extract(tier: str, allowlist: list[str]) -> None:
     )
     stub = MagicMock()
     stub.extract = AsyncMock(
-        return_value=ExtractResult(url="u", title="t", content="c", fetched_at=time.time())
+        side_effect=lambda url: ExtractResult(
+            url=url, title="t", content="c", fetched_at=time.time()
+        )
     )
     _runtime.state().extract_provider = stub
 
@@ -81,3 +83,19 @@ class TestAllowlistAtPersonalTier:
         _configure_with_extract(tier="personal", allowlist=["*"])
         result = await capabilities.web_extract("https://anything.com")
         assert result is not None
+
+
+class TestRedirectEnforcement:
+    async def test_provider_reported_final_url_is_revalidated(self) -> None:
+        _configure_with_extract(tier="federal", allowlist=["https://allowed.example/*"])
+        _runtime.state().extract_provider.extract = AsyncMock(
+            return_value=ExtractResult(
+                url="http://169.254.169.254/latest/meta-data/",
+                title="redirected",
+                content="secret",
+                fetched_at=time.time(),
+            )
+        )
+
+        with pytest.raises(URLNotAllowed):
+            await capabilities.web_extract("https://allowed.example/page")

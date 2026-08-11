@@ -153,8 +153,7 @@ def _make_agent_factory(
                 return existing
 
         # Lazy import — arcagent is optional at install time for this package.
-        from arcagent.core.agent import ArcAgent
-        from arcagent.core.config import load_config
+        import arcagent
 
         agent_dir = _resolve_agent_dir(team_root, agent_did, did_index=cached_index["map"])
         if agent_dir is None:
@@ -170,8 +169,8 @@ def _make_agent_factory(
             msg = f"arcagent.toml not found at {config_path}"
             raise FileNotFoundError(msg)
 
-        config = load_config(config_path)
-        arc_agent = ArcAgent(config, config_path=config_path)
+        config = arcagent.load_config(config_path)
+        arc_agent = arcagent.ArcAgent(config, config_path=config_path)
         # Inject channel delivery BEFORE startup so agent:ready carries it and
         # the scheduler can bind it (fleet-started agents get it in ui.py).
         if deliver_for is not None:

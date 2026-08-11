@@ -38,8 +38,11 @@ def test_build_brain_returns_arcmemory_brain(tmp_path: Path) -> None:
 def test_build_brain_threads_model_identity_and_pipeline(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Guards the producers-unwired trap: agentic consolidation is DEAD (model=None)
-    and writes UNSIGNED unless build_brain threads model + identity + policy_pipeline.
+    """Guards the producers-unwired trap: agentic consolidation is DEAD and writes
+    UNSIGNED unless build_brain threads the model factory + identity + policy_pipeline.
+
+    The factory is asserted by CALLING it: a threaded-but-broken factory would
+    satisfy a mere ``is not None``, which is the same dead-wiring this guards.
     """
     recorded: dict[str, object] = {}
 
@@ -58,7 +61,9 @@ def test_build_brain_threads_model_identity_and_pipeline(
     ctx["policy_pipeline"] = pipe
     build_brain(ctx)
 
-    assert recorded["model"] == "MODEL"
+    factory = recorded["model_factory"]
+    assert callable(factory)
+    assert factory() == "MODEL"
     assert recorded["identity"] is ident
     assert recorded["policy_pipeline"] is pipe
 

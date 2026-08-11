@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import textwrap
 from pathlib import Path
@@ -11,6 +12,7 @@ import pytest
 from arcagent.__main__ import (
     _build_parser,
     _load_config,
+    _readline_or_shutdown,
     _stringify_response,
     _write_shutdown_marker,
     main,
@@ -106,6 +108,16 @@ class TestStringifyResponse:
                 return "{repr}"
 
         assert _stringify_response(_R()) == "{repr}"
+
+
+async def test_stdin_shutdown_drains_pending_read_task() -> None:
+    reader = asyncio.StreamReader()
+    shutdown = asyncio.Event()
+    shutdown.set()
+
+    assert await _readline_or_shutdown(reader, shutdown) is None
+    await asyncio.sleep(0)
+    assert not [task for task in asyncio.all_tasks() if task.get_name().startswith("stdin:")]
 
 
 class TestMainErrorPaths:

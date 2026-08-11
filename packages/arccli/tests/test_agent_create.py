@@ -167,7 +167,7 @@ class TestCreate:
         assert calc.exists(), "calculator should be scaffolded into <agent>/capabilities/"
         content = calc.read_text()
         # SPEC-021 calls for a @tool decorator, not the legacy extension(api) factory.
-        assert "@tool(" in content
+        assert "@arcagent.tool(" in content
         assert "async def calculate" in content
         assert "def extension(api)" not in content
 

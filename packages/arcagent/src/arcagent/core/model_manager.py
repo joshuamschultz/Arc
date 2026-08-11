@@ -19,9 +19,10 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from arcrun import Event
+import arcrun
 from arctrust import AuditEvent, RecordCipher, Signer, WormSink, emit
 
+from arcagent.core.background_tasks import BackgroundTaskSupervisor
 from arcagent.core.config import ArcAgentConfig
 from arcagent.core.module_bus import ModuleBus
 from arcagent.utils import load_eval_model
@@ -130,7 +131,8 @@ def create_arcrun_bridge(
     *,
     model_id: str = "",
     agent_label: str = "",
-) -> Callable[[Event], None]:
+    task_supervisor: BackgroundTaskSupervisor | None = None,
+) -> Callable[[arcrun.Event], None]:
     """Create on_event callback for arcrun.run().
 
     Maps ArcRun lifecycle events to Module Bus events:
@@ -151,9 +153,9 @@ def create_arcrun_bridge(
         "turn.start": "agent:pre_plan",
         "turn.end": "agent:post_plan",
     }
-    _pending: set[asyncio.Task[Any]] = set()
+    supervisor = task_supervisor or BackgroundTaskSupervisor(logger=_logger)
 
-    def bridge(event: Event) -> None:
+    def bridge(event: arcrun.Event) -> None:
         bus_event = _event_map.get(event.type)
         if bus_event is not None:
             # Always copy to a plain dict — Event.data is typed as
@@ -161,10 +163,8 @@ def create_arcrun_bridge(
             # requires dict[str, Any]. Shallow copy is intentional here.
             data: dict[str, Any] = dict(event.data)
             try:
-                loop = asyncio.get_running_loop()
-                task = loop.create_task(bus.emit(bus_event, data))
-                _pending.add(task)
-                task.add_done_callback(_pending.discard)
+                asyncio.get_running_loop()
+                supervisor.create(bus.emit(bus_event, data), name=f"arcrun_bridge:{bus_event}")
             except RuntimeError:
                 _logger.warning(
                     "No running event loop for bridge event: %s",
@@ -174,7 +174,9 @@ def create_arcrun_bridge(
     return bridge
 
 
-def create_arcllm_bridge(bus: ModuleBus) -> Callable[[Any], None]:
+def create_arcllm_bridge(
+    bus: ModuleBus, *, task_supervisor: BackgroundTaskSupervisor | None = None
+) -> Callable[[Any], None]:
     """Create on_event callback for ArcLLM's load_model().
 
     Maps ArcLLM TraceRecord event_types to Module Bus events:
@@ -191,8 +193,7 @@ def create_arcllm_bridge(bus: ModuleBus) -> Callable[[Any], None]:
         "config_change": "llm:config_change",
         "circuit_change": "llm:circuit_change",
     }
-    # Hold strong references to pending tasks so they aren't GC'd
-    _pending: set[asyncio.Task[Any]] = set()
+    supervisor = task_supervisor or BackgroundTaskSupervisor(logger=_logger)
 
     def bridge(record: Any) -> None:
         data = record.model_dump() if hasattr(record, "model_dump") else record
@@ -200,10 +201,8 @@ def create_arcllm_bridge(bus: ModuleBus) -> Callable[[Any], None]:
         bus_event = _event_map.get(event_type)
         if bus_event is not None:
             try:
-                loop = asyncio.get_running_loop()
-                task = loop.create_task(bus.emit(bus_event, data))
-                _pending.add(task)
-                task.add_done_callback(_pending.discard)
+                asyncio.get_running_loop()
+                supervisor.create(bus.emit(bus_event, data), name=f"arcllm_bridge:{bus_event}")
             except RuntimeError:
                 _logger.warning(
                     "No running event loop for LLM bridge event: %s",
@@ -222,6 +221,7 @@ def ensure_model(
     actor_did: str = "",
     witness: WitnessAnchor | None = None,
     record_cipher: RecordCipher | None = None,
+    task_supervisor: BackgroundTaskSupervisor | None = None,
 ) -> tuple[Any, Any]:
     """Load the eval model, wiring trace store + on_event bridge.
 
@@ -240,8 +240,6 @@ def ensure_model(
     caching both — this helper is intentionally stateless so it can
     be unit-tested without an ArcAgent instance.
     """
-    from arcllm.trace_store import JSONLTraceStore
-
     agent_root = workspace.parent
     checkpoint_sink = (
         build_checkpoint_sink(
@@ -255,8 +253,10 @@ def ensure_model(
         if operator_signer is not None
         else None
     )
-    trace_store = JSONLTraceStore(agent_root, checkpoint_sink=checkpoint_sink)
-    on_event = create_arcllm_bridge(bus) if bus is not None else None
+    trace_store = arcrun.create_model_trace_store(agent_root, checkpoint_sink=checkpoint_sink)
+    on_event = (
+        create_arcllm_bridge(bus, task_supervisor=task_supervisor) if bus is not None else None
+    )
     model = load_eval_model(
         config.llm.model,
         trace_store=trace_store,

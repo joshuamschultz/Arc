@@ -35,23 +35,21 @@ class TestBuildCapabilityRegistryDoesNotSpawn:
     def test_loader_constructed_with_spawn_background_tasks_false(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # build_capability_registry imports CapabilityLoader lazily (arccli's
-        # cold-start-budget convention — see module docstring) so we patch
-        # the SOURCE module's attribute; the local `from ... import` inside
-        # the function resolves it fresh on every call.
-        import arcagent.capabilities.capability_loader as loader_mod
+        # ArcCLI consumes ArcAgent through its root facade, so patch the
+        # qualified lookup site used by the registry builder.
+        import arcagent
 
         captured: dict[str, object] = {}
-        real_init = loader_mod.CapabilityLoader.__init__
+        real_init = arcagent.CapabilityLoader.__init__
 
         def _spy_init(self: object, **kwargs: object) -> None:
             captured.update(kwargs)
             real_init(self, **kwargs)  # type: ignore[arg-type]
 
-        class _SpyLoader(loader_mod.CapabilityLoader):
+        class _SpyLoader(arcagent.CapabilityLoader):
             __init__ = _spy_init  # type: ignore[assignment]
 
-        monkeypatch.setattr(loader_mod, "CapabilityLoader", _SpyLoader)
+        monkeypatch.setattr(arcagent, "CapabilityLoader", _SpyLoader)
 
         build_capability_registry(_config_with_memory_enabled(), agent_root=None)
 

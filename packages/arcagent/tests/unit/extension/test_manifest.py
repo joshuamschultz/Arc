@@ -456,7 +456,7 @@ class TestTierFloorRefusesButCannotRaise:
         # author control over operator policy, and no behavioural assertion here
         # would see it happen.
         #
-        # ``connections.py`` is the second and last permitted reader: it copies
+        # ``connection_catalog.py`` is the second and last permitted reader: it copies
         # the floor onto a catalog listing entry so a surface can SHOW which
         # bundles this deployment could run ("enterprise+"), and takes no verdict
         # from it — the listing is a display record with no resolver behind it.
@@ -473,7 +473,7 @@ class TestTierFloorRefusesButCannotRaise:
             if re.search(r"\.tier_floor\b", path.read_text(encoding="utf-8"))
         )
 
-        assert readers == [Path("connections.py"), Path("extension/manifest.py")]
+        assert readers == [Path("connection_catalog.py"), Path("extension/manifest.py")]
 
 
 # --- what a token_command may name --------------------------------------------

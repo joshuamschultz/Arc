@@ -366,8 +366,9 @@ async def _docker_run_detached(
     network: str,
     workspace_mount: Path | None = None,
     readonly_subpaths: list[Path] | None = None,
+    memory_limit: str = "256m",
 ) -> str:
-    """docker run -d …; returns the container ID.
+    """docker run -d with fixed memory/swap ceilings; returns the container ID.
 
     When ``workspace_mount`` is set the host workspace is bind-mounted rw at
     ``/workspace`` (with ``--read-only`` still rooting the rest of the container
@@ -380,6 +381,8 @@ async def _docker_run_detached(
         "--cap-drop=ALL",
         "--security-opt=no-new-privileges",
         f"--pids-limit={pids_limit}",
+        f"--memory={memory_limit}",
+        f"--memory-swap={memory_limit}",
         "--read-only",
         f"--network={network}",
         "--tmpfs=/tmp:noexec,nosuid,size=64m",

@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 from arcagent.brain import NullBrain
+from arcagent.core.runtime_dependencies import RuntimeBinding
 from arcagent.modules.memory import _runtime
 from arcagent.modules.memory.config import MemoryConfig
 
@@ -90,7 +91,8 @@ def agent(unbound_state: _runtime._State) -> ArcAgent:
     rebind-into-this-task path under test — that path is what stops memory's
     ``state()`` from failing closed when the waiter runs outside a turn's task.
     """
-    stub = SimpleNamespace(_runtime_bindings=[(_runtime.bind, unbound_state)])
+    binding = RuntimeBinding("memory", _runtime.bind, unbound_state)
+    stub = SimpleNamespace(_runtime_bindings=[binding])
     return cast("ArcAgent", stub)
 
 

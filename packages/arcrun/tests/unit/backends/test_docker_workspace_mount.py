@@ -73,6 +73,8 @@ async def test_docker_run_mounts_workspace_rw_and_subpath_ro(
     assert "--security-opt=no-new-privileges" in argv
     assert "--network=none" in argv
     assert "--read-only" in argv
+    assert "--memory=256m" in argv
+    assert "--memory-swap=256m" in argv
     assert "--tmpfs=/tmp:noexec,nosuid,size=64m" in argv
 
 

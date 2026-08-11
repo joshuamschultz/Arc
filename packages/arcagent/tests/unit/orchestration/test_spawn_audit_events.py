@@ -87,7 +87,9 @@ class TestSpawnAuditEvents:
         sink = CaptureSink()
         fake_result = _fake_loop_result()
 
-        with patch("arcrun.loop.run", new=AsyncMock(return_value=fake_result)):
+        with patch(
+            "arcagent.orchestration.spawn.arcrun.run", new=AsyncMock(return_value=fake_result)
+        ):
             await spawn(
                 parent_state=_make_state(),
                 task="test task",
@@ -105,7 +107,9 @@ class TestSpawnAuditEvents:
         sink = CaptureSink()
         fake_result = _fake_loop_result()
 
-        with patch("arcrun.loop.run", new=AsyncMock(return_value=fake_result)):
+        with patch(
+            "arcagent.orchestration.spawn.arcrun.run", new=AsyncMock(return_value=fake_result)
+        ):
             await spawn(
                 parent_state=_make_state(),
                 task="test task",
@@ -126,7 +130,7 @@ class TestSpawnAuditEvents:
             await asyncio.sleep(9999)
             return _fake_loop_result()
 
-        with patch("arcrun.loop.run", new=_slow):
+        with patch("arcagent.orchestration.spawn.arcrun.run", new=_slow):
             result = await spawn(
                 parent_state=_make_state(),
                 task="slow task",
@@ -174,7 +178,9 @@ class TestSpawnAuditEvents:
         )
         fake_result = _fake_loop_result()
 
-        with patch("arcrun.loop.run", new=AsyncMock(return_value=fake_result)):
+        with patch(
+            "arcagent.orchestration.spawn.arcrun.run", new=AsyncMock(return_value=fake_result)
+        ):
             await spawn(
                 parent_state=_make_state(),
                 task="task",
@@ -215,7 +221,9 @@ class TestSpawnAuditEvents:
         """NullSink is accepted as audit_sink — no error."""
         fake_result = _fake_loop_result()
 
-        with patch("arcrun.loop.run", new=AsyncMock(return_value=fake_result)):
+        with patch(
+            "arcagent.orchestration.spawn.arcrun.run", new=AsyncMock(return_value=fake_result)
+        ):
             result = await spawn(
                 parent_state=_make_state(),
                 task="task",
@@ -231,7 +239,9 @@ class TestSpawnAuditEvents:
         """When audit_sink is omitted the function works without error."""
         fake_result = _fake_loop_result()
 
-        with patch("arcrun.loop.run", new=AsyncMock(return_value=fake_result)):
+        with patch(
+            "arcagent.orchestration.spawn.arcrun.run", new=AsyncMock(return_value=fake_result)
+        ):
             result = await spawn(
                 parent_state=_make_state(),
                 task="task",

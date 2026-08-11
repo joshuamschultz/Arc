@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 from arcagent.modules.pulse import PulseCheck, PulseCheckState, PulseState
 from arcagent.modules.pulse.config import PulseConfig
+from arcagent.utils.periodic import FailurePolicy, PeriodicRunner
 
 if TYPE_CHECKING:
     from arcagent.core.module_bus import ModuleBus
@@ -106,6 +107,7 @@ class PulseEngine:
         self._running = False
         self._timer_task: asyncio.Task[None] | None = None
         self._ready = asyncio.Event()
+        self._poller = PeriodicRunner()
         self._consecutive_errors = 0
         self._fire_and_forget: set[asyncio.Task[Any]] = set()
 
@@ -123,12 +125,14 @@ class PulseEngine:
     async def start(self) -> None:
         """Start the pulse timer loop."""
         self._running = True
+        self._poller.reset()
         self._timer_task = asyncio.create_task(self._timer_loop())
         _logger.info("Pulse engine started (interval=%ds)", self._config.interval_seconds)
 
     async def stop(self) -> None:
         """Stop the pulse engine."""
         self._running = False
+        self._poller.stop()
         self._ready.set()
 
         if self._timer_task is not None:
@@ -145,26 +149,28 @@ class PulseEngine:
     async def _timer_loop(self) -> None:
         """Periodically fire pulse checks."""
         await self._ready.wait()
-        interval = self._config.interval_seconds
+        if not self._running:
+            return
 
-        while self._running:
-            try:
-                await self._pulse()
-                self._consecutive_errors = 0
-            except Exception:  # reason: fail-open — log + continue
-                self._consecutive_errors += 1
-                _logger.exception(
-                    "Pulse error (consecutive: %d)",
-                    self._consecutive_errors,
-                )
-                if self._consecutive_errors >= 5:
-                    _logger.critical(
-                        "Pulse hit %d consecutive errors, stopping",
-                        self._consecutive_errors,
-                    )
-                    self._running = False
-                    return
-            await asyncio.sleep(interval)
+        async def tick() -> None:
+            await self._pulse()
+            self._consecutive_errors = 0
+
+        def on_error(exc: BaseException, failures: int) -> None:
+            self._consecutive_errors = failures
+            _logger.error("Pulse error (consecutive: %d): %s", failures, exc)
+            if failures >= 5:
+                _logger.critical("Pulse hit %d consecutive errors, stopping", failures)
+
+        try:
+            await self._poller.run(
+                tick,
+                interval=self._config.interval_seconds,
+                failure=FailurePolicy(max_consecutive=5),
+                on_error=on_error,
+            )
+        finally:
+            self._running = False
 
     async def _pulse(self) -> None:
         """Single pulse cycle: parse checks, execute all overdue."""

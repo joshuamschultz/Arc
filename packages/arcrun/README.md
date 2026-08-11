@@ -21,7 +21,7 @@
 
 Everything else is built on top of this.
 
-It's deliberately small. **No agent state.** No persistent identity. No skill discovery. No extension loading. Those concerns belong upstairs in `arcagent`. `arcrun` does one thing: drive a loop, safely.
+It's deliberately small. **No agent state.** No persistent identity. No skill discovery. No extension loading. Those concerns belong to its caller. `arcrun` does one thing: drive a loop, safely.
 
 > ⚡ **One async function call. Hash-chained event log. Sandboxed tools. Streamable. Cancelable. Steerable.**
 
@@ -37,8 +37,7 @@ flowchart TB
     classDef llm fill:#003B82,stroke:#002550,color:#FFFFFF
     classDef found fill:#002550,stroke:#001A38,color:#FFFFFF
 
-    arcagent[arcagent]:::agent --> arcrun
-    arccli[arccli]:::entry --> arcrun
+    caller[caller / host]:::agent --> arcrun
     arcrun[arcrun<br/>think → act → observe loop]:::runtime --> arcllm[arcllm]:::llm
     arcrun --> arctrust[arctrust]:::found
     arcrun --> arcstore[arcstore]:::found

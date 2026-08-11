@@ -25,12 +25,12 @@ import asyncio
 import logging
 import time
 from contextlib import nullcontext
+from dataclasses import dataclass, field
 from typing import Any, Literal
 from xml.sax.saxutils import escape as xml_escape
 
+import arcrun
 from arcprompt import load_stock
-from arcrun import Tool as ArcRunTool
-from arcrun import ToolContext
 from arctrust import AgentIdentity
 
 from arcagent.core.config import ToolConfig, ToolsConfig
@@ -80,6 +80,7 @@ __all__ = [
     "_PY_TYPE_MAP",
     "RegisteredTool",
     "ToolClassification",
+    "ToolDispatchContext",
     "ToolRegistry",
     "ToolTransport",
     "_bind_caller_did",
@@ -88,6 +89,26 @@ __all__ = [
     "_validate_tool_args",
     "native_tool",
 ]
+
+
+@dataclass
+class ToolDispatchContext:
+    """Typed state passed through one tool-dispatch envelope."""
+
+    tool: RegisteredTool
+    args: dict[str, Any]
+    parent_state: Any = None
+    session_id: str = ""
+    call_legs: frozenset[str] = field(default_factory=frozenset)
+    arg_summary: str = ""
+    clearance: Any = None
+    call: ToolCall | None = None
+    policy_context: PolicyContext | None = None
+    decision: Any = None
+    accumulated: frozenset[str] = field(default_factory=frozenset)
+    admission_lock: Any = None
+    result: Any = None
+    elapsed: float = 0.0
 
 
 class ToolRegistry:
@@ -277,6 +298,35 @@ class ToolRegistry:
         _logger.info("Unregistered tool: %s", tool_name)
         return True
 
+    def replace_owned(
+        self,
+        owned_names: set[str],
+        replacements: list[RegisteredTool],
+    ) -> set[str]:
+        """Replace one owner's tools without exposing a partially rebuilt set.
+
+        Registration and policy filtering are synchronous, so the event loop
+        cannot interleave a dispatch between removal and completion. If a
+        registration unexpectedly raises, the exact previous mapping and
+        prompt cache are restored before the exception escapes.
+        """
+        previous_tools = dict(self._tools)
+        previous_cache = self._prompt_cache
+        try:
+            for name in owned_names:
+                self._tools.pop(name, None)
+            accepted: set[str] = set()
+            for tool in replacements:
+                self.register(tool)
+                if tool.name in self._tools:
+                    accepted.add(tool.name)
+            self._prompt_cache = None
+            return accepted
+        except Exception:
+            self._tools = previous_tools
+            self._prompt_cache = previous_cache
+            raise
+
     def _policy_allows(self, tool_name: str) -> bool:
         """Return True iff the tool is permitted by current policy.
 
@@ -299,7 +349,7 @@ class ToolRegistry:
             egress_allow=self._config.policy.egress_allow,
         )
 
-    def to_arcrun_tools(self) -> list[ArcRunTool]:
+    def to_arcrun_tools(self) -> list[arcrun.Tool]:
         """Convert all registered tools to ``arcrun.Tool`` instances.
 
         Each tool's execute is wrapped with:
@@ -313,13 +363,13 @@ class ToolRegistry:
         events), so ``ArcRunTool.timeout_seconds`` is left as
         ``None`` to avoid double-timeout behaviour.
         """
-        result: list[ArcRunTool] = []
+        result: list[arcrun.Tool] = []
         for tool in self._tools.values():
             wrapped = self._create_wrapped_execute(tool)
 
             async def arcrun_execute(
                 args: dict[str, Any],
-                ctx: ToolContext,
+                ctx: arcrun.ToolContext,
                 _w: Any = wrapped,
             ) -> str:
                 # Thread the live RunState (arcrun budget accounting) into the
@@ -330,7 +380,7 @@ class ToolRegistry:
                 return str(raw_result)
 
             result.append(
-                ArcRunTool(
+                arcrun.Tool(
                     name=tool.name,
                     description=tool.description,
                     input_schema=tool.input_schema,
@@ -414,6 +464,172 @@ class ToolRegistry:
             raise PolicyDenied(decision2)
         return approved_call
 
+    def _normalize_dispatch(self, dispatch: ToolDispatchContext) -> None:
+        """Validate arguments and bind trusted caller identity."""
+        tool = dispatch.tool
+        if tool.input_schema:
+            _validate_tool_args(tool.name, dispatch.args, tool.input_schema)
+        if not _is_memory_tool(tool.name):
+            return
+        declared = frozenset(tool.input_schema.get("properties", {}))
+        dispatch.args = _bind_caller_did(
+            tool.name,
+            dispatch.args,
+            self._agent_did,
+            declared=declared,
+            telemetry=self._telemetry,
+        )
+        if "caller_did" not in declared:
+            dispatch.args.pop("caller_did", None)
+
+    async def _authorize_dispatch(self, dispatch: ToolDispatchContext) -> None:
+        """Evaluate policy atomically and record immediately admitted calls."""
+        pipeline = self._policy_pipeline
+        if pipeline is None:
+            return
+        tool = dispatch.tool
+        dispatch.session_id = current_session_id()
+        dispatch.call_legs = legs_for_call(tool.name, tool.capability_tags, dispatch.args)
+        dispatch.arg_summary = summarize_arguments(dispatch.args) if dispatch.call_legs else ""
+        declared_legs = legs_for_tags(tool.capability_tags)
+        if EXTERNAL_COMMS in declared_legs and EXTERNAL_COMMS not in dispatch.call_legs:
+            self._telemetry.audit_event(
+                "policy.owner_channel_exempt",
+                {
+                    "tool": tool.name,
+                    "actor_did": self._agent_did,
+                    "tier": self._tier,
+                    "reason": "owner-directed egress is a trusted sink",
+                    "destination": dispatch.args.get("to"),
+                },
+            )
+        provider_usage = build_provider_usage(dispatch.parent_state, self._provider_label)
+        dispatch.clearance = build_clearance_context(
+            self._identity,
+            self._resource_classifications.get(tool.name),
+            self._classification_strict,
+        )
+        call = ToolCall(
+            tool_name=tool.name,
+            arguments=dispatch.args,
+            agent_did=self._agent_did,
+            session_id=dispatch.session_id,
+            classification=self._resource_classifications.get(tool.name) or "unclassified",
+            capability_tags=dispatch.call_legs,
+        )
+        dispatch.call = sign_call(call, self._identity) if self._identity is not None else call
+        ledger = self._capability_ledger
+        dispatch.admission_lock = (
+            ledger.admission_lock(dispatch.session_id) if ledger is not None else nullcontext()
+        )
+        async with dispatch.admission_lock:
+            dispatch.accumulated = (
+                ledger.snapshot(dispatch.session_id) if ledger is not None else frozenset()
+            )
+            dispatch.policy_context = PolicyContext(
+                tier=self._tier,
+                policy_version=self._policy_version,
+                bundle_age_seconds=0.0,
+                session_capabilities=dispatch.accumulated,
+                provider_usage=provider_usage,
+                clearance=dispatch.clearance,
+            )
+            dispatch.decision = await pipeline.evaluate(dispatch.call, dispatch.policy_context)
+            if not dispatch.decision.is_deny():
+                self._record_admission(
+                    ledger,
+                    dispatch.session_id,
+                    dispatch.call_legs,
+                    dispatch.clearance,
+                    tool_name=tool.name,
+                    arg_summary=dispatch.arg_summary,
+                )
+
+    async def _approve_dispatch(self, dispatch: ToolDispatchContext) -> None:
+        """Resolve composition approval, then run the final pre-tool veto."""
+        if dispatch.decision is not None and dispatch.decision.is_deny():
+            if dispatch.call is None or dispatch.policy_context is None:
+                raise ToolError(
+                    code="TOOL_DISPATCH_STATE_INVALID",
+                    message="Policy denied without a complete approval context",
+                    details={"tool": dispatch.tool.name},
+                )
+            dispatch.call = await self._resolve_forbidden_composition(
+                dispatch.call,
+                dispatch.policy_context,
+                dispatch.decision,
+                self._human_gate,
+                dispatch.call_legs,
+                dispatch.accumulated,
+            )
+            async with dispatch.admission_lock:
+                self._record_admission(
+                    self._capability_ledger,
+                    dispatch.session_id,
+                    dispatch.call_legs,
+                    dispatch.clearance,
+                    tool_name=dispatch.tool.name,
+                    arg_summary=dispatch.arg_summary,
+                )
+        event = await self._bus.emit(
+            "agent:pre_tool", {"tool": dispatch.tool.name, "args": dispatch.args}
+        )
+        if event.is_vetoed:
+            raise ToolVetoedError(
+                message=f"Tool '{dispatch.tool.name}' vetoed: {event.veto_reason}",
+                details={"tool": dispatch.tool.name, "reason": event.veto_reason},
+            )
+
+    async def _execute_dispatch(self, dispatch: ToolDispatchContext) -> None:
+        """Execute once under the configured timeout and telemetry span."""
+        start = time.monotonic()
+        try:
+            async with self._telemetry.tool_span(dispatch.tool.name, dispatch.args):
+                dispatch.result = await asyncio.wait_for(
+                    dispatch.tool.execute(**dispatch.args),
+                    timeout=dispatch.tool.timeout_seconds,
+                )
+        except TimeoutError as exc:
+            raise ToolError(
+                code="TOOL_TIMEOUT",
+                message=(
+                    f"Tool '{dispatch.tool.name}' timed out after {dispatch.tool.timeout_seconds}s"
+                ),
+                details={
+                    "tool": dispatch.tool.name,
+                    "timeout": dispatch.tool.timeout_seconds,
+                },
+            ) from exc
+        dispatch.elapsed = time.monotonic() - start
+
+    async def _record_dispatch(self, dispatch: ToolDispatchContext) -> None:
+        """Publish the successful result and write its audit envelope."""
+        tool = dispatch.tool
+        await self._bus.emit(
+            "agent:post_tool",
+            {"tool": tool.name, "result": dispatch.result, "duration": dispatch.elapsed},
+        )
+        if self._agent_did == "did:arc:unknown":
+            self._telemetry.audit_event(
+                "security.unidentified_tool_call",
+                {
+                    "tool": tool.name,
+                    "actor_did": self._agent_did,
+                    "tier": self._tier,
+                    "warning": "Tool called without a real agent DID — configure identity.",
+                },
+            )
+        self._telemetry.audit_event(
+            "tool.executed",
+            {
+                "tool": tool.name,
+                "transport": tool.transport.value,
+                "duration_ms": round(dispatch.elapsed * 1000),
+                "actor_did": self._agent_did,
+                "tier": self._tier,
+            },
+        )
+
     def _create_wrapped_execute(self, tool: RegisteredTool) -> Any:
         """Create a wrapped execute function for a tool.
 
@@ -426,23 +642,6 @@ class ToolRegistry:
           4. Post-tool event
           5. Audit
         """
-        bus = self._bus
-        telemetry = self._telemetry
-        pipeline = self._policy_pipeline
-        identity = self._identity
-        agent_did = self._agent_did
-        tier = self._tier
-        policy_version = self._policy_version
-        ledger = self._capability_ledger
-        human_gate = self._human_gate
-        provider_label = self._provider_label
-        resource_label = self._resource_classifications.get(tool.name)
-        classification_strict = self._classification_strict
-        # Session-scoped trifecta legs this tool DECLARES (deployment map). The
-        # legs actually charged to a call are resolved per-dispatch below, so a
-        # destination-scoped egress tool (e.g. an owner-directed messaging_send)
-        # can drop a leg the raw tags would otherwise contribute.
-        declared_legs = legs_for_tags(tool.capability_tags)
 
         async def wrapped_execute(
             args: dict[str, Any] | None = None,
@@ -450,185 +649,19 @@ class ToolRegistry:
             parent_state: Any = None,
             **kwargs: Any,
         ) -> Any:
-            if args is None:
-                args = kwargs
-
-            # 0. Validate arguments against schema
-            if tool.input_schema:
-                _validate_tool_args(tool.name, args, tool.input_schema)
-
-            # 0.5 ASI-03 / LLM-01 transport defence — strip UNDECLARED LLM-supplied
-            # identity fields from memory-tool arguments before they reach the
-            # policy pipeline or execute(). Runs regardless of whether a policy
-            # pipeline is configured. Identity fields the tool legitimately
-            # declares (e.g. ``user_profile_read(user_did=...)``) are preserved;
-            # only injected, undeclared identity args are dropped. ``caller_did``
-            # is forwarded only to tools whose schema declares it.
-            if _is_memory_tool(tool.name):
-                declared = frozenset(tool.input_schema.get("properties", {}))
-                args = _bind_caller_did(
-                    tool.name, args, agent_did, declared=declared, telemetry=telemetry
-                )
-                if "caller_did" not in declared:
-                    args.pop("caller_did", None)
-
-            # 1. Policy pipeline — the single, authoritative deny path.
-            # No sudo mode, no bypass flag. Exceptions in layers are
-            # caught by the pipeline and returned as DENY (fail-closed).
-            if pipeline is not None:
-                session_id = current_session_id()
-                # Destination-aware trifecta legs: an owner-directed send (to the
-                # operator's own paired channel) is a trusted sink, not exfil, so
-                # it drops the external_comms leg — the forbidden-composition gate
-                # must not fire on the agent delivering a result to its own owner
-                # (ASI09). Any non-owner recipient keeps the leg and still trips.
-                call_legs = legs_for_call(tool.name, tool.capability_tags, args)
-                # SPEC-035 approval enrichment — a redacted, bounded one-line arg
-                # summary for this call's leg provenance. Computed here (OUTSIDE the
-                # admission lock) and only for leg-bearing calls, so PII redaction
-                # never runs under the O(1) critical section (REQ-032).
-                arg_summary = summarize_arguments(args) if call_legs else ""
-                if EXTERNAL_COMMS in declared_legs and EXTERNAL_COMMS not in call_legs:
-                    telemetry.audit_event(
-                        "policy.owner_channel_exempt",
-                        {
-                            "tool": tool.name,
-                            "actor_did": agent_did,
-                            "tier": tier,
-                            "reason": "owner-directed egress is a trusted sink",
-                            "destination": args.get("to"),
-                        },
-                    )
-                # SPEC-038 REQ-004/010 — bridge the live arcrun usage onto the
-                # ProviderLayer seam with a TRUSTED config-sourced provider label
-                # (never response.model). Lights up SPEC-034's inert layer.
-                provider_usage = build_provider_usage(parent_state, provider_label)
-                # SPEC-038 REQ-023 — no-read-up labels for the ClassificationLayer:
-                # caller clearance from identity, resource classification from the
-                # per-tool config label. None when either is absent (layer no-ops).
-                clearance_ctx = build_clearance_context(
-                    identity, resource_label, classification_strict
-                )
-                call = ToolCall(
-                    tool_name=tool.name,
-                    arguments=args,
-                    agent_did=agent_did,
-                    session_id=session_id,
-                    classification=resource_label or "unclassified",
-                    capability_tags=call_legs,
-                )
-                # Sign the call so the pipeline's IdentityLayer can authenticate
-                # it (proves this dispatch came from the key-holding agent, not
-                # an injected call). No identity → call stays unsigned → denied.
-                if identity is not None:
-                    call = sign_call(call, identity)
-                # SPEC-043 REQ-032 — snapshot→evaluate→record is atomic per
-                # session under the admission lock: concurrent dispatch cannot
-                # interleave the TOCTOU window, so two calls whose union completes
-                # a forbidden composition are evaluated in sequence (the second
-                # sees the union → GlobalLayer denies). The lock covers ONLY the
-                # O(1) decision; tool.execute and the human-approval await below
-                # run outside it (no over-locking, no human timeout under lock).
-                lock = ledger.admission_lock(session_id) if ledger is not None else nullcontext()
-                async with lock:
-                    accumulated = (
-                        ledger.snapshot(session_id) if ledger is not None else frozenset()
-                    )
-                    # session_capabilities carries the accumulated trifecta legs
-                    # so GlobalLayer sees the cross-call union (SPEC-035 REQ-012).
-                    ctx_pol = PolicyContext(
-                        tier=tier,
-                        policy_version=policy_version,
-                        bundle_age_seconds=0.0,
-                        session_capabilities=accumulated,
-                        provider_usage=provider_usage,
-                        clearance=clearance_ctx,
-                    )
-                    decision = await pipeline.evaluate(call, ctx_pol)
-                    denied = decision.is_deny()
-                    if not denied:
-                        self._record_admission(
-                            ledger,
-                            session_id,
-                            call_legs,
-                            clearance_ctx,
-                            tool_name=tool.name,
-                            arg_summary=arg_summary,
-                        )
-                if denied:
-                    # Human approval awaits OUTSIDE the lock (REQ-032): a granted
-                    # one-shot re-evaluates and, on ALLOW, records the legs.
-                    call = await self._resolve_forbidden_composition(
-                        call, ctx_pol, decision, human_gate, call_legs, accumulated
-                    )
-                    async with lock:
-                        self._record_admission(
-                            ledger,
-                            session_id,
-                            call_legs,
-                            clearance_ctx,
-                            tool_name=tool.name,
-                            arg_summary=arg_summary,
-                        )
-
-            # 2. Pre-tool event (may veto)
-            ctx = await bus.emit(
-                "agent:pre_tool",
-                {"tool": tool.name, "args": args},
+            dispatch = ToolDispatchContext(
+                tool=tool,
+                args=dict(kwargs if args is None else args),
+                parent_state=parent_state,
             )
-            if ctx.is_vetoed:
-                raise ToolVetoedError(
-                    message=f"Tool '{tool.name}' vetoed: {ctx.veto_reason}",
-                    details={"tool": tool.name, "reason": ctx.veto_reason},
-                )
+            self._normalize_dispatch(dispatch)
 
-            # 3. Execute with timeout and telemetry span
-            start = time.monotonic()
-            try:
-                async with telemetry.tool_span(tool.name, args):
-                    result = await asyncio.wait_for(
-                        tool.execute(**args),
-                        timeout=tool.timeout_seconds,
-                    )
-            except TimeoutError as exc:
-                raise ToolError(
-                    code="TOOL_TIMEOUT",
-                    message=f"Tool '{tool.name}' timed out after {tool.timeout_seconds}s",
-                    details={"tool": tool.name, "timeout": tool.timeout_seconds},
-                ) from exc
-            elapsed = time.monotonic() - start
+            await self._authorize_dispatch(dispatch)
+            await self._approve_dispatch(dispatch)
 
-            # 4. Post-tool event
-            await bus.emit(
-                "agent:post_tool",
-                {"tool": tool.name, "result": result, "duration": elapsed},
-            )
-
-            # 5. Audit — actor_did and tier are mandatory for every tool
-            # dispatch so the audit trail answers ASI03: who called what.
-            # Unknown DID ("did:arc:unknown") is flagged as a security event.
-            if agent_did == "did:arc:unknown":
-                telemetry.audit_event(
-                    "security.unidentified_tool_call",
-                    {
-                        "tool": tool.name,
-                        "actor_did": agent_did,
-                        "tier": tier,
-                        "warning": "Tool called without a real agent DID — configure identity.",
-                    },
-                )
-            telemetry.audit_event(
-                "tool.executed",
-                {
-                    "tool": tool.name,
-                    "transport": tool.transport.value,
-                    "duration_ms": round(elapsed * 1000),
-                    "actor_did": agent_did,
-                    "tier": tier,
-                },
-            )
-
-            return result
+            await self._execute_dispatch(dispatch)
+            await self._record_dispatch(dispatch)
+            return dispatch.result
 
         return wrapped_execute
 

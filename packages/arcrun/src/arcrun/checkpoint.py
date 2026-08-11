@@ -1,7 +1,7 @@
 """Loop checkpoint — serializable resumable state (SPEC-043 REQ-001..004).
 
 arcrun *emits* a :class:`LoopCheckpoint` at each turn boundary through an
-injected hook; it never persists. The caller (arcagent) writes it durably
+injected hook; it never persists. The caller writes it durably
 (``SessionManager`` JSONL + arcstore WORM at ent/fed). Resume reconstructs the
 ``RunState`` from the checkpoint and re-enters the loop at the saved turn —
 because the message list already carries every completed turn, resume redoes no

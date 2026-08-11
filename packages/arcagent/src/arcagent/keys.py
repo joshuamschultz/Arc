@@ -29,7 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from arcllm import list_provider_keys
+import arcrun
 from arctrust.audit import AuditEvent, AuditSink, emit
 from arctrust.paths import arc_home
 
@@ -88,7 +88,7 @@ class KeyStore:
                 required=key.required,
                 present=bool(entries.get(key.api_key_env)),
             )
-            for key in list_provider_keys()
+            for key in arcrun.model_provider_keys()
         )
         self._audit("provider_key.list", str(self._file.path), caller_did, "allow")
         return statuses
@@ -130,7 +130,7 @@ class KeyStore:
     @staticmethod
     def _declared(env_var: str) -> None:
         """The allowlist: arcllm's packaged providers, and nothing beyond them."""
-        if env_var not in {key.api_key_env for key in list_provider_keys()}:
+        if env_var not in {key.api_key_env for key in arcrun.model_provider_keys()}:
             raise ExtensionError(
                 code="PROVIDER_KEY_UNKNOWN",
                 message=f"no packaged provider reads {env_var}; refusing to touch it",

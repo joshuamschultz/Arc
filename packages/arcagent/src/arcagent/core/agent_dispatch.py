@@ -14,15 +14,13 @@ solely to keep ``agent.py`` slim.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable
 from typing import TYPE_CHECKING, Any
 
-from arcrun import Event, RunHandle, StreamEvent, TurnEndEvent, get_strategy_prompts
-from arcrun import run_async as arcrun_run_async
-from arcrun import run_stream as arcrun_run_stream
+import arcrun
 
+from arcagent.capabilities.capability_registry import CapabilityRegistry
 from arcagent.capabilities.provider import WORKSPACE_ROOT, AgentCapabilityProvider, _Skill
 from arcagent.core import known_channels, turn_context
 from arcagent.core.agent_lifecycle import activate_runtime_bindings
@@ -47,7 +45,7 @@ async def build_run_context(
     Any,  # model
     AgentCapabilityProvider,  # the unified capability surface for arcrun
     AssembledPrompt,  # tiered system prompt + this turn's context
-    Callable[[Event], None],  # bridge
+    Callable[[arcrun.Event], None],  # bridge
 ]:
     """Prepare shared run context for the streaming run.
 
@@ -76,7 +74,7 @@ async def build_run_context(
     tool_names = [t.name for t in invoke_tools]
     strategy_sections = {
         "base": resolve("arcagent", "base_system"),
-        **get_strategy_prompts(tool_names=tool_names, resolve=resolve),
+        **arcrun.get_strategy_prompts(tool_names=tool_names, resolve=resolve),
     }
 
     # Orchestration: spawn_task is context-dependent (reads depth/budget from the
@@ -116,6 +114,7 @@ async def build_run_context(
         bus,
         model_id=agent._config.llm.model,
         agent_label=agent._config.agent.name,
+        task_supervisor=agent._background_tasks,
     )
 
     provider = AgentCapabilityProvider(
@@ -163,7 +162,7 @@ def _agent_skills(agent: ArcAgent) -> list[_Skill]:
         return []
     return [
         _Skill(name=e.name, description=e.description, location=e.location, scan_root=e.scan_root)
-        for e in registry._skills.values()
+        for e in registry.skill_entries()
     ]
 
 
@@ -177,7 +176,7 @@ def _requires_skill_map(agent: ArcAgent) -> dict[str, str]:
         return {}
     return {
         entry.meta.name: entry.meta.requires_skill
-        for entry in registry._tools.values()
+        for entry in registry.tool_entries()
         if entry.meta.requires_skill
     }
 
@@ -190,13 +189,9 @@ def _workspace_authored(agent: ArcAgent) -> frozenset[str]:
     which records each entry's scan_root.
     """
     registry = agent._capability_registry
-    if registry is None:
+    if not isinstance(registry, CapabilityRegistry):
         return frozenset()
-    names = {name for name, entry in registry._tools.items() if entry.scan_root == WORKSPACE_ROOT}
-    names |= {
-        name for name, entry in registry._skills.items() if entry.scan_root == WORKSPACE_ROOT
-    }
-    return frozenset(names)
+    return registry.workspace_authored_names(WORKSPACE_ROOT)
 
 
 def _tighter(a: float | None, b: float | None) -> float | None:
@@ -207,7 +202,7 @@ def _tighter(a: float | None, b: float | None) -> float | None:
 
 def track_active_run(
     agent: ArcAgent, session_id: str
-) -> tuple[Callable[[RunHandle], None], Callable[[], None]]:
+) -> tuple[Callable[[arcrun.RunHandle], None], Callable[[], None]]:
     """Register a streaming run's live handle so the operator kill-switch can reach it.
 
     Returns ``(on_handle, untrack)``: pass ``on_handle`` to ``arcrun.run_stream`` so
@@ -218,15 +213,15 @@ def track_active_run(
     stale finalizer. This is the streaming-path parity for what ``start_tracked_run``
     already does for tracked runs (GAP-A).
     """
-    registered: list[RunHandle] = []
+    registered: list[arcrun.RunHandle] = []
 
-    def on_handle(handle: RunHandle) -> None:
+    def on_handle(handle: arcrun.RunHandle) -> None:
         registered.append(handle)
-        agent._active_runs[session_id] = handle
+        agent._run_coordinator.register(session_id, handle)
 
     def untrack() -> None:
-        if registered and agent._active_runs.get(session_id) is registered[0]:
-            del agent._active_runs[session_id]
+        if registered:
+            agent._run_coordinator.unregister(session_id, registered[0])
 
     return on_handle, untrack
 
@@ -243,7 +238,7 @@ async def dispatch_stream(
     reply_target: str | None = None,
     reply_label: str | None = None,
     allowed_strategies: list[str] | None = None,
-) -> AsyncIterator[StreamEvent]:
+) -> AsyncIterator[arcrun.StreamEvent]:
     """The single execution path: stream one agent turn into a session.
 
     Appends the user turn, drives arcrun's streaming loop with the session's
@@ -265,6 +260,39 @@ async def dispatch_stream(
     bindings — so tool dispatches inside the loop inherit it (e.g. the scheduler
     defaults a new schedule's delivery to this channel).
     """
+    # Serialize the *whole* turn. In particular, history cannot be read by a
+    # later call until this call has committed its assistant response.
+    async with agent._run_coordinator.turn(session.session_id):
+        async for event in _dispatch_stream_locked(
+            agent,
+            input_text,
+            session=session,
+            tool_choice=tool_choice,
+            max_tokens=max_tokens,
+            max_cost_usd=max_cost_usd,
+            run_id=run_id,
+            reply_target=reply_target,
+            reply_label=reply_label,
+            allowed_strategies=allowed_strategies,
+        ):
+            yield event
+
+
+async def _dispatch_stream_locked(
+    agent: ArcAgent,
+    input_text: str,
+    *,
+    session: SessionManager,
+    tool_choice: dict[str, Any] | None,
+    max_tokens: int | None,
+    max_cost_usd: float | None,
+    run_id: str | None,
+    reply_target: str | None,
+    reply_label: str | None,
+    allowed_strategies: list[str] | None,
+) -> AsyncIterator[arcrun.StreamEvent]:
+    """Execute a turn after its session serialization lock is held."""
+    agent._ensure_started()
     activate_runtime_bindings(agent)
     turn_context.set_inbound_channel(reply_target)
     if reply_target:
@@ -295,7 +323,7 @@ async def dispatch_stream(
     try:
         async with telemetry.session_span(input_text):
             _logger.info("Running agent loop for task: %s", input_text[:80])
-            raw_stream = await arcrun_run_stream(
+            raw_stream = await arcrun.run_stream(
                 model=model,
                 capabilities=provider,
                 system_prompt=prompt.segments,
@@ -313,7 +341,7 @@ async def dispatch_stream(
                 **narrowed_loop_controls(agent, session, allowed_strategies),
             )
             async for event in raw_stream:
-                if isinstance(event, TurnEndEvent):
+                if isinstance(event, arcrun.TurnEndEvent):
                     final_text = event.final_text
                 yield event
     except Exception as exc:  # reason: re-raise after log
@@ -347,7 +375,7 @@ async def start_tracked_run(
     input_text: str,
     *,
     session_key: str,
-) -> RunHandle:
+) -> arcrun.RunHandle:
     """Start an async, steerable run for ``session_key`` and track its handle.
 
     Mirrors :func:`dispatch_stream`'s session bookkeeping but drives
@@ -357,37 +385,47 @@ async def start_tracked_run(
     the assistant turn, compacts, and emits ``agent:post_respond`` (parity with
     the streaming path). REQ-040/041.
     """
-    activate_runtime_bindings(agent)
     session = await agent.session(session_key)
-    _telemetry, _bus, model, provider, prompt, bridge = await build_run_context(agent, input_text)
-    await session.append_message(prompt.session_record(input_text))
-    history = wire_messages(session.get_messages())
-    transform = agent._context.transform_context if agent._context else None
-    max_tokens, max_cost_usd = resolve_run_budget(agent._config)
-
-    # Bind the session id before the loop task is created so the background run
-    # (and its tool dispatches) inherit it in their copied context (SPEC-035).
-    session_token = bind_session_id(session.session_id)
+    coordination_key = session.session_id
+    await agent._run_coordinator.acquire_turn(coordination_key)
     try:
-        handle = await arcrun_run_async(
-            model,
-            provider,
-            prompt.segments,
-            input_text,
-            messages=history,
-            on_event=bridge,
-            transform_context=transform,
-            actor_did=agent._identity.did if agent._identity else None,
-            store_raw_bodies=agent._config.telemetry.capture_tool_io,
-            max_tokens=max_tokens,
-            max_cost_usd=max_cost_usd,
-            **build_loop_controls(agent, session),
+        agent._ensure_started()
+        activate_runtime_bindings(agent)
+        _telemetry, _bus, model, provider, prompt, bridge = await build_run_context(
+            agent, input_text
         )
-    finally:
-        reset_session_id(session_token)
-    agent._active_runs[session_key] = handle
-    finalizer = asyncio.ensure_future(
-        _finalize_tracked_run(agent, handle, session, session_key, input_text)
+        await session.append_message(prompt.session_record(input_text))
+        history = wire_messages(session.get_messages())
+        transform = agent._context.transform_context if agent._context else None
+        max_tokens, max_cost_usd = resolve_run_budget(agent._config)
+
+        # Bind the session id before the loop task is created so the background
+        # run (and its tool dispatches) inherit it in their copied context.
+        session_token = bind_session_id(session.session_id)
+        try:
+            handle = await arcrun.run_async(
+                model,
+                provider,
+                prompt.segments,
+                input_text,
+                messages=history,
+                on_event=bridge,
+                transform_context=transform,
+                actor_did=agent._identity.did if agent._identity else None,
+                store_raw_bodies=agent._config.telemetry.capture_tool_io,
+                max_tokens=max_tokens,
+                max_cost_usd=max_cost_usd,
+                **build_loop_controls(agent, session),
+            )
+        finally:
+            reset_session_id(session_token)
+    except BaseException:
+        agent._run_coordinator.release_turn(coordination_key)
+        raise
+    agent._run_coordinator.register(coordination_key, handle)
+    finalizer = agent._background_tasks.create(
+        _finalize_tracked_run(agent, handle, session, coordination_key, input_text),
+        name=f"run_finalizer:{coordination_key}",
     )
     agent._run_finalizers.add(finalizer)
     finalizer.add_done_callback(agent._run_finalizers.discard)
@@ -396,7 +434,7 @@ async def start_tracked_run(
 
 async def _finalize_tracked_run(
     agent: ArcAgent,
-    handle: RunHandle,
+    handle: arcrun.RunHandle,
     session: SessionManager,
     session_key: str,
     input_text: str,
@@ -424,7 +462,13 @@ async def _finalize_tracked_run(
     except Exception:  # reason: fail-open — background run must not crash the loop
         _logger.exception("Tracked run finalizer failed for session %s", session_key)
     finally:
-        agent._active_runs.pop(session_key, None)
+        coordinator = getattr(agent, "_run_coordinator", None)
+        if coordinator is not None:
+            coordinator.unregister(session_key, handle)
+            coordinator.release_turn(session_key)
+        elif agent._active_runs.get(session_key) is handle:
+            # Compatibility for focused tests using a minimal mock agent.
+            del agent._active_runs[session_key]
 
 
 async def maybe_compact(agent: ArcAgent, session: SessionManager) -> None:

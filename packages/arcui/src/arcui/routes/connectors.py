@@ -44,22 +44,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from arcagent.connections import (
-    NOT_INSTALLED,
-    AuditChain,
-    Authorization,
-    CatalogEntry,
-    Connection,
-    Connections,
-    ConnectorPlan,
-    ExtensionError,
-    HostPrerequisiteDirector,
-    HostVerdict,
-    Tier,
-    ToolSpec,
-    catalog,
-    resolve_roots,
-)
+import arcagent
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
@@ -94,6 +79,21 @@ from arcui.schemas import (
     ConnectorTool,
     ConnectorUnreadableBundle,
 )
+
+NOT_INSTALLED = arcagent.NOT_INSTALLED
+AuditChain = arcagent.AuditChain
+Authorization = arcagent.Authorization
+CatalogEntry = arcagent.CatalogEntry
+Connection = arcagent.Connection
+Connections = arcagent.Connections
+ConnectorPlan = arcagent.ConnectorPlan
+ExtensionError = arcagent.ExtensionError
+HostPrerequisiteDirector = arcagent.HostPrerequisiteDirector
+HostVerdict = arcagent.HostVerdict
+Tier = arcagent.Tier
+ToolSpec = arcagent.ToolSpec
+catalog = arcagent.catalog
+resolve_roots = arcagent.resolve_roots
 
 logger = logging.getLogger("arcui.routes.connectors")
 

@@ -25,9 +25,11 @@ Spec: SPEC-018 T4.8.5
 
 from __future__ import annotations
 
-import fnmatch
 import logging
-import urllib.parse
+from collections.abc import Callable, Iterable
+from urllib.parse import urlsplit
+
+from arcagent.utils.url_security import UnsafeURLError, validate_http_url
 
 _logger = logging.getLogger("arcagent.modules.web.url_policy")
 
@@ -37,6 +39,8 @@ def is_url_allowed(
     *,
     allowlist: list[str],
     tier: str,
+    resolve: bool = False,
+    resolver: Callable[[str], Iterable[str]] | None = None,
 ) -> bool:
     """Return True if ``url`` is permitted under the given tier policy.
 
@@ -50,6 +54,15 @@ def is_url_allowed(
     Returns:
         True if the URL is allowed, False if it should be denied.
     """
+    try:
+        validated = validate_http_url(
+            url,
+            resolve=resolve,
+            **({"resolver": resolver} if resolver is not None else {}),
+        )
+    except UnsafeURLError:
+        return False
+
     # Empty allowlist: federal denies (open-internet control is a federal
     # stringency requirement — startup also rejects an empty federal list);
     # personal/enterprise allow by default so ordinary research is not bricked.
@@ -59,12 +72,34 @@ def is_url_allowed(
     if tier.lower() == "enterprise":
         _warn_cross_org_if_needed(url, allowlist)
 
-    return _check_allowlist(url, allowlist)
+    return _check_allowlist(validated.raw, allowlist)
 
 
 def _check_allowlist(url: str, allowlist: list[str]) -> bool:
     """Return True if ``url`` matches any pattern in ``allowlist``."""
-    return any(fnmatch.fnmatch(url, pattern) for pattern in allowlist)
+    candidate = urlsplit(url)
+    candidate_host = (candidate.hostname or "").rstrip(".").lower()
+    for pattern in allowlist:
+        if pattern == "*":
+            return True
+        parsed_pattern = urlsplit(pattern)
+        pattern_host = (parsed_pattern.hostname or "").rstrip(".").lower()
+        if candidate.scheme.lower() != parsed_pattern.scheme.lower():
+            continue
+        if pattern_host.startswith("*."):
+            suffix = pattern_host[2:]
+            host_matches = candidate_host != suffix and candidate_host.endswith(f".{suffix}")
+        else:
+            host_matches = candidate_host == pattern_host
+        if not host_matches or candidate.port != parsed_pattern.port:
+            continue
+        pattern_path = parsed_pattern.path
+        if pattern_path.endswith("*"):
+            if candidate.path.startswith(pattern_path[:-1]):
+                return True
+        elif candidate.path == pattern_path:
+            return True
+    return False
 
 
 def _warn_cross_org_if_needed(url: str, allowlist: list[str]) -> None:
@@ -73,12 +108,13 @@ def _warn_cross_org_if_needed(url: str, allowlist: list[str]) -> None:
     Best-effort heuristic for enterprise tier: compare the URL's host
     against the domain part of each allowlist pattern; warn when none match.
     """
-    parsed = urllib.parse.urlparse(url)
+    parsed = urlsplit(url)
     host = parsed.netloc.lower()
     # Check whether the host appears in any allowlist pattern's domain part
     for pattern in allowlist:
-        pattern_host = urllib.parse.urlparse(pattern).netloc.lower()
-        if pattern_host and pattern_host in host:
+        pattern_host = urlsplit(pattern).hostname or ""
+        pattern_host = pattern_host.removeprefix("*.").lower()
+        if pattern_host and (host == pattern_host or host.endswith(f".{pattern_host}")):
             return
     _logger.warning(
         "web.url_policy enterprise cross-org URL detected: %s "

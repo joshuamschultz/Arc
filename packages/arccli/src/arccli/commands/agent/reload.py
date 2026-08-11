@@ -14,12 +14,11 @@ def _reload(args: argparse.Namespace) -> None:
     agent_dir = _resolve_agent_dir(args.path)
     _load_env(agent_dir)
 
-    from arcagent.core.agent import ArcAgent
-    from arcagent.core.config import load_config
+    import arcagent
 
     config_path = agent_dir / "arcagent.toml"
-    config = load_config(config_path)
-    arc_agent = ArcAgent(config, config_path=config_path)
+    config = arcagent.load_config(config_path)
+    arc_agent = arcagent.ArcAgent(config, config_path=config_path)
 
     async def _do_reload() -> None:
         await arc_agent.startup()

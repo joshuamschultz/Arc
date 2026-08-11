@@ -8,7 +8,7 @@ Provider-agnostic LLM client: many providers over direct `httpx` (no vendor SDKs
 
 ## Layer
 
-**Provider abstraction.** Depends on `arctrust`, `arcstore`. Imported by `arcrun`, `arcagent`, `arcmemory`, `arccli`, `arcui`.
+**Provider abstraction.** Depends on `arctrust`, `arcstore`. ArcRun consumes it; ArcLLM knows nothing about ArcRun, ArcAgent, gateways, or user interfaces.
 
 **Concern boundary:** all LLM calls live here. No agent state, no ReAct loop.
 
@@ -36,8 +36,9 @@ Lazy (`__getattr__`): adapters, modules, embeddings (`embed`, `resolve_embedder`
 ## Package rules
 
 - **No vendor LLM SDKs** — httpx only (root CLAUDE.md / tech.md).
-- `arcrun` must **not** call `load_model` or import `arcllm.registry` (architecture test). Receive a pre-built model instead.
-- Prefer `arcllm.types` as the cross-package contract (e.g. `StreamEvent` for SPEC-059).
+- Cross-package consumers use `import arcllm` and qualified root-facade names, never its internal module layout.
+- ArcRun owns the higher-level model-execution seam; ArcLLM remains the standalone provider/router implementation beneath it.
+- Export cross-package contracts such as `StreamEvent` through the `arcllm` root facade.
 - Package `.env` must not inject API keys into unrelated consumers; respect cwd/.env conventions.
 
 ## Tests

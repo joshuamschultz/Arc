@@ -60,7 +60,7 @@ def _patch_stream(*tokens: str) -> Any:
     async def _factory(*args: Any, **kwargs: Any) -> AsyncIterator[StreamEvent]:
         return _fake_stream(*tokens)
 
-    return patch("arcagent.core.agent_dispatch.arcrun_run_stream", side_effect=_factory)
+    return patch("arcagent.core.agent_dispatch.arcrun.run_stream", side_effect=_factory)
 
 
 def _capture_stream(*tokens: str) -> tuple[dict[str, Any], Any]:
@@ -73,7 +73,7 @@ def _capture_stream(*tokens: str) -> tuple[dict[str, Any], Any]:
         captured.update(kwargs)
         return _fake_stream(*tokens)
 
-    patcher = patch("arcagent.core.agent_dispatch.arcrun_run_stream", side_effect=_factory)
+    patcher = patch("arcagent.core.agent_dispatch.arcrun.run_stream", side_effect=_factory)
     return captured, patcher
 
 

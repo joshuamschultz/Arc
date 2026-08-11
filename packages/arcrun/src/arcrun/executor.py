@@ -8,15 +8,13 @@ import json
 import time
 from typing import Any
 
+import arcllm
 import jsonschema
-
-# Re-export for type reference
-from arcllm.types import Message
 
 from arcrun._messages import tool_result
 from arcrun.sandbox import Sandbox
 from arcrun.state import RunState
-from arcrun.types import ToolContext
+from arcrun.types import ParentRunContext, ToolContext
 
 _MAX_ERROR_LEN = 200
 
@@ -42,7 +40,7 @@ async def execute_tool_call(
     tc: Any,
     state: RunState,
     sandbox: Sandbox,
-) -> tuple[Message, bool]:
+) -> tuple[arcllm.Message, bool]:
     """Execute a single tool call through the full pipeline.
 
     Returns (tool_result_message, success).
@@ -81,7 +79,15 @@ async def execute_tool_call(
         turn_number=state.turn_count + 1,
         event_bus=bus,
         cancelled=state.cancel_event,
-        parent_state=state,  # exposed so tools (e.g., delegate) can read depth/budget
+        parent_state=ParentRunContext(
+            run_id=state.run_id,
+            depth=state.depth,
+            max_depth=state.max_depth,
+            event_bus=state.event_bus,
+            tokens_used=state.tokens_used.copy(),
+            cost_usd=state.cost_usd,
+            tool_calls_made=state.tool_calls_made,
+        ),
     )
 
     timeout = tool_def.timeout_seconds or state.tool_timeout

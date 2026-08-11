@@ -27,7 +27,7 @@ import os
 import time
 from typing import Any
 
-from arcllm.types import Message
+import arcrun
 from arcprompt import load_stock
 
 from arcagent.modules.workpad import _runtime
@@ -180,11 +180,11 @@ async def perform_maintenance(st: _runtime._State, model: Any, transcript_text: 
 
     response = await model.invoke(
         [
-            Message(
+            arcrun.Message(
                 role="system",
                 content=load_stock("arcagent", "context_maintainer_system"),
             ),
-            Message(role="user", content=_render_input(current, transcript_text)),
+            arcrun.Message(role="user", content=_render_input(current, transcript_text)),
         ]
     )
     new_md = (response.content or "").strip()

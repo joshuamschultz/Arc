@@ -14,7 +14,7 @@ registry, never a mid-run mutation of the live set.
 
 from __future__ import annotations
 
-from arcllm.types import Tool as LLMTool
+import arcllm
 
 from arcrun.events import EventBus
 from arcrun.types import Tool
@@ -27,7 +27,7 @@ class ToolRegistry:
         self._tools: dict[str, Tool] = {t.name: t for t in tools}
         self._event_bus = event_bus
         self._frozen = False
-        self._schema_cache: list[LLMTool] | None = None
+        self._schema_cache: list[arcllm.Tool] | None = None
 
     def freeze(self) -> None:
         """Seal the registry for the run. After this, add/remove raise."""
@@ -67,7 +67,7 @@ class ToolRegistry:
         tool = self._tools.get(name)
         return tool.classification if tool is not None else "state_modifying"
 
-    def list_schemas(self) -> list[LLMTool]:
+    def list_schemas(self) -> list[arcllm.Tool]:
         """Convert tools to arcllm Tool format for model.invoke().
 
         Memoized: the loop reads this every turn and the tool set is fixed
@@ -76,7 +76,7 @@ class ToolRegistry:
         """
         if self._schema_cache is None:
             self._schema_cache = [
-                LLMTool(
+                arcllm.Tool(
                     name=t.name,
                     description=t.description,
                     parameters=t.input_schema,

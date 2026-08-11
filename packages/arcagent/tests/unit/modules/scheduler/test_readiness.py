@@ -172,12 +172,11 @@ def test_the_lifecycle_offers_the_run_callback_to_modules() -> None:
     import inspect
 
     from arcagent.core import agent_lifecycle
+    from arcagent.core.runtime_dependencies import DependencyKey
     from arcagent.modules.scheduler import _runtime
 
-    source = Path(agent_lifecycle.__file__).read_text(encoding="utf-8")
-    assert '"agent_run_fn": agent.run_collected' in source, (
-        "core no longer offers the run callback to modules"
-    )
+    spec = agent_lifecycle._RUNTIME_SPECS["scheduler"]
+    assert DependencyKey.AGENT_RUN_FN in spec.dependencies
     assert "agent_run_fn" in inspect.signature(_runtime.configure).parameters, (
         "the scheduler no longer asks for the run callback"
     )

@@ -169,16 +169,12 @@ def _version(args: argparse.Namespace) -> None:
     """Show arcrun version and capabilities."""
     import arcllm
     import arcrun
-    from arcrun.strategies import STRATEGIES, _load_strategies
-
-    if not STRATEGIES:
-        _load_strategies()
 
     as_json: bool = getattr(args, "as_json", False)
     data: dict[str, Any] = {
         "arcrun": getattr(arcrun, "__version__", "0.1.0"),
         "arcllm": getattr(arcllm, "__version__", "0.1.0"),
-        "strategies": list(STRATEGIES.keys()),
+        "strategies": list(arcrun.available_strategies()),
         "builtins": ["execute_python"],
         "public_api": [
             "run",
@@ -237,13 +233,13 @@ async def _run_exec_async(
     caller_did: str | None,
     audit_sink: Any | None,
 ) -> None:
-    from arcrun import ToolContext, make_execute_tool
+    import arcrun
 
     # Isolation is sourced from the machine config (never hardcoded): a personal
     # dev box runs sandbox-off on the host, an enterprise/federal host is routed
     # to its container/VM floor. Selection/downgrade/refuse events are attributed
     # to the operator DID and persisted to the audit sink.
-    tool = make_execute_tool(
+    tool = arcrun.make_execute_tool(
         timeout_seconds=timeout,
         max_output_bytes=max_output,
         tier=tier,
@@ -251,7 +247,7 @@ async def _run_exec_async(
         caller_did=caller_did,
         audit_sink=audit_sink,
     )
-    ctx = ToolContext(
+    ctx = arcrun.ToolContext(
         run_id="cli-exec",
         tool_call_id="manual",
         turn_number=1,
@@ -331,9 +327,9 @@ async def _execute_task(
     show_events: bool,
     as_json: bool,
 ) -> None:
-    from arcagent.orchestration import RootTokenBudget, make_spawn_tool
-    from arcllm import load_model
-    from arcrun import StaticProvider, Tool, ToolContext, make_execute_tool, run
+    import arcagent
+    import arcllm
+    import arcrun
 
     from arccli.commands.identity import load_signing_authority
 
@@ -353,18 +349,18 @@ async def _execute_task(
             "Note: no signing authority — run `arc identity init` to attribute/audit direct runs."
         )
 
-    llm = load_model(
+    llm = arcllm.load_model(
         provider,
         model_name,
         telemetry={"agent_did": actor_did} if actor_did else True,
         agent_label="arc-cli",
     )
 
-    tools: list[Tool] = []
+    tools: list[arcrun.Tool] = []
 
     if with_calc:
 
-        async def calculate(params: dict[str, Any], ctx: ToolContext) -> str:
+        async def calculate(params: dict[str, Any], ctx: arcrun.ToolContext) -> str:
             expr = params["expression"]
             try:
                 return str(_eval_arith(ast.parse(expr, mode="eval")))
@@ -372,7 +368,7 @@ async def _execute_task(
                 return f"Error: {e}"
 
         tools.append(
-            Tool(
+            arcrun.Tool(
                 name="calculate",
                 description="Evaluate a math expression. Supports +, -, *, /, (), %.",
                 input_schema={
@@ -391,7 +387,7 @@ async def _execute_task(
         # selection is attributed to the operator DID and persisted to the sink.
         tier, relax = _machine_isolation()
         tools.append(
-            make_execute_tool(
+            arcrun.make_execute_tool(
                 timeout_seconds=code_timeout,
                 tier=tier,
                 relax=relax,
@@ -404,12 +400,12 @@ async def _execute_task(
     # The CLI plays the role of a thin agent here. Closure mutation lets nested
     # children inherit spawn_task too.
     if with_spawn:
-        spawn_tool = make_spawn_tool(
+        spawn_tool = arcagent.make_spawn_tool(
             model=llm,
             tools=tools,
             system_prompt=system_prompt,
             root_token_budget=(
-                RootTokenBudget(spawn_token_budget) if spawn_token_budget else None
+                arcagent.RootTokenBudget(spawn_token_budget) if spawn_token_budget else None
             ),
         )
         tools.append(spawn_tool)
@@ -455,9 +451,9 @@ async def _execute_task(
         _write(f"Tools: {', '.join(t.name for t in tools)}")
         _write("-" * 50)
 
-    result = await run(
+    result = await arcrun.run(
         model=llm,
-        capabilities=StaticProvider(tools),
+        capabilities=arcrun.StaticProvider(tools),
         system_prompt=system_prompt,
         task=prompt,
         max_turns=max_turns,

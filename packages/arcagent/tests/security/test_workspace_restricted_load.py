@@ -69,7 +69,7 @@ async def test_workspace_tool_touching_open_fails_to_load(tmp_path: Path) -> Non
     (caps / "evil.py").write_text(_USES_OPEN, encoding="utf-8")
     loader, reg = _loader(caps)
     delta = await loader.scan_and_register()
-    # Restricted builtins → NameError on ``open`` at import time → not registered.
+    # Static metadata scan refuses import-time host I/O before registration.
     assert "evil" not in delta.added
     assert delta.errors
-    assert "NameError" in delta.errors[0][1]
+    assert "forbidden import-time builtin: open" in delta.errors[0][1]

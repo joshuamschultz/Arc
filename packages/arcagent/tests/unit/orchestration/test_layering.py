@@ -1,9 +1,8 @@
 """Architecture test (SPEC-028 task 3.6) — spawn observability respects layers.
 
-The dependency arrow points one way: arcagent → {arcrun, arcllm, arcstore}.
+The model dependency arrow points one way: arcagent → arcrun → arcllm.
 - Spawn lineage (``spawn_event``) is emitted by arcagent, never arcrun.
-- Telemetry identity (the ``agent_identity`` contextvar) is defined by arcllm;
-  arcagent only *sets* it. arcrun never learns about either concern.
+- Telemetry identity is set through ArcRun's public model boundary.
 """
 
 from __future__ import annotations
@@ -12,6 +11,7 @@ from pathlib import Path
 
 _ARCRUN_SRC = Path(__import__("arcrun").__file__).resolve().parent
 _SPAWN_SRC = Path(__import__("arcagent").__file__).resolve().parent / "orchestration" / "spawn.py"
+_OBSERVABILITY_SRC = _SPAWN_SRC.with_name("spawn_observability.py")
 
 
 def test_spawn_owned_by_arcagent() -> None:
@@ -24,16 +24,17 @@ def test_spawn_owned_by_arcagent() -> None:
     assert not offenders, f"spawn_event must be emitted by arcagent, not arcrun: {offenders}"
 
 
-def test_spawn_emits_lineage_and_uses_arcllm_identity() -> None:
+def test_spawn_emits_lineage_and_uses_arcrun_identity() -> None:
     """arcagent's spawn.py emits the spawn_event and sets (not defines) the contextvar."""
-    src = _SPAWN_SRC.read_text(encoding="utf-8")
-    assert 'kind="spawn_event"' in src
-    # Identity contextvar is an arcllm concern that arcagent imports and uses.
-    assert "from arcllm.modules.telemetry import agent_identity" in src
+    execution_src = _SPAWN_SRC.read_text(encoding="utf-8")
+    observability_src = _OBSERVABILITY_SRC.read_text(encoding="utf-8")
+    assert 'kind="spawn_event"' in observability_src
+    assert "arcrun.model_identity" in execution_src
+    assert "arcllm" not in execution_src + observability_src
 
 
-def test_agent_identity_defined_in_arcllm() -> None:
-    """The contextvar identity primitive lives in arcllm.telemetry (not arcagent)."""
-    from arcllm.modules.telemetry import agent_identity
+def test_agent_identity_exposed_by_arcrun() -> None:
+    """ArcAgent consumes identity binding only through ArcRun's root facade."""
+    import arcrun
 
-    assert callable(agent_identity)
+    assert callable(arcrun.model_identity)

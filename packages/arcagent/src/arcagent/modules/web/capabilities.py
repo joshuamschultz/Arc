@@ -14,6 +14,7 @@ Provider clients are built lazily by :mod:`arcagent.modules.web._runtime`.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -43,19 +44,18 @@ def _hash_query(query: str) -> str:
 def _redact_if_enabled(text: str, *, enabled: bool) -> str:
     """Apply PII redaction when enabled.
 
-    Uses arcllm._pii directly so we don't take on an arcllm module-bus
-    dependency.  The RegexPiiDetector is stateless — safe to instantiate
+    Uses ArcTrust's neutral redaction primitives. The detector is stateless — safe to instantiate
     per-call.
     """
     if not enabled:
         return text
-    from arcllm._pii import RegexPiiDetector, redact_text
+    import arctrust
 
-    detector = RegexPiiDetector()
+    detector = arctrust.RegexPiiDetector()
     matches = detector.detect(text)
     if not matches:
         return text
-    result: str = str(redact_text(text, matches))
+    result: str = str(arctrust.redact_text(text, matches))
     return result
 
 
@@ -161,7 +161,14 @@ async def _extract(url: str) -> dict[str, Any]:
     cfg = st.config
 
     # Enforce URL allowlist BEFORE any network request (ASI02, LLM06).
-    if not is_url_allowed(url, allowlist=cfg.url_allowlist, tier=cfg.tier):
+    allowed = await asyncio.to_thread(
+        is_url_allowed,
+        url,
+        allowlist=cfg.url_allowlist,
+        tier=cfg.tier,
+        resolve=True,
+    )
+    if not allowed:
         await safe_audit(
             st.telemetry,
             "web.url_denied",
@@ -180,6 +187,19 @@ async def _extract(url: str) -> dict[str, Any]:
         raise ExtractFailed(
             f"Unexpected error during web extraction: {type(exc).__name__}",
         ) from exc
+
+    # Providers may follow redirects on the caller's behalf. Treat the
+    # reported final URL as a fresh destination and fail closed.
+    final_url = result.url or url
+    final_allowed = await asyncio.to_thread(
+        is_url_allowed,
+        final_url,
+        allowlist=cfg.url_allowlist,
+        tier=cfg.tier,
+        resolve=True,
+    )
+    if not final_allowed:
+        raise URLNotAllowed(url=final_url, tier=cfg.tier)
 
     # Apply content size cap — truncate, never silently drop.
     content = _truncate_content(result.content, cfg.max_content_bytes, url)

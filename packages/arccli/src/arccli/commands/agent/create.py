@@ -100,11 +100,11 @@ def _mint_agent_identity(agent_dir: Path) -> Any:
     so the identity registered here is the SAME one the agent signs with at
     startup — the signed bus can therefore verify its messages.
     """
-    from arcagent.core.config import load_config
+    import arcagent
     from arctrust import AgentIdentity
 
     config_path = agent_dir / "arcagent.toml"
-    config = load_config(config_path)
+    config = arcagent.load_config(config_path)
     return AgentIdentity.from_config(
         config.identity,
         org=config.agent.org,
@@ -133,11 +133,11 @@ def _sign_scaffolded_capabilities(agent_dir: Path) -> Any | None:
     if not identity.can_sign:
         return identity
 
-    from arcagent.capabilities import artifact_signing
+    import arcagent
 
     calc_path = agent_dir / "capabilities" / "calculator.py"
     try:
-        artifact_signing.write_signature(
+        arcagent.write_signature(
             calc_path,
             calc_path.read_bytes(),
             signer_did=identity.did,

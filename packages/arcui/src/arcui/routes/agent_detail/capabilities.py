@@ -19,6 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import arcagent
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -39,10 +40,10 @@ async def _agent_capability_rows(
     config_path = agent_root / "arcagent.toml"
     if not config_path.is_file():
         return []
-    from arcagent.capabilities.inventory import collect_agent_capability_inventory
-
     try:
-        inventory = await collect_agent_capability_inventory(config_path, live_agent=live_agent)
+        inventory = await arcagent.collect_agent_capability_inventory(
+            config_path, live_agent=live_agent
+        )
     except Exception:  # reason: fleet resilience — see docstring
         logger.warning(
             "%s inventory failed for %s; contributing none", kind, agent_root, exc_info=True
@@ -102,11 +103,8 @@ async def get_capabilities(request: Request) -> JSONResponse:
             status_code=404,
         )
 
-    # Lazy import — see module docstring (arcagent -> arcui dependency cycle).
-    from arcagent.capabilities.inventory import collect_agent_capability_inventory
-
     try:
-        inventory = await collect_agent_capability_inventory(
+        inventory = await arcagent.collect_agent_capability_inventory(
             config_path, live_agent=_live_agent(request, agent_id)
         )
     except Exception as exc:  # reason: surface failure explicitly, never fail-open empty

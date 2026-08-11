@@ -21,7 +21,7 @@ deployment wires arcllm-backed seams to light up semantic recall and distillatio
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -77,7 +77,7 @@ class ArcMemoryBrain:
         distiller: Distiller | None = None,
         audit_sink: AuditSink | None = None,
         seed_vocabulary: Iterable[str] | None = None,
-        model: object | None = None,
+        model_factory: Callable[[], object] | None = None,
         identity: AgentIdentity | None = None,
         policy_pipeline: PolicyPipeline | None = None,
         react_loop: ReactLoop = run_react_loop,
@@ -93,8 +93,10 @@ class ArcMemoryBrain:
         self._audit = audit_sink if audit_sink is not None else NullSink()
         self._seed_vocab = list(seed_vocabulary or [])
         # Agentic-consolidation seams (default engine); passed through to the
-        # Consolidator. Without a model the engine degrades to the pipeline distiller.
-        self._model = model
+        # Consolidator. Without a factory the engine degrades to the pipeline
+        # distiller. A FACTORY, not a model: the loop's provider is built when a
+        # consolidation runs, so memory costs no provider key at startup.
+        self._model_factory = model_factory
         self._identity = identity
         self._policy = policy_pipeline
         self._react_loop = react_loop
@@ -279,7 +281,7 @@ class ArcMemoryBrain:
                 embedder=self._embedder,
                 confirmer=self._distiller,
                 seed_vocabulary=self._seed_vocab,
-                model=self._model,
+                model_factory=self._model_factory,
                 identity=self._identity,
                 policy_pipeline=self._policy,
                 react_loop=self._react_loop,

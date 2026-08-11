@@ -78,7 +78,7 @@ class _State:
         """Rebuild the SKILL.md-path -> name lookup from the CapabilityRegistry."""
         self.skill_registry = registry
         self.skill_paths = {
-            entry.location.resolve(): entry.name for entry in registry._skills.values()
+            entry.location.resolve(): entry.name for entry in registry.skill_entries()
         }
 
 
@@ -201,7 +201,7 @@ def _skill_path(skill_name: str) -> Path | None:
     st = _state_var.get()
     if st is None or st.skill_registry is None:
         return None
-    entry = st.skill_registry._skills.get(skill_name)
+    entry = st.skill_registry.skill_entry(skill_name)
     if entry is None:
         return None
     location: Path = entry.location

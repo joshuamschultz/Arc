@@ -321,7 +321,6 @@ version = "0.16.0"
 source = { editable = "packages/arcagent" }
 dependencies = [
     { name = "aiorwlock" },
-    { name = "arcllm" },
     { name = "arcprompt" },
     { name = "arcrun" },
     { name = "arctrust" },
@@ -361,7 +360,6 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiorwlock", specifier = ">=1.4,<2" },
-    { name = "arcllm", editable = "packages/arcllm" },
     { name = "arcmemory", marker = "extra == 'memory'", editable = "packages/arcmemory" },
     { name = "arcprompt", editable = "packages/arcprompt" },
     { name = "arcrun", editable = "packages/arcrun" },

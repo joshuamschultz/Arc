@@ -337,6 +337,12 @@ def allowed_paths() -> list[Path] | None:
     return _allowed_paths_var.get()
 
 
+def authorized_roots() -> tuple[Path, ...]:
+    """Canonical roots used for descriptor-relative built-in file I/O."""
+    extras = _allowed_paths_var.get() or []
+    return (workspace().resolve(), *(path.resolve() for path in extras))
+
+
 def protected_paths() -> frozenset[Path]:
     """Return the session-immutable operator-protected path set (SPEC-035)."""
     return _protected_paths_var.get()
@@ -419,8 +425,7 @@ async def run_sandboxed_bash(command: str, *, timeout: int = 120) -> str:
     """
     import json
 
-    from arcrun import run_shell
-    from arcrun.builtins import ExecutionIsolationError
+    import arcrun
 
     from arcagent.core.errors import ToolError
 
@@ -430,7 +435,7 @@ async def run_sandboxed_bash(command: str, *, timeout: int = 120) -> str:
     audit = _ArcRunAuditAdapter(audit_sink) if audit_sink is not None else None
     tier_value = _tier_var.get()
     try:
-        raw = await run_shell(
+        raw = await arcrun.run_shell(
             command,
             tier=tier_value,
             workspace=workspace(),
@@ -439,7 +444,7 @@ async def run_sandboxed_bash(command: str, *, timeout: int = 120) -> str:
             audit_sink=audit,
             timeout=float(timeout),
         )
-    except ExecutionIsolationError as exc:
+    except arcrun.ExecutionIsolationError as exc:
         raise ToolError(
             code="TOOL_SANDBOX_UNAVAILABLE",
             message=f"Sandboxed bash refused: {exc}",
@@ -594,6 +599,7 @@ __all__ = [
     "RuntimeSnapshot",
     "allowed_paths",
     "audit_unsigned_artifact",
+    "authorized_roots",
     "bind",
     "check_protected",
     "check_secret_content",

@@ -19,7 +19,7 @@ class Injection:
 
     arcrun is a dumb but *identified* queue: it never decides whether an
     injection is permitted — that trust/policy decision belongs to the caller
-    (arcagent). arcrun only guarantees the injection carries a non-empty
+    (the host). arcrun only guarantees the injection carries a non-empty
     ``caller_did`` and records it in the audit trail at the drain point.
     """
 
@@ -103,7 +103,7 @@ class RunState:
     # a tool named in ``approval_required_tools``, the loop awaits
     # ``approval_provider(tc)``; a returned grant is attached to the call, ``None``
     # fails closed (call not dispatched). arcrun mints/verifies nothing — the
-    # provider is bound to SPEC-035 HumanGate by arcagent.
+    # provider is bound to the host's human-approval gate.
     approval_provider: Callable[[Any], Awaitable[Any]] | None = None
     approval_required_tools: frozenset[str] = frozenset()
     # SPEC-043 REQ-035 — semaphore ceiling on concurrent in-flight tool calls.

@@ -3,12 +3,35 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from arcrun.events import ChainVerificationResult, Event, EventBus
+
+
+@dataclass(frozen=True)
+class ParentRunContext:
+    """Immutable public view of the run that invoked a tool.
+
+    The execution engine owns its mutable ``RunState``. Tools receive this
+    deliberately small snapshot for child-run lineage, depth enforcement, and
+    usage policy without importing or mutating engine internals.
+    """
+
+    run_id: str
+    depth: int
+    max_depth: int
+    event_bus: EventBus
+    tokens_used: Mapping[str, int]
+    cost_usd: float
+    tool_calls_made: int
+
+    def __post_init__(self) -> None:
+        """Detach usage counters from mutable engine state."""
+        object.__setattr__(self, "tokens_used", MappingProxyType(dict(self.tokens_used)))
 
 
 @dataclass
@@ -29,7 +52,7 @@ class Tool:
         parallelize; anything else forces sequential dispatch. Default
         ``"state_modifying"`` — fail-closed so an unclassified tool never
         runs concurrently by accident (SPEC-043 REQ-034). The owning
-        deployment (arcagent) sets the real value when it builds the tool.
+        deployment host sets the real value when it builds the tool.
     """
 
     name: str
@@ -46,11 +69,8 @@ class ToolContext:
     """Passed to Tool.execute.
 
     Attributes:
-        parent_state: Live RunState from the parent execution. Set by the
-            executor when the tool is called so tools (e.g., delegate) can
-            read depth, max_depth, and budget usage without importing RunState
-            directly. None for tools called outside a running loop (tests,
-            standalone invocations).
+        parent_state: Immutable public snapshot of the invoking run. None for
+            tools called outside a running loop (tests, standalone invocations).
     """
 
     run_id: str
@@ -58,7 +78,13 @@ class ToolContext:
     turn_number: int
     event_bus: EventBus | None
     cancelled: asyncio.Event
-    parent_state: Any = None
+    parent_state: ParentRunContext | None = None
+
+    @property
+    def parent_run(self) -> ParentRunContext | None:
+        """Explicitly named alias for the public parent-run snapshot."""
+        return self.parent_state
+
     # Opaque annotation a tool may set during execute; the executor merges it
     # onto the ``tool.end`` event so it reaches the tool_event spool. arcrun
     # assigns it no meaning (used e.g. to record a provider skill activation).

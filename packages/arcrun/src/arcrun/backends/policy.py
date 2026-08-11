@@ -5,7 +5,7 @@ functions.  ``loader.py`` calls these functions; it never branches on tier
 strings directly.
 
 This is the ``policy.py`` pattern documented in
-``docs/architecture/policy-modules.md``: every arcagent/arcrun module with
+``docs/architecture/policy-modules.md``: every policy-aware module with
 tier-dependent behaviour MUST extract a ``policy.py`` with pure functions;
 business logic calls into policy.
 

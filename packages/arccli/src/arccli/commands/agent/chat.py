@@ -9,7 +9,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
-from arcrun import collect
+import arcrun
 
 from arccli.commands.agent._common import (
     _iter_capability_files,
@@ -232,7 +232,7 @@ async def _chat_interactive(
             # Execute task via the one streaming entry, collected to a result.
             try:
                 session = await arc_agent.session(current_session_id)
-                result = await collect(arc_agent.run(user_input, session=session))
+                result = await arcrun.collect(arc_agent.run(user_input, session=session))
 
                 total_cost += result.cost_usd
                 total_turns += result.turns

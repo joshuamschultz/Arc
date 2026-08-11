@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -40,6 +41,13 @@ class Strategy(ABC):
 
 
 STRATEGIES: dict[str, Strategy] = {}
+
+
+def available_strategies() -> MappingProxyType[str, Strategy]:
+    """Return a read-only view of the registered execution strategies."""
+    if not STRATEGIES:
+        _load_strategies()
+    return MappingProxyType(STRATEGIES)
 
 
 def _load_strategies() -> None:
@@ -80,9 +88,9 @@ async def select_strategy(
         },
     )
 
-    from arcllm.types import Tool as LLMTool
+    import arcllm
 
-    select_tool = LLMTool(
+    select_tool = arcllm.Tool(
         name="select_strategy",
         description="Select the best execution strategy for this task",
         parameters={

@@ -26,8 +26,8 @@ class TestBrowserSecurityConfig:
             "blob",
             "ftp",
         ]
-        assert cfg.allow_js_execution is True
-        assert cfg.allow_downloads is True
+        assert cfg.allow_js_execution is False
+        assert cfg.allow_downloads is False
         assert cfg.download_path == "/tmp/arcagent-downloads"
         assert cfg.redact_inputs is False
         assert cfg.max_page_text_length == 50_000

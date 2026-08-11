@@ -18,6 +18,7 @@ TD-MED.
 from __future__ import annotations
 
 import os
+import stat
 from pathlib import Path
 
 
@@ -64,6 +65,48 @@ def write_secret(path: Path, contents: bytes | str) -> None:
         os.close(fd)
 
 
+def read_owned_file(path: Path, *, max_bytes: int) -> tuple[bytes | None, str]:
+    """Read a bounded, owner-only regular file through one no-follow fd."""
+    if max_bytes < 1:
+        raise ValueError("max_bytes must be positive")
+    flags = os.O_RDONLY | os.O_NOFOLLOW
+    try:
+        fd = os.open(str(path), flags)
+    except FileNotFoundError:
+        return None, "absent"
+    except OSError as exc:
+        return None, f"open_failed_{exc.errno}"
+
+    try:
+        try:
+            info = os.fstat(fd)
+        except OSError:
+            return None, "stat_failed"
+        if not stat.S_ISREG(info.st_mode):
+            return None, "not_regular"
+        if info.st_uid != os.getuid():
+            return None, "wrong_owner"
+        if stat.S_IMODE(info.st_mode) != 0o600:
+            return None, "loose_perms"
+        if info.st_size > max_bytes:
+            return None, "too_large"
+        try:
+            chunks: list[bytes] = []
+            remaining = max_bytes + 1
+            while remaining > 0:
+                chunk = os.read(fd, min(remaining, 64 * 1024))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            data = b"".join(chunks)
+            return (None, "too_large") if len(data) > max_bytes else (data, "ok")
+        except OSError:
+            return None, "read_failed"
+    finally:
+        os.close(fd)
+
+
 def read_secret_owned(path: Path) -> tuple[bytes | None, str]:
     """Read `path` only if it is 0600 and owned by the current UID.
 
@@ -82,27 +125,4 @@ def read_secret_owned(path: Path) -> tuple[bytes | None, str]:
     `O_NOFOLLOW` rejects symlink swaps performed between caller's
     `path.exists()` and our open.
     """
-    if not path.exists():
-        return None, "absent"
-
-    flags = os.O_RDONLY | os.O_NOFOLLOW
-    try:
-        fd = os.open(str(path), flags)
-    except OSError as exc:
-        return None, f"open_failed_{exc.errno}"
-
-    try:
-        try:
-            st = os.fstat(fd)
-        except OSError:
-            return None, "stat_failed"
-        if st.st_uid != os.getuid():
-            return None, "wrong_owner"
-        if st.st_mode & 0o077:
-            return None, "loose_perms"
-        try:
-            return os.read(fd, 4096), "ok"
-        except OSError:
-            return None, "read_failed"
-    finally:
-        os.close(fd)
+    return read_owned_file(path, max_bytes=4096)

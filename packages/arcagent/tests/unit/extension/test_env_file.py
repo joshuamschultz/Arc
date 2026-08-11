@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import os
 import stat
+import time
 from pathlib import Path
 
 import pytest
@@ -114,3 +115,29 @@ async def test_concurrent_writes_do_not_lose_each_other(env_path: Path) -> None:
         "ANTHROPIC_API_KEY": "sk-ant-value",
         "OPENAI_API_KEY": "sk-openai-value",
     }
+
+
+async def test_independent_instances_share_a_transaction_lock(
+    env_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Separate CLI/agent instances cannot commit stale snapshots."""
+    original_write = EnvFile._write
+
+    def slow_write(self: EnvFile, entries: dict[str, str]) -> None:
+        time.sleep(0.05)
+        original_write(self, entries)
+
+    monkeypatch.setattr(EnvFile, "_write", slow_write)
+    first = EnvFile(env_path)
+    second = EnvFile(env_path)
+    await asyncio.gather(first.put("FIRST", "one"), second.put("SECOND", "two"))
+
+    assert await EnvFile(env_path).read() == {"FIRST": "one", "SECOND": "two"}
+
+
+async def test_rejects_unbounded_or_multiline_values(env_path: Path) -> None:
+    env_file = EnvFile(env_path)
+    with pytest.raises(ValueError, match="newline"):
+        await env_file.put("KEY", "one\ntwo")
+    with pytest.raises(ValueError, match="too large"):
+        await env_file.put("KEY", "x" * (64 * 1024 + 1))

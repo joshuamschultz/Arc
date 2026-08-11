@@ -4,9 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+import arcagent.core.session_internal.manager as manager_module
+from arcagent.core.config import ContextConfig, SessionConfig
+from arcagent.core.session_internal.manager import SessionManager
 
 
 def _mock_model(*, return_value: Any = None, side_effect: Exception | None = None) -> MagicMock:
@@ -17,10 +24,6 @@ def _mock_model(*, return_value: Any = None, side_effect: Exception | None = Non
     else:
         model.invoke = AsyncMock(return_value=MagicMock(content=return_value))
     return model
-
-
-from arcagent.core.config import ContextConfig, SessionConfig
-from arcagent.core.session_internal.manager import SessionManager
 
 
 def _make_telemetry() -> MagicMock:
@@ -122,6 +125,56 @@ class TestAppendMessage:
 
 
 class TestResumeSession:
+    async def test_skips_non_object_and_invalid_message_records(self, tmp_path: Path) -> None:
+        sessions_dir = tmp_path / "sessions"
+        sessions_dir.mkdir(parents=True)
+        (sessions_dir / "typed.jsonl").write_text(
+            "42\n"
+            + json.dumps({"type": "message", "role": "bogus", "content": "bad"})
+            + "\n"
+            + json.dumps({"type": "message", "role": "user", "content": "good"})
+            + "\n",
+            encoding="utf-8",
+        )
+
+        messages = await _make_session_manager(tmp_path).resume_session("typed")
+
+        assert [message["content"] for message in messages] == ["good"]
+
+    async def test_refuses_oversized_session_file(self, tmp_path: Path, monkeypatch: Any) -> None:
+        sessions_dir = tmp_path / "sessions"
+        sessions_dir.mkdir(parents=True)
+        (sessions_dir / "huge.jsonl").write_text("x" * 20, encoding="utf-8")
+        monkeypatch.setattr(manager_module, "_MAX_REPLAY_FILE_BYTES", 10)
+
+        with pytest.raises(ValueError, match="session file exceeds"):
+            await _make_session_manager(tmp_path).resume_session("huge")
+
+    async def test_replay_file_io_runs_off_the_event_loop(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        sessions_dir = tmp_path / "sessions"
+        sessions_dir.mkdir(parents=True)
+        (sessions_dir / "slow.jsonl").write_text("", encoding="utf-8")
+        original = manager_module._load_session_records
+
+        def slow_load(path: Path, session_id: str) -> Any:
+            time.sleep(0.05)
+            return original(path, session_id)
+
+        monkeypatch.setattr(manager_module, "_load_session_records", slow_load)
+        ticked = False
+
+        async def tick() -> None:
+            nonlocal ticked
+            await asyncio.sleep(0.005)
+            ticked = True
+
+        ticker = asyncio.create_task(tick())
+        await _make_session_manager(tmp_path).resume_session("slow")
+        await ticker
+        assert ticked
+
     async def test_loads_messages_from_jsonl(self, tmp_path: Path) -> None:
         sm = _make_session_manager(tmp_path)
         session_id = await sm.create_session()

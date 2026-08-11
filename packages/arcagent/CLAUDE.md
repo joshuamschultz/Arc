@@ -4,11 +4,11 @@
 
 ## Goal
 
-Agent nucleus: DID-required identity, capability loading, sessions, module bus, and orchestration. Wires `arcrun` + `arcllm` for accountable autonomy — does **not** own LLM HTTP or the ReAct loop.
+Agent nucleus: DID-required identity, capability loading, sessions, module bus, and orchestration. Wires `arcrun` for accountable autonomy — does **not** own LLM HTTP or the execution loop.
 
 ## Layer
 
-**Agent nucleus.** Depends on `arcllm`, `arcrun`, `arctrust`, `arcprompt` (+ optional `arcmemory` extra). Imported by `arccli`, `arcgateway`, and other surfaces that construct agents.
+**Agent nucleus.** Depends on `arcrun`, `arctrust`, `arcprompt` (+ optional `arcmemory` extra). Imported by `arccli`, `arcgateway`, and other surfaces that construct agents. It is headless and works without `arcgateway` or `arcui`.
 
 Must **not** import `arcgateway` (`tests/architecture/test_no_arcagent_imports_arcgateway.py`). Core LOC budget **< 3,500** (ADR-004).
 
@@ -42,7 +42,8 @@ Top-level `__init__` exports errors mainly. Real entry: `arcagent.core.agent.Arc
 
 ## Package rules
 
-- **Concern split:** no LLM-call logic, no loop reimplementation — invoke `arcrun`, call through `arcllm`.
+- **Concern split:** no LLM-call logic, no loop reimplementation — use `import arcrun` and invoke its public facade. ArcAgent never imports `arcllm` directly.
+- Cross-package consumers use `import arcagent`; public seams belong on the root facade rather than in deep imports.
 - **ADR-029:** agent state (memory, sessions, `context.md`, identity, audit chain) → **direct workspace I/O**. Never via LLM tools `write`/`bash`/`edit`. `working_dir` moves the tool root; the fence stays `workspace + allowed_paths`.
 - Memory via structural `Brain` Protocol — no hard dependency on `arcmemory` (optional extra; default `NullBrain`).
 - Modules stay independent; no global agent state on the module bus.

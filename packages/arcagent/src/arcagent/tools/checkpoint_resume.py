@@ -18,8 +18,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 
-from arcrun import LoopCheckpoint, StreamEvent, TurnEndEvent, system_messages
-from arcrun import run_stream as arcrun_run_stream
+import arcrun
 
 from arcagent.core.agent_dispatch import build_run_context, maybe_compact, track_active_run
 from arcagent.core.agent_lifecycle import activate_runtime_bindings
@@ -32,7 +31,7 @@ if TYPE_CHECKING:
     from arcagent.core.agent import ArcAgent
 
 
-async def resume_stream(agent: ArcAgent, *, session_key: str) -> AsyncIterator[StreamEvent]:
+async def resume_stream(agent: ArcAgent, *, session_key: str) -> AsyncIterator[arcrun.StreamEvent]:
     """Resume an incomplete persisted run from its latest signed checkpoint.
 
     Yields the resumed run's ``StreamEvent``s and commits the final assistant
@@ -57,8 +56,8 @@ async def resume_stream(agent: ArcAgent, *, session_key: str) -> AsyncIterator[S
     # so the freshly-assembled system prompt must lead it — the transcript on disk
     # never carries the system message (it is rebuilt every run). Built by arcrun's
     # own helper so a resumed run's system messages are identical to a live run's.
-    cp = LoopCheckpoint.from_record(
-        record, messages=[*system_messages(prompt.segments), *transcript]
+    cp = arcrun.LoopCheckpoint.from_record(
+        record, messages=[*arcrun.system_messages(prompt.segments), *transcript]
     )
     transform = agent._context.transform_context if agent._context else None
 
@@ -68,7 +67,7 @@ async def resume_stream(agent: ArcAgent, *, session_key: str) -> AsyncIterator[S
     on_handle, untrack_run = track_active_run(agent, session.session_id)
     session_token = bind_session_id(session.session_id)
     try:
-        raw_stream = await arcrun_run_stream(
+        raw_stream = await arcrun.run_stream(
             model=model,
             capabilities=provider,
             system_prompt=prompt.segments,
@@ -83,7 +82,7 @@ async def resume_stream(agent: ArcAgent, *, session_key: str) -> AsyncIterator[S
             **build_loop_controls(agent, session),
         )
         async for event in raw_stream:
-            if isinstance(event, TurnEndEvent):
+            if isinstance(event, arcrun.TurnEndEvent):
                 final_text = event.final_text
             yield event
     finally:

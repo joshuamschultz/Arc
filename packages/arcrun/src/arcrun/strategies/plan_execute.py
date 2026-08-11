@@ -2,7 +2,7 @@
 
 The parallel Executor half of an LLMCompiler-style split (arXiv 2312.04511): the
 Planner + Task-Fetching Unit (dependency resolution, the DAG frontier) live in
-arcagent's ``PlanOrchestrator``; this strategy is the dumb parallel Executor. It
+a host planner; this strategy is the dumb parallel executor. It
 receives a **flat list of INDEPENDENT, ready items** — opaque tasks, never a DAG
 — and runs them concurrently through the one wired concurrency primitive
 (``parallel_dispatch.ParallelDispatcher``), returning per-item outcomes in
@@ -19,7 +19,7 @@ from typing import Any
 
 from arcprompt import load_stock
 
-from arcrun.parallel_dispatch import ParallelDispatcher
+from arcrun.parallel_dispatch import dispatch_ready
 from arcrun.sandbox import Sandbox
 from arcrun.state import RunState
 from arcrun.strategies import Strategy
@@ -70,9 +70,7 @@ class PlanExecuteStrategy(Strategy):
         """
         if not items:
             return []
-        dispatcher = ParallelDispatcher(max_parallel=max_parallel)
-        paired = await dispatcher.dispatch(items, lambda item: _wrap(item, runner))
-        return [outcome for _item, outcome in paired]
+        return await dispatch_ready(items, runner, max_parallel=max_parallel)
 
     async def __call__(
         self, model: Any, state: RunState, sandbox: Sandbox, max_turns: int
@@ -93,11 +91,6 @@ class PlanExecuteStrategy(Strategy):
             cost_usd=state.cost_usd,
             events=state.event_bus.events,
         )
-
-
-async def _wrap(item: Any, runner: ItemRunner) -> tuple[Any, Any]:
-    """Adapt a single-arg item runner to the dispatcher's ``(item, outcome)`` shape."""
-    return item, await runner(item)
 
 
 __all__ = ["ItemRunner", "PlanExecuteStrategy"]

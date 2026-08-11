@@ -91,7 +91,7 @@ async def test_second_turn_reuses_the_first_turns_prefix(
 
     agent._bus.subscribe("agent:post_respond", capture)
 
-    with patch("arcagent.core.agent_dispatch.arcrun_run_stream", side_effect=_fake_run_stream):
+    with patch("arcagent.core.agent_dispatch.arcrun.run_stream", side_effect=_fake_run_stream):
         session = await agent.session("cache-test")
         async for _ in agent.run("first question", session=session):
             pass

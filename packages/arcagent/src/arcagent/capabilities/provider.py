@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from arcrun import CapabilityResult, CapabilitySpec, Tool, detached_context
+import arcrun
 
 _logger = logging.getLogger("arcagent.capability_provider")
 
@@ -60,11 +60,11 @@ class AgentCapabilityProvider:
     def __init__(
         self,
         *,
-        tools: list[Tool],
+        tools: list[arcrun.Tool],
         skills: list[_Skill],
         tier: str,
         caller_did: str,
-        ctx_tools: list[Tool] | None = None,
+        ctx_tools: list[arcrun.Tool] | None = None,
         workspace_authored: frozenset[str] = frozenset(),
         requires_skill: dict[str, str] | None = None,
         audit: AuditSink | None = None,
@@ -76,12 +76,12 @@ class AgentCapabilityProvider:
             # load — neither advertised nor invocable (ADR-023 §3 / AC-6.1).
             return federal and name in workspace_authored
 
-        self._tools: dict[str, Tool] = {t.name: t for t in tools if not _gated(t.name)}
+        self._tools: dict[str, arcrun.Tool] = {t.name: t for t in tools if not _gated(t.name)}
         self._skills: dict[str, _Skill] = {s.name: s for s in skills if not _gated(s.name)}
         # ctx-dependent tools (e.g. spawn) dispatched directly by the loop with
         # its live ToolContext — they read depth/budget from it, so they cannot
         # route through the context-free invoke() path.
-        self._ctx_tools: list[Tool] = list(ctx_tools or [])
+        self._ctx_tools: list[arcrun.Tool] = list(ctx_tools or [])
         self._caller_did = caller_did
         # tool name -> the skill that teaches it (R-014). When such a tool is
         # invoked, that skill is activated into context as part of the call
@@ -93,14 +93,14 @@ class AgentCapabilityProvider:
         # body once, not on every call to the requiring tool).
         self._activated: set[str] = set()
 
-    def raw_tools(self) -> list[Tool]:
+    def raw_tools(self) -> list[arcrun.Tool]:
         """Tools the loop must dispatch directly (live ToolContext preserved)."""
         return list(self._ctx_tools)
 
-    def advertise(self) -> list[CapabilitySpec]:
+    def advertise(self) -> list[arcrun.CapabilitySpec]:
         """Lean manifest: invocable tools + skill menu. No bodies."""
-        specs: list[CapabilitySpec] = [
-            CapabilitySpec(
+        specs: list[arcrun.CapabilitySpec] = [
+            arcrun.CapabilitySpec(
                 name=tool.name,
                 description=tool.description,
                 input_schema=tool.input_schema,
@@ -111,7 +111,7 @@ class AgentCapabilityProvider:
             for tool in self._tools.values()
         ]
         specs.extend(
-            CapabilitySpec(
+            arcrun.CapabilitySpec(
                 name=skill.name,
                 description=skill.description,
                 input_schema={"type": "object", "properties": {}},
@@ -134,7 +134,7 @@ class AgentCapabilityProvider:
 
     async def invoke(
         self, name: str, args: dict[str, Any], *, caller_did: str
-    ) -> CapabilityResult:
+    ) -> arcrun.CapabilityResult:
         """Dispatch a tool call through its policy-wrapped execute (fail-closed).
 
         If the tool declares a ``requires_skill``, that skill is activated into
@@ -142,15 +142,15 @@ class AgentCapabilityProvider:
         """
         tool = self._tools.get(name)
         if tool is None:
-            return CapabilityResult(content=f"unknown capability '{name}'", is_error=True)
+            return arcrun.CapabilityResult(content=f"unknown capability '{name}'", is_error=True)
         try:
-            out = str(await tool.execute(dict(args), detached_context()))
+            out = str(await tool.execute(dict(args), arcrun.detached_context()))
             is_error = False
         except Exception as exc:  # reason: surface as an error result, never crash the loop
             _logger.exception("Capability '%s' raised during invoke", name)
             out, is_error = f"{type(exc).__name__}: {exc}", True
         content, extra = await self._activate_required_skill(name, out, caller_did=caller_did)
-        return CapabilityResult(content=content, is_error=is_error, extra=extra)
+        return arcrun.CapabilityResult(content=content, is_error=is_error, extra=extra)
 
     async def _activate_required_skill(
         self, tool_name: str, out: str, *, caller_did: str

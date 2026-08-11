@@ -24,6 +24,16 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from arcagent.utils.url_security import set_url_resolver
+
+
+@pytest.fixture(autouse=True)
+def _public_test_dns():
+    set_url_resolver(lambda _hostname: ("93.184.216.34",))
+    yield
+    set_url_resolver(None)
+
+
 from arcagent.modules.web import _runtime, capabilities
 from arcagent.modules.web.protocols import ExtractResult, SearchHit
 

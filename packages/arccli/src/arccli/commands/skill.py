@@ -151,7 +151,7 @@ def _discover_skills_fallback(agent_dir: str | None) -> list[dict[str, str]]:
 def _get_skills(agent_dir: str | None) -> list[Any]:
     """Discover skills via arcagent's validator when available."""
     try:
-        from arcagent.capabilities.skill_validator import validate_skill_folder
+        import arcagent
     except ImportError:
         return _discover_skills_fallback(agent_dir)
 
@@ -160,7 +160,7 @@ def _get_skills(agent_dir: str | None) -> list[Any]:
         for entry in sorted(root.iterdir()):
             if not entry.is_dir() or not (entry / "SKILL.md").exists():
                 continue
-            result = validate_skill_folder(entry, source)
+            result = arcagent.validate_skill_folder(entry, source)
             if result.entry is None:
                 continue
             out.append(
@@ -261,14 +261,14 @@ def _validate(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     try:
-        from arcagent.capabilities.skill_validator import validate_skill_folder
+        import arcagent
     except ImportError:
         sys.stderr.write(
             "Error: arcagent is not installed; install it to validate skill folders.\n"
         )
         sys.exit(1)
 
-    result = validate_skill_folder(folder, "agent")
+    result = arcagent.validate_skill_folder(folder, "agent")
 
     for err in result.errors:
         _write(f"  [FAIL] {err.code}: {err.detail}")

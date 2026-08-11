@@ -8,7 +8,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from arcrun import collect
+import arcrun
 
 from arccli.commands.agent._common import (
     _load_arcagent,
@@ -62,7 +62,7 @@ async def _agent_run_once(
         # stream to a final result (SPEC-027 AC-2.2). Session id is dated/rolling
         # (or --session) so tasks don't all pile into one unbounded transcript.
         session = await arc_agent.session(session_id)
-        result = await collect(arc_agent.run(task, session=session))
+        result = await arcrun.collect(arc_agent.run(task, session=session))
 
         if as_json:
             _print_result_json(result)

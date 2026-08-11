@@ -22,7 +22,7 @@ import logging
 from typing import Any
 from uuid import uuid4
 
-from arcrun.types import LoopResult
+import arcrun
 
 from arcagent.modules.planning import _runtime
 from arcagent.modules.planning.decomposer import DecompositionError, decompose, replan
@@ -74,7 +74,7 @@ def _adapt_run_fn(agent_run_fn: Any, plan_id: str, *, isolated: bool = False) ->
 
     async def run_fn(
         *, task: str, max_tokens: int | None, max_cost_usd: float | None, actor_did: str
-    ) -> LoopResult:
+    ) -> arcrun.LoopResult:
         session_key = f"plan-{plan_id}-{uuid4().hex}" if isolated else f"plan-{plan_id}"
         rr = await agent_run_fn(
             task,
@@ -82,7 +82,7 @@ def _adapt_run_fn(agent_run_fn: Any, plan_id: str, *, isolated: bool = False) ->
             max_tokens=max_tokens,
             max_cost_usd=max_cost_usd,
         )
-        return LoopResult(
+        return arcrun.LoopResult(
             content=rr.content or "",
             turns=rr.turns,
             tool_calls_made=rr.tool_calls_made,

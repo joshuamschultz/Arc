@@ -83,7 +83,7 @@ def _machine_security() -> Any:
     FIPS + vault_transit + ecdsa-p256), so the CLI signs with the same posture
     as the agent (SPEC-037 F2/F3).
     """
-    from arcagent.core.config import SecurityConfig
+    import arcagent
 
     block: dict[str, Any] = {}
     if _MACHINE_CONFIG.exists():
@@ -92,7 +92,7 @@ def _machine_security() -> Any:
                 block = tomllib.load(f).get("security", {})
         except (OSError, tomllib.TOMLDecodeError):
             block = {}
-    return SecurityConfig(**block)
+    return arcagent.SecurityConfig(**block)
 
 
 def resolve_operator_signer(arc_dir: Path | None = None) -> Signer:

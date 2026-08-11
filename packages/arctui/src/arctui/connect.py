@@ -23,18 +23,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import Path
 
-from arcagent.connections import (
-    AuditChain,
-    ClosableSink,
-    Connections,
-    ConnectionWorld,
-    ConnectorPlan,
-    InstallReport,
-    resolve_deployment,
-)
+import arcagent
 
 
-def open_connections() -> Connections:
+def open_connections() -> arcagent.Connections:
     """Resolve this deployment's connector world and bind it to the audit chain.
 
     There is no agent here: a connected account belongs to the deployment, and the
@@ -48,11 +40,13 @@ def open_connections() -> Connections:
     Raises:
         ExtensionError: The deployment's config will not parse. ``.message`` says which.
     """
-    world = resolve_deployment()
-    return Connections(world, audit=AuditChain.opened_by(lambda: _worm_sink(world)))
+    world = arcagent.resolve_deployment()
+    return arcagent.Connections(
+        world, audit=arcagent.AuditChain.opened_by(lambda: _worm_sink(world))
+    )
 
 
-def _worm_sink(world: ConnectionWorld) -> ClosableSink:
+def _worm_sink(world: arcagent.ConnectionWorld) -> arcagent.ClosableSink:
     """Open the operator-signed WORM chain for one action.
 
     Each action opens and closes its own rather than the screen holding one for as
@@ -65,7 +59,7 @@ def _worm_sink(world: ConnectionWorld) -> ClosableSink:
     return operator_worm_sink(world.arc_dir, world.data_dir)
 
 
-def plan_summary(plan: ConnectorPlan, env_file: Path) -> tuple[str, ...]:
+def plan_summary(plan: arcagent.ConnectorPlan, env_file: Path) -> tuple[str, ...]:
     """What is about to happen, in the order it will happen — shown before any input."""
     lines = [
         f"{plan.extension} → instance '{plan.instance}'",
@@ -82,7 +76,7 @@ def plan_summary(plan: ConnectorPlan, env_file: Path) -> tuple[str, ...]:
     return tuple(lines)
 
 
-def host_refusal(plan: ConnectorPlan) -> tuple[str, ...]:
+def host_refusal(plan: arcagent.ConnectorPlan) -> tuple[str, ...]:
     """The instruction for a prerequisite this machine lacks. The TUI never installs it."""
     return (
         f"{plan.extension} needs prerequisites this machine lacks. Nothing was installed.",
@@ -91,7 +85,9 @@ def host_refusal(plan: ConnectorPlan) -> tuple[str, ...]:
 
 
 def install_summary(
-    report: InstallReport, connections: Connections, agents: Sequence[str]
+    report: arcagent.InstallReport,
+    connections: arcagent.Connections,
+    agents: Sequence[str],
 ) -> tuple[str, ...]:
     """What the install produced. Coordinates only — never a value the operator typed.
 

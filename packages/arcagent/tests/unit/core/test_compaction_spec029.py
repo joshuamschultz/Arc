@@ -149,6 +149,55 @@ class TestBoundaryMasking:
         assert msgs[0]["type"] == "compaction_summary"
         assert msgs[1:] == kept_masked  # masked window persisted, not re-derived
 
+    async def test_restart_replays_exact_compacted_baseline(self, tmp_path: Path) -> None:
+        cm = ContextManager(
+            config=ContextConfig(max_tokens=400, estimate_multiplier=1.0),
+            telemetry=_telemetry(),
+        )
+        sm = _sm(tmp_path, cm)
+        session_id = await sm.create_session()
+        for i in range(8):
+            await sm.append_message({"role": "user", "content": f"message-{i}-" + "x" * 200})
+        await sm.compact(_model())
+        live_baseline = sm.get_messages()
+
+        resumed = _sm(tmp_path, cm)
+        await resumed.resume_session(session_id)
+
+        assert resumed.get_messages() == live_baseline
+
+    async def test_slow_summary_does_not_block_append_or_overwrite_it(
+        self, tmp_path: Path
+    ) -> None:
+        cm = ContextManager(
+            config=ContextConfig(max_tokens=400, estimate_multiplier=1.0),
+            telemetry=_telemetry(),
+        )
+        sm = _sm(tmp_path, cm)
+        await sm.create_session()
+        for i in range(8):
+            await sm.append_message({"role": "user", "content": f"message-{i}"})
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        model = MagicMock()
+
+        async def summarize(*_args: Any, **_kwargs: Any) -> MagicMock:
+            entered.set()
+            await release.wait()
+            return MagicMock(content="goal: safe\nnext_step: continue")
+
+        model.invoke = summarize
+        compacting = asyncio.create_task(sm.compact(model))
+        await entered.wait()
+        await asyncio.wait_for(
+            sm.append_message({"role": "user", "content": "concurrent"}), timeout=0.1
+        )
+        release.set()
+        await compacting
+
+        assert sm.get_messages()[-1]["content"] == "concurrent"
+        assert all(m.get("type") != "compaction_summary" for m in sm.get_messages())
+
 
 # --- D-399: structured summary schema -------------------------------------
 

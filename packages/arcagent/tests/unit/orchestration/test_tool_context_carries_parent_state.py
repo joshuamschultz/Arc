@@ -1,9 +1,9 @@
-"""Architecture test: arcrun.executor populates ToolContext.parent_state.
+"""Architecture test: arcrun exposes a detached parent-run context to tools.
 
 This test verifies the structural guarantee that the execute_tool_call()
-function in arcrun.executor passes parent_state=state when constructing
-ToolContext.  This is the M3 gap-close requirement: delegate_tool must
-be able to read ctx.parent_state.depth rather than defaulting to 0.
+function in arcrun.executor constructs a public ``ParentRunContext`` when
+constructing ``ToolContext``. Delegate tools can read lineage and depth without
+receiving ArcRun's mutable internal ``RunState``.
 
 Two verification approaches:
 1. AST scan — confirms parent_state= is present in the ToolContext() call
@@ -76,8 +76,8 @@ class TestToolContextParentStatePresentInAST:
                 f"Found kwargs: {kwarg_names}"
             )
 
-    def test_parent_state_assigned_from_state(self) -> None:
-        """The parent_state keyword must be assigned the value 'state' (the RunState arg)."""
+    def test_parent_state_is_a_public_snapshot(self) -> None:
+        """The parent_state keyword must construct the public snapshot type."""
         tree = self._load_ast()
         calls = self._find_tool_context_calls(tree)
         assert calls
@@ -85,15 +85,9 @@ class TestToolContextParentStatePresentInAST:
         for call in calls:
             for kw in call.keywords:
                 if kw.arg == "parent_state":
-                    # The value should be the Name 'state'
-                    assert isinstance(kw.value, ast.Name), (
-                        "parent_state in ToolContext() is not a simple name reference; "
-                        f"found {type(kw.value).__name__} at line {call.lineno}"
-                    )
-                    assert kw.value.id == "state", (
-                        f"parent_state in ToolContext() references '{kw.value.id}', "
-                        "expected 'state' (the RunState parameter)"
-                    )
+                    assert isinstance(kw.value, ast.Call)
+                    assert isinstance(kw.value.func, ast.Name)
+                    assert kw.value.func.id == "ParentRunContext"
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +100,7 @@ class TestToolContextParentStateRuntime:
 
     @pytest.mark.asyncio
     async def test_tool_receives_parent_state_in_context(self) -> None:
-        """Tool.execute receives ctx.parent_state pointing to the live RunState."""
+        """Tool.execute receives an immutable snapshot rather than live RunState."""
         from arcrun.events import EventBus
         from arcrun.executor import execute_tool_call
         from arcrun.registry import ToolRegistry
@@ -151,9 +145,9 @@ class TestToolContextParentStateRuntime:
 
         assert len(received_ctx) == 1
         ctx = received_ctx[0]
-        assert ctx.parent_state is state, (
-            "ToolContext.parent_state must point to the live RunState"
-        )
+        assert ctx.parent_state is not state
+        assert type(ctx.parent_state).__name__ == "ParentRunContext"
+        assert ctx.parent_state.run_id == state.run_id
         assert ctx.parent_state.depth == 2, (
             "parent_state.depth must match the RunState depth passed to execute_tool_call"
         )

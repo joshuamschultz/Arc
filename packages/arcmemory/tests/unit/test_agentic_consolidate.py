@@ -61,7 +61,7 @@ async def test_agentic_engine_invokes_tools_and_writes_cards(
         scope,
         distiller=FakeDistiller(FactExtraction(), InsightMint()),
         config=MemoryConfig(),  # engine defaults to "agentic"
-        model=object(),  # a model is present -> agentic path taken
+        model_factory=lambda: object(),  # a model is reachable -> agentic path taken
         identity=identity,
         react_loop=fake_loop,
     )
@@ -93,7 +93,7 @@ async def test_breach_falls_back_to_pipeline_no_data_loss(workspace: Path, db: M
         scope,
         distiller=distiller,
         config=MemoryConfig(),
-        model=object(),
+        model_factory=lambda: object(),
         react_loop=breaching_loop,
     )
     result = await consolidator.run(now=_NOW)
@@ -137,7 +137,12 @@ async def test_arcrun_absent_falls_back_to_pipeline(
     )
     # No react_loop override -> the default run_react_loop adapter is used.
     consolidator = Consolidator(
-        db, workspace, scope, distiller=distiller, config=MemoryConfig(), model=object()
+        db,
+        workspace,
+        scope,
+        distiller=distiller,
+        config=MemoryConfig(),
+        model_factory=lambda: object(),
     )
     result = await consolidator.run(now=_NOW)
     entity = SemanticStore(workspace, WeightedGraph(db), scope=scope.key).read("brad-baker")

@@ -31,9 +31,8 @@ from collections.abc import Coroutine, Iterator
 from pathlib import Path
 from typing import Any, NoReturn, TypeVar
 
-from arcagent.core.errors import ArcAgentError
-from arcagent.keys import KeyStatus, KeyStore, default_env_file
-from arcllm import list_provider_keys
+import arcagent
+import arcllm
 
 from arccli.commands._shared import dispatch, err
 from arccli.commands._shared import print_json as _print_json
@@ -82,12 +81,12 @@ def _audit_sink(arc_dir: Path, data_dir: Path) -> Any:
 
 
 @contextlib.contextmanager
-def _audited(args: argparse.Namespace) -> Iterator[tuple[KeyStore, str]]:
+def _audited(args: argparse.Namespace) -> Iterator[tuple[arcagent.KeyStore, str]]:
     """Open the store and the audit chain for one command, and always close the chain."""
     arc_dir = _arc_dir(args)
     sink = _audit_sink(arc_dir, _data_dir(args))
     try:
-        yield KeyStore(default_env_file(arc_dir), sink=sink), _actor_did(arc_dir)
+        yield arcagent.KeyStore(arcagent.default_env_file(arc_dir), sink=sink), _actor_did(arc_dir)
     finally:
         sink.close()
 
@@ -109,7 +108,7 @@ def _actor_did(arc_dir: Path) -> str:
 
 def _env_var_for(provider: str) -> str:
     """Which variable this provider reads, per arcllm. Exits naming the provider if none."""
-    declared = {key.provider: key.api_key_env for key in list_provider_keys()}
+    declared = {key.provider: key.api_key_env for key in arcllm.list_provider_keys()}
     if provider not in declared:
         _fail(f"unknown provider {provider!r} — arcllm packages: {', '.join(declared)}")
     return declared[provider]
@@ -129,7 +128,7 @@ def _run(call: Coroutine[Any, Any, T]) -> T:
     """
     try:
         return asyncio.run(call)
-    except ArcAgentError as exc:
+    except arcagent.ArcAgentError as exc:
         _fail(exc.message)
 
 
@@ -159,7 +158,7 @@ def _list(args: argparse.Namespace) -> None:
     )
 
 
-def _row(status: KeyStatus) -> dict[str, Any]:
+def _row(status: arcagent.KeyStatus) -> dict[str, Any]:
     """The scriptable shape — presence only, never a value (D-583)."""
     return {
         "provider": status.provider,
@@ -175,7 +174,7 @@ def _set(args: argparse.Namespace) -> None:
     value = getpass.getpass(f"{env_var} (hidden): ")
     with _audited(args) as (store, did):
         _run(store.set(env_var, value, caller_did=did))
-    _out(f"Stored {env_var} for {args.provider} in {default_env_file(_arc_dir(args))}.")
+    _out(f"Stored {env_var} for {args.provider} in {arcagent.default_env_file(_arc_dir(args))}.")
 
 
 def _remove(args: argparse.Namespace) -> None:

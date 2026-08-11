@@ -18,7 +18,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from arcllm.types import Message
+import arcrun
 from arcprompt import load_stock
 
 from arcagent.modules.policy._bullet_parse import parse_bullets
@@ -209,7 +209,7 @@ class PolicyEngine:
             current_policy=current_policy or "(empty)",
             messages=chunk_text,
         )
-        response = await model.invoke([Message(role="user", content=prompt)])
+        response = await model.invoke([arcrun.Message(role="user", content=prompt)])
         return self._parse_delta(response.content)
 
     def _parse_delta(self, raw: str | None) -> PolicyDelta | None:

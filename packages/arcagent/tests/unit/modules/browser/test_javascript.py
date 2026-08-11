@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 
 from arcagent.modules.browser._runtime import _State
 from arcagent.modules.browser.capabilities import browser_execute_js
+from arcagent.modules.browser.config import BrowserConfig, BrowserSecurityConfig
 
 
 def _make_cdp() -> AsyncMock:
@@ -23,7 +24,10 @@ class TestBrowserExecuteJS:
     ) -> None:
         cdp = _make_cdp()
         cdp.send.return_value = {"result": {"type": "string", "value": "hello"}}
-        configure_browser(cdp=cdp)
+        configure_browser(
+            config=BrowserConfig(security=BrowserSecurityConfig(allow_js_execution=True)),
+            cdp=cdp,
+        )
 
         result = await browser_execute_js(expression="'hello'")
         assert "hello" in result
@@ -33,7 +37,10 @@ class TestBrowserExecuteJS:
     ) -> None:
         cdp = _make_cdp()
         cdp.send.return_value = {"exceptionDetails": {"text": "ReferenceError: x is not defined"}}
-        configure_browser(cdp=cdp)
+        configure_browser(
+            config=BrowserConfig(security=BrowserSecurityConfig(allow_js_execution=True)),
+            cdp=cdp,
+        )
 
         result = await browser_execute_js(expression="x")
         assert "error" in result.lower() or "ReferenceError" in result

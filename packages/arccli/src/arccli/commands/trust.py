@@ -26,12 +26,7 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from arcagent.capabilities import artifact_signing
-from arcagent.capabilities.inventory import (
-    list_gated,
-    pin_name_for,
-    read_capability_source,
-)
+import arcagent
 from arcgateway import team_roster
 from arctrust import approve, disapprove
 
@@ -94,14 +89,16 @@ def _list(args: argparse.Namespace) -> None:
     agent_id, agent_root, label = _resolve_agent(getattr(args, "agent", None))
     include_loaded = bool(getattr(args, "all", False))
     items = asyncio.run(
-        list_gated(agent_root, agent_id=agent_id, agent_label=label, include_loaded=include_loaded)
+        arcagent.list_gated(
+            agent_root, agent_id=agent_id, agent_label=label, include_loaded=include_loaded
+        )
     )
     if not items:
         _write("No capabilities found." if include_loaded else "No gated capabilities.")
         return
     rows = []
     for item in items:
-        signed = "yes" if artifact_signing.sidecar_path(Path(item.path)).exists() else "no"
+        signed = "yes" if arcagent.sidecar_path(Path(item.path)).exists() else "no"
         short_hash = item.hash.split(":", 1)[-1][:12] if item.hash else "-"
         rows.append([item.name, item.kind, item.status, signed, short_hash, item.path])
     _print_table(["Name", "Kind", "Status", "Signed", "Hash", "Path"], rows)
@@ -110,19 +107,19 @@ def _list(args: argparse.Namespace) -> None:
 def _approve(args: argparse.Namespace) -> None:
     agent_id, agent_root, label = _resolve_agent(getattr(args, "agent", None))
     config_path = agent_root / "arcagent.toml"
-    gated = asyncio.run(list_gated(agent_root, agent_id=agent_id, agent_label=label))
+    gated = asyncio.run(arcagent.list_gated(agent_root, agent_id=agent_id, agent_label=label))
     target = next((item for item in gated if item.name == args.name), None)
     if target is None:
         _err(f"arc trust: no gated capability named {args.name!r} for {agent_id}")
         sys.exit(1)
-    source = read_capability_source(Path(target.path))
+    source = arcagent.read_capability_source(Path(target.path))
     if source is None:
         _err(f"arc trust: cannot read capability source at {target.path}")
         sys.exit(1)
     approver = _operator_did()
     approve(
         config_path,
-        name=pin_name_for(target),
+        name=arcagent.pin_name_for(target),
         source=source,
         approver=approver,
         timestamp=_now(),
@@ -130,7 +127,7 @@ def _approve(args: argparse.Namespace) -> None:
 
     # Re-scan through the inventory seam to report the post-approval verdict.
     after = asyncio.run(
-        list_gated(agent_root, agent_id=agent_id, agent_label=label, include_loaded=True)
+        arcagent.list_gated(agent_root, agent_id=agent_id, agent_label=label, include_loaded=True)
     )
     resolved = next((item for item in after if item.name == args.name), None)
     status = resolved.status if resolved is not None else "unknown"
@@ -150,10 +147,10 @@ def _disapprove(args: argparse.Namespace) -> None:
     # is still present; else treat the given name as the pin name directly (so a
     # pin for a since-deleted artifact can still be cleared).
     inventory = asyncio.run(
-        list_gated(agent_root, agent_id=agent_id, agent_label=label, include_loaded=True)
+        arcagent.list_gated(agent_root, agent_id=agent_id, agent_label=label, include_loaded=True)
     )
     target = next((item for item in inventory if item.name == args.name), None)
-    pin_name = pin_name_for(target) if target is not None else args.name
+    pin_name = arcagent.pin_name_for(target) if target is not None else args.name
     if disapprove(config_path, name=pin_name):
         _write(f"Removed approval for {args.name} on {agent_id}.")
     else:

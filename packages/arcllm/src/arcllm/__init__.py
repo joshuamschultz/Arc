@@ -24,6 +24,7 @@ from arcllm.config import (
     load_global_config,
     load_provider_config,
     load_telemetry_retention_config,
+    model_config_path,
 )
 from arcllm.exceptions import (
     ArcLLMAPIError,
@@ -38,7 +39,9 @@ from arcllm.exceptions import (
     QueueFullError,
     QueueTimeoutError,
 )
+from arcllm.modules.telemetry import agent_identity
 from arcllm.registry import MODULE_NAMES, clear_cache, load_model
+from arcllm.trace_store import JSONLTraceStore, TraceStore
 from arcllm.types import (
     ContentBlock,
     Delta,
@@ -88,6 +91,7 @@ _LAZY_IMPORTS: dict[str, str] = {
     "XaiAdapter": "arcllm.adapters.xai",
     "AuditModule": "arcllm.modules.audit",
     "BaseModule": "arcllm.modules.base",
+    "CircuitBreakerModule": "arcllm.modules.circuit_breaker",
     "FallbackModule": "arcllm.modules.fallback",
     "GuardrailsModule": "arcllm.modules.guardrails",
     "InjectionModule": "arcllm.modules.injection",
@@ -103,9 +107,7 @@ _LAZY_IMPORTS: dict[str, str] = {
     "VaultResolver": "arcllm.vault",
     "AwsSecretsManagerBackend": "arcllm.backends.aws_secrets",
     "EncryptedEnvelope": "arcllm.trace_store",
-    "JSONLTraceStore": "arcllm.trace_store",
     "TraceRecord": "arcllm.trace_store",
-    "TraceStore": "arcllm.trace_store",
     "ReplayRequest": "arcllm.trace_query",
     "load_for_replay": "arcllm.trace_query",
     # Embeddings (SPEC-041) — lazy so `import arcllm` never pulls httpx/torch.
@@ -148,6 +150,7 @@ __all__ = [
     "Azure_OpenaiAdapter",
     "BaseAdapter",
     "BaseModule",
+    "CircuitBreakerModule",
     "CohereAdapter",
     "ContentBlock",
     "DeepseekAdapter",
@@ -214,6 +217,7 @@ __all__ = [
     "VllmAdapter",
     "XaiAdapter",
     "__version__",
+    "agent_identity",
     "clear_cache",
     "clear_embedder_cache",
     "configured_redactor",
@@ -224,6 +228,7 @@ __all__ = [
     "load_model",
     "load_provider_config",
     "load_telemetry_retention_config",
+    "model_config_path",
     "resolve_embedder",
     "supports_tools",
     "tool_capable_models",

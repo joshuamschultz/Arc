@@ -19,6 +19,8 @@ import shutil
 import sys
 from pathlib import Path
 
+import arcagent
+
 from arccli.commands._shared import dispatch
 from arccli.commands._shared import print_table as _print_table
 from arccli.commands._shared import write as _write
@@ -33,10 +35,10 @@ Registers a tool with the unified capability loader (SPEC-021).
 
 from __future__ import annotations
 
-from arcagent.tools import tool
+import arcagent
 
 
-@tool(
+@arcagent.tool(
     description="<one-sentence imperative description>",
     classification="state_modifying",   # change to "read_only" if no side effect
     capability_tags=["<tag>"],          # e.g., "file_read", "network_egress"
@@ -222,12 +224,12 @@ def _validate(args: argparse.Namespace) -> None:
 
 def _inspect(args: argparse.Namespace) -> None:
     """Render the selected/available/signed state of all four extension-point families."""
-    from arcagent.extension.inspect import inspect_extensions
-
     config, registry = _resolve_inspect_context(getattr(args, "agent", None))
     rows = [
         [r.family, r.kind, r.selected, "yes" if r.available else "no", r.signed]
-        for r in inspect_extensions(config, registry, trusted_public_key=_agent_pubkey(config))
+        for r in arcagent.inspect_extensions(
+            config, registry, trusted_public_key=_agent_pubkey(config)
+        )
     ]
     if rows:
         _print_table(["Family", "Kind", "Selected", "Available", "Signed"], rows)
@@ -240,11 +242,9 @@ def _verify_extensions(args: argparse.Namespace) -> None:
 
     Exits non-zero when a refusal is found so it is usable as a federal change-control gate.
     """
-    from arcagent.extension.inspect import inspect_extensions
-
     config, registry = _resolve_inspect_context(getattr(args, "agent", None))
     tier = _config_tier(config)
-    rows = inspect_extensions(config, registry, trusted_public_key=_agent_pubkey(config))
+    rows = arcagent.inspect_extensions(config, registry, trusted_public_key=_agent_pubkey(config))
     refused = [r for r in rows if _would_refuse(r, tier)]
     if not refused:
         _write(f"All extension-point selections load-clean at tier {tier!r}.")
@@ -284,8 +284,6 @@ def _load_flat_config(agent_dir: str | None) -> object:
     """
     import tomllib
 
-    from arcagent.core.config import ArcAgentConfig
-
     base = Path(agent_dir).expanduser().resolve() if agent_dir else Path.home() / ".arc"
     path = base / "arcagent.toml"
     if not path.is_file():
@@ -294,7 +292,7 @@ def _load_flat_config(agent_dir: str | None) -> object:
     raw = tomllib.loads(path.read_text(encoding="utf-8"))
     raw.setdefault("agent", {"name": "inspect"})
     raw.setdefault("llm", {"model": "none"})
-    return ArcAgentConfig.model_validate(raw)
+    return arcagent.ArcAgentConfig.model_validate(raw)
 
 
 def _config_tier(config: object) -> str:

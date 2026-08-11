@@ -286,7 +286,7 @@ class RunHandle:
 
         ``caller_did`` must be a non-empty verified identity: arcrun records it so
         the kill switch is attributable (ASI09/ASI10) but does not authorize it —
-        that policy decision belongs to the caller (arcagent), mirroring ``steer``
+        that policy decision belongs to the caller, mirroring ``steer``
         and ``follow_up``. ``reason`` is an optional operator note carried into the
         structured cancelled result and the ``loop.cancelled`` audit event.
         """

@@ -16,6 +16,7 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _ARCUI_SRC = _REPO_ROOT / "packages" / "arcui" / "src" / "arcui"
 _ARCGATEWAY_SRC = _REPO_ROOT / "packages" / "arcgateway" / "src" / "arcgateway"
+_ARCAGENT_SRC = _REPO_ROOT / "packages" / "arcagent" / "src" / "arcagent"
 
 
 def _imports_in(path: Path) -> set[str]:
@@ -39,6 +40,46 @@ def _imports_in(path: Path) -> set[str]:
 
 def _all_python_files(root: Path) -> list[Path]:
     return [p for p in root.rglob("*.py") if "__pycache__" not in p.parts]
+
+
+def _qualified_names_on(path: Path, root_module: str) -> set[str]:
+    """Every dotted name accessed off ``root_module`` in *path*.
+
+    ``arcagent.keys.KeyStore`` yields ``keys.KeyStore``; the caller decides how
+    much of the chain to judge.
+    """
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except SyntaxError:
+        return set()
+
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Attribute):
+            continue
+        parts: list[str] = []
+        cursor: ast.expr = node
+        while isinstance(cursor, ast.Attribute):
+            parts.append(cursor.attr)
+            cursor = cursor.value
+        if isinstance(cursor, ast.Name) and cursor.id == root_module:
+            found.add(".".join(reversed(parts)))
+    return found
+
+
+def _arcagent_public_names() -> frozenset[str]:
+    """``arcagent.__all__`` read from source — no import of the package needed."""
+    init = _ARCAGENT_SRC / "__init__.py"
+    if not init.exists():
+        return frozenset()
+    tree = ast.parse(init.read_text(encoding="utf-8"), filename=str(init))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "__all__" for t in node.targets
+        ):
+            if isinstance(node.value, (ast.List, ast.Tuple)):
+                return frozenset(e.value for e in node.value.elts if isinstance(e, ast.Constant))
+    return frozenset()
 
 
 def _violations(root: Path, forbidden_prefixes: tuple[str, ...]) -> list[tuple[Path, str]]:
@@ -102,13 +143,50 @@ def test_arcui_imports_arcagent_only_via_approved_seams() -> None:
     bad = [
         (p, m)
         for p, m in _violations(_ARCUI_SRC, ("arcagent",))
-        if m not in _APPROVED_ARCAGENT_SEAMS
+        if m != "arcagent" and m not in _APPROVED_ARCAGENT_SEAMS
     ]
     assert not bad, (
-        "arcui imports arcagent outside the approved seams "
+        "arcui imports an arcagent SUBMODULE outside the approved seams "
         f"{sorted(_APPROVED_ARCAGENT_SEAMS)} (SPEC-023 §2.2, narrowed by "
         "arcui-reality-mirror, widened by SPEC-064 to the two control-surface "
         "façades):\n" + "\n".join(f"  {p}: {m}" for p, m in bad)
+    )
+
+
+def test_arcui_uses_only_public_arcagent_names() -> None:
+    """Root ``import arcagent`` must not become a back door to everything.
+
+    The submodule allowlist above stopped meaning much once the dependency plan
+    moved cross-package consumers to one root import plus qualified names — a
+    bare ``import arcagent`` names no submodule, so it passes a scan that only
+    reads import statements while still reaching anything at all.
+
+    Narrowness therefore moves to the names: every ``arcagent.X`` arcui actually
+    touches must be in arcagent's declared ``__all__``. Same shape as ArcAgent's
+    own facade guard over ArcRun. A route reaching ``arcagent.core.something``
+    is the signal that the facade is missing an export, not that this check
+    should relax.
+    """
+    if not _ARCUI_SRC.exists():
+        pytest.skip("arcui package not found in this checkout")
+    public = _arcagent_public_names()
+    if not public:
+        pytest.skip("arcagent package not found in this checkout")
+
+    bad: list[tuple[Path, str]] = []
+    for path in _all_python_files(_ARCUI_SRC):
+        for name in _qualified_names_on(path, "arcagent"):
+            # Attribute chains that start at an approved seam are already
+            # covered by the submodule allowlist above.
+            if f"arcagent.{name}" in _APPROVED_ARCAGENT_SEAMS:
+                continue
+            if name.split(".")[0] not in public:
+                bad.append((path, f"arcagent.{name}"))
+
+    assert not bad, (
+        "arcui reaches arcagent names that are not in arcagent.__all__ — the "
+        "facade is missing an export, or the surface is reaching past it:\n"
+        + "\n".join(f"  {p}: {n}" for p, n in sorted(set(bad)))
     )
 
 

@@ -31,7 +31,7 @@ def _skills(args: argparse.Namespace) -> None:
     CLI, arcui, and a real agent load all agree on what skills exist and
     why each one did or didn't load.
     """
-    from arcagent.capabilities.inventory import collect_agent_capability_inventory
+    import arcagent
 
     agent_dir = _resolve_agent_dir(args.path)
     config_path = agent_dir / "arcagent.toml"
@@ -40,7 +40,7 @@ def _skills(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     try:
-        inventory = asyncio.run(collect_agent_capability_inventory(config_path))
+        inventory = asyncio.run(arcagent.collect_agent_capability_inventory(config_path))
     except Exception as exc:  # reason: a listing command must degrade, not crash
         sys.stderr.write(f"arc agent skills: could not enumerate skills: {exc}\n")
         sys.exit(1)

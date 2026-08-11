@@ -14,8 +14,9 @@ Per-file flow:
   2. AST validate via :class:`AstValidator` — failure emits
      ``capability:registration_failed`` and is recorded in the
      reload diff.
-  3. (Future) TOFU policy gate; OS sandbox for self-executing code.
-  4. Import as a transient module; find decorated callables / classes.
+  3. Apply the TOFU/signature policy gate.
+  4. Trusted package code imports normally. Authored source is parsed for inert
+     ``@tool`` metadata and represented by an ArcRun-isolated RPC proxy.
   5. Hand to :class:`CapabilityRegistry` (kind-aware register).
 
 The loader's :meth:`reload` returns the human-readable diff string
@@ -39,7 +40,6 @@ import importlib.util
 import logging
 import sys
 from collections.abc import Iterable
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +51,22 @@ from arcagent.capabilities.capability_registry import (
     HookEntry,
     LifecycleEntry,
     ToolEntry,
+)
+from arcagent.capabilities.isolated_tool import (
+    ArcRunIsolatedRunner,
+    IsolatedRunner,
+    make_isolated_execute,
+    parse_authored_tools,
+)
+from arcagent.capabilities.reload_models import (
+    CapabilityOutcome,
+    PreparedReload,
+)
+from arcagent.capabilities.reload_models import (
+    GateResult as _GateResult,
+)
+from arcagent.capabilities.reload_models import (
+    ReloadDelta as _ReloadDelta,
 )
 from arcagent.capabilities.skill_validator import validate_skill_folder
 from arcagent.capabilities.trust_backend import Ed25519TrustBackend, TrustBackend
@@ -64,11 +80,10 @@ from arcagent.tools._dynamic_loader import (
     DEFAULT_IMPORT_POLICY,
     AstValidationCache,
     ImportPolicy,
-    build_restricted_builtins,
 )
 
-# Roots that go through the AST validator + Sign/TOFU gate + restricted
-# builtins. Every root an agent can write to is untrusted: ``workspace``
+# Roots that go through the AST validator + Sign/TOFU gate + isolated ArcRun
+# execution. Every root an agent can write to is untrusted: ``workspace``
 # (agent-authored), plus ``global`` (~/.arc/capabilities) and ``agent``
 # (<agent_root>/capabilities), where a compromised agent can plant a ``.py``
 # via bash and reload it. Only ``builtins`` / ``builtins-skills`` / ``module:*``
@@ -115,95 +130,6 @@ def is_untrusted_root(root_name: str) -> bool:
 ScanRoot = tuple[str, Path]
 
 
-@dataclass(frozen=True)
-class CapabilityOutcome:
-    """One discovered artifact's terminal load verdict, recorded verbatim.
-
-    Emitted for every skill folder and capability ``.py`` the loader reaches,
-    whether it loaded or was refused. ``status`` is the verdict as produced at
-    the decision point and is never re-interpreted downstream (the arcui
-    capability inventory renders it as-is, REQ-094):
-
-      * ``"loaded"``            — registered into the :class:`CapabilityRegistry`.
-      * a :class:`TofuDecision` value (``"deny"`` / ``"new_sighting"``) — the
-        TOFU adjudication for an agent-writable source.
-      * ``"unsigned"``          — a required-signature floor refusal (above
-        personal) before TOFU is consulted.
-      * ``"invalid"``           — AST validation, skill-frontmatter validation,
-        or import failed.
-      * ``"error"``             — a fail-closed exception inside the trust gate.
-
-    For a refused ``.py`` the module never executed, so ``version`` /
-    ``description`` are empty and ``name`` falls back to the file stem; a
-    refused skill still carries the metadata parsed before the gate ran.
-    """
-
-    kind: str  # "tool" | "skill"
-    name: str
-    version: str
-    description: str
-    scan_root: str
-    source_path: str
-    status: str
-    status_detail: str
-
-
-@dataclass(frozen=True)
-class _GateResult:
-    """Outcome of :meth:`CapabilityLoader._passes_trust_gate`.
-
-    ``status`` / ``detail`` are populated only on refusal and carry the
-    verbatim verdict the caller records in a :class:`CapabilityOutcome`.
-    """
-
-    allowed: bool
-    status: str = ""
-    detail: str = ""
-
-
-@dataclass
-class _ReloadDelta:
-    """Tracks adds/removes/replaces during a single reload pass."""
-
-    added: list[str] = field(default_factory=list)
-    replaced: list[tuple[str, str, str]] = field(default_factory=list)
-    removed: list[str] = field(default_factory=list)
-    errors: list[tuple[str, str]] = field(default_factory=list)
-    # Per-item verdicts for every artifact reached this pass — the structured
-    # counterpart to the human-readable diff string, consumed by the arcui
-    # capability inventory seam (COMP-007).
-    outcomes: list[CapabilityOutcome] = field(default_factory=list)
-
-    def render(self) -> str:
-        """Produce the R-005 diff string."""
-        added_seg = self._segment("added", self.added)
-        replaced_seg = self._render_replaced()
-        removed_seg = self._segment("removed", self.removed)
-        error_count = len(self.errors)
-        head = (
-            f"reload: +{len(self.added)} added{added_seg}, "
-            f"~{len(self.replaced)} replaced{replaced_seg}, "
-            f"-{len(self.removed)} removed{removed_seg}, "
-            f"{error_count} {'error' if error_count == 1 else 'errors'}"
-        )
-        if error_count == 0:
-            return head
-        lines = [head]
-        lines.extend(f"  - {path}: {detail}" for path, detail in self.errors)
-        return "\n".join(lines)
-
-    @staticmethod
-    def _segment(_label: str, names: list[str]) -> str:
-        if not names:
-            return ""
-        return " (" + ", ".join(names) + ")"
-
-    def _render_replaced(self) -> str:
-        if not self.replaced:
-            return ""
-        return " (" + ", ".join(f"{name} {old}→{new}" for name, old, new in self.replaced) + ")"
-
-
 class CapabilityLoader:
     """Scan four roots, register decorated capabilities into the registry.
 
@@ -225,6 +151,9 @@ class CapabilityLoader:
         trusted_public_key: bytes | None = None,
         trust_backend: TrustBackend | None = None,
         spawn_background_tasks: bool = True,
+        isolation_tier: str = "personal",
+        isolated_runner: IsolatedRunner | None = None,
+        ignored_python_paths: frozenset[Path] = frozenset(),
     ) -> None:
         self._scan_roots: list[ScanRoot] = list(scan_roots)
         self._registry = registry
@@ -253,6 +182,12 @@ class CapabilityLoader:
         # loader never silently allows all imports.
         self._import_policy = import_policy
         self._ast_cache = AstValidationCache(policy=import_policy)
+        self._isolation_tier = isolation_tier
+        # Construct the tier backend only when an authored tool is actually
+        # present. Manifest-only extensions and skill-only roots must remain
+        # inspectable/installable on hosts that cannot execute that tier.
+        self._isolated_runner = isolated_runner
+        self._ignored_python_paths = frozenset(path.resolve() for path in ignored_python_paths)
 
     async def scan_and_register(self) -> _ReloadDelta:
         """Walk scan roots in precedence order; register everything found."""
@@ -283,6 +218,58 @@ class CapabilityLoader:
         delta = await self.scan_and_register()
         return delta.render()
 
+    async def prepare_reload(self) -> PreparedReload:
+        """Scan into an isolated registry without changing live capabilities."""
+        candidate_registry = CapabilityRegistry()
+        candidate = CapabilityLoader(
+            scan_roots=self._scan_roots,
+            registry=candidate_registry,
+            import_policy=self._import_policy,
+            tofu=self._tofu,
+            require_signature=self._require_signature,
+            trusted_public_key=self._trusted_public_key,
+            trust_backend=self._trust_backend,
+            spawn_background_tasks=False,
+            isolation_tier=self._isolation_tier,
+            isolated_runner=self._isolated_runner,
+            ignored_python_paths=self._ignored_python_paths,
+        )
+        prior_tools = dict(self._known_tools)
+        prior_skills = dict(self._known_skills)
+        delta = await candidate.scan_and_register()
+
+        # Candidate registration starts from an empty registry. Recompute the
+        # user-facing diff against the last committed scan, not against empty.
+        next_tools = candidate._known_tools
+        next_skills = candidate._known_skills
+        delta.added = sorted(
+            (set(next_tools) - set(prior_tools)) | (set(next_skills) - set(prior_skills))
+        )
+        delta.removed = sorted(
+            (set(prior_tools) - set(next_tools)) | (set(prior_skills) - set(next_skills))
+        )
+        delta.replaced = sorted(
+            (name, prior_tools[name], next_tools[name])
+            for name in set(prior_tools) & set(next_tools)
+            if prior_tools[name] != next_tools[name]
+        ) + sorted(
+            (name, prior_skills[name], next_skills[name])
+            for name in set(prior_skills) & set(next_skills)
+            if prior_skills[name] != next_skills[name]
+        )
+        return PreparedReload(
+            registry=candidate_registry,
+            delta=delta,
+            known_tools=dict(next_tools),
+            known_skills=dict(next_skills),
+        )
+
+    async def commit_reload(self, prepared: PreparedReload) -> None:
+        """Atomically publish a previously validated candidate snapshot."""
+        await self._registry.replace_from(prepared.registry)
+        self._known_tools = dict(prepared.known_tools)
+        self._known_skills = dict(prepared.known_skills)
+
     # --- Discovery ---------------------------------------------------------
 
     async def _scan_root(
@@ -298,6 +285,8 @@ class CapabilityLoader:
                 await self._register_skill_folder(entry, root_name, delta, seen_skills)
                 continue
             if entry.is_file() and entry.suffix == ".py":
+                if entry.resolve() in self._ignored_python_paths:
+                    continue
                 await self._register_python_file(entry, root_name, delta, seen_tools)
 
     async def _register_python_file(
@@ -307,7 +296,6 @@ class CapabilityLoader:
         delta: _ReloadDelta,
         seen_tools: set[str],
     ) -> None:
-        restricted_builtins: dict[str, object] | None = None
         if is_untrusted_root(root_name):
             try:
                 self._ast_cache.validate(path)
@@ -321,9 +309,28 @@ class CapabilityLoader:
             if not gate.allowed:
                 self._record_tool_outcome(delta, path, root_name, gate.status, gate.detail)
                 return
-            restricted_builtins = build_restricted_builtins(policy=self._import_policy)
+            try:
+                source = path.read_text(encoding="utf-8")
+                authored_tools = parse_authored_tools(path)
+            except Exception as exc:  # reason: fail closed before registration
+                detail = _short_error(exc)
+                delta.errors.append((str(path), detail))
+                self._record_tool_outcome(delta, path, root_name, "invalid", detail)
+                await self._emit_registration_failed(path, "python", detail)
+                return
+            for authored in authored_tools:
+                execute = make_isolated_execute(
+                    source=source,
+                    function_name=authored.function_name,
+                    runner=self._isolated_runner_for_tool(),
+                )
+                await self._dispatch_capability(
+                    execute, authored.metadata, path, root_name, delta, seen_tools
+                )
+            return
+
         try:
-            module = _load_module(path, restricted_builtins=restricted_builtins)
+            module = _load_module(path)
         except Exception as exc:  # reason: best-effort — record + continue
             detail = _short_error(exc)
             delta.errors.append((str(path), detail))
@@ -336,6 +343,13 @@ class CapabilityLoader:
             if meta is None:
                 continue
             await self._dispatch_capability(value, meta, path, root_name, delta, seen_tools)
+
+    def _isolated_runner_for_tool(self) -> IsolatedRunner:
+        runner = self._isolated_runner
+        if runner is None:
+            runner = ArcRunIsolatedRunner(tier=self._isolation_tier)
+            self._isolated_runner = runner
+        return runner
 
     async def _passes_trust_gate(self, path: Path, name: str, delta: _ReloadDelta) -> _GateResult:
         """Fail-closed Sign gate for any agent-writable source (SPEC-033 B2/C2/D1).
@@ -666,12 +680,7 @@ class CapabilityLoader:
 
     async def _topological_order(self) -> list[LifecycleEntry]:
         """Return capabilities in topological setup order over depends_on."""
-        # Pull entries via a fresh reader-locked view.
-        # The registry exposes capabilities by name; iterate via known
-        # names from the underlying dict. We read under the lock.
-        async with self._registry._lock.reader:
-            entries = dict(self._registry._capabilities)
-        return _topological_sort(entries)
+        return _topological_sort(self._registry.lifecycle_entries())
 
 
 # --- Helpers --------------------------------------------------------------

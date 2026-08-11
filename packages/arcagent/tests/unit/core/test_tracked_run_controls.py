@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from arcagent.core.agent import ArcAgent
+from arcagent.core.agent_dispatch import _finalize_tracked_run
 from arcagent.core.config import (
     AgentConfig,
     ArcAgentConfig,
@@ -107,12 +108,33 @@ async def _capture_run_async_kwargs(agent: ArcAgent) -> dict[str, Any]:
         captured.update(kwargs)
         return _FakeHandle()
 
-    with patch("arcagent.core.agent_dispatch.arcrun_run_async", side_effect=_fake_run_async):
+    with patch("arcagent.core.agent_dispatch.arcrun.run_async", side_effect=_fake_run_async):
         await agent.start_tracked_run("do it", session_key="tracked:1")
     return captured
 
 
 class TestTrackedPathAppliesLoopControls:
+    @pytest.mark.asyncio
+    async def test_stale_finalizer_does_not_remove_replacement_handle(self) -> None:
+        old_handle = _FakeHandle()
+        replacement = object()
+        agent = MagicMock()
+        agent._active_runs = {"tracked:1": replacement}
+        agent._context = None
+        agent._bus = None
+        session = MagicMock()
+        session.append_message = AsyncMock()
+
+        await _finalize_tracked_run(
+            agent,
+            old_handle,
+            session,
+            "tracked:1",
+            "do it",  # type: ignore[arg-type]
+        )
+
+        assert agent._active_runs["tracked:1"] is replacement
+
     @pytest.mark.asyncio
     async def test_forwards_approval_set_breakers_and_checkpoint(
         self, tmp_path: Path, workspace: Path

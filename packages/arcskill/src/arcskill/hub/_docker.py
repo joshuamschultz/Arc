@@ -23,12 +23,15 @@ from arcskill.hub._result import DryRunResult
 logger = logging.getLogger(__name__)
 
 
-# DockerBackend is an optional dependency (requires arcrun package).
+# DockerBackend is an optional backend-extension dependency (requires arcrun).
+# ``arcrun.backends`` is the intentionally public extension surface; this is
+# the narrow deep-import exception to the root-facade rule, not an internal
+# implementation-module import.
 # Imported at module level so tests can patch arcskill.hub._docker._DockerBackend
 # (and via re-export, arcskill.hub.dry_run._DockerBackend). Falls back to None
 # when arcrun is not installed; _run_docker handles the None case.
 try:
-    from arcrun.backends.docker import DockerBackend as _DockerBackend
+    from arcrun.backends import DockerBackend as _DockerBackend
 except ImportError:
     _DockerBackend = None  # type: ignore[assignment,misc]  # reason: optional import — _run_docker checks for None and returns a skipped result when arcrun isn't installed
 

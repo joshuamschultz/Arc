@@ -78,6 +78,17 @@ class RootTokenBudget:
         async with self._lock:
             self._used += amount
 
+    async def settle(self, reserved: int, actual: int) -> None:
+        """Replace a prior reservation with actual usage atomically.
+
+        ``actual=0`` refunds work that never started or was cancelled. Actual
+        usage may exceed the reservation so accounting remains conservative.
+        """
+        if reserved < 0 or actual < 0:
+            raise ValueError("Budget settlement amounts must be non-negative")
+        async with self._lock:
+            self._used = max(0, self._used - reserved) + actual
+
 
 class TokenUsage(BaseModel):
     """Token usage counters for a single run."""

@@ -69,6 +69,15 @@ class _HandlerRegistration:
     priority: int = 100
     module_name: str = ""
     timeout_seconds: float = _DEFAULT_HANDLER_TIMEOUT
+    token: int = 0
+
+
+@dataclass(frozen=True)
+class SubscriptionToken:
+    """Opaque handle used to remove one exact bus subscription."""
+
+    event: str
+    value: int
 
 
 @dataclass(frozen=True)
@@ -93,6 +102,7 @@ class ModuleBus:
 
     def __init__(self) -> None:
         self._handlers: dict[str, list[_HandlerRegistration]] = defaultdict(list)
+        self._next_token = 1
 
     def subscribe(
         self,
@@ -101,16 +111,75 @@ class ModuleBus:
         priority: int = 100,
         module_name: str = "",
         timeout_seconds: float = _DEFAULT_HANDLER_TIMEOUT,
-    ) -> None:
+    ) -> SubscriptionToken:
         """Register handler for event. Lower priority runs first."""
+        token = SubscriptionToken(event=event, value=self._next_token)
+        self._next_token += 1
         reg = _HandlerRegistration(
             event=event,
             handler=handler,
             priority=priority,
             module_name=module_name,
             timeout_seconds=timeout_seconds,
+            token=token.value,
         )
         self._handlers[event].append(reg)
+        return token
+
+    def unsubscribe(self, token: SubscriptionToken) -> bool:
+        """Remove the exact subscription represented by ``token``."""
+        handlers = self._handlers.get(token.event)
+        if not handlers:
+            return False
+        kept = [registration for registration in handlers if registration.token != token.value]
+        if len(kept) == len(handlers):
+            return False
+        if kept:
+            self._handlers[token.event] = kept
+        else:
+            self._handlers.pop(token.event, None)
+        return True
+
+    def replace_handlers(
+        self,
+        *,
+        module_prefix: str,
+        handlers: list[tuple[str, Callable[[EventContext], Awaitable[None]], int, str]],
+    ) -> tuple[SubscriptionToken, ...]:
+        """Atomically replace every handler owned by a module-name prefix.
+
+        The operation contains no await point: emitters see either the old set
+        or the complete new set, never a partially rebuilt capability bridge.
+        """
+        replacements: list[_HandlerRegistration] = []
+        tokens: list[SubscriptionToken] = []
+        for event, handler, priority, module_name in handlers:
+            token = SubscriptionToken(event=event, value=self._next_token)
+            self._next_token += 1
+            tokens.append(token)
+            replacements.append(
+                _HandlerRegistration(
+                    event=event,
+                    handler=handler,
+                    priority=priority,
+                    module_name=module_name,
+                    token=token.value,
+                )
+            )
+
+        for event in tuple(self._handlers):
+            kept = [
+                registration
+                for registration in self._handlers[event]
+                if not registration.module_name.startswith(module_prefix)
+            ]
+            if kept:
+                self._handlers[event] = kept
+            else:
+                self._handlers.pop(event, None)
+        for registration in replacements:
+            self._handlers[registration.event].append(registration)
+        return tuple(tokens)
 
     def handler_count(self, event: str) -> int:
         """Number of registered handlers for an event."""
@@ -157,7 +226,8 @@ class ModuleBus:
         for priority in sorted(by_priority):
             group = by_priority[priority]
             tasks = [self._run_handler(reg, ctx) for reg in group]
-            await asyncio.gather(*tasks, return_exceptions=True)
+            # _run_handler is the single exception-isolation boundary.
+            await asyncio.gather(*tasks)
 
         return ctx
 

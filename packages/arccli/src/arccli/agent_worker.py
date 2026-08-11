@@ -48,7 +48,7 @@ import sys
 import uuid
 from pathlib import Path
 
-from arcrun import collect
+import arcrun
 
 _logger = logging.getLogger("arc.agent.worker")
 
@@ -201,8 +201,7 @@ async def _run_with_arcagent(
 
     # Try to import arcagent; fall back to echo stub if not installed.
     try:
-        from arcagent.core.agent import ArcAgent
-        from arcagent.core.config import load_config as _load_config
+        import arcagent
     except ImportError:
         _logger.warning(
             "arc-agent-worker: arcagent not installed — falling back to echo stub. "
@@ -228,15 +227,15 @@ async def _run_with_arcagent(
     )
 
     try:
-        config = _load_config(config_path)
+        config = arcagent.load_config(config_path)
         if config.identity.did != agent_did:
             return _identity_mismatch_deltas(agent_did, config.identity.did, config_path)
-        agent = ArcAgent(config, config_path=config_path)
+        agent = arcagent.ArcAgent(config, config_path=config_path)
         await agent.startup()
 
         # One streaming entry, collected to a result, on the event's session.
         session = await agent.session(session_key)
-        result = await collect(agent.run(message, session=session))
+        result = await arcrun.collect(agent.run(message, session=session))
         content: str = result.content or ""
 
         _logger.info(

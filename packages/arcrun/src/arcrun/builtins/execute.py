@@ -8,7 +8,7 @@ Enterprise/federal never fall back to a weaker path; unavailable required
 isolation fails closed.
 
 Boundary: arcrun stays execution-only. ``tier``/``relax`` arrive as parameters
-from the caller (arccli). This module never sources tier, imports arcagent/arcllm,
+from the caller. This module never sources tier or imports upper layers,
 or contains agent logic.
 """
 
@@ -327,7 +327,7 @@ async def run_shell(
     ``cwd=/workspace``.
 
     ``tier`` and ``platform_supports_vm`` are parameters — arcrun never sources
-    them. Personal (host bash) is arcagent's job; run_shell is invoked for
+    them. Host bash is the caller's job; run_shell is invoked for
     enterprise/federal, but a personal call still routes through
     ``resolve_execution_backend`` rather than being special-cased.
 

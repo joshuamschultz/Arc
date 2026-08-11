@@ -1,7 +1,7 @@
 """Strategy prompt provider — model-facing guidance for ArcRun capabilities.
 
 ArcRun owns the strategies and their documentation. Consuming agents
-(e.g. ArcAgent) call get_strategy_prompts() to obtain prompt fragments
+callers use get_strategy_prompts() to obtain prompt fragments
 they inject into the system prompt. This keeps separation clean:
 
 - ArcRun knows WHAT strategies do and WHEN to use them
@@ -9,7 +9,7 @@ they inject into the system prompt. This keeps separation clean:
 
 ArcRun does NOT carry tool-specific guidance (spawn_task, delegate, etc).
 Tool guidance lives with the tool's owner — e.g. spawn_task guidance is
-in ``arcagent.orchestration.prompts``.
+in host-provided prompt context.
 
 See ADR on strategy prompt injection for architectural rationale.
 """

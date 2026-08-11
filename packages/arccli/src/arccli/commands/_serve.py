@@ -49,12 +49,12 @@ def _entity_for(agent_dir: Path) -> Any:
     first mint), so the DID registered here is the SAME key the running agent
     signs with — the signed bus can verify its messages (REQ-030).
     """
-    from arcagent.core.config import load_config
+    import arcagent
     from arcteam.types import Entity, EntityType
     from arctrust import AgentIdentity
 
     config_path = agent_dir / "arcagent.toml"
-    config = load_config(config_path)
+    config = arcagent.load_config(config_path)
     identity = AgentIdentity.from_config(
         config.identity,
         org=config.agent.org,

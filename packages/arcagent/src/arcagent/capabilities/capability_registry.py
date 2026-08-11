@@ -38,6 +38,7 @@ from typing import Any, Literal
 
 import aiorwlock
 
+from arcagent.core.background_tasks import BackgroundTaskSupervisor
 from arcagent.tools._decorator import (
     BackgroundTaskMetadata,
     CapabilityClassMetadata,
@@ -157,6 +158,7 @@ class CapabilityRegistry:
         audit_sink: Any | None = None,
         agent_did: str = "",
         tier: str = "personal",
+        task_supervisor: BackgroundTaskSupervisor | None = None,
     ) -> None:
         self._lock = aiorwlock.RWLock()
         self._tools: dict[str, ToolEntry] = {}
@@ -174,6 +176,76 @@ class CapabilityRegistry:
         self._audit_sink = audit_sink
         self._agent_did = agent_did
         self._tier = tier
+        self._task_supervisor = task_supervisor or BackgroundTaskSupervisor(logger=_logger)
+
+    # --- Read-only snapshots ---------------------------------------------
+
+    def tool_entries(self) -> tuple[ToolEntry, ...]:
+        """Stable event-loop snapshot of registered tools."""
+        return tuple(self._tools.values())
+
+    def skill_entries(self) -> tuple[SkillEntry, ...]:
+        """Stable event-loop snapshot of offered (non-suppressed) skills."""
+        return tuple(self._skills.values())
+
+    def hook_entries(self) -> dict[str, tuple[HookEntry, ...]]:
+        """Copy hooks by event without exposing mutable registry collections."""
+        return {event: tuple(entries) for event, entries in self._hooks.items()}
+
+    def lifecycle_entries(self) -> dict[str, LifecycleEntry]:
+        """Copy capability lifecycle entries for dependency ordering."""
+        return dict(self._capabilities)
+
+    def counts(self) -> tuple[int, int]:
+        """Return ``(tool_count, offered_skill_count)``."""
+        return len(self._tools), len(self._skills)
+
+    def has_skills(self) -> bool:
+        return bool(self._skills)
+
+    def skill_entry(self, name: str) -> SkillEntry | None:
+        return self._skills.get(name)
+
+    def workspace_authored_names(self, workspace_root: str) -> frozenset[str]:
+        names = {
+            entry.meta.name for entry in self._tools.values() if entry.scan_root == workspace_root
+        }
+        names.update(
+            entry.name for entry in self._skills.values() if entry.scan_root == workspace_root
+        )
+        return frozenset(names)
+
+    async def replace_from(self, candidate: CapabilityRegistry) -> None:
+        """Commit a fully scanned candidate snapshot to this live registry.
+
+        Candidate scanning happens in an isolated registry, so validation or
+        import failures cannot mutate the live capability set. Suppressed skill
+        decisions are live operator state and therefore survive the swap.
+        """
+        candidate_tools = dict(candidate._tools)
+        candidate_skills = dict(candidate._skills)
+        candidate_hooks = {event: list(entries) for event, entries in candidate._hooks.items()}
+        candidate_tasks = dict(candidate._tasks)
+        candidate_capabilities = dict(candidate._capabilities)
+
+        async with self._lock.writer:
+            old_tasks = tuple(self._tasks.values())
+            for name in self._suppressed:
+                if name in candidate_skills:
+                    self._suppressed[name] = candidate_skills.pop(name)
+            self._tools = candidate_tools
+            self._skills = candidate_skills
+            self._hooks = candidate_hooks
+            self._tasks = candidate_tasks
+            self._capabilities = candidate_capabilities
+            self._invalidate_cache()
+
+        for entry in old_tasks:
+            await _drain_task(entry.task)
+        for entry in candidate_tasks.values():
+            entry.task = asyncio.create_task(
+                entry.fn(None), name=f"capability_task:{entry.meta.name}"
+            )
 
     # --- Tools ------------------------------------------------------------
 
@@ -288,7 +360,7 @@ class CapabilityRegistry:
             await _drain_task(old.task)
 
         if spawn:
-            entry.task = asyncio.create_task(
+            entry.task = self._task_supervisor.create(
                 entry.fn(None), name=f"capability_task:{entry.meta.name}"
             )
         result = self._diff_result(
@@ -300,6 +372,12 @@ class CapabilityRegistry:
     async def get_task(self, name: str) -> BackgroundTaskEntry | None:
         async with self._lock.reader:
             return self._tasks.get(name)
+
+    async def shutdown(self) -> None:
+        """Drain every background task owned by this registry."""
+        await self._task_supervisor.drain()
+        for entry in self._tasks.values():
+            entry.task = None
 
     # --- Capability classes ----------------------------------------------
 

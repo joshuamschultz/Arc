@@ -39,6 +39,8 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from arcagent.utils.periodic import FailurePolicy, PeriodicRunner
+
 _logger = logging.getLogger("arcagent.proactive.leader_k8s")
 
 # Default TTL and renewal interval. Lease TTL must be strictly greater
@@ -83,6 +85,7 @@ class KubernetesLeaseElection:
         self._renew_seconds = renew_seconds
         self._acquired = False
         self._renewer: asyncio.Task[None] | None = None
+        self._renew_poller = PeriodicRunner()
         self._coord_v1: Any = None
 
     async def acquire_or_wait(self, timeout: float = 30.0) -> bool:
@@ -102,6 +105,7 @@ class KubernetesLeaseElection:
         while asyncio.get_event_loop().time() < deadline:
             if await self._try_acquire_once():
                 self._acquired = True
+                self._renew_poller.reset()
                 self._renewer = asyncio.create_task(self._renew_loop())
                 return True
             await asyncio.sleep(1.0)
@@ -110,6 +114,7 @@ class KubernetesLeaseElection:
     async def release(self) -> None:
         """Release the Lease + cancel the renewer."""
         self._acquired = False
+        self._renew_poller.stop()
         if self._renewer is not None:
             self._renewer.cancel()
             try:
@@ -212,16 +217,18 @@ class KubernetesLeaseElection:
 
     async def _renew_loop(self) -> None:
         """Periodically refresh ``renew_time`` until cancelled."""
-        while self._acquired:
-            try:
-                await asyncio.sleep(self._renew_seconds)
-                await asyncio.to_thread(self._sync_renew)
-            except asyncio.CancelledError:
-                return
-            except Exception:  # reason: fail-open — log + continue
-                _logger.exception("Lease renewal failed")
-                self._acquired = False
-                return
+
+        def on_error(exc: BaseException, _failures: int) -> None:
+            _logger.error("Lease renewal failed: %s", exc)
+            self._acquired = False
+
+        await self._renew_poller.run(
+            lambda: asyncio.to_thread(self._sync_renew),
+            interval=self._renew_seconds,
+            immediate=False,
+            failure=FailurePolicy(max_consecutive=1),
+            on_error=on_error,
+        )
 
     def _sync_renew(self) -> None:
         """Blocking renewal — writes ``renew_time = now``."""

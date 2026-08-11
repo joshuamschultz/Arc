@@ -58,6 +58,25 @@ class TestURLAllowlist:
         _check_url_policy("https://app.example.com/page", config.security)
         _check_url_policy("https://deep.sub.example.com", config.security)
 
+    def test_exact_domain_does_not_match_attacker_suffix(self) -> None:
+        from arcagent.modules.browser.url_policy import _check_url_policy
+
+        config = BrowserConfig(security={"url_mode": "allowlist", "url_patterns": ["example.com"]})
+        with pytest.raises(URLBlockedError):
+            _check_url_policy("https://example.com.attacker.test", config.security)
+
+    def test_resolution_blocks_dns_rebinding_answer(self) -> None:
+        from arcagent.modules.browser.url_policy import _check_url_policy
+
+        config = BrowserConfig()
+        with pytest.raises(URLBlockedError, match="non-public"):
+            _check_url_policy(
+                "https://example.com",
+                config.security,
+                resolve=True,
+                resolver=lambda _host: ["127.0.0.1"],
+            )
+
 
 class TestURLDenylist:
     """Denylist mode: blocked domains rejected."""
@@ -212,7 +231,8 @@ class TestExternalContentMarking:
     ) -> None:
         cdp = AsyncMock()
         cdp.send = AsyncMock(return_value={"result": {"type": "string", "value": "injected"}})
-        configure_browser(cdp=cdp)
+        config = BrowserConfig(security={"allow_js_execution": True})  # type: ignore[arg-type]
+        configure_browser(config, cdp=cdp)
 
         result = await browser_execute_js("'injected'")
         assert "[EXTERNAL WEB CONTENT]" in result

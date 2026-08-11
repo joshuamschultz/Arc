@@ -25,37 +25,30 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import re
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
+from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from arcrun import collect
+import arcrun
 from arctrust import (
     AgentIdentity,
-    AppendOnlyMediumWitness,
     FileNotaryTransit,
     OperatorKey,
     RecordCipher,
     Signer,
-    SignerConfig,
-    SignerError,
     WitnessAnchor,
     WormSink,
-    assert_fips_if_required,
-    build_signer,
-    derive_record_key,
     parse_classification,
-    read_verified_anchor,
-    verify_local_head_witnessed,
     worm_policy_sink,
 )
-from arctrust.signer import VAULT_TRANSIT
 
 from arcagent.capabilities.capability_registry import SkillEntry
+from arcagent.core import agent_security
 from arcagent.core.agent_dispatch import dispatch_stream
 from arcagent.core.agent_lifecycle import setup_capabilities
+from arcagent.core.background_tasks import BackgroundTaskSupervisor
 from arcagent.core.config import ArcAgentConfig
 from arcagent.core.model_manager import (
     create_arcllm_bridge,
@@ -63,6 +56,8 @@ from arcagent.core.model_manager import (
     ensure_model,
 )
 from arcagent.core.module_bus import ModuleBus
+from arcagent.core.runtime_dependencies import RuntimeBinding
+from arcagent.core.session_coordination import SessionRunCoordinator
 from arcagent.core.session_internal import ContextManager, SessionManager
 from arcagent.core.session_internal.capability_ledger import (
     LETHAL_TRIFECTA,
@@ -76,8 +71,6 @@ from arcagent.tools._policy_fill import resolve_provider_limits
 from arcagent.tools.human_gate import ApprovalChannel, HumanGate, HumanGateConfig
 
 if TYPE_CHECKING:
-    from arcrun import RunHandle, StreamEvent
-
     from arcagent.core.tool_policy import PolicyPipeline
 
 
@@ -86,6 +79,16 @@ _logger = logging.getLogger("arcagent.agent")
 # key_ref the operator seed is stored under in a vault_transit keystore/HSM
 # (mirrors arctrust.operator's vault operator id). SPEC-037 REQ-006.
 _OPERATOR_KEY_REF = "operator"
+_SHUTDOWN_STEP_TIMEOUT_SECONDS = 5.0
+
+
+class _LifecycleState(Enum):
+    """Serialized lifecycle phases for one agent instance."""
+
+    STOPPED = "stopped"
+    STARTING = "starting"
+    STARTED = "started"
+    STOPPING = "stopping"
 
 
 __all__ = [
@@ -114,6 +117,8 @@ class ArcAgent:
             self._workspace = workspace_path.resolve()
 
         self._reload_lock = asyncio.Lock()
+        self._lifecycle_lock = asyncio.Lock()
+        self._lifecycle_state = _LifecycleState.STOPPED
         self._started = False
 
         # Components initialized during startup()
@@ -155,8 +160,12 @@ class ArcAgent:
         # Live steerable runs keyed by session (SPEC-031 D2). A tracked run
         # exists only while it executes; a teammate message arriving mid-run is
         # injected into it (steer/follow_up) instead of starting a new one.
-        self._active_runs: dict[str, RunHandle] = {}
+        self._run_coordinator = SessionRunCoordinator()
+        # Compatibility alias for existing operational/tests introspection.
+        # Registration and identity-safe removal go through the coordinator.
+        self._active_runs = self._run_coordinator.active_runs
         self._run_finalizers: set[asyncio.Task[None]] = set()
+        self._background_tasks = BackgroundTaskSupervisor(logger=_logger)
         # Channel-delivery callback ("platform:chat_id", text) -> None. Injected
         # by the embedded gateway (which owns channels) before startup(); None
         # standalone. Surfaced to modules (scheduler) in the agent:ready payload
@@ -183,7 +192,7 @@ class ArcAgent:
         # startup()) would otherwise see none of this agent's ContextVar
         # state. ``agent_lifecycle.activate_runtime_bindings`` replays this
         # list at the top of every turn-dispatch entry point.
-        self._runtime_bindings: list[tuple[Callable[[Any], None], Any]] = []
+        self._runtime_bindings: list[RuntimeBinding[Any]] = []
 
     def _policy_audit_log_path(self) -> Path:
         """Resolve the WORM chain file for policy-decision audit (SPEC-034).
@@ -196,22 +205,7 @@ class ArcAgent:
         flock for its lifetime — a fleet cannot share one active chain file.
         Falls back to the workspace when arcstore is not installed.
         """
-        configured = self._config.security.policy_audit_log
-        if configured:
-            path = Path(configured)
-            return path if path.is_absolute() else (self._workspace / path)
-        try:
-            from arcstore.config import resolve_data_dir
-        except ImportError:
-            return self._workspace / "audit" / "policy-chain.jsonl"
-        # Slug from the AGENT NAME (unique per deployment — agents are named like
-        # people), NOT the workspace basename: every fleet agent's workspace is
-        # "./workspace", so a workspace-name slug collides all agents on one
-        # audit-chain-workspace.jsonl and its exclusive flock. Sanitize so the
-        # name can never introduce a path separator.
-        raw = self._config.agent.name or self._workspace.name or "agent"
-        slug = re.sub(r"[^A-Za-z0-9._-]", "-", raw) or "agent"
-        return resolve_data_dir() / "worm" / f"audit-chain-{slug}.jsonl"
+        return agent_security.policy_audit_log_path(self)
 
     def _operator_key_path(self) -> Path:
         """Resolve the operator-key file (SPEC-053 REQ-004).
@@ -220,7 +214,7 @@ class ArcAgent:
         outside the workspace tool-sandbox so agent-invoked file tools cannot
         write or replace it.
         """
-        return Path(self._config.security.operator_key_dir).expanduser() / "operator.key"
+        return agent_security.operator_key_path(self)
 
     def _resolve_operator_signer(self, sec: Any) -> Signer:
         """Resolve the operator audit/approval signer from custody config (F1).
@@ -235,29 +229,7 @@ class ArcAgent:
           A transit that cannot be resolved fails closed — never a silent
           in-process fallback (NFR-3).
         """
-        assert_fips_if_required(require_fips=sec.require_fips, algorithm=sec.signing_algorithm)
-        if sec.custody == VAULT_TRANSIT:
-            self._operator_key = None
-            transit = self._resolve_transit(sec)
-            return build_signer(
-                SignerConfig(
-                    custody=VAULT_TRANSIT,
-                    algorithm=sec.signing_algorithm,
-                    key_ref=_OPERATOR_KEY_REF,
-                ),
-                vault_transit=transit,
-            )
-        # in_process — auto-bootstrapped ONLY on a genuine first-ever start
-        # (REQ-006); a missing key with a prior chain/record fails closed rather
-        # than regenerate (covert-erasure defense, SPEC-053 #3).
-        self._operator_key = OperatorKey.load(
-            self._operator_key_path(),
-            vault_resolver=self._vault_resolver,
-            vault_path=sec.operator_vault_path,
-            generate_if_absent=True,
-            prior_chain_exists=self._prior_audit_chains_exist(),
-        )
-        return self._operator_key.into_signer(sec.signing_algorithm)
+        return agent_security.resolve_operator_signer(self, sec)
 
     def _resolve_record_cipher(self) -> RecordCipher | None:
         """Resolve the at-rest seal for WORM records (D-577).
@@ -270,14 +242,7 @@ class ArcAgent:
         a silent fall back to plaintext on the tier that asked for the strictest
         custody would be the worst possible failure of this control.
         """
-        if self._operator_key is not None:
-            return RecordCipher(derive_record_key(self._operator_key.seed))
-        _logger.warning(
-            "audit records are NOT sealed at rest: custody=vault_transit keeps the "
-            "operator seed out of this process and no at-rest key is configured "
-            "(SPEC-063 owns audit-store key custody)"
-        )
-        return None
+        return agent_security.resolve_record_cipher(self)
 
     def _resolve_transit(self, sec: Any) -> FileNotaryTransit:
         """Resolve the out-of-process signing transit for vault_transit custody.
@@ -287,22 +252,7 @@ class ArcAgent:
         Fails closed if the transit cannot serve the operator key — the composite
         must never degrade to in-process signing.
         """
-        keystore = (
-            Path(sec.notary_keystore).expanduser()
-            if sec.notary_keystore
-            else Path(sec.operator_key_dir).expanduser() / "notary"
-        )
-        transit = FileNotaryTransit(keystore, algorithm=sec.signing_algorithm)
-        try:
-            transit.public_key(_OPERATOR_KEY_REF)
-        except OSError as exc:
-            raise SignerError(
-                f"custody=vault_transit but the transit at {keystore} cannot serve "
-                f"the operator key {_OPERATOR_KEY_REF!r} — refusing to fall back to "
-                "in-process signing (fail-closed, NFR-3). Provision the notary "
-                "keystore (or configure a production Vault Transit/HSM adapter)."
-            ) from exc
-        return transit
+        return agent_security.resolve_transit(self, sec)
 
     def _build_witness(self) -> WitnessAnchor | None:
         """Build the external witness for trace-checkpoint anchors (federal only).
@@ -316,14 +266,11 @@ class ArcAgent:
         (``arctrust.TransparencyLogWitness``) needs a network transport supplied
         by the deployment (SPEC-037) and is not wired here.
         """
-        if self._config.security.tier != "federal":
-            return None
-        medium = Path(self._config.security.witness_medium_path).expanduser()
-        return AppendOnlyMediumWitness(medium)
+        return agent_security.build_witness(self)
 
     def _trace_checkpoint_chain_path(self) -> Path:
         """Resolve the operator-signed trace-checkpoint WORM chain (SPEC-053)."""
-        return self._workspace.parent / ".audit" / "trace-checkpoint.worm"
+        return agent_security.trace_checkpoint_chain_path(self)
 
     def _prior_audit_chains_exist(self) -> bool:
         """True if any WORM audit chain already exists for this deployment.
@@ -332,13 +279,7 @@ class ArcAgent:
         a now-missing key file is covert erasure, not a first-ever bootstrap —
         the operator-key load must fail closed rather than regenerate (SPEC-053).
         """
-        audit_dir = self._workspace.parent / ".audit"
-        candidates = (
-            self._policy_audit_log_path(),
-            self._trace_checkpoint_chain_path(),
-            audit_dir / "skills.worm",
-        )
-        return any(p.exists() for p in candidates)
+        return agent_security.prior_audit_chains_exist(self)
 
     def _verify_witness_consistency(self) -> None:
         """Fail closed at federal if the local head is not externally witnessed.
@@ -349,16 +290,7 @@ class ArcAgent:
         the operator key, or a missing/unavailable witness — federal fails
         closed; other tiers warn. A deployment with nothing anchored yet passes.
         """
-        if self._witness is None or self._operator_signer is None:
-            return
-        local = read_verified_anchor(
-            self._trace_checkpoint_chain_path(),
-            self._operator_signer.public_key,
-            cipher=self._record_cipher,
-        )
-        verify_local_head_witnessed(
-            local, self._witness, federal=self._config.security.tier == "federal"
-        )
+        agent_security.verify_witness_consistency(self)
 
     async def startup(self) -> None:
         """Initialize all components; release partial state on any failure.
@@ -371,11 +303,19 @@ class ArcAgent:
         the lock (single-writer invariant). On failure we release what was
         acquired and re-raise the original error.
         """
-        try:
-            await self._startup_impl()
-        except BaseException:
-            await self._release_partial_startup()
-            raise
+        async with self._lifecycle_lock:
+            if self._lifecycle_state is _LifecycleState.STARTED:
+                return
+            self._lifecycle_state = _LifecycleState.STARTING
+            try:
+                await self._startup_impl()
+            except BaseException:
+                await self._release_partial_startup()
+                self._started = False
+                self._lifecycle_state = _LifecycleState.STOPPED
+                raise
+            self._started = True
+            self._lifecycle_state = _LifecycleState.STARTED
 
     async def _release_partial_startup(self) -> None:
         """Best-effort teardown of resources a failed :meth:`_startup_impl` acquired.
@@ -392,11 +332,15 @@ class ArcAgent:
         if registry is not None:
             with contextlib.suppress(Exception):
                 await registry.shutdown()
+        with contextlib.suppress(Exception):
+            await self._background_tasks.drain()
         worm = self._policy_worm
         if worm is not None:
             with contextlib.suppress(Exception):
                 worm.close()
             self._policy_worm = None
+        self._runtime_bindings.clear()
+        self._model = None
 
     async def _startup_impl(self) -> None:
         """Initialize all components in dependency order.
@@ -584,7 +528,7 @@ class ArcAgent:
     ) -> tuple[AgentTelemetry, ToolRegistry, ContextManager, ModuleBus]:
         """Validate agent is started and return narrowed component references."""
         if (
-            not self._started
+            self._lifecycle_state is not _LifecycleState.STARTED
             or self._telemetry is None
             or self._tool_registry is None
             or self._context is None
@@ -610,6 +554,7 @@ class ArcAgent:
                 actor_did=self._identity.did if self._identity is not None else "",
                 witness=self._witness,
                 record_cipher=self._record_cipher,
+                task_supervisor=self._background_tasks,
             )
             self._model = model
             self._trace_store = trace_store
@@ -654,7 +599,7 @@ class ArcAgent:
         reply_target: str | None = None,
         reply_label: str | None = None,
         allowed_strategies: list[str] | None = None,
-    ) -> AsyncIterator[StreamEvent]:
+    ) -> AsyncIterator[arcrun.StreamEvent]:
         """Drive one agent turn. The only execution entry — always
         session-bound, always streaming.
 
@@ -727,7 +672,7 @@ class ArcAgent:
         session (and its trifecta ledger) is preserved either way.
         """
         session = await self.session(session_key)
-        return await collect(
+        return await arcrun.collect(
             self.run(
                 input_text,
                 session=session,
@@ -739,11 +684,11 @@ class ArcAgent:
             )
         )
 
-    def active_run(self, session_key: str) -> RunHandle | None:
+    def active_run(self, session_key: str) -> arcrun.RunHandle | None:
         """Return the live steerable run for ``session_key``, or None if idle."""
-        return self._active_runs.get(session_key)
+        return self._run_coordinator.active(session_key)
 
-    async def start_tracked_run(self, input_text: str, *, session_key: str) -> RunHandle:
+    async def start_tracked_run(self, input_text: str, *, session_key: str) -> arcrun.RunHandle:
         """Start an async, steerable run and track its handle under ``session_key``.
 
         The returned :class:`arcrun.RunHandle` lets a teammate message be
@@ -753,6 +698,7 @@ class ArcAgent:
         """
         from arcagent.core.agent_dispatch import start_tracked_run
 
+        self._ensure_started()
         return await start_tracked_run(self, input_text, session_key=session_key)
 
     async def quick_classify(self, *, system: str, user: str, max_tokens: int = 8) -> str:
@@ -763,12 +709,13 @@ class ArcAgent:
         relevance triage) that must decide yes/no without paying a full run.
         Returns the model's stripped text. The caller interprets it.
         """
-        from arcllm import Message
-
         self._ensure_started()
         model = self._ensure_model()
         response = await model.invoke(
-            [Message(role="system", content=system), Message(role="user", content=user)],
+            [
+                arcrun.Message(role="system", content=system),
+                arcrun.Message(role="user", content=user),
+            ],
             max_tokens=max_tokens,
         )
         return (response.content or "").strip()
@@ -804,7 +751,7 @@ class ArcAgent:
         taken: ``"steered"`` | ``"followed_up"`` | ``"started"``.
         """
         self._ensure_started()
-        handle = self._active_runs.get(session_key)
+        handle = self._run_coordinator.active(session_key)
         if handle is None:
             await self.start_tracked_run(message, session_key=session_key)
             return "started"
@@ -909,13 +856,15 @@ class ArcAgent:
             if loader is None or registry is None or tool_registry is None or bus is None:
                 return "reload: capability subsystem not initialized"
 
-            # Drop capability-owned tools from ToolRegistry; the new
-            # set is re-registered after scan.
-            for name in self._capability_tool_names:
-                tool_registry.unregister(name)
-            self._capability_tool_names.clear()
+            prepared = await loader.prepare_reload()
+            diff = prepared.delta
+            if diff.errors:
+                # A reload is a transaction: an invalid candidate is useful
+                # diagnostic output, never permission to damage the working set.
+                rendered: str = diff.render()
+                return rendered
 
-            diff = await loader.scan_and_register()
+            await loader.commit_reload(prepared)
             await bridge_capability_tools_to_registry(self)
             await bridge_capability_hooks_to_bus(self)
             await bus.emit("agent:tools_reloaded", {})
@@ -938,7 +887,7 @@ class ArcAgent:
         """All registered skill entries."""
         if self._capability_registry is None:
             return []
-        return list(self._capability_registry._skills.values())
+        return list(self._capability_registry.skill_entries())
 
     @property
     def registered_tools(self) -> list[RegisteredTool]:
@@ -960,37 +909,71 @@ class ArcAgent:
         reference so connection pools are released deterministically
         (SPEC-017 R-004).
         """
-        if not self._started:
-            return
+        async with self._lifecycle_lock:
+            if self._lifecycle_state is _LifecycleState.STOPPED:
+                return
+            self._lifecycle_state = _LifecycleState.STOPPING
+            self._started = False  # reject new work before awaiting any teardown
 
-        bus = self._bus
-        tool_registry = self._tool_registry
-        if bus is None or tool_registry is None:
-            return
+            async def bounded(label: str, operation: Awaitable[Any]) -> None:
+                try:
+                    await asyncio.wait_for(operation, timeout=_SHUTDOWN_STEP_TIMEOUT_SECONDS)
+                except TimeoutError:
+                    _logger.error("Timed out while %s during shutdown", label)
+                except BaseException:
+                    _logger.exception("Error while %s during shutdown", label)
 
-        # Emit shutdown event
-        await bus.emit("agent:shutdown", {})
-
-        # Tear down capability lifecycles in reverse-topo order.
-        if self._capability_loader is not None:
-            await self._capability_loader.shutdown()
-
-        # Reverse-order cleanup
-        await tool_registry.shutdown()
-
-        # Release the WORM chain lock (SPEC-034).
-        if self._policy_worm is not None:
-            self._policy_worm.close()
-            self._policy_worm = None
-
-        # Close LLM client (releases httpx connection pool). Guarded
-        # because _model is lazy — may never have been materialized.
-        if self._model is not None:
             try:
-                await self._model.close()
-            except Exception:  # reason: fail-open — log + continue
-                _logger.exception("Error closing LLM model on shutdown")
-        self._model = None
+                bus = self._bus
+                if bus is not None:
+                    await bounded("emitting agent:shutdown", bus.emit("agent:shutdown", {}))
 
-        self._started = False
-        _logger.info("Agent %s shut down", self._config.agent.name)
+                # Stop accepting loop work, then request cancellation of every
+                # run before waiting for its finalizer to commit/clean up.
+                handles = list(self._active_runs.values())
+                for handle in handles:
+                    cancel = getattr(handle, "cancel", None)
+                    if cancel is None:
+                        _logger.warning("Active run has no cancellation operation")
+                        continue
+                    try:
+                        operation = cancel(self.did, "agent shutdown")
+                    except BaseException:
+                        _logger.exception("Error requesting active-run cancellation")
+                        continue
+                    await bounded("cancelling an active run", operation)
+                finalizers = list(self._run_finalizers)
+                if finalizers:
+                    await bounded(
+                        "awaiting tracked-run finalizers",
+                        asyncio.gather(*finalizers, return_exceptions=True),
+                    )
+
+                loader = self._capability_loader
+                if loader is not None:
+                    await bounded("stopping capabilities", loader.shutdown())
+                await bounded("draining background tasks", self._background_tasks.drain())
+                registry = self._tool_registry
+                if registry is not None:
+                    await bounded("stopping tools", registry.shutdown())
+
+                worm = self._policy_worm
+                if worm is not None:
+                    try:
+                        worm.close()
+                    except BaseException:
+                        _logger.exception("Error closing policy audit sink during shutdown")
+                    finally:
+                        self._policy_worm = None
+
+                model = self._model
+                if model is not None:
+                    await bounded("closing LLM model", model.close())
+                self._model = None
+            finally:
+                self._runtime_bindings.clear()
+                self._run_coordinator.clear()
+                self._run_finalizers.clear()
+                self._sessions.clear()
+                self._lifecycle_state = _LifecycleState.STOPPED
+                _logger.info("Agent %s shut down", self._config.agent.name)

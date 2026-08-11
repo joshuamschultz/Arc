@@ -46,16 +46,13 @@ import itertools
 import json
 import logging
 from collections.abc import Mapping
-from time import monotonic
 from typing import Any, Protocol, runtime_checkable
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field
 
 from arcagent import __version__
 from arcagent.core.errors import ExtensionError
 from arcagent.extension.attachment import (
-    Classification,
     ProbeResult,
     Requirement,
     RequirementKind,
@@ -64,6 +61,19 @@ from arcagent.extension.attachment import (
     ToolSpec,
 )
 from arcagent.extension.launcher import ProcessDefinition, ProcessLauncher
+from arcagent.extension.mcp_policy import (
+    DEFAULT_POLICY as _DEFAULT_POLICY,
+)
+from arcagent.extension.mcp_policy import (
+    CircuitBreaker as _CircuitBreaker,
+)
+from arcagent.extension.mcp_policy import (
+    McpResilience,
+    McpToolPolicy,
+)
+from arcagent.extension.mcp_policy import (
+    UnavailableError as _UnavailableError,
+)
 from arcagent.extension.secrets import Secret
 
 _logger = logging.getLogger(__name__)
@@ -97,88 +107,6 @@ _READ_CHUNK_BYTES = 64 * 1024
 #: The sentinel that carries a header value which is not plain printable ASCII.
 _BASE64_PREFIX = "=?base64?"
 _BASE64_SUFFIX = "?="
-
-
-class _Declaration(BaseModel):
-    """Base for what a manifest declares: frozen, and a typo is an error not a shrug."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-
-class McpToolPolicy(_Declaration):
-    """What the *manifest* says about one tool — never what the server says.
-
-    The specification is explicit that a server's annotations are untrusted, and
-    these two fields decide how the trifecta gate treats a call, so an undeclared
-    tool gets the restrictive reading (REQ-269).
-    """
-
-    classification: Classification = "state_modifying"
-    capability_tags: list[str] = Field(default_factory=list)
-
-
-class McpResilience(_Declaration):
-    """Bounds on how hard, and how often, Arc will try a server that is misbehaving."""
-
-    timeout_seconds: float = 60.0
-    max_attempts: int = Field(default=3, ge=1)
-    backoff_seconds: float = 0.5
-    failure_threshold: int = Field(default=5, ge=1)
-    reset_after_seconds: float = 30.0
-
-
-_DEFAULT_POLICY = McpToolPolicy()
-
-
-class _UnavailableError(ExtensionError):
-    """The connection is not answering — distinct from the server answering badly.
-
-    Raised for an exhausted timeout or an open circuit, which is what
-    :meth:`McpAttachment.invoke` turns into a readable result: the call may well
-    have happened, so the agent needs to be told rather than crashed.
-    """
-
-    def __init__(self, message: str, details: dict[str, Any] | None = None) -> None:
-        super().__init__(code="EXTENSION_UNAVAILABLE", message=message, details=details)
-
-
-class _CircuitBreaker:
-    """Stops hammering a server that keeps failing to answer at all.
-
-    Counts consecutive *transport* failures only — a server that answers with a
-    JSON-RPC error is a working connection reporting a real verdict, and never
-    trips this.
-    """
-
-    def __init__(self, threshold: int, reset_after_seconds: float) -> None:
-        self._threshold = threshold
-        self._reset_after_seconds = reset_after_seconds
-        self._failures = 0
-        self._opened_at: float | None = None
-
-    def retry_after(self) -> float | None:
-        """Seconds until the circuit reopens, or ``None`` when a call may proceed.
-
-        Once the window has elapsed the next call is let through on probation: a
-        single further failure re-opens the circuit immediately.
-        """
-        if self._opened_at is None:
-            return None
-        remaining = self._reset_after_seconds - (monotonic() - self._opened_at)
-        if remaining > 0:
-            return remaining
-        self._opened_at = None
-        self._failures = self._threshold - 1
-        return None
-
-    def record_failure(self) -> None:
-        self._failures += 1
-        if self._failures >= self._threshold:
-            self._opened_at = monotonic()
-
-    def record_success(self) -> None:
-        self._failures = 0
-        self._opened_at = None
 
 
 @runtime_checkable

@@ -32,8 +32,7 @@ import difflib
 import sys
 from pathlib import Path
 
-from arcagent.core.prompt_context import build_prompt_resolver
-from arcagent.tools._secret_guard import find_secret
+import arcagent
 from arcprompt import (
     PromptCatalog,
     PromptMissing,
@@ -116,7 +115,9 @@ def _operator_signer() -> tuple[str, bytes]:
 
 def _effective_body(agent_root: Path, package: str, name: str) -> str:
     """Overlay-resolved (signature-verified) body, or exit 1 on a load failure."""
-    resolver = build_prompt_resolver(agent_root / "arcagent.toml", read_agent_tier(agent_root))
+    resolver = arcagent.build_prompt_resolver(
+        agent_root / "arcagent.toml", read_agent_tier(agent_root)
+    )
     try:
         return resolver.resolve(package, name).body
     except (PromptMissing, PromptUnsigned, PromptUnparseable) as exc:
@@ -215,7 +216,7 @@ def _edit(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     body = _read_body(args)
-    secret_type = find_secret(body)
+    secret_type = arcagent.find_secret(body)
     if secret_type is not None:
         err(
             f"arc prompt: refusing to override {package}/{name}: content looks like a live "

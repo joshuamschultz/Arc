@@ -11,34 +11,34 @@ class TestLoadEvalModel:
     def test_parses_provider_model(self) -> None:
         from arcagent.utils import load_eval_model
 
-        with patch("arcagent.utils.arcllm_load_model") as mock_load:
+        with patch("arcagent.utils.arcrun.load_model") as mock_load:
             mock_load.return_value = MagicMock()
             result = load_eval_model("anthropic/claude-haiku")
             mock_load.assert_called_once_with(
                 "anthropic",
                 "claude-haiku",
-                retry=True,
                 agent_label=None,
                 agent_did=None,
                 trace_store=None,
                 on_event=None,
+                modules={"retry": True},
             )
             assert result is not None
 
     def test_no_model_name(self) -> None:
         from arcagent.utils import load_eval_model
 
-        with patch("arcagent.utils.arcllm_load_model") as mock_load:
+        with patch("arcagent.utils.arcrun.load_model") as mock_load:
             mock_load.return_value = MagicMock()
             load_eval_model("anthropic")
             mock_load.assert_called_once_with(
                 "anthropic",
                 None,
-                retry=True,
                 agent_label=None,
                 agent_did=None,
                 trace_store=None,
                 on_event=None,
+                modules={"retry": True},
             )
 
     def test_forwards_agent_did_to_arcllm(self) -> None:
@@ -48,7 +48,7 @@ class TestLoadEvalModel:
         undiagnosable from traces alone (agent_did stayed null)."""
         from arcagent.utils import load_eval_model
 
-        with patch("arcagent.utils.arcllm_load_model") as mock_load:
+        with patch("arcagent.utils.arcrun.load_model") as mock_load:
             mock_load.return_value = MagicMock()
             load_eval_model("anthropic/claude-haiku", agent_did="did:arc:agent:josh/c0bef560")
             _args, kwargs = mock_load.call_args
@@ -58,7 +58,7 @@ class TestLoadEvalModel:
         """SPEC-017 R-001: on_event parameter threads to arcllm.load_model()."""
         from arcagent.utils import load_eval_model
 
-        with patch("arcagent.utils.arcllm_load_model") as mock_load:
+        with patch("arcagent.utils.arcrun.load_model") as mock_load:
             mock_load.return_value = MagicMock()
 
             def callback(_record: object) -> None:  # pragma: no cover
@@ -78,7 +78,7 @@ class TestLoadEvalModel:
         """
         from arcagent.utils import load_eval_model
 
-        with patch("arcagent.utils.arcllm_load_model") as mock_load:
+        with patch("arcagent.utils.arcrun.load_model") as mock_load:
             mock_load.return_value = MagicMock()
             load_eval_model(
                 "anthropic/claude-haiku",
@@ -88,8 +88,10 @@ class TestLoadEvalModel:
                 },
             )
             _args, kwargs = mock_load.call_args
-            assert kwargs["queue"] == {"call_timeout": 600.0}
-            assert kwargs["retry"] == {"max_retries": 5}
+            assert kwargs["modules"] == {
+                "queue": {"call_timeout": 600.0},
+                "retry": {"max_retries": 5},
+            }
 
     def test_unknown_module_key_raises(self) -> None:
         """An arcllm_modules key that isn't a known arcllm module fails loudly."""

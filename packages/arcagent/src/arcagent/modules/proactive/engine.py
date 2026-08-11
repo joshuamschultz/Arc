@@ -26,6 +26,7 @@ from typing import Any, Literal
 
 from arcagent.modules.proactive.circuit_breaker import CircuitBreaker
 from arcagent.modules.proactive.timezone import ActiveHours
+from arcagent.utils.periodic import PeriodicRunner
 
 _logger = logging.getLogger("arcagent.proactive.engine")
 
@@ -117,6 +118,7 @@ class ProactiveEngine:
 
         self._last_wake_us: int = -1
         self._running = False
+        self._poller = PeriodicRunner()
         # Strong refs to in-flight handler tasks so asyncio's weak-ref
         # task set does not drop them before completion.
         self._inflight_tasks: set[asyncio.Task[None]] = set()
@@ -177,15 +179,23 @@ class ProactiveEngine:
         Not exercised by unit tests; they use :meth:`tick` directly.
         """
         self._running = True
-        while self._running:
-            try:
-                await self.tick()
-            except Exception:  # reason: fail-open — log + continue
-                _logger.exception("ProactiveEngine tick failed — continuing")
-            await asyncio.sleep(self._poll_interval)
+        self._poller.reset()
+
+        def on_error(exc: BaseException, _failures: int) -> None:
+            _logger.error("ProactiveEngine tick failed — continuing: %s", exc)
+
+        try:
+            await self._poller.run(
+                self.tick,
+                interval=self._poll_interval,
+                on_error=on_error,
+            )
+        finally:
+            self._running = False
 
     def stop(self) -> None:
         self._running = False
+        self._poller.stop()
 
     async def drain(self) -> None:
         """Await all in-flight handler tasks. Caller's orderly shutdown.

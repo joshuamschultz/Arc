@@ -18,7 +18,12 @@ from arcagent.core.config import (
 )
 from arcagent.core.errors import ToolError, ToolVetoedError
 from arcagent.core.module_bus import EventContext, ModuleBus
-from arcagent.core.tool_registry import RegisteredTool, ToolRegistry, ToolTransport
+from arcagent.core.tool_registry import (
+    RegisteredTool,
+    ToolDispatchContext,
+    ToolRegistry,
+    ToolTransport,
+)
 
 
 @pytest.fixture()
@@ -66,6 +71,50 @@ def _make_tool(
         execute=execute,
         timeout_seconds=timeout,
     )
+
+
+class TestDispatchStages:
+    async def test_one_envelope_runs_named_stages_in_security_order(
+        self, registry: ToolRegistry, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        order: list[str] = []
+
+        def normalize(dispatch: ToolDispatchContext) -> None:
+            order.append("normalize")
+
+        async def stage(name: str, dispatch: ToolDispatchContext) -> None:
+            order.append(name)
+            if name == "execute":
+                dispatch.result = "done"
+
+        monkeypatch.setattr(registry, "_normalize_dispatch", normalize)
+        monkeypatch.setattr(registry, "_authorize_dispatch", lambda ctx: stage("authorize", ctx))
+        monkeypatch.setattr(registry, "_approve_dispatch", lambda ctx: stage("approve", ctx))
+        monkeypatch.setattr(registry, "_execute_dispatch", lambda ctx: stage("execute", ctx))
+        monkeypatch.setattr(registry, "_record_dispatch", lambda ctx: stage("record", ctx))
+
+        result = await registry._create_wrapped_execute(_make_tool())({"value": 1})
+
+        assert result == "done"
+        assert order == ["normalize", "authorize", "approve", "execute", "record"]
+
+    async def test_authorize_failure_stops_later_stages(
+        self, registry: ToolRegistry, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        later = AsyncMock()
+
+        async def deny(_dispatch: ToolDispatchContext) -> None:
+            raise ToolError(code="DENIED", message="denied")
+
+        monkeypatch.setattr(registry, "_authorize_dispatch", deny)
+        monkeypatch.setattr(registry, "_approve_dispatch", later)
+        monkeypatch.setattr(registry, "_execute_dispatch", later)
+        monkeypatch.setattr(registry, "_record_dispatch", later)
+
+        with pytest.raises(ToolError, match="denied"):
+            await registry._create_wrapped_execute(_make_tool())({})
+
+        later.assert_not_awaited()
 
 
 class TestRegisteredTool:

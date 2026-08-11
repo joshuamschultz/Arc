@@ -61,9 +61,9 @@ def _get_config_path() -> Path | None:
     Returns None if arcllm is not installed.
     """
     try:
-        from arcllm.config import _get_config_dir
+        import arcagent
 
-        return _get_config_dir() / "config.toml"
+        return arcagent.model_config_path()
     except ImportError:
         logger.warning("arcllm not installed, cannot resolve config path")
         return None

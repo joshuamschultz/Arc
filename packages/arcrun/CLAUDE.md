@@ -8,9 +8,9 @@ Async ReAct execution engine: think → act → observe with tool registry, sand
 
 ## Layer
 
-**Loop.** Depends on `arcllm`, `arctrust`, `arcstore`, `arcprompt`. Imported by `arcagent` (primary), `arccli`, and `arcmemory` only via `react_adapter.py`.
+**Loop.** Depends on `arcllm`, `arctrust`, `arcstore`, and `arcprompt`. It has no knowledge of concrete callers or higher layers.
 
-Must **not** import `arcagent`, `arcui`, `arccli`, `arcgateway`, `arcteam` (`tests/test_layering.py`, architecture guards). Must **not** call `arcllm.load_model` / import `arcllm.registry`.
+Must not import any higher layer (`tests/test_layering.py`, architecture guards).
 
 ## Layout
 
@@ -22,7 +22,7 @@ src/arcrun/
   events.py         # EventBus, verify_chain
   streams.py
   sandbox.py
-  capabilities.py   # CapabilityProvider Protocol (impls live in arcagent)
+  capabilities.py   # CapabilityProvider Protocol (implementations live in hosts)
   checkpoint.py
   prompts.py
   strategies/       # Strategy selection (reactive, etc.)
@@ -37,8 +37,9 @@ src/arcrun/
 
 ## Package rules
 
-- Receive a **pre-built** model + tools; drive the loop — do not construct providers here.
-- `CapabilityProvider` is a Protocol; concrete providers belong in `arcagent`.
+- Own the model-execution seam used by higher layers while keeping provider routing in ArcLLM.
+- Consume ArcLLM with `import arcllm`; consumers likewise use only `import arcrun` and qualified root-facade names.
+- `CapabilityProvider` is a Protocol; concrete providers belong in the host.
 - Stock prompts under `arcrun/context/`; overlays via `arcprompt`.
 - Sandbox / backend work stays defensive (path traversal, injection) — see `tests/security/` and integration docker/firecracker tests.
 

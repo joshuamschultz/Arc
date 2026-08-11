@@ -120,6 +120,32 @@ class TestSessionIndexSchema:
 
 
 class TestSessionIndexPolling:
+    def test_malformed_only_tail_advances_offset_once(
+        self, db_path: Path, tmp_sessions: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        path = tmp_sessions / "sess-malformed.jsonl"
+        path.write_text("not-json\n42\n", encoding="utf-8")
+        index = _make_index(db_path, tmp_sessions)
+        index._init_schema()
+
+        index._scan_once()
+        first_warning_count = sum(
+            "Skipping malformed JSONL" in record.message for record in caplog.records
+        )
+        index._scan_once()
+
+        conn = sqlite3.connect(str(db_path))
+        offset = conn.execute(
+            "SELECT offset FROM sync_state WHERE jsonl_path = ?", (str(path),)
+        ).fetchone()[0]
+        message_count = conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+        conn.close()
+
+        assert offset == path.stat().st_size
+        assert message_count == 0
+        assert first_warning_count == 2
+        assert sum("Skipping malformed JSONL" in r.message for r in caplog.records) == 2
+
     @pytest.mark.asyncio
     async def test_scan_once_indexes_10_lines(self, db_path: Path, tmp_sessions: Path) -> None:
         """Insert 10 JSONL lines, run one poll cycle, assert all 10 in messages."""

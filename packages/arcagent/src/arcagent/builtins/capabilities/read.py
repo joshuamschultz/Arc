@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from arcagent.builtins.capabilities import _runtime
 from arcagent.tools._decorator import tool
+from arcagent.tools._secure_workspace_file import SecureWorkspaceFileError, read_regular_file
 
 _MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 
@@ -29,18 +30,20 @@ async def read(file_path: str, offset: int = 1, limit: int = 0) -> str:
     failure to the LLM without bubbling exceptions.
     """
     resolved = _runtime.resolve_workspace_path(file_path, tool_name="read")
-    if not resolved.exists():
-        return f"Error: File not found: {file_path}"
-    if not resolved.is_file():
-        return f"Error: Not a file: {file_path}"
-    file_size = resolved.stat().st_size
-    if file_size > _MAX_FILE_SIZE:
-        return (
-            f"Error: File too large ({file_size:,} bytes, "
-            f"limit {_MAX_FILE_SIZE:,}). Use offset/limit to read sections."
-        )
     try:
-        text = resolved.read_text(encoding="utf-8")
+        data, _identity = read_regular_file(
+            resolved, _runtime.authorized_roots(), max_bytes=_MAX_FILE_SIZE
+        )
+    except FileNotFoundError:
+        return f"Error: File not found: {file_path}"
+    except SecureWorkspaceFileError as exc:
+        if "exceeds" in str(exc):
+            return f"Error: File too large (limit {_MAX_FILE_SIZE:,}). Use offset/limit."
+        return f"Error: Not a file: {file_path}"
+    except OSError:
+        return f"Error: File could not be opened safely: {file_path}"
+    try:
+        text = data.decode("utf-8")
     except UnicodeDecodeError:
         return f"Error: File is not valid UTF-8 text: {file_path}"
 

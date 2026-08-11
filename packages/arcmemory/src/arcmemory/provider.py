@@ -26,6 +26,7 @@ never learns an arcmemory field name.
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from typing import Any
 
 import arcllm
@@ -77,7 +78,7 @@ def build_brain(context: dict[str, Any]) -> ArcMemoryBrain:
         embedder=build_embedder(agent_did, embed_backend, embed_model, base_url=embed_base_url),
         distiller=build_distiller(distill_provider, distill_model, agent_did),
         audit_sink=context.get("audit_sink"),
-        model=_build_loop_model(distill_provider, distill_model, agent_did),
+        model_factory=_build_loop_model_factory(distill_provider, distill_model, agent_did),
         identity=context.get("identity"),
         policy_pipeline=context.get("policy_pipeline"),
         store_raw_bodies=capture_tool_io,
@@ -91,16 +92,28 @@ def _safe_tier(tier: object) -> Tier:
     return "personal"
 
 
-def _build_loop_model(provider: str, model: str, agent_did: str) -> Any:
-    """arcllm model handle for the agentic consolidation loop, or ``None`` when off.
+def _build_loop_model_factory(
+    provider: str, model: str, agent_did: str
+) -> Callable[[], Any] | None:
+    """Factory for the agentic consolidation loop's model, or ``None`` when off.
 
     Same provider/model as the distiller, loaded WITH telemetry so the memory agent's
     turns ride the SPEC-038 budget/circuit-breaker (LLM10). ``None`` (no distill
     provider) → the agentic engine degrades to the pipeline distiller.
+
+    Deferred like ``build_distiller`` beside it, and for the same reason: the model
+    is used only when a consolidation actually runs. Building it eagerly made a
+    provider key a condition of *starting* — an agent that never consolidates
+    could not boot without one, and a missing key surfaced as "memory module
+    configuration failed" during startup rather than at the call that needed it.
     """
     if not provider:
         return None
-    return arcllm.load_model(provider, model or None, telemetry={"agent_did": agent_did})
+
+    def factory() -> Any:
+        return arcllm.load_model(provider, model or None, telemetry={"agent_did": agent_did})
+
+    return factory
 
 
 def build_embedder(

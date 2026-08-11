@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import re
 
+import arcrun
+
 # Sentence-ending punctuation for boundary detection.
 _SENTENCE_END = re.compile(r"[.!?]\s")
 
@@ -20,20 +22,16 @@ def user_facing_error(exc: Exception) -> str:
     Avoids leaking internal details while giving the user actionable
     information about what went wrong.
     """
-    try:
-        from arcllm.exceptions import ArcLLMAPIError
-    except ImportError:
-        return "Error processing your message. Please try again."
-
-    if isinstance(exc, ArcLLMAPIError):
-        if exc.status_code == 429:
+    model_error = arcrun.model_api_error(exc)
+    if model_error is not None:
+        if model_error.kind == "rate_limited":
             return (
                 "I'm currently rate limited by the LLM provider. "
                 "Please try again in a minute or two."
             )
-        if exc.status_code in {500, 502, 503}:
+        if model_error.kind == "unavailable":
             return "The LLM provider is temporarily unavailable. Please try again shortly."
-        if exc.status_code == 400 and "content_filter" in exc.body.lower():
+        if model_error.kind == "content_filtered":
             return (
                 "Your message was blocked by the content safety filter. "
                 "Please rephrase and try again."

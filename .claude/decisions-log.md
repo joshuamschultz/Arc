@@ -13,7 +13,7 @@ Every design decision made across Arc, grouped by **concern** and then by **pack
 
 - IDs are global, monotonic, and **never renumbered**. A superseded decision keeps its ID and gains
   a note; it is not deleted and not reused.
-- Range in use: `D-001` – `D-619`.
+- Range in use: `D-001` – `D-667`.
 - `D-403` was allocated but never used. It stays empty.
 - Five early decisions used off-pattern IDs (`T-1`, `T-001`, `TS-001`, `DP-001`, `U-001`) and now carry
   `D-581`–`D-585`. Each one shows its former ID inline.
@@ -28,22 +28,22 @@ Every design decision made across Arc, grouped by **concern** and then by **pack
 
 | # | Category | Decisions | Packages |
 |---|----------|-----------|----------|
-| 1 | [Architecture](#1-architecture) | 182 | arcllm, arcrun, arcagent, arcmemory, arcprompt, arcteam, arcui, arctui, capabilities, cross-cutting |
-| 2 | [Data Model](#2-data-model) | 65 | arcllm, arcrun, arcagent, arcmemory, arcprompt, arcteam, arcstore, arcui, capabilities, cross-cutting |
-| 3 | [API Design](#3-api-design) | 46 | arcllm, arcrun, arcagent, arcprompt, arcui, capabilities |
+| 1 | [Architecture](#1-architecture) | 197 | arcllm, arcrun, arcagent, arcmemory, arcprompt, arcteam, arcui, arctui, capabilities, cross-cutting |
+| 2 | [Data Model](#2-data-model) | 67 | arcllm, arcrun, arcagent, arcmemory, arcprompt, arcteam, arcstore, arcui, capabilities, cross-cutting |
+| 3 | [API Design](#3-api-design) | 51 | arcllm, arcrun, arcagent, arcprompt, arcui, capabilities, cross-cutting |
 | 4 | [Identity & Trust](#4-identity--trust) | 15 | arcllm, arcagent, arctrust, arcprompt, arcteam, arcui, cross-cutting |
-| 5 | [Security](#5-security) | 104 | arcllm, arcrun, arcagent, arcmemory, arcprompt, arcteam, arcui, arctui, capabilities, cross-cutting |
+| 5 | [Security](#5-security) | 114 | arcllm, arcrun, arcagent, arcmemory, arcprompt, arcteam, arctrust, arcui, arctui, capabilities, cross-cutting |
 | 6 | [Audit & Compliance](#6-audit--compliance) | 28 | arcllm, arcrun, arcagent, arcprompt, arcteam, arcui, capabilities, cross-cutting |
 | 7 | [Observability](#7-observability) | 23 | arcllm, arcrun, arcagent, arcprompt, arcteam, arcui |
 | 8 | [Integration](#8-integration) | 29 | arcllm, arcrun, arcagent, arcmemory, arcprompt, arcteam, arcui, cross-cutting |
 | 9 | [Performance](#9-performance) | 29 | arcllm, arcrun, arcagent, arcprompt, arcteam, arcui |
 | 10 | [Extensibility](#10-extensibility) | 35 | arcllm, arcrun, arcagent, arcprompt, arcteam, arcui, arctui, cross-cutting |
-| 11 | [Testing](#11-testing) | 22 | arcllm, arcrun, arcagent, arcmemory, arcprompt, arcteam, arcui |
+| 11 | [Testing](#11-testing) | 23 | arcllm, arcrun, arcagent, arcmemory, arcprompt, arcteam, arcui |
 | 12 | [Deployment](#12-deployment) | 14 | arcllm, arcrun, arcagent, arcprompt, arcui, capabilities |
 | 13 | [UI/UX](#13-uiux) | 24 | arcagent, arcprompt, arcui, arctui, capabilities, cross-cutting |
 | 14 | [CLI](#14-cli) | 2 | arcagent |
 
-**Total: 618 decisions across 14 categories.**
+**Total: 625 decisions across 14 categories.**
 
 ---
 
@@ -516,6 +516,22 @@ class Strategy(ABC):
     @abstractmethod
     async def __call__(self, model, state, sandbox, max_turns) -> LoopResult: ...
 ```
+
+#### D-622 — RunState remains internal to ArcRun
+
+`arcrun` · Architecture · from *ArcAgent Refactor and Hardening (2026-08-11)*
+
+- **Decision**: Do not promote mutable `RunState` into ArcRun's public facade merely to satisfy ArcAgent's current deep imports. Add a narrow immutable parent/run context contract containing only the run metadata and event operations an upper layer legitimately consumes.
+- **Alternatives**: Root-export `RunState` (rejected: fossilizes mutable loop internals); retain `arcrun.state` imports (rejected: makes file topology a cross-package contract).
+- **Rationale**: ArcRun owns run-level state. ArcAgent needs selected context, not ownership of the engine's mutable implementation object.
+
+#### D-623 — Parallel dispatch is a public mechanism, not a concrete strategy dependency
+
+`arcrun` · Architecture · from *ArcAgent Refactor and Hardening (2026-08-11)*
+
+- **Decision**: Expose a small public parallel-ready dispatch mechanism or protocol for callers that need it; ArcAgent must not instantiate `PlanExecuteStrategy` solely to call its helper method.
+- **Alternatives**: Root-export `PlanExecuteStrategy` (rejected: couples the caller to a strategy implementation); duplicate `asyncio.gather` logic in ArcAgent (rejected: creates a second concurrency primitive).
+- **Rationale**: Mechanisms are stable seam material; named strategies remain ArcRun implementation/composition choices.
 
 ### arcagent
 
@@ -1249,6 +1265,204 @@ Framework writes runtime metadata (version history, last validated, last reload)
 - **Alternatives**: Leave ADR-018 untouched and let ADR-030 contradict it silently (less editing, but two accepted ADRs would disagree and a future reader could not tell which governs); Mark all of ADR-018 superseded (cleaner status line, but wrongly reopens migration tooling and ACP, which nobody has asked for)
 - **Rationale**: The trigger ADR-018 named for MCP was explicit customer demand. What actually fired was different and should be recorded honestly: research across all ten target services found that the maintained integrations ARE MCP servers, so ADR-018's own escape hatch — "the community can write an adapter" — resolves in practice to "adopt MCP". Two further facts postdate ADR-018: the 2026-07-28 spec revision made MCP stateless, cutting a correct client to roughly 150-400 LOC, and the registry already models the transport, so this finishes a half-wired path rather than opening a new one.
 
+#### D-632 — Every module is optional; none ship in the wheel
+
+`arcagent` · Architecture · from *Optional Module Bundles — Build Decisions (2026-08-11)*
+
+- **Decision**: All eighteen modules are optional. The `arc-agent` wheel ships the
+  nucleus and builtin tools and no modules at all; every module is delivered as a
+  signed bundle and materialized into `${ARC_CONFIG_DIR:-~/.arc}/modules/<name>/` —
+  the deployment module root, installed once per box and shared by every agent on it.
+  Not installed means the folder does not exist. There is no second category of
+  always-present module and therefore no line to argue about.
+- **Alternatives**: Split modules into always-bundled and optional (a working agent
+  straight out of `pip install`, but it creates a permanent argument about which side
+  each module sits on, and the bundled set is never exercised as absent); one
+  distribution per module (real absence, but eighteen packages to version, sign, and
+  release in lockstep with a weekly-changing core); post-install prune of
+  site-packages (no new packages, but mutates an installed wheel, breaks RECORD
+  hashes, and is undone by the next upgrade); extras only, files always present
+  (smallest change, but the source is on disk in the enclave and an auditor scanning
+  for capability finds it).
+- **Rationale**: `pip` writes every file in a wheel; a flag cannot install a subset.
+  Real absence therefore requires the code to arrive from somewhere other than the
+  arcagent wheel. Materializing a signed tree into the workspace reuses the road
+  `capabilities/capability_loader.py` and blueprint v2 materialize already run, so
+  this is an existing mechanism applied to modules rather than a new one. Making
+  *every* module optional was checked against the code before being adopted: nothing
+  in `core/` imports a module or requires one to exist. The single hardcoded module
+  name in core (`core/tool_policy_bridge.py`) is a tool-name prefix list for
+  caller-DID binding, which simply never matches when the module is absent.
+
+#### D-633 — Modules live at the deployment root; the in-tree directory is a source catalog
+
+`arcagent` · Architecture · from *Optional Module Bundles — Build Decisions (2026-08-11)*
+
+- **Decision**: `_MODULES_DIR` moves from the installed package to
+  `${ARC_CONFIG_DIR:-~/.arc}/modules/`. That is a deployment-level directory: outside
+  every agent workspace, outside every agent config dir, one copy per box.
+  `packages/arcagent/src/arcagent/modules/` stays exactly where it is in git but
+  becomes a *source catalog* that the release build packages into bundles and the
+  wheel excludes; it is never a scan root. Folder-presence remains the only discovery
+  signal and config remains the only activation signal.
+- **Alternatives**: Materialize into each agent's workspace (per-agent module sets
+  fall out for free, but ADR-029 reserves the workspace for agent *state*, and a
+  module tree inside a directory the agent can write to is a self-modification path
+  no signature closes); materialize the whole module into each agent's config
+  dir (out of the workspace, but N agents means N copies of the background loops and
+  hook handlers, where divergence is a defect rather than the feature it is for tools
+  and skills — see D-648); scan both the in-wheel directory
+  and the deployment root (handles a source checkout with no install step, but the
+  in-wheel root is empty in every real deployment, so the materialize path would be
+  the one nobody exercises locally).
+- **Rationale**: Folder-presence discovery already gives absence for free — a module
+  with no folder is not discovered and cannot load. Moving the root rather than adding
+  one preserves that property, keeps `active_modules()` the single seam both the load
+  path and `arc module list` agree on, and leaves exactly one discovery path that dev,
+  personal, and federal all run. Deployment-level placement costs nothing in
+  per-agent control: which modules an agent loads has always been decided by its
+  `[modules.NAME]` config entries, never by which files sit near it.
+
+#### D-634 — Module runtimes load by path, not by import name
+
+`arcagent` · Architecture · from *Optional Module Bundles — Build Decisions (2026-08-11)*
+
+- **Decision**: `configure_module_runtimes` stops calling
+  `importlib.import_module(f"arcagent.modules.{name}._runtime")` for materialized
+  modules and loads them through `spec_from_file_location` against the resolved
+  folder. Bundled modules take the same path, resolved to the in-wheel directory,
+  so there is one loader rather than two.
+- **Alternatives**: Add the workspace module root to `sys.path` and keep import-by-
+  name (a two-line change, but puts an agent-writable directory on the import path
+  for the whole process, which shadows arbitrary modules); branch on origin and keep
+  both loaders (no new mechanism, but the bundled path becomes the only one anyone
+  exercises locally and the materialized path rots).
+- **Rationale**: Import-by-name requires the code to live under the installed package,
+  which is the thing D-632 removes. Path loading is what `capability_loader.py`
+  already does, and one code path everywhere is the same rule D-564 applied to
+  sandbox policy.
+
+#### D-630 — A nonterminal plan iteration must make monotonic progress
+
+`arcagent` · Architecture · from *ArcAgent Refactor and Hardening (2026-08-11)*
+
+- **Decision**: If a ready planning frontier produces zero executable outcomes,
+  the orchestrator records a typed step failure and enters its bounded failure
+  path; it never resets the same frontier and retries indefinitely.
+- **Rationale**: Budget reservation and aggregate exhaustion can disagree at
+  dimensional edge cases. Progress must be an explicit loop invariant rather
+  than an assumption shared by separate budget predicates.
+
+#### D-643 — ArcAgent lifecycle transitions are serialized states
+
+`arcagent` · Architecture · from *ArcAgent Refactor and Hardening (2026-08-11)*
+
+- **Decision**: Each ArcAgent instance moves through explicit
+  STOPPED/STARTING/STARTED/STOPPING states under one lifecycle lock. Repeated
+  startup is idempotent and failed startup returns to a restartable STOPPED state.
+- **Rationale**: A boolean allows duplicate initialization and makes partially
+  constructed states indistinguishable from a usable agent.
+
+#### D-644 — Shutdown owns and bounds every agent resource
+
+`arcagent` · Architecture · from *ArcAgent Refactor and Hardening (2026-08-11)*
+
+- **Decision**: Shutdown rejects new work first, cancels active runs, drains
+  finalizers, and tears down each owned service under an independent deadline;
+  one failing stage never suppresses later cleanup.
+- **Rationale**: Linear teardown leaks everything after the first exception and
+  can orphan execution loops that continue mutating state after shutdown.
+
+#### D-647 — One coordinator serializes complete turns per session
+
+`arcagent` · Architecture · from *ArcAgent Refactor and Hardening (2026-08-11)*
+
+- **Decision**: A per-agent SessionRunCoordinator owns both identity-guarded live
+  handle registration and a lock keyed by canonical session id. A turn holds the
+  lock from history read through assistant commit; different sessions remain
+  concurrent and steering reads the active registry without taking the lock.
+- **Rationale**: Protecting individual appends does not prevent two full turns
+  from reading the same prefix or committing responses out of order.
+
+#### D-656 — Multi-spawn scheduling reserves only work that can run
+
+`arcagent` · Architecture · from *ArcAgent Refactor and Hardening (2026-08-11)*
+
+- **Decision**: `spawn_many` uses a bounded worker queue with a fail-fast stop
+  boundary, caps batch/concurrency inputs, drains every worker, and atomically
+  settles each reservation to actual usage or zero.
+- **Rationale**: Pre-creating one task per child allows semaphore waiters to
+  start after failure and strands reservations when cancellation arrives.
+  Scheduling ownership and budget ownership must share the same lifetime.
+
+#### D-657 — Capability reload publishes only complete candidates
+
+`arcagent` · Architecture · from *ArcAgent Refactor and Hardening (2026-08-11)*
+
+- **Decision**: Reload scans and validates an isolated candidate, then commits
+  registry tools and token-owned bus subscriptions as replaceable batches with
+  rollback. No live state is removed during preparation.
+- **Rationale**: Unregister-first reload turns a recoverable syntax/import error
+  into an outage, while identity-only hook deduplication keeps stale code and
+  priority alive after a successful source change.
+
+#### D-658 — One structured primitive owns child-run semantics
+
+`arcagent` · Architecture · from *ArcAgent Refactor and Hardening (2026-08-11)*
+
+- **Decision**: Programmatic and tool-driven child runs both execute through
+  `spawn() -> SpawnResult`; the tool adapter only resolves user-facing inputs,
+  applies its shared envelope, and formats the structured result.
+- **Rationale**: Two implementations had drifted on identity, depth, budgets,
+  audit, timeout, strategy, and error behavior. One policy-bearing primitive
+  makes those outcomes equivalent and testable.
+
+#### D-660 — Every detached task has one draining owner
+
+`arcagent` · Architecture · from *ArcAgent Refactor and Hardening (2026-08-11)*
+
+- **Decision**: An agent-owned background supervisor creates, observes, reports,
+  cancels, and drains detached capability loops, event bridges, and run
+  finalizers; local paired tasks follow the same cancel-and-gather rule.
+- **Rationale**: A done callback that only discards a task loses exceptions, and
+  shutdown that does not await owned work permits post-shutdown mutation and
+  destroyed-pending-task warnings.
+
+#### D-663 — Periodic services share one stoppable cadence contract
+
+`arcagent` · Architecture · from *ArcAgent Refactor and Hardening (2026-08-11)*
+
+- **Decision**: Owned periodic services use `PeriodicRunner` with event-based
+  stopping, explicit first-tick/cadence configuration, and a declared failure
+  threshold plus bounded backoff.
+- **Rationale**: Independent boolean/sleep/while-true loops drift on shutdown,
+  cancellation, retries, and timing. One runner makes immediate stop and error
+  policy deterministic without forcing genuinely one-shot polling into it.
+
+#### D-664 — Module runtimes declare typed dependency contracts
+
+`arcagent` · Architecture · from *ArcAgent Refactor and Hardening (2026-08-11)*
+
+- **Decision**: Each supported runtime has an explicit spec over a closed set of
+  typed dependencies and produces named `RuntimeBinding` objects; required and
+  optional failure behavior is declared by that spec.
+- **Rationale**: Filtering a service dictionary by parameter names makes a
+  rename silently remove a dependency and lets arbitrary modules request
+  authority by spelling a name. Explicit contracts make drift and signer access
+  reviewable and fail required startup predictably.
+
+#### D-666 — Large facades split only at established domain seams
+
+`arcagent` · Architecture · from *ArcAgent Refactor and Hardening (2026-08-11)*
+
+- **Decision**: Responsibility concentration is reduced by extracting named
+  domain owners—configuration loading, reload state, task routing, security
+  custody, workflow tools, connector policy/attachments/credentials/catalog,
+  and spawn observability—behind stable existing facades.
+- **Rationale**: Line-count-only splitting creates generic utility buckets and
+  circular dependencies. Established behavioral seams preserve discoverability,
+  public compatibility, and one-way ownership while enabling later local work.
+
 ### arcmemory
 
 #### D-494 — Home: an evaluations/ folder, not a package
@@ -1651,6 +1865,92 @@ Framework writes runtime metadata (version history, last validated, last reload)
 - **Rationale**: Direct consequence of D-329.
 - **Tiers**: Same.
 
+#### D-620 — One-way execution-stack dependency graph
+
+`cross-cutting` · Architecture · from *ArcAgent Refactor and Hardening (2026-08-11)*
+
+- **Decision**: Enforce `arcllm <- arcrun <- arcagent <- arcgateway / arcui`. ArcLLM knows nothing above it; ArcRun may know ArcLLM but not ArcAgent; ArcAgent knows ArcRun but not ArcLLM, ArcGateway, or ArcUI; ArcAgent must run headlessly.
+- **Alternatives**: Allow convenient cross-layer imports (rejected: standalone packages cease to be standalone); enforce only runtime imports (rejected: metadata can reintroduce the same forbidden dependency).
+- **Rationale**: One-way seams preserve independent installation, replaceability, headless operation, and a comprehensible security boundary.
+
+#### D-624 — Do not turn the ArcRun facade into a cross-layer junk drawer
+
+`cross-cutting` · Architecture · from *ArcAgent Refactor and Hardening (2026-08-11)*
+
+- **Decision**: Classify each current ArcAgent-to-ArcLLM dependency before moving it. Execution/model contracts may become ArcRun-owned; generic PII and secret-detection services belong in a neutral security contract; ArcAgent-specific optional behavior belongs behind injected module/extension interfaces.
+- **Alternatives**: Re-export every ArcLLM helper from ArcRun (rejected: hides rather than removes coupling); keep direct private imports (rejected: violates the dependency graph).
+- **Rationale**: A facade should expose one layer's stable contract, not proxy unrelated internals from every lower package.
+
+#### D-648 — A module's tools and skills are copied to each agent; its runtime is not
+
+`arcagent` · Architecture · from *Optional Module Bundles — Build Decisions (2026-08-11)*
+
+- **Decision**: `arc module install` copies the module's tools and skills into
+  `<agent_dir>/capabilities/<name>/` for each agent that enables it, and leaves
+  `_runtime.py` and its hook handlers at the deployment module root. The agent runs
+  the copies out of its own capability dir and works out of its workspace. Extensions
+  install the same way. The capability loader's scan-root list stays the fixed set it
+  is today and never grows with the number of installed modules or extensions.
+- **Alternatives**: Load tools and skills in place from the deployment root as a
+  trusted `module:<name>` scan root, which is what happens today (no duplication, one
+  copy to update, and first-party signed code keeps its trusted classification — but
+  every installed module and every extension adds a scan root, so the root list grows
+  without bound and its shape is dictated by artifacts that do not exist yet);
+  per-agent overlay files layered over an in-place base (customization without
+  duplication, but a two-file merge for every skill and a base that can move under an
+  overlay that no longer applies).
+- **Rationale**: Josh's call, on two grounds. First, per-agent drift is a product
+  goal, not a defect: an agent's skills are supposed to improve for that agent, which
+  is the whole premise of the skill improver, and a shared read-only original cannot
+  improve for one agent without changing every agent. Second, and decisively for
+  security: an unbounded scan-root list is an unbounded threat surface. Copying into
+  one known directory means the loader's roots are fixed and enumerable no matter how
+  many modules or extensions arrive, so no future artifact gets to add a load path.
+
+#### D-641 — The development path signs with a dev key rather than skipping verification
+
+`arcagent` · Architecture · from *Optional Module Bundles — Build Decisions (2026-08-11)*
+
+- **Decision**: `arc module install --from-source <name>` bundles one module out of
+  the repo's source catalog, signs it with a locally generated development key, and
+  installs it through the identical verify-then-materialize path. Nothing is
+  symlinked, nothing skips verification, and no code is placed in a workspace. The dev
+  key is trusted only at personal tier; enterprise and federal accept release-key
+  issuers alone, so a dev-signed module simply will not load there.
+- **Alternatives**: Symlink the source catalog into the module root and skip
+  verification behind a tier gate (fastest inner loop, but it introduces an
+  unverified load path that exists solely for convenience, and the tier gate is then
+  the only thing keeping it out of production); keep the in-tree directory as a live
+  scan root for development only (zero friction, but a second discovery path that
+  only dev exercises, which is what D-633 rejects); require a release-signed bundle
+  for every edit (no dev machinery at all, but nobody can iterate without CI).
+- **Rationale**: Moving modules out of the wheel makes iteration the thing most likely
+  to break, and a slow inner loop is how a good boundary gets quietly bypassed. But an
+  exception that skips verification is a second path by definition, and the second
+  path is always the one that rots or gets shipped by accident. Signing with a
+  different key instead of skipping the check keeps exactly one code path — bundle,
+  verify, materialize — and moves the trust decision to where it already lives, the
+  issuer allowlist that `arcrun/backends/_verifier.py` and D-636 both use. Bundling a
+  single module is fast enough that this costs seconds per edit.
+
+#### D-635 — One core artifact; the module bundle is the only thing that varies by deployment
+
+`cross-cutting` · Architecture · from *Optional Module Bundles — Build Decisions (2026-08-11)*
+
+- **Decision**: Every deployment installs the identical `arc-agent` wheel. What
+  differs between personal, enterprise, and federal is which signed module bundle
+  is applied on top. No tier-specific build, no tier-specific wheel, no build flag
+  that changes what is compiled.
+- **Alternatives**: Build a custom wheel per deployment containing only approved
+  modules (one artifact to carry, but federal then runs code that was never built or
+  tested elsewhere, every module combination becomes its own hash and its own
+  approval, and the wheel under test is not the wheel shipped).
+- **Rationale**: CLAUDE.md line 129 — personal to federal is a stringency dial, not a
+  rewrite. A per-deployment wheel is a rewrite wearing a version number. Splitting
+  the artifact means the core is approved once and the auditable delta is a short
+  list of module names rather than a diff of two binaries, and adding a module later
+  is a new bundle rather than a rebuild of everything.
+
 ---
 
 ## 2. Data Model
@@ -2000,6 +2300,27 @@ Framework writes runtime metadata (version history, last validated, last reload)
 - **Priority**: security
 - **Alternatives**: One account per connector per agent (simplest, but breaks on Josh's existing two Google accounts on day one); One connector holding several accounts with the account chosen per call (fewest tools, but the agent can pick the wrong identity and policy cannot separate work from personal)
 - **Rationale**: Josh runs hello@joshuaschultz.com and joshuamschultz@gmail.com today. Identity must be fixed at registration time, not chosen by the model at call time.
+
+#### D-629 — Consumed session bytes advance independently of indexable rows
+
+`arcagent` · Data Model · from *ArcAgent Refactor and Hardening (2026-08-11)*
+
+- **Decision**: The session search index commits its byte offset whenever it
+  consumes complete JSONL records, even when every record is malformed or
+  intentionally excluded. Row inserts and the new offset share one transaction.
+- **Rationale**: The offset represents durable consumption, not the count of
+  searchable messages. Coupling it to successful row creation causes malformed
+  tails to be reparsed and relogged forever.
+
+#### D-650 — Compaction commits an explicit replay baseline by revision
+
+`arcagent` · Data Model · from *ArcAgent Refactor and Hardening (2026-08-11)*
+
+- **Decision**: Compaction summarizes a versioned snapshot outside the session
+  lock, commits only when the revision is unchanged, and appends a boundary
+  record containing the exact summary-plus-tail baseline replay must restore.
+- **Rationale**: Appending only a summary resurrects all pre-compaction messages
+  after restart, while holding the lock across a model call blocks normal turns.
 
 ### arcmemory
 
@@ -2490,6 +2811,14 @@ model = "gpt-4o-mini"
 - **Status**: Accepted
 - **Date**: 2026-02-14
 
+#### D-621 — ArcAgent consumes ArcRun through one qualified facade import
+
+`arcrun` · API Design · from *ArcAgent Refactor and Hardening (2026-08-11)*
+
+- **Decision**: Each ArcAgent module uses `import arcrun` and qualified public names such as `arcrun.run_stream` and `arcrun.Tool`. `from arcrun ...` and ArcRun submodule imports are forbidden in ArcAgent production code.
+- **Alternatives**: Individual root imports (rejected: obscures ownership and creates alias churn); deep imports (rejected: couples ArcAgent to ArcRun's internal layout).
+- **Rationale**: One visible namespace makes the package boundary obvious in every call site and gives ArcRun one enforceable compatibility surface.
+
 ### arcagent
 
 #### D-258 — Response delivery
@@ -2612,6 +2941,27 @@ Multi-line only when errors exist (each error appended on its own line with skil
 - **Rationale**: Agent needs tools to create, update, use, manage memory.
 - **Category**: API/Tools
 
+#### D-655 — Capability registry state is exposed only through snapshots
+
+`arcagent` · API Design · from *ArcAgent Refactor and Hardening (2026-08-11)*
+
+- **Decision**: `CapabilityRegistry` owns all collection and lock state and
+  exposes immutable snapshot/query operations for tools, skills, hooks,
+  lifecycles, authored names, and counts.
+- **Rationale**: Consumers that acquire the registry's lock or traverse its
+  dictionaries duplicate precedence rules and make transactional reload
+  impossible to reason about. Snapshots keep one owner for mutation semantics.
+
+#### D-662 — Tool dispatch is an ordered typed pipeline
+
+`arcagent` · API Design · from *ArcAgent Refactor and Hardening (2026-08-11)*
+
+- **Decision**: One dispatch envelope passes a typed context through explicit
+  normalize, authorize, approve, execute, and record stages in that order.
+- **Rationale**: A 185-line nested closure that mutates captured arguments and
+  policy state makes security ordering implicit. Named stage contracts expose
+  inputs/outputs while retaining one fail-closed public envelope.
+
 ### arcprompt
 
 #### D-464 — Dedicated prompt endpoints
@@ -2694,6 +3044,27 @@ Multi-line only when errors exist (each error appended on its own line with skil
 
 - **Choice**: All 6 tools `read_only`; remediation/tailoring/live-scan deferred
 - **Source**: Source doc §3, deliberate scope cut
+
+### cross-cutting
+
+#### D-626 — Core packages have one clean cross-package import
+
+`cross-cutting` · API Design · from *ArcAgent Refactor and Hardening (2026-08-11)*
+
+- **Decision**: A cross-package consumer uses only `import arcllm`, `import arcrun`, or `import arcagent`, followed by qualified public names. It does not use `from <core-package> ...` or import a core package's implementation submodule.
+- **Scope**: This governs cross-package seams. A package's own implementation may import its internal modules. Deep cross-package imports are reserved for genuine separately installable extras, extensions, modules, or plugins with an intentionally public submodule API.
+- **Alternatives**: Force package internals through their own root facade (rejected: circular imports and a service-locator `__init__`); allow convenient deep imports everywhere (rejected: internal file layouts become public contracts).
+- **Rationale**: One qualified namespace makes ownership visible, keeps compatibility surfaces curated, and permits internal refactors without change amplification.
+
+#### D-631 — Package metadata declares the public-facade compatibility floor
+
+`cross-cutting` · API Design · from *ArcAgent Refactor and Hardening (2026-08-11)*
+
+- **Decision**: A consumer that relies on the 0.9 root facades declares
+  `>=0.9,<1` for those dependencies and type-checks the real installed seam
+  without missing-import suppression.
+- **Rationale**: A permissive `>=0.1` range claims compatibility with releases
+  that cannot provide required symbols, while suppressed imports hide drift.
 
 ---
 
@@ -3458,6 +3829,173 @@ Hidden from prompt manifest. LLM doesn't see what it can't use; no temptation to
 - **Alternatives**: Load from inside the MCP module directory (simplest wiring, but module scan roots are trusted so every bundle would inherit trust it must not have); Load from the agent workspace root alongside skills (already untrusted with the gate wired, nothing new to build, but mixes third-party connector definitions into the agent's own home)
 - **Rationale**: capability_loader.py:84-94 — _UNTRUSTED_ROOTS covers only workspace, global, and agent roots; each enabled module is appended as a TRUSTED scan root at agent_lifecycle.py:152-154. Third-party connector code must not inherit module trust. The gate re-verifies independently of any install-time check and denies on any exception, and per capability_loader.py:334-337 requiring a signature implies pinning a key — an unpinned floor is no floor.
 
+#### D-628 — Host shell execution owns a bounded process group
+
+`arcagent` · Security · from *ArcAgent Refactor and Hardening (2026-08-11)*
+
+- **Decision**: Personal-tier Bash runs each command in a new process session,
+  incrementally retains bounded stdout/stderr, and treats timeout or caller
+  cancellation as whole-process-group teardown with bounded drain and reap.
+- **Rationale**: Killing only the shell leaves descendants alive, while
+  `communicate()` can exhaust host memory before output truncation. Resource
+  ownership must cover the command tree and every cancellation path.
+
+#### D-642 — Secret files are authorized and read through one bounded fd
+
+`arcagent` · Security · from *ArcAgent Refactor and Hardening (2026-08-11)*
+
+- **Decision**: Every standalone secret file is opened with `O_NOFOLLOW`, then
+  type, owner, exact mode, and size are verified with `fstat` on that same file
+  descriptor before a bounded read.
+- **Rationale**: `exists`/`stat` followed by `read_text` authorizes a pathname
+  that an attacker can swap. One descriptor binds authorization to the bytes
+  actually read and rejects devices, FIFOs, symlinks, and oversized secrets.
+
+#### D-645 — Secret-store replacement locks the full cross-process transaction
+
+`arcagent` · Security · from *ArcAgent Refactor and Hardening (2026-08-11)*
+
+- **Decision**: Env-file reads and mutations coordinate through a private 0600
+  advisory lock; mutations hold it from snapshot read through atomic replace.
+  Store size, entry count, key shape, and value length are bounded.
+- **Rationale**: Atomic rename prevents torn files but cannot prevent two
+  processes from replacing each other's independently derived snapshots.
+
+#### D-646 — Session journals replay through bounded typed streaming
+
+`arcagent` · Security · from *ArcAgent Refactor and Hardening (2026-08-11)*
+
+- **Decision**: Session resume streams records off the event loop under explicit
+  file, line, and record-count ceilings and admits only validated public message
+  and checkpoint shapes. Incomplete tails are ignored until completed.
+- **Rationale**: Whole-file parsing lets a local/crafted journal block or exhaust
+  the agent, while syntactically valid scalars and malformed message dictionaries
+  otherwise fail later at a less controlled boundary.
+
+#### D-654 — Outbound URL authorization includes DNS destinations
+
+`arcagent` · Security · from *ArcAgent Refactor and Hardening (2026-08-11)*
+
+- **Decision**: Browser and web egress authorize canonical HTTP(S) URLs before
+  use and again after redirects/provider resolution, resolving DNS off the event
+  loop and rejecting every non-global answer. JavaScript and downloads default
+  off; tests inject a resolver through a context-local seam.
+- **Rationale**: String allowlists do not stop localhost, metadata services,
+  suffix confusion, redirects, or DNS answers that cross the network boundary.
+  Test determinism must come from injection, not a production fail-open path.
+
+#### D-659 — Authored Python crosses an isolated JSON execution seam
+
+`arcagent` · Security · from *ArcAgent Refactor and Hardening (2026-08-11)*
+
+- **Decision**: Untrusted authored Python is never imported by ArcAgent. Literal
+  tool metadata is extracted statically and calls cross a bounded JSON-only
+  proxy into ArcRun's configured Docker/VM backend; unsupported resident hooks
+  and lifecycle code fail closed.
+- **Rationale**: Signatures and AST restrictions establish provenance and lint
+  intent, not containment. Host `exec` exposes secrets, file descriptors,
+  process state, memory, and availability to any approved or escaped artifact.
+
+#### D-665 — Extension entrypoints are not authored capability files
+
+`arcagent` · Security · from *ArcAgent Refactor and Hardening (2026-08-11)*
+
+- **Decision**: A manifest-declared attachment entrypoint is excluded from the
+  extension capability scan. Authored `@tool` files still cross the isolated
+  JSON seam; the separately declared plugin entrypoint follows the extension's
+  signature, attachment, credential, and egress contract.
+- **Rationale**: Treating every top-level Python file as an authored tool both
+  rejects valid attachment plugins and conflates two trust mechanisms. The
+  exception is manifest-exact, not a general fallback for decorator-free code.
+
+#### D-667 — Isolation backends are acquired only for executable artifacts
+
+`arcagent` · Security · from *ArcAgent Refactor and Hardening (2026-08-11)*
+
+- **Decision**: Capability scanning constructs a tier isolation runner lazily,
+  at the first isolated authored tool, rather than when inspecting a root.
+- **Rationale**: Eager VM resolution makes manifest-only extensions and skills
+  uninstallable on a non-execution host and confuses the ability to verify an
+  artifact with authority to execute it. Actual execution still fails closed if
+  the tier backend is unavailable.
+
+#### D-661 — Workspace file authorization is descriptor-relative
+
+`arcagent` · Security · from *ArcAgent Refactor and Hardening (2026-08-11)*
+
+- **Decision**: Built-in file operations walk the selected authorized root with
+  no-follow directory descriptors, authorize and read the final descriptor, and
+  commit writes through a fsynced same-directory temporary plus identity-checked
+  dirfd replacement.
+- **Rationale**: Resolving a safe pathname before a later open leaves every
+  component vulnerable to rename/symlink substitution. Authorization must bind
+  to the descriptors and inode identity that actually supply or receive bytes.
+
+#### D-636 — Bundle signature is verified before materialize, never after
+
+`arcagent` · Security · from *Optional Module Bundles — Build Decisions (2026-08-11)*
+
+- **Decision**: `arc module install` verifies the bundle's Ed25519 signature and each
+  member file's content hash before a single byte is written to the workspace. A
+  failed verification writes nothing and leaves no partial tree. Verification is
+  required at every tier; the tier knob selects which issuer keys are trusted, not
+  whether to verify. Every attempt emits `module.bundle.verified`,
+  `module.signature_invalid`, or `module.content_hash_mismatch`.
+- **Alternatives**: Extract then verify then roll back on failure (simpler streaming
+  extract, but unverified code sits on disk in the window between, and a crash leaves
+  it there); verify at load rather than install (catches tampering after install too,
+  but pays the cost every startup and still lets unverified bytes land).
+- **Rationale**: This is the same shape `arcrun/backends/loader.py` already enforces
+  for executor backends and D-556 enforces for connector bundles. Writing first and
+  checking second is the pattern that produced ASI04 findings elsewhere. Absence of a
+  partial tree is also what makes uninstall and reinstall idempotent.
+
+#### D-637 — Module runtime code never lands anywhere an agent can write
+
+`arcagent` · Security · from *Optional Module Bundles — Build Decisions (2026-08-11)*
+
+- **Decision**: Three locations with three jobs.
+  `${ARC_CONFIG_DIR:-~/.arc}/modules/` holds module *runtime* code — `_runtime.py`,
+  hook handlers, background loops: deployment-level, written `0444` in `0555`
+  directories, outside the tool fence (`workspace + allowed_paths`), writable only by
+  `arc module install` / `arc module remove` running as the operator. A module's tools
+  and skills are copied to the agent's capability dir instead (D-648), where they are
+  writable on purpose. The workspace stays agent state and working data — never module
+  code, never a symlink to module code.
+- **Alternatives**: Materialize inside the workspace behind a sandbox exclusion and
+  a read-only mode (keeps everything an agent uses in one tree, but the exclusion is
+  now the only thing standing between an agent and its own capability source, and one
+  `allowed_paths` mistake reopens it); materialize inside the workspace and
+  re-verify signatures at every load instead of a write barrier (detects tampering,
+  but detection after the fact is not containment, and it pays verification cost on
+  every start).
+- **Rationale**: ADR-029 reserves the workspace for agent state, and the reasoning
+  applies with more force to executable code than to memory: a module tree inside a
+  directory the agent writes to is a way for the agent to rewrite its own capabilities
+  between runs — ASI05 and ASI06 in one move. A signature checked at install says
+  nothing about a file edited afterwards. Putting the code somewhere the agent has no
+  path to at all is a stronger control than any permission bit or sandbox rule,
+  because it removes the reach instead of guarding it. The line falls between runtime
+  and capability because they differ in kind: a tool is a leaf the agent invokes and
+  may improve, while `_runtime.py` owns background loops, hook registration, and
+  shared state for every agent on the box. Editing the first changes what one agent
+  can do; editing the second changes the harness.
+
+### arctrust
+
+#### D-627 — Neutral security primitives live below model and agent layers
+
+`arctrust` · Security · from *ArcAgent Refactor and Hardening (2026-08-11)*
+
+- **Decision**: ArcTrust owns reusable PII detection, redaction mechanics, and
+  canonical secret-pattern detection. ArcLLM and ArcAgent consume that public
+  neutral API; ArcAgent owns policy composition and ArcRun does not re-export
+  these unrelated security utilities.
+- **Rationale**: Both the model adapter and agent layer need identical mechanics,
+  but placing them in either consumer creates a reverse dependency or turns the
+  execution facade into a junk drawer. A neutral owner preserves the one-way
+  package graph and one canonical security implementation.
+
 ### arcmemory
 
 #### D-492 — Dataset, workspaces, and credentials never committed or written in plaintext
@@ -3477,6 +4015,29 @@ Hidden from prompt manifest. LLM doesn't see what it can't use; no temptation to
 - **Category**: Security
 
 ### arcprompt
+
+#### D-652 — arcui signs from the capability inventory, and the agent has no path to it
+
+`arcui` · Security · from *Optional Module Bundles — Build Decisions (2026-08-11)*
+
+- **Decision**: The arcui capability inventory grows an Approve action on any gated
+  row, calling the same code path as `arc trust approve` and signing with the same
+  operator key arcui already uses for prompt overlays. The endpoint is operator-
+  authenticated, is not reachable from `/ws/chat`, and is not exposed as a tool on any
+  registry. Every approval emits an audit event carrying the operator DID, the
+  artifact path, and the source hash signed.
+- **Alternatives**: Approve by chatting with the agent (zero new UI, but it makes the
+  agent the channel for its own privilege escalation, which is ASI09 exactly, and the
+  same reason connector tokens never transit arcui chat); CLI only, no UI (smallest
+  surface, and the CLI is the auditable path anyway — but the person who reviews a
+  drifted skill is looking at a diff in the browser, and forcing a terminal switch is
+  how review turns into rubber-stamping).
+- **Rationale**: The inventory already renders every gated capability with its status
+  and source, so the review surface exists and only the action is missing. Keeping the
+  endpoint off the chat socket and off every tool registry is the whole security
+  content of this decision: an agent that could reach it could improve its own skill
+  and then approve its own improvement, which converts the trust gate into a
+  formality.
 
 #### D-466 — Overlays outside agent tool reach
 
@@ -5101,6 +5662,25 @@ tests/
 - **Rationale**: Follows project test pyramid.
 - **Category**: Testing
 
+#### D-640 — Absent-module safety is proven by removing, not by asserting
+
+`arcagent` · Testing · from *Optional Module Bundles — Build Decisions (2026-08-11)*
+
+- **Decision**: A parametrized suite removes each optional module's materialized tree,
+  starts a real agent, and runs a turn end to end. Green means absent-safe. The suite
+  is parametrized over `discover_modules()` output, so a module added later is covered
+  without anyone remembering to add a case.
+- **Alternatives**: Assert that each module's `configure()` is skipped when absent
+  (fast and unit-shaped, but proves only that the loader skipped it, not that nothing
+  downstream needed it); a single test with all optional modules removed (one case
+  instead of a dozen, but a failure names no module and passing all-off does not prove
+  any individual combination works).
+- **Rationale**: "Removable with no loss of function" is a claim the core can silently
+  break the moment anything treats a module's contribution as guaranteed rather than
+  nullable — a prompt section that assumes a memory block, a listing that assumes a
+  tasks table. Only running without it finds that. This is the producers-unwired
+  lesson: drive the real path or the test proves nothing.
+
 ### arcmemory
 
 #### D-500 — Run scale, isolation, and what is measured
@@ -5122,6 +5702,14 @@ tests/
 - **Priority**: security
 - **Alternatives**: golden-file snapshot of the fully assembled system prompt; both per-prompt bytes and an assembled snapshot
 - **Rationale**: Prompts break invisibly — a lost trailing newline or collapsed blank line changes model behavior without failing anything. Byte equality against the exact string being replaced is the tightest possible proof of a faithful move, and this repo's history of shipping correct predicates with dead wiring makes a real-path assertion non-optional. Deleting the scaffold with the constant honors the no-vestigial-code standard.
+
+#### D-625 — Dependency boundaries are checked in source and metadata
+
+`arcagent` · Testing · from *ArcAgent Refactor and Hardening (2026-08-11)*
+
+- **Decision**: Use non-vacuous AST tests for import direction/style, parse `pyproject.toml` for matching dependency direction, verify ArcRun qualified names belong to its declared `__all__`, and prove ArcAgent has no upper-layer import requirement.
+- **Alternatives**: Grep-only checks (rejected: comments and aliases create false results); code review convention (rejected: does not prevent regression); metadata-only checks (rejected: undeclared workspace imports still couple packages).
+- **Rationale**: Source and packaging are separate dependency graphs and both must enforce the architecture.
 
 ### arcteam
 
@@ -5254,6 +5842,97 @@ Local file (`.tgz`, `.zip`, directory) only. Git URL and marketplace registry de
 - **Decision**: Clean start. No migration. Bio-memory creates fresh state at `memory/`. Existing markdown-memory data untouched.
 - **Rationale**: Priority: simplicity. Agent learns organically.
 - **Category**: Deployment
+
+#### D-651 — One verb signs and pins; `arc trust approve` produces a real signature
+
+`arcagent` · Security · from *Optional Module Bundles — Build Decisions (2026-08-11)*
+
+- **Decision**: `arc trust approve <name>` writes a detached Ed25519 signature over
+  the capability's `.py` or the skill's `SKILL.md` using the operator key, pins that
+  key as the trusted key for the agent, and records the TOFU pin — all three, in one
+  command. The current hash-only pin is replaced, not kept alongside. `arc trust
+  disapprove` is its exact inverse: revoke the signature, drop the pin. Signing is an
+  operator action; no agent tool, chat message, or module can invoke it.
+- **Alternatives**: Add a separate `arc trust sign` beside the existing `approve`
+  (each verb does one thing, but an operator then has to know that the signature floor
+  and the TOFU layer are different mechanisms evaluated in that order, and approving
+  without signing silently does nothing above personal tier — which is today's
+  behaviour and today's bug); make `approve` sign only above personal tier (fewer
+  files written on a laptop, but the federal path stops being the path exercised
+  locally).
+- **Rationale**: `capability_loader.py:_passes_trust_gate` runs the signature check
+  *before* it consults TOFU, and above personal a missing signature denies outright.
+  `arc trust approve` today pins a hash only, and prints a note conceding the pin
+  changes nothing at personal tier. The combination means an agent-improved skill can
+  never load above personal tier and no command in the product can make it load —
+  while `README.md` already advertises signed agent-authored capabilities. This is the
+  missing half, and merging the verbs means an operator never has to reason about two
+  gates to answer one question: do I trust this file.
+
+#### D-649 — Copied capabilities are untrusted by design; federal drift needs an operator signature
+
+`arcagent` · Security · from *Optional Module Bundles — Build Decisions (2026-08-11)*
+
+- **Decision**: Tools and skills copied into `<agent_dir>/capabilities/` land in the
+  existing `agent` scan root and keep its untrusted classification — AST validator,
+  restricted builtins, Sign/TOFU gate — exactly as an agent-authored capability does.
+  They arrive Arc-signed, so they load clean on first install at every tier. Once an
+  agent edits one, the signature no longer matches: at personal tier TOFU adjudicates
+  it, and at enterprise and federal it does not load until an operator reviews and
+  re-signs it with `arc trust approve` (D-651), which does not exist in signing form
+  today.
+- **Alternatives**: Give copied capabilities a trusted `module-copy:` root so they
+  load unchallenged (no re-signing friction, and first-party code keeps the trust it
+  shipped with, but a writable directory whose contents are trusted is exactly the
+  plant-a-`.py`-via-bash hole `_UNTRUSTED_ROOTS` was drawn to close); re-verify the
+  original signature and refuse any drifted file at every tier (unambiguous, but it
+  forbids the skill improvement the copy exists to enable).
+- **Rationale**: The untrusted classification is not a cost of copying here, it is the
+  correct reading of what the directory now is: a place whose contents are *meant* to
+  change. `capability_loader.py:_UNTRUSTED_ROOTS` already treats every agent-writable
+  root this way, so this adds no mechanism. The tier split falls out of the existing
+  signature floor rather than a new rule, and it lands where it should: an agent may
+  improve its own skills on a laptop, while a federal box improves nothing without a
+  human signing for it.
+
+#### D-653 — The signing procedure ships as an operator runbook, README claim, and code together
+
+`arcagent` · Deployment · from *Optional Module Bundles — Build Decisions (2026-08-11)*
+
+- **Decision**: Signing a new tool or skill is documented in three places, and all
+  three land in the same change as the code: `docs/runbooks/signing-capabilities.md`
+  (the operator procedure, CLI and arcui, including what a drifted skill looks like
+  and how to read a denial), `docs/walkthrough/10-security-model.md` (where the
+  signature floor and the TOFU layer sit relative to each other), and `README.md`
+  (the supply-chain row corrected to describe what the commands actually do).
+- **Alternatives**: `--help` text and docstrings only (lives next to the code and
+  cannot go stale, but an operator facing a denied capability at 2am needs a
+  procedure, not a flag list); a runbook written after the code lands (normal
+  sequencing, but this is the exact gap being fixed — the README has been claiming
+  signed agent-authored capabilities while no command could produce a signature).
+- **Rationale**: The defect being closed is not only a missing command; it is a
+  documented capability with no implementation behind it. Shipping the procedure in
+  the same change is what stops the claim and the code drifting apart a second time.
+  `mkdocs --strict` already gates the links, so a runbook that references a command
+  that does not exist fails the build.
+
+#### D-638 — Federal bundles are built outside the enclave and carried in
+
+`arcagent` · Deployment · from *Optional Module Bundles — Build Decisions (2026-08-11)*
+
+- **Decision**: `arc module bundle <names...> -o <file>.arcbundle` runs on the low
+  side, resolves the named modules and their wheels, and emits one signed file.
+  `arc module install --from <file>.arcbundle` runs inside the enclave against a
+  standard `arc-agent` wheel. The air-gapped install is a pre-staged file, never a
+  network fetch, and the same two commands work online where `--from` is omitted.
+- **Alternatives**: Ship a private index mirror inside the enclave (familiar to ops,
+  but that is a service to run, patch, and accredit); require the enclave to have
+  the source repo and build in place (no artifact transfer, but puts a toolchain
+  and the full module catalog inside the boundary).
+- **Rationale**: Nobody installs from the internet in a SCIF, so "offline" was never
+  a capability constraint — it was a timing constraint, and pre-staging resolves it.
+  The bundle is the thing that gets scanned and approved for transfer, and its
+  contents are a readable list of module names rather than an opaque binary diff.
 
 ### arcprompt
 
@@ -5551,6 +6230,29 @@ Concern purity is untouched: arcllm still only calls, arcrun still only loops, a
 - **Decision**: Full design doc CLI: status, identity, episodes, working, search, consolidate (light/deep/dry-run).
 - **Rationale**: Priority: simplicity. Follows PRD.
 - **Category**: CLI
+
+#### D-639 — One install command; `--all` is the personal path, explicit names the federal path
+
+`arcagent` · CLI · from *Optional Module Bundles — Build Decisions (2026-08-11)*
+
+- **Decision**: One command set at every tier: `arc module list`, `arc module install
+  <names...>`, `arc module install --all`, `arc module install --from <bundle>`,
+  `arc module install --link <names...>` (development, D-641), `arc module remove
+  <name>`, `arc module bundle <names...> -o <file>`. Personal uses `--all`; federal
+  names modules explicitly and `--all` resolves to whatever the signed manifest
+  permits rather than erroring. Install writes the config entry as well as the files,
+  so install and enable are one step. `remove` is the exact inverse: delete the
+  materialized tree, drop the config entry, and fail loudly with a non-zero exit if
+  either half does not complete — a partially removed module is a defect, never a
+  warning.
+- **Alternatives**: Separate `install` and `enable` steps (mirrors the four states
+  exactly, but makes the common case two commands and leaves installed-but-forgotten
+  modules on disk); a federal-only `--manifest` flag (explicit about the gate, but
+  forks the command by tier, which is the thing D-635 refuses).
+- **Rationale**: The same command with the same flags everywhere is what keeps the
+  federal path exercised locally. `--all` meaning "everything permitted here" rather
+  than "everything that exists" makes the manifest the authority without needing the
+  operator to know it is there.
 
 ---
 
@@ -6176,6 +6878,54 @@ Concern purity is untouched: arcllm still only calls, arcrun still only loops, a
 | D-617 | Architecture | arcrun | CodeExec Wraps react_loop |
 | D-618 | Architecture | arcrun | ABC Base Class for Strategy |
 | D-619 | Data Model | arcrun | Strategy Metadata is name + description |
+| D-620 | Architecture | cross-cutting | One-way execution-stack dependency graph |
+| D-621 | API Design | arcrun | ArcAgent consumes ArcRun through one qualified facade import |
+| D-622 | Architecture | arcrun | RunState remains internal to ArcRun |
+| D-623 | Architecture | arcrun | Parallel dispatch is a public mechanism, not a concrete strategy dependency |
+| D-624 | Architecture | cross-cutting | Do not turn the ArcRun facade into a cross-layer junk drawer |
+| D-625 | Testing | arcagent | Dependency boundaries are checked in source and metadata |
+| D-626 | API Design | cross-cutting | Core packages have one clean cross-package import |
+| D-627 | Security | arctrust | Neutral security primitives live below model and agent layers |
+| D-628 | Security | arcagent | Host shell execution owns a bounded process group |
+| D-629 | Data Model | arcagent | Consumed session bytes advance independently of indexable rows |
+| D-630 | Architecture | arcagent | A nonterminal plan iteration must make monotonic progress |
+| D-631 | API Design | cross-cutting | Package metadata declares the public-facade compatibility floor |
+| D-642 | Security | arcagent | Secret files are authorized and read through one bounded fd |
+| D-643 | Architecture | arcagent | ArcAgent lifecycle transitions are serialized states |
+| D-644 | Architecture | arcagent | Shutdown owns and bounds every agent resource |
+| D-645 | Security | arcagent | Secret-store replacement locks the full cross-process transaction |
+| D-646 | Security | arcagent | Session journals replay through bounded typed streaming |
+| D-647 | Architecture | arcagent | One coordinator serializes complete turns per session |
+| D-648 | Architecture | arcagent | A module's tools and skills are copied to each agent; its runtime is not |
+| D-649 | Security | arcagent | Copied capabilities are untrusted by design; federal drift needs an operator signature |
+| D-650 | Data Model | arcagent | Compaction commits an explicit replay baseline by revision |
+| D-651 | Security | arcagent | One verb signs and pins; `arc trust approve` produces a real signature |
+| D-652 | Security | arcui | arcui signs from the capability inventory, and the agent has no path to it |
+| D-653 | Deployment | arcagent | The signing procedure ships as an operator runbook, README claim, and code together |
+| D-654 | Security | arcagent | Outbound URL authorization includes DNS destinations |
+| D-655 | API Design | arcagent | Capability registry state is exposed only through snapshots |
+| D-656 | Architecture | arcagent | Multi-spawn scheduling reserves only work that can run |
+| D-657 | Architecture | arcagent | Capability reload publishes only complete candidates |
+| D-658 | Architecture | arcagent | One structured primitive owns child-run semantics |
+| D-659 | Security | arcagent | Authored Python crosses an isolated JSON execution seam |
+| D-660 | Architecture | arcagent | Every detached task has one draining owner |
+| D-661 | Security | arcagent | Workspace file authorization is descriptor-relative |
+| D-662 | API Design | arcagent | Tool dispatch is an ordered typed pipeline |
+| D-663 | Architecture | arcagent | Periodic services share one stoppable cadence contract |
+| D-664 | Architecture | arcagent | Module runtimes declare typed dependency contracts |
+| D-665 | Security | arcagent | Extension entrypoints are not authored capability files |
+| D-666 | Architecture | arcagent | Large facades split only at established domain seams |
+| D-667 | Security | arcagent | Isolation backends are acquired only for executable artifacts |
+| D-632 | Architecture | arcagent | Every module is optional; none ship in the wheel |
+| D-633 | Architecture | arcagent | Modules live at the deployment root; the in-tree directory is a source catalog |
+| D-634 | Architecture | arcagent | Module runtimes load by path, not by import name |
+| D-635 | Architecture | cross-cutting | One core artifact; the module bundle is the only thing that varies by deployment |
+| D-636 | Security | arcagent | Bundle signature is verified before materialize, never after |
+| D-637 | Security | arcagent | Module runtime code never lands anywhere an agent can write |
+| D-638 | Deployment | arcagent | Federal bundles are built outside the enclave and carried in |
+| D-639 | CLI | arcagent | One install command; `--all` is the personal path, explicit names the federal path |
+| D-640 | Testing | arcagent | Absent-module safety is proven by removing, not by asserting |
+| D-641 | Architecture | arcagent | The development path signs with a dev key rather than skipping verification |
 
 ---
 
@@ -6217,3 +6967,4 @@ next to that build's state, in `.claude/builds/<feature>/research.md`.
 | connector-extensions | D-540–D-580 (41) | [`builds/connector-extensions/research.md`](builds/connector-extensions/research.md) |
 | arcrun-core-loop | D-586–D-616 (31) | [`builds/arcrun-core-loop/research.md`](builds/arcrun-core-loop/research.md) |
 | phase-2-codeexec | D-617–D-619 (3) | [`builds/phase-2-codeexec/research.md`](builds/phase-2-codeexec/research.md) |
+| module-bundles | D-632–D-641, D-648–D-649, D-651–D-653 (15) | [`builds/module-bundles/research.md`](builds/module-bundles/research.md) |

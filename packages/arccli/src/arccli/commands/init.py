@@ -12,8 +12,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from arcagent.keys import default_env_file
-from arcllm import ProviderKey, list_provider_keys
+import arcagent
+import arcllm
 
 from arccli.commands._arcllm_surface import (
     BUDGET_BLOCK,
@@ -275,19 +275,19 @@ def _generate_gateway_toml(tier: str) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _provider_key(provider: str) -> ProviderKey | None:
+def _provider_key(provider: str) -> arcllm.ProviderKey | None:
     """Which env var this provider reads, per arcllm — the one declarer (D-581).
 
     None when arcllm packages no such provider, which is what makes an unknown
     ``--provider`` an error here rather than a config file naming a provider the
     stack cannot load.
     """
-    return next((key for key in list_provider_keys() if key.provider == provider), None)
+    return next((key for key in arcllm.list_provider_keys() if key.provider == provider), None)
 
 
 def _provider_menu() -> list[str]:
     """The provider list the prompt offers, split by whether a key is needed."""
-    keys = list_provider_keys()
+    keys = arcllm.list_provider_keys()
     cloud = [key.provider for key in keys if key.required]
     local = [key.provider for key in keys if not key.required]
     return [
@@ -471,7 +471,7 @@ def _init(args: argparse.Namespace) -> None:
     for path, content in targets:
         path.write_text(content, encoding="utf-8")
 
-    env_path = default_env_file(arc_dir)
+    env_path = arcagent.default_env_file(arc_dir)
     if not env_path.exists():
         env_path.touch(mode=0o600)
 

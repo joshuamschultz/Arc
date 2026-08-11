@@ -29,7 +29,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from arcllm._secrets import SECRET_PATTERNS
+import arctrust
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -59,7 +59,7 @@ _GENERIC_TOKEN_RE = re.compile(
 
 def _find_secret(content: str) -> str | None:
     """Return a label for the first secret-shaped match in ``content``, else None."""
-    for secret_type, pattern in SECRET_PATTERNS:
+    for secret_type, pattern in arctrust.SECRET_PATTERNS:
         if pattern.search(content):
             return secret_type
     if _GENERIC_TOKEN_RE.search(content):

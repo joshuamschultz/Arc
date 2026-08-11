@@ -19,6 +19,10 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 
+import arctrust
+
+from arcagent.core.redaction import default_redactor
+
 _logger = logging.getLogger("arcagent.modules.skills.approval")
 
 _SKILL_MUTATION_LEG = "skill_mutation"
@@ -26,18 +30,20 @@ _SKILL_MUTATION_LEG = "skill_mutation"
 ApprovalProvider = Callable[[str, str, str], Awaitable[bool]]
 
 
-def build_skill_approval_provider(human_gate: object, agent_did: str) -> ApprovalProvider:
+def build_skill_approval_provider(
+    human_gate: object,
+    agent_did: str,
+    *,
+    redactor: Callable[[str], str] | None = None,
+) -> ApprovalProvider:
     """Return an ``ApprovalProvider`` that asks the shared HumanGate for a skill mutation."""
-    from arcllm import configured_redactor
-    from arctrust.policy import ToolCall
-
     # This call is BUILT here and never transits arcllm, so nothing has applied
     # the deployment's PII policy to it. Applied at construction, before the
     # truncation — a cap taken first can split a match and leave a fragment.
-    redact = configured_redactor()
+    redact = redactor or default_redactor()
 
     async def _provider(action: str, skill_name: str, detail: str) -> bool:
-        call = ToolCall(
+        call = arctrust.ToolCall(
             tool_name=f"skill.mutation:{action}",
             arguments={"skill": redact(skill_name), "detail": redact(detail)[:200]},
             agent_did=agent_did,

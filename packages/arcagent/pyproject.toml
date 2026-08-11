@@ -27,10 +27,9 @@ dependencies = [
     "opentelemetry-sdk>=1.20",
     "httpx>=0.27,<1",
     "mcp>=1.25,<2",
-    "arcllm>=0.1",
     "arcprompt>=0.1",
-    "arcrun>=0.1",
-    "arctrust>=0.1",
+    "arcrun>=0.9,<1",
+    "arctrust>=0.9,<1",
     "pyyaml>=6.0,<7",
     "tomlkit>=0.12",
     "packaging>=24.0,<27",
@@ -96,7 +95,7 @@ warn_unused_configs = true
 exclude = ['builtins/capabilities/skills/.*/scripts/.*\.py$']
 
 [[tool.mypy.overrides]]
-module = ["arcllm.*", "arcrun.*", "arccli.*"]
+module = ["arccli.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

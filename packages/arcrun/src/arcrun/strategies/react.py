@@ -168,7 +168,7 @@ async def _resolve_approval(tc: Any, state: RunState) -> bool:
     loop SUSPENDS (an ``await``) before dispatch and asks the provider. A grant
     → proceed with the single call; ``None`` → fail closed (do not dispatch).
     arcrun mints/verifies nothing — the grant is opaque; only its presence is
-    read. The provider is bound to SPEC-035 ``HumanGate`` by arcagent (REQ-012).
+    read. The provider is bound to a human-approval gate by the host (REQ-012).
     """
     if state.approval_provider is None or tc.name not in state.approval_required_tools:
         return True
@@ -273,7 +273,7 @@ async def react_loop(
 
         # Transform context hook. Contract: append-only between turns (see
         # _check_append_only). Compaction is a deliberate boundary reset, not
-        # a per-turn rewrite — its owner is the caller (arcagent), not arcrun.
+        # a per-turn rewrite — its owner is the caller, not arcrun.
         messages = state.messages
         if state.transform_context is not None:
             transformed = state.transform_context(messages)

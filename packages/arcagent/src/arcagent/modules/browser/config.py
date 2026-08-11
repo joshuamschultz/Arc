@@ -34,8 +34,8 @@ class BrowserSecurityConfig(ModuleConfig):
             "ftp",
         ]
     )
-    allow_js_execution: bool = True
-    allow_downloads: bool = True
+    allow_js_execution: bool = False
+    allow_downloads: bool = False
     download_path: str = "/tmp/arcagent-downloads"  # noqa: S108 — default; overridden in production config
     redact_inputs: bool = False
     max_page_text_length: int = 50_000

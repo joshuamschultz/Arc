@@ -38,7 +38,7 @@ import uuid
 from collections.abc import AsyncIterator, Callable
 from typing import Any, Literal, Protocol, runtime_checkable
 
-from arcrun import TokenEvent
+import arcagent
 from pydantic import BaseModel, Field
 
 _logger = logging.getLogger("arcgateway.executor")
@@ -293,10 +293,11 @@ class AsyncioExecutor:
                     reply_target=_reply_target(event),
                     reply_label=_reply_label(event),
                 ):
-                    if isinstance(stream_event, TokenEvent):
+                    token_text = arcagent.stream_token_text(stream_event)
+                    if token_text is not None:
                         yield Delta(
                             kind="token",
-                            content=stream_event.text,
+                            content=token_text,
                             is_final=False,
                             turn_id=turn_id,
                         )

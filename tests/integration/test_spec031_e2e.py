@@ -39,8 +39,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
+import arcrun
 import pytest
 from arcagent.core.agent import ArcAgent
+from arcagent.core.session_coordination import SessionRunCoordinator
 from arcteam.audit import AuditLogger
 from arcteam.crypto import MessageSigner, new_nonce, sign_message, verify_message
 from arcteam.messenger import MessagingService, Subscription
@@ -73,25 +75,50 @@ def _free_port() -> int:
         return port
 
 
-@pytest.fixture(scope="module")
-def server_url() -> Iterator[str]:
-    port = _free_port()
-    store = tempfile.mkdtemp(prefix="arcteam-e2e-")
+def _start_server(port: int, store: str) -> subprocess.Popen[bytes] | None:
+    """Start nats-server on ``port``; return None if it did not come up.
+
+    ``_free_port`` releases the port before the server claims it, so a
+    concurrently-starting process can take it in between. That is a race, not a
+    defect in what this test covers, so a lost port is retried rather than
+    reported as a failure of the code under test.
+    """
     proc = subprocess.Popen(
-        ["nats-server", "-js", "-p", str(port), "-sd", store],  # noqa: S607  # dev tool via PATH, guarded by shutil.which
+        ["nats-server", "-js", "-p", str(port), "-sd", store],  # noqa: S607  # dev tool via PATH, guarded by shutil.which above
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            return None  # exited early — almost always "port already in use"
         try:
             with socket.create_connection(("127.0.0.1", port), timeout=0.2):
-                break
+                return proc
         except OSError:
             time.sleep(0.05)
-    else:
-        proc.terminate()
-        pytest.fail("nats-server did not start")
+    proc.terminate()
+    proc.wait(timeout=5)
+    return None
+
+
+@pytest.fixture(scope="module")
+def server_url() -> Iterator[str]:
+    if shutil.which("nats-server") is None:
+        pytest.skip("nats-server is not installed — this e2e needs a real JetStream broker")
+
+    store = tempfile.mkdtemp(prefix="arcteam-e2e-")
+    proc: subprocess.Popen[bytes] | None = None
+    port = 0
+    for _attempt in range(3):
+        port = _free_port()
+        proc = _start_server(port, store)
+        if proc is not None:
+            break
+    if proc is None:
+        shutil.rmtree(Path(store), ignore_errors=True)
+        pytest.skip("nats-server would not bind a free port after 3 attempts")
+
     try:
         yield f"nats://127.0.0.1:{port}"
     finally:
@@ -216,7 +243,13 @@ class _StubAgent:
         self._identity = identity
         self._policy_pipeline = pipeline
         self._telemetry = telemetry
-        self._active_runs = {SESSION_KEY: handle}
+        # The real coordinator, not a dict: AA-012 moved the active-handle
+        # registry behind SessionRunCoordinator, and ``deliver_message`` reads
+        # it through that contract. Faking the old attribute would exercise
+        # nothing the agent actually calls.
+        self._run_coordinator = SessionRunCoordinator()
+        self._run_coordinator.register(SESSION_KEY, cast("arcrun.RunHandle", handle))
+        self._active_runs = self._run_coordinator.active_runs
         self._config = SimpleNamespace(security=SimpleNamespace(tier=tier))
         self.started_runs: list[tuple[str, str]] = []
 

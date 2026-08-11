@@ -76,8 +76,8 @@ async def test_store_raw_bodies_defaults_false_and_forwards_to_arcrun_run(
         return _FakeResult("done", completion_payload={"status": "success"})
 
     monkeypatch.setattr(react_adapter, "_ARCRUN_AVAILABLE", True)
-    monkeypatch.setattr(react_adapter, "run", _capture_run)
-    monkeypatch.setattr(react_adapter, "StaticProvider", lambda tools: object())
+    monkeypatch.setattr(react_adapter.arcrun, "run", _capture_run)
+    monkeypatch.setattr(react_adapter.arcrun, "StaticProvider", lambda tools: object())
 
     await run_react_loop(
         model=object(),
@@ -112,8 +112,8 @@ async def test_timeout_degrades(monkeypatch: pytest.MonkeyPatch) -> None:
         await asyncio.sleep(10)
 
     monkeypatch.setattr(react_adapter, "_ARCRUN_AVAILABLE", True)
-    monkeypatch.setattr(react_adapter, "run", _hang)
-    monkeypatch.setattr(react_adapter, "StaticProvider", lambda tools: object())
+    monkeypatch.setattr(react_adapter.arcrun, "run", _hang)
+    monkeypatch.setattr(react_adapter.arcrun, "StaticProvider", lambda tools: object())
     out = await run_react_loop(
         model=object(),
         tools=[],

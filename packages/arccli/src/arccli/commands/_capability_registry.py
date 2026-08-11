@@ -37,12 +37,9 @@ def build_capability_registry(config: Any, agent_root: Path | None) -> Any | Non
     Best-effort: returns ``None`` if the scan fails outright (e.g. the loader
     itself raises) rather than crashing a read-only listing command.
     """
-    import arcagent.builtins.capabilities as builtins_pkg
-    from arcagent.capabilities.capability_loader import CapabilityLoader
-    from arcagent.capabilities.capability_registry import CapabilityRegistry
-    from arcagent.tools._dynamic_loader import resolve_workspace_import_policy
+    import arcagent
 
-    builtins_root = Path(builtins_pkg.__file__).parent
+    builtins_root = arcagent.builtin_capabilities_path()
     roots: list[tuple[str, Path]] = [
         ("builtins", builtins_root),
         ("builtins-skills", builtins_root / "skills"),
@@ -57,15 +54,15 @@ def build_capability_registry(config: Any, agent_root: Path | None) -> Any | Non
                 roots.append((name, path))
     roots.extend(_enabled_module_roots(config))
 
-    registry = CapabilityRegistry()
-    loader = CapabilityLoader(
+    registry = arcagent.CapabilityRegistry()
+    loader = arcagent.CapabilityLoader(
         scan_roots=roots,
         registry=registry,
         # Read-only enumeration: import policy must never hide a discoverable
         # tool from the listing, so scan under the allow-all (personal) policy
         # regardless of the agent's real tier. Signed/gated status is reported
         # separately by the inspect layer.
-        import_policy=resolve_workspace_import_policy(
+        import_policy=arcagent.resolve_workspace_import_policy(
             "personal", allow_all_imports=True, allow_imports=[]
         ),
         # Task #39: this is a read-only scan over a throwaway registry — a
@@ -93,9 +90,9 @@ def _enabled_module_roots(config: Any) -> list[tuple[str, Path]]:
     gate — so a listing command never diverges from what the agent would
     actually scan at startup.
     """
-    import arcagent.modules as modules_pkg
+    import arcagent
 
-    modules_dir = Path(modules_pkg.__file__).parent
+    modules_dir = arcagent.modules_path()
     roots: list[tuple[str, Path]] = []
     for mod_name, mod_entry in getattr(config, "modules", {}).items():
         if not getattr(mod_entry, "enabled", False):

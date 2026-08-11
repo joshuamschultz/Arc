@@ -41,6 +41,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
+import arcagent
 from textual import work
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -53,8 +54,6 @@ from arctui.transcript import MessageRole, TranscriptView
 from arctui.transport import ChatTransport
 
 if TYPE_CHECKING:
-    from arcagent.connections import Connections
-
     from arctui.connect_screen import ConnectOutcome
 
 _logger = logging.getLogger("arctui.app")
@@ -342,15 +341,13 @@ class ArcTUI(App[None]):
         """
         return self._agent_dir.name if self._agent_dir is not None else ""
 
-    def _connections(self) -> Connections | None:
+    def _connections(self) -> arcagent.Connections | None:
         """Bind this deployment's connector seam, or say why it cannot.
 
         The seam itself needs no agent — a connection belongs to the deployment.
         The attached agent is still required, because it is who a connection made
         here is granted to, and one granted to nobody would serve nobody.
         """
-        from arcagent.connections import ExtensionError
-
         from arctui.connect import open_connections
 
         if self._agent_dir is None:
@@ -362,7 +359,7 @@ class ArcTUI(App[None]):
             return None
         try:
             return open_connections()
-        except ExtensionError as exc:
+        except arcagent.ExtensionError as exc:
             self._say(MessageRole.ERROR, exc.message)
             return None
 

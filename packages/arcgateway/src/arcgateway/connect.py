@@ -18,7 +18,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-from arcagent.utils.toml_writer import dumps_toml
+import arcagent
 
 # Telegram bot tokens: "<bot_id>:<secret>" — digits, colon, ~35 url-safe chars.
 _TOKEN_RE = re.compile(r"^\d{5,}:[A-Za-z0-9_-]{30,}$")
@@ -93,7 +93,7 @@ def _write_gateway_block(
     }
     data.setdefault("security", {})["require_pairing"] = True
     gateway_config.parent.mkdir(parents=True, exist_ok=True)
-    gateway_config.write_text(dumps_toml(data), encoding="utf-8")
+    gateway_config.write_text(arcagent.dumps_toml(data), encoding="utf-8")
 
 
 __all__ = ["connect_telegram"]

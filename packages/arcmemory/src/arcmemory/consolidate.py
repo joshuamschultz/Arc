@@ -32,7 +32,7 @@ from __future__ import annotations
 import json
 import logging
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime, timedelta
 from itertools import combinations
 from pathlib import Path
@@ -116,7 +116,7 @@ class Consolidator:
         embedder: Embedder | None = None,
         confirmer: distill.EntityMergeConfirmer | None = None,
         seed_vocabulary: Iterable[str] | None = None,
-        model: object | None = None,
+        model_factory: Callable[[], object] | None = None,
         identity: AgentIdentity | None = None,
         policy_pipeline: PolicyPipeline | None = None,
         react_loop: ReactLoop = run_react_loop,
@@ -133,9 +133,11 @@ class Consolidator:
         # never merged (loud degrade), because merge is never done on embedding alone.
         self._confirmer = confirmer
         self._seed_vocab = set(seed_vocabulary or [])
-        # Agentic-engine seams (the DEFAULT DISTILL path). Without a model the
+        # Agentic-engine seams (the DEFAULT DISTILL path). Without a factory the
         # engine cannot run, so consolidation falls back to the pipeline distiller.
-        self._model = model
+        # Held as a FACTORY so the loop's provider is built only when a
+        # consolidation actually runs — startup must not require a provider key.
+        self._model_factory = model_factory
         self._identity = identity
         self._policy = policy_pipeline
         self._react_loop = react_loop
@@ -240,15 +242,20 @@ class Consolidator:
         (breach/timeout/arcrun-absent, or no model wired) the whole window is finished
         by the pipeline distiller so no data is lost.
         """
-        if self._cfg.consolidate_engine == "agentic" and self._model is not None:
-            result = await self._run_agentic(events)
+        if self._cfg.consolidate_engine == "agentic" and self._model_factory is not None:
+            result = await self._run_agentic(events, self._model_factory())
             if not result.degraded:
                 return [], [], [], [], result.tool_calls_made
             self._emit("memory.consolidation_degraded", result.reason or "degraded")
         return await self._distill_pipeline(events)
 
-    async def _run_agentic(self, events: list[Event]) -> AgenticResult:
-        """Run one bounded agentic consolidation over this scope's memory tools."""
+    async def _run_agentic(self, events: list[Event], model: object) -> AgenticResult:
+        """Run one bounded agentic consolidation over this scope's memory tools.
+
+        The model is passed in already built: the caller owns deciding whether the
+        agentic engine runs at all, so this method never has to reason about a
+        missing provider.
+        """
         tools = build_memory_tools(
             workspace=self._workspace,
             db=self._db,
@@ -264,7 +271,7 @@ class Consolidator:
         actor_did = self._identity.did if self._identity is not None else self._scope.agent_did
         return await run_agentic_consolidation(
             episodes=events,
-            model=self._model,
+            model=model,
             tools=tools,
             config=self._cfg,
             actor_did=actor_did,

@@ -31,10 +31,12 @@ credential the gateway reads — so an operator sees one file format, not two.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import fcntl
 import logging
 import os
 import stat
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -55,6 +57,9 @@ _ENV_PREFIX = "ARC_SECRET"
 
 #: Root of the vault namespace this store owns.
 _VAULT_ROOT = "arc/connectors"
+_MAX_ENV_FILE_BYTES = 1024 * 1024
+_MAX_ENV_ENTRIES = 2048
+_MAX_ENV_VALUE_CHARS = 64 * 1024
 
 
 #: What a credential is replaced with wherever a third party's own words are rendered.
@@ -165,10 +170,9 @@ class EnvFile:
     """One owner-only ``KEY=value`` file, read and rewritten safely (D-582).
 
     Every mutation rewrites the whole file through a private temp file and one
-    ``os.replace``, guarded by a lock so two coroutines cannot lose each other's
-    entry in a read-modify-write. A second *process* touching the same file can
-    still lose its own update, but ``os.replace`` means it can never leave a torn
-    one.
+    ``os.replace``. An in-process lock and a sibling advisory lock cover the
+    complete read-modify-replace transaction, so concurrent processes cannot
+    overwrite a newer snapshot.
 
     The recipe is shared rather than copied: connector credentials
     (:class:`LocalFileSecretBackend`) and provider API keys
@@ -189,21 +193,54 @@ class EnvFile:
     async def read(self) -> dict[str, str]:
         """Every entry, or an empty mapping when the file was never written."""
         async with self._lock:
-            return await asyncio.to_thread(self._read)
+            return await asyncio.to_thread(self._read_transaction)
 
     async def put(self, key: str, value: str) -> None:
+        if not key or "=" in key or "\n" in key:
+            raise ValueError("env key must be non-empty and contain no '=' or newline")
+        if len(value) > _MAX_ENV_VALUE_CHARS or "\n" in value:
+            raise ValueError("env value is too large or contains a newline")
         async with self._lock:
-            entries = await asyncio.to_thread(self._read)
-            entries[key] = value
-            await asyncio.to_thread(self._write, entries)
+            await asyncio.to_thread(self._put_transaction, key, value)
 
     async def delete(self, key: str) -> bool:
         """Drop one entry. False when there was nothing to drop."""
         async with self._lock:
-            entries = await asyncio.to_thread(self._read)
+            return await asyncio.to_thread(self._delete_transaction, key)
+
+    @contextlib.contextmanager
+    def _file_lock(self, *, exclusive: bool) -> Iterator[None]:
+        parent = self._path.parent
+        parent.mkdir(parents=True, exist_ok=True)
+        parent.chmod(0o700)
+        lock_path = parent / f".{self._path.name}.lock"
+        fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            os.fchmod(fd, 0o600)
+            fcntl.flock(fd, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
+    def _read_transaction(self) -> dict[str, str]:
+        with self._file_lock(exclusive=False):
+            return self._read()
+
+    def _put_transaction(self, key: str, value: str) -> None:
+        with self._file_lock(exclusive=True):
+            entries = self._read()
+            if key not in entries and len(entries) >= _MAX_ENV_ENTRIES:
+                raise ValueError("env file entry limit exceeded")
+            entries[key] = value
+            self._write(entries)
+
+    def _delete_transaction(self, key: str) -> bool:
+        with self._file_lock(exclusive=True):
+            entries = self._read()
             if entries.pop(key, None) is None:
                 return False
-            await asyncio.to_thread(self._write, entries)
+            self._write(entries)
             return True
 
     def _read(self) -> dict[str, str]:
@@ -239,7 +276,11 @@ class EnvFile:
                     f"mode is {stat.S_IMODE(info.st_mode):o}, expected 600",
                 )
             chunks: list[bytes] = []
+            total = 0
             while chunk := os.read(fd, 65536):
+                total += len(chunk)
+                if total > _MAX_ENV_FILE_BYTES:
+                    raise self._refuse("SECRET_STORE_TOO_LARGE", "store exceeds size limit")
                 chunks.append(chunk)
         finally:
             os.close(fd)
@@ -251,6 +292,8 @@ class EnvFile:
         parent.mkdir(parents=True, exist_ok=True)
         parent.chmod(0o700)
         body = "".join(f"{key}={value}\n" for key, value in entries.items())
+        if len(entries) > _MAX_ENV_ENTRIES or len(body.encode("utf-8")) > _MAX_ENV_FILE_BYTES:
+            raise ValueError("env file limits exceeded")
 
         # Unique per write, not per process: two store instances over the same file
         # (a CLI verb beside a running module) must not collide on the temp name.

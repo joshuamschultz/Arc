@@ -49,20 +49,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, NoReturn
 
-from arcagent.connections import (
-    AttachmentFactory,
-    AuditChain,
-    Authorization,
-    CatalogEntry,
-    Connections,
-    ConnectorPlan,
-    ExtensionError,
-    ToolSpec,
-    catalog,
-    deployment_tier,
-    resolve_deployment,
-    resolve_roots,
-)
+import arcagent
 
 from arccli.commands._shared import dispatch, err
 from arccli.commands._shared import print_json as _print_json
@@ -74,12 +61,12 @@ from arccli.commands._shared import write as _out
 # ---------------------------------------------------------------------------
 
 
-def _attachment_factory() -> AttachmentFactory | None:
+def _attachment_factory() -> arcagent.AttachmentFactory | None:
     """How a manifest becomes something probeable. ``None`` means the shipped builder."""
     return None
 
 
-def _connections(args: argparse.Namespace) -> Connections:
+def _connections(args: argparse.Namespace) -> arcagent.Connections:
     """Bind this deployment to the operator-signed chain, or exit naming what is wrong.
 
     The chain is described, never held: every verb opens and closes its own through
@@ -95,17 +82,19 @@ def _connections(args: argparse.Namespace) -> Connections:
     from arccli.commands.operator import operator_worm_sink
 
     try:
-        world = resolve_deployment(
+        world = arcagent.resolve_deployment(
             arc_dir=getattr(args, "arc_dir", None) or Path.home() / ".arc",
             data_dir=getattr(args, "data_dir", None),
             extensions_root=getattr(args, "extensions_root", None),
             env_file=getattr(args, "env_file", None),
         )
-    except ExtensionError as exc:
+    except arcagent.ExtensionError as exc:
         _fail(exc.message)
-    return Connections(
+    return arcagent.Connections(
         world,
-        audit=AuditChain.opened_by(lambda: operator_worm_sink(world.arc_dir, world.data_dir)),
+        audit=arcagent.AuditChain.opened_by(
+            lambda: operator_worm_sink(world.arc_dir, world.data_dir)
+        ),
         attachment_factory=_attachment_factory(),
     )
 
@@ -130,7 +119,7 @@ def _add(args: argparse.Namespace) -> None:
         plan = connections.plan(args.extension, args.name, agents=agents)
         _refuse_unsatisfied_host(plan)
         report = asyncio.run(connections.install(plan, _prompt_secrets(plan), agents=agents))
-    except ExtensionError as exc:
+    except arcagent.ExtensionError as exc:
         _fail(exc.message)
 
     _out(f"Connected {report.extension} as '{report.instance}'.")
@@ -150,7 +139,7 @@ def _grant(args: argparse.Namespace) -> None:
     agents = _agents(args)
     try:
         granted = connections.grant(args.instance, agents)
-    except ExtensionError as exc:
+    except arcagent.ExtensionError as exc:
         _fail(exc.message)
     _out(f"'{args.instance}' is now granted to: {', '.join(granted.agents) or '(nobody)'}")
     _out("  Restart those agents for the connection to attach.")
@@ -161,7 +150,7 @@ def _revoke(args: argparse.Namespace) -> None:
     connections = _connections(args)
     try:
         remaining = connections.revoke(args.instance, _agents(args))
-    except ExtensionError as exc:
+    except arcagent.ExtensionError as exc:
         _fail(exc.message)
     _out(f"'{args.instance}' is now granted to: {', '.join(remaining.agents) or '(nobody)'}")
     _out("  Restart the agents that lost it; a running agent keeps what it attached.")
@@ -183,7 +172,7 @@ def _auth(args: argparse.Namespace) -> None:
             _direct_host_authorization(asyncio.run(connections.authorization(args.instance)))
             return
         updated = asyncio.run(connections.reauth(plan, _prompt_secrets(plan)))
-    except ExtensionError as exc:
+    except arcagent.ExtensionError as exc:
         _fail(exc.message)
     env_file = connections.world.env_file
     _out(f"Updated {len(updated)} credential(s) for '{args.instance}' in {env_file}.")
@@ -199,7 +188,7 @@ _SIGN_IN_LINE = {
 }
 
 
-def _direct_host_authorization(auth: Authorization) -> None:
+def _direct_host_authorization(auth: arcagent.Authorization) -> None:
     """Print the exact command that authorises a connector whose binary owns its token.
 
     "declares no credentials; nothing to supply" was true and useless: ``gh`` does
@@ -239,7 +228,7 @@ def _authorize(args: argparse.Namespace) -> None:
         if auth.token_binary:
             token = getpass.getpass(f"Token for {auth.token_binary} (hidden): ")
             auth = asyncio.run(connections.authorize(args.instance, token=token))
-    except ExtensionError as exc:
+    except arcagent.ExtensionError as exc:
         _fail(exc.message)
 
     _direct_host_authorization(auth)
@@ -258,7 +247,7 @@ def _host_setup(args: argparse.Namespace) -> None:
     connections = _connections(args)
     try:
         report = asyncio.run(connections.setup_host(args.extension))
-    except ExtensionError as exc:
+    except arcagent.ExtensionError as exc:
         _fail(exc.message)
 
     _out(report.detail)
@@ -279,11 +268,11 @@ def _available(args: argparse.Namespace) -> None:
     """
     arc_dir = Path(args.arc_dir).expanduser() if args.arc_dir else None
     try:
-        tier = deployment_tier(arc_dir)
-    except ExtensionError as exc:
+        tier = arcagent.deployment_tier(arc_dir)
+    except arcagent.ExtensionError as exc:
         _fail(exc.message)
-    roots = resolve_roots(arc_dir, extensions_root=args.extensions_root)
-    entries = catalog(roots=roots, tier=tier)
+    roots = arcagent.resolve_roots(arc_dir, extensions_root=args.extensions_root)
+    entries = arcagent.catalog(roots=roots, tier=tier)
 
     if args.json:
         _print_json([_entry_json(entry) for entry in entries])
@@ -308,7 +297,7 @@ def _list(args: argparse.Namespace) -> None:
     connections = _connections(args)
     try:
         defined = connections.connections()
-    except ExtensionError as exc:
+    except arcagent.ExtensionError as exc:
         _fail(exc.message)
     if not defined:
         _out("No connections on this deployment.")
@@ -328,7 +317,7 @@ def _tools(args: argparse.Namespace) -> None:
     connections = _connections(args)
     try:
         specs = asyncio.run(connections.tools(args.instance))
-    except ExtensionError as exc:
+    except arcagent.ExtensionError as exc:
         _fail(exc.message)
     if not specs:
         _out(f"'{args.instance}' offers no tools.")
@@ -341,7 +330,7 @@ def _probe(args: argparse.Namespace) -> None:
     connections = _connections(args)
     try:
         result = asyncio.run(connections.probe(args.instance))
-    except ExtensionError as exc:
+    except arcagent.ExtensionError as exc:
         _fail(exc.message)
     if not result.reachable:
         _fail(f"probe: '{args.instance}' did not answer — {result.detail}")
@@ -354,7 +343,7 @@ def _doctor(args: argparse.Namespace) -> None:
     connections = _connections(args)
     try:
         checks = asyncio.run(connections.doctor(args.instance))
-    except ExtensionError as exc:
+    except arcagent.ExtensionError as exc:
         _fail(exc.message)
     _print_table(
         ["Check", "Status", "Detail"],
@@ -367,7 +356,7 @@ def _approve(args: argparse.Namespace) -> None:
     connections = _connections(args)
     try:
         approved = asyncio.run(connections.approve(args.instance))
-    except ExtensionError as exc:
+    except arcagent.ExtensionError as exc:
         _fail(exc.message)
     _out(f"Approved {len(approved)} tool contract(s) for '{args.instance}':")
     for name in approved:
@@ -383,7 +372,7 @@ def _remove(args: argparse.Namespace) -> None:
     connections = _connections(args)
     try:
         report = asyncio.run(connections.remove(args.instance))
-    except ExtensionError as exc:
+    except arcagent.ExtensionError as exc:
         _fail(exc.message)
     _out(f"Disconnected '{report.instance}'.")
     _out(f"  credentials dropped : {', '.join(report.removed_secrets) or '(none)'}")
@@ -395,7 +384,7 @@ def _remove(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _prompt_secrets(plan: ConnectorPlan) -> dict[str, str]:
+def _prompt_secrets(plan: arcagent.ConnectorPlan) -> dict[str, str]:
     """Ask for every declared value, hiding the ones that are actually credentials.
 
     The manifest decides, per field. A hidden prompt is the right protection for a
@@ -411,7 +400,7 @@ def _prompt_secrets(plan: ConnectorPlan) -> dict[str, str]:
     return values
 
 
-def _refuse_unsatisfied_host(plan: ConnectorPlan) -> None:
+def _refuse_unsatisfied_host(plan: arcagent.ConnectorPlan) -> None:
     """Direct the operator to install what is missing. Never install it for them."""
     if not plan.unsatisfied_host:
         return
@@ -421,14 +410,14 @@ def _refuse_unsatisfied_host(plan: ConnectorPlan) -> None:
     sys.exit(1)
 
 
-def _tool_rows(specs: Sequence[ToolSpec]) -> list[list[str]]:
+def _tool_rows(specs: Sequence[arcagent.ToolSpec]) -> list[list[str]]:
     return [
         [spec.name, spec.classification, ",".join(spec.capability_tags), spec.description]
         for spec in specs
     ]
 
 
-def _entry_json(entry: CatalogEntry) -> dict[str, Any]:
+def _entry_json(entry: arcagent.CatalogEntry) -> dict[str, Any]:
     """One listing entry, with the full reason when the bundle is unreadable."""
     return {
         "name": entry.name,
@@ -440,14 +429,14 @@ def _entry_json(entry: CatalogEntry) -> dict[str, Any]:
     }
 
 
-def _entry_row(entry: CatalogEntry, roots: Sequence[Path]) -> list[str]:
+def _entry_row(entry: arcagent.CatalogEntry, roots: Sequence[Path]) -> list[str]:
     """One table row. An unreadable bundle keeps its place and shows its reason."""
     if entry.error:
         return [entry.name, "-", f"unreadable: {_one_line(entry.error)}", _source(entry, roots)]
     return [entry.name, entry.version, entry.description, _source(entry, roots)]
 
 
-def _source(entry: CatalogEntry, roots: Sequence[Path]) -> str:
+def _source(entry: arcagent.CatalogEntry, roots: Sequence[Path]) -> str:
     """Which root a bundle came from, as its position on the search path."""
     for index, root in enumerate(roots, start=1):
         if entry.path.parent == root:

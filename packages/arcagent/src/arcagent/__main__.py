@@ -89,35 +89,48 @@ async def _run_stdin_loop(agent: ArcAgent, shutdown_event: asyncio.Event) -> str
     loop = asyncio.get_running_loop()
     reader = asyncio.StreamReader(loop=loop)
     protocol = asyncio.StreamReaderProtocol(reader)
-    await loop.connect_read_pipe(lambda: protocol, sys.stdin)
+    transport, _ = await loop.connect_read_pipe(lambda: protocol, sys.stdin)
 
-    while not shutdown_event.is_set():
-        read_task = asyncio.create_task(reader.readline())
-        wait_task = asyncio.create_task(shutdown_event.wait())
-        _done, _pending = await asyncio.wait(
-            {read_task, wait_task}, return_when=asyncio.FIRST_COMPLETED
-        )
-        if shutdown_event.is_set():
-            read_task.cancel()
-            return "signal"
-        wait_task.cancel()
-        raw = read_task.result()
-        if not raw:
-            return "eof"
-        prompt = raw.decode("utf-8", errors="replace").strip()
-        if not prompt:
-            continue
-        try:
-            response = await agent.run_collected(prompt, session_key="serve:stdin")
-        except Exception:  # reason: fail-open — log + continue serving
-            _logger.exception("agent run failed; continuing serve loop")
-            sys.stdout.write("[error] see log\n")
+    try:
+        while not shutdown_event.is_set():
+            raw = await _readline_or_shutdown(reader, shutdown_event)
+            if raw is None:
+                return "signal"
+            if not raw:
+                return "eof"
+            prompt = raw.decode("utf-8", errors="replace").strip()
+            if not prompt:
+                continue
+            try:
+                response = await agent.run_collected(prompt, session_key="serve:stdin")
+            except Exception:  # reason: fail-open — log + continue serving
+                _logger.exception("agent run failed; continuing serve loop")
+                sys.stdout.write("[error] see log\n")
+                sys.stdout.flush()
+                continue
+            text = _stringify_response(response)
+            sys.stdout.write(text + "\n")
             sys.stdout.flush()
-            continue
-        text = _stringify_response(response)
-        sys.stdout.write(text + "\n")
-        sys.stdout.flush()
-    return "signal"
+        return "signal"
+    finally:
+        transport.close()
+
+
+async def _readline_or_shutdown(
+    reader: asyncio.StreamReader, shutdown_event: asyncio.Event
+) -> bytes | None:
+    """Return one input line, or ``None`` when shutdown wins; drain both waits."""
+    read_task = asyncio.create_task(reader.readline(), name="stdin:readline")
+    wait_task = asyncio.create_task(shutdown_event.wait(), name="stdin:shutdown")
+    tasks = {read_task, wait_task}
+    try:
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        return None if shutdown_event.is_set() else read_task.result()
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def _run_none_loop(shutdown_event: asyncio.Event) -> str:

@@ -34,10 +34,8 @@ first use, since ``_runtime.configure()`` itself is sync (see
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import logging
-import re
 import sqlite3
 import uuid
 from collections.abc import Iterator
@@ -56,6 +54,24 @@ from arcagent.core.session_internal.capability_ledger import (
     reset_carried_legs,
 )
 from arcagent.modules.tasks import _runtime
+from arcagent.modules.tasks._dispatch_helpers import (
+    backoff_elapsed as _backoff_elapsed,
+)
+from arcagent.modules.tasks._dispatch_helpers import (
+    format_task_prompt as _format_task_prompt,
+)
+from arcagent.modules.tasks._dispatch_helpers import (
+    is_stale as _is_stale,
+)
+from arcagent.modules.tasks._dispatch_helpers import (
+    pick_agent as _pick_agent,
+)
+from arcagent.modules.tasks._dispatch_helpers import (
+    resolve_timeout as _resolve_timeout,
+)
+from arcagent.modules.tasks._dispatch_helpers import (
+    session_key as _session_key,
+)
 from arcagent.modules.tasks.models import Priority, Task
 from arcagent.modules.tasks.node_execution import (
     WorkflowNode,
@@ -583,61 +599,8 @@ _DISPATCH_TICK = 15.0
 # is cheap; a short interval makes operator "stop" feel responsive.
 _RELIABILITY_TICK = 5.0
 
-# Session key prefix for a dispatched task's run — one transcript per task so
-# the board and the session log line up (``<workspace>/sessions/task:<id>.jsonl``).
-_TASK_SESSION = "task"
-
-# A session key becomes a FILENAME, and a workflow node's row id is
-# path-shaped (``wf/<run>/<node>/<iteration>``) because it is a durable
-# identity, not a name. Flatten it deterministically and carry a digest of the
-# original so two ids can never land on one session — same task, same session,
-# on every retry and after a restart.
-_SAFE_SESSION_KEY = re.compile(r"^[A-Za-z0-9._:-]+$")
-
 # Highest-priority-first ordering (mirrors arcstore's claim order, SDD §2).
 _PRIORITY_RANK: dict[Priority, int] = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-
-
-def _format_task_prompt(task: Task) -> str:
-    """Render the run prompt handed to the agent for an assigned task.
-
-    Title/description are re-sanitized before prompt interpolation (LLM01/
-    ASI06 defence-in-depth) even though the arcstore ``Task`` validator already
-    scrubbed them at write time — the prompt is an instruction surface.
-    """
-    title = sanitize_text(task.title, max_length=500)
-    lines = [
-        f"You have been assigned task {task.id}.",
-        f"Title: {title}",
-    ]
-    if task.description:
-        lines.append(f"Details: {sanitize_text(task.description, max_length=4000)}")
-    lines.append(f"Priority: {task.priority}")
-    lines.append(
-        "Do the work now. When finished, call complete_task with a short "
-        "resolution — or fail_task if you cannot complete it. Work silently; "
-        "only notify the user for a meaningful result, a question, or a blocker."
-    )
-    return "\n".join(lines)
-
-
-def _resolve_timeout(task: Task, config: Any) -> float | None:
-    """The wall-clock cap for this run: per-task override, else config default.
-
-    ``None`` means unbounded (both knobs 0/None). Kept a pure function so the
-    timeout policy is testable without a running loop.
-    """
-    timeout = task.timeout_seconds if task.timeout_seconds else config.task_timeout_seconds
-    return timeout if timeout and timeout > 0 else None
-
-
-def _backoff_elapsed(task: Task, now: str) -> bool:
-    """True if a task's retry backoff has elapsed (or it has none).
-
-    ``next_attempt_at`` and ``now`` are both ``_now()``-formatted UTC ISO
-    strings, so a lexicographic compare is chronological.
-    """
-    return task.next_attempt_at is None or task.next_attempt_at <= now
 
 
 async def _is_dispatchable(st: _runtime._State, task: Task, now: str) -> bool:
@@ -686,15 +649,6 @@ async def _dispatch_tick() -> None:
         # Lost the atomic claim (a concurrent starter won) — try again next tick.
         return
     await _run_task(st, started, run_id, self_did)
-
-
-def _session_key(task_id: str) -> str:
-    """The session a task's run resumes into, safe to use as a filename."""
-    if _SAFE_SESSION_KEY.match(task_id):
-        return f"{_TASK_SESSION}:{task_id}"
-    digest = hashlib.sha256(task_id.encode("utf-8")).hexdigest()[:12]
-    flattened = re.sub(r"[^A-Za-z0-9._-]+", "-", task_id).strip("-")
-    return f"{_TASK_SESSION}:{flattened}-{digest}"
 
 
 async def _run_task(st: _runtime._State, task: Task, run_id: str, self_did: str) -> None:
@@ -852,21 +806,6 @@ async def _handle_attempt_failure(
     await st.store.requeue(task_id, actor_did=self_did, last_error=error, next_attempt_at=next_at)
 
 
-def _is_stale(task: Task, now: datetime, threshold: float) -> bool:
-    """True if an in_progress task's run looks dead (no progress past threshold).
-
-    A missing/unparseable ``started_at`` on an in_progress task is itself
-    anomalous, so treat it as stale (reclaim it).
-    """
-    if not task.started_at:
-        return True
-    try:
-        started = datetime.fromisoformat(task.started_at)
-    except ValueError:
-        return True
-    return (now - started).total_seconds() >= threshold
-
-
 async def _reliability_tick() -> None:
     """One cancel + stuck-reclaim pass over the agent's in_progress tasks (P1).
 
@@ -996,21 +935,6 @@ async def _load_by_owner(st: _runtime._State) -> dict[str, int]:
             if task.owner_did:
                 load[task.owner_did] = load.get(task.owner_did, 0) + 1
     return load
-
-
-def _pick_agent(task: Task, agents: list[Entity], load: dict[str, int]) -> Entity:
-    """Least-loaded eligible agent, preferring a capability match, tie-break name.
-
-    A capability match (task tag ∈ agent capabilities) dominates load, so a
-    matching agent is chosen even if busier; among equals, least-loaded then
-    name. Goal-relevance routing would slot in here as a richer score — the seam.
-    """
-
-    def rank(agent: Entity) -> tuple[int, int, str]:
-        matches = bool(set(task.tags) & set(agent.capabilities))
-        return (0 if matches else 1, load.get(agent.did, 0), agent.name)
-
-    return min(agents, key=rank)
 
 
 def _should_reclaim(st: _runtime._State, task: Task, now: datetime, first_pass: bool) -> bool:

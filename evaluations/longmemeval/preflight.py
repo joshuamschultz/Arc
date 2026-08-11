@@ -253,7 +253,15 @@ def check_live_seams(agent: ArcAgent) -> None:
     for attribute, assertion, consequence in (
         ("_embedder", "brain_embedder", "recall degrades to BM25 plus graph"),
         ("_distiller", "brain_distiller", "consolidation is a no-op and mints nothing"),
-        ("_model", "brain_model", "agentic consolidation degrades to the pipeline distiller"),
+        # A factory, not a model: the loop's provider is built when a consolidation
+        # runs, so an agent that never consolidates needs no provider key to start.
+        # The seam still has to be WIRED, which is what this checks — an unwired
+        # factory is the same silent degrade a missing model was.
+        (
+            "_model_factory",
+            "brain_model",
+            "agentic consolidation degrades to the pipeline distiller",
+        ),
     ):
         if getattr(brain, attribute, None) is None:
             _fail(

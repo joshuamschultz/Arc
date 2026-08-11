@@ -90,7 +90,7 @@ async def _started_agent(config: ArcAgentConfig) -> ArcAgent:
 
     async def _do() -> ArcAgent:
         agent = ArcAgent(config=config)
-        with patch("arcagent.core.agent_dispatch.arcrun_run_stream"):
+        with patch("arcagent.core.agent_dispatch.arcrun.run_stream"):
             await agent.startup()
         return agent
 
@@ -200,14 +200,14 @@ class TestSameAgentTwoSiblingTurns:
 
         observed: dict[str, _Observation] = {}
         with patch(
-            "arcagent.core.agent_dispatch.arcrun_run_stream",
+            "arcagent.core.agent_dispatch.arcrun.run_stream",
             side_effect=_fake_run_stream_recording(observed, "turn1"),
         ):
             await router.handle(_make_event(agent_did=real_did, session_key="s1", message="turn1"))
             await _await_record(observed, "turn1")
 
         with patch(
-            "arcagent.core.agent_dispatch.arcrun_run_stream",
+            "arcagent.core.agent_dispatch.arcrun.run_stream",
             side_effect=_fake_run_stream_recording(observed, "turn2"),
         ):
             # A SECOND, independent asyncio.Task — SessionRouter.handle()
@@ -266,7 +266,7 @@ class TestTwoAgentsInterleaved:
 
         observed: dict[str, _Observation] = {}
         with patch(
-            "arcagent.core.agent_dispatch.arcrun_run_stream",
+            "arcagent.core.agent_dispatch.arcrun.run_stream",
             side_effect=_fake_run_stream_recording(observed, "josh_turn"),
         ):
             await router.handle(
@@ -275,7 +275,7 @@ class TestTwoAgentsInterleaved:
             await _await_record(observed, "josh_turn")
 
         with patch(
-            "arcagent.core.agent_dispatch.arcrun_run_stream",
+            "arcagent.core.agent_dispatch.arcrun.run_stream",
             side_effect=_fake_run_stream_recording(observed, "coder_turn"),
         ):
             await router.handle(

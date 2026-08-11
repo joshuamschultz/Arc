@@ -8,15 +8,22 @@ the browser onto a blocked domain.
 
 from __future__ import annotations
 
-import fnmatch
+from collections.abc import Callable, Iterable
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlsplit
 
 from arcagent.modules.browser.config import BrowserSecurityConfig
 from arcagent.modules.browser.errors import URLBlockedError
+from arcagent.utils.url_security import UnsafeURLError, validate_http_url
 
 
-def _check_url_policy(url: str, config: BrowserSecurityConfig) -> None:
+def _check_url_policy(
+    url: str,
+    config: BrowserSecurityConfig,
+    *,
+    resolve: bool = False,
+    resolver: Callable[[str], Iterable[str]] | None = None,
+) -> None:
     """Validate a URL against the security policy.
 
     Checks scheme blocklist, then allowlist/denylist domain patterns.
@@ -28,15 +35,24 @@ def _check_url_policy(url: str, config: BrowserSecurityConfig) -> None:
     Raises:
         URLBlockedError: If the URL violates the security policy.
     """
-    parsed = urlparse(url)
-
-    if parsed.scheme in config.blocked_schemes:
+    scheme = urlsplit(url).scheme.lower()
+    if scheme not in {"http", "https"}:
         raise URLBlockedError(
-            message=f"Scheme '{parsed.scheme}' is blocked by security policy",
-            details={"url": url, "scheme": parsed.scheme},
+            message=f"Scheme '{scheme}' is blocked by security policy",
+            details={"url": url, "scheme": scheme},
         )
+    try:
+        validated = validate_http_url(
+            url,
+            resolve=resolve,
+            **({"resolver": resolver} if resolver is not None else {}),
+        )
+    except UnsafeURLError as exc:
+        raise URLBlockedError(
+            message=f"URL is blocked by security policy: {exc}", details={"url": url}
+        ) from exc
 
-    hostname = parsed.hostname or ""
+    hostname = validated.hostname
 
     if config.url_mode == "allowlist":
         if not any(_match_pattern(hostname, p) for p in config.url_patterns):
@@ -57,7 +73,12 @@ def _match_pattern(hostname: str, pattern: str) -> bool:
 
     Supports patterns like ``*.example.com`` and ``example.com``.
     """
-    return fnmatch.fnmatch(hostname, pattern)
+    hostname = hostname.rstrip(".").lower()
+    pattern = pattern.rstrip(".").lower()
+    if pattern.startswith("*."):
+        suffix = pattern[2:]
+        return hostname != suffix and hostname.endswith(f".{suffix}")
+    return hostname == pattern
 
 
 async def _get_current_url(cdp: Any) -> str:

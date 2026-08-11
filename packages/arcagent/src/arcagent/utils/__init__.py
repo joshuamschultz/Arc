@@ -6,8 +6,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from arcllm import MODULE_NAMES, LLMProvider
-from arcllm import load_model as arcllm_load_model
+import arcrun
 
 _logger = logging.getLogger("arcagent.utils")
 
@@ -20,7 +19,7 @@ def load_eval_model(
     trace_store: Any | None = None,
     on_event: Callable[[Any], None] | None = None,
     arcllm_modules: dict[str, dict[str, Any]] | None = None,
-) -> LLMProvider:
+) -> arcrun.Model:
     """Load LLM model via ArcLLM for eval/background use.
 
     Parses ``provider/model`` format and delegates to ``arcllm.load_model()``.
@@ -52,23 +51,15 @@ def load_eval_model(
     _logger.info("Loading model: %s (label=%s)", model_id, agent_label)
     provider, _, model_name = model_id.partition("/")
 
-    module_overrides: dict[str, Any] = {}
-    if arcllm_modules:
-        unknown = set(arcllm_modules) - MODULE_NAMES
-        if unknown:
-            raise ValueError(
-                f"Unknown arcllm module key(s): {sorted(unknown)}. "
-                f"Valid keys: {sorted(MODULE_NAMES)}.",
-            )
-        module_overrides.update(arcllm_modules)
+    module_overrides: dict[str, Any] = dict(arcllm_modules or {})
+    module_overrides.setdefault("retry", True)
 
-    return arcllm_load_model(
+    return arcrun.load_model(
         provider,
         model_name or None,
-        retry=module_overrides.pop("retry", True),
         agent_label=agent_label,
         agent_did=agent_did,
         trace_store=trace_store,
         on_event=on_event,
-        **module_overrides,
+        modules=module_overrides,
     )

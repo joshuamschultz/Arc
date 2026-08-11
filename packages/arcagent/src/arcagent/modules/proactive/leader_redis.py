@@ -36,6 +36,8 @@ import logging
 import secrets
 from typing import Any
 
+from arcagent.utils.periodic import FailurePolicy, PeriodicRunner
+
 _logger = logging.getLogger("arcagent.proactive.leader_redis")
 
 _DEFAULT_TTL_MS = 30_000
@@ -104,6 +106,7 @@ class RedisLockElection:
         self._renew_interval_s = renew_interval_s
         self._acquired = False
         self._renewer: asyncio.Task[None] | None = None
+        self._renew_poller = PeriodicRunner()
 
     async def acquire_or_wait(self, timeout: float = 30.0) -> bool:
         """Try to acquire the lock; return ``False`` on any failure."""
@@ -121,6 +124,7 @@ class RedisLockElection:
                 return False
             if won:
                 self._acquired = True
+                self._renew_poller.reset()
                 self._renewer = asyncio.create_task(self._renew_loop())
                 return True
             await asyncio.sleep(1.0)
@@ -129,6 +133,7 @@ class RedisLockElection:
     async def release(self) -> None:
         """Release the lock via fence-token-checked DEL."""
         self._acquired = False
+        self._renew_poller.stop()
         if self._renewer is not None:
             self._renewer.cancel()
             try:
@@ -148,23 +153,27 @@ class RedisLockElection:
 
     async def _renew_loop(self) -> None:
         """Periodically PEXPIRE the lock so it doesn't expire mid-run."""
-        while self._acquired:
-            try:
-                await asyncio.sleep(self._renew_interval_s)
-                extended = await self._redis.eval(
-                    _RENEW_SCRIPT, 1, self._key, self._fence_token, self._ttl_ms
-                )
-                if not extended:
-                    # Someone else holds the lock now; we lost it.
-                    _logger.warning("Redis leader lock %r lost during renewal", self._key)
-                    self._acquired = False
-                    return
-            except asyncio.CancelledError:
-                return
-            except Exception:  # reason: fail-open — log + continue
-                _logger.exception("Redis lock renewal failed")
+
+        async def renew() -> None:
+            extended = await self._redis.eval(
+                _RENEW_SCRIPT, 1, self._key, self._fence_token, self._ttl_ms
+            )
+            if not extended:
+                _logger.warning("Redis leader lock %r lost during renewal", self._key)
                 self._acquired = False
-                return
+                self._renew_poller.stop()
+
+        def on_error(exc: BaseException, _failures: int) -> None:
+            _logger.error("Redis lock renewal failed: %s", exc)
+            self._acquired = False
+
+        await self._renew_poller.run(
+            renew,
+            interval=self._renew_interval_s,
+            immediate=False,
+            failure=FailurePolicy(max_consecutive=1),
+            on_error=on_error,
+        )
 
 
 __all__ = ["RedisLockElection"]

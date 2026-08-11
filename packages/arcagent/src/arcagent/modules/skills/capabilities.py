@@ -20,7 +20,6 @@ With a :class:`~arcagent.skilladapt.NullSkillAdapter` selected, ``state().active
 
 from __future__ import annotations
 
-import asyncio
 import inspect
 import logging
 from pathlib import Path
@@ -28,6 +27,7 @@ from typing import Any
 
 from arcagent.modules.skills import _runtime
 from arcagent.tools._decorator import background_task, hook
+from arcagent.utils.periodic import PeriodicRunner
 
 _logger = logging.getLogger("arcagent.modules.skills.capabilities")
 
@@ -179,14 +179,15 @@ async def skills_review_lifecycle_loop(_ctx: Any) -> None:
     The decorator interval is metadata; the loop owns its cadence, reading the live
     ``sweep_poll_seconds`` config each cycle. Mirrors the memory consolidate loop.
     """
-    while True:
-        try:
-            await _runtime.run_lifecycle_sweep()
-        except asyncio.CancelledError:
-            raise
-        except Exception:  # reason: fail-open — a sweep error must never crash the agent
-            _logger.warning("skills lifecycle sweep failed", exc_info=True)
-        await asyncio.sleep(_poll_interval())
+
+    def on_error(exc: BaseException, _failures: int) -> None:
+        _logger.warning("skills lifecycle sweep failed: %s", exc)
+
+    await PeriodicRunner().run(
+        _runtime.run_lifecycle_sweep,
+        interval=_poll_interval,
+        on_error=on_error,
+    )
 
 
 def _poll_interval() -> float:

@@ -23,6 +23,7 @@ replicate their tests.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -273,6 +274,71 @@ class TestReloadDiff:
         diff = await loader.reload()
         assert "~1 replaced" in diff
         assert "1.0.0" in diff and "2.0.0" in diff
+
+
+@pytest.mark.asyncio
+class TestTransactionalReload:
+    async def test_invalid_candidate_preserves_live_tool(self, tmp_path: Path) -> None:
+        from arcagent.capabilities.capability_loader import CapabilityLoader
+
+        _write_tool(tmp_path / "stable.py", "stable")
+        registry = CapabilityRegistry()
+        loader = CapabilityLoader(scan_roots=[("builtins", tmp_path)], registry=registry)
+        await loader.scan_and_register()
+        original = await registry.get_tool("stable")
+
+        (tmp_path / "stable.py").write_text("this is not valid python !!!")
+        prepared = await loader.prepare_reload()
+
+        assert prepared.delta.errors
+        assert await registry.get_tool("stable") is original
+
+    async def test_changed_hook_replaces_code_and_priority_exactly_once(self) -> None:
+        from arcagent.capabilities.capability_registry import HookEntry
+        from arcagent.core.agent_lifecycle import bridge_capability_hooks_to_bus
+        from arcagent.core.module_bus import ModuleBus
+        from arcagent.tools._decorator import HookMetadata
+
+        calls: list[str] = []
+
+        async def old(_ctx: object) -> None:
+            calls.append("old")
+
+        async def updated(_ctx: object) -> None:
+            calls.append("updated")
+
+        async def middle(_ctx: object) -> None:
+            calls.append("middle")
+
+        live = CapabilityRegistry()
+        candidate = CapabilityRegistry()
+        await live.register_hook(
+            HookEntry(
+                meta=HookMetadata(name="refresh", event="tick", priority=200),
+                handler=old,
+                source_path=Path("old.py"),
+                scan_root="builtins",
+            )
+        )
+        await candidate.register_hook(
+            HookEntry(
+                meta=HookMetadata(name="refresh", event="tick", priority=10),
+                handler=updated,
+                source_path=Path("updated.py"),
+                scan_root="builtins",
+            )
+        )
+        bus = ModuleBus()
+        bus.subscribe("tick", middle, priority=100, module_name="module:middle")
+        agent = SimpleNamespace(_capability_registry=live, _bus=bus)
+        await bridge_capability_hooks_to_bus(agent)
+
+        await live.replace_from(candidate)
+        await bridge_capability_hooks_to_bus(agent)
+        await bus.emit("tick", {})
+
+        assert calls == ["updated", "middle"]
+        assert bus.handler_count_by_module("tick", "capability:refresh") == 1
 
 
 @pytest.mark.asyncio

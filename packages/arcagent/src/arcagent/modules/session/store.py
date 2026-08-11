@@ -79,6 +79,9 @@ def read_messages_from_offset(path: Path, start_offset: int) -> tuple[list[dict[
             continue
         try:
             entry = json.loads(line.decode("utf-8"))
+            if not isinstance(entry, dict):
+                _logger.warning("Skipping malformed JSONL record in %s", path)
+                continue
             entries.append(entry)
         except (json.JSONDecodeError, UnicodeDecodeError):
             _logger.warning("Skipping malformed JSONL line in %s", path)

@@ -587,19 +587,15 @@ def attach_llm(app: Starlette, instance: Any, label: str | None = None) -> None:
             call-site compatibility with the agent label passed by the CLI).
     """
     try:
-        from arcllm.modules.circuit_breaker import CircuitBreakerModule
-        from arcllm.modules.queue import QueueModule
-        from arcllm.modules.telemetry import TelemetryModule
+        import arcagent
 
-        current = instance
-        while current is not None:
-            if isinstance(current, CircuitBreakerModule):
-                app.state.circuit_breakers.append(current)
-            if isinstance(current, TelemetryModule):
-                app.state.telemetry_modules.append(current)
-            if isinstance(current, QueueModule):
-                app.state.queue_modules.append(current)
-            current = getattr(current, "_inner", None)
+        destinations = {
+            "circuit_breaker": app.state.circuit_breakers,
+            "telemetry": app.state.telemetry_modules,
+            "queue": app.state.queue_modules,
+        }
+        for kind, module in arcagent.iter_model_modules(instance):
+            destinations[kind].append(module)
     except ImportError:
         logger.debug("arcllm not available, skipping module stack discovery")
 

@@ -40,7 +40,7 @@ def _build(args: argparse.Namespace) -> None:
 
 def _run_validation(agent_dir: Path) -> None:
     """Validation-only path for `arc agent build --check`."""
-    from arcrun.strategies import STRATEGIES, _load_strategies
+    import arcrun
 
     provider_env_vars = {
         "anthropic": "ANTHROPIC_API_KEY",
@@ -107,9 +107,7 @@ def _run_validation(agent_dir: Path) -> None:
         checks.append(("WARN", "capabilities/ not found"))
 
     try:
-        if not STRATEGIES:
-            _load_strategies()
-        checks.append(("OK", f"strategies: {', '.join(STRATEGIES.keys())}"))
+        checks.append(("OK", f"strategies: {', '.join(arcrun.available_strategies())}"))
     except Exception:  # reason: fail-open — continue
         checks.append(("WARN", "could not load strategies"))
 

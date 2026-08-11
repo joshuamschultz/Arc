@@ -22,8 +22,7 @@ from typing import Any
 from arcmemory.tools import MemoryTool
 
 try:  # arcrun is an additive, guarded dependency — absence degrades to pipeline.
-    from arcrun import StaticProvider, run
-    from arcrun.types import Tool as _ArcRunTool
+    import arcrun
 
     _ARCRUN_AVAILABLE = True
 except ImportError:  # pragma: no cover - exercised via monkeypatch
@@ -68,7 +67,7 @@ def _to_arcrun_tool(mtool: MemoryTool) -> Any:
     async def _execute(args: dict[str, Any], _ctx: Any) -> str:
         return await mtool.execute(args)
 
-    return _ArcRunTool(
+    return arcrun.Tool(
         name=mtool.name,
         description=mtool.description,
         input_schema=mtool.input_schema,
@@ -119,10 +118,10 @@ async def run_react_loop(
     """
     if not _ARCRUN_AVAILABLE:
         return ReactOutcome(degraded=True, reason="arcrun-absent")
-    provider = StaticProvider([_to_arcrun_tool(t) for t in tools])
+    provider = arcrun.StaticProvider([_to_arcrun_tool(t) for t in tools])
     try:
         async with asyncio.timeout(timeout_seconds):
-            result = await run(
+            result = await arcrun.run(
                 model,
                 provider,
                 system_prompt,

@@ -21,13 +21,16 @@ from arcagent.modules.browser.config import (
     BrowserConfig,
     BrowserConnectionConfig,
 )
+from arcagent.utils.url_security import set_url_resolver
 
 
 @pytest.fixture(autouse=True)
 def _reset_browser_runtime() -> Iterator[None]:
     """Clear shared runtime state around every browser test."""
     _runtime.reset()
+    set_url_resolver(lambda _hostname: ("93.184.216.34",))
     yield
+    set_url_resolver(None)
     _runtime.reset()
 
 

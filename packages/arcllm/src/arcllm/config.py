@@ -268,6 +268,16 @@ def _get_config_dir() -> Path:
     return Path(__file__).parent
 
 
+def model_config_path() -> Path:
+    """Return the canonical packaged model configuration file.
+
+    Higher layers use this public coordinate instead of reaching into ArcLLM's
+    private configuration helpers.  The location remains package-relative for
+    compatibility with the existing configuration editor.
+    """
+    return _get_config_dir() / "config.toml"
+
+
 def _user_config_path() -> Path | None:
     """Return the user-override config path, or None if absent.
 

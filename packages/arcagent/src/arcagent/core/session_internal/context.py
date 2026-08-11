@@ -32,7 +32,7 @@ from pathlib import Path
 # TYPE_CHECKING-only import to avoid circular dependency
 from typing import TYPE_CHECKING, Any
 
-from arcllm import Message
+import arcrun
 
 from arcagent.core.config import ContextConfig
 from arcagent.core.telemetry import AgentTelemetry
@@ -203,20 +203,20 @@ class AssembledPrompt:
         return "\n\n".join(self.segments)
 
 
-def wire_messages(records: Sequence[dict[str, Any]]) -> list[Message]:
+def wire_messages(records: Sequence[dict[str, Any]]) -> list[arcrun.Message]:
     """Session records as the messages the model actually receives.
 
     Each record's stored turn context is re-attached verbatim, so a replayed
     turn is byte-identical to the turn as first sent. This is the counterpart
     of :meth:`AssembledPrompt.session_record`; the two must stay paired.
     """
-    out: list[Message] = []
+    out: list[arcrun.Message] = []
     for record in records:
         turn = record.get(TURN_CONTEXT_KEY) or ""
         content = record.get("content")
         if turn and isinstance(content, str):
             record = {**record, "content": with_turn_context(content, turn)}
-        out.append(Message(**record))
+        out.append(arcrun.Message(**record))
     return out
 
 

@@ -8,7 +8,7 @@ Real-time multi-agent dashboard: Starlette server reading the shared `arcstore` 
 
 ## Layer
 
-**Surface / dashboard.** Depends on `arcllm`, `arcagent`, `arcgateway`, `arcstore`, `arcteam`, `arctrust`, `arcskill`, Starlette/uvicorn. Launched mainly via `arc ui start` / `arc ui tail` (`arccli`).
+**Surface / dashboard.** Views and interacts with `arcagent` through public seams; it does not bypass the agent to call ArcRun or ArcLLM. It may depend on `arcgateway`, `arcstore`, `arcteam`, `arctrust`, and `arcskill`. Launched mainly via `arc ui start` / `arc ui tail` (`arccli`).
 
 ## Layout
 
@@ -30,6 +30,7 @@ web/                       # React 19 + Vite + shadcn/Tailwind
 ## Package rules
 
 - SPEC-026: **read-on-demand** from arcstore — do not reintroduce agent live-push `/ws` telemetry.
+- Use `import arcagent` and its public facade; never make ArcAgent depend on this dashboard.
 - Two tokens only (viewer / operator); process-memory — no on-disk token file.
 - SPEC-022: **zero** direct `team/` filesystem / `watchfiles` in arcui — only via `arcgateway.fs_reader` (`tests/test_arcui_no_team_imports.py`).
 - Built static assets are committed (air-gap). UI change → edit `web/`, build into `static/`, commit artifacts.

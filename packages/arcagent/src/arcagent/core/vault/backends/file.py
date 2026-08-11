@@ -19,8 +19,11 @@ This backend never raises ``VaultUnreachable`` — the filesystem is always
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
+
+from arcagent.utils.secure_file import read_owned_file
 
 _logger = logging.getLogger("arcagent.core.vault.backends.file")
 
@@ -28,8 +31,7 @@ _logger = logging.getLogger("arcagent.core.vault.backends.file")
 _DEFAULT_SECRETS_DIR = Path("~/.arc/secrets").expanduser()
 
 # Required mode mask: owner read/write only, no group/other bits.
-_REQUIRED_MODE = 0o600
-_ALLOWED_MODE_MASK = 0o777  # Strip sticky / setuid bits before comparison
+_MAX_SECRET_BYTES = 64 * 1024
 
 
 class FileBackend:
@@ -67,24 +69,23 @@ class FileBackend:
 
         secret_path = self._secrets_dir / path
 
-        if not secret_path.exists():
-            return None
-
-        # Enforce 0600 — refuse any file that is readable by group or others.
-        file_stat = secret_path.stat()
-        actual_mode = file_stat.st_mode & _ALLOWED_MODE_MASK
-
-        if actual_mode != _REQUIRED_MODE:
+        raw, reason = await asyncio.to_thread(
+            read_owned_file, secret_path, max_bytes=_MAX_SECRET_BYTES
+        )
+        if raw is None:
+            if reason == "absent":
+                return None
             _logger.warning(
-                "File backend: REFUSING to read %s — mode is %o, expected %o. Run: chmod 600 %s",
+                "File backend: refusing to read %s (%s)",
                 secret_path,
-                actual_mode,
-                _REQUIRED_MODE,
-                secret_path,
+                reason,
             )
             return None
-
-        content = secret_path.read_text(encoding="utf-8").strip()
+        try:
+            content = raw.decode("utf-8").strip()
+        except UnicodeDecodeError:
+            _logger.warning("File backend: refusing non-UTF-8 secret %s", secret_path)
+            return None
         return content if content else None
 
 

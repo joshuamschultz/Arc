@@ -27,6 +27,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import arcagent
+
 from arccli.blueprints import ResolvedBlueprint, apply_blueprint, dumps_toml
 
 # (signer_did, ed25519_seed) — the raw 32-byte seed the signer holds.
@@ -98,9 +100,7 @@ def _merge_sibling(path: Path, overlay: dict[str, Any]) -> None:
     """Deep-merge ``overlay`` UNDER ``path``'s existing config (user wins); no-op if empty."""
     if not overlay:
         return
-    from arcagent.core.config import _deep_merge
-
-    merged = _deep_merge(overlay, _read_toml(path))
+    merged = arcagent.deep_merge(overlay, _read_toml(path))
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(dumps_toml(merged), encoding="utf-8")
 
@@ -164,14 +164,13 @@ def _author_prompt_overlays(
             f"operator key is available to sign them; the resolver rejects unsigned overlays "
             f"at run start. Run 'arc init' to create the deployment operator key first."
         )
-    from arcagent.tools._secret_guard import find_secret
     from arcprompt import load_stock_document, render_prompt
     from arctrust.artifact import sign_artifact
 
     signer_did, seed = operator_signer
     context_root = agent_dir / _CONTEXT_DIRNAME
     for spec in bp.prompt_overlays:
-        secret = find_secret(spec.body)
+        secret = arcagent.find_secret(spec.body)
         if secret is not None:
             raise ValueError(
                 f"blueprint {bp.name!r} overlay {spec.package}/{spec.name} looks like a live "
@@ -261,12 +260,8 @@ def _sign_agent_artifact(
     if agent_signer is None:
         result.unsigned_warnings.append(str(path))
         return
-    from arcagent.capabilities import artifact_signing
-
     signer_did, seed = agent_signer
-    artifact_signing.write_signature(
-        path, path.read_bytes(), signer_did=signer_did, private_key=seed
-    )
+    arcagent.write_signature(path, path.read_bytes(), signer_did=signer_did, private_key=seed)
 
 
 # ---------------------------------------------------------------------------
@@ -283,13 +278,6 @@ def _seed_schedules(
     """Seed declared ``[[schedules]]`` into the agent's scheduler store (workspace/<store>)."""
     if not bp.schedules:
         return
-    from arcagent.modules.scheduler.models import (
-        ScheduleEntry,
-        ScheduleMetadata,
-        generate_schedule_id,
-    )
-    from arcagent.modules.scheduler.store import ScheduleStore
-
     store_path = (
         merged.get("modules", {})
         .get("scheduler", {})
@@ -298,12 +286,12 @@ def _seed_schedules(
     )
     workspace = agent_dir / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    meta = ScheduleMetadata(created_by="system", reason=f"seeded by blueprint {bp.name}")
+    meta = arcagent.ScheduleMetadata(created_by="system", reason=f"seeded by blueprint {bp.name}")
     entries = [
-        ScheduleEntry(id=generate_schedule_id(), metadata=meta, **dict(spec))
+        arcagent.ScheduleEntry(id=arcagent.generate_schedule_id(), metadata=meta, **dict(spec))
         for spec in bp.schedules
     ]
-    ScheduleStore(workspace / store_path).save(entries)
+    arcagent.ScheduleStore(workspace / store_path).save(entries)
     result.schedules = len(entries)
 
 

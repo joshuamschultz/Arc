@@ -94,6 +94,33 @@ async def test_empty_file_returns_none(secrets_dir: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_refuses_symlink(secrets_dir: Path) -> None:
+    target = secrets_dir / "target"
+    target.write_text("secret", encoding="utf-8")
+    target.chmod(0o600)
+    (secrets_dir / "linked").symlink_to(target)
+
+    assert await FileBackend(secrets_dir=secrets_dir).get_secret("linked") is None
+
+
+@pytest.mark.asyncio
+async def test_refuses_non_regular_file(secrets_dir: Path) -> None:
+    directory = secrets_dir / "not-a-file"
+    directory.mkdir(mode=0o700)
+
+    assert await FileBackend(secrets_dir=secrets_dir).get_secret("not-a-file") is None
+
+
+@pytest.mark.asyncio
+async def test_refuses_oversized_secret(secrets_dir: Path) -> None:
+    secret_file = secrets_dir / "oversized"
+    secret_file.write_bytes(b"x" * (64 * 1024 + 1))
+    secret_file.chmod(0o600)
+
+    assert await FileBackend(secrets_dir=secrets_dir).get_secret("oversized") is None
+
+
+@pytest.mark.asyncio
 async def test_rejects_path_traversal(secrets_dir: Path) -> None:
     """Path traversal attempts (e.g., '../etc/passwd') are rejected."""
     backend = FileBackend(secrets_dir=secrets_dir)

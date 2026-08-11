@@ -18,8 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from arcrun.state import RunState
-from arcrun.types import SandboxConfig, Tool
+import arcrun
 from pydantic import BaseModel
 
 from arcagent.orchestration.token_budget import TokenUsage
@@ -71,9 +70,9 @@ class SpawnSpec:
     """
 
     task: str
-    tools: list[Tool]
+    tools: list[arcrun.Tool]
     system_prompt: str
-    parent_state: RunState
+    parent_state: arcrun.ParentRunContext
     child_did: str
     child_sk_bytes: bytes
     wallclock_timeout_s: float = _DEFAULT_SPAWN_TIMEOUT_SECONDS
@@ -81,4 +80,4 @@ class SpawnSpec:
     token_budget: int | None = None
     context: str | None = None
     max_turns: int = 25
-    sandbox: SandboxConfig | None = None
+    sandbox: arcrun.SandboxConfig | None = None

@@ -94,7 +94,7 @@ def _capture():
     """Patch every producer's spool binding into one shared list."""
     records: list = []
     patches = [
-        patch("arcagent.orchestration.spawn._spool_record", records.append),
+        patch("arcagent.orchestration.spawn_observability.spool_record", records.append),
         patch("arcrun.events._spool_record", records.append),
         patch("arcllm.modules.telemetry._spool_record", records.append),
     ]
@@ -265,7 +265,7 @@ async def test_make_spawn_tool_records_lineage_and_child_identity() -> None:
     spawn_events = [r for r in records if r.kind == "spawn_event"]
     assert len(spawn_events) == 1
     assert spawn_events[0].parent_did == _PARENT_DID
-    assert spawn_events[0].child_did.startswith("did:arc:spawn:child/")
+    assert spawn_events[0].child_did.startswith("did:arc:delegate:child/")
     assert spawn_events[0].depth == 1
 
     child_did = spawn_events[0].child_did

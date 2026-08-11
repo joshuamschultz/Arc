@@ -36,39 +36,41 @@ what makes adding an agent incapable of widening access.
 
 from __future__ import annotations
 
-import contextlib
 import logging
-import sys
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from arctrust.audit import AuditSink, NullSink
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import ValidationError
 
 from arcagent.core.errors import ExtensionError
 from arcagent.core.tier import Tier
 from arcagent.extension.attachment import ExtensionAttachment, ProbeResult
 from arcagent.extension.catalog import MANIFEST_NAME, ExtensionCatalog
-from arcagent.extension.cli_attachment import CliAttachment, CliCommand, CliResilience
 from arcagent.extension.contract_ledger import ToolContractLedger
 from arcagent.extension.coordinates import is_coordinate
 from arcagent.extension.coordinates import refusal as coordinate_refusal
 from arcagent.extension.field_formats import normalize
 from arcagent.extension.grants import Connection, ConnectionRegistry
-from arcagent.extension.host import HostPrerequisiteDirector, HostVerdict
+from arcagent.extension.host import HostPrerequisiteDirector
 from arcagent.extension.loader import ExtensionLoader
-from arcagent.extension.manifest import ExtensionManifest, SecretRequirement, load_manifest
-from arcagent.extension.native_attachment import NativeAttachment
+from arcagent.extension.manifest import ExtensionManifest, load_manifest
 from arcagent.extension.secrets import Secret, SecretRef, SecretStore
 from arcagent.extension.state import ConnectionRecord, ConnectionStateStore
+from arcagent.modules.connectors.attachments import build_attachment
+from arcagent.modules.connectors.credential_placement import placement_environment
+from arcagent.modules.connectors.credential_placement import visible_values as _visible_values
+from arcagent.modules.connectors.models import ConnectorPlan, InstallReport, RemovalReport
 from arcagent.tools._egress_policy import first_forbidden_egress
 
 if TYPE_CHECKING:
     from arcagent.capabilities.capability_registry import CapabilityRegistry
 
 _logger = logging.getLogger("arcagent.modules.connectors.install")
+
+# Kept as an established import surface while credential placement has one owner.
+visible_values = _visible_values
 
 #: The deployment's owner-only credential file, beside its connections (D-555).
 CONNECTOR_ENV_FILENAME = "connections.env"
@@ -96,47 +98,6 @@ def _refuse(step: str, message: str, **details: Any) -> ExtensionError:
         message=f"{step}: {message}",
         details={"step": step, **details},
     )
-
-
-@dataclass(frozen=True)
-class ConnectorPlan:
-    """Everything an install needs, and everything the operator must still supply.
-
-    Produced without writing anything, so a surface can show the operator what is
-    about to happen — and so ``doctor`` can report a broken connection without
-    touching it.
-    """
-
-    instance: str
-    extension: str
-    bundle: Path
-    manifest: ExtensionManifest
-    unsatisfied_host: tuple[HostVerdict, ...]
-    secrets: tuple[SecretRequirement, ...]
-    approval_mode: str
-    tier: Tier
-    extensions_root: tuple[Path, ...]
-    egress_allow: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True)
-class InstallReport:
-    """What a completed install produced."""
-
-    instance: str
-    extension: str
-    tools: tuple[str, ...]
-    detail: str = ""
-
-
-@dataclass(frozen=True)
-class RemovalReport:
-    """What a removal actually dropped, so a surface can say so precisely."""
-
-    instance: str
-    removed_secrets: tuple[str, ...] = ()
-    removed_config: bool = False
-    removed_state: bool = False
 
 
 def plan_connector(
@@ -376,28 +337,6 @@ def connector_env_file(arc_dir: Path) -> Path:
     return Path(arc_dir) / CONNECTOR_ENV_FILENAME
 
 
-@contextlib.contextmanager
-def _importable(bundle: Path) -> Iterator[None]:
-    """Make a bundle's own directory importable for exactly one entrypoint resolve.
-
-    REQ-264 keeps an extension's implementation inside its own folder and never
-    copies it into core or into the agent's capability folder, so the dotted
-    entrypoint a manifest declares resolves there and nowhere else.
-
-    The entry comes straight back off ``sys.path``. Leaving it would let one
-    extension's top-level module names shadow another's — and every unrelated
-    import for the rest of the process — which is a supply-chain hole dressed as
-    a convenience.
-    """
-    entry = str(bundle)
-    sys.path.insert(0, entry)
-    try:
-        yield
-    finally:
-        with contextlib.suppress(ValueError):
-            sys.path.remove(entry)
-
-
 async def resolve_secrets(
     manifest: ExtensionManifest,
     *,
@@ -461,54 +400,6 @@ async def resolve_secrets(
     return resolved
 
 
-def placement_environment(
-    manifest: ExtensionManifest, secrets: Mapping[str, Secret]
-) -> dict[str, Secret]:
-    """The child-process environment this bundle's declared placements ask for.
-
-    One mapping, built in one place, and used by everything that starts a program on
-    this connection's behalf: the attachment's own verbs and probe, and the sign-in
-    check behind ``verify_command``. A second copy would let a connection whose tools
-    work report itself as signed out, because the check ran without the credential the
-    tools had.
-
-    Values stay wrapped: the caller that starts the process unwraps them into that
-    process's environment and nothing before it does. So a mapping held on an
-    attachment, or dumped by a traceback on the way to one, still renders
-    ``Secret(***)``.
-
-    Args:
-        manifest: What the bundle declares. A credential with no
-            ``[secrets.placement]`` contributes nothing.
-        secrets: The credentials :func:`resolve_secrets` read out of the store.
-
-    Returns:
-        Environment variable to credential, empty when the bundle places nothing.
-    """
-    return {
-        declared.placement.variable: secrets[declared.name]
-        for declared in manifest.secrets
-        if declared.placement is not None and declared.name in secrets
-    }
-
-
-def visible_values(manifest: ExtensionManifest, secrets: Mapping[str, Secret]) -> dict[str, str]:
-    """The bundle's non-sensitive fields, for the argv tokens its manifest names.
-
-    Only ``sensitive = false`` fields, and that is the whole safety rule rather than a
-    convenience: these values are written into a command line, and a command line is
-    readable by every other user on the box. A credential reaches a child through
-    ``[secrets.placement]`` — its environment — or through a login's stdin, and never
-    through here. The manifest parser refuses a placeholder naming a sensitive field,
-    so a bundle cannot ask; this makes it so a bundle could not be served if it did.
-    """
-    return {
-        declared.name: secrets[declared.name].reveal()
-        for declared in manifest.secrets
-        if not declared.sensitive and declared.name in secrets
-    }
-
-
 def shape_supplied(plan: ConnectorPlan, values: Mapping[str, str]) -> dict[str, str]:
     """Put every supplied value into the shape its bundle declared for that field.
 
@@ -534,100 +425,6 @@ def shape_supplied(plan: ConnectorPlan, values: Mapping[str, str]) -> dict[str, 
         name: normalize(declared[name].format, name, value) if name in declared else value
         for name, value in values.items()
     }
-
-
-def _unplaced_secrets(manifest: ExtensionManifest) -> list[str]:
-    """Declared credentials this bundle gives no destination for.
-
-    A ``cli`` attachment reaches its service by spawning a binary, so a credential it
-    declares is deliverable only through ``[secrets.placement]``. Accepting one without
-    would store a credential and deliver it nowhere — a connection that probes green
-    and 401s on the first real verb.
-
-    A field some declared command NAMES is the exception, and it is not a loophole:
-    that command carries the field on its own argv or stdin, which is why one CLI
-    reads its site and address from no environment variable at all and another
-    requires its vault on every call. Refusing those would leave a bundle unable to
-    declare the very fields its commands cannot run without. The manifest parser
-    already refuses a command naming a SENSITIVE field, so nothing exempted here can
-    be a credential.
-    """
-    delivered = manifest.fields_named_by_commands()
-    return [
-        declared.name
-        for declared in manifest.secrets
-        if declared.placement is None and declared.name not in delivered
-    ]
-
-
-def build_attachment(
-    manifest: ExtensionManifest, bundle: Path, secrets: Mapping[str, Secret]
-) -> ExtensionAttachment:
-    """Build the attachment a manifest declares, or refuse the kind.
-
-    Two kinds ship: ``cli`` runs a locally installed binary the operator was
-    directed to install, and ``native`` imports the implementation the extension
-    package supplies. A third party adds a kind by supplying a factory, which is
-    why this function refuses an unknown kind rather than guessing at one.
-
-    **This is where a credential is revealed, and it is the only place here.** A
-    :class:`~arcagent.extension.secrets.Secret` renders ``Secret(***)`` wherever it
-    is formatted, and ``reveal()`` ends that protection — so the value crosses
-    exactly one boundary, from the store into the extension's own factory, with no
-    log line, audit event, or refusal between the two. A placed credential is not
-    unwrapped here at all: it stays a ``Secret`` until the attachment spawns the
-    process it belongs to.
-    """
-    kind = manifest.extension.attachment
-    if kind == "native":
-        entrypoint = _NativeConfig.model_validate(manifest.config.get("native", {})).entrypoint
-        context: dict[str, Any] = {"bundle": str(bundle)}
-        context.update({name: secret.reveal() for name, secret in secrets.items()})
-        with _importable(bundle):
-            return NativeAttachment(entrypoint, context)
-    if kind == "cli":
-        unplaced = _unplaced_secrets(manifest)
-        if unplaced:
-            raise _refuse(
-                "probe",
-                f"{manifest.extension.name} declares credential(s) {', '.join(unplaced)} "
-                f"with no [secrets.placement], and attaches as 'cli', which can only "
-                f"deliver a credential the bundle names a destination for",
-                extension=manifest.extension.name,
-                attachment=kind,
-                unplaced=unplaced,
-            )
-        declared = _CliConfig.model_validate(manifest.config.get("cli", {}))
-        return CliAttachment(
-            binary=declared.binary,
-            commands=declared.commands,
-            probe_argv=declared.probe_argv,
-            install_instruction=declared.install_instruction,
-            resilience=declared.resilience,
-            env=placement_environment(manifest, secrets),
-            values=visible_values(manifest, secrets),
-        )
-    raise _refuse("probe", f"unknown attachment kind {kind!r}", attachment=kind)
-
-
-class _NativeConfig(BaseModel):
-    """``[config.native]`` — the dotted module exposing the extension's factory."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    entrypoint: str
-
-
-class _CliConfig(BaseModel):
-    """``[config.cli]`` — the binary, its declared commands, and its resilience bounds."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    binary: str
-    commands: list[CliCommand] = Field(default_factory=list)
-    probe_argv: list[str] = Field(default_factory=lambda: ["--version"])
-    install_instruction: str = ""
-    resilience: CliResilience = Field(default_factory=CliResilience)
 
 
 # --- internals --------------------------------------------------------------

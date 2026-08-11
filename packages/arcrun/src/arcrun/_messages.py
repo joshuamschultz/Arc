@@ -9,7 +9,12 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-from arcllm.types import Message, TextBlock, ToolResultBlock, ToolUseBlock
+import arcllm
+
+Message = arcllm.Message
+TextBlock = arcllm.TextBlock
+ToolResultBlock = arcllm.ToolResultBlock
+ToolUseBlock = arcllm.ToolUseBlock
 
 __all__ = [
     "Message",

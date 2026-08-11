@@ -15,6 +15,7 @@ State is shared via :mod:`arcagent.modules.browser._runtime`.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -132,7 +133,7 @@ async def browser_navigate(url: str) -> str:
     cdp = await _cdp()
     config = _runtime.state().config
     try:
-        _check_url_policy(url, config.security)
+        await asyncio.to_thread(_check_url_policy, url, config.security, resolve=True)
     except URLBlockedError:
         await _emit("browser.url_blocked", {"url": url})
         raise
@@ -146,7 +147,7 @@ async def browser_navigate(url: str) -> str:
     final_url = await _get_current_url(cdp)
     if final_url and final_url != url:
         try:
-            _check_url_policy(final_url, config.security)
+            await asyncio.to_thread(_check_url_policy, final_url, config.security, resolve=True)
         except URLBlockedError:
             await _emit(
                 "browser.url_blocked",
@@ -170,7 +171,7 @@ async def _history_navigate(method: str, direction: str) -> str:
     current_url = await _get_current_url(cdp)
     if current_url:
         try:
-            _check_url_policy(current_url, config.security)
+            await asyncio.to_thread(_check_url_policy, current_url, config.security, resolve=True)
         except URLBlockedError:
             await _emit("browser.url_blocked", {"url": current_url})
             await cdp.send("Page", "navigate", {"url": "about:blank"})
@@ -554,7 +555,7 @@ async def browser_download_file(url: str) -> str:
     if not cfg.security.allow_downloads:
         raise CapabilityDisabledError("browser_download_file")
     cdp = await _cdp()
-    _check_url_policy(url, cfg.security)
+    await asyncio.to_thread(_check_url_policy, url, cfg.security, resolve=True)
     download_path = cfg.security.download_path
     await cdp.send(
         "Browser",

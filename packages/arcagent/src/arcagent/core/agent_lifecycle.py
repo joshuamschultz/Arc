@@ -3,7 +3,7 @@
 Sibling of ``arcagent.core.agent``. Owns the SPEC-021 capability
 subsystem wiring that runs during ``ArcAgent.startup()``: capability
 registry construction, builtin runtime configuration, per-module
-runtime configuration via signature dispatch, scan-root assembly,
+runtime configuration via explicit typed contracts, scan-root assembly,
 and the bridges that route discovered tools and hooks back into
 the existing ToolRegistry and ModuleBus.
 
@@ -17,9 +17,9 @@ orchestrator file slim.
 from __future__ import annotations
 
 import importlib
-import inspect
 import logging
 import os
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -29,6 +29,14 @@ from arcagent.capabilities.capability_loader import CapabilityLoader
 from arcagent.capabilities.capability_registry import CapabilityRegistry
 from arcagent.core.module_bus import EventContext
 from arcagent.core.module_discovery import active_modules, module_statuses
+from arcagent.core.runtime_dependencies import (
+    DependencyKey,
+    RuntimeBindable,
+    RuntimeBinding,
+    RuntimeDependencies,
+    RuntimeModule,
+    RuntimeModuleSpec,
+)
 from arcagent.core.tool_registry import RegisteredTool, ToolTransport
 from arcagent.tools._egress_build import build_egress_proxy
 
@@ -36,6 +44,61 @@ if TYPE_CHECKING:
     from arcagent.core.agent import ArcAgent
 
 _logger = logging.getLogger("arcagent.agent_lifecycle")
+
+K = DependencyKey
+_COMMON = (K.CONFIG, K.TELEMETRY, K.WORKSPACE)
+_RUNTIME_SPECS: dict[str, RuntimeModuleSpec] = {
+    "browser": RuntimeModuleSpec((*_COMMON, K.BUS)),
+    "connectors": RuntimeModuleSpec(
+        (
+            *_COMMON,
+            K.IDENTITY,
+            K.CONFIG_PATH,
+            K.TOOL_REGISTRY,
+            K.OPERATOR_SIGNER,
+            K.TIER,
+            K.POLICY_PIPELINE,
+            K.HUMAN_GATE,
+        )
+    ),
+    "memory": RuntimeModuleSpec(
+        (*_COMMON, K.BUS, K.AGENT_DID, K.AGENT_NAME, K.IDENTITY, K.POLICY_PIPELINE)
+    ),
+    "messaging": RuntimeModuleSpec(
+        (*_COMMON, K.TEAM_ROOT, K.AGENT_NAME, K.IDENTITY, K.OPERATOR_SIGNER)
+    ),
+    "planning": RuntimeModuleSpec(
+        (*_COMMON, K.LLM_CONFIG, K.EVAL_CONFIG, K.AGENT_NAME, K.AGENT_DID, K.OPERATOR_SIGNER)
+    ),
+    "policy": RuntimeModuleSpec((*_COMMON, K.EVAL_CONFIG, K.LLM_CONFIG, K.AGENT_NAME)),
+    "proactive": RuntimeModuleSpec((*_COMMON, K.AGENT_NAME, K.LLM_CONFIG)),
+    "pulse": RuntimeModuleSpec((*_COMMON, K.LLM_CONFIG, K.AGENT_NAME, K.BUS, K.AGENT_RUN_FN)),
+    "runcontrol": RuntimeModuleSpec((*_COMMON, K.IDENTITY)),
+    "scheduler": RuntimeModuleSpec((*_COMMON, K.BUS, K.AGENT_RUN_FN)),
+    "session": RuntimeModuleSpec(_COMMON),
+    "skills": RuntimeModuleSpec(
+        (
+            *_COMMON,
+            K.EVAL_CONFIG,
+            K.LLM_CONFIG,
+            K.AGENT_NAME,
+            K.AGENT_DID,
+            K.IDENTITY,
+            K.OPERATOR_SIGNER,
+            K.HUMAN_GATE,
+        )
+    ),
+    "tasks": RuntimeModuleSpec((*_COMMON, K.IDENTITY, K.OPERATOR_SIGNER, K.TEAM_ROOT)),
+    "user_profile": RuntimeModuleSpec((*_COMMON, K.AGENT_NAME)),
+    "voice": RuntimeModuleSpec((K.CONFIG, K.TELEMETRY)),
+    "web": RuntimeModuleSpec((*_COMMON, K.AGENT_NAME)),
+    "workflows": RuntimeModuleSpec(
+        (*_COMMON, K.IDENTITY, K.HUMAN_GATE, K.OPERATOR_SIGNER, K.TIER)
+    ),
+    "workpad": RuntimeModuleSpec(
+        (*_COMMON, K.EVAL_CONFIG, K.LLM_CONFIG, K.AGENT_NAME, K.AGENT_DID)
+    ),
+}
 
 
 def _resolve_working_dir(
@@ -82,12 +145,14 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
     if bus is None or tool_registry is None or telemetry is None or identity is None:
         msg = "Capability subsystem requires bus, tool_registry, telemetry, and identity"
         raise RuntimeError(msg)
+    agent._runtime_bindings.clear()
 
     agent._capability_registry = CapabilityRegistry(
         bus=bus,
         audit_sink=None,
         agent_did=identity.did,
         tier=agent._config.security.tier,
+        task_supervisor=agent._background_tasks,
     )
 
     # Configure builtin runtime — workspace + allowed_paths visible
@@ -174,6 +239,7 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
         tofu=posture.tofu,
         require_signature=posture.require_signature,
         trusted_public_key=posture.trusted_public_key,
+        isolation_tier=agent._config.security.tier,
     )
     builtin_runtime.configure(
         workspace=workspace,
@@ -190,7 +256,9 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
     )
     # Task 27 follow-up (hotfix) — this is the FINAL builtin_runtime.configure()
     # call, so its snapshot is the one every turn must rebind.
-    agent._runtime_bindings.append((builtin_runtime.bind, builtin_runtime.snapshot()))
+    agent._runtime_bindings.append(
+        RuntimeBinding("builtins", builtin_runtime.bind, builtin_runtime.snapshot())
+    )
 
     diff = await agent._capability_loader.scan_and_register()
     if diff.errors:
@@ -216,13 +284,7 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
 def configure_module_runtimes(
     agent: ArcAgent, workspace: Path, *, egress_proxy: Any = None
 ) -> None:
-    """Call ``_runtime.configure(...)`` on every enabled module.
-
-    Each module's configure() declares the kwargs it needs; we
-    introspect the signature and pass only matching values.
-    Modules without a ``_runtime`` submodule are silently ignored
-    — they may legitimately have no shared state.
-    """
+    """Configure enabled modules through explicit, typed dependency contracts."""
     identity = agent._identity
     telemetry = agent._telemetry
     tool_registry = agent._tool_registry
@@ -231,75 +293,54 @@ def configure_module_runtimes(
     llm_config = agent._config.llm
     eval_config = agent._config.eval
 
+    dependencies = RuntimeDependencies(
+        workspace=workspace,
+        config_path=agent._config_path,
+        eval_config=eval_config,
+        llm_config=llm_config,
+        telemetry=telemetry,
+        bus=agent._bus,
+        tool_registry=tool_registry,
+        agent_name=agent_name,
+        agent_did=identity.did if identity is not None else "",
+        team_root=team_root,
+        tier=str(agent._config.security.tier),
+        identity=identity,
+        operator_signer=agent._operator_signer,
+        policy_pipeline=agent._policy_pipeline,
+        egress_proxy=egress_proxy,
+        human_gate=agent._human_gate,
+        agent_run_fn=agent.run_collected,
+    )
+
     _warn_config_without_folder(agent)
 
     for mod_name in active_modules(agent._config):
         mod_entry = agent._config.modules[mod_name]
-        runtime_mod = importlib.import_module(f"arcagent.modules.{mod_name}._runtime")
-        configure_fn = getattr(runtime_mod, "configure", None)
-        if configure_fn is None:
-            continue
-
-        # SPEC-053/037 — the resolved operator Signer is offered to EVERY module,
-        # but delivered only by signature: a module receives it iff its
-        # ``configure()`` declares an ``operator_signer`` parameter. Core names no
-        # module; a generic module cannot harvest signing authority unless it
-        # explicitly asks for the parameter (and the WORM-sink modules that do ask
-        # sign by reference under vault_transit — SPEC-037 F1 — never the seed).
-        available: dict[str, Any] = {
-            "config": mod_entry.config,
-            "eval_config": eval_config,
-            "telemetry": telemetry,
-            "workspace": workspace,
-            "llm_config": llm_config,
-            "agent_name": agent_name,
-            "team_root": team_root,
-            "bus": agent._bus,
-            "agent_did": identity.did if identity else "",
-            "identity": identity,
-            # The agent's config file, so a module that owns its own top-level
-            # config table can read it. Offered as the path rather than the
-            # parsed document because core parses only what ArcAgentConfig
-            # models; a module's own table is the module's to read.
-            "config_path": agent._config_path,
-            # The tool registry, so a module that contributes tools at runtime
-            # registers them into the one component that owns the dispatch
-            # envelope — schema validation, signed ToolCall, policy pipeline,
-            # human gate, timeout, audit. A second dispatch path would be a
-            # second envelope, and the one that drifts is the ungoverned one.
-            "tool_registry": tool_registry,
-            # The deployment tier, from the SAME [security] setting the tool
-            # registry and policy pipeline read. A module that gates on tier must
-            # never carry its own copy in module config — two sources of truth
-            # for stringency means one of them is silently wrong.
-            "tier": str(agent._config.security.tier),
-            "policy_pipeline": agent._policy_pipeline,
-            "egress_proxy": egress_proxy,
-            "human_gate": agent._human_gate,
-            "operator_signer": agent._operator_signer,
-            # The agent's own run callback, offered the same way: a module gets
-            # it only by declaring the parameter. The scheduler used to receive
-            # this through an ``agent:ready`` event instead, and a binding that
-            # travels by event can be missed — wrong task, wrong ordering, a
-            # handler that never ran — which is how one agent's reminders sat
-            # due and silent for days. Handed in at configure time, there is
-            # nothing left to miss.
-            "agent_run_fn": agent.run_collected,
-        }
-        sig = inspect.signature(configure_fn)
-        kwargs = {name: value for name, value in available.items() if name in sig.parameters}
+        spec = _RUNTIME_SPECS.get(mod_name)
+        if spec is None:
+            raise RuntimeError(f"Enabled module {mod_name!r} has no runtime dependency contract")
         try:
-            configure_fn(**kwargs)
-        except Exception:  # reason: fail-open — log + continue
-            _logger.exception("Module %s _runtime.configure failed", mod_name)
+            runtime_mod: RuntimeModule = importlib.import_module(
+                f"arcagent.modules.{mod_name}._runtime"
+            )
+            runtime_mod.configure(**spec.kwargs(dependencies, mod_entry.config))
+        except Exception as exc:
+            if not spec.optional:
+                # Chain the cause. ``from None`` here left the only signal as
+                # "configuration failed" with the real error discarded, which
+                # makes a required module's startup failure undiagnosable from
+                # logs alone — the one moment the cause matters most.
+                raise RuntimeError(f"Required module {mod_name!r} configuration failed") from exc
+            _logger.exception("Optional module %s runtime configuration failed", mod_name)
             continue
 
         # Task 27 follow-up (hotfix) — record the built state so every turn
         # can rebind it in whatever asyncio.Task actually dispatches it.
-        bind_fn = getattr(runtime_mod, "bind", None)
-        state_fn = getattr(runtime_mod, "state", None)
-        if bind_fn is not None and state_fn is not None:
-            agent._runtime_bindings.append((bind_fn, state_fn()))
+        if isinstance(runtime_mod, RuntimeBindable):
+            agent._runtime_bindings.append(
+                RuntimeBinding(mod_name, runtime_mod.bind, runtime_mod.state())
+            )
 
 
 def _warn_config_without_folder(agent: ArcAgent) -> None:
@@ -334,8 +375,8 @@ def activate_runtime_bindings(agent: ArcAgent) -> None:
     leaking another agent's state. Cheap and idempotent — each ``bind`` call is
     a dict insert plus a single ``ContextVar.set``.
     """
-    for bind_fn, built_state in agent._runtime_bindings:
-        bind_fn(built_state)
+    for binding in agent._runtime_bindings:
+        binding.activate()
 
 
 async def bridge_capability_tools_to_registry(agent: ArcAgent) -> None:
@@ -349,11 +390,8 @@ async def bridge_capability_tools_to_registry(agent: ArcAgent) -> None:
     tool_registry = agent._tool_registry
     if registry is None or tool_registry is None:
         return
-    async with registry._lock.reader:
-        entries = list(registry._tools.values())
-    for entry in entries:
-        if entry.meta.name in agent._capability_tool_names:
-            continue
+    replacements: list[RegisteredTool] = []
+    for entry in registry.tool_entries():
         registered = RegisteredTool(
             name=entry.meta.name,
             description=entry.meta.description,
@@ -367,8 +405,10 @@ async def bridge_capability_tools_to_registry(agent: ArcAgent) -> None:
             when_to_use=entry.meta.when_to_use,
             signals_completion=entry.meta.signals_completion,
         )
-        tool_registry.register(registered)
-        agent._capability_tool_names.add(entry.meta.name)
+        replacements.append(registered)
+    agent._capability_tool_names = tool_registry.replace_owned(
+        agent._capability_tool_names, replacements
+    )
 
 
 async def bridge_capability_hooks_to_bus(agent: ArcAgent) -> None:
@@ -381,19 +421,12 @@ async def bridge_capability_hooks_to_bus(agent: ArcAgent) -> None:
     bus = agent._bus
     if registry is None or bus is None:
         return
-    async with registry._lock.reader:
-        hook_lists = {evt: list(hooks) for evt, hooks in registry._hooks.items()}
-    for event, hooks in hook_lists.items():
+    replacements: list[tuple[str, Callable[[EventContext], Awaitable[None]], int, str]] = []
+    for event, hooks in registry.hook_entries().items():
         for hook in hooks:
             module_name = f"capability:{hook.meta.name}"
-            if bus.handler_count_by_module(event, module_name) > 0:
-                continue
-            bus.subscribe(
-                event=event,
-                handler=hook.handler,
-                priority=hook.meta.priority,
-                module_name=module_name,
-            )
+            replacements.append((event, hook.handler, hook.meta.priority, module_name))
+    bus.replace_handlers(module_prefix="capability:", handlers=replacements)
 
 
 def setup_capability_prompt_injection(agent: ArcAgent) -> None:
@@ -418,17 +451,18 @@ def setup_capability_prompt_injection(agent: ArcAgent) -> None:
         if prompt_text:
             sections["capabilities"] = prompt_text
             if telemetry is not None:
+                tool_count, skill_count = registry.counts()
                 telemetry.audit_event(
                     "prompt.capabilities_manifest_rebuilt",
                     {
-                        "tool_count": len(registry._tools),
-                        "skill_count": len(registry._skills),
+                        "tool_count": tool_count,
+                        "skill_count": skill_count,
                     },
                 )
 
     async def _inject_skill_usage(ctx: EventContext) -> None:
         sections = ctx.data.get("sections")
-        if not isinstance(sections, dict) or not registry._skills:
+        if not isinstance(sections, dict) or not registry.has_skills():
             return
         sections["skill_usage"] = load_stock("arcagent", "skill_usage_instruction")
 

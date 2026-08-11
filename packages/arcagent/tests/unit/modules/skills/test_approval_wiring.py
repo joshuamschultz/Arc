@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
 import pytest
 
@@ -91,8 +90,7 @@ async def test_arc_built_call_carries_the_deployments_pii_policy() -> None:
     point is ours.
     """
     gate = _Gate(object())
-    with patch("arcllm.registry._resolve_module_config", return_value={"pii_enabled": True}):
-        provider = build_skill_approval_provider(gate, "did:arc:agent")
+    provider = build_skill_approval_provider(gate, "did:arc:agent")
     await provider("retire", "s", "reported by victim@example.com")
 
     arguments = gate.calls[0][2]
@@ -104,8 +102,7 @@ async def test_arc_built_call_carries_the_deployments_pii_policy() -> None:
 async def test_arc_built_call_is_untouched_when_the_deployment_disables_pii() -> None:
     """The tier decides, not this module — the mirror of the D-572 deletion."""
     gate = _Gate(object())
-    with patch("arcllm.registry._resolve_module_config", return_value={"pii_enabled": False}):
-        provider = build_skill_approval_provider(gate, "did:arc:agent")
+    provider = build_skill_approval_provider(gate, "did:arc:agent", redactor=lambda text: text)
     await provider("retire", "s", "reported by victim@example.com")
 
     assert gate.calls[0][2]["detail"] == "reported by victim@example.com"

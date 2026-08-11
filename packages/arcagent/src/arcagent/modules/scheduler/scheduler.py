@@ -20,6 +20,7 @@ from arcagent.core.telemetry import AgentTelemetry
 from arcagent.modules.scheduler.config import SchedulerConfig
 from arcagent.modules.scheduler.models import ScheduleEntry
 from arcagent.modules.scheduler.store import ScheduleStore
+from arcagent.utils.periodic import FailurePolicy, PeriodicRunner
 
 if TYPE_CHECKING:
     from arcagent.core.module_bus import ModuleBus
@@ -69,6 +70,7 @@ class SchedulerEngine:
         self._fire_and_forget: set[asyncio.Task[Any]] = set()
         self._timer_task: asyncio.Task[None] | None = None
         self._running = False
+        self._poller = PeriodicRunner()
         self._timer_consecutive_errors = 0
         self._unready_ticks = 0
         # Which agent this engine belongs to. A fleet runs one engine per
@@ -106,6 +108,7 @@ class SchedulerEngine:
     async def start(self) -> None:
         """Start the one loop this engine has."""
         self._running = True
+        self._poller.reset()
         self._timer_task = asyncio.create_task(self._timer_loop())
         _logger.info("Scheduler engine started")
 
@@ -113,6 +116,7 @@ class SchedulerEngine:
         """Stop the loop. Nothing to drain — a firing runs inline."""
         del timeout
         self._running = False
+        self._poller.stop()
         if self._timer_task is not None:
             self._timer_task.cancel()
             try:
@@ -433,26 +437,26 @@ class SchedulerEngine:
         so a callback bound late, early, or from another task all work.
         """
         interval = self._tick_seconds or self._config.check_interval_seconds
-        while self._running:
-            try:
-                await self._tick()
-                self._timer_consecutive_errors = 0
-            except asyncio.CancelledError:
-                raise
-            except Exception:  # reason: one bad tick must not stop the engine
-                self._timer_consecutive_errors += 1
-                _logger.exception(
-                    "Error in scheduler tick (consecutive: %d)",
-                    self._timer_consecutive_errors,
-                )
-                if self._timer_consecutive_errors >= 5:
-                    _logger.critical(
-                        "Scheduler stopping after %d consecutive tick errors",
-                        self._timer_consecutive_errors,
-                    )
-                    self._running = False
-                    return
-            await asyncio.sleep(interval)
+
+        async def tick() -> None:
+            await self._tick()
+            self._timer_consecutive_errors = 0
+
+        def on_error(exc: BaseException, failures: int) -> None:
+            self._timer_consecutive_errors = failures
+            _logger.error("Error in scheduler tick (consecutive: %d): %s", failures, exc)
+            if failures >= 5:
+                _logger.critical("Scheduler stopping after %d consecutive tick errors", failures)
+
+        try:
+            await self._poller.run(
+                tick,
+                interval=interval,
+                failure=FailurePolicy(max_consecutive=5),
+                on_error=on_error,
+            )
+        finally:
+            self._running = False
 
     async def _tick(self) -> None:
         """Run every schedule that is due, sequentially."""

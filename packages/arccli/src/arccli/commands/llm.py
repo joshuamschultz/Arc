@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import arcllm
+
 from arccli.commands._shared import dispatch
 from arccli.commands._shared import print_json as _print_json
 from arccli.commands._shared import print_kv as _print_kv
@@ -20,8 +22,6 @@ from arccli.commands._shared import write as _write
 
 def _get_providers_dir() -> Path:
     """Return the providers/ directory inside the arcllm package."""
-    import arcllm
-
     return Path(arcllm.__file__).parent / "providers"
 
 
@@ -40,8 +40,6 @@ def _list_provider_names() -> list[str]:
 
 def _version(args: argparse.Namespace) -> None:
     """Show version information."""
-    import arcllm
-
     import arccli
 
     data = {
@@ -57,9 +55,7 @@ def _version(args: argparse.Namespace) -> None:
 
 def _config(args: argparse.Namespace) -> None:
     """Show global ArcLLM configuration."""
-    from arcllm.config import load_global_config
-
-    cfg = load_global_config()
+    cfg = arcllm.load_global_config()
     module_name: str | None = getattr(args, "module", None)
     as_json: bool = getattr(args, "as_json", False)
 
@@ -100,14 +96,12 @@ def _config(args: argparse.Namespace) -> None:
 
 def _providers(args: argparse.Namespace) -> None:
     """List all available providers."""
-    from arcllm.config import load_provider_config
-
     as_json: bool = getattr(args, "as_json", False)
     names = _list_provider_names()
     rows = []
     for name in names:
         try:
-            cfg = load_provider_config(name)
+            cfg = arcllm.load_provider_config(name)
             rows.append(
                 {
                     "name": name,
@@ -135,15 +129,12 @@ def _providers(args: argparse.Namespace) -> None:
 
 def _provider(args: argparse.Namespace) -> None:
     """Show provider details and models."""
-    from arcllm.config import load_provider_config
-    from arcllm.exceptions import ArcLLMConfigError
-
     name: str = args.name
     as_json: bool = getattr(args, "as_json", False)
 
     try:
-        cfg = load_provider_config(name)
-    except ArcLLMConfigError:
+        cfg = arcllm.load_provider_config(name)
+    except arcllm.ArcLLMConfigError:
         sys.stderr.write(
             f"Error: Provider '{name}' not found. Run `arc llm providers` to see available.\n"
         )
@@ -190,8 +181,6 @@ def _provider(args: argparse.Namespace) -> None:
 
 def _models(args: argparse.Namespace) -> None:
     """List all models across providers."""
-    from arcllm.config import load_provider_config
-
     provider_filter: str | None = getattr(args, "provider_filter", None)
     tools_only: bool = getattr(args, "tools", False)
     vision_only: bool = getattr(args, "vision", False)
@@ -204,7 +193,7 @@ def _models(args: argparse.Namespace) -> None:
     rows = []
     for name in names:
         try:
-            cfg = load_provider_config(name)
+            cfg = arcllm.load_provider_config(name)
         except Exception:  # noqa: S112 — skip providers that fail to load (match legacy behavior)
             continue
         for model_name, meta in cfg.models.items():
@@ -248,13 +237,11 @@ def _validate(args: argparse.Namespace) -> None:
     """Validate configs and API key availability."""
     import os
 
-    from arcllm.config import load_global_config, load_provider_config
-
     provider_filter: str | None = getattr(args, "provider_filter", None)
     as_json: bool = getattr(args, "as_json", False)
 
     try:
-        load_global_config()
+        arcllm.load_global_config()
         global_ok = True
         global_error = ""
     except Exception as e:  # reason: fail-open — continue
@@ -274,7 +261,7 @@ def _validate(args: argparse.Namespace) -> None:
             "error": "",
         }
         try:
-            cfg = load_provider_config(name)
+            cfg = arcllm.load_provider_config(name)
             entry["config_valid"] = True
             env_var = cfg.provider.api_key_env
             entry["api_key_env"] = env_var
@@ -310,9 +297,6 @@ def _prompt(args: argparse.Namespace) -> None:
     """Send a single-turn prompt to a provider and print the response."""
     import asyncio
 
-    from arcllm import Message, TextBlock, load_model
-    from arcllm.config import load_global_config
-
     text: str = args.text
     if text == "-":
         text = sys.stdin.read()
@@ -320,7 +304,7 @@ def _prompt(args: argparse.Namespace) -> None:
         sys.stderr.write("arc llm prompt: empty prompt\n")
         sys.exit(2)
 
-    provider: str = args.provider or load_global_config().defaults.provider
+    provider: str = args.provider or arcllm.load_global_config().defaults.provider
     model_id: str | None = args.model
     system: str | None = args.system
     as_json: bool = getattr(args, "as_json", False)
@@ -331,17 +315,17 @@ def _prompt(args: argparse.Namespace) -> None:
     if args.max_tokens is not None:
         invoke_kwargs["max_tokens"] = args.max_tokens
 
-    messages: list[Message] = []
+    messages: list[arcllm.Message] = []
     if system:
-        messages.append(Message(role="system", content=[TextBlock(text=system)]))
-    messages.append(Message(role="user", content=[TextBlock(text=text)]))
+        messages.append(arcllm.Message(role="system", content=[arcllm.TextBlock(text=system)]))
+    messages.append(arcllm.Message(role="user", content=[arcllm.TextBlock(text=text)]))
 
     load_kwargs: dict[str, Any] = {}
     if args.security is not None:
         load_kwargs["security"] = args.security
 
     async def _run() -> Any:
-        model = load_model(provider, model_id, **load_kwargs)
+        model = arcllm.load_model(provider, model_id, **load_kwargs)
         try:
             return await model.invoke(messages, **invoke_kwargs)
         finally:

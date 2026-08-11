@@ -135,7 +135,7 @@ class EventBus:
         # When set, loop-lifecycle events are mirrored to the arcstore spool
         # under this DID (SPEC-026 FR-4). None disables operational recording.
         self._spool_actor_did = spool_actor_did
-        # Raw-capture posture flows in from the caller (arcagent/arccli), never
+        # Raw-capture posture flows in from the caller, never
         # read from config here — arcrun stays config-free (SPEC-028 NFR-4).
         self.store_raw_bodies = store_raw_bodies
         # Probabilistic thinning of high-frequency tool_events only; lifecycle
@@ -290,7 +290,7 @@ class EventBus:
     def spool_actor_did(self) -> str | None:
         """The DID this run spools under (None when operational recording is off).
 
-        Read-only accessor so a layer above (arcagent spawn) can derive lineage
+        Read-only accessor so a layer above can derive lineage
         without reaching into a private attribute.
         """
         return self._spool_actor_did

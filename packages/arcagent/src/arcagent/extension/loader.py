@@ -178,7 +178,7 @@ class ExtensionLoader:
         self._catalog.resolve(name)  # official-upstream verdict, audited by the catalog
         manifest = self._read_manifest(bundle, name)
         self._refuse_forbidden_egress(manifest, name)
-        roots = await self._register_capabilities(bundle, name)
+        roots = await self._register_capabilities(bundle, name, manifest)
         self._audit("extension.loaded", name, "allow", reason="verified")
         return LoadedExtension(
             name=name,
@@ -246,7 +246,9 @@ class ExtensionLoader:
         if refusal is not None:
             self._refuse(name, reason="egress_forbidden", message=refusal.message)
 
-    async def _register_capabilities(self, bundle: Path, name: str) -> tuple[str, ...]:
+    async def _register_capabilities(
+        self, bundle: Path, name: str, manifest: ExtensionManifest
+    ) -> tuple[str, ...]:
         """Register the bundle's skills and tools through untrusted extension roots.
 
         The bundle's implementation and dependencies are not touched: only ``.py``
@@ -255,6 +257,15 @@ class ExtensionLoader:
         """
         roots: list[ScanRoot] = []
         append_capability_scan_roots(roots, f"{EXTENSION_ROOT_PREFIX}{name}", bundle)
+        attachment_config = manifest.config.get(manifest.extension.attachment, {})
+        entrypoint = (
+            attachment_config.get("entrypoint") if isinstance(attachment_config, dict) else None
+        )
+        ignored_paths = frozenset(
+            {bundle / f"{entrypoint.split('.', 1)[0]}.py"}
+            if isinstance(entrypoint, str) and entrypoint
+            else set()
+        )
         loader = CapabilityLoader(
             scan_roots=roots,
             registry=self._registry,
@@ -263,6 +274,8 @@ class ExtensionLoader:
             ),
             require_signature=self._tier is not Tier.PERSONAL,
             trusted_public_key=self._trusted_public_key,
+            isolation_tier=self._tier.value,
+            ignored_python_paths=ignored_paths,
         )
         delta = await loader.scan_and_register()
         if delta.errors:

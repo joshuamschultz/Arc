@@ -281,6 +281,24 @@ class TestSpawnAutoIdentity:
 
 class TestSpawnManyFailFastBudget:
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("limit", [0, -1])
+    async def test_rejects_non_positive_concurrency(self, limit: int) -> None:
+        with pytest.raises(ValueError, match="max_concurrent"):
+            await spawn_many(
+                [
+                    SpawnSpec(
+                        task="task",
+                        tools=[ECHO_TOOL],
+                        system_prompt="sys",
+                        parent_state=_make_state(depth=0, max_depth=3),
+                        child_did=_identity(99).did,
+                        child_sk_bytes=_identity(99).sk_bytes,
+                    )
+                ],
+                max_concurrent=limit,
+            )
+
+    @pytest.mark.asyncio
     async def test_fail_fast_on_budget_exhaustion_sets_cancelled(self) -> None:
         """fail_fast=True with budget exhaustion cancels subsequent specs."""
         budget = RootTokenBudget(50)  # Only fits one child at 50 tokens
@@ -367,3 +385,15 @@ class TestTokenUsageDefaults:
         assert t.input == 0
         assert t.output == 0
         assert t.total == 0
+
+
+class TestRootBudgetSettlement:
+    @pytest.mark.asyncio
+    async def test_settle_refunds_unused_reservation(self) -> None:
+        budget = RootTokenBudget(100)
+        assert await budget.try_debit(80)
+
+        await budget.settle(80, 12)
+
+        assert budget.used == 12
+        assert budget.remaining == 88

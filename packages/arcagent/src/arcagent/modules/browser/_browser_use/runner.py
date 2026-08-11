@@ -12,7 +12,7 @@ from __future__ import annotations
 # browser_use is imported at module top ON PURPOSE: importing this module is
 # what fails when the optional extra is absent, so browser_task's caller
 # catches that ImportError and degrades loudly. Do not defer these imports.
-from arcllm import load_model
+import arcrun
 from browser_use import Agent
 from browser_use.browser import BrowserProfile, BrowserSession
 
@@ -22,7 +22,7 @@ from arcagent.modules.browser.config import BrowserUseConfig
 
 async def run_browser_task(goal: str, cfg: BrowserUseConfig) -> str:
     """Run a browser-use agent to accomplish ``goal``; return its result."""
-    provider = load_model(cfg.llm_provider, cfg.llm_model or None)
+    provider = arcrun.load_model(cfg.llm_provider, cfg.llm_model or None)
     llm = ArcLLMChatModel(provider, model=provider.model_name)
 
     session = None

@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from arcllm.types import Message
+import arcrun
 from arcprompt import load_stock
 
 from arcagent.core.config import ContextConfig, SessionConfig
@@ -34,6 +34,84 @@ if TYPE_CHECKING:
     from arcagent.core.session_internal.context import ContextManager
 
 _logger = logging.getLogger("arcagent.session_manager")
+_MAX_REPLAY_FILE_BYTES = 64 * 1024 * 1024
+_MAX_REPLAY_LINE_BYTES = 2 * 1024 * 1024
+_MAX_REPLAY_RECORDS = 100_000
+
+
+def _load_session_records(
+    path: Path, session_id: str
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """Synchronously stream and validate one bounded session journal."""
+    size = path.stat().st_size
+    if size > _MAX_REPLAY_FILE_BYTES:
+        raise ValueError(f"session file exceeds {_MAX_REPLAY_FILE_BYTES} bytes")
+
+    messages: list[dict[str, Any]] = []
+    checkpoint: dict[str, Any] | None = None
+    with open(path, "rb") as stream:
+        for line_num, raw_line in enumerate(stream, 1):
+            if line_num > _MAX_REPLAY_RECORDS:
+                raise ValueError(f"session exceeds {_MAX_REPLAY_RECORDS} records")
+            if len(raw_line) > _MAX_REPLAY_LINE_BYTES:
+                raise ValueError(f"session line {line_num} exceeds size limit")
+            if not raw_line.endswith(b"\n"):
+                _logger.warning("Ignoring incomplete JSONL tail in session %s", session_id)
+                break
+            try:
+                entry = json.loads(raw_line)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                _logger.warning(
+                    "Skipping malformed JSONL line %d in session %s", line_num, session_id
+                )
+                continue
+            if not isinstance(entry, dict):
+                _logger.warning(
+                    "Skipping non-object JSONL line %d in session %s", line_num, session_id
+                )
+                continue
+            if entry.get("type") == "checkpoint":
+                checkpoint = entry
+                continue
+            if entry.get("type") == "compaction_boundary":
+                baseline = entry.get("messages")
+                if not isinstance(baseline, list):
+                    _logger.warning("Skipping invalid compaction boundary in %s", session_id)
+                    continue
+                validated: list[dict[str, Any]] = []
+                for message in baseline:
+                    if not isinstance(message, dict):
+                        validated = []
+                        break
+                    try:
+                        arcrun.Message.model_validate(
+                            {"role": message.get("role"), "content": message.get("content")}
+                        )
+                    except Exception:
+                        validated = []
+                        break
+                    validated.append(message)
+                if validated:
+                    messages = validated
+                else:
+                    _logger.warning("Skipping invalid compaction baseline in %s", session_id)
+                continue
+            if entry.get("type") not in {"message", "compaction_summary"}:
+                _logger.warning(
+                    "Skipping unknown session record at line %d in %s", line_num, session_id
+                )
+                continue
+            try:
+                arcrun.Message.model_validate(
+                    {"role": entry.get("role"), "content": entry.get("content")}
+                )
+            except Exception:
+                _logger.warning(
+                    "Skipping invalid message at line %d in session %s", line_num, session_id
+                )
+                continue
+            messages.append(entry)
+    return messages, checkpoint
 
 
 class SessionManager:
@@ -61,6 +139,7 @@ class SessionManager:
         # only). Kept out of the message list so it never re-enters the model
         # transcript; a resume rebuilds RunState from it + the transcript.
         self._last_checkpoint: dict[str, Any] | None = None
+        self._revision = 0
 
     @property
     def session_id(self) -> str:
@@ -143,29 +222,9 @@ class SessionManager:
             _logger.warning("Session file not found: %s", self._jsonl_path)
             return []
 
-        content = self._jsonl_path.read_text(encoding="utf-8").strip()
-        if not content:
-            return []
-
-        for line_num, line in enumerate(content.split("\n"), 1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                entry = json.loads(line)
-                # Checkpoint records are loop metadata, not conversation — keep
-                # them out of the transcript (they are not valid Messages) and
-                # retain only the latest for a possible resume (REQ-003/005).
-                if entry.get("type") == "checkpoint":
-                    self._last_checkpoint = entry
-                    continue
-                self._messages.append(entry)
-            except json.JSONDecodeError:
-                _logger.warning(
-                    "Skipping malformed JSONL line %d in session %s",
-                    line_num,
-                    session_id,
-                )
+        self._messages, self._last_checkpoint = await asyncio.to_thread(
+            _load_session_records, self._jsonl_path, session_id
+        )
 
         _logger.info(
             "Resumed session %s with %d messages",
@@ -207,6 +266,7 @@ class SessionManager:
 
         async with self._lock:
             self._messages.append(entry)
+            self._revision += 1
             if self._jsonl_path is not None:
                 with open(self._jsonl_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(entry) + "\n")
@@ -270,61 +330,79 @@ class SessionManager:
         message baseline; ``context.md`` is NOT touched here (the workpad module
         owns it — separation of concerns).
 
-        Lock covers the whole operation to prevent concurrent compaction from
-        corrupting message state (M-06).
+        The message snapshot is taken under the lock, model work happens outside
+        it, and a revision compare-and-swap prevents a stale summary from
+        overwriting concurrent appends.
         """
         async with self._lock:
             if len(self._messages) < 4:
                 return  # Not enough messages to compact
-
+            snapshot = list(self._messages)
+            snapshot_revision = self._revision
             messages_before = len(self._messages)
-            to_summarize, to_keep = self._split_for_compaction()
+            to_summarize, to_keep = self._split_for_compaction(snapshot)
 
-            try:
-                summary_text = await self._summarize_messages(to_summarize, model)
-            except TimeoutError:
-                # Best-effort compaction: a hung summarizer must not wedge the
-                # turn. Skip this cycle (messages untouched) and record it.
-                _logger.warning(
-                    "Compaction summarizer timed out after %.1fs; skipping for session %s",
-                    self._config.compaction_timeout_seconds,
-                    self._session_id,
+        try:
+            summary_text = await self._summarize_messages(to_summarize, model)
+        except TimeoutError:
+            _logger.warning(
+                "Compaction summarizer timed out after %.1fs; skipping for session %s",
+                self._config.compaction_timeout_seconds,
+                self._session_id,
+            )
+            if self._telemetry is not None:
+                self._telemetry.audit_event(
+                    "context.compaction_skipped",
+                    {"session_id": self._session_id, "reason": "summarizer_timeout"},
                 )
-                if self._telemetry is not None:
-                    self._telemetry.audit_event(
-                        "context.compaction_skipped",
-                        {"session_id": self._session_id, "reason": "summarizer_timeout"},
-                    )
-                return
+            return
 
-            # Observation masking on the kept window: keep tool-call metadata,
-            # replace stale output bodies with placeholders. Persisted below so
-            # it is not re-derived (and cache-busted) every subsequent turn.
-            if self._context_manager is not None:
-                protected = int(self._context_config.max_tokens * 0.20)
-                to_keep = self._context_manager.prune_observations(
-                    to_keep, protected_recent_tokens=protected
-                )
+        if self._context_manager is not None:
+            protected = int(self._context_config.max_tokens * 0.20)
+            to_keep = self._context_manager.prune_observations(
+                to_keep, protected_recent_tokens=protected
+            )
 
             # role/content make the entry render as a normal prefix message on
             # reassembly (agent_dispatch builds history via Message(**record));
             # `type` + counts are metadata (pydantic ignores extra keys). The
             # summary is sanitized before it re-enters context, mirroring the
             # context.md flush (ASI-06 — no injection laundering into the baseline).
-            safe_summary = self._sanitize_context_output(summary_text)
-            summary_entry: dict[str, Any] = {
-                "type": "compaction_summary",
-                "role": "user",
-                "content": f"[Summary of {len(to_summarize)} earlier messages]\n{safe_summary}",
-                "summarized_count": len(to_summarize),
-                "timestamp": datetime.now(UTC).isoformat(),
-            }
+        safe_summary = self._sanitize_context_output(summary_text)
+        summary_entry: dict[str, Any] = {
+            "type": "compaction_summary",
+            "role": "user",
+            "content": f"[Summary of {len(to_summarize)} earlier messages]\n{safe_summary}",
+            "summarized_count": len(to_summarize),
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+        baseline = [summary_entry, *to_keep]
+
+        async with self._lock:
+            if self._revision != snapshot_revision:
+                if self._telemetry is not None:
+                    self._telemetry.audit_event(
+                        "context.compaction_skipped",
+                        {"session_id": self._session_id, "reason": "concurrent_append"},
+                    )
+                return
             self._messages = [summary_entry, *to_keep]
+            self._revision += 1
             messages_after = len(self._messages)
 
             if self._jsonl_path is not None:
                 with open(self._jsonl_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(summary_entry) + "\n")
+                    f.write(
+                        json.dumps(
+                            {
+                                "type": "compaction_boundary",
+                                "messages": baseline,
+                                "timestamp": datetime.now(UTC).isoformat(),
+                            }
+                        )
+                        + "\n"
+                    )
 
             if self._telemetry is not None:
                 self._telemetry.audit_event(
@@ -344,16 +422,19 @@ class SessionManager:
             len(to_keep),
         )
 
-    def _split_for_compaction(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    def _split_for_compaction(
+        self, messages: list[dict[str, Any]] | None = None
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """Deep token-based split, delegating token math to the context manager.
 
         Falls back to a 30/70 count split when no context manager is wired
         (test-only construction; production always injects one).
         """
         if self._context_manager is not None:
-            return self._context_manager.compaction_split(self._messages)
-        split_idx = max(1, len(self._messages) * 30 // 100)
-        return self._messages[:split_idx], self._messages[split_idx:]
+            return self._context_manager.compaction_split(messages or self._messages)
+        source = messages or self._messages
+        split_idx = max(1, len(source) * 30 // 100)
+        return source[:split_idx], source[split_idx:]
 
     @staticmethod
     def _sanitize_context_output(text: str) -> str:
@@ -375,7 +456,7 @@ class SessionManager:
 
         try:
             response = await asyncio.wait_for(
-                model.invoke([Message(role="user", content=summary_template + msg_text)]),
+                model.invoke([arcrun.Message(role="user", content=summary_template + msg_text)]),
                 timeout=self._config.compaction_timeout_seconds,
             )
             summary: str = response.content or ""

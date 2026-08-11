@@ -41,6 +41,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from arcagent.modules.session.store import read_messages_from_offset
+from arcagent.utils.periodic import PeriodicRunner
 
 _logger = logging.getLogger("arcagent.modules.session.index")
 
@@ -125,7 +126,7 @@ class SessionIndex:
         self._sessions_dir = sessions_dir
         self._poll_interval = poll_interval
         self._task: asyncio.Task[None] | None = None
-        self._stop_event = asyncio.Event()
+        self._poller = PeriodicRunner()
         self._started = False
 
     # ------------------------------------------------------------------
@@ -135,7 +136,7 @@ class SessionIndex:
     async def start(self) -> None:
         """Ensure schema exists, start background poll loop."""
         await asyncio.to_thread(self._init_schema)
-        self._stop_event.clear()
+        self._poller.reset()
         self._started = True
         # Use asyncio.create_task() directly (replaces deprecated
         # asyncio.get_event_loop() plus .create_task() is the deprecated form.
@@ -149,7 +150,7 @@ class SessionIndex:
 
     async def stop(self) -> None:
         """Signal the poll loop to stop and wait for it to finish."""
-        self._stop_event.set()
+        self._poller.stop()
         if self._task is not None and not self._task.done():
             self._task.cancel()
             try:
@@ -172,22 +173,22 @@ class SessionIndex:
 
     async def _poll_loop(self) -> None:
         """Poll JSONL files every poll_interval seconds until stopped."""
-        while not self._stop_event.is_set():
-            try:
-                await asyncio.wait_for(
-                    asyncio.shield(self._stop_event.wait()),
-                    timeout=self._poll_interval,
-                )
-                break
-            except TimeoutError:
-                pass
-            except asyncio.CancelledError:
-                break
 
+        def on_error(exc: BaseException, _failures: int) -> None:
+            _logger.error("SessionIndex._scan_once raised unexpectedly: %s", exc)
+
+        async def scan() -> None:
             try:
                 await asyncio.to_thread(self._scan_once)
-            except Exception:  # reason: fail-open — log + continue
-                _logger.exception("SessionIndex._scan_once raised unexpectedly")
+            except asyncio.CancelledError:
+                raise
+
+        await self._poller.run(
+            scan,
+            interval=self._poll_interval,
+            immediate=False,
+            on_error=on_error,
+        )
 
     # ------------------------------------------------------------------
     # Schema initialisation
@@ -226,14 +227,7 @@ class SessionIndex:
 
         entries, new_offset = read_messages_from_offset(path, start_offset)
 
-        if row is None:
-            conn.execute(
-                "INSERT OR IGNORE INTO sync_state(jsonl_path, offset) VALUES (?, 0)",
-                (path_str,),
-            )
-            conn.commit()
-
-        if not entries:
+        if new_offset == start_offset:
             return
 
         session_id = path.stem
@@ -243,9 +237,6 @@ class SessionIndex:
             for entry in entries
             if (r := _entry_to_row(session_id, path_str, start_offset, entry)) is not None
         ]
-
-        if not rows:
-            return
 
         with conn:
             for i in range(0, len(rows), _INSERT_BATCH_SIZE):

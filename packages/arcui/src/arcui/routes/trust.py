@@ -25,6 +25,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import arcagent
 from arctrust import OperatorKey, default_operator_key_path
 from arctrust import approve as _approve_pin
 from arctrust import disapprove as _disapprove_pin
@@ -76,15 +77,13 @@ def _operator_did() -> str:
 
 async def list_gated(request: Request) -> JSONResponse:
     """GET /api/trust/gated — gated capabilities across the server's agents."""
-    from arcagent.capabilities.inventory import list_gated as _list_gated
-
     provider = getattr(request.app.state, "roster_provider", None)
     entries = provider() if provider is not None else []
     gated: list[dict[str, Any]] = []
     for entry in entries:
         agent_root = Path(entry.workspace_path)
         try:
-            items = await _list_gated(
+            items = await arcagent.list_gated(
                 agent_root, agent_id=entry.agent_id, agent_label=entry.display_name
             )
         except Exception:  # reason: fleet resilience — one bad agent never sinks the list
@@ -113,14 +112,6 @@ async def _read_body(request: Request) -> tuple[str, str] | JSONResponse:
 
 async def approve(request: Request) -> JSONResponse:
     """POST /api/trust/approve — pin a gated capability's source hash (operator)."""
-    from arcagent.capabilities.inventory import (
-        list_gated as _list_gated,
-    )
-    from arcagent.capabilities.inventory import (
-        pin_name_for,
-        read_capability_source,
-    )
-
     parsed = await _read_body(request)
     if isinstance(parsed, JSONResponse):
         return parsed
@@ -156,7 +147,7 @@ async def approve(request: Request) -> JSONResponse:
         return _error(f"operator_key_unavailable: {type(exc).__name__}", 500)
 
     # Discover the gated capability (arcagent), pin its hash (arctrust), re-scan.
-    gated = await _list_gated(agent_root, agent_id=agent_id, agent_label=label)
+    gated = await arcagent.list_gated(agent_root, agent_id=agent_id, agent_label=label)
     item = next((entry for entry in gated if entry.name == name), None)
     if item is None:
         detail = f"no gated capability named {name!r} for this agent"
@@ -164,7 +155,7 @@ async def approve(request: Request) -> JSONResponse:
             request, target=target, operation="trust.approve", outcome="denied", detail=detail
         )
         return _error(detail, 404)
-    source = read_capability_source(Path(item.path))
+    source = arcagent.read_capability_source(Path(item.path))
     if source is None:
         detail = f"cannot read capability source at {item.path}"
         emit_mutation_audit(
@@ -174,12 +165,12 @@ async def approve(request: Request) -> JSONResponse:
 
     _approve_pin(
         agent_root / "arcagent.toml",
-        name=pin_name_for(item),
+        name=arcagent.pin_name_for(item),
         source=source,
         approver=approver,
         timestamp=_now(),
     )
-    after = await _list_gated(
+    after = await arcagent.list_gated(
         agent_root, agent_id=agent_id, agent_label=label, include_loaded=True
     )
     resolved_item = next((entry for entry in after if entry.name == name), item)
@@ -189,9 +180,6 @@ async def approve(request: Request) -> JSONResponse:
 
 async def disapprove(request: Request) -> JSONResponse:
     """POST /api/trust/disapprove — remove a capability's approval pin (operator)."""
-    from arcagent.capabilities.inventory import list_gated as _list_gated
-    from arcagent.capabilities.inventory import pin_name_for
-
     parsed = await _read_body(request)
     if isinstance(parsed, JSONResponse):
         return parsed
@@ -215,11 +203,11 @@ async def disapprove(request: Request) -> JSONResponse:
 
     # Resolve the loader's pin name from the inventory when present; else treat
     # the given name as the pin name directly (clears a pin for a deleted artifact).
-    inventory = await _list_gated(
+    inventory = await arcagent.list_gated(
         agent_root, agent_id=agent_id, agent_label=label, include_loaded=True
     )
     item = next((entry for entry in inventory if entry.name == name), None)
-    pin_name = pin_name_for(item) if item is not None else name
+    pin_name = arcagent.pin_name_for(item) if item is not None else name
     _disapprove_pin(agent_root / "arcagent.toml", name=pin_name)
     emit_mutation_audit(request, target=target, operation="trust.disapprove", outcome="applied")
     return JSONResponse({"ok": True})

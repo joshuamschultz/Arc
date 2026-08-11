@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 
-from arcagent.keys import ExtensionError, KeyStore, default_env_file
+import arcagent
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
@@ -38,13 +38,13 @@ from arcui.schemas import (
 logger = logging.getLogger("arcui.routes.keys")
 
 
-def _store(request: Request) -> KeyStore:
+def _store(request: Request) -> arcagent.KeyStore:
     """The one store every surface writes provider keys to.
 
     ``default_env_file()`` is resolved per request rather than at import so an
     ``ARC_CONFIG_DIR`` change (a relocated deployment, a test) is honoured.
     """
-    return KeyStore(default_env_file(), sink=operator_audit_sink(request))
+    return arcagent.KeyStore(arcagent.default_env_file(), sink=operator_audit_sink(request))
 
 
 async def _value_from_body(request: Request) -> str | None:
@@ -64,7 +64,7 @@ async def get_keys(request: Request) -> JSONResponse:
     """
     try:
         statuses = await _store(request).list(caller_did=operator_actor_did(request))
-    except ExtensionError as exc:
+    except arcagent.ExtensionError as exc:
         return _error(exc.message, 400)
 
     return JSONResponse(
@@ -103,7 +103,7 @@ async def put_key(request: Request) -> JSONResponse:
 
     try:
         await _store(request).set(env_var, value, caller_did=operator_actor_did(request))
-    except ExtensionError as exc:
+    except arcagent.ExtensionError as exc:
         emit_mutation_audit(
             request,
             target=f"provider_key:{env_var}",
@@ -136,7 +136,7 @@ async def delete_key(request: Request) -> JSONResponse:
     env_var = request.path_params["env_var"]
     try:
         removed = await _store(request).delete(env_var, caller_did=operator_actor_did(request))
-    except ExtensionError as exc:
+    except arcagent.ExtensionError as exc:
         return _error(exc.message, 400)
 
     emit_mutation_audit(

@@ -25,12 +25,15 @@ import pytest
 from arcagent.modules.web import _runtime, capabilities
 from arcagent.modules.web.errors import URLNotAllowed
 from arcagent.modules.web.protocols import ExtractResult, SearchHit
+from arcagent.utils.url_security import set_url_resolver
 
 
 @pytest.fixture(autouse=True)
 def _reset_runtime() -> Any:
     _runtime.reset()
+    set_url_resolver(lambda _hostname: ("93.184.216.34",))
     yield
+    set_url_resolver(None)
     _runtime.reset()
 
 
