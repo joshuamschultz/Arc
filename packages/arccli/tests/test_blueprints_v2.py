@@ -1,6 +1,6 @@
 """Blueprint v2 loader — sibling config, file-tree prompts/capabilities/skills, schedules, questions.
 
-v2 is additive: the three shipped blueprints keep resolving with empty v2 fields.
+v2 is additive: a blueprint that declares none of it keeps resolving with empty v2 fields.
 A v2 blueprint folder may carry ``[arcllm]``/``[arcrun]`` tables, ``[[schedules]]``
 and ``[[questions]]`` arrays, a ``prompts/<pkg>/<name>.md`` overlay tree, a
 ``capabilities/`` folder, and a ``skills/`` folder. Prompt overlays are validated
@@ -92,11 +92,49 @@ def test_v2_unknown_prompt_overlay_hard_errors(tmp_path: Path) -> None:
         bp.resolve_blueprint(str(bp_dir), tier="personal")
 
 
-def test_existing_blueprints_resolve_with_empty_v2_fields() -> None:
-    r = bp.resolve_blueprint("personal-assistant", tier="personal")
+def test_v1_blueprint_resolves_with_empty_v2_fields(tmp_path: Path) -> None:
+    """Every v2 field is optional: absent means empty, never None and never a crash.
+
+    Pinned to a synthetic v1 folder. This assertion used to ride on the shipped
+    ``personal-assistant`` and broke the moment that blueprint grew the v2 sections it
+    was always meant to have — "whichever shipped blueprint happens to still be simple"
+    is a hostage of blueprint content, not a test of the loader.
+    """
+    bp_dir = tmp_path / "v1-only"
+    bp_dir.mkdir()
+    (bp_dir / "blueprint.toml").write_text(
+        "[blueprint]\n"
+        'name = "v1-only"\n'
+        'version = "1.0.0"\n'
+        'tier = "personal"\n\n'
+        "[modules.memory]\n"
+        "enabled = true\n",
+        encoding="utf-8",
+    )
+    r = bp.resolve_blueprint(str(bp_dir), tier="personal")
+    assert r.overlay["modules"]["memory"]["enabled"] is True  # v1 overlay passes through whole
     assert r.arcllm_overlay == {}
     assert r.arcrun_overlay == {}
     assert r.prompt_overlays == ()
     assert r.schedules == ()
     assert r.questions == ()
     assert r.capabilities_dir is None
+    assert r.skills_dir is None
+
+
+def test_shipped_personal_assistant_v2_sections_leave_the_arcagent_overlay() -> None:
+    """The shipped blueprint's declared v2 tables reach their own fields, not ``overlay``.
+
+    Structural, not value-pinned, so blueprint content can evolve. A declared
+    ``[arcllm]``/``[arcrun]``/``[[schedules]]`` still sitting in ``overlay`` would be
+    written into arcagent.toml and silently never applied — the producers-unwired
+    failure mode, where the config reads correct and does nothing.
+    """
+    r = bp.resolve_blueprint("personal-assistant", tier="personal")
+    assert r.arcllm_overlay["llm"]["model"]
+    assert r.arcllm_overlay["budget"]["max_cost_usd"] > 0
+    assert r.arcrun_overlay["max_turns"] > 0
+    assert r.schedules and all(s["type"] == "cron" and s["expression"] for s in r.schedules)
+    assert r.questions and all({"id", "prompt", "type"} <= set(q) for q in r.questions)
+    for peeled in ("arcllm", "arcrun", "schedules", "questions"):
+        assert peeled not in r.overlay
