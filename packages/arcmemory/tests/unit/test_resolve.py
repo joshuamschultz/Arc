@@ -93,6 +93,9 @@ async def test_resolve_fuzzy_same_type(workspace: Path, db: MemoryDB, scope: Sco
 async def test_resolve_fuzzy_never_crosses_type(
     workspace: Path, db: MemoryDB, scope: Scope
 ) -> None:
+    """No distiller wired: an exact-name cross-type namesake still can't auto-fold —
+    with nothing able to disambiguate it, it stays new (see
+    test_resolve_exact_name_cross_type_asks_disambiguator for the wired case)."""
     store = _store(workspace, db, scope)
     store.write_fact("acme-corp", "hq", "Austin", name="Acme", entity_type="company")
     resolved = await resolve_entity(
@@ -103,6 +106,32 @@ async def test_resolve_fuzzy_never_crosses_type(
         embedder=_NameEmbedder(),
     )
     assert resolved == "acme-person"
+
+
+async def test_resolve_exact_name_cross_type_asks_disambiguator(
+    workspace: Path, db: MemoryDB, scope: Scope
+) -> None:
+    """The real bug: an entity whose type drifted between writes (once "thing", once
+    "skill") is invisible to a same-type-only fuzzy match. An EXACT (case-insensitive)
+    name match now reaches the distiller for a disambiguation call even across types —
+    it's still never auto-folded on name alone (that would wrongly merge a real
+    homograph like Acme-the-company and Acme-the-person), the LLM decides.
+    """
+    store = _store(workspace, db, scope)
+    store.write_fact(
+        "ahrefs-seo-research", "note", "kw workflow", name="Ahrefs SEO Skill", entity_type="thing"
+    )
+    disambiguator = _StubDisambiguator(answer="ahrefs-seo-research")
+    resolved = await resolve_entity(
+        store,
+        slug="ahrefs-seo-skill",
+        name="Ahrefs SEO Skill",
+        entity_type="skill",  # different type — same name must still reach the LLM
+        embedder=_NameEmbedder(),
+        distiller=disambiguator,
+    )
+    assert resolved == "ahrefs-seo-research"
+    assert disambiguator.asked and disambiguator.asked[0][1] == ["ahrefs-seo-research"]
 
 
 class _BandEmbedder:

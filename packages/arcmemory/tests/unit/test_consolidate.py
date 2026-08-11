@@ -568,11 +568,16 @@ async def test_confirmer_keeps_similar_but_different_people(workspace, db, scope
     assert set(store.slugs()) == {"josh-schultz", "joshua-shubbie"}
 
 
-async def test_candidate_clusters_never_cross_type(workspace, db, scope) -> None:
-    """Same name, different type never even becomes a candidate (place is not a person)."""
+async def test_candidate_clusters_cross_type_needs_exact_name(workspace, db, scope) -> None:
+    """Merely-similar names never cross the type boundary (place is not a person) —
+    only an EXACT name match does (see test_cross_type_exact_name_becomes_candidate).
+    Cards here share the "austin" keyword (so the fake embedder would cluster them
+    if type were ignored) but their NAMES differ, so cross-type candidacy must not
+    fire on embedding similarity alone.
+    """
     store = SemanticStore(workspace, WeightedGraph(db), scope=scope.key)
-    store.write_fact("austin-place", "state", "TX", name="Austin", entity_type="place")
-    store.write_fact("austin-person", "role", "eng", name="Austin", entity_type="person")
+    store.write_fact("austin-place", "state", "TX", name="Austin, Texas", entity_type="place")
+    store.write_fact("austin-person", "role", "eng", name="Austin Powers", entity_type="person")
 
     confirmer = RecordingConfirmer()
     consolidator = Consolidator(
@@ -585,8 +590,76 @@ async def test_candidate_clusters_never_cross_type(workspace, db, scope) -> None
         confirmer=confirmer,
     )
     assert await consolidator.merge_entities() == []
-    assert confirmer.groups == []  # cross-type pairs never reach the LLM
+    assert confirmer.groups == []  # similar-but-not-exact cross-type pairs never reach the LLM
     assert set(store.slugs()) == {"austin-place", "austin-person"}
+
+
+async def test_cross_type_exact_name_becomes_candidate_but_confirmer_can_reject(
+    workspace, db, scope
+) -> None:
+    """An EXACT same name across types (a real homograph, e.g. a place AND a person
+    both literally called "Austin") now reaches the confirmer — candidacy alone no
+    longer rules it out. The confirmer, which sees entity_type + facts, is the
+    layer that must keep genuine homographs apart; here it does (RejectingConfirmer),
+    so the fix does not weaken the Austin-place-vs-Austin-person guarantee, it just
+    moves where that guarantee is enforced.
+    """
+    store = SemanticStore(workspace, WeightedGraph(db), scope=scope.key)
+    store.write_fact("austin-place", "state", "TX", name="Austin", entity_type="place")
+    store.write_fact("austin-person", "role", "eng", name="Austin", entity_type="person")
+
+    confirmer = RejectingConfirmer()
+    consolidator = Consolidator(
+        db,
+        workspace,
+        scope,
+        distiller=_distiller(),
+        config=MemoryConfig(),
+        embedder=SubstringEmbedder(),
+        confirmer=confirmer,
+    )
+    assert await consolidator.merge_entities() == []  # confirmer kept them apart
+    assert set(store.slugs()) == {"austin-place", "austin-person"}
+
+
+async def test_cross_type_exact_name_merges_when_confirmed(workspace, db, scope) -> None:
+    """The real bug this fixes: a duplicate whose entity_type drifted between writes
+    (e.g. filed once as "thing", once as "skill") is the SAME real-world card and
+    must be reachable by dedup — cross-type candidacy plus a confirming LLM call
+    is what lets it fold, where same-type-only clustering silently missed it.
+    """
+    store = SemanticStore(workspace, WeightedGraph(db), scope=scope.key)
+    store.write_fact(
+        "ahrefs-seo-research",
+        "note",
+        "keyword research workflow",
+        name="ahrefs-seo-research skill",
+        entity_type="thing",
+    )
+    store.write_fact(
+        "ahrefs-seo-skill",
+        "note",
+        "keyword research workflow",
+        name="ahrefs-seo-research skill",
+        entity_type="skill",
+    )
+
+    confirmer = RecordingConfirmer()  # confirms every candidate group it sees
+    consolidator = Consolidator(
+        db,
+        workspace,
+        scope,
+        distiller=_distiller(),
+        config=MemoryConfig(),
+        embedder=SubstringEmbedder(),
+        confirmer=confirmer,
+    )
+    merges = await consolidator.merge_entities()
+
+    assert set(confirmer.groups[0]) == {"ahrefs-seo-research", "ahrefs-seo-skill"}
+    assert len(merges) == 1
+    survivor_slugs = {"ahrefs-seo-research", "ahrefs-seo-skill"}
+    assert len(set(store.slugs()) & survivor_slugs) == 1  # one folded into the other
 
 
 async def test_no_embedder_emits_loud_dedup_skipped(workspace, db, scope) -> None:

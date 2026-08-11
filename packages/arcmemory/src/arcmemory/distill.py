@@ -271,21 +271,36 @@ async def _fuzzy_entity_match(
     embedder: Embedder,
     config: MemoryConfig,
 ) -> tuple[str | None, list[str]]:
-    """Embedding fuzz over SAME-TYPE cards: a fold match, plus the ambiguous near band.
+    """Embedding fuzz over SAME-TYPE cards, plus an exact-name cross-type namesake.
 
     Returns ``(match, near)`` — ``match`` is the canonical slug at/above the merge
-    threshold (fold now), and ``near`` is the same-type slugs in the disambiguation band
-    ``[entity_disambiguate_min, entity_merge_threshold)`` (worth an LLM call). Both empty
-    when embeddings are unavailable, so the caller degrades cleanly.
+    threshold (fold now; same-type only — an embedding score alone is never enough
+    to auto-fold across types). ``near`` is the disambiguation band, worth an LLM
+    call rather than an auto-fold: same-type slugs scoring in
+    ``[entity_disambiguate_min, entity_merge_threshold)``, PLUS any slug of a
+    DIFFERENT type whose name matches ``name`` exactly (case-insensitive) — the
+    fix for an entity whose type itself drifted between writes (filed once as
+    "thing", once as "skill" for the same real card), which same-type-only
+    scoring can never see since it never compares across types. The exact-name
+    signal needs no embedder, so it is still returned when embeddings are
+    unavailable; ``match`` stays ``None`` in that case so the caller degrades
+    cleanly (no LLM to ask, no auto-fold to fall back to).
     """
+    cross_type_exact = [
+        s
+        for s in store.slugs()
+        if (e := store.read(s))
+        and e.entity_type != entity_type
+        and e.name.strip().lower() == name.strip().lower()
+    ]
     same_type = [
         (s, e) for s in store.slugs() if (e := store.read(s)) and e.entity_type == entity_type
     ]
     if not same_type:
-        return None, []
+        return None, cross_type_exact
     embedded = await embed_or_none(embedder, [name] + [e.name for _, e in same_type])
     if embedded is None:
-        return None, []
+        return None, cross_type_exact
     query, existing = embedded[0], embedded[1:]
     scored = sorted(
         ((slug, _cosine(query, vec)) for (slug, _e), vec in zip(same_type, existing, strict=True)),
@@ -296,7 +311,7 @@ async def _fuzzy_entity_match(
     if best_score >= config.entity_merge_threshold:
         return best_slug, []
     near = [slug for slug, score in scored if score >= config.entity_disambiguate_min]
-    return None, near
+    return None, near + cross_type_exact
 
 
 def confidence_from_hits(hits: float, gamma: float) -> float:

@@ -120,6 +120,7 @@ class Consolidator:
         identity: AgentIdentity | None = None,
         policy_pipeline: PolicyPipeline | None = None,
         react_loop: ReactLoop = run_react_loop,
+        store_raw_bodies: bool = False,
     ) -> None:
         self._db = db
         self._workspace = Path(workspace)
@@ -138,6 +139,7 @@ class Consolidator:
         self._identity = identity
         self._policy = policy_pipeline
         self._react_loop = react_loop
+        self._store_raw_bodies = store_raw_bodies
 
         self._graph = WeightedGraph(db, self._cfg)
         self._semantic = SemanticStore(workspace, self._graph, scope=scope.key)
@@ -267,6 +269,7 @@ class Consolidator:
             config=self._cfg,
             actor_did=actor_did,
             react_loop=self._react_loop,
+            store_raw_bodies=self._store_raw_bodies,
         )
 
     async def _distill_pipeline(
@@ -507,19 +510,27 @@ class Consolidator:
 
         The fix for identity drift, done safely: ``write_fact`` upserts by canonical slug
         only, so the distiller phrasing the same thing differently ("Austin, Texas" /
-        "Austin, TX") minted separate cards. Here each same-type card's NAME is embedded and
-        clustered at the WIDER ``entity_merge_candidate_threshold`` into CANDIDATE groups —
-        *possible* duplicates, never merged on that alone. Each cluster of >= 2 goes to
+        "Austin, TX") minted separate cards. Two independent signals form a CANDIDATE
+        pair — *possible* duplicates, never merged on either alone: (1) same-type cards
+        whose NAME embedding clears the WIDER ``entity_merge_candidate_threshold``, or
+        (2) an EXACT (case-insensitive) name match regardless of type — the fix for an
+        entity whose type itself drifted between writes (filed once as "thing", once as
+        "skill" for the same real card), which (1) alone can never see since it never
+        compares across types. Each cluster of >= 2 goes to
         :meth:`EntityMergeConfirmer.confirm_entity_merges`, one bounded LLM call that
-        conservatively returns the slug sub-groups that are the SAME real-world entity; only
-        those fold, into the richest survivor (most facts, slug tie-break) via
+        conservatively returns the slug sub-groups that are the SAME real-world entity —
+        this is also what keeps a genuine homograph apart (a place and a person both
+        named "Austin" reach the confirmer via signal (2) now, but a confirmer that sees
+        entity_type + facts still correctly declines to merge them; the guarantee moves
+        from "never a candidate" to "never confirmed", it does not weaken). Only
+        confirmed groups fold, into the richest survivor (most facts, slug tie-break) via
         :meth:`SemanticStore.merge_into`, with graph edges repointed. Returns the
         ``(merged_from, merged_into)`` pairs.
 
         LOUD degrade (never a silent ``[]``): with no embedder wired, or candidates found
         but no confirmer wired, it emits a WARNING + a ``memory.dedup_skipped`` audit and
-        merges nothing. A card with no similar same-type neighbor forms no cluster, so no
-        LLM call is spent on it.
+        merges nothing. A card with no similar same-type neighbor AND no exact-name
+        namesake forms no cluster, so no LLM call is spent on it.
         """
         entities = [(s, e) for s in self._semantic.slugs() if (e := self._semantic.read(s))]
         if len(entities) < 2:
@@ -530,13 +541,7 @@ class Consolidator:
             return []
         vectors = {slug: vec for (slug, _), vec in zip(entities, embedded, strict=True)}
 
-        by_type: dict[str, list[tuple[str, Entity]]] = defaultdict(list)
-        for slug, entity in entities:
-            by_type[entity.entity_type].append((slug, entity))
-
-        clusters: list[list[tuple[str, Entity]]] = []
-        for group in by_type.values():
-            clusters += self._candidate_clusters(group, vectors)
+        clusters = self._candidate_clusters(entities, vectors)
         if not clusters:
             return []
         if self._confirmer is None:
@@ -548,16 +553,23 @@ class Consolidator:
         return self._apply_confirmed_merges(confirmed, dict(entities))
 
     def _candidate_clusters(
-        self, group: list[tuple[str, Entity]], vectors: dict[str, list[float]]
+        self, entities: list[tuple[str, Entity]], vectors: dict[str, list[float]]
     ) -> list[list[tuple[str, Entity]]]:
-        """Connected-components clustering of same-type cards by pairwise name-cosine.
+        """Connected-components clustering over ALL cards by two edge signals.
 
-        Two cards share a cluster when their name embeddings clear the wide candidate
-        threshold (a *possible* duplicate). A card with no such neighbor forms no
-        cluster and is dropped, so it never reaches the LLM confirmer.
+        An edge forms between two cards when EITHER: they share a type and their name
+        embeddings clear the wide candidate threshold (a *possible* same-type
+        duplicate); or their names match EXACTLY, case-insensitive, regardless of type
+        (a *possible* type-drifted duplicate — the same real card filed under two
+        different ``entity_type`` values over time). Neither signal merges anything by
+        itself; a cluster of >= 2 is only a candidate for the LLM confirmer, which is
+        what actually decides (and what keeps a real cross-type homograph apart).
+        A card with neither a same-type embedding neighbor nor an exact-name namesake
+        forms no cluster and is dropped, so it never reaches the LLM confirmer.
         """
         threshold = self._cfg.entity_merge_candidate_threshold
-        slugs = [slug for slug, _ in group]
+        slugs = [slug for slug, _ in entities]
+        by_slug = dict(entities)
         parent = {slug: slug for slug in slugs}
 
         def find(node: str) -> str:
@@ -567,11 +579,17 @@ class Consolidator:
             return node
 
         for a, b in combinations(slugs, 2):
-            if _cosine(vectors[a], vectors[b]) >= threshold:
+            entity_a, entity_b = by_slug[a], by_slug[b]
+            exact_name = entity_a.name.strip().lower() == entity_b.name.strip().lower()
+            same_type_near = (
+                entity_a.entity_type == entity_b.entity_type
+                and _cosine(vectors[a], vectors[b]) >= threshold
+            )
+            if exact_name or same_type_near:
                 parent[find(a)] = find(b)
 
         by_root: dict[str, list[tuple[str, Entity]]] = defaultdict(list)
-        for slug, entity in group:
+        for slug, entity in entities:
             by_root[find(slug)].append((slug, entity))
         return [members for members in by_root.values() if len(members) >= 2]
 
