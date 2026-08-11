@@ -66,7 +66,7 @@ test = [
 # Tutorial / help-docs tooling — Jupyter notebook walkthroughs only. NOT part of
 # the harness runtime closure and deliberately excluded from the CI security
 # audit (which scopes to the runtime requirements export). Their transitive CVEs
-# (jupyterlab, jupyter-server, tornado, bleach, msgpack) never ship in Arc.
+# (jupyterlab, jupyter-server, tornado, bleach) never ship in Arc.
 tutorial = [
     "nbformat>=5.10.4",
     "jupyter>=1.1.1",

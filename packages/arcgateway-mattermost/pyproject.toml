@@ -22,7 +22,11 @@ classifiers = [
 dependencies = [
     "arcgateway>=0.2",
     "pydantic>=2.0,<3",
-    "aiohttp>=3.14.1,<4",
+    # 3.14.3 is the security floor: it clears the WebSocket-upgrade request
+    # smuggling and the undeclared-permessage-deflate RSV1 decompress
+    # (PYSEC-2026-3546/3547), both reachable by anything that serves or dials a
+    # WebSocket, plus the C-parser out-of-bounds read (PYSEC-2026-3545).
+    "aiohttp>=3.14.3,<4",
 ]
 
 [project.entry-points."arcgateway.adapters"]

@@ -44,7 +44,7 @@ trace-encryption = [
     # arctrust (arctrust.fips reads the private
     # cryptography.hazmat.backends.openssl.backend._fips_enabled attribute —
     # no public API exists, pyca/cryptography#7722).
-    "cryptography>=46.0.7,<47.0",
+    "cryptography>=50.0.0",
 ]
 injection-semantic = [
     "numpy>=1.26",

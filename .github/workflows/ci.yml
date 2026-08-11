@@ -115,9 +115,10 @@ jobs:
         # Scope the vulnerability gate to what Arc actually ships: every
         # workspace package + product extras (azure/cloud/container),
         # EXCLUDING the dev, test, and tutorial groups. Tutorial/help-docs
-        # tooling (jupyter, jupyterlab, jupyter-server, tornado, bleach,
-        # msgpack) and dev tooling (pip, pip-audit) are not part of the
-        # deployed harness and must not gate every PR on their CVEs.
+        # tooling (jupyter, jupyterlab, jupyter-server, tornado, bleach) and dev
+        # tooling (pip via pip-api, msgpack via cachecontrol, both under
+        # pip-audit) are not part of the deployed harness and must not gate
+        # every PR on their CVEs.
         run: |
           uv export --frozen --no-emit-workspace --no-hashes \
             --all-packages --all-extras --no-default-groups \

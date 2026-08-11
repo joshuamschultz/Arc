@@ -22,7 +22,14 @@ classifiers = [
 dependencies = [
     "pynacl>=1.5,<2",
     "pydantic>=2.0,<3",
-    "cryptography>=46.0.7",
+    # Security floor, not a feature floor: 50.0.0 is the first release clear of
+    # PYSEC-2026-3552/3553/3554 — the last of which is a name-constraint
+    # wildcard escape that makes an invalid certificate chain verify, which the
+    # mTLS and X.509 identity paths must never accept. Deliberately uncapped:
+    # FIPS posture comes from the linked OpenSSL provider (see fips.py), never
+    # from the Python package version, so an upper cap buys no FIPS
+    # compatibility and only blocks the next security fix.
+    "cryptography>=50.0.0",
     "tomlkit>=0.13,<1",
 ]
 

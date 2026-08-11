@@ -10,5 +10,10 @@
 # truthful — auditors read this file as the POA&M of record (NIST 800-53 CA-5).
 #
 # Format:  <VULN_ID>   # <package version> · <why deferred> · <control> · <fix>
-
-GHSA-537c-gmf6-5ccf   # cryptography 46.0.7 · fix is 48.0.1 but Arc deliberately caps cryptography <47.0 for FIPS 140-3 validated OpenSSL provider compatibility (federal mode) · compensating control: the affected code path (PKCS7/SMIME decryption with untrusted attacker-controlled data) is not reachable in Arc — Arc uses cryptography only for Ed25519 signing/verification and X.509 identity, never PKCS7 decryption · intended fix: lift the <47.0 cap once a FIPS-validated build of cryptography >=48.0.1 is available, then remove this suppression.
+#
+# The POA&M is currently EMPTY: the runtime closure has no accepted residual
+# vulnerabilities. An empty file is the goal state, not an oversight — every
+# finding is bumped rather than accepted. Note that a version cap is never a
+# valid reason to accept a residual: FIPS posture comes from the linked OpenSSL
+# provider, not from a Python package version, so capping a package buys no
+# FIPS compatibility and only defers the next security fix.
