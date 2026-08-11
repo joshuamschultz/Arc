@@ -564,13 +564,24 @@ export const useAgentFileRead = (agentId: string, path: string | null) =>
 
 // --- SPEC-028: tool/code timeline, spawn lineage, per-identity cost --------
 
-export const useRuns = () => useApiQuery<RunsResponse>(['runs'], '/api/runs')
+// Polls every 4s: a run's turns/tool_calls/status here are a snapshot, and the
+// timeline drawer for the same run re-fetches fresh on every open — without a
+// matching poll here, the list (and any header stats derived from it) freeze
+// at first-load while the drawer underneath keeps moving, so the two disagree
+// for the entire life of a long-running run.
+export const useRuns = () =>
+  useQuery<RunsResponse>({
+    queryKey: ['runs'],
+    queryFn: ({ signal }) => apiGet<RunsResponse>('/api/runs', signal),
+    refetchInterval: 4000,
+  })
 
 export const useRunTimeline = (runId: string | null) =>
   useQuery<RunTimelineResponse>({
     queryKey: ['run', runId, 'timeline'],
     queryFn: ({ signal }) => apiGet(`/api/runs/${encodeURIComponent(runId!)}/timeline`, signal),
     enabled: !!runId,
+    refetchInterval: 4000,
   })
 
 export const useSpawnTree = (root: string | null) =>

@@ -62,6 +62,7 @@ const STATUS_TONE: Record<string, string> = {
   pending: 'text-status-warning',
   in_progress: 'text-status-info',
   running: 'text-status-info',
+  stale: 'text-status-warning',
 }
 
 /** Inline status text with a tone dot. */

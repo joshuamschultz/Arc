@@ -7,6 +7,7 @@ import {
 } from '@/components/ui/sheet'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { JsonBlock } from '@/components/json-block'
+import { LoadingRows } from '@/components/states'
 import { StatusText } from '@/components/status-badge'
 import { LlmContent } from '@/components/llm-content-renderer'
 import { useTraceDetail } from '@/lib/queries'
@@ -106,9 +107,15 @@ export function TraceDrawer({
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
-  // The list row is lightweight; fetch the full record for request/response.
+  // The caller (e.g. run-detail-drawer) opens this with only {trace_id} — no
+  // model/status/tokens yet, those live solely in the detail fetch. Rendering
+  // real UI against that gap reads as "this call has no data" (Unknown status,
+  // "unknown model", every field "—") when it's really just "not fetched yet";
+  // `stillLoading` tells the two apart so a brief fetch isn't mistaken for a
+  // broken/empty record.
   const detail = useTraceDetail(open ? (trace?.trace_id ?? null) : null)
   const full: Trace = { ...(trace ?? {}), ...(detail.data ?? {}) }
+  const stillLoading = detail.isLoading && full.model == null
   const messages = extractMessages(full)
   const inTokens = full.input_tokens ?? full.total_tokens
   const response = full.response
@@ -122,13 +129,18 @@ export function TraceDrawer({
             <SheetTitle className="inline-flex items-center rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-xs text-foreground">
               {shortId(full.trace_id, 16)}
             </SheetTitle>
-            <StatusText value={full.status} />
+            {!stillLoading && <StatusText value={full.status} />}
           </div>
           <SheetDescription>
-            {full.model || 'unknown model'} · {fmtTime(full.timestamp)}
+            {stillLoading ? 'Loading…' : `${full.model || 'unknown model'} · ${fmtTime(full.timestamp)}`}
           </SheetDescription>
         </SheetHeader>
 
+        {stillLoading ? (
+          <div className="flex-1 overflow-auto p-5">
+            <LoadingRows rows={8} />
+          </div>
+        ) : (
         <Tabs defaultValue="structured" className="flex flex-1 flex-col overflow-hidden">
           <TabsList className="mx-5 mt-3 w-fit">
             <TabsTrigger value="structured">Structured</TabsTrigger>
@@ -187,6 +199,7 @@ export function TraceDrawer({
             <JsonBlock value={full} />
           </TabsContent>
         </Tabs>
+        )}
       </SheetContent>
     </Sheet>
   )

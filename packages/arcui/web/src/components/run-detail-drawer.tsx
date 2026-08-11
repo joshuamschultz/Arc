@@ -49,8 +49,16 @@ interface RunItem {
 }
 type Item = ToolItem | LlmItem | RunItem
 
-/** Fold raw timeline rows into display items, pairing tool start/end by name. */
-function mergeTimeline(entries: TimelineEntry[]): Item[] {
+/** Fold raw timeline rows into display items, pairing tool start/end by name.
+ *
+ * `runIsLive` gates a still-open tool item's displayed status: a `start` with
+ * no matching `end`/`error` is genuinely "running" only while its OWN run is
+ * still live. Once the run itself has resolved to anything else (completed,
+ * error, or the backend's own "stale" verdict for an orphaned/killed run —
+ * see observe_stats.compute_runs), any leftover open tool item is exactly as
+ * dead as the run that never finished it, and must not read as in-progress
+ * forever. */
+function mergeTimeline(entries: TimelineEntry[], runIsLive: boolean): Item[] {
   const items: Item[] = []
   const pending = new Map<string, ToolItem[]>() // tool_name -> open starts (FIFO)
 
@@ -113,6 +121,11 @@ function mergeTimeline(entries: TimelineEntry[]): Item[] {
       })
     } else {
       items.push({ kind: 'run', ts: e.ts, name: e.name ?? 'event' })
+    }
+  }
+  if (!runIsLive) {
+    for (const item of items) {
+      if (item.kind === 'tool' && item.status === 'running') item.status = 'stale'
     }
   }
   return items
@@ -259,7 +272,7 @@ export function RunDetailDrawer({
   onOpenChange: (open: boolean) => void
 }) {
   const { data, isLoading } = useRunTimeline(open ? run?.run_id ?? null : null)
-  const items = data ? mergeTimeline(data.timeline) : []
+  const items = data ? mergeTimeline(data.timeline, run?.status === 'running') : []
   // Deep-link: clicking an LLM step opens that exact ArcLLM call's drawer.
   const [selectedTrace, setSelectedTrace] = useState<Trace | null>(null)
 

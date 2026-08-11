@@ -21,6 +21,8 @@ from typing import Any
 
 # bucket_count, bucket_duration_seconds — mirrors the chart granularity the
 # front-end renders for each window selector value.
+_STALE_AFTER_SECONDS = 15 * 60  # no terminal event + no new activity this long -> orphaned, not still working
+
 _TIMESERIES_SHAPE: dict[str, tuple[int, int]] = {
     "1h": (60, 60),  # 60 x 1 min
     "24h": (24, 3600),  # 24 x 1 hr
@@ -298,10 +300,22 @@ def _fold_run(run: dict[str, Any], row: dict[str, Any]) -> None:
         run["_error"] = True
 
 
-def _finalize_run(run: dict[str, Any]) -> dict[str, Any]:
+def _finalize_run(run: dict[str, Any], *, now: float) -> dict[str, Any]:
     start, end = _epoch(run["started_at"]), _epoch(run["ended_at"])
     duration_ms = round((end - start) * 1000, 1) if start is not None and end is not None else None
-    status = "error" if run["_error"] else "completed" if run["_completed"] else "running"
+    if run["_error"]:
+        status = "error"
+    elif run["_completed"]:
+        status = "completed"
+    elif end is not None and (now - end) > _STALE_AFTER_SECONDS:
+        # No terminal event, and nothing has happened in a long time — this is
+        # not "still working", it's a process that died mid-run (crash, service
+        # restart, hard /stop) before it ever got to write loop.complete. Left
+        # as "running" it would say that forever; every subsequent read of this
+        # same dead row keeps computing the same wrong answer.
+        status = "stale"
+    else:
+        status = "running"
     return {
         "run_id": run["run_id"],
         "agent": run["agent"] or run["actor_did"] or "unknown",
@@ -320,20 +334,26 @@ def _finalize_run(run: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def compute_runs(rows: list[dict[str, Any]], *, limit: int | None = None) -> list[dict[str, Any]]:
+def compute_runs(
+    rows: list[dict[str, Any]], *, limit: int | None = None, now: float | None = None
+) -> list[dict[str, Any]]:
     """Fold run/tool/llm spool rows into per-run summaries, newest first.
 
     A run is one ``request_id`` (one ``arcrun.run()`` = one user-question →
     final-response cycle). Rows without a ``request_id`` cannot be attributed to
     a run and are skipped.
+
+    ``now`` (injectable for tests; defaults to wall-clock) is the reference
+    point a run's staleness is measured against — see ``_finalize_run``.
     """
+    resolved_now = now if now is not None else datetime.now(UTC).timestamp()
     runs: dict[str, dict[str, Any]] = {}
     for row in rows:
         run_id = row.get("request_id")
         if not run_id:
             continue
         _fold_run(runs.setdefault(run_id, _new_run(run_id)), row)
-    out = [_finalize_run(r) for r in runs.values()]
+    out = [_finalize_run(r, now=resolved_now) for r in runs.values()]
     out.sort(key=lambda r: r["started_at"] or "", reverse=True)
     return out[:limit] if limit is not None else out
 

@@ -243,6 +243,25 @@ class TestComputeRuns:
         assert runs[0]["status"] == "error"
 
     def test_status_running_without_completion(self) -> None:
+        # A fresh, recent event with no terminal marker yet — genuinely in flight.
+        recent = (datetime.now(UTC) - timedelta(seconds=5)).isoformat()
+        runs = compute_runs(
+            [
+                {
+                    "kind": "run_event",
+                    "request_id": "r",
+                    "actor_did": "did:a",
+                    "name": "turn.start",
+                    "ts": recent,
+                },
+            ]
+        )
+        assert runs[0]["status"] == "running"
+
+    def test_status_stale_when_last_event_far_older_than_now(self) -> None:
+        """A run whose process died mid-flight (crash, restart, hard /stop) never
+        writes its terminal event — without a staleness cutoff it shows "running"
+        forever, indistinguishable from a run that's genuinely still working."""
         runs = compute_runs(
             [
                 {
@@ -252,9 +271,42 @@ class TestComputeRuns:
                     "name": "turn.start",
                     "ts": "2026-05-31T00:00:01+00:00",
                 },
-            ]
+            ],
+            now=datetime.fromisoformat("2026-05-31T01:00:00+00:00").timestamp(),
+        )
+        assert runs[0]["status"] == "stale"
+
+    def test_status_running_just_under_the_staleness_cutoff(self) -> None:
+        runs = compute_runs(
+            [
+                {
+                    "kind": "run_event",
+                    "request_id": "r",
+                    "actor_did": "did:a",
+                    "name": "turn.start",
+                    "ts": "2026-05-31T00:00:01+00:00",
+                },
+            ],
+            now=datetime.fromisoformat("2026-05-31T00:14:00+00:00").timestamp(),
         )
         assert runs[0]["status"] == "running"
+
+    def test_error_status_wins_over_staleness(self) -> None:
+        runs = compute_runs(
+            [
+                {
+                    "kind": "tool_event",
+                    "request_id": "r",
+                    "actor_did": "did:a",
+                    "tool_name": "x",
+                    "phase": "error",
+                    "outcome": "error",
+                    "ts": "2026-05-31T00:00:01+00:00",
+                },
+            ],
+            now=datetime.fromisoformat("2026-05-31T01:00:00+00:00").timestamp(),
+        )
+        assert runs[0]["status"] == "error"
 
     def test_agent_falls_back_to_did(self) -> None:
         runs = compute_runs(
