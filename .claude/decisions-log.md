@@ -6974,7 +6974,7 @@ next to that build's state, in `.claude/builds/<feature>/research.md`.
 ## Gateway Messaging + Media — Build Decisions (2026-08-11)
 
 **Phase**: build | **Status**: complete | **Total decisions**: 10 (10 user, 0 auto-applied)
-**ID range**: D-668 to D-679
+**ID range**: D-668 to D-681
 **Priority framework**: simplicity → modularity → security → scalability
 
 ### Summary
@@ -7067,11 +7067,25 @@ _(none)_
 - **Alternatives considered**: inject into whatever run is active; queue behind background work until it finishes
 - **Rationale**: That decision said the message always lands in the session but did not distinguish which run is in flight. Injecting into a scheduled job would surface a user's answer inside that job's output and let an interactive turn perturb work the user never asked about. Waiting for background work is worse — a consolidation pass can be long, and the user is owed an answer now. The three states are therefore: interactive run in flight → inject; background run or nothing in flight → new turn, same session; explicit `/new` → rotate.
 
+#### D-680: Who guarantees the message broker is running
+
+**Decision**: `arcgateway.bootstrap` ensures the broker (`arcteam.nats_server.ensure_nats_server`) as part of embedded startup. `arcui` owns no infrastructure — it calls the existing embedded bootstrap and nothing else. Absence stays fail-open with a loud log and the existing explicit `team_messaging_unavailable` route error; it is never a fabricated empty inbox.
+
+- **Priority**: modularity
+- **Alternatives considered**: arcui ensures it in its own lifespan; require the operator to start a broker
+- **Rationale**: This is the arcui Messages defect. `ensure_nats_server` exists and works, but has exactly one caller — `arccli/commands/_serve.py`. So `arc … serve` spawns a broker and messaging works, while every other launch path leaves `arcui.messaging._connect_backend` returning `None` and the inbox silently empty. Putting it in arcui would invert the layering the 2026-05-03 brainstorm deliberately protected ("`build_for_embedded` lives in `arcgateway.bootstrap`, NOT `arcui`"). The gateway is the messaging surface, so the gateway guarantees its transport.
+
+#### D-681: Outbound files
+
+**Decision**: An agent replies with parts, not just text. The adapter's `send(target, parts)` takes the same part vocabulary as inbound, so a text reply and a file reply are one path. Outbound media is read from the agent workspace under the same fence as every other agent file read (`workspace + allowed_paths`), size-capped per adapter's platform limit, and audited as `media.sent`. An adapter that cannot send a given kind degrades to a text description rather than failing the turn.
+
+- **Priority**: simplicity
+- **Alternatives considered**: a separate send_file method; text-only outbound with links
+- **Rationale**: Symmetry with the inbound envelope means one vocabulary in both directions and no second code path to keep honest. Reading through the existing workspace fence means outbound file sending grants the agent no reach it did not already have. Per-adapter degradation matters because platform limits genuinely differ (Telegram 50 MB, Slack tiered) and a turn should not be lost because one channel cannot carry an attachment.
+
 ### Open Questions
 - session_queue.py becomes vestigial under the delivery decision unless it earns its keep as flood backpressure. Decide before implementing — CLAUDE.md 3 forbids leaving dead code.
-- arcui Messages requires a NATS broker; _connect_backend fails open to None and the channel routes report unavailable. Test with a mock backend and assume the broker is up on DGX.
 - Deferred: Anthropic Files API (upload once, pass file_id) for media referenced across several turns. An arcllm capability, not a gateway one.
-- Outbound media (agent sends a file back) is covered by the adapter contract above, but its workspace-source and size rules are not yet decided.
 - Categories not walked (Data Model, API, Observability, Audit, Security, Integration, Performance, Deployment, UI) were judged settled by the decisions above rather than skipped: the envelope fixes the data model, the delivery decision fixes the API seam, and D-674/D-675 settle audit and security for this feature. /specify should challenge that judgement.
 
 ### Related Solutions
