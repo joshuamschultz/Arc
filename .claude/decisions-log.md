@@ -6968,3 +6968,112 @@ next to that build's state, in `.claude/builds/<feature>/research.md`.
 | arcrun-core-loop | D-586–D-616 (31) | [`builds/arcrun-core-loop/research.md`](builds/arcrun-core-loop/research.md) |
 | phase-2-codeexec | D-617–D-619 (3) | [`builds/phase-2-codeexec/research.md`](builds/phase-2-codeexec/research.md) |
 | module-bundles | D-632–D-641, D-648–D-649, D-651–D-653 (15) | [`builds/module-bundles/research.md`](builds/module-bundles/research.md) |
+
+---
+
+## Gateway Messaging + Media — Build Decisions (2026-08-11)
+
+**Phase**: build | **Status**: complete | **Total decisions**: 10 (10 user, 0 auto-applied)
+**ID range**: D-668 to D-679
+**Priority framework**: simplicity → modularity → security → scalability
+
+### Summary
+One messaging path for every surface (CLI, arcui, Telegram, Slack), adapters as droppable in-tree modules, and inbound/outbound media stored in the agent workspace and referenced (never inlined) through the session. Driven by three live defects: a photo produces no run at all, every message starts a fresh turn instead of joining the running one, and arcui Messages goes nowhere.
+
+### Auto-Applied (Compliance Mandates)
+_(none)_
+
+### Architecture
+
+#### D-668: Inbound envelope shape
+**Decision**: One InboundMessage carrying an ordered list of typed parts; text is a part like any other, so media is never a special case.
+**Priority**: simplicity
+**Alternatives**: keep message: str and add a parallel attachments list; platform-native passthrough normalised in core
+**Rationale**: Today InboundEvent.message is a bare str, so media has nowhere to live. A parallel attachments list keeps two code paths forever and cannot represent a caption between two photos. Passthrough would grow per-platform branches in core, the opposite of adapters being droppable.
+
+#### D-669: Where a gateway part becomes an LLM content block
+**Decision**: arcgateway defines its own MediaPart carrying a workspace ref and never imports arcllm. arcagent translates at its own boundary, reaching the types through the arcrun facade (import arcrun, qualified names).
+**Priority**: modularity
+**Alternatives**: gateway emits arcllm blocks directly; a shared MediaRef type in arcllm
+**Rationale**: Matches the dependency graph after the ArcAgent decoupling: arcagent uses the arcrun facade only. Putting the type in arcllm would give the LLM layer a workspace-path concept it has no business knowing (ADR-029).
+
+#### D-670: Adapter location and discovery
+**Decision**: Adapters are in-tree arcgateway/adapters/<name>/ modules with a module-level PLATFORM descriptor, found by directory scan. A failed import is skipped and logged; a deleted folder is simply gone.
+**Priority**: simplicity
+**Alternatives**: explicit registry module; config names them and the gateway imports only those
+**Rationale**: Replaces the separate arcgateway-telegram/-slack/-mattermost packages. The filesystem is the registry, so 'delete it with no problem' is literally true; a registry file would have to be edited in step, and config-gating would hide a working adapter until config mentioned it.
+
+#### D-671: How an inbound message reaches a running turn
+**Decision**: A message always lands in the session and the agent handles it. steer vs follow-up vs new run is internal to arcagent; 'interrupt' leaves the gateway-facing seam entirely.
+**Priority**: simplicity
+**Alternatives**: gateway checks active_run and branches; queue drain decides
+**Rationale**: Root cause of the reported bug: deliver_message is only bus-published for teammates, so every human surface calls agent.run() and gets a fresh turn. No caller should choose — mid-run or new, it joins the same session and is answered, the way Claude Code behaves.
+
+#### D-672: Where inbound media bytes live
+**Decision**: The adapter downloads once; the gateway writes the file under the agent workspace with direct filesystem I/O and passes a MediaPart ref. Session history carries the ref; bytes are materialised only for the provider call that needs them.
+**Priority**: simplicity
+**Alternatives**: inline base64 in the part; gateway-side content-addressed blob store the agent fetches from
+**Rationale**: Web research is consistent against inlining: the Messages API is stateless so base64 is re-sent every turn (Anthropic recommends the Files API for anything referenced more than once); Microsoft Agent Framework and the MCP file-handling write-up both land on metadata-plus-reference, with files moving without passing through the LLM. Inlining would put a 5 MB photo in the session jsonl permanently and leave it unreadable next turn. ADR-029 also makes an inbound attachment agent state, written to the workspace.
+
+#### D-673: Gateway simplification scope
+**Decision**: Collapse pairing's four files (1,740 LOC) into one module with one entry point, preserving hashed ids, operator approval and throttling. session.py, runner.py and web.py are untouched this pass.
+**Priority**: simplicity
+**Alternatives**: also collapse session_queue and the session router; change only what the three bugs force
+**Rationale**: Pairing is the single largest concentration and it is four files implementing one idea. Keeping the live inbound path out of scope bounds the blast radius on the only thing currently making agents reachable.
+
+#### D-674: Trust posture for inbound media
+**Decision**: A paired channel IS the authorization boundary. Media arriving over Slack, Telegram, or arcui with an operator token does not trip the lethal-trifecta human gate per file.
+**Priority**: security
+**Alternatives**: gate every inbound file; tier-gate the screening
+**Rationale**: Operator decision: trust attaches to the approved channel, not to each artefact, so the trifecta rules that govern untrusted content do not apply to a channel a human already approved. Tier-gating was rejected separately because CLAUDE.md makes the pillars universal and tier a stringency dial, never a gate.
+
+#### D-675: Filename, size and audit for stored media
+**Decision**: The gateway names the file: workspace/inbox/<date>/<hhmmss>-<sender>-<sanitised-stem>.<ext>, sender derived from the resolved user_did. The sender's original filename is kept as metadata. Size is capped and one media.received audit event is emitted per file.
+**Priority**: security
+**Alternatives**: take the sender's filename as-is; sanitise the name but no cap and no per-file audit
+**Rationale**: D-674 settles trust in the sender's intent; it does not make the bytes well-formed. Generating the name removes path traversal by construction rather than by policy, the cap guards against an accidental huge upload rather than an attack, and audit is a universal AU pillar because a write into agent state is an operation. Timestamp and sender are in the name so a file is identifiable on disk without opening metadata.
+
+### Testing
+
+#### D-676: How media round-tripping is proven
+**Decision**: A parametrised contract suite every discovered adapter must pass (inbound text/image/file, outbound long text, outbound media), plus one test per adapter driving a fake platform payload through the real handler, real gateway and real agent to assertions on the workspace file and the session parts.
+**Priority**: security
+**Alternatives**: per-layer unit tests; live smoke against a real bot
+**Rationale**: The defect being fixed is one line — MessageHandler(filters.TEXT, ...) — that every per-layer unit test passes while photos silently do nothing. Only a test through the real registration path fails on it. Live smoke has the highest fidelity but needs credentials and cannot gate a merge.
+
+### Extensibility
+
+#### D-677: The adapter author's contract
+**Decision**: Thin adapter plus optional capability declarations: the adapter holds the connection, turns a payload into parts, and sends parts back; AdapterSpec declares optional extras (edit, threads, reactions) and the gateway degrades when absent. Download, naming, caps, audit, session keys, pairing and splitting stay in the gateway, written once.
+**Priority**: modularity
+**Alternatives**: fat adapter owning its own storage and delivery; thin adapter with no capability negotiation
+**Rationale**: A new platform cannot get the security properties wrong because it never implements them — the fourth adapter is otherwise the fourth chance to forget a size cap. Capability declarations are the concession to platforms genuinely differing; the cost is a negotiation surface that has to be kept honest.
+
+
+#### D-678: Who owns session identity
+
+**Decision**: `arcgateway` owns session identity — `build_session_key` derives it and `router.new_session` rotates it. `arcui` and `arctui` are viewpoints that call those and never derive or hold their own. A session rotates on an explicit `/new` and on nothing else.
+
+- **Priority**: modularity
+- **Alternatives considered**: each surface derives its own key; the agent owns session identity
+- **Rationale**: This is already how the code behaves — arcui's `agent_sessions.py` calls `router.new_session` and `chat_ws.py` imports `build_session_key` from `arcgateway.session`. Recording it makes the property enforceable instead of incidental, and matches the arctui ruling that a surface is a viewpoint, not an agent owner. It also retires an open question from this build: arcui was never a source of session instability.
+- **Corrects**: the reported symptom "it starts a new session after the run is done" is not a session rotation. The session key is stable and the history is intact; each message becomes a fresh *run* because nothing calls `deliver_message` (the delivery decision above), which reads as a new conversation.
+
+#### D-679: What an inbound message may be injected into [refines D-671]
+
+**Decision**: A message is injected only into the **interactive** run for its session. A background run — scheduler, pulse, proactive, memory consolidation — is never an injection target. With no interactive run in flight, the message becomes a new turn in the same session; it does not interrupt background work and it does not start a new session.
+
+- **Priority**: simplicity
+- **Alternatives considered**: inject into whatever run is active; queue behind background work until it finishes
+- **Rationale**: That decision said the message always lands in the session but did not distinguish which run is in flight. Injecting into a scheduled job would surface a user's answer inside that job's output and let an interactive turn perturb work the user never asked about. Waiting for background work is worse — a consolidation pass can be long, and the user is owed an answer now. The three states are therefore: interactive run in flight → inject; background run or nothing in flight → new turn, same session; explicit `/new` → rotate.
+
+### Open Questions
+- session_queue.py becomes vestigial under the delivery decision unless it earns its keep as flood backpressure. Decide before implementing — CLAUDE.md 3 forbids leaving dead code.
+- arcui Messages requires a NATS broker; _connect_backend fails open to None and the channel routes report unavailable. Test with a mock backend and assume the broker is up on DGX.
+- Deferred: Anthropic Files API (upload once, pass file_id) for media referenced across several turns. An arcllm capability, not a gateway one.
+- Outbound media (agent sends a file back) is covered by the adapter contract above, but its workspace-source and size rules are not yet decided.
+- Categories not walked (Data Model, API, Observability, Audit, Security, Integration, Performance, Deployment, UI) were judged settled by the decisions above rather than skipped: the envelope fixes the data model, the delivery decision fixes the API seam, and D-674/D-675 settle audit and security for this feature. /specify should challenge that judgement.
+
+### Related Solutions
+_(none)_
+
