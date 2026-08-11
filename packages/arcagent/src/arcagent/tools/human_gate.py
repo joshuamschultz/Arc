@@ -107,6 +107,13 @@ class HumanGateConfig:
     # Personal/enterprise only: leg-sets that may be auto-approved without a
     # human, e.g. [["private_data", "external_comms", "untrusted_input"]].
     auto_approve: list[frozenset[str]] = field(default_factory=list)
+    # Personal/enterprise only: specific tool names that skip the gate
+    # regardless of which legs tripped it, e.g. {"jira_create_issue"}. Narrower
+    # to configure than naming every leg-composition a tool might trip, and
+    # scoped the other way from ``auto_approve`` — a tool named here is trusted
+    # no matter the composition; a composition named there is trusted no matter
+    # the tool. Same federal exclusion applies (ADR-019).
+    auto_approve_tools: frozenset[str] = field(default_factory=frozenset)
 
 
 class HumanGate:
@@ -175,7 +182,7 @@ class HumanGate:
             session_id=call.session_id,
         )
 
-        if self._auto_approvable(legs):
+        if self._auto_approvable(legs, call.tool_name):
             self._emit("human_gate.auto_approved", request, outcome="auto_approve")
             return sign_approval(call, self._operator)
 
@@ -200,16 +207,25 @@ class HumanGate:
         self._emit("human_gate.granted", request, outcome="granted")
         return grant
 
-    def _auto_approvable(self, legs: frozenset[str]) -> bool:
-        """Personal/enterprise may auto-approve named compositions; federal never.
+    def _auto_approvable(self, legs: frozenset[str], tool_name: str) -> bool:
+        """Personal/enterprise may auto-approve named compositions or tools; federal never.
 
-        The named set must equal the tripping composition EXACTLY. A subset test
-        would let a narrower entry (e.g. ``{private_data, external_comms}``)
-        green-light a wider forbidden set — the tripping union is always a
-        superset of any subset — silently authorizing more than the operator named.
+        Two independent ways in, either is sufficient:
+        - ``auto_approve``: the leg-set must equal the tripping composition
+          EXACTLY. A subset test would let a narrower entry (e.g.
+          ``{private_data, external_comms}``) green-light a wider forbidden set
+          — the tripping union is always a superset of any subset — silently
+          authorizing more than the operator named.
+        - ``auto_approve_tools``: the tool name is trusted outright, whatever
+          composition tripped it this time. Use for a specific tool the
+          operator has decided never needs a human in the loop (e.g. a
+          low-stakes connector write), rather than enumerating every leg-set
+          that tool might ever trip.
         """
         if self._tier == "federal":
             return False
+        if tool_name in self._config.auto_approve_tools:
+            return True
         return any(named == legs for named in self._config.auto_approve)
 
     async def _ask_human(self, request: ApprovalRequest) -> ApprovalGrant | None:

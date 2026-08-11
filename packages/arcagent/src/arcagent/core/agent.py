@@ -492,6 +492,7 @@ class ArcAgent:
             config=HumanGateConfig(
                 timeout_seconds=gate_cfg.timeout_seconds,
                 auto_approve=[frozenset(legs) for legs in gate_cfg.auto_approve],
+                auto_approve_tools=frozenset(gate_cfg.auto_approve_tools),
             ),
             audit_sink=policy_sink,
             channel=self._build_approval_channel(gate_cfg.timeout_seconds),

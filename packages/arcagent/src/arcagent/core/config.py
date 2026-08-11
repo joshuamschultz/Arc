@@ -186,12 +186,17 @@ class HumanGatePolicy(BaseModel):
 
     ``auto_approve`` lists named low-risk leg-compositions that personal/
     enterprise may approve without a human (each an explicit, audited leg list,
-    e.g. ``[["private_data", "external_comms", "untrusted_input"]]``). Federal
-    ignores it — the gate can never be auto-satisfied at federal (ADR-019).
+    e.g. ``[["private_data", "external_comms", "untrusted_input"]]``).
+    ``auto_approve_tools`` instead names specific tools that skip the gate
+    outright regardless of which composition tripped it, e.g.
+    ``["jira_create_issue"]`` — narrower to write than enumerating every
+    leg-set a given tool might trip. Federal ignores both — the gate can
+    never be auto-satisfied at federal (ADR-019).
     """
 
     timeout_seconds: float = 300.0
     auto_approve: list[list[str]] = []
+    auto_approve_tools: list[str] = []
 
 
 class ToolsConfig(BaseModel):

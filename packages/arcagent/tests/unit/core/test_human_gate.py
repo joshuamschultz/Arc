@@ -216,6 +216,60 @@ class TestAutoApproveExactMatch:
         assert await gate.request(_call(), legs=_TRIFECTA) is not None
 
 
+def _named_call(tool_name: str, agent_did: str = "did:arc:example:org:agent:abc") -> ToolCall:
+    return ToolCall(
+        tool_name=tool_name,
+        arguments={"url": "https://x"},
+        agent_did=agent_did,
+        session_id="",
+        classification="unclassified",
+        capability_tags=frozenset({"external_comms"}),
+    )
+
+
+@pytest.mark.asyncio
+class TestAutoApproveTools:
+    """``auto_approve_tools`` trusts a named tool regardless of composition —
+    the other axis from ``auto_approve``, which trusts a named composition
+    regardless of tool.
+    """
+
+    async def test_whitelisted_tool_auto_approves_whatever_composition_tripped_it(
+        self,
+    ) -> None:
+        gate = HumanGate(
+            operator_signer=_operator_signer(),
+            agent_did="did:arc:example:org:agent:abc",
+            tier="personal",
+            config=HumanGateConfig(auto_approve_tools=frozenset({"jira_create_issue"})),
+        )
+        # No channel + no auto_approve leg entry — only the tool whitelist saves it.
+        grant = await gate.request(_named_call("jira_create_issue"), legs=_TRIFECTA)
+        assert grant is not None
+        single_leg = frozenset({"external_comms"})
+        grant2 = await gate.request(_named_call("jira_create_issue"), legs=single_leg)
+        assert grant2 is not None
+
+    async def test_non_whitelisted_tool_still_gated(self) -> None:
+        gate = HumanGate(
+            operator_signer=_operator_signer(),
+            agent_did="did:arc:example:org:agent:abc",
+            tier="personal",
+            config=HumanGateConfig(auto_approve_tools=frozenset({"jira_create_issue"})),
+        )
+        # Different tool, same composition — the whitelist is per-tool, not global.
+        assert await gate.request(_named_call("github_pr_create"), legs=_TRIFECTA) is None
+
+    async def test_federal_ignores_tool_whitelist(self) -> None:
+        gate = HumanGate(
+            operator_signer=_operator_signer(),
+            agent_did="did:arc:example:org:agent:abc",
+            tier="federal",
+            config=HumanGateConfig(auto_approve_tools=frozenset({"jira_create_issue"})),
+        )
+        assert await gate.request(_named_call("jira_create_issue"), legs=_TRIFECTA) is None
+
+
 def test_policy_context_carries_session_capabilities() -> None:
     # The injected accumulator field exists and is optional (backward-compatible).
     ctx = PolicyContext(tier="personal", policy_version="v0", bundle_age_seconds=0.0)
