@@ -263,6 +263,31 @@ def ensure_model(
         agent_label=config.agent.name,
         agent_did=actor_did or None,
         on_event=on_event,
-        arcllm_modules=config.llm.modules or None,
+        arcllm_modules=_arcllm_modules(config),
     )
     return model, trace_store
+
+
+def _arcllm_modules(config: ArcAgentConfig) -> dict[str, Any]:
+    """The agent's arcllm module overrides, with its declared routes folded in.
+
+    ``[llm.routes]`` reaches arcllm as the routing module's route table, which
+    is also the permission boundary: the router can only ever dispatch to a
+    model this agent declared. Everything else in ``[llm.modules]`` passes
+    through untouched.
+
+    The table is passed *always*, empty included. Omitting it would let the
+    deployment-wide ``[modules.routing.routes]`` in ``~/.arc/arcllm.toml`` apply
+    to an agent that declared nothing — which is exactly the case the boundary
+    exists to prevent, since a model being configured on the machine is not a
+    grant to every agent on it (ASI03). An agent that wants an alternate lane
+    names it.
+    """
+    modules: dict[str, Any] = {name: dict(cfg) for name, cfg in config.llm.modules.items()}
+    routing = dict(modules.get("routing", {}))
+    routing["routes"] = {
+        name: {"model": route.model, "phrases": list(route.phrases)}
+        for name, route in config.llm.routes.items()
+    }
+    modules["routing"] = routing
+    return modules

@@ -9,19 +9,29 @@ cache_ttl_seconds = 300
 url = ""
 region = ""
 
-# --- Classification-based routing ---
+# --- Routing: always on, the entry point to every call ---
+# Declaring no routes leaves a pass-through in front of the model you asked
+# for, so this block only matters once a second model exists. Selection order
+# is pin -> tool continuity -> phrase match -> default; the continuity tier is
+# not configurable because returning a tool result to a different model than
+# asked for it is wrong, not merely undesirable.
 [modules.routing]
-enabled = false
 enforcement = "warn"
-default_classification = "unclassified"
+default_route = "default"
+# Cosine similarity a phrase must reach to win. Re-tune after changing routes,
+# phrases, or the embedding model: absolute similarity is not comparable across
+# embedders.
+threshold = 0.45
+embedding_backend = "local"
+embedding_model = "all-MiniLM-L6-v2"
+# "raise" (default) or "default_route". Fail closed: phrases configured but no
+# embedder means routing is not happening, and that is worth an error rather
+# than a quiet month of every call landing on the default.
+on_embedder_error = "raise"
 
-# [modules.routing.rules.cui]
-# provider = "anthropic"
-# model = "claude-sonnet-5"
-
-# [modules.routing.rules.unclassified]
-# provider = "openai"
-# model = "gpt-4o-mini"
+# [modules.routing.routes.local]
+# model = "litellm/qwen3-coder"
+# phrases = ["run this locally", "keep this on my machine"]
 
 # --- Telemetry: token counting, cost tracking, TraceRecord emission ---
 [modules.telemetry]

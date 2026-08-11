@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Routing is now the always-on entry point to every call.** `load_model` no longer chooses
+  between "an adapter" and "a router" — it always returns a `RoutingModule`, holding one route
+  (a pass-through, no span, no selection) or several. This also ends the old fork where routing
+  and load balancing competed for the innermost slot and the loser was silently dropped; a
+  balanced pool now lives *underneath* a route, so both can be configured at once.
+- **`[modules.routing]` replaces classification rules with named routes.** A route is
+  `{model = "provider/model", phrases = [...]}` — the same `provider/model` spelling used by
+  `[llm] model`. The old `rules` table and the `classification=` selection kwarg are gone; the
+  explicit pin is now `route="..."`. Config still carrying `rules` fails loudly at load rather
+  than routing nothing. `classification` remains what it always was elsewhere: a trace label.
+- **Selection is a four-tier ladder**: explicit pin → tool continuity → phrase match → default.
+  Tool continuity is derived from the router's own dispatches (it records every tool-call id it
+  hands out and returns a later `tool_result` to the route that asked), so a whole agentic turn
+  stays on one model without arcllm learning anything about loops, runs, or sessions. It is a
+  correctness boundary and outranks every preference below it.
+- **Route adapters build lazily, except the default.** Declaring four models costs four TOML
+  reads and only the connection pools actually reached. The default is still built during
+  `load_model` so a misspelled provider fails at startup, not mid-turn.
+
+### Fixed
+- **Every call was billed at the default model's price.** `TelemetryModule` sits above the
+  router and priced from the model resolved at load time, so a call routed to a cheap or local
+  lane still cost cloud rates in the ledger and against the budget. The router now stamps the
+  route it took on the response, and telemetry prices from a per-route table built from each
+  route's provider metadata. Unpriced routes fall back to the flat configured rate rather than
+  silently costing zero.
+- **`RoutingModule` had no `invoke_stream`.** It inherited the base fallback, which collapses a
+  stream into one Delta by calling `invoke()` — so any routed deployment silently lost
+  token-by-token output. It now streams from the selected route and learns tool-call ids from
+  the stream.
+
 ### Added
 - **`claude-sonnet-5` added to the Anthropic catalog and made the default model.** 1M context,
   128K max output, tools/vision/thinking, $3/$15 per MTok (cache read $0.30, write $3.75).

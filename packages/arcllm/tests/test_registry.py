@@ -44,7 +44,7 @@ class TestLoadModelHappyPath:
         # security=False: test adapter construction without wrappers.
         # Per ADR-019, security is enabled by default; disable explicitly here.
         model = load_model("anthropic", telemetry=False, retry=False, queue=False, security=False)
-        assert isinstance(model, AnthropicAdapter)
+        assert isinstance(model.adapter_for("default"), AnthropicAdapter)
 
     def test_load_openai_adapter(self):
         from arcllm.adapters.openai import OpenaiAdapter
@@ -53,7 +53,7 @@ class TestLoadModelHappyPath:
         # security=False: test adapter construction without wrappers.
         # Per ADR-019, security is enabled by default; disable explicitly here.
         model = load_model("openai", telemetry=False, retry=False, queue=False, security=False)
-        assert isinstance(model, OpenaiAdapter)
+        assert isinstance(model.adapter_for("default"), OpenaiAdapter)
 
     def test_load_default_model(self):
         from arcllm.registry import load_model
@@ -90,7 +90,7 @@ class TestLoadModelHappyPath:
             security=False,
         )
         assert model.model_name == "claude-nonexistent-99"
-        assert model._model_meta is None
+        assert model.adapter_for("default")._model_meta is None
 
     def test_same_provider_different_models_returns_distinct_instances(self):
         """Cache stores config, not adapter instances. Each call returns a fresh adapter."""
@@ -284,7 +284,7 @@ class TestModuleStacking:
         with patch("arcllm.registry.load_global_config", return_value=mock_global):
             model = load_model("anthropic", retry=False)
         assert not isinstance(model, RetryModule)
-        assert isinstance(model, AnthropicAdapter)
+        assert isinstance(model.adapter_for("default"), AnthropicAdapter)
 
     def test_load_model_with_fallback(self):
         """fallback=True wraps adapter with FallbackModule.
@@ -339,7 +339,7 @@ class TestModuleStacking:
         # Inner is Fallback
         assert isinstance(model._inner, FallbackModule)
         # Innermost is the adapter
-        assert isinstance(model._inner._inner, AnthropicAdapter)
+        assert isinstance(model._inner._inner.adapter_for("default"), AnthropicAdapter)
 
     def test_load_model_no_modules_unchanged(self):
         """With all modules disabled, adapter returned directly.
@@ -351,7 +351,7 @@ class TestModuleStacking:
         from arcllm.registry import load_model
 
         model = load_model("anthropic", telemetry=False, retry=False, queue=False, security=False)
-        assert isinstance(model, AnthropicAdapter)
+        assert isinstance(model.adapter_for("default"), AnthropicAdapter)
 
     def test_load_model_retry_kwarg_overrides_config_values(self):
         """retry={max_retries: 10} overrides config.toml max_retries=2."""
@@ -415,7 +415,7 @@ class TestModuleStacking:
         with patch("arcllm.registry.load_global_config", return_value=mock_global):
             model = load_model("anthropic", rate_limit=False, retry=False)
         assert not isinstance(model, RateLimitModule)
-        assert isinstance(model, AnthropicAdapter)
+        assert isinstance(model.adapter_for("default"), AnthropicAdapter)
 
     def test_load_model_full_stack_order_without_telemetry(self):
         """Stacking order without telemetry or security: Retry(Fallback(RateLimit(adapter))).
@@ -441,7 +441,7 @@ class TestModuleStacking:
         assert isinstance(model, RetryModule)
         assert isinstance(model._inner, FallbackModule)
         assert isinstance(model._inner._inner, RateLimitModule)
-        assert isinstance(model._inner._inner._inner, AnthropicAdapter)
+        assert isinstance(model._inner._inner._inner.adapter_for("default"), AnthropicAdapter)
 
     def test_load_model_with_telemetry(self):
         """telemetry=True wraps adapter with TelemetryModule."""
@@ -627,7 +627,9 @@ class TestModuleStacking:
         assert isinstance(model._inner, RetryModule)
         assert isinstance(model._inner._inner, FallbackModule)
         assert isinstance(model._inner._inner._inner, RateLimitModule)
-        assert isinstance(model._inner._inner._inner._inner, AnthropicAdapter)
+        assert isinstance(
+            model._inner._inner._inner._inner.adapter_for("default"), AnthropicAdapter
+        )
 
     def test_load_model_telemetry_false_overrides_config(self):
         """telemetry=False disables even if config.toml enables it."""
@@ -643,7 +645,7 @@ class TestModuleStacking:
         with patch("arcllm.registry.load_global_config", return_value=mock_global):
             model = load_model("anthropic", telemetry=False, retry=False)
         assert not isinstance(model, TelemetryModule)
-        assert isinstance(model, AnthropicAdapter)
+        assert isinstance(model.adapter_for("default"), AnthropicAdapter)
 
     def test_load_model_with_audit(self):
         """audit=True wraps adapter with AuditModule."""
@@ -667,7 +669,7 @@ class TestModuleStacking:
         with patch("arcllm.registry.load_global_config", return_value=mock_global):
             model = load_model("anthropic", audit=False, retry=False)
         assert not isinstance(model, AuditModule)
-        assert isinstance(model, AnthropicAdapter)
+        assert isinstance(model.adapter_for("default"), AnthropicAdapter)
 
     def test_load_model_full_stack_with_audit(self):
         """Stacking order: Telemetry(Audit(Retry(Fallback(RateLimit(adapter))))).
@@ -698,7 +700,9 @@ class TestModuleStacking:
         assert isinstance(model._inner._inner, RetryModule)
         assert isinstance(model._inner._inner._inner, FallbackModule)
         assert isinstance(model._inner._inner._inner._inner, RateLimitModule)
-        assert isinstance(model._inner._inner._inner._inner._inner, AnthropicAdapter)
+        assert isinstance(
+            model._inner._inner._inner._inner._inner.adapter_for("default"), AnthropicAdapter
+        )
 
     def test_load_model_with_otel(self):
         """otel={exporter: none} wraps adapter with OtelModule."""
@@ -739,7 +743,7 @@ class TestModuleStacking:
         with patch("arcllm.registry.load_global_config", return_value=mock_global):
             model = load_model("anthropic", queue=False, retry=False)
         assert not isinstance(model, QueueModule)
-        assert isinstance(model, AnthropicAdapter)
+        assert isinstance(model.adapter_for("default"), AnthropicAdapter)
 
     def test_load_model_otel_full_stack(self):
         """Full stack: Otel(Queue(Telemetry(Audit(Retry(Fallback(RateLimit(adapter))))))).
@@ -775,7 +779,10 @@ class TestModuleStacking:
         assert isinstance(model._inner._inner._inner._inner, RetryModule)
         assert isinstance(model._inner._inner._inner._inner._inner, FallbackModule)
         assert isinstance(model._inner._inner._inner._inner._inner._inner, RateLimitModule)
-        assert isinstance(model._inner._inner._inner._inner._inner._inner._inner, AnthropicAdapter)
+        assert isinstance(
+            model._inner._inner._inner._inner._inner._inner._inner.adapter_for("default"),
+            AnthropicAdapter,
+        )
 
     def test_load_model_otel_false_overrides_config(self):
         """otel=False disables even if config.toml enables it."""
@@ -791,7 +798,7 @@ class TestModuleStacking:
         with patch("arcllm.registry.load_global_config", return_value=mock_global):
             model = load_model("anthropic", otel=False, retry=False)
         assert not isinstance(model, OtelModule)
-        assert isinstance(model, AnthropicAdapter)
+        assert isinstance(model.adapter_for("default"), AnthropicAdapter)
 
     def test_load_model_otel_dict_overrides_config(self):
         """otel={...} kwarg dict merges over config.toml defaults."""
@@ -827,7 +834,7 @@ class TestModuleStacking:
             security=False,
         )
         assert isinstance(model, OtelModule)
-        assert isinstance(model._inner, AnthropicAdapter)
+        assert isinstance(model._inner.adapter_for("default"), AnthropicAdapter)
 
     def test_clear_cache_clears_buckets(self):
         """clear_cache() resets rate limit shared state."""
@@ -878,7 +885,7 @@ class TestInjectionGuardrailsStacking:
         from arcllm.registry import load_model
 
         model = load_model("anthropic", telemetry=False, retry=False, queue=False, security=False)
-        assert isinstance(model, AnthropicAdapter)
+        assert isinstance(model.adapter_for("default"), AnthropicAdapter)
 
     def test_guardrails_dict_wraps_with_guardrails_module(self):
         from arcllm.modules.guardrails import GuardrailsModule
@@ -907,7 +914,7 @@ class TestInjectionGuardrailsStacking:
             queue=False,
             security=False,
         )
-        assert isinstance(model, AnthropicAdapter)
+        assert isinstance(model.adapter_for("default"), AnthropicAdapter)
 
     def test_stack_order_security_injection_guardrails_audit(self):
         """ADR-430: Audit(Guardrails(Injection(Security(adapter))))."""
@@ -932,7 +939,9 @@ class TestInjectionGuardrailsStacking:
         assert isinstance(model._inner, GuardrailsModule)
         assert isinstance(model._inner._inner, InjectionModule)
         assert isinstance(model._inner._inner._inner, SecurityModule)
-        assert isinstance(model._inner._inner._inner._inner, AnthropicAdapter)
+        assert isinstance(
+            model._inner._inner._inner._inner.adapter_for("default"), AnthropicAdapter
+        )
 
     def test_injection_sees_pre_redaction_text(self):
         """Injection wraps Security, so it scans the ORIGINAL (unredacted) text."""
@@ -1041,8 +1050,8 @@ weight = 1
             queue=False,
             security=False,
         )
-        assert isinstance(model, LoadBalancerModule)
-        assert len(model._pool) == 2
+        assert isinstance(model.adapter_for("default"), LoadBalancerModule)
+        assert len(model.adapter_for("default")._pool) == 2
 
     def test_load_balance_dict_override(self):
         from arcllm.modules.load_balancer import LoadBalancerModule
@@ -1056,8 +1065,8 @@ weight = 1
             queue=False,
             security=False,
         )
-        assert isinstance(model, LoadBalancerModule)
-        assert model._strategy == "sticky"
+        assert isinstance(model.adapter_for("default"), LoadBalancerModule)
+        assert model.adapter_for("default")._strategy == "sticky"
 
     def test_load_balance_false_overrides_config(self):
         from arcllm.adapters.openai import OpenaiAdapter
@@ -1071,7 +1080,7 @@ weight = 1
             queue=False,
             security=False,
         )
-        assert isinstance(model, OpenaiAdapter)
+        assert isinstance(model.adapter_for("default"), OpenaiAdapter)
 
     def test_load_balance_none_defaults_disabled(self):
         """config.toml ships load_balance.enabled=false -- None means disabled."""
@@ -1079,7 +1088,7 @@ weight = 1
         from arcllm.registry import load_model
 
         model = load_model("openai", telemetry=False, retry=False, queue=False, security=False)
-        assert isinstance(model, OpenaiAdapter)
+        assert isinstance(model.adapter_for("default"), OpenaiAdapter)
 
     def test_no_pool_provider_unaffected_by_load_balance_true(self):
         """load_balance=True but provider has no [[endpoints]] -- pass-through (FR-15)."""
@@ -1094,7 +1103,7 @@ weight = 1
             queue=False,
             security=False,
         )
-        assert isinstance(model, AnthropicAdapter)
+        assert isinstance(model.adapter_for("default"), AnthropicAdapter)
 
     def test_rate_limit_wraps_load_balancer(self):
         """RateLimit stays outside LoadBalancer in the stack (per SDD architecture fit)."""
@@ -1112,7 +1121,7 @@ weight = 1
             security=False,
         )
         assert isinstance(model, RateLimitModule)
-        assert isinstance(model._inner, LoadBalancerModule)
+        assert isinstance(model._inner.adapter_for("default"), LoadBalancerModule)
 
     def test_endpoint_weight_zero_excluded_from_pool(self, monkeypatch):
         from arcllm.config import _get_config_dir
@@ -1147,8 +1156,8 @@ weight = 0
             queue=False,
             security=False,
         )
-        assert isinstance(model, LoadBalancerModule)
-        assert len(model._pool) == 1
+        assert isinstance(model.adapter_for("default"), LoadBalancerModule)
+        assert len(model.adapter_for("default")._pool) == 1
 
     def test_endpoint_identity_never_contains_key_value(self):
         """FR-18: pool endpoint identity carries the key *source name*, not the secret."""
@@ -1163,8 +1172,8 @@ weight = 0
             queue=False,
             security=False,
         )
-        assert isinstance(model, LoadBalancerModule)
-        for ep in model._pool:
+        assert isinstance(model.adapter_for("default"), LoadBalancerModule)
+        for ep in model.adapter_for("default")._pool:
             assert "kA" not in ep.endpoint_id
             assert "kB" not in ep.endpoint_id
             assert "POOL_KEY" in ep.endpoint_id

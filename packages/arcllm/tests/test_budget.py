@@ -588,15 +588,15 @@ class TestBudgetMaxTokensDefault:
 
 
 # ---------------------------------------------------------------------------
-# TestClassificationValidation — routing classification format validation
+# TestRoutePinFormatValidation — routing pin format validation
 # ---------------------------------------------------------------------------
 
 
-class TestClassificationFormatValidation:
-    """Verify RoutingModule rejects invalid classification formats."""
+class TestRoutePinFormatValidation:
+    """Verify RoutingModule rejects malformed ``route=`` pins before lookup."""
 
     def setup_method(self) -> None:
-        from arcllm.modules.routing import RoutingModule
+        from arcllm.modules.routing import Route, RoutingModule
 
         self._adapter = MagicMock(spec=LLMProvider)
         self._adapter.name = "test"
@@ -604,30 +604,37 @@ class TestClassificationFormatValidation:
         self._adapter.validate_config.return_value = True
         self._adapter.invoke = AsyncMock(return_value=_OK_RESPONSE)
         self._adapter.close = AsyncMock()
+        # Two routes: the single-route fast path skips selection entirely, so a
+        # format check can only be exercised by a router that has a choice.
+        routes = [
+            Route(name="unclassified", provider="test", model="m"),
+            Route(name="cui", provider="test", model="m"),
+        ]
         self._router = RoutingModule(
-            {"enforcement": "block", "default_classification": "unclassified"},
-            {"unclassified": self._adapter},
+            {"enforcement": "block", "default_route": "unclassified"},
+            routes,
+            lambda route: self._adapter,
         )
         self._messages = [Message(role="user", content="hi")]
 
-    async def test_uppercase_classification_rejected(self) -> None:
+    async def test_uppercase_pin_rejected(self) -> None:
         from arcllm.exceptions import ArcLLMConfigError
 
-        with pytest.raises(ArcLLMConfigError, match="Invalid classification format"):
-            await self._router.invoke(self._messages, classification="CUI")
+        with pytest.raises(ArcLLMConfigError, match="Invalid route format"):
+            await self._router.invoke(self._messages, route="CUI")
 
-    async def test_spaces_in_classification_rejected(self) -> None:
+    async def test_spaces_in_pin_rejected(self) -> None:
         from arcllm.exceptions import ArcLLMConfigError
 
-        with pytest.raises(ArcLLMConfigError, match="Invalid classification format"):
-            await self._router.invoke(self._messages, classification="my data")
+        with pytest.raises(ArcLLMConfigError, match="Invalid route format"):
+            await self._router.invoke(self._messages, route="my data")
 
-    async def test_sql_injection_classification_rejected(self) -> None:
+    async def test_sql_injection_pin_rejected(self) -> None:
         from arcllm.exceptions import ArcLLMConfigError
 
-        with pytest.raises(ArcLLMConfigError, match="Invalid classification format"):
-            await self._router.invoke(self._messages, classification="'; DROP TABLE--")
+        with pytest.raises(ArcLLMConfigError, match="Invalid route format"):
+            await self._router.invoke(self._messages, route="'; DROP TABLE--")
 
-    async def test_valid_classification_accepted(self) -> None:
-        result = await self._router.invoke(self._messages, classification="unclassified")
+    async def test_valid_pin_accepted(self) -> None:
+        result = await self._router.invoke(self._messages, route="unclassified")
         assert result.content == "ok"

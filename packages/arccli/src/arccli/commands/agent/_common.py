@@ -647,6 +647,15 @@ _ARCLLM_HEADER = """\
 model = "anthropic/claude-sonnet-4-5-20250929"  # ArcLLM model id (provider/model)
 max_tokens = 8192   # max output tokens per LLM call
 temperature = 0.7   # sampling temperature
+
+# Additional models this agent may be routed to. The model above stays the
+# default; a route is chosen per call by explicit pin, then tool continuity,
+# then phrase match. This list is also the boundary — the router can reach a
+# provider only if the agent declared it here.
+#
+# [llm.routes.local]
+# model = "litellm/qwen3-coder"
+# phrases = ["run this locally", "keep this on my machine"]
 """
 
 

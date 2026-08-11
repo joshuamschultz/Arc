@@ -119,10 +119,13 @@ arc llm validate                 # test API key + connectivity per provider
 `arcllm` wraps the bare adapter in a stack of opt-in modules. The stacking order is deterministic:
 
 ```
-Otel → Queue → Telemetry → Audit → Guardrails → Injection → Security → CircuitBreaker → Retry → Fallback → RateLimit → [Routing | LoadBalancer | Adapter]
+Otel → Queue → Telemetry → Audit → Guardrails → Injection → Security → CircuitBreaker → Retry → Fallback → RateLimit → Routing → [LoadBalancer | Adapter]
 ```
 
-Each module is one decorator that adds one concern.
+Each module is one decorator that adds one concern. Every module above Routing
+is opt-in; **Routing is not** — it is the innermost element of every stack. With
+one declared model it is a pass-through, so it costs an unconfigured deployment
+nothing.
 
 | Module | What It Does | Why You Want It |
 |---|---|---|
@@ -134,9 +137,29 @@ Each module is one decorator that adds one concern.
 | **Security** | Bidirectional PII + secret redaction (checksum-gated, gov/CUI entities, pluggable detector), asymmetric request signing (Ed25519 / ECDSA-P256 FIPS) | Lethal Trifecta protection, tamper-evidence |
 | **Retry** | Exponential backoff, jitter, retryable-error classification | Survives transient provider failures |
 | **Fallback** | Failover chain across providers / models | Continuity when a provider is down |
-| **LoadBalancer** | Intra-provider distribution across endpoints/keys — weighted RR, health-aware, sticky (opt-in) | Throughput + quota headroom (SC-5, LLM10) |
 | **RateLimit** | Token bucket per provider | Stay inside provider quotas |
+| **Routing** | Picks one of N declared models per call: explicit pin → tool continuity → phrase match → default (always on) | Cheap/local lanes without a second agent |
+| **LoadBalancer** | Intra-provider distribution across endpoints/keys — weighted RR, health-aware, sticky (opt-in) | Throughput + quota headroom (SC-5, LLM10) |
 | **Adapter** | Direct HTTP to the provider | The actual call |
+
+### Routing
+
+```toml
+[modules.routing.routes.local]
+model = "litellm/qwen3-coder"
+phrases = ["run this locally", "keep this on my machine"]
+```
+
+Selection runs per call, in order:
+
+1. **Pin** — the caller passed `route="local"`. Background jobs that must not be guessed at say so.
+2. **Tool continuity** — the conversation's tail answers a tool call this router dispatched, so the result returns to the model that asked for it. A correctness boundary, not a preference: it outranks everything below.
+3. **Phrase** — cosine match of the last *user* message against each route's example phrases, above `threshold`. Tool results ride the `user` role and are skipped; only prose steers a route.
+4. **Default** — the model passed to `load_model`, or `default_route`.
+
+Tier 2 is what makes tier 3 cheap. An agent turn is one user message followed by many tool round-trips; only the first call is unlocked, so the embedding is paid once per turn rather than once per call.
+
+Routes are also the reachability boundary — the router can only dispatch to a declared route, never to a provider merely present in config. Phrases require an embedder (`arcllm[local]`); with phrases configured and no embedder, construction of the index **raises** rather than quietly sending every call to the default. Set `on_embedder_error = "default_route"` to opt into the quiet behavior.
 
 Toggle any of them per call:
 

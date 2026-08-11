@@ -342,8 +342,8 @@ class TestRegistryRemainingPaths:
         adapter = _build_adapter("anthropic", "claude-sonnet-4-6", FakeVaultCfg(), None)
         assert adapter is not None
 
-    def test_load_model_routing_with_valid_rules(self) -> None:
-        """Lines 278-282: routing with valid provider builds RoutingModule.
+    def test_load_model_always_returns_a_router(self) -> None:
+        """Even with nothing configured, the innermost element is the router.
 
         Per ADR-019, security is enabled by default (wraps outermost over
         routing). Disable security so RoutingModule is the observable outermost.
@@ -353,17 +353,28 @@ class TestRegistryRemainingPaths:
 
         model = load_model(
             "anthropic",
-            routing={
-                "rules": {
-                    "unclassified": {"provider": "anthropic"},
-                }
-            },
             telemetry=False,
             retry=False,
             queue=False,
             security=False,
         )
         assert isinstance(model, RoutingModule)
+        assert model.routes == ("default",)
+
+    def test_load_model_declared_routes_reach_the_router(self) -> None:
+        from arcllm.modules.routing import RoutingModule
+        from arcllm.registry import load_model
+
+        model = load_model(
+            "anthropic",
+            routing={"routes": {"cheap": {"model": "anthropic/claude-haiku-4-5"}}},
+            telemetry=False,
+            retry=False,
+            queue=False,
+            security=False,
+        )
+        assert isinstance(model, RoutingModule)
+        assert model.routes == ("default", "cheap")
 
     def test_load_model_vault_resolver_created_from_backend(self) -> None:
         """Lines 260-262: vault resolver instantiated when vault backend configured."""

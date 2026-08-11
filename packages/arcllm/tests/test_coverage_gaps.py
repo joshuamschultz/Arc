@@ -665,18 +665,27 @@ class TestRegistryUncoveredPaths:
         assert model._budget_scope == "agent:test-007"
         clear_budgets()
 
-    def test_load_model_routing_missing_provider_raises(self):
-        """Lines 276-277: routing rule missing 'provider' raises ArcLLMConfigError."""
+    def test_load_model_route_missing_model_raises(self):
+        """A declared route without a target is a config error, not a silent skip."""
         from arcllm.registry import load_model
 
-        with pytest.raises(ArcLLMConfigError, match="missing 'provider'"):
+        with pytest.raises(ArcLLMConfigError, match="missing 'model'"):
             load_model(
                 "anthropic",
-                routing={
-                    "rules": {
-                        "unclassified": {}  # missing 'provider'
-                    }
-                },
+                routing={"routes": {"local": {}}},
+                telemetry=False,
+                retry=False,
+                queue=False,
+            )
+
+    def test_load_model_stale_rules_key_rejected(self):
+        """The pre-rewrite ``rules`` shape must fail loudly, not route nothing."""
+        from arcllm.registry import load_model
+
+        with pytest.raises(ArcLLMConfigError, match="Unknown RoutingModule config keys"):
+            load_model(
+                "anthropic",
+                routing={"rules": {"unclassified": {"provider": "anthropic"}}},
                 telemetry=False,
                 retry=False,
                 queue=False,

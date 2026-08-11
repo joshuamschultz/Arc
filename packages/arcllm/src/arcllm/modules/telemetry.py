@@ -80,9 +80,13 @@ _INTERNAL_KWARG_KEYS = {
     "_queue_wait_ms",
     "lineage",
     "classification",
+    # The router's explicit pin. It steers which provider serves the call and
+    # is never model input, so it must not land in the captured request body.
+    "route",
 }
 
 _VALID_CONFIG_KEYS = {
+    "pricing",
     "cost_input_per_1m",
     "cost_output_per_1m",
     "cost_cache_read_per_1m",
@@ -309,6 +313,12 @@ class TelemetryModule(BaseModule):
         self._cost_cache_read: float = config.get("cost_cache_read_per_1m", 0.0)
         self._cost_cache_write: float = config.get("cost_cache_write_per_1m", 0.0)
 
+        # Per-route prices keyed by "provider/model". The router runs *below*
+        # this module, so without the table every call would be billed at the
+        # default route's rate and a switch to a cheap or local model would
+        # look, in the ledger, exactly like not switching at all.
+        self._pricing: dict[str, dict[str, float]] = config.get("pricing") or {}
+
         self._log_level: int = validate_log_level(config)
 
         # Budget config (all optional — budget disabled if no limits present)
@@ -403,14 +413,33 @@ class TelemetryModule(BaseModule):
         """ContextVar label (a spawned child) > config/global."""
         return _agent_label_var.get() or self._agent_label
 
-    def _calculate_cost(self, usage: Usage) -> float:
-        """Calculate USD cost from token counts and per-1M pricing."""
+    def _calculate_cost(self, usage: Usage, response: LLMResponse | None = None) -> float:
+        """Calculate USD cost from token counts and the price of the route taken.
+
+        The router stamps ``arcllm_route_model`` (the *configured* id, which is
+        what provider metadata is keyed by — a wire ``model`` string usually
+        carries a dated suffix that matches nothing). Absent that stamp, or for
+        a route with no published price, this falls back to the configured
+        flat rate, which is the single-route case and stays exact.
+        """
+        prices = None
+        if response is not None and response.metadata:
+            route_model = response.metadata.get("arcllm_route_model")
+            if isinstance(route_model, str):
+                prices = self._pricing.get(route_model)
+        if prices is None:
+            prices = {
+                "cost_input_per_1m": self._cost_input,
+                "cost_output_per_1m": self._cost_output,
+                "cost_cache_read_per_1m": self._cost_cache_read,
+                "cost_cache_write_per_1m": self._cost_cache_write,
+            }
         return calculate_cost(
             usage,
-            input_per_1m=self._cost_input,
-            output_per_1m=self._cost_output,
-            cache_read_per_1m=self._cost_cache_read,
-            cache_write_per_1m=self._cost_cache_write,
+            input_per_1m=prices["cost_input_per_1m"],
+            output_per_1m=prices["cost_output_per_1m"],
+            cache_read_per_1m=prices["cost_cache_read_per_1m"],
+            cache_write_per_1m=prices["cost_cache_write_per_1m"],
         )
 
     def _estimate_cost(self, max_tokens: int) -> float:
@@ -862,7 +891,7 @@ class TelemetryModule(BaseModule):
         t_llm = time.monotonic()
 
         usage = response.usage
-        cost = self._calculate_cost(usage)
+        cost = self._calculate_cost(usage, response)
 
         # Budget post-deduct (after successful call)
         if self._budget_enabled:

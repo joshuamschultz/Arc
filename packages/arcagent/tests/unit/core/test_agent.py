@@ -721,8 +721,12 @@ class TestLLMBridgeWiring:
         agent._ensure_model()
 
         _args, kwargs = mock_load_model.call_args
+        # The routing table always rides along (empty here — this agent declared
+        # no alternates), so an undeclared agent cannot inherit a machine-wide
+        # route. Everything else must pass through byte-for-byte.
         assert kwargs.get("arcllm_modules") == {
             "queue": {"call_timeout": 600.0, "max_concurrent": 2},
+            "routing": {"routes": {}},
         }
 
     @patch("arcagent.core.model_manager.load_eval_model")

@@ -50,9 +50,11 @@ def test_global_config_module_extra_fields():
     assert config.modules["retry"].backoff_base_seconds == 1.0
     assert config.modules["fallback"].chain == ["anthropic", "openai"]
     assert config.modules["rate_limit"].requests_per_minute == 60
-    # Routing module has enforcement and default_classification
+    # Routing carries selection settings; it has no enabled flag because it is
+    # the always-on entry point rather than an opt-in wrapper.
     assert config.modules["routing"].enforcement == "warn"
-    assert config.modules["routing"].default_classification == "unclassified"
+    assert config.modules["routing"].default_route == "default"
+    assert config.modules["routing"].threshold == 0.45
 
 
 # --- Provider config loading ---

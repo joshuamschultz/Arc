@@ -3,7 +3,7 @@
 import importlib
 import logging
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any, cast
 
 from arcllm.adapters.base import BaseAdapter
@@ -16,6 +16,7 @@ from arcllm.config import (
     load_provider_config,
 )
 from arcllm.exceptions import ArcLLMConfigError
+from arcllm.modules.routing import Route, RoutingModule, parse_routes
 from arcllm.types import LLMProvider
 
 logger = logging.getLogger(__name__)
@@ -207,6 +208,89 @@ def _build_adapter(
     return _construct_adapter(provider_name, resolved_model, config, vault_cfg, vault_resolver)
 
 
+def _resolve_routing_config(kwarg: bool | dict[str, Any] | None) -> dict[str, Any]:
+    """Routing settings, read without consulting an ``enabled`` flag.
+
+    Every other module answers "am I switched on"; routing does not. It is the
+    entry point to every call, so with one declared model it is a pass-through
+    and with several it is the thing doing the choosing. An operator who writes
+    ``[modules.routing.routes]`` and forgets a toggle must get routing, not
+    silence.
+    """
+    settings = dict(_module_settings_cache.get("routing", {}))
+    if isinstance(kwarg, dict):
+        settings.update(kwarg)
+    return settings
+
+
+def _build_route_adapter(
+    route: Route,
+    lb_config: dict[str, Any] | None,
+    vault_cfg: Any,
+    vault_resolver: Any,
+) -> LLMProvider:
+    """Build one route's innermost provider: a load-balanced pool, or an adapter.
+
+    Called lazily by the router on a route's first use, so declaring four
+    models costs four TOML reads and only the connection pools actually
+    reached (SPEC-017 ADR-7 previously had the pool and the router competing
+    for one slot; a pool now simply lives underneath a route).
+    """
+    if route.provider not in _provider_config_cache:
+        _provider_config_cache[route.provider] = load_provider_config(route.provider)
+    config = _provider_config_cache[route.provider]
+    resolved_model = route.model or config.provider.default_model
+
+    if lb_config is not None and config.endpoints:
+        from arcllm.modules.load_balancer import LoadBalancerModule, PoolEndpoint
+
+        pool = [
+            PoolEndpoint(
+                adapter=_build_adapter_for_endpoint(
+                    route.provider, resolved_model, ep, vault_cfg, vault_resolver
+                ),
+                weight=ep.weight,
+                endpoint_id=_endpoint_identity(ep),
+            )
+            for ep in config.endpoints
+            if ep.weight > 0
+        ]
+        return LoadBalancerModule(lb_config, pool, route.provider)
+
+    if lb_config is not None:
+        logger.info(
+            "load_balance enabled but no endpoints configured for '%s'; using single provider",
+            route.provider,
+        )
+    return _build_adapter(route.provider, resolved_model, vault_cfg, vault_resolver)
+
+
+def _route_pricing(routes: Sequence[Route]) -> dict[str, dict[str, float]]:
+    """Per-1M token prices for every declared route, keyed by ``provider/model``.
+
+    Telemetry sits outside the router and would otherwise bill a local call at
+    the default route's cloud rate. Provider TOMLs are cheap to read and
+    already cached, so the whole table is resolved up front while adapters stay
+    lazy — the price of a route must be known before the call, not after.
+    """
+    table: dict[str, dict[str, float]] = {}
+    for route in routes:
+        if route.provider not in _provider_config_cache:
+            _provider_config_cache[route.provider] = load_provider_config(route.provider)
+        config = _provider_config_cache[route.provider]
+        resolved_model = route.model or config.provider.default_model
+        meta = config.models.get(resolved_model)
+        if meta is None:
+            continue
+        table[f"{route.provider}/{resolved_model}"] = {
+            "cost_input_per_1m": meta.cost_input_per_1m,
+            "cost_output_per_1m": meta.cost_output_per_1m,
+            "cost_cache_read_per_1m": meta.cost_cache_read_per_1m,
+            "cost_cache_write_per_1m": meta.cost_cache_write_per_1m,
+        }
+    return table
+
+
 def _endpoint_identity(endpoint: EndpointConfig) -> str:
     """Stable identity string for a pool endpoint: base_url + key *source name*.
 
@@ -322,6 +406,7 @@ def _apply_telemetry(
     config: ProviderConfig,
     model_name: str,
     *,
+    pricing: dict[str, dict[str, float]],
     budget_scope: str | None,
     on_event: Callable[[Any], None] | None,
     trace_store: Any | None,
@@ -338,13 +423,18 @@ def _apply_telemetry(
     """
     from arcllm.modules.telemetry import TelemetryModule
 
-    # Inject pricing from provider model metadata
+    # Inject pricing from provider model metadata. The flat cost_* keys are the
+    # default route's rate and remain the fallback; ``pricing`` carries every
+    # declared route's rate so a call that took a cheaper lane is billed at that
+    # lane's price instead of the default's.
     model_meta = config.models.get(model_name)
     if model_meta is not None:
         telemetry_config.setdefault("cost_input_per_1m", model_meta.cost_input_per_1m)
         telemetry_config.setdefault("cost_output_per_1m", model_meta.cost_output_per_1m)
         telemetry_config.setdefault("cost_cache_read_per_1m", model_meta.cost_cache_read_per_1m)
         telemetry_config.setdefault("cost_cache_write_per_1m", model_meta.cost_cache_write_per_1m)
+    if pricing:
+        telemetry_config.setdefault("pricing", pricing)
 
     # Inject budget_scope from load_model() kwarg into telemetry config
     if budget_scope is not None:
@@ -522,60 +612,25 @@ def load_model(
             **backend_kwargs,
         )
 
-    # Check if routing is enabled — if so, create a RoutingModule instead of
-    # a single adapter. Router replaces adapter at innermost stack position.
-    # LoadBalancer competes for the same innermost slot (SPEC-017 ADR-7) —
-    # both are "Router-like" innermost-replacers; routing takes priority
-    # when both happen to be configured (routing decides provider/model,
-    # a strictly outer concern to endpoint selection within one provider).
-    routing_config = _resolve_module_config("routing", routing)
-    if routing_config is not None and routing_config.get("rules"):
-        from arcllm.modules.routing import RoutingModule
-
-        rules: dict[str, Any] = routing_config.get("rules", {})
-        adapters: dict[str, LLMProvider] = {}
-        for classification, rule in rules.items():
-            rule_provider = rule.get("provider")
-            if not rule_provider:
-                raise ArcLLMConfigError(f"Routing rule '{classification}' missing 'provider'")
-            adapters[classification] = _build_adapter(
-                rule_provider, rule.get("model"), vault_cfg, _vault_resolver_cache
-            )
-
-        result: LLMProvider = RoutingModule(
-            {
-                "enforcement": routing_config.get("enforcement", "block"),
-                "default_classification": routing_config.get(
-                    "default_classification", "unclassified"
-                ),
-            },
-            adapters,
-        )
-    else:
-        lb_config = _resolve_module_config("load_balance", load_balance)
-        if lb_config is not None and config.endpoints:
-            from arcllm.modules.load_balancer import LoadBalancerModule, PoolEndpoint
-
-            pool_endpoints = [
-                PoolEndpoint(
-                    adapter=_build_adapter_for_endpoint(
-                        provider, model_name, ep, vault_cfg, _vault_resolver_cache
-                    ),
-                    weight=ep.weight,
-                    endpoint_id=_endpoint_identity(ep),
-                )
-                for ep in config.endpoints
-                if ep.weight > 0
-            ]
-            result = LoadBalancerModule(lb_config, pool_endpoints, provider)
-        else:
-            if lb_config is not None and not config.endpoints:
-                logger.info(
-                    "load_balance enabled but no endpoints configured for '%s'; "
-                    "using single provider",
-                    provider,
-                )
-            result = _build_adapter(provider, model_name, vault_cfg, _vault_resolver_cache)
+    # The router is the innermost element of every stack, always. With one
+    # declared route it is a dict lookup in front of the adapter; with several
+    # it chooses per call. Making it unconditional removes the old fork where
+    # routing and load balancing fought over the same slot and the loser was
+    # silently dropped — a pool now lives *under* a route (see
+    # _build_route_adapter), so both can be true at once.
+    routing_config = _resolve_routing_config(routing)
+    lb_config = _resolve_module_config("load_balance", load_balance)
+    routes = parse_routes(
+        routing_config.get("routes"),
+        default_provider=provider,
+        default_model=model_name,
+    )
+    resolver = _vault_resolver_cache
+    result: LLMProvider = RoutingModule(
+        routing_config,
+        routes,
+        lambda route: _build_route_adapter(route, lb_config, vault_cfg, resolver),
+    )
 
     # Apply module wrapping, innermost first. The STACKING ORDER below is
     # load-bearing: injection sits ABOVE security so it scans the ORIGINAL
@@ -606,6 +661,7 @@ def load_model(
             telemetry_config,
             config,
             model_name,
+            pricing=_route_pricing(routes),
             budget_scope=budget_scope,
             on_event=on_event,
             trace_store=trace_store,

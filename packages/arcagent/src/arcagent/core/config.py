@@ -62,10 +62,33 @@ class AgentConfig(BaseModel):
     workspace: str = "./workspace"
 
 
+class AgentRoute(BaseModel):
+    """One alternate model this agent may be routed to.
+
+    ``model`` is spelled ``provider/model``, the same way ``[llm] model`` is.
+    ``phrases`` are example utterances that select this route; a route with
+    none is reachable only by an explicit pin, which is the right shape for a
+    lane nothing should land on by accident.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    model: str
+    phrases: list[str] = Field(default_factory=list)
+
+
 class LLMConfig(BaseModel):
     """LLM provider configuration for ArcLLM."""
 
     model: str
+    # Alternate models this agent is permitted to reach, keyed by route name.
+    # This list IS the permission boundary: arcllm can only route to what the
+    # agent declared, so a provider merely configured on the machine stays
+    # unreachable to an agent that was not granted it (ASI03, least privilege).
+    #
+    # The ``model`` above remains the default route. Routing is always on in
+    # arcllm; with no routes declared it is a pass-through to that default.
+    routes: dict[str, AgentRoute] = Field(default_factory=dict)
     max_tokens: int = Field(default=4096, gt=0)
     temperature: float = 0.7
     # Per-agent arcllm module overrides. Keyed by arcllm module name

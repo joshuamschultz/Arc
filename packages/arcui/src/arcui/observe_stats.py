@@ -21,7 +21,9 @@ from typing import Any
 
 # bucket_count, bucket_duration_seconds — mirrors the chart granularity the
 # front-end renders for each window selector value.
-_STALE_AFTER_SECONDS = 15 * 60  # no terminal event + no new activity this long -> orphaned, not still working
+_STALE_AFTER_SECONDS = (
+    15 * 60
+)  # no terminal event + no new activity this long -> orphaned, not still working
 
 _TIMESERIES_SHAPE: dict[str, tuple[int, int]] = {
     "1h": (60, 60),  # 60 x 1 min
