@@ -355,10 +355,10 @@ the POA&M in `sbom/security-suppressions.txt`.
 
 | # | Action | Status |
 |---|---|---|
-| 1 | **Runtime deps bumped to fixed versions**: `aiohttp→3.14.1`, `pyjwt→2.13.0`, `starlette→1.3.1`, `python-multipart→0.0.32`, `requests→2.34.2`, `urllib3→2.7.0`, `idna→3.18`, `pydantic-settings→2.14.2`, `pygments→2.20.0`, `python-dotenv→1.2.2` | ✅ DONE — constraints raised in owning `pyproject.toml` / workspace `constraint-dependencies`; `uv lock` regenerated |
-| 2 | **`cryptography` GHSA-537c-gmf6-5ccf** (fix 48.0.1) | ⏸️ ACCEPTED w/ POA&M — deliberate `<47.0` FIPS 140-3 cap; affected PKCS7/SMIME-decrypt path is unreachable in Arc (Ed25519/X.509 only). See `sbom/security-suppressions.txt`. |
+| 1 | **Runtime deps bumped to fixed versions**: `aiohttp→3.14.3`, `pyjwt→2.13.0`, `starlette→1.3.1`, `python-multipart→0.0.32`, `requests→2.34.2`, `urllib3→2.7.0`, `idna→3.18`, `pydantic-settings→2.14.2`, `pygments→2.20.0`, `python-dotenv→1.2.2` | ✅ DONE — constraints raised in owning `pyproject.toml` / workspace `constraint-dependencies`; `uv lock` regenerated |
+| 2 | **`cryptography` PYSEC-2026-3552/3553/3554 + GHSA-537c-gmf6-5ccf** (fix 50.0.0) | ✅ DONE — raised to `>=50.0.0` in `arctrust` and `arcllm`; the former `<47.0` cap was removed because FIPS posture comes from the linked OpenSSL provider, not the Python package version, so the cap bought no FIPS compatibility while blocking a name-constraint-bypass fix. POA&M entry retired. |
 | 3 | **Tutorial/help-docs tooling** (`jupyterlab`, `jupyter-server`, `tornado`, `bleach`) | ✅ EXCLUDED — moved to the `tutorial` dependency group; not part of the deployed runtime, so out of the security gate's scope |
-| 4 | **Dev tooling** (`pip`, `msgpack` via `pip-audit`'s filecache) | ✅ EXCLUDED — build-time only, not in the runtime closure |
+| 4 | **Dev tooling** (`pip` via `pip-api`, `msgpack` via `cachecontrol` — both under `pip-audit`) | ✅ EXCLUDED — build-time only, absent from the runtime closure export |
 | 5 | **`npm audit fix`** in `packages/arcui/web` | ◻️ PENDING — `vite` developer-workstation advisory; unchanged by this Python-dependency work |
 | 6 | **Blocking CI gate** | ✅ WIRED — `security` job exports the runtime closure and runs `pip-audit` against it; any new unignored runtime vuln fails the build |
 
