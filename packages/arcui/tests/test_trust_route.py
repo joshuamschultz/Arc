@@ -324,3 +324,132 @@ def test_approve_unknown_agent_is_404(tmp_path: Path) -> None:
     )
     assert resp.status_code == 404
     assert resp.json()["error"] == "agent_not_found"
+
+
+def test_viewer_can_read_capability_source(tmp_path: Path) -> None:
+    """Reading is a viewer right — reviewing the artifact must not need the operator token.
+
+    The returned text is the artifact's exact bytes: the operator is judging
+    what the loader will hash, not a re-rendering of it.
+    """
+    team_root = tmp_path / "team"
+    team_root.mkdir()
+    _build_agent(team_root, "olivia", tier="enterprise", sign=False)
+    client = _make_client(team_root)
+
+    resp = client.get(
+        "/api/trust/source", headers=_VIEWER, params={"agent_id": "olivia", "name": "reporter"}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    skill_md = _skill_md(team_root, "olivia")
+    assert body["source"] == skill_md.read_bytes().decode("utf-8")
+    assert body["path"] == str(skill_md)
+
+
+def test_source_hash_matches_the_gated_row(tmp_path: Path) -> None:
+    """The source carries the same hash the row shows — that pairing IS the gate.
+
+    The UI enables approve only while the rendered source's hash equals the
+    listed row's hash, so a drift between the two must be observable here. If
+    these could disagree for identical bytes the gate would refuse every
+    honest review.
+    """
+    team_root = tmp_path / "team"
+    team_root.mkdir()
+    _build_agent(team_root, "olivia", tier="enterprise", sign=False)
+    client = _make_client(team_root)
+
+    row = next(
+        it
+        for it in client.get("/api/trust/gated", headers=_VIEWER).json()["gated"]
+        if it["name"] == "reporter"
+    )
+    body = client.get(
+        "/api/trust/source", headers=_VIEWER, params={"agent_id": "olivia", "name": "reporter"}
+    ).json()
+    assert body["hash"] == row["hash"] != ""
+
+    # Rewriting the artifact must move both together, or a stale review would
+    # keep approving bytes nobody read.
+    _skill_md(team_root, "olivia").write_text(
+        _VALID_SKILL.format(name="reporter") + "\nedited\n", encoding="utf-8"
+    )
+    after_row = next(
+        it
+        for it in client.get("/api/trust/gated", headers=_VIEWER).json()["gated"]
+        if it["name"] == "reporter"
+    )
+    after = client.get(
+        "/api/trust/source", headers=_VIEWER, params={"agent_id": "olivia", "name": "reporter"}
+    ).json()
+    assert after["hash"] == after_row["hash"] != row["hash"]
+
+
+def test_source_requires_authentication(tmp_path: Path) -> None:
+    """Artifact text is executable code — it is never anonymously readable."""
+    team_root = tmp_path / "team"
+    team_root.mkdir()
+    _build_agent(team_root, "olivia", tier="enterprise", sign=False)
+    client = _make_client(team_root)
+
+    resp = client.get(
+        "/api/trust/source", params={"agent_id": "olivia", "name": "reporter"}
+    )
+    assert resp.status_code == 401
+
+
+def test_source_unknown_agent_is_404(tmp_path: Path) -> None:
+    team_root = tmp_path / "team"
+    team_root.mkdir()
+    client = _make_client(team_root)
+
+    resp = client.get(
+        "/api/trust/source", headers=_VIEWER, params={"agent_id": "ghost", "name": "reporter"}
+    )
+    assert resp.status_code == 404
+    assert resp.json()["error"] == "agent_not_found"
+
+
+def test_source_unknown_capability_is_404(tmp_path: Path) -> None:
+    team_root = tmp_path / "team"
+    team_root.mkdir()
+    _build_agent(team_root, "olivia", tier="enterprise", sign=False)
+    client = _make_client(team_root)
+
+    resp = client.get(
+        "/api/trust/source", headers=_VIEWER, params={"agent_id": "olivia", "name": "ghost"}
+    )
+    assert resp.status_code == 404
+
+
+def test_source_requires_agent_id_and_name(tmp_path: Path) -> None:
+    team_root = tmp_path / "team"
+    team_root.mkdir()
+    _build_agent(team_root, "olivia", tier="enterprise", sign=False)
+    client = _make_client(team_root)
+
+    resp = client.get("/api/trust/source", headers=_VIEWER, params={"agent_id": "olivia"})
+    assert resp.status_code == 400
+    assert resp.json()["error"] == "agent_id and name are required"
+
+
+def test_source_of_an_unreadable_artifact_is_404(tmp_path: Path) -> None:
+    """An artifact that cannot even be scanned is unreviewable, so unapprovable.
+
+    Undecodable bytes make ``arcagent``'s skill validator raise, which would
+    otherwise surface as an unhandled 500 — a shape the frontend reads as a
+    transport failure rather than a refusal. The gate must fail CLOSED and say
+    so: no source rendered means the approve action never unlocks.
+    """
+    team_root = tmp_path / "team"
+    team_root.mkdir()
+    _build_agent(team_root, "olivia", tier="enterprise", sign=False)
+    _skill_md(team_root, "olivia").write_bytes(b"\xff\xfe not utf-8")
+    client = _make_client(team_root)
+
+    resp = client.get(
+        "/api/trust/source", headers=_VIEWER, params={"agent_id": "olivia", "name": "reporter"}
+    )
+    assert resp.status_code == 404
+    assert "cannot read capability source" in resp.json()["error"]

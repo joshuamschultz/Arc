@@ -137,6 +137,35 @@ export const useGatedCapabilities = () =>
     refetchInterval: 4000,
   })
 
+export interface CapabilitySource {
+  agent_id: string
+  name: string
+  kind: 'tool' | 'skill'
+  path: string
+  hash: string
+  source: string
+}
+
+// Fetched per row only while its source disclosure is open (`enabled`), never
+// folded into the gated list: that list polls every 4s, so carrying artifact
+// text would re-ship every capability's executable source to every open
+// dashboard continuously — and to operators who never asked to read it.
+export const useCapabilitySource = (agentId: string, name: string, enabled: boolean) =>
+  useQuery<CapabilitySource>({
+    queryKey: ['trust', 'source', agentId, name],
+    queryFn: ({ signal }) =>
+      apiGet<CapabilitySource>(
+        `/api/trust/source?agent_id=${encodeURIComponent(agentId)}&name=${encodeURIComponent(name)}`,
+        signal,
+      ),
+    enabled,
+    // Overrides the app-wide 10s staleTime: reopening the panel must re-read
+    // what is on disk NOW, because the approve gate compares this hash to the
+    // polled row hash and a cached body would otherwise keep an edited
+    // artifact locked out until the cache aged out.
+    staleTime: 0,
+  })
+
 export const useTeamToolsSkills = () =>
   useApiQuery<TeamToolsSkillsResponse>(['team', 'tools-skills'], '/api/team/tools-skills')
 

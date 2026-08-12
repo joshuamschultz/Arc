@@ -2,6 +2,8 @@
 
 ``GET  /api/trust/gated``       — list gated (non-loaded) capabilities across the
                                   server's agents (any authed role).
+``GET  /api/trust/source``      — one gated capability's artifact text (any authed
+                                  role) so it can be read before it is trusted.
 ``POST /api/trust/approve``     — sign a gated capability (operator).
 ``POST /api/trust/disapprove``  — withdraw that signature (operator).
 
@@ -136,6 +138,57 @@ async def list_gated(request: Request) -> JSONResponse:
             continue
         gated.extend(item.model_dump(mode="json") for item in items)
     return JSONResponse({"gated": gated})
+
+
+async def read_source(request: Request) -> JSONResponse:
+    """GET /api/trust/source?agent_id&name — the artifact text behind a gated row.
+
+    Any authed role may read: reviewing a capability is what the approve gate
+    demands first, and a viewer who cannot read it cannot review it. Only the
+    operator may act on what they read.
+
+    Fetched per row on demand rather than folded into ``/api/trust/gated``: that
+    list polls every few seconds, so bundling artifact text would re-ship every
+    capability's executable source to every open dashboard continuously.
+
+    The ``hash`` returned is the same sha256 the row carries, so a surface can
+    prove the text it rendered is the text an approval would sign.
+
+    The artifact path comes from the inventory, never from the caller — a client
+    names a capability, not a file, so no request can steer this read outside
+    the agent's own capability tree.
+    """
+    agent_id = request.query_params.get("agent_id", "")
+    name = request.query_params.get("name", "")
+    if not agent_id or not name:
+        return _error("agent_id and name are required", 400)
+
+    resolved = _resolve_agent(request, agent_id)
+    if resolved is None:
+        return _error("agent_not_found", 404)
+    agent_root, label = resolved
+    try:
+        gated = await arcagent.list_gated(agent_root, agent_id=agent_id, agent_label=label)
+    except Exception:  # reason: an artifact bad enough to break the scan is unreviewable
+        logger.warning("trust inventory failed for %s; source unavailable", agent_id)
+        return _error(f"cannot read capability source for {name!r}", 404)
+    item = next((entry for entry in gated if entry.name == name), None)
+    if item is None:
+        return _error(f"no gated capability named {name!r} for this agent", 404)
+
+    source = arcagent.read_capability_source(Path(item.path))
+    if source is None:
+        return _error(f"cannot read capability source at {item.path}", 404)
+    return JSONResponse(
+        {
+            "agent_id": agent_id,
+            "name": name,
+            "kind": item.kind,
+            "path": item.path,
+            "hash": item.hash,
+            "source": source,
+        }
+    )
 
 
 async def _read_body(request: Request) -> tuple[str, str] | JSONResponse:
@@ -296,8 +349,9 @@ async def disapprove(request: Request) -> JSONResponse:
 
 routes = [
     Route("/api/trust/gated", list_gated, methods=["GET"]),
+    Route("/api/trust/source", read_source, methods=["GET"]),
     Route("/api/trust/approve", approve, methods=["POST"]),
     Route("/api/trust/disapprove", disapprove, methods=["POST"]),
 ]
 
-__all__ = ["approve", "disapprove", "list_gated", "routes"]
+__all__ = ["approve", "disapprove", "list_gated", "read_source", "routes"]
