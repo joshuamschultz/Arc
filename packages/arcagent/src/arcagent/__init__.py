@@ -15,6 +15,8 @@ from arcagent.capabilities.artifact_signing import (
 )
 from arcagent.capabilities.capability_loader import CapabilityLoader
 from arcagent.capabilities.capability_registry import CapabilityRegistry
+from arcagent.capabilities.capability_signing import revoke as revoke_capability
+from arcagent.capabilities.capability_signing import sign as sign_capability
 from arcagent.capabilities.inventory import (
     collect_agent_capability_inventory,
     list_gated,
@@ -176,8 +178,10 @@ __all__ = [
     "resolve_deployment",
     "resolve_roots",
     "resolve_workspace_import_policy",
+    "revoke_capability",
     "set_workflow_runner",
     "sidecar_path",
+    "sign_capability",
     "stream_token_text",
     "stricter_tier",
     "tier_rank",

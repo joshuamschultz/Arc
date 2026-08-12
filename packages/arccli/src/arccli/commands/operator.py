@@ -118,6 +118,21 @@ def resolve_operator_signer(arc_dir: Path | None = None) -> Signer:
     return load_operator_key(arc_dir).into_signer(sec.signing_algorithm)
 
 
+def operator_signing_seed(arc_dir: Path | None = None) -> bytes | None:
+    """The raw operator seed for in-process signing, or ``None`` under transit custody.
+
+    Capability signing (SPEC-066) needs the seed itself rather than a
+    :class:`Signer`: it derives the verify key that gets pinned into the agent's
+    config alongside the signature. ``vault_transit`` custody deliberately keeps
+    the seed out of this process, so there is nothing to return and the caller
+    must fail closed — signing with any other key would pin a trust anchor the
+    deployment never authorised.
+    """
+    if _machine_security().custody == VAULT_TRANSIT:
+        return None
+    return load_operator_key(arc_dir).seed
+
+
 def resolve_record_cipher(arc_dir: Path | None = None) -> RecordCipher | None:
     """Resolve the at-rest seal for a CLI-written WORM chain (D-577).
 
@@ -181,6 +196,7 @@ __all__ = [
     "load_operator_key",
     "operator_key_path",
     "operator_public_key",
+    "operator_signing_seed",
     "operator_worm_sink",
     "resolve_operator_signer",
 ]
