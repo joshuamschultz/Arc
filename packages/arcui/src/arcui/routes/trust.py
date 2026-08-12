@@ -2,34 +2,40 @@
 
 ``GET  /api/trust/gated``       — list gated (non-loaded) capabilities across the
                                   server's agents (any authed role).
-``POST /api/trust/approve``     — pin a gated capability's source hash (operator).
-``POST /api/trust/disapprove``  — remove a pin (operator).
+``POST /api/trust/approve``     — sign a gated capability (operator).
+``POST /api/trust/disapprove``  — withdraw that signature (operator).
 
 This module is a pure view: it DISCOVERS gated capabilities via
-``arcagent.capabilities.inventory`` (arcagent owns loading) and MUTATES the
-approval store via ``arctrust`` (arctrust owns trust/approval). It resolves
-agents from the roster, gates mutations on the operator role, records the
-approver as the on-box operator DID, and audits every mutation — mirroring
-``routes/approvals.py`` exactly. The ``arcagent`` inventory seam is imported
-lazily inside handlers so arcui never takes a hard package dependency on
-arcagent: the seam is the ONE approved arcagent import (SPEC-023 §2.2, enforced
-by ``test_arcui_imports_arcagent_only_via_inventory_seam``), and keeping it at
-call time means a view module cannot quietly widen that surface. ``arctrust``
-(a lower layer that imports no siblings) is imported at module top.
+``arcagent.capabilities.inventory`` (arcagent owns loading) and MUTATES trust
+through ``arcagent``'s signing seam (SPEC-066 COMP-010) — the same one
+``arc trust approve`` drives, so a browser approval and a CLI approval are one
+code path. Approval SIGNS: a source-hash pin alone leaves the capability behind
+the loader's signature floor, which is the gap SPEC-066 exists to close. It
+resolves agents from the roster, gates mutations on the operator role, records
+the approver as the on-box operator DID, and audits every mutation — mirroring
+``routes/approvals.py`` exactly. ``arcagent`` is reached through its root facade
+only (SPEC-023 §2.2, enforced by ``test_arcui_imports_arcagent_only_via_
+approved_seams`` and ``test_arcui_uses_only_public_arcagent_names``), so a view
+module cannot quietly widen that surface. ``arctrust`` (a lower layer that
+imports no siblings) is imported at module top.
+
+REQ-321: approval is operator-authenticated HTTP only. It is not registered as a
+tool on any registry and is not routed on ``/ws/chat`` — an agent must never be
+able to authorize its own capability.
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+import tomllib
 from pathlib import Path
 from typing import Any
 
 import arcagent
-from arctrust import OperatorKey, default_operator_key_path
-from arctrust import approve as _approve_pin
+from arctrust import OperatorKey, arc_home, default_operator_key_path
 from arctrust import disapprove as _disapprove_pin
 from arctrust.policy import OperatorApprovalAuthority
+from arctrust.signer import VAULT_TRANSIT
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
@@ -40,17 +46,27 @@ from arcui.schemas import ErrorResponse
 logger = logging.getLogger("arcui.routes.trust")
 
 
+class _OperatorSeedUnavailableError(RuntimeError):
+    """The deployment custodies the operator seed outside this process."""
+
+
+#: What the operator is told when custody puts the seed out of reach. Names the
+#: cause AND the two ways out, because the refusal is otherwise indistinguishable
+#: from a broken deployment and the operator's next move is not obvious.
+_VAULT_CUSTODY_REFUSAL = (
+    f"operator_key_not_in_process: custody={VAULT_TRANSIT}. Signing a capability "
+    "needs the operator seed in this process. Either approve from a deployment "
+    'that holds the seed, or set [security] custody = "in_process" in the machine '
+    "arcagent.toml under your arc home."
+)
+
+
 def _error(message: str, status: int) -> JSONResponse:
     return JSONResponse(ErrorResponse(error=message).model_dump(mode="json"), status_code=status)
 
 
 def _is_operator(request: Request) -> bool:
     return getattr(request.state, "role", None) == "operator"
-
-
-def _now() -> str:
-    """RFC3339 UTC timestamp minted at the route boundary (injected into logic)."""
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _resolve_agent(request: Request, agent_id: str) -> tuple[Path, str] | None:
@@ -64,15 +80,44 @@ def _resolve_agent(request: Request, agent_id: str) -> tuple[Path, str] | None:
     return None
 
 
-def _operator_did() -> str:
-    """The on-box deployment operator DID recorded as the approver.
+def _machine_custody() -> str:
+    """The deployment's operator-key custody model, from the machine ``[security]``.
+
+    Read from the same arc home the operator key itself resolves under, and
+    validated by ``SecurityConfig`` so the tier crypto floor applies (federal and
+    enterprise imply ``vault_transit``). An absent or unparseable config is the
+    personal default, matching ``arccli.commands.operator._machine_security``.
+    """
+    config = arc_home() / "arcagent.toml"
+    block: dict[str, Any] = {}
+    if config.exists():
+        try:
+            block = tomllib.loads(config.read_text(encoding="utf-8")).get("security", {})
+        except (OSError, tomllib.TOMLDecodeError):
+            block = {}
+    return str(arcagent.SecurityConfig(**block).custody)
+
+
+def _operator_key() -> OperatorKey:
+    """The on-box operator key that signs an approved capability.
 
     Read-only load (never bootstraps a key — an unpinned operator is no
     operator); a missing key raises and the caller fails the mutation with 500,
     exactly like ``routes/approvals.py._operator_authority``.
+
+    Under ``vault_transit`` custody the seed never enters this process, so there
+    is nothing here that can sign. Refuse rather than reach for whatever key
+    happens to be on disk: a stale file left behind by a custody change would
+    otherwise mint an authority the deployment deliberately moved to a vault.
     """
-    signer = OperatorKey.load(default_operator_key_path(), generate_if_absent=False).into_signer()
-    return OperatorApprovalAuthority(signer).did
+    if _machine_custody() == VAULT_TRANSIT:
+        raise _OperatorSeedUnavailableError(f"custody={VAULT_TRANSIT}")
+    return OperatorKey.load(default_operator_key_path(), generate_if_absent=False)
+
+
+def _operator_did(key: OperatorKey) -> str:
+    """The deployment operator DID recorded as signer and approver."""
+    return OperatorApprovalAuthority(key.into_signer()).did
 
 
 async def list_gated(request: Request) -> JSONResponse:
@@ -111,7 +156,7 @@ async def _read_body(request: Request) -> tuple[str, str] | JSONResponse:
 
 
 async def approve(request: Request) -> JSONResponse:
-    """POST /api/trust/approve — pin a gated capability's source hash (operator)."""
+    """POST /api/trust/approve — sign a gated capability (operator)."""
     parsed = await _read_body(request)
     if isinstance(parsed, JSONResponse):
         return parsed
@@ -134,7 +179,16 @@ async def approve(request: Request) -> JSONResponse:
     agent_root, label = resolved
 
     try:
-        approver = _operator_did()
+        signing_key = _operator_key()
+    except _OperatorSeedUnavailableError as exc:
+        emit_mutation_audit(
+            request,
+            target=target,
+            operation="trust.approve",
+            outcome="denied",
+            detail=f"operator seed not in this process ({exc})",
+        )
+        return _error(_VAULT_CUSTODY_REFUSAL, 500)
     except (FileNotFoundError, OSError) as exc:
         logger.exception("operator key unavailable for trust approval")
         emit_mutation_audit(
@@ -145,8 +199,9 @@ async def approve(request: Request) -> JSONResponse:
             detail="operator key unavailable",
         )
         return _error(f"operator_key_unavailable: {type(exc).__name__}", 500)
+    approver = _operator_did(signing_key)
 
-    # Discover the gated capability (arcagent), pin its hash (arctrust), re-scan.
+    # Discover the gated capability (arcagent), sign it (arcagent), re-scan.
     gated = await arcagent.list_gated(agent_root, agent_id=agent_id, agent_label=label)
     item = next((entry for entry in gated if entry.name == name), None)
     if item is None:
@@ -155,21 +210,32 @@ async def approve(request: Request) -> JSONResponse:
             request, target=target, operation="trust.approve", outcome="denied", detail=detail
         )
         return _error(detail, 404)
-    source = arcagent.read_capability_source(Path(item.path))
-    if source is None:
+    if arcagent.read_capability_source(Path(item.path)) is None:
         detail = f"cannot read capability source at {item.path}"
         emit_mutation_audit(
             request, target=target, operation="trust.approve", outcome="denied", detail=detail
         )
         return _error(detail, 404)
 
-    _approve_pin(
-        agent_root / "arcagent.toml",
-        name=arcagent.pin_name_for(item),
-        source=source,
-        approver=approver,
-        timestamp=_now(),
-    )
+    try:
+        arcagent.sign_capability(
+            Path(item.path),
+            signer_did=approver,
+            private_key=signing_key.seed,
+            config_path=agent_root / "arcagent.toml",
+        )
+    except (OSError, ValueError) as exc:
+        # A half-applied signing is a capability the operator believes is
+        # trusted and is not — so it is audited, never silently 500'd.
+        logger.exception("signing failed for %s", item.path)
+        emit_mutation_audit(
+            request,
+            target=target,
+            operation="trust.approve",
+            outcome="error",
+            detail=f"signing failed: {type(exc).__name__}",
+        )
+        return _error(f"capability_signing_failed: {type(exc).__name__}", 500)
     after = await arcagent.list_gated(
         agent_root, agent_id=agent_id, agent_label=label, include_loaded=True
     )
@@ -179,7 +245,7 @@ async def approve(request: Request) -> JSONResponse:
 
 
 async def disapprove(request: Request) -> JSONResponse:
-    """POST /api/trust/disapprove — remove a capability's approval pin (operator)."""
+    """POST /api/trust/disapprove — withdraw a capability's signature (operator)."""
     parsed = await _read_body(request)
     if isinstance(parsed, JSONResponse):
         return parsed
@@ -201,14 +267,29 @@ async def disapprove(request: Request) -> JSONResponse:
         return _error("agent_not_found", 404)
     agent_root, label = resolved
 
-    # Resolve the loader's pin name from the inventory when present; else treat
-    # the given name as the pin name directly (clears a pin for a deleted artifact).
+    # Revoke against the artifact when the inventory still sees it — that removes
+    # the signature, the trusted key, and the pin together. When the artifact is
+    # gone there is nothing to unsign, so clear the orphaned pin by name alone.
     inventory = await arcagent.list_gated(
         agent_root, agent_id=agent_id, agent_label=label, include_loaded=True
     )
     item = next((entry for entry in inventory if entry.name == name), None)
-    pin_name = arcagent.pin_name_for(item) if item is not None else name
-    _disapprove_pin(agent_root / "arcagent.toml", name=pin_name)
+    config_path = agent_root / "arcagent.toml"
+    try:
+        if item is None:
+            _disapprove_pin(config_path, name=name)
+        else:
+            arcagent.revoke_capability(Path(item.path), config_path=config_path)
+    except (OSError, ValueError) as exc:
+        logger.exception("revocation failed for %s on %s", name, agent_id)
+        emit_mutation_audit(
+            request,
+            target=target,
+            operation="trust.disapprove",
+            outcome="error",
+            detail=f"revocation failed: {type(exc).__name__}",
+        )
+        return _error(f"capability_revocation_failed: {type(exc).__name__}", 500)
     emit_mutation_audit(request, target=target, operation="trust.disapprove", outcome="applied")
     return JSONResponse({"ok": True})
 
