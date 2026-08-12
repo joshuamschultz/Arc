@@ -12,6 +12,7 @@ resolution-markers = [
 members = [
     "arc",
     "arc-agent",
+    "arcbundle",
     "arccmd",
     "arcgateway",
     "arcllm",
@@ -385,6 +386,35 @@ dev = [
     { name = "pytest-cov", specifier = ">=7.0.0" },
     { name = "types-croniter", specifier = ">=6.0" },
     { name = "types-pyyaml", specifier = ">=6.0" },
+]
+
+[[package]]
+name = "arcbundle"
+version = "0.9.0"
+source = { editable = "packages/arcbundle" }
+dependencies = [
+    { name = "arctrust" },
+    { name = "pydantic" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "arctrust", editable = "packages/arctrust" },
+    { name = "pydantic", specifier = ">=2.0,<3" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=9.0" },
+    { name = "pytest-asyncio", specifier = ">=1.3.0" },
+    { name = "pytest-cov", specifier = ">=7.0.0" },
 ]
 
 [[package]]

@@ -101,6 +101,7 @@ arcrun = { workspace = true }
 arcteam = { workspace = true }
 arcmas = { workspace = true }
 arctrust = { workspace = true }
+arcbundle = { workspace = true }
 arcstore = { workspace = true }
 arcmemory = { workspace = true }
 arcskill = { workspace = true }
