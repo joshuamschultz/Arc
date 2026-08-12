@@ -273,7 +273,9 @@ class ExtensionLoader:
                 self._tier.value, allow_all_imports=False, allow_imports=[]
             ),
             require_signature=self._tier is not Tier.PERSONAL,
-            trusted_public_key=self._trusted_public_key,
+            trusted_public_keys=(
+                () if self._trusted_public_key is None else (self._trusted_public_key,)
+            ),
             isolation_tier=self._tier.value,
             ignored_python_paths=ignored_paths,
         )

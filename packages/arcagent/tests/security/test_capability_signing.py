@@ -1,0 +1,338 @@
+"""SPEC-066 COMP-010 / REQ-319-REQ-320 — operator signing closes the trust gate.
+
+The loader has refused unsigned capabilities above personal tier since SPEC-033,
+but Arc ships no way to actually sign one: ``arc trust approve`` pins a source
+hash that the signature floor never lets :class:`~arctrust.TofuLayer` evaluate.
+COMP-010 supplies the missing half. ``capability_signing.sign()`` performs one
+atomic operator action with three effects — write the detached ``.arcsig``
+signature over the artifact bytes, pin the signer's public key as a trusted
+capability-verification key in the agent's ``arcagent.toml``, and record the
+TOFU pin. ``revoke()`` removes all three.
+
+Every verdict here comes from the REAL :class:`CapabilityLoader` gate
+(``require_signature=True``, a pinned key, and a ``TofuLayer`` built from the
+agent's own on-disk config), never from a re-implementation, so a verdict in
+this file is the verdict a live agent gets.
+
+The trusted key is a SET, not a single value. An operator-signed capability and
+an agent-self-signed capability must both be able to pass, so ``sign()``
+persists the signer key alongside whatever keys are already pinned rather than
+replacing them — see ``test_operator_and_agent_signed_capabilities_coexist``.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from arctrust import TofuLayer, generate_keypair, load_validators
+from arctrust.identity import AgentIdentity
+
+from arcagent.capabilities import artifact_signing, capability_signing
+from arcagent.capabilities.capability_loader import CapabilityLoader
+from arcagent.capabilities.capability_registry import CapabilityRegistry
+from arcagent.capabilities.inventory import collect_agent_capability_inventory
+from arcagent.capabilities.reload_models import CapabilityOutcome, ReloadDelta
+from arcagent.core.tier import Tier
+from arcagent.tools._dynamic_loader import resolve_workspace_import_policy
+
+_PERSONAL_POLICY = resolve_workspace_import_policy(
+    "personal", allow_all_imports=False, allow_imports=[]
+)
+
+#: Tiers where a signature is the floor — the only tiers this feature changes.
+_ABOVE_PERSONAL = [Tier.ENTERPRISE, Tier.FEDERAL]
+
+_OPERATOR_DID = "did:arc:operator:alice"
+
+_TOOL = (
+    "from arcagent.tools._decorator import tool\n"
+    "@tool(description='ok', version='1.0.0')\n"
+    "async def {fn}() -> str:\n"
+    "    return 'ok'\n"
+)
+
+_AGENT_TOML = """\
+[agent]
+name = "signing_probe"
+
+[security]
+tier = "federal"
+
+[security.validators]
+auto_run_agent_code = false
+"""
+
+
+@pytest.fixture
+def agent_root(tmp_path: Path) -> Path:
+    """An agent home with an ``arcagent.toml`` and empty capability roots."""
+    root = tmp_path / "agent"
+    (root / "capabilities" / "skills").mkdir(parents=True)
+    (root / "arcagent.toml").write_text(_AGENT_TOML, encoding="utf-8")
+    return root
+
+
+def _config(agent_root: Path) -> Path:
+    return agent_root / "arcagent.toml"
+
+
+def _write_tool(agent_root: Path, name: str) -> Path:
+    """Write an unsigned capability ``.py`` into the per-agent root."""
+    path = agent_root / "capabilities" / f"{name}.py"
+    path.write_bytes(_TOOL.format(fn=name).encode("utf-8"))
+    return path
+
+
+def _skill_md(name: str) -> str:
+    return (
+        "---\n"
+        f"name: {name}\n"
+        "version: 1.0.0\n"
+        f"description: does {name}\n"
+        f"triggers: [{name}]\n"
+        "tools: [reload]\n"
+        "---\n"
+        "\n## Resources\n\n## Contract\n\n## Knowledge\n\n## Steps\n\n"
+        "## Anti Patterns\n\n## Examples\n\n## Validation\n"
+    )
+
+
+def _write_skill(agent_root: Path, name: str) -> Path:
+    """Write an unsigned skill folder; returns the gated ``SKILL.md``."""
+    folder = agent_root / "capabilities" / "skills" / name
+    folder.mkdir(parents=True)
+    skill_md = folder / "SKILL.md"
+    skill_md.write_bytes(_skill_md(name).encode("utf-8"))
+    return skill_md
+
+
+async def _scan(agent_root: Path, *, tier: Tier, trusted_public_key: bytes) -> ReloadDelta:
+    """Run the real loader over the agent's two agent-writable roots.
+
+    The loader pins a SET of keys; these cases each exercise one signer, so they
+    hand it a single-element set.
+    """
+    caps = agent_root / "capabilities"
+    loader = CapabilityLoader(
+        scan_roots=[("agent", caps), ("agent-skills", caps / "skills")],
+        registry=CapabilityRegistry(),
+        import_policy=_PERSONAL_POLICY,
+        tofu=TofuLayer(tier, load_validators(_config(agent_root))),
+        require_signature=True,
+        trusted_public_keys=(trusted_public_key,),
+    )
+    return await loader.scan_and_register()
+
+
+def _outcome(delta: ReloadDelta, name: str) -> CapabilityOutcome:
+    for outcome in delta.outcomes:
+        if outcome.name == name:
+            return outcome
+    seen = [o.name for o in delta.outcomes]
+    raise AssertionError(f"no loader outcome for {name!r}; loader reported {seen}")
+
+
+@pytest.mark.parametrize("tier", _ABOVE_PERSONAL)
+@pytest.mark.asyncio
+async def test_operator_signed_capabilities_pass_the_gate(agent_root: Path, tier: Tier) -> None:
+    """An operator signature is the missing half: sign once, and both artifact
+    kinds the gate handles load above personal tier."""
+    operator = generate_keypair()
+    tool = _write_tool(agent_root, "ledger")
+    skill = _write_skill(agent_root, "audit-brief")
+    for artifact in (tool, skill):
+        capability_signing.sign(
+            artifact,
+            signer_did=_OPERATOR_DID,
+            private_key=operator.private_key,
+            config_path=_config(agent_root),
+        )
+
+    delta = await _scan(agent_root, tier=tier, trusted_public_key=operator.public_key)
+
+    assert _outcome(delta, "ledger").status == "loaded"
+    assert _outcome(delta, "audit-brief").status == "loaded"
+    assert {"ledger", "audit-brief"} <= set(delta.added)
+
+
+@pytest.mark.parametrize("tier", _ABOVE_PERSONAL)
+@pytest.mark.asyncio
+async def test_agent_self_signed_capabilities_still_pass(agent_root: Path, tier: Tier) -> None:
+    """No regression: an agent signing with its OWN DID key keeps loading.
+
+    Adding operator signing must not narrow the existing self-signed path that
+    ``arc agent create`` and the SPEC-033 self-modification tools depend on.
+    """
+    identity = AgentIdentity.generate(org="arc", agent_type="exec")
+    tool = _write_tool(agent_root, "ledger")
+    skill = _write_skill(agent_root, "audit-brief")
+    for artifact in (tool, skill):
+        capability_signing.sign(
+            artifact,
+            signer_did=identity.did,
+            private_key=identity.signing_seed,
+            config_path=_config(agent_root),
+        )
+
+    delta = await _scan(agent_root, tier=tier, trusted_public_key=identity.public_key)
+
+    assert _outcome(delta, "ledger").status == "loaded"
+    assert _outcome(delta, "audit-brief").status == "loaded"
+    assert {"ledger", "audit-brief"} <= set(delta.added)
+
+
+@pytest.mark.parametrize("tier", _ABOVE_PERSONAL)
+@pytest.mark.asyncio
+async def test_unsigned_capabilities_denied_as_unsigned(agent_root: Path, tier: Tier) -> None:
+    """Denial must name the actual cause. ``unsigned`` tells an operator to run
+    the signing command; a generic error tells them nothing."""
+    operator = generate_keypair()
+    _write_tool(agent_root, "ledger")
+    _write_skill(agent_root, "audit-brief")
+
+    delta = await _scan(agent_root, tier=tier, trusted_public_key=operator.public_key)
+
+    assert _outcome(delta, "ledger").status == "unsigned"
+    assert _outcome(delta, "audit-brief").status == "unsigned"
+    assert delta.added == []
+
+
+@pytest.mark.asyncio
+async def test_sign_writes_signature_trusted_key_and_tofu_pin(agent_root: Path) -> None:
+    """One call, three durable effects — all three are what makes the gate pass."""
+    operator = generate_keypair()
+    tool = _write_tool(agent_root, "ledger")
+    config = _config(agent_root)
+
+    capability_signing.sign(
+        tool,
+        signer_did=_OPERATOR_DID,
+        private_key=operator.private_key,
+        config_path=config,
+    )
+
+    assert artifact_signing.verify_file(
+        tool, tool.read_bytes(), trusted_public_key=operator.public_key
+    )
+    assert operator.public_key.hex() in config.read_text(encoding="utf-8")
+    # TOFU keys a tool on its file stem, so the pin must be recorded under it.
+    assert [entry.name for entry in load_validators(config).approved] == ["ledger"]
+
+
+@pytest.mark.asyncio
+async def test_sign_pins_a_skill_under_its_folder_name(agent_root: Path) -> None:
+    """A skill is gated under its FOLDER name, not its frontmatter name — a pin
+    recorded under the wrong key silently leaves the skill gated."""
+    operator = generate_keypair()
+    skill = _write_skill(agent_root, "audit-brief")
+    config = _config(agent_root)
+
+    capability_signing.sign(
+        skill,
+        signer_did=_OPERATOR_DID,
+        private_key=operator.private_key,
+        config_path=config,
+    )
+
+    assert [entry.name for entry in load_validators(config).approved] == ["audit-brief"]
+
+
+@pytest.mark.asyncio
+async def test_revoke_removes_signature_trusted_key_and_tofu_pin(agent_root: Path) -> None:
+    """Revocation is the exact inverse — the capability returns to gated."""
+    operator = generate_keypair()
+    tool = _write_tool(agent_root, "ledger")
+    config = _config(agent_root)
+    capability_signing.sign(
+        tool,
+        signer_did=_OPERATOR_DID,
+        private_key=operator.private_key,
+        config_path=config,
+    )
+
+    signed = await _scan(agent_root, tier=Tier.FEDERAL, trusted_public_key=operator.public_key)
+    assert _outcome(signed, "ledger").status == "loaded"
+
+    capability_signing.revoke(tool, config_path=config)
+
+    assert not artifact_signing.sidecar_path(tool).exists()
+    assert operator.public_key.hex() not in config.read_text(encoding="utf-8")
+    assert load_validators(config).approved == ()
+    delta = await _scan(agent_root, tier=Tier.FEDERAL, trusted_public_key=operator.public_key)
+    assert _outcome(delta, "ledger").status == "unsigned"
+    assert "ledger" not in delta.added
+
+
+@pytest.mark.asyncio
+async def test_pinned_key_is_consumed_by_the_real_load_posture(agent_root: Path) -> None:
+    """The pin must be WIRED, not merely written.
+
+    Every other test in this file hands the loader the right key directly, so a
+    ``sign()`` that wrote a hex string nothing ever reads would pass them all.
+    This one goes through the seam a live agent goes through — the inventory
+    resolves the trust posture from the agent's own config, and the test never
+    supplies the operator key. The probe agent has no DID, so before signing the
+    posture resolves no pinned key at all and the gate denies; afterwards the
+    ONLY thing that can make it load is the loader consuming the persisted set.
+    """
+    operator = generate_keypair()
+    tool = _write_tool(agent_root, "ledger")
+    config = _config(agent_root)
+
+    before = await collect_agent_capability_inventory(config)
+    gated = next(item for item in before.items if item.name == "ledger")
+    assert gated.status == "unsigned"
+
+    capability_signing.sign(
+        tool,
+        signer_did=_OPERATOR_DID,
+        private_key=operator.private_key,
+        config_path=config,
+    )
+
+    after = await collect_agent_capability_inventory(config)
+    loaded = next(item for item in after.items if item.name == "ledger")
+    assert loaded.status == "loaded", f"pin not consumed at load: {loaded.status_detail}"
+
+
+@pytest.mark.asyncio
+async def test_operator_and_agent_signed_capabilities_coexist(agent_root: Path) -> None:
+    """The trusted key is a SET.
+
+    Signing with the operator key must not evict the agent's own key, and vice
+    versa. Both keys stay pinned, and each signer's artifact passes the real
+    gate under its own key.
+    """
+    operator = generate_keypair()
+    identity = AgentIdentity.generate(org="arc", agent_type="exec")
+    config = _config(agent_root)
+    operator_tool = _write_tool(agent_root, "ledger")
+    agent_tool = _write_tool(agent_root, "notepad")
+
+    capability_signing.sign(
+        operator_tool,
+        signer_did=_OPERATOR_DID,
+        private_key=operator.private_key,
+        config_path=config,
+    )
+    capability_signing.sign(
+        agent_tool,
+        signer_did=identity.did,
+        private_key=identity.signing_seed,
+        config_path=config,
+    )
+
+    persisted = config.read_text(encoding="utf-8")
+    assert operator.public_key.hex() in persisted
+    assert identity.public_key.hex() in persisted
+
+    under_operator_key = await _scan(
+        agent_root, tier=Tier.FEDERAL, trusted_public_key=operator.public_key
+    )
+    assert _outcome(under_operator_key, "ledger").status == "loaded"
+
+    under_agent_key = await _scan(
+        agent_root, tier=Tier.FEDERAL, trusted_public_key=identity.public_key
+    )
+    assert _outcome(under_agent_key, "notepad").status == "loaded"

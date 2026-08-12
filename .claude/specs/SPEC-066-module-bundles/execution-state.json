@@ -1,0 +1,213 @@
+{
+  "feature": "SPEC-066-module-bundles",
+  "current_task": null,
+  "tasks": {
+    "T-949": {
+      "description": "(red) Failing test: a signed capability passes the loader's own trust gate; an unsigned one is denied above personal",
+      "status": "done",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-950": {
+      "description": "(green) Implement capability signing and revocation against the operator key",
+      "status": "in-progress",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-951": {
+      "description": "(green) Rework `arc trust approve` / `disapprove` to sign, not pin a hash alone",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-952": {
+      "description": "(green) `POST /api/trust/approve` signs through the same function",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-953": {
+      "description": "(green) Capability trust panel: render artifact source, then allow approve",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-954": {
+      "description": "(green) Audit events for capability sign, revoke, and refusal",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-955": {
+      "description": "(green) Signing runbook, security-model section, and README correction",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-956": {
+      "description": "(red) Failing test: manifest canonical bytes are stable and match the arcrun verifier convention",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-957": {
+      "description": "(green) `BundleManifest` model and canonical-JSON encoding",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-958": {
+      "description": "(green) Bundle signer over canonical manifest bytes",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-959": {
+      "description": "(red) Failing tests: verification refuses a bad signature, a hash mismatch, and leaves no partial tree",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-960": {
+      "description": "(green) Fail-closed bundle verifier",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-961": {
+      "description": "(green) Atomic materializer with read-only mode bits and inverse remove",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-962": {
+      "description": "(green) Bundle builder over the repository source catalog",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-963": {
+      "description": "(red) Security test: agent tools cannot reach the deployment module root",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-964": {
+      "description": "(green) Move the module scan root to the deployment directory",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-965": {
+      "description": "(green) Load module runtimes by path instead of by import name",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-966": {
+      "description": "(red) Absent-safe suite parametrized over live discovery",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-967": {
+      "description": "(green) `arc module` command set",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-968": {
+      "description": "(green) Per-agent copy of module tools and skills, and its inverse",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-969": {
+      "description": "(green) Audit events for bundle verify, refuse, install, and remove",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-970": {
+      "description": "(green) Exclude modules from the wheel; release CI builds and signs bundles",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-971": {
+      "description": "(green) `arc module install --from-source` for development, signed with a dev key",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-972": {
+      "description": "(refactor) Migrate all eighteen modules out of the wheel, one at a time",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-973": {
+      "description": "(refactor) Module distribution docs and package index",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    }
+  },
+  "task_order": [
+    "T-949",
+    "T-950",
+    "T-951",
+    "T-952",
+    "T-953",
+    "T-954",
+    "T-955",
+    "T-956",
+    "T-957",
+    "T-958",
+    "T-959",
+    "T-960",
+    "T-961",
+    "T-962",
+    "T-963",
+    "T-964",
+    "T-965",
+    "T-966",
+    "T-967",
+    "T-968",
+    "T-969",
+    "T-970",
+    "T-971",
+    "T-972",
+    "T-973"
+  ],
+  "meta": {
+    "last_updated": "2026-08-12",
+    "sessions": 1,
+    "total_tasks": 25
+  }
+}

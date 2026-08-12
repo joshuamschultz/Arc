@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from arctrust import TofuLayer, hash_source
+from arctrust import TofuLayer, ValidatorsConfig, hash_source
 from pydantic import BaseModel, ConfigDict
 
 import arcagent.builtins.capabilities as _builtins_pkg
@@ -40,6 +40,9 @@ _logger = logging.getLogger("arcagent.capabilities.inventory")
 # tasks, and capability classes are out of scope for the arcui capability views.
 _INVENTORY_KINDS: frozenset[str] = frozenset({"skill", "tool"})
 _DEFAULT_GLOBAL_ROOT = Path("~/.arc/capabilities")
+#: The one file a skill folder is gated on — its presence makes the FOLDER the
+#: pin name, matching what the loader looks up.
+_SKILL_MANIFEST = "SKILL.md"
 _KNOWN_TIERS: frozenset[str] = frozenset({"personal", "enterprise", "federal"})
 
 
@@ -112,7 +115,7 @@ async def collect_capability_inventory(
     builtins_root: Path | None = None,
     tofu: TofuLayer | None = None,
     require_signature: bool = False,
-    trusted_public_key: bytes | None = None,
+    trusted_public_keys: tuple[bytes, ...] = (),
     import_policy: ImportPolicy = DEFAULT_IMPORT_POLICY,
 ) -> list[CapabilityInventoryItem]:
     """Enumerate an agent's skills and capability tools with verbatim verdicts.
@@ -130,7 +133,7 @@ async def collect_capability_inventory(
         registry=CapabilityRegistry(),
         tofu=tofu,
         require_signature=require_signature,
-        trusted_public_key=trusted_public_key,
+        trusted_public_keys=trusted_public_keys,
         import_policy=import_policy,
         # Task #39: this is a read-only scan over a throwaway registry — a
         # discovered @background_task must never actually start (its body
@@ -173,7 +176,7 @@ class TrustPosture:
 
     tofu: TofuLayer
     require_signature: bool
-    trusted_public_key: bytes | None
+    trusted_public_keys: tuple[bytes, ...]
     import_policy: ImportPolicy
 
 
@@ -187,9 +190,13 @@ def resolve_trust_posture(
 
     ``require_signature`` is the enterprise/federal signature floor; the TOFU
     layer carries the per-tier source-approval policy; the import policy is the
-    tier-resolved allowlist for agent-authored workspace tools. ``trusted_public_key``
-    is the agent's pinned DID key (its own signatures verify against it) — the
-    caller supplies it because it lives with the identity, not the config.
+    tier-resolved allowlist for agent-authored workspace tools.
+
+    The trusted key is a SET: the agent's own DID key (``trusted_public_key``,
+    supplied by the caller because it lives with the identity, not the config)
+    unioned with every operator key pinned in ``[security.validators]``. An
+    operator-signed capability and an agent-self-signed one must both be able to
+    pass, so neither source of keys may evict the other.
     """
     tier = security.tier
     import_policy = resolve_workspace_import_policy(
@@ -204,9 +211,31 @@ def resolve_trust_posture(
     return TrustPosture(
         tofu=tofu,
         require_signature=tier in ("enterprise", "federal"),
-        trusted_public_key=trusted_public_key,
+        trusted_public_keys=_union_trusted_keys(trusted_public_key, security.validators),
         import_policy=import_policy,
     )
+
+
+def _union_trusted_keys(
+    agent_public_key: bytes | None, validators: ValidatorsConfig
+) -> tuple[bytes, ...]:
+    """Agent DID key + persisted operator keys, de-duplicated, order preserved.
+
+    A malformed hex entry is dropped rather than raised on: the pinned set is
+    operator-written config, and one bad row must not brick the load of every
+    other correctly signed capability. Dropping fails closed — the artifact that
+    needed that key stays gated.
+    """
+    keys: list[bytes] = [] if agent_public_key is None else [agent_public_key]
+    for encoded in validators.trusted_keys:
+        try:
+            decoded = bytes.fromhex(encoded)
+        except ValueError:
+            _logger.warning("ignoring malformed trusted_keys entry in [security.validators]")
+            continue
+        if decoded not in keys:
+            keys.append(decoded)
+    return tuple(keys)
 
 
 class RuntimeToolItem(BaseModel):
@@ -267,7 +296,7 @@ async def collect_agent_capability_inventory(
         global_root=global_root,
         tofu=posture.tofu,
         require_signature=posture.require_signature,
-        trusted_public_key=posture.trusted_public_key,
+        trusted_public_keys=posture.trusted_public_keys,
         import_policy=posture.import_policy,
     )
     if live_agent is None:
@@ -361,19 +390,28 @@ def read_capability_source(path: Path) -> str | None:
         return None
 
 
-def pin_name_for(item: GatedItem) -> str:
-    """The name TofuLayer keys ``item`` on — NOT always its display name.
+def pin_name_for_path(artifact: Path) -> str:
+    """The name TofuLayer keys the gated ``artifact`` on.
 
     The loader gates a tool under its file stem and a skill under its FOLDER
-    name (``SKILL.md``'s parent), while a skill's displayed ``name`` is its
-    frontmatter name, which can differ. Deriving the pin name from the source
+    name (``SKILL.md``'s parent), while a skill's displayed name is its
+    frontmatter name, which can differ. Deriving the pin name from the artifact
     path keeps an approval aligned with what the loader will look up. Callers
     pass this to ``arctrust.approve`` / ``arctrust.disapprove``.
     """
-    source = Path(item.path)
-    if item.kind == "skill":
-        return source.parent.name
-    return source.stem
+    if artifact.name == _SKILL_MANIFEST:
+        return artifact.parent.name
+    return artifact.stem
+
+
+def pin_name_for(item: GatedItem) -> str:
+    """The name TofuLayer keys ``item`` on — NOT always its display name.
+
+    A :class:`GatedItem`'s ``path`` is the gated artifact itself (the ``.py``
+    for a tool, ``SKILL.md`` for a skill), so this is :func:`pin_name_for_path`
+    over that path.
+    """
+    return pin_name_for_path(Path(item.path))
 
 
 async def list_gated(
@@ -425,6 +463,7 @@ __all__ = [
     "collect_capability_inventory",
     "list_gated",
     "pin_name_for",
+    "pin_name_for_path",
     "read_capability_source",
     "resolve_trust_posture",
 ]

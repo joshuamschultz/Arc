@@ -100,7 +100,7 @@ def _loader(
         import_policy=_PERSONAL_POLICY,
         tofu=TofuLayer(tier, validators),
         require_signature=require_signature,
-        trusted_public_key=trusted_public_key,
+        trusted_public_keys=() if trusted_public_key is None else (trusted_public_key,),
     )
     return loader, sink
 

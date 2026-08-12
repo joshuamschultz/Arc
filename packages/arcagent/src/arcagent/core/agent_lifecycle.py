@@ -238,7 +238,7 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
         import_policy=posture.import_policy,
         tofu=posture.tofu,
         require_signature=posture.require_signature,
-        trusted_public_key=posture.trusted_public_key,
+        trusted_public_keys=posture.trusted_public_keys,
         isolation_tier=agent._config.security.tier,
     )
     builtin_runtime.configure(

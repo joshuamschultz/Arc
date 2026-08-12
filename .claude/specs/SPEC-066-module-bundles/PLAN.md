@@ -9,12 +9,12 @@
 
 ## Phase 1: Foundation
 
-- [ ] **T-949**: (red) Failing test: a signed capability passes the loader's own trust gate; an unsigned one is denied above personal
+- [x] **T-949**: (red) Failing test: a signed capability passes the loader's own trust gate; an unsigned one is denied above personal
   - domain: test
   - Components: COMP-010
   - Requirements: REQ-319
   - Acceptance: Test drives the real `capability_loader._passes_trust_gate` with `require_signature=True` and a pinned key. Red for the right reason: no signing function exists yet. Asserts denial detail is `unsigned`, not a generic error.
-- [ ] **T-950**: (green) Implement capability signing and revocation against the operator key
+- [x] **T-950**: (green) Implement capability signing and revocation against the operator key
   - domain: auth
   - Components: COMP-010
   - Requirements: REQ-319, REQ-320

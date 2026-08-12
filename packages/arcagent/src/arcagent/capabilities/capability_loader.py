@@ -148,7 +148,7 @@ class CapabilityLoader:
         import_policy: ImportPolicy = DEFAULT_IMPORT_POLICY,
         tofu: TofuLayer | None = None,
         require_signature: bool = False,
-        trusted_public_key: bytes | None = None,
+        trusted_public_keys: tuple[bytes, ...] = (),
         trust_backend: TrustBackend | None = None,
         spawn_background_tasks: bool = True,
         isolation_tier: str = "personal",
@@ -168,12 +168,15 @@ class CapabilityLoader:
         self._spawn_background_tasks = spawn_background_tasks
         # SPEC-033 load-path Sign gate. ``tofu`` is the per-tier source-approval
         # policy; ``require_signature`` makes a valid detached signature the
-        # floor (enterprise/federal); ``trusted_public_key`` pins self-authored
-        # signatures to the agent's own DID key. All default off so a bare
-        # library loader keeps pre-SPEC-033 behaviour — production wires them.
+        # floor (enterprise/federal); ``trusted_public_keys`` is the SET of keys
+        # a signature may be pinned to — the agent's own DID key plus every
+        # operator key pinned in ``[security.validators]``, because an
+        # operator-signed and an agent-self-signed capability must both be able
+        # to pass. All default off so a bare library loader keeps pre-SPEC-033
+        # behaviour — production wires them.
         self._tofu = tofu
         self._require_signature = require_signature
-        self._trusted_public_key = trusted_public_key
+        self._trusted_public_keys = trusted_public_keys
         self._trust_backend: TrustBackend = trust_backend or Ed25519TrustBackend()
         self._known_tools: dict[str, str] = {}  # name → version
         self._known_skills: dict[str, str] = {}
@@ -227,7 +230,7 @@ class CapabilityLoader:
             import_policy=self._import_policy,
             tofu=self._tofu,
             require_signature=self._require_signature,
-            trusted_public_key=self._trusted_public_key,
+            trusted_public_keys=self._trusted_public_keys,
             trust_backend=self._trust_backend,
             spawn_background_tasks=False,
             isolation_tier=self._isolation_tier,
@@ -365,11 +368,12 @@ class CapabilityLoader:
 
         Requiring a signature implies a pinned key (SPEC-033 #6): without one,
         arctrust skips key-pinning and accepts any self-consistent signature, so
-        an unpinned floor is no floor. Fail closed.
+        an unpinned floor is no floor. Fail closed — an EMPTY key set is exactly
+        that unpinned floor and denies.
         """
         if self._tofu is None and not self._require_signature:
             return _GateResult(allowed=True)
-        if self._require_signature and self._trusted_public_key is None:
+        if self._require_signature and not self._trusted_public_keys:
             await self._deny_capability(path, "signature", "signature required but no pinned key")
             delta.errors.append((str(path), "signature: required but no pinned key — denied"))
             return _GateResult(
@@ -377,9 +381,7 @@ class CapabilityLoader:
             )
         try:
             source_bytes = path.read_bytes()
-            signed = self._trust_backend.verify(
-                path, source_bytes, trusted_public_key=self._trusted_public_key
-            )
+            signed = self._verify_against_any_key(path, source_bytes)
             if self._require_signature and not signed:
                 await self._deny_capability(path, "signature", "missing or invalid signature")
                 delta.errors.append((str(path), "signature: unsigned/invalid — denied"))
@@ -403,6 +405,22 @@ class CapabilityLoader:
         delta.errors.append((str(path), f"tofu: {decision.value}"))
         return _GateResult(
             allowed=False, status=decision.value, detail=f"tofu decision {decision.value}"
+        )
+
+    def _verify_against_any_key(self, path: Path, content: bytes) -> bool:
+        """True when ``content``'s sidecar verifies against ANY pinned key.
+
+        The backend contract stays singular-key — one call per pinned key — so
+        every other consumer of :class:`TrustBackend` is untouched. An empty set
+        means no pin at all: only reachable when a signature is not the floor
+        (the gate denies an unpinned floor before we get here), where an
+        unpinned verify asks for attribution rather than authority.
+        """
+        if not self._trusted_public_keys:
+            return self._trust_backend.verify(path, content, trusted_public_key=None)
+        return any(
+            self._trust_backend.verify(path, content, trusted_public_key=key)
+            for key in self._trusted_public_keys
         )
 
     async def _deny_capability(self, path: Path, action: str, reason: str) -> None:

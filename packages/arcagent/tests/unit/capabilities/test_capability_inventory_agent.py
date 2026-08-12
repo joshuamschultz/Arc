@@ -112,7 +112,7 @@ class TestResolveTrustPosture:
             trusted_public_key=b"k",
         )
         assert posture.require_signature is False
-        assert posture.trusted_public_key == b"k"
+        assert posture.trusted_public_keys == (b"k",)
 
     def test_federal_tier_requires_signature(self) -> None:
         from arcagent.capabilities.inventory import resolve_trust_posture

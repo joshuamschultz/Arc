@@ -64,6 +64,13 @@ class ValidatorsConfig(BaseModel):
         default=(),
         description="Persisted TOFU approvals; appended by `arc trust approve`",
     )
+    trusted_keys: tuple[str, ...] = Field(
+        default=(),
+        description=(
+            "Hex-encoded Ed25519 verify keys a capability signature may be "
+            "pinned to; appended by the operator signing command"
+        ),
+    )
 
 
 def hash_source(source: str) -> str:
@@ -158,6 +165,39 @@ def disapprove(config_path: Path, *, name: str) -> bool:
     return True
 
 
+def pin_key(config_path: Path, *, public_key: bytes) -> ValidatorsConfig:
+    """Pin ``public_key`` as a trusted capability-verification key and persist.
+
+    The trusted key is a SET, not a single value: an operator-signed capability
+    and an agent-self-signed capability must both be able to pass the load gate,
+    so a new pin is added alongside the existing ones rather than replacing
+    them. Re-pinning an already-trusted key is a no-op write.
+    """
+    validators = load_validators(config_path)
+    encoded = public_key.hex()
+    if encoded in validators.trusted_keys:
+        return validators
+    updated = validators.model_copy(update={"trusted_keys": (*validators.trusted_keys, encoded)})
+    persist_validators(config_path, updated)
+    return updated
+
+
+def unpin_key(config_path: Path, *, public_key: bytes) -> bool:
+    """Remove ``public_key`` from the trusted capability-verification set.
+
+    Returns True when a key was removed, False when it was not pinned. Artifacts
+    signed by that key stop verifying at the next load — revocation is a trust
+    withdrawal, so it fails closed by construction.
+    """
+    validators = load_validators(config_path)
+    encoded = public_key.hex()
+    kept = tuple(key for key in validators.trusted_keys if key != encoded)
+    if len(kept) == len(validators.trusted_keys):
+        return False
+    persist_validators(config_path, validators.model_copy(update={"trusted_keys": kept}))
+    return True
+
+
 def persist_validators(config_path: Path, validators: ValidatorsConfig) -> None:
     """Rewrite only the ``[security.validators]`` block in ``arcagent.toml``.
 
@@ -176,6 +216,9 @@ def persist_validators(config_path: Path, validators: ValidatorsConfig) -> None:
         security["validators"] = validators_table
 
     validators_table["auto_run_agent_code"] = validators.auto_run_agent_code
+    trusted_keys = tomlkit.array()
+    trusted_keys.extend(validators.trusted_keys)
+    validators_table["trusted_keys"] = trusted_keys
     approved = tomlkit.aot()
     for entry in validators.approved:
         row = tomlkit.table()
@@ -213,4 +256,6 @@ __all__ = [
     "hash_source",
     "load_validators",
     "persist_validators",
+    "pin_key",
+    "unpin_key",
 ]
