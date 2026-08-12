@@ -1,6 +1,6 @@
 # The Tasks Module — Mission Control
 
-> **Runbooks**  ·  Operate  ·  page 9 of 18  
+> **Runbooks**  ·  Operate  ·  page 9 of 19  
 > **For** Operators deploying and running Arc  
 > [← Teams](teams.md)  ·  [Docs home](../../README.md)  ·  [Agent features →](agent-features.md)
 

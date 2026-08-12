@@ -1,8 +1,8 @@
 # Signing a Gated Capability
 
-> **Runbooks**  ·  Operate  ·  page 13 of 18  
+> **Runbooks**  ·  Operate  ·  page 13 of 19  
 > **For** Operators deploying and running Arc  
-> [← Hardening](security/hardening.md)  ·  [Docs home](../README.md)  ·  [Threat model →](security/threat-model.md)
+> [← Hardening](security/hardening.md)  ·  [Docs home](../README.md)  ·  [Staging module bundles →](staging-module-bundles.md)
 
 An agent can write its own tools and skills. Arc does not let that code run
 until a human operator approves it. This runbook is the approval procedure.

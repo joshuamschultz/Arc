@@ -1,6 +1,6 @@
 # ArcAgent Security Hardening Runbook
 
-> **Runbooks**  ·  Operate  ·  page 12 of 18  
+> **Runbooks**  ·  Operate  ·  page 12 of 19  
 > **For** Operators deploying and running Arc  
 > [← Policy and proactive engine](../operate/policy-and-proactive.md)  ·  [Docs home](../../README.md)  ·  [Signing capabilities →](../signing-capabilities.md)
 

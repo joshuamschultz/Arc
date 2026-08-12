@@ -1,6 +1,6 @@
 # Agent-Level Features
 
-> **Runbooks**  ·  Operate  ·  page 10 of 18  
+> **Runbooks**  ·  Operate  ·  page 10 of 19  
 > **For** Operators deploying and running Arc  
 > [← Tasks](tasks.md)  ·  [Docs home](../../README.md)  ·  [Policy and proactive engine →](policy-and-proactive.md)
 
