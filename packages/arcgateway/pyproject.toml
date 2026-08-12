@@ -24,6 +24,16 @@ dependencies = [
     "httpx>=0.27,<1",
     "arc-agent>=0.2",
     "watchfiles>=0.21",
+    # Direct, not transitive: audit.py, media_store.py, pairing.py, identity.py,
+    # config.py, workflow_runner_host.py, executor_subprocess.py, the registry and
+    # both token-bearing adapters all `import arctrust`, and session.py takes
+    # `build_session_key` from `arctrust.session_identity` (the derivation lives on
+    # a leaf because arcagent may not import arcgateway). The uv workspace resolves
+    # this regardless of what is declared here, which is exactly why the edge has to
+    # be written down: a standalone `pip install arcgateway` fails at import without
+    # it, and this repo has already been bitten once by a missing edge that showed up
+    # only in Docker and got papered over with a sync-everything runbook rule.
+    "arctrust>=0.9",
     # SPEC-061 (ArcFlow): COMP-009 RunnerHost owns the arcteam WorkflowRunner's
     # lifecycle on the agent side of the fleet service; it needs both the
     # engine (arcteam) and the shared run/task store (arcstore).
@@ -31,12 +41,24 @@ dependencies = [
     "arcteam>=0.6",
 ]
 
-# Remote platform adapters are separate extension packages, discovered via the
-# ``arcgateway.adapters`` entry-point group. Install one alongside the gateway:
-#   pip install 'arcgateway-telegram'
-#   pip install 'arcgateway-slack'
-#   pip install 'arcgateway-mattermost'
-# The gateway core ships only the in-process ``web`` adapter.
+# Platform adapters are in-tree folders under ``src/arcgateway/adapters/``,
+# discovered by scanning for a module-level ``PLATFORM`` descriptor (SPEC-065
+# REQ-308). Adding a platform is adding a folder; deleting the folder deletes
+# the platform. What is optional is not the adapter but the third-party client
+# it needs, so each platform ships as an extra:
+#   pip install 'arcgateway[telegram]'
+#   pip install 'arcgateway[slack]'
+#   pip install 'arcgateway[mattermost]'
+# Without its extra, the platform is skipped at personal/enterprise tier with
+# the reason recorded, and refuses startup at federal.
+[project.optional-dependencies]
+telegram = ["python-telegram-bot>=20,<22"]
+slack = ["slack-bolt>=1.18", "slack-sdk>=3", "aiohttp>=3.14.3,<4"]
+# 3.14.3 is the security floor: it clears the WebSocket-upgrade request
+# smuggling and the undeclared-permessage-deflate RSV1 decompress
+# (PYSEC-2026-3546/3547), both reachable by anything that serves or dials a
+# WebSocket, plus the C-parser out-of-bounds read (PYSEC-2026-3545).
+mattermost = ["aiohttp>=3.14.3,<4"]
 
 [project.scripts]
 arcgateway = "arcgateway.cli:main"
@@ -81,6 +103,12 @@ warn_unused_configs = true
 
 [[tool.mypy.overrides]]
 module = ["arcagent.*", "arcllm.*", "arcrun.*", "arccli.*"]
+ignore_missing_imports = true
+
+# Platform clients for the in-tree adapters. Optional extras, and none of them
+# ships complete stubs — suppress missing-import noise so --strict stays clean.
+[[tool.mypy.overrides]]
+module = ["telegram.*", "slack_bolt.*", "slack_sdk.*", "aiohttp.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

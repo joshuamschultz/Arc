@@ -15,8 +15,8 @@ from arcgateway.pairing import (
     _ADD_SIGNED_BY_DID_COLUMN,
     _SCHEMA_SQL,
     PairingSignatureInvalid,
+    PairingSignatureVerifier,
 )
-from arcgateway.pairing_signature import PairingSignatureVerifier
 
 
 def _make_db() -> sqlite3.Connection:

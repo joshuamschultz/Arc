@@ -24,6 +24,7 @@ import logging
 import time
 from collections.abc import AsyncIterator
 
+from arcgateway.adapters._text import split_for_platform
 from arcgateway.delivery import DeliveryTarget
 from arcgateway.executor import Delta
 
@@ -284,20 +285,14 @@ class StreamBridge:
 
 
 def _split_for_platform(adapter: object, text: str) -> list[str]:
-    """Split ``text`` into platform-sized chunks via the adapter's ``split_message``.
+    """Split ``text`` into platform-sized chunks (SPEC-065 REQ-310).
 
-    Length-limited adapters (Telegram, Slack) expose ``split_message(text)`` so the
-    bridge can chunk a long reply for in-place finalization without hard-coding any
-    platform limit. Adapters that omit it (or return a non-list, e.g. test mocks)
-    fall back to a single chunk — the adapter's own ``edit_message``/``send`` then
-    applies whatever limit it enforces.
+    Splitting is the gateway's, so the bridge asks the shared splitter rather
+    than each adapter. A length-limited platform declares ``max_message_chars``
+    and its preferred ``text_boundaries``; one that declares neither (web,
+    in-process, test doubles) is unbounded and gets a single chunk.
     """
-    splitter = getattr(adapter, "split_message", None)
-    if callable(splitter):
-        chunks = splitter(text)
-        if isinstance(chunks, list) and chunks and all(isinstance(c, str) for c in chunks):
-            return chunks
-    return [text]
+    return split_for_platform(adapter, text) or [text]
 
 
 def _audit(event_name: str, data: dict[str, object]) -> None:

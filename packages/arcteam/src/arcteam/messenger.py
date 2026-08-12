@@ -140,7 +140,24 @@ class MessagingService:
 
     async def _to_dlq(self, message: Message, reason: str) -> None:
         """Send failed message to Dead Letter Queue."""
-        entry = message.model_dump()
+        await self._quarantine(message.model_dump(), reason)
+
+    async def _quarantine(self, payload: dict[str, Any], reason: str) -> None:
+        """Record one dead-letter entry, with its reason, for any payload (REQ-313).
+
+        Takes a raw dict rather than a ``Message`` so a payload this consumer
+        cannot even parse still leaves a record an operator can query — a
+        message that stops travelling is never allowed to leave nothing behind.
+
+        The payload and its ``meta`` are both copied: a caller may hand over the
+        live stream record, and stamping the reason onto that record in place
+        would rewrite the message still sitting on the stream. ``meta`` is
+        rebuilt when it is missing or not a mapping — stream data is untrusted,
+        and the reason has to survive whatever shape it arrives in.
+        """
+        entry = dict(payload)
+        meta = entry.get("meta")
+        entry["meta"] = dict(meta) if isinstance(meta, dict) else {}
         entry["meta"]["dlq_reason"] = reason
         entry["meta"]["dlq_timestamp"] = datetime.now(UTC).isoformat()
         entry["seq"] = await self._next_dlq_seq()
@@ -343,6 +360,14 @@ class MessagingService:
             except ValueError:
                 await self._to_dlq(message, "invalid_address")
                 raise
+
+            # REQ-313: an entity target must resolve to a registered entity, in
+            # whichever form it was addressed. `@ghost` already raises here via
+            # resolve_ref; without this the `agent://ghost` form was accepted,
+            # written to a stream nothing subscribes to, and reported "sent" —
+            # neither delivered nor recorded anywhere as failed.
+            if scheme in ("agent", "user") and self._entity_by_ref(entities, uri) is None:
+                raise UnknownHandle(f"Addressee is not a registered entity: {uri}")
 
             # FR-7: Enforce channel membership
             if scheme == "channel":
@@ -638,16 +663,19 @@ class MessagingService:
         benign fan-out duplicate — acked and skipped, never delivered twice. A
         handler that raises :class:`RetryableDeliveryError` (transient
         backpressure) is NOT acked, so it redelivers rather than being lost; any
-        other handler failure is logged (fail-open) and acked to avoid a
-        poison-message loop.
+        other handler failure is dead-lettered with a reason and acked, so a
+        poison message neither loops forever nor vanishes without a record
+        (REQ-313).
         """
         try:
             message = Message.model_validate(delivery.data)
         except ValidationError:
             # Untrusted stream data — a malformed payload must not escape the
-            # consume loop and kill the unsupervised task. Log and ack so the
-            # poison message is dropped rather than crashing the subscription.
-            logger.exception("dropping unparseable delivery (poison message)")
+            # consume loop and kill the unsupervised task. Quarantine it with a
+            # reason and ack: dropping the poison message is right, dropping it
+            # with only a log line behind it is the silent drop REQ-313 forbids.
+            logger.exception("dead-lettering unparseable delivery (poison message)")
+            await self._quarantine(delivery.data, "unparseable_envelope")
             await delivery.ack()
             return
         reason = await self._verify_origin(message)
@@ -658,18 +686,28 @@ class MessagingService:
         if message.id in seen_ids:
             await delivery.ack()
             return
+        # Claim the id BEFORE awaiting the handler (REQ-314). The check and the
+        # record have to be one synchronous step: an addressee coming back to a
+        # backlog has the same message waiting on two of its streams at once, so
+        # both consume loops reach here in the same tick and — with the record
+        # on the far side of the await — both would deliver it. A duplicated
+        # instruction to an agent is a duplicated action, not a cosmetic repeat.
+        seen_ids.add(message.id)
         try:
             await handler(message)
         except asyncio.CancelledError:
+            seen_ids.discard(message.id)
             raise
         except RetryableDeliveryError:
-            # Transient downstream backpressure — do NOT ack or mark seen; the
-            # durable consumer redelivers after ack_wait so the message is not lost.
+            # Transient downstream backpressure — release the claim and do NOT
+            # ack; the durable consumer redelivers after ack_wait so the message
+            # is deferred rather than lost.
+            seen_ids.discard(message.id)
             logger.warning("inbox delivery deferred (backpressure) for %s", message.id)
             return
-        except Exception:  # reason: fail-open — log + ack to avoid poison loop
+        except Exception:  # reason: permanent failure — record it, then ack
             logger.exception("inbox handler failed for message %s", message.id)
-        seen_ids.add(message.id)
+            await self._to_dlq(message, "handler_failed")
         await delivery.ack()
 
     # --- Cursor ---

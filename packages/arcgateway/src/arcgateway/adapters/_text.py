@@ -1,9 +1,11 @@
-"""Shared text utilities for chat platform adapters.
+"""The gateway's message splitter — the one implementation (SPEC-065 REQ-310).
 
 SPEC-025 review §arch-M-1 — Slack, Mattermost, and Telegram each had a
 near-duplicate ``split_message`` implementation. This module owns the one
-canonical version. Each adapter calls in with its own platform-specific
-limits and boundary preferences.
+canonical version, and REQ-310 keeps it here: an adapter *declares* its
+platform's limit (``max_message_chars``) and preferred boundaries
+(``text_boundaries``) and the gateway does the splitting, so a fourth platform
+cannot arrive with a fourth splitter that chunks differently.
 
 The algorithm is: walk the input, on overflow find the rightmost
 boundary character (or substring) in the current window, split there,
@@ -14,7 +16,53 @@ chunk is hard-cut at ``max_length``.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
+
+#: Sentence-ending punctuation, the last resort before a hard cut.
+_SENTENCE_END = re.compile(r"[.!?]\s")
+
+#: Boundaries used when an adapter declares none.
+_DEFAULT_BOUNDARIES: tuple[str, ...] = ("\n\n", "\n")
+
+
+def last_sentence_boundary(window: str) -> int | None:
+    """Return the index just past the last ``.!?`` in ``window`` (or None).
+
+    The returned index keeps the punctuation in the left chunk; the splitter
+    ``lstrip``-s the trailing whitespace from the remainder.
+    """
+    last: re.Match[str] | None = None
+    for match in _SENTENCE_END.finditer(window):
+        last = match
+    if last is None:
+        return None
+    return last.end() - 1
+
+
+def split_for_platform(adapter: object, text: str) -> list[str]:
+    """Split ``text`` for whatever platform ``adapter`` fronts.
+
+    The adapter contributes two *declarations* and no code: ``max_message_chars``
+    (its platform's hard limit) and ``text_boundaries`` (where its users expect a
+    break). An adapter that declares no limit is unbounded and gets one chunk.
+
+    Args:
+        adapter: The platform adapter the text is bound for.
+        text: The reply to split.
+
+    Returns:
+        Chunks the platform will accept, in order.
+    """
+    if not text:
+        return []
+    limit = getattr(adapter, "max_message_chars", 0)
+    if not isinstance(limit, int) or limit <= 0:
+        return [text]
+    boundaries = getattr(adapter, "text_boundaries", _DEFAULT_BOUNDARIES)
+    return split_message(
+        text, limit, boundaries=tuple(boundaries), final_boundary=last_sentence_boundary
+    )
 
 
 def split_message(

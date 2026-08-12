@@ -38,8 +38,10 @@ import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
+from arcgateway.adapters.base import DraftPart, Outbound, as_parts
 from arcgateway.delivery import DeliveryTarget
 from arcgateway.executor import Delta, InboundEvent
+from arcgateway.parts import TextPart, flatten_text
 
 _logger = logging.getLogger("arcgateway.adapters.in_process")
 
@@ -120,14 +122,24 @@ class PythonAdapter:
             queue.put_nowait(Delta(kind="done", is_final=True, turn_id=sk))
         self._streams.clear()
 
+    def to_parts(self, payload: Any) -> list[DraftPart]:
+        """Turn one in-process call's payload into parts (COMP-004).
+
+        A caller hands this adapter a string, so there is nothing to fetch and
+        nothing to classify. Implemented anyway so this transport answers the
+        same contract every platform does.
+        """
+        text = str(payload)
+        return [TextPart(text=text)] if text else []
+
     async def send(
         self,
         target: DeliveryTarget,
-        message: str,
+        parts: Outbound,
         *,
         reply_to: str | None = None,
     ) -> None:
-        """Route the adapter's outbound text into the dispatching call's stream.
+        """Route the adapter's outbound reply into the dispatching call's stream.
 
         Real adapters write to a wire protocol here; we put a ``token``
         delta on the per-session queue. The router calls this once
@@ -142,7 +154,12 @@ class PythonAdapter:
             )
             return
         queue.put_nowait(
-            Delta(kind="token", content=message, is_final=False, turn_id=target.chat_id)
+            Delta(
+                kind="token",
+                content=flatten_text(as_parts(parts)),
+                is_final=False,
+                turn_id=target.chat_id,
+            )
         )
 
     async def send_with_id(self, target: DeliveryTarget, message: str) -> str | None:

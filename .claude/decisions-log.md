@@ -4016,28 +4016,30 @@ Hidden from prompt manifest. LLM doesn't see what it can't use; no temptation to
 
 ### arcprompt
 
-#### D-652 — arcui signs from the capability inventory, and the agent has no path to it
+#### D-652 — arcui's trust surface exists and is correctly gated; it needs to sign, and needs a button
 
 `arcui` · Security · from *Optional Module Bundles — Build Decisions (2026-08-11)*
 
-- **Decision**: The arcui capability inventory grows an Approve action on any gated
-  row, calling the same code path as `arc trust approve` and signing with the same
-  operator key arcui already uses for prompt overlays. The endpoint is operator-
-  authenticated, is not reachable from `/ws/chat`, and is not exposed as a tool on any
-  registry. Every approval emits an audit event carrying the operator DID, the
-  artifact path, and the source hash signed.
+- **Decision**: `arcui/routes/trust.py` already ships `GET /api/trust/gated`,
+  `POST /api/trust/approve`, and `POST /api/trust/disapprove` — operator-role gated,
+  audited, and reaching arcagent only through the capability-inventory seam. That
+  posture is correct and stays as-is. What changes: approve begins signing (D-651)
+  instead of pinning a hash alone, and the web UI gains the action itself, with the
+  artifact source shown on the row before approval becomes available.
 - **Alternatives**: Approve by chatting with the agent (zero new UI, but it makes the
   agent the channel for its own privilege escalation, which is ASI09 exactly, and the
   same reason connector tokens never transit arcui chat); CLI only, no UI (smallest
   surface, and the CLI is the auditable path anyway — but the person who reviews a
   drifted skill is looking at a diff in the browser, and forcing a terminal switch is
   how review turns into rubber-stamping).
-- **Rationale**: The inventory already renders every gated capability with its status
-  and source, so the review surface exists and only the action is missing. Keeping the
-  endpoint off the chat socket and off every tool registry is the whole security
-  content of this decision: an agent that could reach it could improve its own skill
-  and then approve its own improvement, which converts the trust gate into a
-  formality.
+- **Rationale**: Checked against the code before specifying. The endpoint, the
+  operator-role gate, the audit emission, and the roster resolution all exist and
+  mirror `routes/approvals.py`; specifying them as new work would have duplicated a
+  correct surface. The remaining gap is real but narrow — the endpoint pins a hash
+  that the loader's signature floor never consults, and there is no button. Keeping
+  approval off the chat socket and off every tool registry stays the security content:
+  an agent that could reach it could improve its own skill and then approve its own
+  improvement, which converts the trust gate into a formality.
 
 #### D-466 — Overlays outside agent tool reach
 
@@ -6900,7 +6902,7 @@ Concern purity is untouched: arcllm still only calls, arcrun still only loops, a
 | D-649 | Security | arcagent | Copied capabilities are untrusted by design; federal drift needs an operator signature |
 | D-650 | Data Model | arcagent | Compaction commits an explicit replay baseline by revision |
 | D-651 | Security | arcagent | One verb signs and pins; `arc trust approve` produces a real signature |
-| D-652 | Security | arcui | arcui signs from the capability inventory, and the agent has no path to it |
+| D-652 | Security | arcui | arcui's trust surface exists and is correctly gated; it needs to sign, and needs a button |
 | D-653 | Deployment | arcagent | The signing procedure ships as an operator runbook, README claim, and code together |
 | D-654 | Security | arcagent | Outbound URL authorization includes DNS destinations |
 | D-655 | API Design | arcagent | Capability registry state is exposed only through snapshots |
@@ -6974,7 +6976,7 @@ next to that build's state, in `.claude/builds/<feature>/research.md`.
 ## Gateway Messaging + Media — Build Decisions (2026-08-11)
 
 **Phase**: build | **Status**: complete | **Total decisions**: 10 (10 user, 0 auto-applied)
-**ID range**: D-668 to D-681
+**ID range**: D-668 to D-682
 **Priority framework**: simplicity → modularity → security → scalability
 
 ### Summary
@@ -7082,6 +7084,14 @@ _(none)_
 - **Priority**: simplicity
 - **Alternatives considered**: a separate send_file method; text-only outbound with links
 - **Rationale**: Symmetry with the inbound envelope means one vocabulary in both directions and no second code path to keep honest. Reading through the existing workspace fence means outbound file sending grants the agent no reach it did not already have. Per-adapter degradation matters because platform limits genuinely differ (Telegram 50 MB, Slack tiered) and a turn should not be lost because one channel cannot carry an attachment.
+
+#### D-682: Media retention
+
+**Decision**: Inbound artefacts stay in the workspace. No retention window, no pruning job, no size-based eviction.
+
+- **Priority**: simplicity
+- **Alternatives considered**: age-based purge; size-capped inbox with oldest-out eviction
+- **Rationale**: Operator call. An agent's inbox is the same kind of thing as its memory and its sessions — it stays because the agent may need it later, and a file the agent was handed is evidence of what it was asked to do. Deleting it on a timer would make an old turn unreplayable. Growth is bounded in practice by the per-artefact size ceiling and by how much a human actually sends. Recorded as a decision so nobody later reads the absence of a pruner as an oversight.
 
 ### Open Questions
 - session_queue.py becomes vestigial under the delivery decision unless it earns its keep as flood backpressure. Decide before implementing — CLAUDE.md 3 forbids leaving dead code.

@@ -49,10 +49,9 @@ def _configure_logging(*, verbose: bool) -> None:
 
     Root stays at WARNING (third-party library chatter stays quiet); the
     audit logger and platform-adapter loggers are explicitly raised to INFO
-    — the two categories confirmed silent in production. Adapter packages
-    install as top-level modules with underscores (``arcgateway_telegram``,
-    not ``arcgateway.telegram``), so each needs its own entry — setting
-    "arcgateway" alone would not cover them.
+    — the two categories confirmed silent in production. Since SPEC-065 every
+    platform lives under ``arcgateway.adapters.<name>``, so that one prefix
+    covers each of them and a platform added later needs no entry here.
 
     ``force=True`` guarantees this config wins even if something already
     called ``basicConfig`` first (a dependency, or — in tests — a prior
@@ -71,9 +70,6 @@ def _configure_logging(*, verbose: bool) -> None:
     )
     logging.getLogger("arcui.audit").setLevel(logging.INFO)
     logging.getLogger("arcgateway.adapters").setLevel(logging.INFO)
-    logging.getLogger("arcgateway_telegram").setLevel(logging.INFO)
-    logging.getLogger("arcgateway_slack").setLevel(logging.INFO)
-    logging.getLogger("arcgateway_mattermost").setLevel(logging.INFO)
     if verbose:
         logging.getLogger().setLevel(logging.INFO)
 

@@ -39,8 +39,10 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any, Protocol, runtime_checkable
 
+from arcgateway.adapters.base import DraftPart, Outbound, as_parts
 from arcgateway.delivery import DeliveryTarget
 from arcgateway.executor import Delta, InboundEvent
+from arcgateway.parts import TextPart, flatten_text
 from arcgateway.session import build_session_key
 
 _logger = logging.getLogger("arcgateway.adapters.web")
@@ -177,18 +179,30 @@ class WebPlatformAdapter:
             task.cancel()
         self._eviction_tasks.clear()
 
+    def to_parts(self, payload: Any) -> list[DraftPart]:
+        """Turn one browser frame into parts (COMP-004).
+
+        The browser posts words and nothing else — there is no upload surface
+        on this transport — so the translation is the trivial one. It exists
+        because the contract is the contract: a surface that answered "not my
+        job" here would be deciding what an inbound message is somewhere else.
+        """
+        text = str(payload.get("message", "") or "") if isinstance(payload, dict) else str(payload)
+        return [TextPart(text=text)] if text else []
+
     async def send(
         self,
         target: DeliveryTarget,
-        message: str,
+        parts: Outbound,
         *,
         reply_to: str | None = None,
     ) -> None:
-        """Fan out a ``message`` frame to every socket for ``target.chat_id``.
+        """Fan out a reply to every socket for ``target.chat_id``.
 
         Returns without waiting for socket I/O. Emits exactly one audit
         event per call. Drop-oldest under backpressure preserves liveness.
         """
+        message = flatten_text(as_parts(parts))
         sockets = list(self._sockets.get(target.chat_id, set()))
         turn_id = (
             reply_to or hashlib.sha256(f"{target.chat_id}:{message}".encode()).hexdigest()[:16]

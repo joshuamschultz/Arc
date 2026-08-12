@@ -27,6 +27,18 @@ def default_team_root() -> Path:
     return default_config_dir() / "team"
 
 
+def default_nats_url() -> str:
+    """Resolve the team broker url: ``$ARCTEAM_NATS_URL`` or the local default.
+
+    Single source of truth for every surface that starts, connects to, or
+    reports on the broker. A surface that ensures a broker at one url while
+    another connects to a second produces the exact failure this resolver
+    exists to prevent: two healthy-looking halves on separate buses, and an
+    inbox that reads empty because nothing it can see is there.
+    """
+    return os.environ.get("ARCTEAM_NATS_URL", "nats://127.0.0.1:4222")
+
+
 def default_jetstream_store_dir() -> Path:
     """Resolve the NATS JetStream store: ``${ARC_CONFIG_DIR:-~/.arc}/nats/jetstream``.
 

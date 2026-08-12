@@ -63,6 +63,13 @@ _COVERAGE_TARGETS: list[tuple[str, str]] = [
     ("arcagent.modules.session", "arcagent.modules.session"),
     ("arcagent.core.vault", "arcagent.core.vault"),
     ("arcagent.modules.skills", "arcagent.modules.skills"),
+    # SPEC-065: the media reference model spans three packages, and the two
+    # halves outside arcgateway had no coverage signal at all — not a low
+    # number, no number. PartTranslator decides what reaches a provider and
+    # session_identity decides which conversation a message joins; both are
+    # exactly the kind of code a gate exists for.
+    ("arcagent.parts", "arcagent.parts"),
+    ("arctrust.session_identity", "arctrust.session_identity"),
 ]
 
 _COVERAGE_SUITES: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
@@ -77,6 +84,20 @@ _COVERAGE_SUITES: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
             "arcagent.modules.session",
             "arcagent.core.vault",
             "arcagent.modules.skills",
+        ),
+    ),
+    # PartTranslator is exercised by the media suites across arcagent and the
+    # dashboard's replay contract, so both trees are measured together.
+    (
+        (
+            "packages/arcagent/tests/unit/test_parts.py",
+            "packages/arcagent/tests/integration/test_session_history_carries_references.py",
+            "packages/arcagent/tests/security/test_parts_workspace_fence.py",
+            "packages/arcgateway/tests/unit/test_session_identity.py",
+        ),
+        (
+            "arcagent.parts",
+            "arctrust.session_identity",
         ),
     ),
 )
@@ -226,7 +247,13 @@ def _parse_coverage_json(
             covered_branches += summary.get("covered_branches", 0)
 
         line_pct = (covered_stmts / total_stmts * 100.0) if total_stmts > 0 else 0.0
-        branch_pct = (covered_branches / total_branches * 100.0) if total_branches > 0 else 0.0
+        # A module with no branches is fully branch-covered, not 0% covered.
+        # Scoring 0/0 as zero fails straight-line code for having no `if` to
+        # test, which pushes toward either dropping it from the gate or adding
+        # a branch to satisfy the arithmetic — both worse than measuring it.
+        branch_pct = (
+            (covered_branches / total_branches * 100.0) if total_branches > 0 else 100.0
+        )
 
         results[display_name] = {"line": line_pct, "branch": branch_pct}
 

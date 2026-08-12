@@ -45,8 +45,7 @@ _DEPLOYMENT_PACKAGES: dict[str, str] = {
     "arc-agent": "the agent runtime itself",
     "arccmd": "the `arc` console entry point",
     "arcui": "`arc ui start` — dashboard, /ws/chat, embedded gateway",
-    "arcgateway": "gateway core, wired by `arc ui start`",
-    "arcgateway-telegram": "the default remote adapter; silently skipped when absent",
+    "arcgateway": "gateway core (with in-tree platform adapters), wired by `arc ui start`",
     "arcmemory": 'the default brain (brain = "arcmemory") for scaffolded agents',
     "arcskill": 'the default skills adapter (skills.adapter = "arcskill")',
 }

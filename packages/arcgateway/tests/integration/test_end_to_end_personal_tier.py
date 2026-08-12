@@ -1,72 +1,90 @@
 """End-to-end integration test — personal tier (AsyncioExecutor).
 
 Tests the full message flow for personal/enterprise tier:
-  Telegram DM → SessionRouter → AsyncioExecutor → ArcAgent.run() → Delta stream
-               → accumulated response → adapter.send()
+  Telegram DM → SessionRouter → AsyncioExecutor → ArcAgent.deliver_message()
+               → the opened turn's reply → Delta stream → adapter.send()
 
 Because this test runs without a real Telegram connection and without a real
 ArcAgent config file, we use:
   1. A mock TelegramAdapter that captures send() calls.
   2. A real SessionRouter + real SessionIndex + real IdentityGraph.
   3. A mock AsyncioExecutor that wraps a minimal "echo agent" (simulating
-     what ArcAgent.run() would return). This avoids needing LLM credentials
-     in CI while fully testing the plumbing.
+     what ArcAgent.deliver_message() would do). This avoids needing LLM
+     credentials in CI while fully testing the plumbing.
   4. A real StreamBridge-equivalent: SessionRouter._run_turn accumulates
      deltas and we assert the final content via the send() mock.
 
 Design note:
   AsyncioExecutor.agent_factory is the seam we test here. The real
-  ArcAgent is substituted with a minimal stub that returns a simple
-  response object — the same interface ArcAgent.run() satisfies.
+  ArcAgent is substituted with a minimal stub on the delivery contract —
+  the same interface ArcAgent.deliver_message() satisfies.
 
 M1 Acceptance Gate coverage:
   - Full personal-tier message path wired end-to-end
   - IdentityGraph resolves cross-platform user DID
-  - SessionRouter race guard holds (1 task per session)
+  - Every message of a burst is handed to the agent (the router queues none)
   - adapter.send() receives the agent reply
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import pytest
-from arcrun import StreamEvent, TokenEvent, TurnEndEvent
 
 from arcgateway.delivery import DeliveryTarget
 from arcgateway.executor import AsyncioExecutor, InboundEvent
 from arcgateway.session import SessionRouter, build_session_key
 
 # ---------------------------------------------------------------------------
-# Minimal agent stub — simulates ArcAgent.run() return value
+# Minimal agent stub — simulates ArcAgent.deliver_message()
 # ---------------------------------------------------------------------------
 
 
-class _EchoAgent:
-    """Minimal streaming agent that echoes the message back.
+class _EchoReply:
+    def __init__(self, content: str) -> None:
+        self.content = content
 
-    Satisfies the SPEC-027 contract the AsyncioExecutor drives:
-    ``session(key)`` + streaming ``run(input, *, session)``.
+
+class _EchoHandle:
+    """Stand-in for the RunHandle the agent hands back for a turn it opened."""
+
+    def __init__(self, content: str) -> None:
+        self._content = content
+
+    async def result(self) -> _EchoReply:
+        return _EchoReply(self._content)
+
+
+class _EchoAgent:
+    """Minimal agent that echoes the message back.
+
+    Satisfies the SPEC-065 contract the AsyncioExecutor drives: a single
+    ``deliver_message(...)`` entry point that decides the run for itself. It
+    declares no ``interrupt`` parameter, so a gateway that ever passed a run
+    decision would fail loudly here (REQ-312).
     """
 
     def __init__(self, agent_did: str) -> None:
         self.agent_did = agent_did
+        self.session_keys: list[str] = []
 
-    async def session(self, key: str) -> str:
-        return key
-
-    async def run(
+    async def deliver_message(
         self,
-        input_text: str,
         *,
-        session: Any,
+        caller_did: str,
+        message: str,
+        session_key: str,
         reply_target: str | None = None,
         reply_label: str | None = None,
-    ) -> AsyncIterator[StreamEvent]:
-        yield TokenEvent(text=f"echo: {input_text}")
-        yield TurnEndEvent(final_text=f"echo: {input_text}")
+        on_handle: Any | None = None,
+    ) -> str:
+        self.session_keys.append(session_key)
+        if on_handle is not None:
+            on_handle(_EchoHandle(f"echo: {message}"))
+        return "started"
 
 
 async def _echo_agent_factory(agent_did: str) -> _EchoAgent:
@@ -159,7 +177,7 @@ class TestPersonalTierEndToEnd:
 
         This verifies the full path:
           adapter.simulate_inbound → SessionRouter.handle → AsyncioExecutor.run
-          → _echo_agent_factory → EchoAgent.run → Delta stream
+          → _echo_agent_factory → EchoAgent.deliver_message → Delta stream
         """
         await adapter.simulate_inbound(user_id=12345, text="hello world")
 
@@ -236,31 +254,30 @@ class TestPersonalTierEndToEnd:
         )
 
     @pytest.mark.asyncio
-    async def test_race_guard_single_agent_task(
+    async def test_concurrent_messages_all_reach_the_agent(
         self,
         adapter: _MockTelegramAdapter,
         session_router: SessionRouter,
     ) -> None:
-        """Concurrent messages from the same user spawn exactly one agent task."""
-        # Fire 10 concurrent messages from the same user
-        await asyncio.gather(
-            *[adapter.simulate_inbound(user_id=77777, text=f"msg {i}") for i in range(10)]
-        )
+        """A burst from one user is delivered in full, and the router holds nothing.
 
-        # Allow all tasks to complete
+        The router no longer queues: every message is handed over. What the agent
+        then does with them — one turn plus follow-ups — is asserted against the
+        real agent in ``test_race_regression.py``.
+        """
+        n_messages = 10
+        await asyncio.gather(
+            *[adapter.simulate_inbound(user_id=77777, text=f"msg {i}") for i in range(n_messages)]
+        )
         await asyncio.sleep(0.5)
 
         session_key = build_session_key("did:arc:agent:test", "did:arc:telegram:77777")
-        spawned = session_router.agent_tasks_spawned.get(session_key, 0)
+        assert session_router.agent_tasks_spawned.get(session_key, 0) == n_messages, (
+            "every message must get its own handoff — none may be dropped or held"
+        )
 
-        # The first message spawns 1 task; queued messages are drained
-        # by the session drainer (separate task) — all must process eventually
-        # but should not double-spawn the active session
-        assert spawned >= 1, "At least one agent task must be spawned"
-        # All 10 messages eventually get processed (via queue drain)
-        # The queue_depth should be 0 after draining
-        assert session_router.queue_depth(session_key) == 0, (
-            "Queue should be empty after all messages processed"
+        assert session_router.active_session_count() == 0, (
+            "no handoff may still be in flight once the burst has been delivered"
         )
 
     @pytest.mark.asyncio

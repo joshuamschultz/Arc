@@ -4,7 +4,7 @@ Root pyproject.toml declares arcskill as the default skills adapter
 (SkillsConfig.adapter defaults to "none" otherwise), but `_arcagent_base_config`
 omitted [modules.skills] entirely — every freshly-scaffolded personal-tier
 agent shipped with skills silently off, matching the memory/skills adapter
-gap already fixed once for arcgateway-telegram's token_env.
+gap already fixed once for the telegram adapter's token_env.
 
 The correct shape is the generic module envelope (arcagent.core.config
 ArcAgentConfig.modules: dict[str, ModuleEntry], where ModuleEntry has

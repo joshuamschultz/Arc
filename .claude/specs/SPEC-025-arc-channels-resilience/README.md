@@ -94,13 +94,13 @@ Harden the multi-channel agent surface so the operator can always reach an agent
 
 ### Architecture decisions (ADRs to write before next phase)
 - **ADR-001 — Replay-buffer cleanup deferred until v1.2.** Per-chat `_outbound_seq` and `_replay_buffers` survive the last-socket-unregister so a reconnecting browser can replay. Memory bound is `max_connections × 50 frames × ~2KB ≈ 5MB`. TTL-based eviction is TD-1.
-- **ADR-002 — Slack/web session-key divergence is the v1.1 reality.** SlackAdapter's `slack:{channel}:{user_id}` and WebPlatformAdapter's `build_session_key(agent_did, user_did)` produce different session keys. Cross-platform unified history is **out of scope for SPEC-025**; the SDD's claim that "chat_id == session_key — identical across web/slack/telegram" applies only to web/telegram for now. TD-2.
+- **ADR-002 — ~~Slack/web session-key divergence is the v1.1 reality.~~ SUPERSEDED by SPEC-065 T-928 (REQ-304).** SlackAdapter's `slack:{channel}:{user_id}` and WebPlatformAdapter's `build_session_key(agent_did, user_did)` produced different session keys. Adapters no longer compose a session key at all: `SessionRouter._canonicalise` is the sole owner and stamps the same `(agent, user)` key on every surface, so web and Slack now converge on one session. The pinned divergence test in `test_dual_adapter_chat.py` is deleted, as that ADR required of whoever aligned the formats.
 - **ADR-003 — `~/.arcagent/agent-state.json` is the arc-stack ↔ arcui contract.** File-based handoff (atomic write + best-effort read with empty-dict fallback) chosen over a typed gateway-health API for Phase 1 because the gateway has no per-agent health surface yet. TD-5 documents the restart race.
 - **ADR-004 — Service-worker cache versioning is a manual constant for v1.1.** `CACHE_VERSION = 'arcui-shell-v1'` requires a developer bump per shell change. Build-id template substitution is TD-3.
 
 ### Tech-debt items (log in `.claude/decisions-log.md`)
 - **TD-1**: Memory leak — per-chat `_outbound_seq`/`_replay_buffers` never reclaimed; needs TTL eviction.
-- **TD-2**: Slack vs. web session-key divergence — blocks unified cross-platform chat history.
+- ~~**TD-2**: Slack vs. web session-key divergence — blocks unified cross-platform chat history.~~ **RESOLVED by SPEC-065 T-928** — one owner stamps every surface.
 - **TD-3**: Service-worker cache key not bumped on deploy.
 - **TD-4**: `_read_agent_manifest` duplication risk if Azure deploy gains a manifest.
 - **TD-5**: `agent-state.json` race during `arc-stack restart` (stale read window).
@@ -160,7 +160,7 @@ Harden the multi-channel agent surface so the operator can always reach an agent
 
 ### ADRs filed
 - ADR-001 — Replay-buffer TTL eviction
-- ADR-002 — Cross-platform session keys (web/Slack diverge in v1.1)
+- ADR-002 — Cross-platform session keys (~~web/Slack diverge in v1.1~~ — superseded by SPEC-065 T-928; one owner, keys converge)
 - ADR-003 — `agent-state.json` arc-stack ↔ arcui contract
 - ADR-004 — SW cache key build-id template substitution
 - ADR-005 — Vault backend `**kwargs` forwarding contract

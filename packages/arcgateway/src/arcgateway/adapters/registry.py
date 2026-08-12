@@ -1,76 +1,80 @@
-"""Generic adapter-plugin registry — gateway core's platform-agnostic loader.
+"""Adapter registry — the filesystem is the registry (SPEC-065 COMP-003).
 
-The gateway core contains **zero** platform-specific code. Each chat platform
-(Telegram, Slack, Mattermost, …) ships as a separately-installed extension
-package that registers an :class:`AdapterPlugin` under the
-``arcgateway.adapters`` entry-point group::
+A platform is a folder. ``arcgateway/adapters/<name>/`` exporting a module-level
+``PLATFORM = AdapterSpec(...)`` is discoverable; deleting the folder deletes the
+platform. Nothing here is edited to add one, which is the property that makes
+"you can delete it with no problem" literally true (REQ-308, D-670).
 
-    # arcgateway-telegram/pyproject.toml
-    [project.entry-points."arcgateway.adapters"]
-    telegram = "arcgateway_telegram:PLUGIN"
-
-At startup the gateway discovers every registered plugin, applies the
-four-pillar **Authorize**/**Audit** gate, and builds an adapter for each
-``[platforms.<name>]`` block that is ``enabled = true``.
+Resilience is the security property, not a nicety (REQ-309, ASI04). A folder in
+this package is code executed at import time. If a third-party or merely broken
+adapter's exception could reach startup, one bad folder would be a denial of
+service against the daemon and every other platform on it. So an import failure
+is caught, **recorded** as an audit event, and skipped — and the roster that did
+load is logged on one line, because a platform that silently stopped working is
+otherwise indistinguishable from one nobody configured.
 
 Four Pillars (ADR-019) — tier is *stringency metadata, not a gate*:
 
     Identity   Each adapter carries the agent DID it serves (ctx.agent_did()).
-    Sign       Entry points are only registrable by installed distributions;
-               an allowlist of official plugin names is the load-time control
+    Sign       An in-tree folder is code that shipped with the gateway; the
+               allowlist of official platform names is the load-time control
                point where Sigstore/arctrust verification will attach.
-    Authorize  Plugin names are regex-validated (no path traversal / injection,
-               ASI04 / NIST SI-10). Unofficial plugins load at personal/
-               enterprise with an audit warning (self-signed posture) but are
-               **blocked** at federal (signed-allowlist requirement).
+    Authorize  Platform names are regex-validated (no path traversal /
+               injection, ASI04 / NIST SI-10). Unofficial platforms load at
+               personal/enterprise with an audit warning but are **blocked** at
+               federal (signed-allowlist requirement).
     Audit      Every load / skip / block emits a ``gateway.adapter.*`` event.
 
-Credential-presence gating (NanoClaw's lesson): a plugin whose credentials or
-optional dependency are missing raises :class:`AdapterUnavailableError` (or
-``ImportError``); the registry skips it at personal/enterprise but treats it as
-a hard startup failure at federal — a federal deployment that enabled an
-adapter must refuse to start rather than serve a subset silently.
+Credential-presence gating: a platform whose credentials or optional dependency
+are missing raises :class:`AdapterUnavailableError` (or ``ImportError``); the
+registry skips it at personal/enterprise but treats it as a hard startup
+failure at federal — a federal deployment that enabled an adapter must refuse to
+start rather than serve a subset silently.
 """
 
 from __future__ import annotations
 
+import importlib
 import logging
+import pkgutil
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from importlib.metadata import entry_points
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from arcgateway.audit import emit_event
 
 if TYPE_CHECKING:
-    from arcgateway.adapters.base import BasePlatformAdapter
+    from arcgateway.adapters.base import BasePlatformAdapter, InboundDraft
     from arcgateway.executor import InboundEvent
 
 _logger = logging.getLogger("arcgateway.adapters.registry")
 
-#: Entry-point group extension packages register their plugin under.
-ENTRY_POINT_GROUP = "arcgateway.adapters"
+#: Import path of the package scanned for platform folders.
+_ADAPTERS_PACKAGE = "arcgateway.adapters"
+
+#: Module-level name a platform folder exports to declare itself.
+_DESCRIPTOR = "PLATFORM"
 
 # Platform names: lowercase, start with a letter, max 32 chars. Mirrors
 # arcllm's provider-name guard — blocks "../evil", "os.system", etc.
 _VALID_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 
-#: First-party adapter plugins → their expected distribution package name.
-#: At federal tier only these names may load (signed-allowlist control point).
-OFFICIAL_ADAPTERS: dict[str, str] = {
-    "telegram": "arcgateway-telegram",
-    "slack": "arcgateway-slack",
-    "mattermost": "arcgateway-mattermost",
-}
+#: First-party platforms. At federal tier only these names may load
+#: (signed-allowlist control point).
+OFFICIAL_ADAPTERS: frozenset[str] = frozenset({"telegram", "slack", "mattermost", "web"})
 
-OnMessage = Callable[["InboundEvent"], Awaitable[None]]
+#: What an adapter calls with each inbound message. A platform adapter hands
+#: up a draft (artefacts still on the wire); web/in-process hand up a
+#: finished event. ``SessionRouter.handle`` accepts both.
+OnMessage = Callable[["InboundEvent | InboundDraft"], Awaitable[None]]
 
 
 class AdapterUnavailableError(Exception):
-    """A plugin could not build its adapter (missing credentials/config).
+    """A platform could not build its adapter (missing credentials/config).
 
-    Plugins raise this (or ``ImportError`` for a missing optional dependency)
+    Adapters raise this (or ``ImportError`` for a missing optional dependency)
     to signal a skippable condition. The registry skips the adapter at
     personal/enterprise tier and re-raises it at federal tier.
     """
@@ -80,7 +84,7 @@ def validate_adapter_name(name: str) -> None:
     """Reject platform names that could enable path traversal or injection.
 
     Args:
-        name: Platform name from a ``[platforms.<name>]`` block or entry point.
+        name: Platform name from a ``[platforms.<name>]`` block or a folder.
 
     Raises:
         ValueError: If ``name`` does not match ``[a-z][a-z0-9_]{0,31}``.
@@ -92,14 +96,14 @@ def validate_adapter_name(name: str) -> None:
 
 @dataclass(frozen=True)
 class AdapterBuildContext:
-    """Everything a plugin needs to construct its adapter.
+    """Everything an adapter needs to construct itself.
 
     Attributes:
         name: The platform name (``[platforms.<name>]`` key).
         raw_config: The raw TOML block for this platform, including ``enabled``
-            and an optional ``agent_did`` override. The plugin validates this
+            and an optional ``agent_did`` override. The adapter validates this
             against its own Pydantic model.
-        on_message: Async callback the adapter calls with each inbound event
+        on_message: Async callback the adapter calls with each inbound draft
             (wired to ``SessionRouter.handle`` in production).
         default_agent_did: The gateway-level ``[gateway].agent_did``.
         tier: Deployment tier — ``personal`` | ``enterprise`` | ``federal``.
@@ -107,7 +111,7 @@ class AdapterBuildContext:
             adapter's own static allowlist gate becomes an OR-condition
             rather than the sole gate: a message from a user who fails the
             static check is forwarded to ``on_message`` instead of being
-            dropped, so SessionRouter's PairingInterceptor can mint/DM a
+            dropped, so SessionRouter's pairing interceptor can mint/DM a
             pairing code or route an already-approved user through.
     """
 
@@ -133,53 +137,100 @@ class AdapterBuilder(Protocol):
 
 
 @dataclass(frozen=True)
-class AdapterPlugin:
-    """A platform adapter plugin exported by an extension package.
-
-    Extension packages expose a module-level ``PLUGIN = AdapterPlugin(...)`` and
-    register it under the ``arcgateway.adapters`` entry-point group.
+class AdapterSpec:
+    """A platform's self-declaration, exported as ``PLATFORM`` from its folder.
 
     Attributes:
-        name: Platform name (must satisfy :func:`validate_adapter_name`).
-        build: Callable that validates ``ctx.raw_config``, resolves credentials,
-            and returns a connected-on-``connect()`` adapter — or raises
-            :class:`AdapterUnavailableError` / ``ImportError`` when it cannot build.
+        name: Platform name (must satisfy :func:`validate_adapter_name`) and the
+            folder it lives in.
+        requires: Third-party distributions this platform cannot run without.
+            Declared rather than discovered so a skip reports *what* is missing
+            instead of an ImportError traceback.
+        supports: Capabilities the gateway may use — artefact kinds this
+            platform can carry outbound, plus optional extras such as ``edit``.
+            Undeclared is not the same as unsupported: the gateway has to know
+            what a platform cannot carry *before* it tries, or degradation is an
+            exception handler and the turn is already at risk.
+        build: Validates ``ctx.raw_config``, resolves credentials, and returns
+            an adapter — or raises :class:`AdapterUnavailableError` /
+            ``ImportError`` when it cannot.
     """
 
     name: str
+    requires: tuple[str, ...]
+    supports: tuple[str, ...]
     build: AdapterBuilder
 
 
-def discover_plugins() -> dict[str, AdapterPlugin]:
-    """Discover installed adapter plugins via entry points.
+def discover_adapters() -> list[AdapterSpec]:
+    """Scan ``arcgateway/adapters/`` for folders exporting a ``PLATFORM``.
 
-    Iterating entry points is side-effect-free; each plugin object is loaded
-    (its module imported) only here, once. Malformed or wrong-typed entries are
-    audited and skipped rather than crashing discovery.
+    Repeatable: nothing is cached, so a folder added, fixed or deleted between
+    two scans is reflected in the next one. A folder that raises on import is
+    audited and skipped; the rest of the roster loads.
 
     Returns:
-        Mapping of validated platform name → :class:`AdapterPlugin`.
+        Every discovered platform's :class:`AdapterSpec`, in name order.
     """
-    found: dict[str, AdapterPlugin] = {}
-    for ep in entry_points(group=ENTRY_POINT_GROUP):
-        try:
-            validate_adapter_name(ep.name)
-        except ValueError:
-            _audit("gateway.adapter.blocked", ep.name, "deny", reason="invalid_name")
-            _logger.warning("registry: blocked entry point with invalid name %r", ep.name)
-            continue
-        try:
-            plugin = ep.load()
-        except Exception:  # reason: a broken plugin must not abort discovery
-            _audit("gateway.adapter.blocked", ep.name, "error", reason="load_failed")
-            _logger.exception("registry: failed to load adapter plugin %r", ep.name)
-            continue
-        if not isinstance(plugin, AdapterPlugin):
-            _audit("gateway.adapter.blocked", ep.name, "deny", reason="not_a_plugin")
-            _logger.warning("registry: entry point %r did not export an AdapterPlugin", ep.name)
-            continue
-        found[ep.name] = plugin
-    return found
+    specs: list[AdapterSpec] = []
+    for info in sorted(pkgutil.iter_modules([str(Path(__file__).parent)]), key=_module_name):
+        spec = _load_descriptor(info.name)
+        if spec is not None:
+            specs.append(spec)
+
+    _logger.info(
+        "registry: adapters loaded: %s",
+        ", ".join(spec.name for spec in specs) or "none",
+    )
+    return specs
+
+
+def _module_name(info: pkgutil.ModuleInfo) -> str:
+    return info.name
+
+
+def _load_descriptor(name: str) -> AdapterSpec | None:
+    """Import one candidate module and return its ``PLATFORM``, or None.
+
+    Every ``return None`` here is a *quiet* skip on purpose: the adapters
+    package also holds the base contract, this registry and shared helpers, and
+    none of them is a platform. Only an import that *failed* is loud, because
+    that is a platform someone expected to be there.
+    """
+    if name.startswith("_"):
+        return None
+    try:
+        validate_adapter_name(name)
+    except ValueError:
+        _audit("gateway.adapter.blocked", name, "deny", reason="invalid_name")
+        _logger.warning("registry: blocked adapter folder with invalid name %r", name)
+        return None
+
+    try:
+        module = importlib.import_module(f"{_ADAPTERS_PACKAGE}.{name}")
+    except Exception as exc:  # reason: one broken folder must not take the daemon down
+        _audit("gateway.adapter.blocked", name, "error", reason="import_failed")
+        _logger.exception(
+            "registry: adapter folder %r failed to import and was skipped: %s", name, exc
+        )
+        return None
+
+    spec = getattr(module, _DESCRIPTOR, None)
+    if spec is None:
+        return None
+    if not isinstance(spec, AdapterSpec):
+        _audit("gateway.adapter.blocked", name, "deny", reason="not_an_adapter_spec")
+        _logger.warning("registry: %r exports a %s, not an AdapterSpec", name, type(spec).__name__)
+        return None
+    if spec.name != name:
+        _audit("gateway.adapter.blocked", name, "deny", reason="name_mismatch")
+        _logger.warning(
+            "registry: folder %r declares itself %r — a platform is named by its folder",
+            name,
+            spec.name,
+        )
+        return None
+    return spec
 
 
 def build_adapters(
@@ -189,7 +240,6 @@ def build_adapters(
     default_agent_did: str,
     tier: str,
     require_pairing: bool = False,
-    plugins: dict[str, AdapterPlugin] | None = None,
 ) -> list[BasePlatformAdapter]:
     """Build adapters for every enabled platform block, generically.
 
@@ -201,18 +251,16 @@ def build_adapters(
         tier: ``personal`` | ``enterprise`` | ``federal``.
         require_pairing: ``[security].require_pairing`` — forwarded to every
             adapter's :class:`AdapterBuildContext` (see its docstring).
-        plugins: Pre-discovered plugins (defaults to :func:`discover_plugins`).
-            Injected directly in tests.
 
     Returns:
         Adapters for each enabled, authorized, buildable platform.
 
     Raises:
-        AdapterUnavailableError: At federal tier, when an enabled platform cannot be
-            loaded (plugin missing, unofficial, or its build failed) — federal
+        AdapterUnavailableError: At federal tier, when an enabled platform cannot
+            be loaded (folder absent, unofficial, or its build failed) — federal
             fails closed rather than serving a silent subset.
     """
-    plugins = discover_plugins() if plugins is None else plugins
+    specs = {spec.name: spec for spec in discover_adapters()}
     is_federal = tier == "federal"
     adapters: list[BasePlatformAdapter] = []
 
@@ -220,16 +268,16 @@ def build_adapters(
         if not isinstance(block, dict) or not block.get("enabled"):
             continue
 
-        # A block may set ``platform = "telegram"`` to reuse the telegram plugin
+        # A block may set ``platform = "telegram"`` to reuse the telegram adapter
         # under a distinct block name — this is how a fleet runs one bot PER agent
         # (``[platforms.sales_telegram]``, ``[platforms.josh_telegram]``, each with
         # its own token_env + agent_did). Absent the key, the block name IS the
         # platform (unchanged single-bot behavior). Both the block name and the
-        # resolved plugin name are path-validated.
-        plugin_name = str(block.get("platform") or name)
+        # resolved platform name are path-validated.
+        platform_name = str(block.get("platform") or name)
         try:
             validate_adapter_name(name)
-            validate_adapter_name(plugin_name)
+            validate_adapter_name(platform_name)
         except ValueError:
             _audit("gateway.adapter.blocked", name, "deny", reason="invalid_name")
             _logger.warning("registry: skipping platform with invalid name %r", name)
@@ -237,8 +285,8 @@ def build_adapters(
                 raise AdapterUnavailableError(f"invalid adapter name {name!r}") from None
             continue
 
-        if plugin_name not in OFFICIAL_ADAPTERS:
-            # Unofficial plugin: blocked at federal, allowed-with-warning otherwise.
+        if platform_name not in OFFICIAL_ADAPTERS:
+            # Unofficial platform: blocked at federal, allowed-with-warning otherwise.
             if is_federal:
                 _audit("gateway.adapter.blocked", name, "deny", reason="not_official")
                 raise AdapterUnavailableError(f"adapter {name!r} is not in the federal allowlist")
@@ -247,13 +295,12 @@ def build_adapters(
                 "registry: loading unofficial adapter %r (personal/enterprise only)", name
             )
 
-        plugin = plugins.get(plugin_name)
-        if plugin is None:
-            _audit("gateway.adapter.skipped", name, "deny", reason="not_installed")
-            expected = OFFICIAL_ADAPTERS.get(plugin_name, "an arcgateway adapter package")
+        spec = specs.get(platform_name)
+        if spec is None:
+            _audit("gateway.adapter.skipped", name, "deny", reason="no_such_folder")
             msg = (
-                f"adapter {name!r} enabled but its plugin package is not installed "
-                f"(expected: {expected})"
+                f"adapter {name!r} is enabled but there is no "
+                f"arcgateway/adapters/{platform_name}/ folder"
             )
             if is_federal:
                 raise AdapterUnavailableError(msg)
@@ -269,19 +316,24 @@ def build_adapters(
             require_pairing=require_pairing,
         )
         try:
-            adapter = plugin.build(ctx)
+            adapter = spec.build(ctx)
         except (AdapterUnavailableError, ImportError) as exc:
             _audit("gateway.adapter.skipped", name, "deny", reason=type(exc).__name__)
             if is_federal:
                 raise AdapterUnavailableError(f"adapter {name!r} unavailable: {exc}") from exc
-            _logger.warning("registry: adapter %r unavailable — skipping: %s", name, exc)
+            _logger.warning(
+                "registry: adapter %r unavailable — skipping (needs %s): %s",
+                name,
+                ", ".join(spec.requires) or "no extra packages",
+                exc,
+            )
             continue
 
         _audit(
             "gateway.adapter.loaded",
             name,
             "allow",
-            reason="official" if plugin_name in OFFICIAL_ADAPTERS else "unofficial",
+            reason="official" if platform_name in OFFICIAL_ADAPTERS else "unofficial",
         )
         if not isinstance(block.get("agent_did"), str) or not block.get("agent_did"):
             # No per-platform override: this adapter serves whatever
@@ -323,13 +375,12 @@ def _audit(action: str, name: str, outcome: str, *, reason: str) -> None:
 
 
 __all__ = [
-    "ENTRY_POINT_GROUP",
     "OFFICIAL_ADAPTERS",
     "AdapterBuildContext",
     "AdapterBuilder",
-    "AdapterPlugin",
+    "AdapterSpec",
     "AdapterUnavailableError",
     "build_adapters",
-    "discover_plugins",
+    "discover_adapters",
     "validate_adapter_name",
 ]

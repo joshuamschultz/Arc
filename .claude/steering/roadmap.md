@@ -20,10 +20,11 @@
 
 ## Current Phase
 
-- **Phase**: 1.5 — Security Foundation Hardening (complete) → resuming Phase 2 (NLIT demo)
-- **Driver**: NLIT 2026 Kansas City demonstration (May 2026)
-- **Active branch**: `feature/SPEC-024-nlit-scap-demo` (Phase 2 work); security-hardening track landed on `feat/SPEC-033..038,053` and a truthfulness doc pass on `feat/SPEC-039-quality-truthfulness`
-- **Active spec**: `SPEC-024-nlit-scap-demo` (resumes now that the security foundation is real, enforced, and tested end to end)
+- **Phase**: 3 — Distribution & supply-chain hardening
+- **Driver**: Federal deployments must be able to *not install* a capability, not merely disable it, and an operator must be able to sign a capability through a documented command.
+- **Active branch**: `feat/gateway-messaging-media`
+- **Active spec**: `SPEC-066-module-bundles` (signed module bundles + capability signing surfaces)
+- **Phase 2 status**: `SPEC-024-nlit-scap-demo` is still `draft` and its NLIT 2026 driver date (May 2026) has passed. Phase 2 was overtaken by the Phase 3/4 work that shipped through SPEC-055–SPEC-065 (ArcFlow, connectors, blueprints v2, arcprompt, Mission Control, gateway messaging). Treat SPEC-024 as unstarted, not in-flight.
 
 ## Phase Definitions
 
@@ -32,9 +33,9 @@
 | 0 | Core foundation | ✅ Complete | arcrun ≤ 0.5, arcllm ≤ 0.4, arctrust ≤ 0.2, arcagent ≤ 0.4 |
 | 1 | Monorepo refactor + Four Pillars universality | ✅ Complete (2026-04-26) | SPEC-017 (core hardening), SPEC-021 (capability system) |
 | 1.5 | **Security foundation hardening** — Four Pillars from claim to enforced reality | ✅ **Complete** | SPEC-033 (sign), SPEC-034 (policy pipeline), SPEC-035 (goal-lock + lethal trifecta), SPEC-036 (code-exec sandbox), SPEC-037 (asymmetric + FIPS signing), SPEC-038 (budgets + classification), SPEC-053 (audit-authority independence), SPEC-039 (docs truthfulness pass) |
-| 2 | NLIT demo + SCAP tooling | 🔨 In progress (resuming) | SPEC-022, SPEC-023, **SPEC-024**, SPEC-025 |
-| 3 | Distribution & supply-chain hardening | 📋 Planned | `arcskill` Sigstore lifecycle, TOFU approval flows, signed bundles |
-| 4 | Multi-agent fleet | 📋 Planned | NATS messaging, cascading-failure handling, fleet-level audit |
+| 2 | NLIT demo + SCAP tooling | ⏸️ Unstarted (driver date passed) | SPEC-022, SPEC-023, **SPEC-024** (`draft`), SPEC-025 |
+| 3 | Distribution & supply-chain hardening | 🔨 **In progress** | **SPEC-066** (module bundles + capability signing); prior: SPEC-033 (sign), connector bundles, blueprints v2 |
+| 4 | Multi-agent fleet | 🔨 Largely shipped ahead of Phase 3 | SPEC-055/056 (mention triage, Mission Control), SPEC-061 (ArcFlow), SPEC-065 (gateway messaging) |
 
 ---
 

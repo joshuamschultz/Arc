@@ -31,6 +31,8 @@ from pathlib import Path
 from typing import Any
 from xml.sax.saxutils import escape as xml_escape
 
+from arctrust.session_identity import build_session_key
+
 from arcagent.core import known_channels, turn_context
 from arcagent.modules.messaging import _runtime
 from arcagent.modules.messaging.tools import _stream_end_byte_pos
@@ -110,9 +112,18 @@ async def _build_roster() -> str:
 # Mid-task delivery (REQ-040/041) + push consume (REQ-021)
 # ---------------------------------------------------------------------------
 
-# Deterministic session the inbox drives — all teammate traffic lands here so a
-# single tracked run absorbs a burst of messages mid-task.
-_INBOX_SESSION = "messaging:inbox"
+
+def _inbox_session(sender_did: str, identity: Any) -> str:
+    """Session identity for a teammate message, from its one owner (REQ-312).
+
+    A teammate gets a session per (this agent, that sender) — the same key the
+    human surface is handed for a person, derived by the same owner
+    (COMP-007). A constant here would be a second identity for the
+    conversation: every teammate on the team would land in one shared session,
+    so alice's conversation became bob's context, and it would skip the
+    rotation the owner folds in.
+    """
+    return build_session_key(identity.did if identity is not None else "", sender_did)
 
 
 def _should_activate(msg: Any, identity: Any) -> bool:
@@ -174,10 +185,12 @@ async def _passes_channel_triage(msg: Any, st: Any) -> bool:
 
 
 def _interrupt_for(msg: Any, identity: Any) -> bool:
-    """Whether ``msg`` is interrupt-eligible for mid-turn steering (REQ-041).
+    """Whether ``msg`` asks for mid-turn steering (REQ-041).
 
-    Critical priority always is; an ``action_required`` message is only when it
+    Critical priority always does; an ``action_required`` message only when it
     @mentions this agent. Everything else queues as a follow_up at turn end.
+    This is the sender's request, read off the message itself, not a decision:
+    ``deliver_fn`` still refuses it unless the policy pipeline permits a steer.
     """
     if str(msg.priority) == "critical":
         return True
@@ -202,14 +215,16 @@ def _format_delivery(msg: Any) -> str:
 
 
 async def _handle_incoming(message: Any) -> None:
-    """Deliver one bus-pushed message into the agent's run via the steering gate.
+    """Deliver one bus-pushed message into the agent's run via the delivery gate.
 
     ``MessagingService.subscribe`` has already Ed25519-verified + replay-checked
-    the message and will ack it once this returns (REQ-021/030). Default
-    follow_up; steer only for interrupt-eligible messages the policy pipeline
-    permits — the trust decision lives in ``deliver_fn`` (arcagent core), not
-    here. Before ``agent:ready`` binds ``deliver_fn`` the message routes through
-    ``agent_run_fn`` so nothing is dropped in the startup window.
+    the message and will ack it once this returns (REQ-021/030). A teammate
+    message travels the same path as a message from a human surface (REQ-312):
+    whether it joins the live turn, steers it or opens a new one is decided by
+    ``deliver_fn`` (arcagent core). A critical teammate message may *request* a
+    steer, which the policy pipeline still has to permit. Before ``agent:ready``
+    binds ``deliver_fn`` the message routes through ``agent_run_fn`` so nothing
+    is dropped in the startup window.
     """
     st = _runtime.state()
     if not _should_activate(message, st.identity):
@@ -224,13 +239,14 @@ async def _handle_incoming(message: Any) -> None:
         # gate exists to prevent). Still ack-and-ignore -- nothing to steer.
         return
     async with st.processing_lock:
+        caller_did = message.signer_did or message.sender
+        session_key = _inbox_session(caller_did, st.identity)
         if st.deliver_fn is not None:
-            caller_did = message.signer_did or message.sender
             try:
                 await st.deliver_fn(
                     caller_did=caller_did,
                     message=_format_delivery(message),
-                    session_key=_INBOX_SESSION,
+                    session_key=session_key,
                     interrupt=_interrupt_for(message, st.identity),
                 )
             except asyncio.QueueFull as exc:
@@ -240,7 +256,7 @@ async def _handle_incoming(message: Any) -> None:
                 # let subscribe ack this) rather than silently dropping a teammate.
                 raise RetryableDeliveryError(message.id) from exc
         elif st.agent_run_fn is not None:
-            await st.agent_run_fn(_format_delivery(message), session_key=_INBOX_SESSION)
+            await st.agent_run_fn(_format_delivery(message), session_key=session_key)
 
 
 # ---------------------------------------------------------------------------

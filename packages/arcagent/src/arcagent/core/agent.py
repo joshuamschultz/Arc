@@ -26,7 +26,7 @@ import asyncio
 import contextlib
 import logging
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -688,18 +688,32 @@ class ArcAgent:
         """Return the live steerable run for ``session_key``, or None if idle."""
         return self._run_coordinator.active(session_key)
 
-    async def start_tracked_run(self, input_text: str, *, session_key: str) -> arcrun.RunHandle:
+    async def start_tracked_run(
+        self,
+        input_text: str,
+        *,
+        session_key: str,
+        reply_target: str | None = None,
+        reply_label: str | None = None,
+    ) -> arcrun.RunHandle:
         """Start an async, steerable run and track its handle under ``session_key``.
 
         The returned :class:`arcrun.RunHandle` lets a teammate message be
         injected mid-task (REQ-040/041). The handle is registered while the loop
         runs and removed by a finalizer that commits the assistant turn and
-        compacts, matching the streaming path.
+        compacts, matching the streaming path. ``reply_target`` / ``reply_label``
+        name the channel the turn arrived on (see :meth:`run`).
         """
         from arcagent.core.agent_dispatch import start_tracked_run
 
         self._ensure_started()
-        return await start_tracked_run(self, input_text, session_key=session_key)
+        return await start_tracked_run(
+            self,
+            input_text,
+            session_key=session_key,
+            reply_target=reply_target,
+            reply_label=reply_label,
+        )
 
     async def quick_classify(self, *, system: str, user: str, max_tokens: int = 8) -> str:
         """Bounded single-shot classification for cheap gating decisions.
@@ -738,28 +752,84 @@ class ArcAgent:
         caller_did: str,
         message: str,
         session_key: str,
-        interrupt: bool,
+        interrupt: bool = False,
+        reply_target: str | None = None,
+        reply_label: str | None = None,
+        parts: Sequence[Mapping[str, Any]] | None = None,
+        on_handle: Callable[[arcrun.RunHandle], None] | None = None,
     ) -> str:
-        """Deliver a teammate message into the agent's run for ``session_key``.
+        """Deliver one inbound message — from a human surface or a teammate.
 
-        The single steering caller in the system (SDD C8). Default is
-        ``follow_up`` at the next turn boundary (REQ-040); ``steer`` is used
-        mid-turn only when ``interrupt`` is set AND the arctrust policy pipeline
-        permits it for ``caller_did`` (REQ-041) — a denied steer degrades to
-        ``follow_up`` rather than interrupting. With no active run for the
-        session, a fresh tracked run is started instead. Returns the action
-        taken: ``"steered"`` | ``"followed_up"`` | ``"started"``.
+        The single entry every sender uses, so injection, session identity and
+        audit behave identically whoever sent it (REQ-312). What happens to the
+        message is the **agent's** call:
+
+        * an interactive run is in flight → the message joins it (REQ-302), as a
+          ``follow_up`` at the next turn boundary — the default for every sender
+          that states nothing.
+        * the session is idle, or its only run is background work such as a
+          schedule or a consolidation pass → the message opens its own turn and
+          the background run is left untouched (REQ-303).
+
+        ``interrupt`` is a sender's *request* for a mid-turn steer, never a
+        decision: it is honoured only when the arctrust policy pipeline also
+        permits one for ``caller_did``, and a denied steer degrades to a
+        ``follow_up`` (REQ-041). No human surface passes it — the gateway makes
+        no run decision, and ``test_delivery_joins_live_turn`` fails if any
+        surface starts. It exists for the teammate path, where the message
+        itself carries the priority that earns an interrupt.
+
+        The read and the run it may start are serialized per session, so two
+        messages arriving in the same event-loop tick cannot both open a turn.
+        ``on_handle`` receives the started run's handle, letting the caller stream
+        that turn's result back to its channel; it is never called when the
+        message joined a run already in flight, whose reply rides that run's own
+        stream. ``reply_target`` / ``reply_label`` name the channel the message
+        arrived on (see :meth:`run`).
+
+        ``parts`` carries a message the sender composed out of more than words
+        (SPEC-065 REQ-296/301): an ordered list in which an artefact is a
+        *reference* into this agent's workspace. It is translated here, at the
+        agent's own boundary, because this is the lowest layer allowed to know
+        model types at all — ``arcgateway`` deliberately cannot. Senders with
+        nothing but text pass ``message`` and never touch it.
+
+        Returns the action taken: ``"steered"`` | ``"followed_up"`` | ``"started"``.
         """
+        if parts:
+            message = self._compose_from_parts(parts)
         self._ensure_started()
-        handle = self._run_coordinator.active(session_key)
-        if handle is None:
-            await self.start_tracked_run(message, session_key=session_key)
-            return "started"
-        if interrupt and await self._authorize_steer(caller_did):
-            await handle.steer(caller_did, message)
-            return "steered"
-        await handle.follow_up(caller_did, message)
-        return "followed_up"
+        async with self._run_coordinator.delivery(session_key):
+            handle = self._run_coordinator.injection_target(session_key)
+            if handle is None:
+                started = await self.start_tracked_run(
+                    message,
+                    session_key=session_key,
+                    reply_target=reply_target,
+                    reply_label=reply_label,
+                )
+                if on_handle is not None:
+                    on_handle(started)
+                return "started"
+            if interrupt and await self._authorize_steer(caller_did):
+                await handle.steer(caller_did, message)
+                return "steered"
+            await handle.follow_up(caller_did, message)
+            return "followed_up"
+
+    def _compose_from_parts(self, parts: Sequence[Mapping[str, Any]]) -> str:
+        """Render a multi-part message as the text this turn opens on.
+
+        :class:`~arcagent.parts.PartTranslator` produces one block per part;
+        for an artefact that block is a readable line naming the file, its type
+        and where it is in the workspace — never its bytes. The agent can then
+        open the file with its own tools if it needs the contents, and the
+        session log keeps a reference that stays kilobytes forever (REQ-316).
+        """
+        from arcagent.parts import PartTranslator
+
+        blocks = PartTranslator(workspace=self._workspace).to_history_content(parts)
+        return "\n".join(str(block.get("text", "")) for block in blocks).strip()
 
     async def _authorize_steer(self, caller_did: str) -> bool:
         """Whether the policy pipeline permits a mid-turn steer for ``caller_did``.

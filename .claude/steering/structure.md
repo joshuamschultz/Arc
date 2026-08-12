@@ -27,8 +27,11 @@
 | Provider abstraction | `arcllm` | LLM HTTP transport, request signing, PII redaction, OTel spans |
 | Loop | `arcrun` | Async ReAct, tool dispatch protocol, sandbox |
 | Data plane | `arcstore` | Operational/observability data plane — always-on spool + pluggable backend (tasks, approvals, cancellations, and — SPEC-061 — runs) |
+| Memory plane | `arcmemory` | Dual-speed analogical memory; optional extra behind `arcagent`'s structural `Brain` Protocol (default `NullBrain`) |
+| Model registry | `arcmodel` | Model metadata and capability descriptors consumed by `arcllm` routing |
 | Agent nucleus | `arcagent` | Orchestration, capability loading, module bus, sessions, scheduling |
-| Surface / adapters | `arccli`, `arcui`, `arcgateway`, `arcteam`, `arcskill` | CLI, dashboard, chat platforms, multi-agent, skill install |
+| Surface / adapters | `arccli`, `arcui`, `arctui`, `arcgateway`, `arcteam`, `arcskill` | CLI, dashboard, terminal UI, chat platforms, multi-agent, skill install |
+| Gateway adapters | `arcgateway-telegram`, `arcgateway-slack`, `arcgateway-mattermost` | Per-platform entry-point plugins; gateway core ships `web` only |
 
 ### Component Diagram
 
@@ -282,7 +285,8 @@ Rules:
 3. **Each package is independently installable** from PyPI.
 4. **`arcstore` is a data-plane leaf.** It depends only on `arctrust` + Pydantic and must never import upward (`arcagent`, `arcui`, `arccli`, `arcrun`, `arcgateway`) — enforced by `tests/architecture/test_no_arcstore_arcteam_upward_imports.py`. `arcteam → arcstore` (SPEC-061: the ArcFlow workflow engine reuses `arcstore.tasks` + a new `runs` collection as its execution substrate) and `arcgateway → arcstore` (SPEC-061 COMP-009: `RunnerHost` owns the workflow runner's lifecycle on the agent side of the fleet service) are both legal downward edges onto this same leaf.
 5. **`arcprompt` is a prompt-plane leaf.** It depends only on `arctrust` + Pydantic/PyYAML and must never import upward — enforced by `tests/architecture/test_no_arcprompt_imports_upward.py`.
-4. **Concern separation is sacred** (per `CLAUDE.md`):
+6. **`arcui` reaches `arcagent` through exactly one seam.** The capability-inventory seam is the only approved `arcagent` import, enforced by `test_arcui_imports_arcagent_only_via_inventory_seam`.
+7. **Concern separation is sacred** (per `CLAUDE.md`):
    - `arcllm` — all LLM calls.
    - `arcrun` — loop execution.
    - `arcagent` — agent orchestration (tools, skills, extensions, memory, sessions).

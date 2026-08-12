@@ -212,18 +212,41 @@ def track_active_run(
     identity-guarded so a re-entrant run for the same session is never evicted by a
     stale finalizer. This is the streaming-path parity for what ``start_tracked_run``
     already does for tracked runs (GAP-A).
+
+    Registered as background: a streaming run was not opened by an inbound
+    message, so a delivered message must open its own turn rather than join it
+    (REQ-303). Only :func:`start_tracked_run` registers an injection target.
     """
     registered: list[arcrun.RunHandle] = []
 
     def on_handle(handle: arcrun.RunHandle) -> None:
         registered.append(handle)
-        agent._run_coordinator.register(session_id, handle)
+        agent._run_coordinator.register(session_id, handle, interactive=False)
 
     def untrack() -> None:
         if registered:
             agent._run_coordinator.unregister(session_id, registered[0])
 
     return on_handle, untrack
+
+
+def bind_inbound_channel(
+    agent: ArcAgent, reply_target: str | None, reply_label: str | None
+) -> None:
+    """Bind the turn's inbound channel and remember it as a delivery target.
+
+    Called at every turn-dispatch entry, before the loop task is created, so the
+    contextvar reaches the tool dispatches inside the loop (a capability like the
+    scheduler defaults a new schedule's delivery to the channel the request
+    arrived on). ``reply_target`` is None for non-channel runs.
+    """
+    turn_context.set_inbound_channel(reply_target)
+    if reply_target:
+        # Remember this channel so arcui can offer it as a delivery-target
+        # dropdown (a raw chat_id exists only here on the inbound path).
+        known_channels.record(
+            agent._workspace, target=reply_target, label=reply_label or reply_target
+        )
 
 
 async def dispatch_stream(
@@ -294,13 +317,7 @@ async def _dispatch_stream_locked(
     """Execute a turn after its session serialization lock is held."""
     agent._ensure_started()
     activate_runtime_bindings(agent)
-    turn_context.set_inbound_channel(reply_target)
-    if reply_target:
-        # Remember this channel so arcui can offer it as a delivery-target
-        # dropdown (a raw chat_id exists only here on the inbound path).
-        known_channels.record(
-            agent._workspace, target=reply_target, label=reply_label or reply_target
-        )
+    bind_inbound_channel(agent, reply_target, reply_label)
     telemetry, bus, model, provider, prompt, bridge = await build_run_context(agent, input_text)
     await session.append_message(prompt.session_record(input_text))
     history = wire_messages(session.get_messages())
@@ -375,6 +392,8 @@ async def start_tracked_run(
     input_text: str,
     *,
     session_key: str,
+    reply_target: str | None = None,
+    reply_label: str | None = None,
 ) -> arcrun.RunHandle:
     """Start an async, steerable run for ``session_key`` and track its handle.
 
@@ -384,6 +403,11 @@ async def start_tracked_run(
     registered in ``agent._active_runs`` and removed by a finalizer that commits
     the assistant turn, compacts, and emits ``agent:post_respond`` (parity with
     the streaming path). REQ-040/041.
+
+    This is the turn an inbound message opens, so the run is registered as an
+    injection target: the next message for this session joins it rather than
+    starting a second one (REQ-302). ``reply_target`` / ``reply_label`` carry the
+    channel the message arrived on, same as the streaming path.
     """
     session = await agent.session(session_key)
     coordination_key = session.session_id
@@ -391,6 +415,7 @@ async def start_tracked_run(
     try:
         agent._ensure_started()
         activate_runtime_bindings(agent)
+        bind_inbound_channel(agent, reply_target, reply_label)
         _telemetry, _bus, model, provider, prompt, bridge = await build_run_context(
             agent, input_text
         )
@@ -422,7 +447,7 @@ async def start_tracked_run(
     except BaseException:
         agent._run_coordinator.release_turn(coordination_key)
         raise
-    agent._run_coordinator.register(coordination_key, handle)
+    agent._run_coordinator.register(coordination_key, handle, interactive=True)
     finalizer = agent._background_tasks.create(
         _finalize_tracked_run(agent, handle, session, coordination_key, input_text),
         name=f"run_finalizer:{coordination_key}",

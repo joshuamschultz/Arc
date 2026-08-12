@@ -334,6 +334,10 @@ def create_app(
             starlette_app.state.session_router = embedded_gateway.session_router
             starlette_app.state.web_adapter = embedded_gateway.web_adapter
             starlette_app.state.stream_bridge = embedded_gateway.stream_bridge
+            # COMP-008: the broker the gateway ensured. Routes read ``available``
+            # to tell "nothing to show" apart from "cannot see" (REQ-307); the
+            # ``finally`` below reaps the child if this startup began one.
+            starlette_app.state.broker = embedded_gateway.broker
             # SPEC-023: cache loaded agents and register them in the
             # fleet so chat-loaded agents show as LIVE without a separate
             # /api/agent/connect WebSocket. One install_ call, idempotent.
@@ -453,6 +457,12 @@ def create_app(
                             "lifespan: error disconnecting adapter %s",
                             getattr(adapter, "name", "unknown"),
                         )
+                # COMP-008: last, so nothing still shutting down loses its bus.
+                # Idempotent, and a no-op for a broker this process only reused.
+                try:
+                    await embedded_gateway.broker.aclose()
+                except Exception:  # reason: fail-open — continue shutdown
+                    logger.exception("lifespan: error stopping the managed broker")
 
     # Last, so it catches only what no real route claimed: the browser router's
     # own paths, which must load directly and not just via in-app navigation.

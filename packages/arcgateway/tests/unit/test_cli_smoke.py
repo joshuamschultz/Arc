@@ -425,7 +425,7 @@ def test_wire_adapters_telegram_missing_token_personal_warns(tmp_path: Path) -> 
 
 def test_wire_adapters_telegram_present_token_registers_adapter(tmp_path: Path) -> None:
     """_wire_adapters registers a telegram adapter (via the registry) when its token is present."""
-    pytest.importorskip("arcgateway_telegram")
+    pytest.importorskip("telegram")
     runner, config = _make_real_runner_and_config(tmp_path, telegram_enabled=True)
 
     with patch.dict(os.environ, {"TEST_TELEGRAM_TOKEN": "fake-token"}):
@@ -464,7 +464,7 @@ def test_wire_adapters_slack_missing_token_personal_warns(tmp_path: Path) -> Non
 
 def test_wire_adapters_slack_present_tokens_registers_adapter(tmp_path: Path) -> None:
     """_wire_adapters registers a slack adapter (via the registry) when both tokens are present."""
-    pytest.importorskip("arcgateway_slack")
+    pytest.importorskip("slack_sdk")
     runner, config = _make_real_runner_and_config(tmp_path, slack_enabled=True)
 
     with patch.dict(

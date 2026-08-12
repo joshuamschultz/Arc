@@ -11,12 +11,13 @@ SQLite ``pairing_store`` (no row for a user never DM-paired) — so an
 allowlisted user still got a pairing code minted on their first message.
 
 Each platform's ``InboundEvent.user_did`` is built by that platform's OWN
-adapter package, in its own scheme — the gateway core stays platform-agnostic
-(see ``PlatformsSection``'s docstring; ``extra="allow"`` blocks are handed to
-adapter plugins raw). Telegram: ``"did:arc:telegram:{user_id}"`` (arcgateway_
-telegram/adapter.py). Slack: ``"slack:{user_id}"`` (arcgateway_slack/adapter.
-py). This is a deliberate, PRE-EXISTING inconsistency — this fix matches each
-platform's scheme, it does not unify them.
+adapter, in its own scheme — the gateway core stays platform-agnostic (see
+``PlatformsSection``'s docstring; ``extra="allow"`` blocks are handed to each
+adapter raw). Telegram: ``"did:arc:telegram:{user_id}"``
+(adapters/telegram/adapter.py). Slack: ``"slack:{user_id}"``
+(adapters/slack/adapter.py). This is a deliberate, PRE-EXISTING
+inconsistency — this fix matches each platform's scheme, it does not unify
+them.
 
 Mattermost is channel-based (``allowed_channel_ids``, not ``allowed_user_ids``
 — a different auth model) and has no user_did scheme here.

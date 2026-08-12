@@ -1,8 +1,8 @@
 """``arc init``'s generated gateway.toml must use each adapter's real field names.
 
 Regression test for a silent config bug: TelegramPlatformConfig's real field
-is ``token_env`` (arcgateway_telegram/config.py), not ``bot_token_env``
-(that's Slack's field name — arcgateway_slack/config.py). Both Pydantic
+is ``token_env`` (adapters/telegram/config.py), not ``bot_token_env``
+(that's Slack's field name — adapters/slack/config.py). Both Pydantic
 models use ``extra="ignore"``, so a wrong key doesn't raise — it's silently
 dropped, and the generated Telegram block ends up authless with no error
 until someone notices the bot never receives a token.
@@ -40,7 +40,7 @@ def test_telegram_token_env_round_trips_through_real_config_model() -> None:
     """
     import tomllib
 
-    from arcgateway_telegram.config import TelegramPlatformConfig
+    from arcgateway.adapters.telegram.config import TelegramPlatformConfig
 
     toml_text = _generate_gateway_toml("personal")
     parsed = tomllib.loads(toml_text)

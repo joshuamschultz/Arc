@@ -290,15 +290,15 @@ agent_did = "did:arc:agent:default"
 [security]
 require_pairing = false
 
-# Remote platforms load from extension packages via the adapter-plugin
-# registry. Enable a block AND install its package, e.g.:
-#   pip install 'arcgateway-telegram'
+# Remote platforms are in-tree adapter folders, found by directory scan.
+# Enable a block AND install the platform's client library, e.g.:
+#   pip install 'arcgateway[telegram]'
 [platforms.telegram]
 enabled = false
 token_env = "TELEGRAM_BOT_TOKEN"
 # allowed_user_ids = [123456789]  # Your Telegram user ID
 
-# pip install 'arcgateway-slack'
+# pip install 'arcgateway[slack]'
 [platforms.slack]
 enabled = false
 bot_token_env = "SLACK_BOT_TOKEN"

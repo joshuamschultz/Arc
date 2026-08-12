@@ -271,7 +271,7 @@ def _gateway_pair_approve_handler(args: list[str]) -> None:
     authority (``arc identity init``) and consumes the code. PairingStore
     requires a valid Ed25519 signature at EVERY tier — including personal,
     where the operator's self-signed key IS the trust anchor
-    (arcgateway.pairing_signature) — so this command cannot succeed without
+    (arcgateway.pairing) — so this command cannot succeed without
     an identity that has been registered as a trusted operator, which
     ``arc identity init`` now does automatically.
 
@@ -300,7 +300,7 @@ def _gateway_pair_approve_handler(args: list[str]) -> None:
     if identity is None:
         sys.stderr.write(
             "Error: no signing authority found. An operator must sign every pairing "
-            "approval (all tiers — see arcgateway.pairing_signature).\n"
+            "approval (all tiers — see arcgateway.pairing).\n"
             "Run: arc identity init\n"
         )
         sys.exit(1)

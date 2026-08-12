@@ -18,26 +18,31 @@ from arcgateway.adapters.install import (
 )
 
 
-def test_available_adapters_lists_official() -> None:
+def test_available_adapters_lists_every_in_tree_platform() -> None:
+    """A platform is a folder; what can be missing is its client library.
+
+    The requirement is therefore this distribution's extra, not a separate
+    distribution — since SPEC-065 there is no `arcgateway-telegram` to install.
+    """
     avail = available_adapters()
-    assert avail["telegram"] == "arcgateway-telegram"
-    assert avail["slack"] == "arcgateway-slack"
-    assert avail["mattermost"] == "arcgateway-mattermost"
+    assert avail["telegram"] == "arcgateway[telegram]"
+    assert avail["slack"] == "arcgateway[slack]"
+    assert avail["mattermost"] == "arcgateway[mattermost]"
 
 
 def test_build_command_with_uv() -> None:
     cmd = build_install_command("telegram", prefer_uv=True)
-    assert cmd == ["uv", "pip", "install", "arcgateway-telegram"]
+    assert cmd == ["uv", "pip", "install", "arcgateway[telegram]"]
 
 
 def test_build_command_with_pip() -> None:
     cmd = build_install_command("slack", prefer_uv=False)
-    assert cmd == [sys.executable, "-m", "pip", "install", "arcgateway-slack"]
+    assert cmd == [sys.executable, "-m", "pip", "install", "arcgateway[slack]"]
 
 
 def test_build_command_upgrade_flag() -> None:
     cmd = build_install_command("telegram", upgrade=True, prefer_uv=True)
-    assert cmd == ["uv", "pip", "install", "--upgrade", "arcgateway-telegram"]
+    assert cmd == ["uv", "pip", "install", "--upgrade", "arcgateway[telegram]"]
 
 
 def test_build_command_rejects_unknown_adapter() -> None:
@@ -62,7 +67,7 @@ def test_install_adapter_runs_command_and_returns_code() -> None:
 
     rc = install_adapter("telegram", prefer_uv=False, runner=_runner)
     assert rc == 0
-    assert calls == [[sys.executable, "-m", "pip", "install", "arcgateway-telegram"]]
+    assert calls == [[sys.executable, "-m", "pip", "install", "arcgateway[telegram]"]]
 
 
 def test_install_adapter_propagates_nonzero_exit() -> None:

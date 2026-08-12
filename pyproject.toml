@@ -31,13 +31,13 @@ dependencies = [
     # builtin adapter as unavailable in a default-synced env. Pin it here for the
     # same reason as arcmemory: the default extension must load out of the box.
     "arcskill",
-    # arcgateway-telegram is the default remote gateway adapter — same reason
-    # as arcmemory/arcskill: without this edge it's only present under
-    # `uv sync --all-packages`, so a bare `uv sync` + an enabled
-    # [platforms.telegram] block in gateway.toml starts a gateway with no
-    # Telegram adapter (registry.build_adapters skips it, silently, at
-    # personal/enterprise tier). Pin it here so it ships out of the box.
-    "arcgateway-telegram",
+    # Telegram is the default remote gateway surface. Since SPEC-065 the
+    # adapter itself is in-tree, but its client library is an extra — and
+    # extras are NOT installed by `uv sync --all-packages`, so without this
+    # edge a bare sync + an enabled [platforms.telegram] block starts a
+    # gateway that skips Telegram (silently, at personal/enterprise tier).
+    # Pin the extra here so it ships out of the box.
+    "arcgateway[telegram]",
     "croniter>=6.2.2",
 ]
 
@@ -111,7 +111,6 @@ arcmodel = { workspace = true }
 arccmd = { workspace = true, editable = true }
 arc-agent = { workspace = true, editable = true }
 arcgateway = { workspace = true, editable = true }
-arcgateway-telegram = { workspace = true }
 
 [tool.ruff]
 target-version = "py311"
@@ -213,4 +212,17 @@ pythonpath = ["."]
 markers = [
     "slow: end-to-end test that starts a real nats-server (skipped when the binary is absent)",
     "requires_docker: needs a reachable Docker daemon; skipped locally, required in CI",
+]
+
+[tool.coverage.run]
+# The adapter registry's contract is "a platform is a folder", so the tests that
+# prove it must create real folders inside the real package — a tmp_path copy
+# would exercise a scan of somewhere the gateway never scans. Those folders are
+# deleted in teardown, which used to leave coverage holding measurements of
+# files that no longer exist; `coverage json` then failed hard and took the
+# whole G1.7 gate down with it. Excluding the fixtures by name keeps the gate
+# measuring only code that outlives the test that touched it.
+omit = [
+    "*/arcgateway/adapters/broken_*/*",
+    "*/arcgateway/adapters/probe_*/*",
 ]

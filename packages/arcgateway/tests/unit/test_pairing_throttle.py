@@ -16,8 +16,8 @@ from arcgateway.pairing import (
     PairingPlatformFull,
     PairingPlatformLocked,
     PairingRateLimited,
+    PairingThrottle,
 )
-from arcgateway.pairing_throttle import PairingThrottle
 
 
 def _make_db() -> tuple[sqlite3.Connection, Path]:

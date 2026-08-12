@@ -226,6 +226,10 @@ class TestSendSigned:
     ) -> None:
         monkeypatch.setenv("HOME", str(tmp_path))
         sender_did = _create_agent(tmp_path, "sender")
+        # Register the addressee too. Sending to an unregistered handle is now
+        # refused rather than written to a stream nobody reads (SPEC-065 T-945,
+        # REQ-313); this test is about the signature, so give it a real peer.
+        _create_agent(tmp_path, "receiver")
 
         _send(
             argparse.Namespace(
@@ -253,6 +257,8 @@ class TestSendSigned:
     ) -> None:
         monkeypatch.setenv("HOME", str(tmp_path))
         _create_agent(tmp_path, "sender")
+        # See above: an unregistered addressee is now refused (T-945 / REQ-313).
+        _create_agent(tmp_path, "receiver")
         _send(
             argparse.Namespace(
                 root=None,

@@ -9,6 +9,8 @@ rather than a runtime ImportError further up the dependency chain.
 from __future__ import annotations
 
 import ast
+import re
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -234,31 +236,133 @@ def test_web_adapter_does_not_import_bootstrap() -> None:
 # ── Gateway core is platform-agnostic ────────────────────────────────────────
 
 
-def test_gateway_does_not_import_extension_packages() -> None:
-    """The gateway core must never import a platform extension package.
+#: Platforms whose names must never appear in the registry's own source.
+_PLATFORM_NAMES = ("telegram", "slack", "mattermost", "discord")
 
-    Platforms load only through the entry-point registry. A direct import would
-    re-couple the core to a specific platform and defeat the plugin model.
+
+def test_the_registry_names_no_platform() -> None:
+    """Discovery is a scan, so ``registry.py`` cannot know a platform's name.
+
+    SPEC-065 REQ-308. This replaces the pre-T-940 pair of guards, which asserted
+    that remote platforms lived in *separate distributions* — the opposite of
+    what the spec now requires. One of them survived T-940 only by looking for
+    ``telegram.py`` while the platform had become the directory ``telegram/``:
+    it passed on a technicality while asserting a principle that had become
+    false, which is worse than failing.
+
+    The invariant that actually earns its keep now is that adding or deleting a
+    platform needs no edit to the DISCOVERY path.
+
+    Scoped to the discovery functions on purpose. ``OFFICIAL_ADAPTERS`` in the
+    same module does name platforms, and legitimately so — it is a trust
+    allowlist (federal tier blocks unofficial platforms, and every load is
+    audited official/unofficial), which is a different axis from discovery.
+    Vetting is supposed to be an explicit list; finding is not.
     """
-    if not _ARCGATEWAY_SRC.exists():
-        pytest.skip("arcgateway package not found in this checkout")
-    bad = _violations(
-        _ARCGATEWAY_SRC,
-        ("arcgateway_telegram", "arcgateway_slack", "arcgateway_mattermost"),
+    source = (_ARCGATEWAY_SRC / "adapters" / "registry.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    discovery = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+        and node.name in {"discover_adapters", "_load_descriptor"}
+    ]
+    assert discovery, "discovery functions not found — has registry.py been restructured?"
+
+    named = sorted(
+        {
+            name
+            for node in discovery
+            for name in _PLATFORM_NAMES
+            if name in ast.get_source_segment(source, node, padded=True).lower()
+        }
     )
-    assert not bad, (
-        "arcgateway core imports a platform extension package (forbidden):\n"
-        + "\n".join(f"  {p}: {m}" for p, m in bad)
+
+    assert not named, (
+        f"the discovery path in adapters/registry.py names {named} — discovery must "
+        "stay a scan for the PLATFORM descriptor, so adding a folder needs no edit "
+        "here (REQ-308)"
     )
 
 
-def test_gateway_core_ships_no_platform_adapter_modules() -> None:
-    """The only adapter in the core is ``web``; remote platforms live in packages."""
+def test_every_in_tree_platform_exports_the_descriptor() -> None:
+    """A platform folder without ``PLATFORM`` is invisible to the scan.
+
+    The failure this catches is silent: the folder is present, its code looks
+    wired, and the gateway simply never loads it.
+    """
     adapters_dir = _ARCGATEWAY_SRC / "adapters"
     if not adapters_dir.exists():
         pytest.skip("arcgateway.adapters not present")
-    forbidden = {"telegram.py", "slack.py", "mattermost.py", "discord.py"}
-    present = {p.name for p in adapters_dir.glob("*.py")} & forbidden
-    assert not present, (
-        f"platform adapter modules must not live in the gateway core: {sorted(present)}"
+
+    missing = [
+        folder.name
+        for folder in adapters_dir.iterdir()
+        if folder.is_dir() and not folder.name.startswith("_") and (folder / "__init__.py").exists()
+        if "PLATFORM" not in (folder / "__init__.py").read_text(encoding="utf-8")
+    ]
+
+    assert not missing, (
+        f"adapter folders export no PLATFORM descriptor and will never be "
+        f"discovered: {sorted(missing)}"
     )
+
+
+# ── arcgateway MUST NOT import a model package (SPEC-065 REQ-301) ────────────
+
+#: The two packages that know model vocabulary. arcgateway is two layers above
+#: both (arcllm <- arcrun <- arcagent <- arcgateway) and reaching either would
+#: skip arcagent entirely.
+_MODEL_PACKAGES = ("arcllm", "arcrun")
+
+
+def test_model_package_detector_can_actually_fail(tmp_path: Path) -> None:
+    """Positive control: prove the scan below reports a real violation.
+
+    A boundary test that can only ever pass is worse than no test — it reads as
+    evidence while checking nothing. Plant every import form and require the
+    detector to catch all of them.
+    """
+    planted = tmp_path / "planted.py"
+    planted.write_text(
+        "import arcllm\nfrom arcrun import run\nimport arcllm.types\n",
+        encoding="utf-8",
+    )
+
+    found = _violations(tmp_path, _MODEL_PACKAGES)
+
+    assert {module for _, module in found} == {"arcllm", "arcrun", "arcllm.types"}
+
+
+def test_arcgateway_imports_no_model_package() -> None:
+    """Media translation is the agent's job, not the gateway's (SPEC-065 COMP-009).
+
+    The gateway carries a *workspace reference* through to arcagent and never
+    holds a content block, which is why it needs no model vocabulary at all. If
+    a media part ever had to become an ImageBlock here, the bytes would be in
+    the gateway's hands — and the layer that has the bytes is the layer that
+    leaks them into a queue or a log.
+    """
+    if not _ARCGATEWAY_SRC.exists():
+        pytest.skip("arcgateway package not found in this checkout")
+
+    bad = _violations(_ARCGATEWAY_SRC, _MODEL_PACKAGES)
+
+    assert not bad, (
+        "arcgateway imports a model package — translation belongs in arcagent "
+        "(SPEC-065 COMP-009):\n" + "\n".join(f"  {p}: {m}" for p, m in bad)
+    )
+
+
+def test_arcgateway_metadata_declares_no_model_package() -> None:
+    """Source and packaging must state the same graph; a dependency is a promise."""
+    pyproject = _REPO_ROOT / "packages" / "arcgateway" / "pyproject.toml"
+    with pyproject.open("rb") as handle:
+        declared = tomllib.load(handle)["project"].get("dependencies", [])
+
+    names = {
+        re.split(r"[^A-Za-z0-9_.-]", entry.strip(), maxsplit=1)[0].lower() for entry in declared
+    }
+
+    assert not names & {"arcllm", "arcrun", "arc-llm", "arc-run"}

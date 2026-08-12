@@ -2,9 +2,12 @@
 
 Tests cover:
 - Session key construction (determinism, cross-platform continuity, uniqueness)
-- Basic handle() routing (new session spawns task, busy session queues)
-- Queue depth tracking
-- Active session counting
+- Basic handle() routing (every message gets its own handoff, none held back)
+- In-flight session counting
+
+Turn serialisation is NOT tested here: since SPEC-065 it belongs to the agent,
+and its regression guard drives a real agent in
+``tests/integration/test_race_regression.py``.
 """
 
 from __future__ import annotations
@@ -56,7 +59,7 @@ class _ImmediateExecutor:
 class _SlowExecutor:
     """Executor that waits for an external gate before completing.
 
-    Used to hold a turn open so we can test queuing behaviour.
+    Used to hold a handoff open so we can observe in-flight state.
 
     Gate lifecycle: gates are pre-created in run() so that open_gate()
     can be called BEFORE the stream actually starts waiting. This avoids
@@ -284,8 +287,12 @@ class TestSessionRouterHandle:
         assert router.agent_tasks_spawned.get(key, 0) == 1
 
     @pytest.mark.asyncio
-    async def test_second_message_to_busy_session_is_queued(self) -> None:
-        """A second message from the same (agent, user) queues behind the active turn."""
+    async def test_second_message_to_busy_session_is_handed_over_too(self) -> None:
+        """A second message for a busy session is delivered, never held back.
+
+        The router keeps no queue: it is the agent that decides the second
+        message joins the turn already in flight (REQ-302, REQ-317).
+        """
         slow_exec = _SlowExecutor()
         router = SessionRouter(executor=slow_exec)
 
@@ -296,15 +303,16 @@ class TestSessionRouterHandle:
         await router.handle(event1)
         await router.handle(event2)
 
-        assert router.agent_tasks_spawned.get(key, 0) == 1
-        assert len(router.queued_events.get(key, [])) == 1
+        assert router.agent_tasks_spawned.get(key, 0) == 2, (
+            "both messages must reach the executor; the router holds neither"
+        )
 
         slow_exec.open_gate(key)
         await asyncio.sleep(0.05)
 
     @pytest.mark.asyncio
     async def test_active_session_count(self) -> None:
-        """active_session_count() reflects currently running sessions.
+        """active_session_count() reflects sessions with a handoff in flight.
 
         Distinct users → distinct canonical keys → distinct sessions.
         """
@@ -330,8 +338,8 @@ class TestSessionRouterHandle:
         assert router.active_session_count() == 0
 
     @pytest.mark.asyncio
-    async def test_queue_depth(self) -> None:
-        """queue_depth() returns the correct count of pending events."""
+    async def test_no_message_is_held_back_behind_a_busy_session(self) -> None:
+        """Three messages to one busy session produce three handoffs, no waiting line."""
         slow_exec = _SlowExecutor()
         router = SessionRouter(executor=slow_exec)
 
@@ -341,10 +349,12 @@ class TestSessionRouterHandle:
         await router.handle(_make_event(message="m2"))
         await router.handle(_make_event(message="m3"))
 
-        assert router.queue_depth(key) == 2  # m1 running, m2+m3 queued
+        assert router.agent_tasks_spawned.get(key, 0) == 3
+        assert router.active_session_count() == 1, "one session, three handoffs in flight"
 
         slow_exec.open_gate(key)
         await asyncio.sleep(0.05)
+        assert router.active_session_count() == 0
 
     @pytest.mark.asyncio
     async def test_independent_sessions_run_concurrently(self) -> None:
@@ -375,8 +385,8 @@ class TestOutboundSend:
         router = SessionRouter(executor=_ImmediateExecutor())
         tg = _RecordingAdapter("telegram")
         web = _RecordingAdapter("web")
-        router.register_adapter(tg)  # type: ignore[arg-type]
-        router.register_adapter(web)  # type: ignore[arg-type]
+        router.register_adapter(tg)
+        router.register_adapter(web)
 
         await router.send(DeliveryTarget.parse("telegram:999"), "hi there")
 
@@ -398,8 +408,8 @@ class TestOutboundSend:
         router = SessionRouter(executor=_ImmediateExecutor())
         olivia = _RecordingAdapter("telegram", agent_did="did:arc:local:executor/olivia")
         sales = _RecordingAdapter("telegram", agent_did="did:arc:local:executor/sales")
-        router.register_adapter(olivia)  # type: ignore[arg-type]
-        router.register_adapter(sales)  # type: ignore[arg-type]
+        router.register_adapter(olivia)
+        router.register_adapter(sales)
 
         await router.send(
             DeliveryTarget.parse("telegram:42"),
@@ -419,8 +429,8 @@ class TestMultiBotReplyRouting:
         olivia = _RecordingAdapter("telegram", agent_did="did:arc:agent:olivia")
         sales = _RecordingAdapter("telegram", agent_did="did:arc:agent:sales")
         router = SessionRouter(executor=_EchoExecutor())
-        router.register_adapter(olivia)  # type: ignore[arg-type]
-        router.register_adapter(sales)  # type: ignore[arg-type]
+        router.register_adapter(olivia)
+        router.register_adapter(sales)
 
         # A message that arrived on Olivia's bot (agent_did=olivia).
         event = _make_event(

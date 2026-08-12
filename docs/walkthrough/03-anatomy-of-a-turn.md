@@ -83,12 +83,11 @@ same shape as sibling packages — `packages/arcgateway-slack`,
  `GatewayRunner` at startup. `handle()` resolves the canonical,
  cross-platform-stable session key (`build_session_key`,
  `packages/arcgateway/src/arcgateway/session.py:105`), runs the pairing
- allowlist check, checks for a queued turn on this session
- (`QueueManager`, `packages/arcgateway/src/arcgateway/session_queue.py:33`),
- and — if the session is idle — spawns `_process_session` →
- `_run_turn` (`session.py:417`, `session.py:443`).
-3. `_run_turn` calls `await self._executor.run(event)`
- (`session.py:461`) and streams the result back through
+ allowlist check, and spawns `_process_session` → `_run_turn` for the
+ message. It holds no queue of its own and makes no decision about the
+ run — see §9.1.3.
+3. `_run_turn` calls `await self._executor.run(event)`, which hands the
+ message to `ArcAgent.deliver_message()`, and streams the result back through
  `StreamBridge.consume()` to the adapter that owns the reply channel
  (`session.py:466`).
 4. Which `Executor` runs is picked once, at gateway startup, by tier —
@@ -642,7 +641,7 @@ flowchart TD
 | `packages/arccli/src/arccli/commands/agent/chat.py` | Interactive CLI entry to a real agent | The `arc agent chat` UX |
 | `packages/arccli/src/arccli/agent_worker.py` | Federal-tier subprocess worker (JSON-lines IPC) | Federal isolation behavior |
 | `packages/arctui/src/arctui/app.py` | TUI's direct `agent.run()` consumer | The terminal UI's turn rendering |
-| `packages/arcgateway/src/arcgateway/session.py` | `SessionRouter`, session-key derivation, per-session queueing | Gateway session routing/ordering |
+| `packages/arcgateway/src/arcgateway/session.py` | `SessionRouter`, session-key derivation, per-message handoff | Gateway session routing |
 | `packages/arcgateway/src/arcgateway/executor.py` | `AsyncioExecutor`/`SubprocessExecutor`, `Delta` streaming | How a channel consumes the agent stream |
 | `packages/arcgateway/src/arcgateway/executor_subprocess.py` | Federal `SubprocessExecutor` | Subprocess isolation, resource limits |
 | `packages/arcagent/src/arcagent/core/agent.py` | `ArcAgent.run` / `run_collected`, identity, `.did` | The public agent entry surface |

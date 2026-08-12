@@ -179,7 +179,7 @@ def register_operator(
     caller who already holds a keypair (e.g. ``arc identity init``) register
     itself as a trusted pairing-approval operator without editing TOML by
     hand. Personal-tier trust is explicitly "self-signed key accepted as
-    tier-1 trust anchor" (see ``arcgateway.pairing_signature``); this is the
+    tier-1 trust anchor" (see ``arcgateway.pairing``); this is the
     mechanism that makes that anchor concrete.
 
     Idempotent: re-registering the same DID replaces its existing entry

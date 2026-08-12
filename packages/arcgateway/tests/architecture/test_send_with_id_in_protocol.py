@@ -58,6 +58,9 @@ async def test_protocol_default_calls_send_and_returns_none() -> None:
         async def disconnect(self) -> None:
             pass
 
+        def to_parts(self, payload: object) -> list[object]:
+            return []
+
         async def send(
             self,
             target: DeliveryTarget,

@@ -271,7 +271,7 @@ reference implementation.
 |---|---|
 | **Allowlist** | Stored as user hashes, not raw IDs. Operator-approved. Persisted to JSONL |
 | **Code TTL** | Codes expire (default 15 min). `pair list` shows time remaining |
-| **Code throttling** | `pairing_throttle.py` rate-limits pairing-code generation per user |
+| **Code throttling** | `PairingThrottle` (`pairing.py`) rate-limits pairing-code generation per user |
 | **Pairing signature** | Every pairing record is signed (Ed25519 via arctrust) — tampering with the allowlist file is detectable |
 | **Replay protection** | Codes are single-use. `approve` consumes the code immediately |
 

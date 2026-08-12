@@ -140,8 +140,8 @@ class _SplittingAdapter:
     async def edit_message(self, target, message_id, text) -> None:  # type: ignore[no-untyped-def]
         self.events.append(("edit", text))
 
-    def split_message(self, text: str) -> list[str]:
-        return [text[i : i + self.LIMIT] for i in range(0, len(text), self.LIMIT)] or [text]
+    # Declared, not implemented: the gateway owns splitting (REQ-310).
+    max_message_chars = LIMIT
 
 
 @pytest.mark.asyncio

@@ -22,8 +22,10 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
 
+from arcgateway.broker_bootstrap import BrokerHandle, start_broker
 from arcgateway.commands import build_default_registry
 from arcgateway.executor import AsyncioExecutor, Executor
+from arcgateway.media_store import MediaStore
 from arcgateway.session import SessionRouter
 from arcgateway.stream_bridge import StreamBridge
 
@@ -36,6 +38,14 @@ if TYPE_CHECKING:
 _logger = logging.getLogger("arcgateway.bootstrap")
 
 
+
+# Inbound artefact ceiling (SPEC-065 REQ-299). 20 MiB is the smallest ceiling
+# the supported platforms impose on a bot download (Telegram's Bot API caps
+# getFile at 20 MB), so a larger value here would accept artefacts the adapter
+# could never fetch. Not yet operator-configurable — the spec leaves retention
+# and sizing open, and one honest constant beats a config key nothing reads.
+_MEDIA_CEILING_BYTES = 20 * 1024 * 1024
+
 class EmbeddedGateway(NamedTuple):
     """Bundle of components arcui needs to host the gateway runtime.
 
@@ -43,6 +53,12 @@ class EmbeddedGateway(NamedTuple):
     ``[platforms.web]`` block is disabled). ``adapters`` holds every enabled
     remote-platform adapter (telegram, slack, …) built through the generic
     adapter-plugin registry — the gateway core names none of them.
+
+    ``broker`` (COMP-008) is the message broker this startup ensured, and the
+    right to stop it if this startup is what started it. Its ``available`` flag
+    is what lets a messaging surface tell "nothing to show" apart from "cannot
+    see" (REQ-307); the host is responsible for ``await broker.aclose()`` on
+    shutdown, alongside the adapter disconnects.
 
     ``workflow_runner_host`` (SPEC-061 COMP-009) is the singleton ArcFlow
     runner host constructed on THIS (the agent) side of the fleet service —
@@ -56,6 +72,7 @@ class EmbeddedGateway(NamedTuple):
     session_router: SessionRouter
     web_adapter: WebPlatformAdapter | None
     stream_bridge: StreamBridge
+    broker: BrokerHandle
     adapters: tuple[BasePlatformAdapter, ...] = ()
     workflow_runner_host: RunnerHost | None = None
 
@@ -234,10 +251,11 @@ async def build_for_embedded(
             disables adapters, and supplies per-adapter limits.
 
     Returns:
-        EmbeddedGateway with executor, session_router, stream_bridge, and any
-        enabled adapters. The arcui lifespan stores the named tuple on
-        ``app.state`` and is responsible for ``await connect()`` /
-        ``await disconnect()`` on each adapter.
+        EmbeddedGateway with executor, session_router, stream_bridge, the
+        ensured ``broker``, and any enabled adapters. The arcui lifespan stores
+        the named tuple on ``app.state`` and is responsible for
+        ``await connect()`` / ``await disconnect()`` on each adapter and for
+        ``await broker.aclose()`` on shutdown.
     """
     if not team_root.exists():
         _logger.warning(
@@ -245,6 +263,29 @@ async def build_for_embedded(
             team_root,
         )
 
+    # COMP-008 / REQ-306: the broker is part of starting Arc, not of one CLI
+    # verb. Every launch path composes through this function, so ensuring it
+    # here — before the agents, adapters and runner that talk over it — is what
+    # makes a plain start produce a working inbox. Never fatal (REQ-307): an
+    # unreachable broker leaves an explicit unavailable handle on the bundle and
+    # the rest of the gateway still serves.
+    broker = await start_broker()
+    try:
+        return await _compose_embedded(team_root, gateway_config, broker)
+    except BaseException:
+        # A broker started moments ago and abandoned here would outlive the
+        # process that started it. Reuse is not ownership, so aclose() is a
+        # no-op when the broker was already running.
+        await broker.aclose()
+        raise
+
+
+async def _compose_embedded(
+    team_root: Path,
+    gateway_config: GatewayConfig,
+    broker: BrokerHandle,
+) -> EmbeddedGateway:
+    """Wire the components onto an already-ensured broker (see build_for_embedded)."""
     # Late-bound holder: the factory needs a per-agent deliver fn that closes
     # over the SessionRouter built below (two-step wiring breaks the
     # inbound/outbound cycle). The factory calls deliver_for(agent_did) per
@@ -292,12 +333,30 @@ async def build_for_embedded(
     # Slash-command registry + persisted session-rotation epochs. The epoch DB
     # sits beside the pairing DB so "New session" survives a gateway restart.
     command_registry = build_default_registry()
+    def _media_store_for(agent_did: str) -> MediaStore | None:
+        """Resolve the addressed agent's own artefact store (SPEC-065 COMP-002).
+
+        Per agent, never one for the router: the router serves the whole fleet
+        but a workspace belongs to exactly one agent (ADR-029). A single shared
+        store would file every agent's inbound attachments in one agent's home,
+        putting one correspondent's files inside another agent's readable
+        workspace. An unknown DID yields None, and the message still arrives
+        with its artefacts named rather than stored.
+        """
+        agent_dir = _resolve_agent_dir(team_root, agent_did)
+        if agent_dir is None:
+            return None
+        return MediaStore(
+            workspace=agent_dir / "workspace", max_bytes=_MEDIA_CEILING_BYTES
+        )
+
     session_router = SessionRouter(
         executor=executor,
         pairing_store=pairing_store,
         user_allowlist=user_allowlist,
         command_registry=command_registry,
         session_epoch_db_path=gateway_config.pairing.db_path.parent / "session_epochs.db",
+        media_store_for=_media_store_for,
     )
     # Now that the router exists, satisfy the factory's late-bound delivery hook.
     router_holder["router"] = session_router
@@ -338,10 +397,11 @@ async def build_for_embedded(
             set_names(command_registry.names())
 
     _logger.info(
-        "bootstrap: embedded gateway built (tier=%s web=%s remote=%s)",
+        "bootstrap: embedded gateway built (tier=%s web=%s remote=%s broker=%s)",
         gateway_config.gateway.tier,
         bool(web_adapter),
         [a.name for a in remote_adapters],
+        "available" if broker.available else "UNAVAILABLE",
     )
 
     # SPEC-061 COMP-009: the ArcFlow runner is constructed HERE, on the agent
@@ -359,6 +419,7 @@ async def build_for_embedded(
         session_router=session_router,
         web_adapter=web_adapter,
         stream_bridge=stream_bridge,
+        broker=broker,
         adapters=tuple(remote_adapters),
         workflow_runner_host=workflow_runner_host,
     )

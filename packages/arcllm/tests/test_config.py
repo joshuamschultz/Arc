@@ -294,9 +294,40 @@ def test_http_single_label_service_name_allowed(base_url):
 @pytest.mark.parametrize(
     "base_url",
     [
+        "http://100.80.212.52:4000",       # a Tailscale node, low in the range
+        "http://100.64.0.1:8000",          # first usable address in 100.64/10
+        "http://100.127.255.254:11434",    # last address in 100.64/10
+        "http://[fd7a:115c:a1e0::1]:4000",  # Tailscale's IPv6 ULA prefix
+    ],
+)
+def test_http_tailscale_address_allowed(base_url):
+    """A Tailscale address is a private overlay address, not a public one.
+
+    100.64.0.0/10 is RFC 6598 shared address space and fd7a:115c:a1e0::/48 is
+    a ULA prefix. Neither is routable on the public internet, so plain HTTP to
+    one cannot leave the private network the caller is already inside — the
+    same argument that already admits ``http://litellm:4000``.
+
+    Without this, a tailnet node was reachable by MagicDNS name but not by the
+    address that name resolves to, which made the rule look arbitrary and
+    pushed people toward the real workarounds: disabling the check, or
+    terminating TLS between two machines on the same overlay.
+    """
+    assert _settings(base_url).base_url == base_url
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
         "http://internal.example.com",
         "http://litellm.evil.com",
         "http://10.0.0.5:4000",
+        # Adjacent to 100.64.0.0/10 on both sides. An off-by-one in the range
+        # check hands plain HTTP to a public address.
+        "http://100.63.255.255:4000",
+        "http://100.128.0.0:4000",
+        # A public name that merely looks like a tailnet address.
+        "http://100.80.212.52.evil.com",
     ],
 )
 def test_http_dotted_host_still_refused(base_url):

@@ -141,6 +141,26 @@ def test_every_arcrun_name_used_by_arcagent_is_public() -> None:
     assert used <= _public_arcrun_names()
 
 
+def test_part_translator_reaches_model_types_through_the_arcrun_facade() -> None:
+    """SPEC-065 COMP-009: the one module that turns a media ref into a model block.
+
+    It is the natural place for the boundary to break, because it is the first
+    ArcAgent code whose *job* is to speak model vocabulary. It still may not
+    ``import arcllm``: the block types it builds are re-exported by ArcRun, and
+    reaching past ArcRun for them would make ArcLLM's file layout part of
+    ArcAgent's contract. The whole-tree scan above covers this file once it
+    exists; this test additionally pins that it exists and does consume ArcRun,
+    so the guard cannot pass by the module quietly never being written.
+    """
+    translator = _ARCAGENT_SRC / "parts.py"
+
+    assert translator.exists(), f"PartTranslator module missing: {translator}"
+    assert not _arcagent_boundary_violations([translator])
+    assert "arcrun" in {module for _, _, module in _imports(translator)}, (
+        "the translator must build model blocks from the ArcRun facade"
+    )
+
+
 @pytest.mark.parametrize("package", ["arcgateway", "arcui"])
 def test_arcagent_imports_without_optional_upper_layer(package: str) -> None:
     """No ArcAgent source import may require an upper-layer package."""

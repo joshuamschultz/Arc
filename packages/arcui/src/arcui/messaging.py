@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -38,14 +37,20 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_NATS_URL = "nats://127.0.0.1:4222"
 _PREFLIGHT_TIMEOUT = 0.5
 _CONNECT_TIMEOUT = 3.0
 
 
 def _nats_url() -> str:
-    """Resolve the broker URL — same source as the ``arc team`` CLI path."""
-    return os.environ.get("ARCTEAM_NATS_URL", _DEFAULT_NATS_URL)
+    """Resolve the broker URL through arcteam's single source of truth.
+
+    The gateway ensures a broker at this url on startup (COMP-008); reading it
+    from anywhere else is how the dashboard ends up connecting to a bus nobody
+    is on while every half looks healthy.
+    """
+    from arcteam.config import default_nats_url
+
+    return default_nats_url()
 
 
 async def _preflight(url: str) -> None:
@@ -167,11 +172,23 @@ async def build_messaging_service(
     """
     signer = _operator_signer()
     if signer is None:
+        # REQ-307: loud, because the consequence is invisible. Without this the
+        # routes answer "unavailable" and the log says nothing at all, so an
+        # operator scanning for errors sees a clean run and believes the inbox.
+        logger.error(
+            "team messaging unavailable: no operator audit authority — channels "
+            "and DMs cannot be read or sent from the dashboard"
+        )
         return None, None, None
 
     if backend is None:
         backend = await _connect_backend()
         if backend is None:
+            logger.error(
+                "team messaging unavailable: broker unreachable at %s — the inbox "
+                "cannot be read, which is not the same as having no messages",
+                _nats_url(),
+            )
             return None, None, None
 
     from arcteam.audit import AuditLogger

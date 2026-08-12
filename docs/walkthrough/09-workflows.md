@@ -68,17 +68,19 @@ first two matter most for correctness:
  (`packages/arcgateway/src/arcgateway/session_pairing.py:104`) checks a
  static allowlist first, then falls through to a live SQLite read against
  `PairingStore`. An unapproved user never reaches the agent — see §9.1.1.
-3. **The pre-await race guard.** Whether a session is "already active" is
- checked and the `_active_sessions` dict is written to *synchronously*, with
- no `await` in between (`session.py:377-398`) — Python's cooperative
- scheduling guarantees no other coroutine can interleave between two
- synchronous statements. A second message for the same session while a turn
- is in flight is queued by `QueueManager`
- (`packages/arcgateway/src/arcgateway/session_queue.py:33`, bounded at 100
- events per session, idle-evicted after 1h) and replayed sequentially once
- the active turn finishes.
-4. **Dispatch.** The chosen `Executor` runs the turn.
- `AsyncioExecutor` (`executor.py:147`) is used at personal/enterprise tier;
+3. **The pre-await race guard.** It lives in the agent, not the gateway. The
+ router hands every message over and decides nothing; `ArcAgent.deliver_message()`
+ serialises the decision per session
+ (`SessionRunCoordinator.delivery`,
+ `packages/arcagent/src/arcagent/core/session_coordination.py`) so that two
+ messages arriving in the same event-loop tick cannot both open a turn. A
+ second message for a session whose turn is in flight joins that turn as a
+ follow-up rather than starting another; a background run (a schedule, a
+ consolidation pass) is never an injection target and is never interrupted.
+ The live run's injection queues are bounded at 16, past which the surplus is
+ refused to the sender rather than dropped.
+4. **Dispatch.** The chosen `Executor` delivers the message to the agent.
+ `AsyncioExecutor` is used at personal/enterprise tier;
  `SubprocessExecutor` at federal tier spawns an isolated
  `arc-agent-worker` subprocess per session (OS-level isolation for
  CMMC/FedRAMP). Deltas stream back through `StreamBridge`
@@ -97,12 +99,13 @@ which writes an `approved` row into the *same* SQLite file the running
 gateway reads — no in-memory allowlist to go stale, so approval takes effect
 on the very next message. Five failed approval attempts lock the platform out
 for 1h (`PairingThrottle`,
-`packages/arcgateway/src/arcgateway/pairing_throttle.py:38`). At federal tier,
+`packages/arcgateway/src/arcgateway/pairing.py:294`). At *every* tier,
 approval additionally requires an Ed25519 signature over
 `sha256(code + minted_at_iso)` from the operator's key
-(`PairingSignatureVerifier`, `pairing_signature.py`); enterprise warns when a
-signature is absent but still allows the approval; personal ignores
-signatures. `[platforms.<name>].allowed_user_ids` seeds a static allowlist so
+(`PairingSignatureVerifier`, `packages/arcgateway/src/arcgateway/pairing.py:501`).
+The tier picks the trust anchor, never whether the signature is checked:
+federal chains to operator/issuer anchors, personal accepts the operator's
+self-signed key. `[platforms.<name>].allowed_user_ids` seeds a static allowlist so
 known users skip the DM dance entirely
 (`packages/arcgateway/src/arcgateway/pairing_allowlist.py:42`) — but only when
 `[security].require_pairing = true`, otherwise pairing is a no-op by design
@@ -594,8 +597,8 @@ Full detail on every durable format: [`docs/08-data-and-storage.md`](08-data-and
 
 | Path | What lives there | Start here if you're changing... |
 |---|---|---|
-| `packages/arcgateway/src/arcgateway/session.py` | `SessionRouter` — identity resolution, pairing gate, race guard, queueing | Session-key policy, message routing |
-| `packages/arcgateway/src/arcgateway/pairing.py`, `pairing_throttle.py`, `pairing_signature.py`, `pairing_allowlist.py`, `pairing_postgres.py` | DM pairing store, throttle policy, federal signature verification, static allowlist wiring | Anything about who's allowed to talk to an agent |
+| `packages/arcgateway/src/arcgateway/session.py` | `SessionRouter` — identity resolution, pairing gate, handoff to the agent's delivery entry point | Session-key policy, message routing |
+| `packages/arcgateway/src/arcgateway/pairing.py`, `pairing_allowlist.py` | DM pairing store, throttle policy, signature verification, static allowlist wiring | Anything about who's allowed to talk to an agent |
 | `packages/arcgateway/src/arcgateway/runner.py`, `bootstrap.py`, `fleet.py` | Standalone daemon, embedded composition root, always-on fleet registry | Gateway process lifecycle |
 | `packages/arcgateway-telegram`, `-slack`, `-mattermost` | Platform-specific adapter packages | Adding or fixing a platform integration |
 | `packages/arcstore/src/arcstore/tasks.py` | `Task`, `TaskStore` — the durable task directory | Task state machine, DAG/dependency logic |

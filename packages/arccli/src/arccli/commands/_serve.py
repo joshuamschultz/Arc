@@ -16,7 +16,6 @@ regardless of registry state.
 from __future__ import annotations
 
 import logging
-import os
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -25,12 +24,12 @@ from arccli.commands._shared import write as _write
 
 _logger = logging.getLogger("arccli.serve")
 
-_DEFAULT_NATS_URL = "nats://127.0.0.1:4222"
-
 
 def nats_url() -> str:
-    """Resolve the broker URL — same source as the ``arc team`` CLI path."""
-    return os.environ.get("ARCTEAM_NATS_URL", _DEFAULT_NATS_URL)
+    """Resolve the broker URL through arcteam's single source of truth."""
+    from arcteam.config import default_nats_url
+
+    return default_nats_url()
 
 
 def discover_agent_dirs(team_root: Path) -> list[Path]:
@@ -104,28 +103,32 @@ async def bootstrap_infra(team_root: Path) -> Any:
     """Start (or reuse) NATS and auto-register the folder's agents.
 
     Returns the :class:`~arcteam.nats_server.ManagedNatsServer` handle this call
-    started (the caller must ``await handle.stop()`` on shutdown), or ``None``
-    when a broker was reused or none could be started. Prints one status line
-    describing what came up. Fail-open throughout — the dashboard still serves
-    the folder-scanned roster even if messaging infra is unavailable.
-    """
-    from arcteam.config import TeamConfig, default_jetstream_store_dir
-    from arcteam.nats_server import NatsServerUnavailableError, ensure_nats_server
+    started (the caller must reap it on shutdown), or ``None`` when a broker was
+    reused or none could be started. Prints one status line describing what came
+    up. Fail-open throughout — the dashboard still serves the folder-scanned
+    roster even if messaging infra is unavailable.
 
-    url = nats_url()
+    Delegates to :func:`arcgateway.broker_bootstrap.start_broker` rather than
+    calling ``ensure_nats_server`` directly: COMP-008 exists so every launch
+    path shares one broker lifecycle, and a second hand-rolled one here is the
+    reaping bug that only shows up on whichever path nobody fixed.
+    """
+    from arcgateway.broker_bootstrap import start_broker
+    from arcteam.config import TeamConfig
+
     agent_dirs = discover_agent_dirs(team_root)
 
-    handle = None
-    try:
-        handle = await ensure_nats_server(url=url, store_dir=default_jetstream_store_dir())
-    except NatsServerUnavailableError as exc:
-        _write(f"  Messaging: {exc}")
+    broker = await start_broker()
+    url = broker.url
+    if not broker.available:
+        _write(f"  Messaging: {broker.reason}")
         _write(
             "  Messaging: agents still appear in the roster (folder scan); "
             "team status/send are unavailable until a broker is running."
         )
         return None
 
+    handle = broker.managed
     if handle is None:
         _write(f"  Messaging: reusing NATS broker already running at {url}")
     else:

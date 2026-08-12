@@ -220,23 +220,18 @@ async def _team_bindings(key_path: Path) -> tuple[Any, Any]:
     return owners, narrator
 
 
-#: Same variable and same default the agents and the ``arc team`` CLI use
-#: (``arcui.messaging._nats_url``). This MUST match: the runner resolves node
-#: owners from the team registry and narrates to team channels, so a runner on a
-#: different bus than the agents is a separate island — it would resolve no
-#: owner, fail every run at its first node, and post narration nobody receives.
-#: That failure is silent and looks healthy, which is the shape this feature has
-#: produced five times. It previously read ``ARC_NATS_URL`` and defaulted to the
-#: in-process bus, so on any real deployment the two halves could not have met.
-_NATS_URL_ENV = "ARCTEAM_NATS_URL"
-_DEFAULT_NATS_URL = "nats://127.0.0.1:4222"
-
-
+#: One resolver, ``arcteam.config.default_nats_url``, shared with the agents,
+#: the ``arc team`` CLI, the dashboard, and the broker the gateway starts. This
+#: MUST match: the runner resolves node owners from the team registry and
+#: narrates to team channels, so a runner on a different bus than the agents is
+#: a separate island — it would resolve no owner, fail every run at its first
+#: node, and post narration nobody receives. That failure is silent and looks
+#: healthy, which is the shape this feature has produced five times.
 def _nats_url() -> str:
     """The messaging substrate url the AGENTS are on — never a private default."""
-    import os
+    from arcteam.config import default_nats_url
 
-    return os.environ.get(_NATS_URL_ENV, _DEFAULT_NATS_URL)
+    return default_nats_url()
 
 
 def _operator_signer(key_path: Path) -> Any:

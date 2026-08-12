@@ -13,16 +13,22 @@ Design (SDD §3.1 DM Pairing):
     - Storage: SQLite at ~/.arc/gateway/pairing.db (0600 perms)
     - The raw pairing code is a SECRET — never logged; log code_id (sha256 first 16)
 
-Federal / enterprise / personal signature semantics (T1.8.3, M3 gap-close):
+Signature semantics — four-pillar mandate (ID + sign + authorize + audit ON
+BY DEFAULT).  A signature is REQUIRED at EVERY tier.  Tier sets the stringency
+of the trust anchor, never whether the signature is checked: mutual identity
+verification (ASI07) is the foundation of inter-agent trust and cannot be
+bypassed at any tier.
 
-    Federal:    signature is REQUIRED.  Missing or invalid → approval refused,
-                PairingSignatureInvalid raised; failure recorded against the
-                platform lockout counter.  The operator's Ed25519 pubkey is
-                resolved via ``arctrust.trust_store.load_operator_pubkey``.
-    Enterprise: signature is OPTIONAL but recommended.  When supplied it is
-                verified; when absent a WARN audit event is emitted
-                (``gateway.pairing.signature_missing``) but approval proceeds.
-    Personal:   signature is ignored.
+    Federal:    signing key must chain to operator/issuer trust anchors via
+                ``arctrust.trust_store.load_operator_pubkey``.
+    Enterprise: missing signature → warn audit emitted before raising, so
+                operators see a clear message rather than a generic error.
+    Personal:   self-signed keys accepted (tier-1 trust anchor) — the operator's
+                own pubkey is the trust root, no external issuer chain required.
+
+    In every case a missing or invalid signature refuses the approval and
+    records a failure against the platform lockout counter, so repeated bogus
+    signatures cannot be used to probe for valid codes.
 
 Challenge format
 ----------------
@@ -46,9 +52,6 @@ Audit events emitted (SDD §4.2, federal-tier signature additions):
     - gateway.pairing.signature_invalid:     {code_id, approver_did, platform, reason}
     - gateway.pairing.signature_missing:     {code_id, approver_did, platform, tier}
 
-Federal multi-instance Postgres backend (T1.8.4):
-    - Deferred. See ``arcgateway.pairing_postgres.PostgresPairingStore``.
-
 Performance note (Wave-2 perf review):
     All sync-sqlite-in-async operations are now wrapped with asyncio.to_thread()
     so the event loop is never blocked by file I/O.  This closes the Wave-2
@@ -62,9 +65,12 @@ Security properties:
       to detect brute-force.
 
 Composition:
-    - PairingThrottle  (arcgateway.pairing_throttle) — rate-limit + lockout policy.
-    - PairingSignatureVerifier (arcgateway.pairing_signature) — Ed25519 verification.
-    Rate-limit and signature logic are tested independently via those classes.
+    - PairingThrottle — rate-limit + lockout policy.
+    - PairingSignatureVerifier — Ed25519 verification.
+    PairingStore composes both; each is constructed and tested independently.
+    All three live here because the policy classes need this module's constants,
+    exceptions and challenge helper, and this module needs them back — split
+    across files that mutual need is only expressible as a circular import.
 """
 
 from __future__ import annotations
@@ -281,6 +287,479 @@ def build_pairing_challenge(code: str, minted_at: float) -> bytes:
 
 
 # ---------------------------------------------------------------------------
+# PairingThrottle
+# ---------------------------------------------------------------------------
+
+
+class PairingThrottle:
+    """Encapsulates rate-limit and platform-lockout policy for pairing.
+
+    All methods operate on an already-open sqlite3.Connection.  The caller
+    is responsible for holding the asyncio.Lock before entering these methods
+    to prevent concurrent mutation.
+
+    Attributes:
+        _max_pending:     Maximum pending codes per platform.
+        _rate_limit_secs: Per-user minting rate limit window (seconds).
+        _lockout_secs:    Platform lockout duration (seconds).
+        _lockout_thresh:  Failed attempts before lockout triggers.
+        _ttl_secs:        Code TTL used for failure-window calculation.
+    """
+
+    def __init__(
+        self,
+        *,
+        max_pending: int = _MAX_PENDING_PER_PLATFORM,
+        rate_limit_seconds: float = _USER_RATE_LIMIT_SECONDS,
+        lockout_duration_seconds: float = _LOCKOUT_DURATION_SECONDS,
+        lockout_threshold: int = _LOCKOUT_FAILURE_THRESHOLD,
+        ttl_seconds: float = _TTL_SECONDS,
+    ) -> None:
+        """Initialise PairingThrottle with configurable policy values.
+
+        Args:
+            max_pending:              Max pending codes per platform.
+            rate_limit_seconds:       User re-mint rate limit window.
+            lockout_duration_seconds: Duration of platform lockout.
+            lockout_threshold:        Failures before lockout triggers.
+            ttl_seconds:              Code TTL (used for failure-window calc).
+        """
+        self._max_pending = max_pending
+        self._rate_limit_secs = rate_limit_seconds
+        self._lockout_secs = lockout_duration_seconds
+        self._lockout_thresh = lockout_threshold
+        self._ttl_secs = ttl_seconds
+
+    # -----------------------------------------------------------------------
+    # Public checks (raise on violation)
+    # -----------------------------------------------------------------------
+
+    def check_platform_locked(
+        self,
+        conn: sqlite3.Connection,
+        platform: str,
+        now: float,
+    ) -> None:
+        """Raise PairingPlatformLocked if the platform has an active lockout.
+
+        Args:
+            conn:     Open DB connection.
+            platform: Platform name.
+            now:      Current unix timestamp.
+
+        Raises:
+            PairingPlatformLocked: If the platform is currently locked.
+        """
+        if self.is_locked(conn, platform, now):
+            raise PairingPlatformLocked(
+                f"Platform {platform!r} is locked due to failed approval attempts"
+            )
+
+    def check_rate_limit(
+        self,
+        conn: sqlite3.Connection,
+        platform: str,
+        user_hash: str,
+        now: float,
+    ) -> None:
+        """Raise PairingRateLimited if the user minted a code recently.
+
+        Args:
+            conn:      Open DB connection.
+            platform:  Platform name.
+            user_hash: Hashed platform user ID.
+            now:       Current unix timestamp.
+
+        Raises:
+            PairingRateLimited: If the user minted within the rate-limit window.
+        """
+        recent_count: int = conn.execute(
+            """SELECT COUNT(*) FROM pairing_codes
+               WHERE platform = ? AND user_hash = ?
+                 AND minted_at > ? AND consumed = 0""",
+            (platform, user_hash, now - self._rate_limit_secs),
+        ).fetchone()[0]
+
+        if recent_count > 0:
+            raise PairingRateLimited(
+                f"User already has a pending code on {platform!r}; "
+                f"wait {int(self._rate_limit_secs) // 60} minutes"
+            )
+
+    def check_platform_full(
+        self,
+        conn: sqlite3.Connection,
+        platform: str,
+        now: float,
+    ) -> None:
+        """Raise PairingPlatformFull if the platform cap is reached.
+
+        Args:
+            conn:     Open DB connection.
+            platform: Platform name.
+            now:      Current unix timestamp.
+
+        Raises:
+            PairingPlatformFull: If the platform already has max pending codes.
+        """
+        pending_count: int = conn.execute(
+            """SELECT COUNT(*) FROM pairing_codes
+               WHERE platform = ? AND expires_at > ? AND consumed = 0""",
+            (platform, now),
+        ).fetchone()[0]
+
+        if pending_count >= self._max_pending:
+            raise PairingPlatformFull(
+                f"Platform {platform!r} already has {self._max_pending} pending pairing codes"
+            )
+
+    # -----------------------------------------------------------------------
+    # Failure recording
+    # -----------------------------------------------------------------------
+
+    def record_failure(
+        self,
+        conn: sqlite3.Connection,
+        platform: str,
+        now: float,
+        audit_fn: Any | None = None,
+    ) -> None:
+        """Record a failed approval attempt and trigger lockout if threshold reached.
+
+        Inserts a failure row and, when recent failures reach the threshold,
+        inserts/replaces a lockout record.
+
+        Args:
+            conn:     Open DB connection.
+            platform: Platform where the failure occurred.
+            now:      Current unix timestamp.
+            audit_fn: Optional callable(event_type, details) for audit emission.
+        """
+        conn.execute(
+            "INSERT INTO pairing_failures(platform, attempted_at) VALUES (?, ?)",
+            (platform, now),
+        )
+
+        recent_failures: int = conn.execute(
+            """SELECT COUNT(*) FROM pairing_failures
+               WHERE platform = ? AND attempted_at > ?""",
+            (platform, now - self._ttl_secs),
+        ).fetchone()[0]
+
+        if recent_failures >= self._lockout_thresh:
+            locked_until = now + self._lockout_secs
+            conn.execute(
+                """INSERT OR REPLACE INTO pairing_lockouts(platform, locked_until)
+                   VALUES (?, ?)""",
+                (platform, locked_until),
+            )
+            _logger.warning(
+                "Platform %r locked for 1h after %d failed approval attempts",
+                platform,
+                recent_failures,
+            )
+            if audit_fn is not None:
+                audit_fn(
+                    "gateway.pairing.locked_out",
+                    {"platform": platform, "locked_until": locked_until},
+                )
+
+    # -----------------------------------------------------------------------
+    # Lockout query
+    # -----------------------------------------------------------------------
+
+    def is_locked(
+        self,
+        conn: sqlite3.Connection,
+        platform: str,
+        now: float,
+    ) -> bool:
+        """Return True if the platform has an active lockout record.
+
+        Args:
+            conn:     Open DB connection.
+            platform: Platform to check.
+            now:      Current unix timestamp.
+
+        Returns:
+            True if locked, False otherwise.
+        """
+        row = conn.execute(
+            "SELECT locked_until FROM pairing_lockouts WHERE platform = ?",
+            (platform,),
+        ).fetchone()
+        if row is None:
+            return False
+        return float(row[0]) > now
+
+
+# ---------------------------------------------------------------------------
+# PairingSignatureVerifier
+# ---------------------------------------------------------------------------
+
+
+class PairingSignatureVerifier:
+    """Verifies Ed25519 signatures on pairing approvals.
+
+    A signature is required at every tier; tier selects the stringency of the
+    trust anchor only (see the module docstring).
+
+    Attributes:
+        _tier:      Deployment tier ("personal" | "enterprise" | "federal").
+        _trust_dir: Override for the operator trust store directory.
+    """
+
+    def __init__(
+        self,
+        tier: str = "personal",
+        *,
+        trust_dir: Any | None = None,
+    ) -> None:
+        """Initialise PairingSignatureVerifier.
+
+        Args:
+            tier:      Tier string: "personal", "enterprise", or "federal".
+            trust_dir: Optional Path override for the arctrust directory.
+        """
+        self._tier = tier
+        self._trust_dir = trust_dir
+
+    # -----------------------------------------------------------------------
+    # Public API
+    # -----------------------------------------------------------------------
+
+    def enforce_policy(
+        self,
+        *,
+        conn: sqlite3.Connection,
+        row: sqlite3.Row,
+        code: str,
+        approver_did: str | None,
+        signature: bytes | None,
+        now: float,
+        record_failure_fn: Any,
+        audit_fn: Any,
+    ) -> None:
+        """Apply tier-driven signature policy and verify when signature present.
+
+        Signature is required at ALL tiers (four-pillar mandate, ASI07).
+        Tier determines the *stringency* of the trust anchor check, not
+        whether the signature is validated.
+
+        Personal:   self-signed key accepted; no issuer chain required.
+        Enterprise: signature required; missing → PairingSignatureInvalid with
+                    warn audit before raising (visibility before failure).
+        Federal:    signature required; key must chain to operator trust anchors.
+
+        Delegates to ``_handle_missing_signature`` or ``_verify`` as appropriate.
+
+        Args:
+            conn:              Open DB connection (for failure recording).
+            row:               DB row for the pairing code being approved.
+            code:              8-char pairing code (for challenge construction).
+            approver_did:      DID of the approving operator.
+            signature:         Ed25519 signature bytes (may be None).
+            now:               Current unix timestamp.
+            record_failure_fn: Callable(conn, platform, now) to record failures.
+            audit_fn:          Callable(event_type, details) for audit emission.
+
+        Raises:
+            PairingSignatureInvalid: On missing sig (all tiers) or bad sig (all tiers).
+        """
+        # No tier-based early return. Signature is required at all tiers.
+        # Tier sets trust-anchor stringency inside _verify, not whether to check.
+        platform = row["platform"]
+        minted_at = row["minted_at"]
+
+        if signature is None:
+            self._handle_missing_signature(
+                conn=conn,
+                code=code,
+                approver_did=approver_did,
+                platform=platform,
+                now=now,
+                record_failure_fn=record_failure_fn,
+                audit_fn=audit_fn,
+            )
+            return
+
+        # Signature supplied — verify regardless of tier (fail-closed on bad sig).
+        self._verify(
+            conn=conn,
+            code=code,
+            minted_at=minted_at,
+            approver_did=approver_did,
+            signature=signature,
+            platform=platform,
+            now=now,
+            record_failure_fn=record_failure_fn,
+            audit_fn=audit_fn,
+        )
+
+    # -----------------------------------------------------------------------
+    # Private helpers
+    # -----------------------------------------------------------------------
+
+    def _handle_missing_signature(
+        self,
+        *,
+        conn: sqlite3.Connection,
+        code: str,
+        approver_did: str | None,
+        platform: str,
+        now: float,
+        record_failure_fn: Any,
+        audit_fn: Any,
+    ) -> None:
+        """Handle the missing-signature case — raises at ALL tiers.
+
+        Signature is required at all tiers (four-pillar mandate, ASI07).
+        The tier difference is only in the audit message phrasing:
+        - federal / enterprise: explicit "required" wording.
+        - personal: "self-signed key required" (tier-1 trust anchor).
+
+        In every case: record the failure and raise PairingSignatureInvalid.
+
+        Args:
+            conn:              Open DB connection.
+            code:              Pairing code (for code_id in audit).
+            approver_did:      DID of approver.
+            platform:          Platform name.
+            now:               Current unix timestamp.
+            record_failure_fn: Callable(conn, platform, now) for failure recording.
+            audit_fn:          Callable(event_type, details) for audit emission.
+
+        Raises:
+            PairingSignatureInvalid: Always — signature is required at all tiers.
+        """
+        record_failure_fn(conn, platform, now)
+        conn.commit()
+        audit_fn(
+            "gateway.pairing.signature_invalid",
+            {
+                "code_id": _code_id(code),
+                "approver_did": approver_did,
+                "platform": platform,
+                "tier": self._tier,
+                "reason": "missing_signature",
+            },
+        )
+
+        if self._tier == "personal":
+            raise PairingSignatureInvalid(
+                f"Personal tier requires an Ed25519 signature on approval "
+                f"(self-signed key accepted as tier-1 trust anchor); "
+                f"approver_did={approver_did!r} supplied none."
+            )
+
+        # enterprise / federal — same hard requirement, explicit wording.
+        raise PairingSignatureInvalid(
+            f"{self._tier.capitalize()} tier requires an Ed25519 signature on approval; "
+            f"approver_did={approver_did!r} supplied none."
+        )
+
+    def _verify(
+        self,
+        *,
+        conn: sqlite3.Connection,
+        code: str,
+        minted_at: float,
+        approver_did: str | None,
+        signature: bytes,
+        platform: str,
+        now: float,
+        record_failure_fn: Any,
+        audit_fn: Any,
+    ) -> None:
+        """Resolve operator pubkey and verify Ed25519 signature.
+
+        Args:
+            conn:              Open DB connection (for failure recording).
+            code:              Pairing code.
+            minted_at:         Unix timestamp when code was minted.
+            approver_did:      DID of the approving operator.
+            signature:         Ed25519 signature bytes.
+            platform:          Platform name.
+            now:               Current unix timestamp.
+            record_failure_fn: Callable(conn, platform, now).
+            audit_fn:          Callable(event_type, details).
+
+        Raises:
+            PairingSignatureInvalid: If approver_did is None, trust lookup fails,
+                                     or signature does not verify.
+        """
+        if approver_did is None:
+            record_failure_fn(conn, platform, now)
+            conn.commit()
+            audit_fn(
+                "gateway.pairing.signature_invalid",
+                {
+                    "code_id": _code_id(code),
+                    "approver_did": None,
+                    "platform": platform,
+                    "reason": "approver_did_required_with_signature",
+                },
+            )
+            raise PairingSignatureInvalid(
+                "Signature supplied without approver_did — cannot resolve pubkey."
+            )
+
+        # Lazy: keeps this module importable in minimal environments that lack
+        # the native crypto extensions arctrust needs.
+        try:
+            import arctrust
+            from arctrust.trust_store import TrustStoreError, load_operator_pubkey
+        except ImportError as exc:  # pragma: no cover — arctrust is a required dep
+            raise PairingSignatureInvalid(
+                f"arctrust trust store not available; cannot verify signatures: {exc}"
+            ) from exc
+
+        try:
+            pubkey = load_operator_pubkey(approver_did, trust_dir=self._trust_dir)
+        except TrustStoreError as exc:
+            record_failure_fn(conn, platform, now)
+            conn.commit()
+            audit_fn(
+                "gateway.pairing.signature_invalid",
+                {
+                    "code_id": _code_id(code),
+                    "approver_did": approver_did,
+                    "platform": platform,
+                    "reason": f"trust_store:{exc.code}",
+                },
+            )
+            raise PairingSignatureInvalid(
+                f"Cannot resolve operator pubkey for {approver_did!r}: [{exc.code}] {exc.message}"
+            ) from exc
+
+        challenge = build_pairing_challenge(code, minted_at)
+        if not arctrust.verify(challenge, signature, pubkey):
+            record_failure_fn(conn, platform, now)
+            conn.commit()
+            audit_fn(
+                "gateway.pairing.signature_invalid",
+                {
+                    "code_id": _code_id(code),
+                    "approver_did": approver_did,
+                    "platform": platform,
+                    "reason": "bad_signature",
+                },
+            )
+            raise PairingSignatureInvalid(
+                f"Ed25519 signature for approver_did={approver_did!r} did not verify."
+            )
+
+        audit_fn(
+            "gateway.pairing.signature_verified",
+            {
+                "code_id": _code_id(code),
+                "signed_by_did": approver_did,
+                "platform": platform,
+            },
+        )
+
+
+# ---------------------------------------------------------------------------
 # PairingStore
 # ---------------------------------------------------------------------------
 
@@ -297,8 +776,8 @@ class PairingStore:
     Wave-2 perf review high-severity finding).
 
     Composition:
-        - PairingThrottle  (arcgateway.pairing_throttle) — rate-limit + lockout.
-        - PairingSignatureVerifier (arcgateway.pairing_signature) — Ed25519 verify.
+        - PairingThrottle — rate-limit + lockout.
+        - PairingSignatureVerifier — Ed25519 verify.
 
     Attributes:
         _db_path:      Path to the SQLite database file.
@@ -327,9 +806,10 @@ class PairingStore:
                            defaults to ``"federal"``.  Preserved for backwards
                            compatibility with existing callers.
             tier:          Explicit tier.  Takes precedence over ``federal_tier``.
-                           ``"federal"`` requires a valid Ed25519 signature on
-                           approval; ``"enterprise"`` warns when absent but still
-                           accepts the approval; ``"personal"`` ignores signatures.
+                           Every tier requires a valid Ed25519 signature on
+                           approval; the tier selects the trust anchor —
+                           ``"federal"`` chains to operator/issuer anchors,
+                           ``"personal"`` accepts a self-signed operator key.
             trust_dir:     Override the directory scanned by the trust store.
                            Defaults to ``~/.arc/trust``.
         """
@@ -349,10 +829,6 @@ class PairingStore:
         self._trust_dir = trust_dir
         self._lock = asyncio.Lock()
         self._telemetry: Any = None
-
-        # Composed policy helpers — extracted for independent testability.
-        from arcgateway.pairing_signature import PairingSignatureVerifier
-        from arcgateway.pairing_throttle import PairingThrottle
 
         self._throttle = PairingThrottle()
         self._sig = PairingSignatureVerifier(tier=resolved_tier, trust_dir=trust_dir)
@@ -466,20 +942,20 @@ class PairingStore:
     ) -> PairingCode | None:
         """Attempt to approve and consume a pairing code.
 
+        ``signature`` is REQUIRED at every tier — Ed25519 over
+        ``sha256(code + minted_at_iso)``.  Missing or invalid →
+        ``PairingSignatureInvalid`` raised and a failure recorded against the
+        platform lockout counter.  Tier selects the trust anchor only:
+
         Federal tier:
-          - ``approver_did`` REQUIRED.
-          - ``signature`` REQUIRED — Ed25519 over
-            ``sha256(code + minted_at_iso)``.
-          - Missing/invalid signature → ``PairingSignatureInvalid`` raised,
-            failure recorded against the platform lockout counter.
+          - ``approver_did`` REQUIRED before the code is even looked up.
+          - Signing key must chain to operator/issuer trust anchors.
 
         Enterprise tier:
-          - ``approver_did`` optional (WARN audit if absent).
-          - ``signature`` optional.  When present, verified.
-          - Missing signature → warn audit + proceed.
+          - Missing signature → warn audit emitted, then raise.
 
         Personal tier:
-          - Signature ignored; approval succeeds on code validity alone.
+          - Self-signed keys accepted as the tier-1 trust anchor.
 
         Args:
             code:           8-char pairing code to approve.

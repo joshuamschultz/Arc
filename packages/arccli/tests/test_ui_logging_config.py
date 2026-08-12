@@ -5,8 +5,8 @@ Live bug: `UIAuditLogger` emits at INFO on the "arcui.audit" logger, but
 level) — Python's interpreter default (root logger effectively WARNING,
 no handler) silently dropped every `ui.mutation` / `ui.session_start`
 record, plus every adapter connect/auth-reject INFO line
-(`arcgateway.adapters.*`, `arcgateway_telegram.adapter`,
-`arcgateway_slack.adapter`). Verified live: zero audit lines in journald
+(`arcgateway.adapters.*`, which since SPEC-065 covers every in-tree
+platform). Verified live: zero audit lines in journald
 despite mutations genuinely happening. `uvicorn.Config(log_level="info")`
 only configures uvicorn's OWN loggers — it has no effect on these.
 """
@@ -35,9 +35,6 @@ def _reset_logging_state() -> None:
         for name in (
             "arcui.audit",
             "arcgateway.adapters",
-            "arcgateway_telegram",
-            "arcgateway_slack",
-            "arcgateway_mattermost",
         )
     }
     yield
@@ -74,9 +71,9 @@ class TestConfigureLogging:
             "arcgateway.adapters.base",
             "arcgateway.adapters.registry",
             "arcgateway.adapters.web",
-            "arcgateway_telegram.adapter",
-            "arcgateway_slack.adapter",
-            "arcgateway_mattermost.adapter",
+            "arcgateway.adapters.telegram.adapter",
+            "arcgateway.adapters.slack.adapter",
+            "arcgateway.adapters.mattermost.adapter",
         ):
             assert logging.getLogger(name).getEffectiveLevel() == logging.INFO, name
 
@@ -127,7 +124,7 @@ class TestAuditEventsAreObservable:
 
         _configure_logging(verbose=False)
 
-        adapter_logger = logging.getLogger("arcgateway_telegram.adapter")
+        adapter_logger = logging.getLogger("arcgateway.adapters.telegram.adapter")
         adapter_logger.info("TelegramAdapter: connecting (agent_did=%s)", "did:arc:agent:x")
 
         captured = capsys.readouterr().err

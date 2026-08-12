@@ -52,6 +52,9 @@ class _ConcreteAdapter:
     async def disconnect(self) -> None:
         pass
 
+    def to_parts(self, payload: object) -> list[object]:
+        return []
+
     async def send(
         self,
         target: DeliveryTarget,
@@ -86,8 +89,9 @@ class _ConcreteAdapter:
 def test_base_platform_adapter_is_runtime_checkable() -> None:
     """BasePlatformAdapter is @runtime_checkable.
 
-    An object with name, connect, disconnect, send, and edit_message
-    satisfies isinstance(obj, BasePlatformAdapter).
+    An object with name, connect, disconnect, to_parts and send satisfies
+    isinstance(obj, BasePlatformAdapter) — the three responsibilities REQ-310
+    grants an adapter, and no more.
     """
     adapter = _ConcreteAdapter()
     assert isinstance(adapter, BasePlatformAdapter)

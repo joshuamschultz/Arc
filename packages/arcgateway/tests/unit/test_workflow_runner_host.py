@@ -251,15 +251,24 @@ async def test_a_runner_that_cannot_be_built_is_reported_not_swallowed() -> None
     def _explodes(**_: object) -> object:
         raise RuntimeError("engine absent in this checkout")
 
+    class _Recorder(logging.Handler):
+        """Keeps every record so the assertions can read the reason back."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.records: list[logging.LogRecord] = []
+
+        def emit(self, record: logging.LogRecord) -> None:
+            self.records.append(record)
+
     logger = logging.getLogger("arcgateway.workflow_runner_host")
-    records: list[logging.LogRecord] = []
-    handler = logging.Handler()
-    handler.emit = records.append  # type: ignore[method-assign]
+    handler = _Recorder()
     logger.addHandler(handler)
     try:
         host = await start_runner_host(tier="personal", runner_factory=_explodes)
     finally:
         logger.removeHandler(handler)
+    records = handler.records
 
     assert host is None, "an unbuildable runner must not yield a live host"
     assert records, "a gateway with no workflow runner must say so in the log"
@@ -317,23 +326,37 @@ async def test_a_started_runner_reaches_the_agent_tool_surface() -> None:
         _runtime.reset()
 
 
-def test_the_runner_and_the_agents_resolve_the_same_bus() -> None:
+async def test_the_runner_and_the_agents_resolve_the_same_bus(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A runner on a different bus than the agents is a silent island.
 
     It would resolve no node owner (the team registry lives on the bus), fail
     every run at its first node, and narrate to a channel nobody receives —
     while looking completely healthy. The two halves previously read DIFFERENT
     environment variables with different defaults, so on a real deployment they
-    could not have met.
+    could not have met. Every surface now resolves through the one function in
+    ``arcteam.config``, and the broker the gateway starts (COMP-008) uses it
+    too — so a moved bus moves all of them together instead of splitting them.
     """
+    from arcteam.config import default_nats_url
     from arcui import messaging as ui_messaging
 
+    from arcgateway import broker_bootstrap
     from arcgateway import workflow_runner_host as host
 
-    assert host._NATS_URL_ENV == "ARCTEAM_NATS_URL"
-    assert host._DEFAULT_NATS_URL == ui_messaging._DEFAULT_NATS_URL, (
-        "the runner and the agents must default to the same broker"
-    )
-    assert host._nats_url() == ui_messaging._nats_url(), (
+    monkeypatch.delenv("ARCTEAM_NATS_URL", raising=False)
+    assert host._nats_url() == ui_messaging._nats_url() == default_nats_url(), (
         "same environment, different bus — the runner would be an island"
+    )
+
+    monkeypatch.setenv("ARCTEAM_NATS_URL", "nats://moved-bus:4333")
+    assert host._nats_url() == ui_messaging._nats_url() == "nats://moved-bus:4333", (
+        "a moved broker must move every surface, not just the one that reads it"
+    )
+    # …including the broker COMP-008 ensures. The conftest guard stands in for
+    # one that is already listening, so this starts nothing and owns nothing.
+    handle = await broker_bootstrap.start_broker()
+    assert handle.url == "nats://moved-bus:4333", (
+        "the broker we start must be the broker everyone else connects to"
     )

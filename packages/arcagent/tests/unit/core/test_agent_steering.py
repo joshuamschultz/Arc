@@ -46,7 +46,7 @@ def _config(tmp_path: Path, workspace: Path, tier: str = "personal") -> ArcAgent
         identity=IdentityConfig(did="", key_dir=str(tmp_path / "keys"), vault_path=""),
         telemetry=TelemetryConfig(enabled=False),
         context=ContextConfig(max_tokens=10000),
-        security=SecurityConfig(tier=tier),  # type: ignore[arg-type]
+        security=SecurityConfig(tier=tier),
     )
 
 
@@ -88,7 +88,9 @@ class TestDeliverToActiveRun:
         """A non-interrupt message is queued via follow_up, never steer."""
         agent = await _started_agent(tmp_path, workspace)
         handle = _FakeHandle()
-        agent._active_runs["messaging:inbox"] = handle  # type: ignore[assignment]
+        # Registered the way delivery registers a turn it opened: only such a
+        # run is an injection target (REQ-303).
+        agent._run_coordinator.register("messaging:inbox", handle, interactive=True)  # type: ignore[arg-type]
         try:
             outcome = await agent.deliver_message(
                 caller_did="did:arc:local:peer/aaaa",
@@ -108,7 +110,9 @@ class TestDeliverToActiveRun:
     ) -> None:
         agent = await _started_agent(tmp_path, workspace)
         handle = _FakeHandle()
-        agent._active_runs["messaging:inbox"] = handle  # type: ignore[assignment]
+        # Registered the way delivery registers a turn it opened: only such a
+        # run is an injection target (REQ-303).
+        agent._run_coordinator.register("messaging:inbox", handle, interactive=True)  # type: ignore[arg-type]
         try:
             with patch.object(agent, "_authorize_steer", AsyncMock(return_value=True)):
                 outcome = await agent.deliver_message(
@@ -130,7 +134,9 @@ class TestDeliverToActiveRun:
         """A denied steer must not interrupt — it degrades to follow_up (REQ-041)."""
         agent = await _started_agent(tmp_path, workspace)
         handle = _FakeHandle()
-        agent._active_runs["messaging:inbox"] = handle  # type: ignore[assignment]
+        # Registered the way delivery registers a turn it opened: only such a
+        # run is an injection target (REQ-303).
+        agent._run_coordinator.register("messaging:inbox", handle, interactive=True)  # type: ignore[arg-type]
         try:
             with patch.object(agent, "_authorize_steer", AsyncMock(return_value=False)):
                 outcome = await agent.deliver_message(
@@ -152,11 +158,17 @@ class TestDeliverStartsRunWhenIdle:
         agent = await _started_agent(tmp_path, workspace)
         started: dict[str, Any] = {}
 
-        async def _fake_start(inp: str, *, session_key: str) -> _FakeHandle:
+        async def _fake_start(
+            inp: str,
+            *,
+            session_key: str,
+            reply_target: str | None = None,
+            reply_label: str | None = None,
+        ) -> _FakeHandle:
             started["input"] = inp
             started["session_key"] = session_key
             h = _FakeHandle()
-            agent._active_runs[session_key] = h  # type: ignore[assignment]
+            agent._run_coordinator.register(session_key, h, interactive=True)  # type: ignore[arg-type]
             return h
 
         try:

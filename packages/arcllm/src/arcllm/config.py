@@ -8,6 +8,7 @@ Dicts deep-merge; lists and scalars are replaced. Missing user file =
 no-op (current behavior preserved).
 """
 
+import ipaddress
 import os
 import re
 import tomllib
@@ -27,6 +28,33 @@ from pydantic import (
 from arcllm.exceptions import ArcLLMConfigError
 
 _PROVIDER_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+
+# The address space a Tailscale-style overlay hands out. Neither prefix is
+# routable on the public internet — 100.64.0.0/10 is RFC 6598 shared address
+# space, reserved for carrier NAT and never advertised to it, and
+# fd7a:115c:a1e0::/48 is a ULA prefix under fc00::/7. An address inside either
+# one can only be reached from inside the overlay, which is the same property
+# that already admits single-label service names below.
+_OVERLAY_NETWORKS = (
+    ipaddress.ip_network("100.64.0.0/10"),
+    ipaddress.ip_network("fd7a:115c:a1e0::/48"),
+)
+
+
+def _is_private_overlay_address(host: str) -> bool:
+    """True when *host* is an IP literal inside a private overlay prefix.
+
+    Deliberately parses rather than pattern-matches. ``100.80.212.52.evil.com``
+    starts with a tailnet address and is a public name; only a host that is
+    *entirely* an address, and falls inside the range, gets through. That also
+    rules out the two off-by-one neighbours, 100.63.255.255 and 100.128.0.0,
+    which are ordinary public addresses.
+    """
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        return False        # a name, not an address
+    return any(addr in net for net in _OVERLAY_NETWORKS)
 
 
 # ---------------------------------------------------------------------------
@@ -79,6 +107,26 @@ def _enforce_https_for_remote(v: str) -> str:
     # or to terminate TLS between two containers on the same bridge. Both are
     # worse than naming the case.
     #
+    # An address on a private overlay — a tailnet and its like. Same argument
+    # as the single-label case, arrived at from the other direction: the name
+    # cannot resolve outside the private network, and the address cannot route
+    # outside it either.
+    #
+    # Without this, a node was reachable by its MagicDNS name and refused by
+    # the address that name resolves to. That reads as an arbitrary rule rather
+    # than a security one, and an arbitrary rule gets worked around — by
+    # switching the check off wholesale, or by standing up TLS between two
+    # machines already on an encrypted overlay. Both are worse than naming the
+    # case, which is the reasoning the single-label exception below records too.
+    #
+    # What this does NOT establish is that the *caller* is on the overlay. No
+    # check at config-parse time can: it sees a destination, not a route. The
+    # guarantee is narrower and is the one that matters — a packet addressed
+    # here never reaches the public internet, so plain HTTP to it cannot be
+    # read in transit by anyone outside the network the caller is already in.
+    if _is_private_overlay_address(host):
+        return v
+
     # A dotted host is still required to use HTTPS. "internal.example.com" is a
     # resolvable name and may route anywhere.
     if "." not in host and ":" not in host:
@@ -86,8 +134,10 @@ def _enforce_https_for_remote(v: str) -> str:
 
     raise ValueError(
         f"base_url must use HTTPS for remote hosts. Got: {v}. Plain HTTP is "
-        f"allowed only for localhost and for single-label service names such "
-        f"as http://litellm:4000, which cannot resolve outside a private network."
+        f"allowed only for localhost, for private overlay addresses such as a "
+        f"tailnet's 100.64.0.0/10, and for single-label service names such as "
+        f"http://litellm:4000 — none of which can be reached from the public "
+        f"internet."
     )
 
 

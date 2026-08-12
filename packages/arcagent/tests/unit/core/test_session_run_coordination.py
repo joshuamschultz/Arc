@@ -41,12 +41,13 @@ def test_active_run_removal_is_identity_guarded() -> None:
     coordinator = SessionRunCoordinator()
     old = MagicMock(spec=arcrun.RunHandle)
     replacement = MagicMock(spec=arcrun.RunHandle)
-    coordinator.register("same", old)
-    coordinator.register("same", replacement)
+    coordinator.register("same", old, interactive=True)
+    coordinator.register("same", replacement, interactive=True)
 
     coordinator.unregister("same", old)
 
     assert coordinator.active("same") is replacement
+    assert coordinator.injection_target("same") is replacement
 
 
 @pytest.mark.asyncio

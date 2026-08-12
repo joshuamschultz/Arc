@@ -107,7 +107,7 @@ async def test_build_for_embedded_remote_skipped_without_credentials(
     Uses telegram as a concrete installed plugin; the registry-skip path is the
     same for any platform whose build() raises AdapterUnavailableError.
     """
-    pytest.importorskip("arcgateway_telegram")
+    pytest.importorskip("telegram")
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     cfg = _config(
         """
@@ -125,7 +125,7 @@ async def test_build_for_embedded_remote_loads_into_adapters_tuple(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An enabled remote platform with credentials lands in the adapters tuple."""
-    pytest.importorskip("arcgateway_telegram")
+    pytest.importorskip("telegram")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "1234:test-token")
     cfg = _config(
         """
@@ -220,7 +220,7 @@ async def test_build_for_embedded_forwards_require_pairing_to_adapters(
     dropped by the adapter itself before ever reaching the (correctly wired)
     SessionRouter/PairingInterceptor.
     """
-    pytest.importorskip("arcgateway_telegram")
+    pytest.importorskip("telegram")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "1234:test-token")
     db_path = tmp_path / "pairing.db"
     cfg = _config(
@@ -264,7 +264,7 @@ async def test_build_for_embedded_allowlisted_user_skips_pairing_on_first_messag
     from arcgateway.executor import Delta, InboundEvent
     from arcgateway.session import build_session_key
 
-    pytest.importorskip("arcgateway_telegram")
+    pytest.importorskip("telegram")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "1234:test-token")
     db_path = tmp_path / "pairing.db"
     cfg = _config(

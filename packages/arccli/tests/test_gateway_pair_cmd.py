@@ -1,7 +1,7 @@
 """``arc gateway pair approve/list/revoke`` — CLI wiring to the live PairingStore.
 
 Root cause fixed here: PairingStore.verify_and_consume() requires a valid
-Ed25519 signature at EVERY tier (arcgateway.pairing_signature — "four-pillar
+Ed25519 signature at EVERY tier (arcgateway.pairing — "four-pillar
 mandate", not a federal-only rule). The original `_gateway_pair_approve_handler`
 called `store.verify_and_consume(code)` with no approver_did/signature at all,
 so it unconditionally raised PairingSignatureInvalid — `arc gateway pair

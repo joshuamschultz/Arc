@@ -14,9 +14,6 @@ members = [
     "arc-agent",
     "arccmd",
     "arcgateway",
-    "arcgateway-mattermost",
-    "arcgateway-slack",
-    "arcgateway-telegram",
     "arcllm",
     "arcmas",
     "arcmemory",
@@ -239,8 +236,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "arc-agent" },
     { name = "arccmd" },
-    { name = "arcgateway" },
-    { name = "arcgateway-telegram" },
+    { name = "arcgateway", extra = ["telegram"] },
     { name = "arcmemory", extra = ["local"] },
     { name = "arcskill" },
     { name = "arcui" },
@@ -280,7 +276,7 @@ requires-dist = [
     { name = "arc-agent", editable = "packages/arcagent" },
     { name = "arccmd", editable = "packages/arccli" },
     { name = "arcgateway", editable = "packages/arcgateway" },
-    { name = "arcgateway-telegram", editable = "packages/arcgateway-telegram" },
+    { name = "arcgateway", extras = ["telegram"], editable = "packages/arcgateway" },
     { name = "arcmemory", extras = ["local"], editable = "packages/arcmemory" },
     { name = "arcskill", editable = "packages/arcskill" },
     { name = "arcui", editable = "packages/arcui" },
@@ -424,9 +420,23 @@ dependencies = [
     { name = "arc-agent" },
     { name = "arcstore" },
     { name = "arcteam" },
+    { name = "arctrust" },
     { name = "httpx" },
     { name = "pydantic" },
     { name = "watchfiles" },
+]
+
+[package.optional-dependencies]
+mattermost = [
+    { name = "aiohttp" },
+]
+slack = [
+    { name = "aiohttp" },
+    { name = "slack-bolt" },
+    { name = "slack-sdk" },
+]
+telegram = [
+    { name = "python-telegram-bot" },
 ]
 
 [package.dev-dependencies]
@@ -436,69 +446,23 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", marker = "extra == 'mattermost'", specifier = ">=3.14.3,<4" },
+    { name = "aiohttp", marker = "extra == 'slack'", specifier = ">=3.14.3,<4" },
     { name = "arc-agent", editable = "packages/arcagent" },
     { name = "arcstore", editable = "packages/arcstore" },
     { name = "arcteam", editable = "packages/arcteam" },
+    { name = "arctrust", editable = "packages/arctrust" },
     { name = "httpx", specifier = ">=0.27,<1" },
     { name = "pydantic", specifier = ">=2.0,<3" },
+    { name = "python-telegram-bot", marker = "extra == 'telegram'", specifier = ">=20,<22" },
+    { name = "slack-bolt", marker = "extra == 'slack'", specifier = ">=1.18" },
+    { name = "slack-sdk", marker = "extra == 'slack'", specifier = ">=3" },
     { name = "watchfiles", specifier = ">=0.21" },
 ]
+provides-extras = ["telegram", "slack", "mattermost"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "mypy", specifier = ">=1.19.1" }]
-
-[[package]]
-name = "arcgateway-mattermost"
-version = "0.1.0"
-source = { editable = "packages/arcgateway-mattermost" }
-dependencies = [
-    { name = "aiohttp" },
-    { name = "arcgateway" },
-    { name = "pydantic" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiohttp", specifier = ">=3.14.3,<4" },
-    { name = "arcgateway", editable = "packages/arcgateway" },
-    { name = "pydantic", specifier = ">=2.0,<3" },
-]
-
-[[package]]
-name = "arcgateway-slack"
-version = "0.1.0"
-source = { editable = "packages/arcgateway-slack" }
-dependencies = [
-    { name = "arcgateway" },
-    { name = "pydantic" },
-    { name = "slack-bolt" },
-    { name = "slack-sdk" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "arcgateway", editable = "packages/arcgateway" },
-    { name = "pydantic", specifier = ">=2.0,<3" },
-    { name = "slack-bolt", specifier = ">=1.18" },
-    { name = "slack-sdk", specifier = ">=3" },
-]
-
-[[package]]
-name = "arcgateway-telegram"
-version = "0.1.0"
-source = { editable = "packages/arcgateway-telegram" }
-dependencies = [
-    { name = "arcgateway" },
-    { name = "pydantic" },
-    { name = "python-telegram-bot" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "arcgateway", editable = "packages/arcgateway" },
-    { name = "pydantic", specifier = ">=2.0,<3" },
-    { name = "python-telegram-bot", specifier = ">=20,<22" },
-]
 
 [[package]]
 name = "arcllm"

@@ -13,8 +13,8 @@ arcgateway core LOC budget (ADR-004 / G1.6). Import it from there.
 The executor is chosen by the tier-policy layer in GatewayRunner. Callers
 only see the Executor Protocol; tier logic is not scattered through business code.
 
-Module boundary: arcgateway.executor MAY import arcagent to call agent.run().
-arcagent MUST NOT import anything from arcgateway.
+Module boundary: arcgateway.executor MAY reach the agent through its public
+facade to deliver a message. arcagent MUST NOT import anything from arcgateway.
 
 Implementation contract for run():
     run() is an async coroutine that returns an AsyncIterator[Delta].
@@ -38,8 +38,9 @@ import uuid
 from collections.abc import AsyncIterator, Callable
 from typing import Any, Literal, Protocol, runtime_checkable
 
-import arcagent
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from arcgateway.parts import Part, TextPart, flatten_text
 
 _logger = logging.getLogger("arcgateway.executor")
 
@@ -55,7 +56,7 @@ class InboundEvent(BaseModel):
     All platform-specific details have been resolved before this point:
     - user_did is the resolved cross-platform user identity (D-06).
     - agent_did identifies which ArcAgent should handle this message.
-    - session_key is pre-computed by SessionRouter.
+    - session_key is stamped by SessionRouter, not by the adapter.
 
     Attributes:
         platform: Source platform name ("telegram", "slack", etc.).
@@ -63,8 +64,19 @@ class InboundEvent(BaseModel):
         thread_id: Optional thread within the chat.
         user_did: Resolved user DID (cross-platform identity).
         agent_did: Target agent DID.
-        session_key: Pre-computed session key (build_session_key output).
-        message: Raw text content from the user.
+        session_key: Canonical session key, empty until SessionRouter stamps it.
+            Adapters supply platform identity only and leave this unset: the
+            router is the sole owner of session identity (REQ-304, REQ-310),
+            and a key composed anywhere else is a second identity for the same
+            (agent, user) pair that also skips the rotation generation.
+        message: The message as text — the flattened projection of ``parts``
+            that every text-only consumer (commands, the subprocess executor,
+            the echo stub) reads.
+        parts: The message as the sender composed it: an ordered list in which
+            text is a part like any other and an artefact is a *reference* into
+            the agent workspace, never bytes (SPEC-065 REQ-296). Media therefore
+            never becomes a branch, and a 5MB photo never enters the queue, the
+            session jsonl or the prompt.
         raw_payload: Full platform-specific payload for audit/replay.
     """
 
@@ -73,9 +85,52 @@ class InboundEvent(BaseModel):
     thread_id: str | None = None
     user_did: str
     agent_did: str
-    session_key: str
+    session_key: str = ""
     message: str
+    parts: list[Part] = Field(default_factory=list)
     raw_payload: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _keep_projections_consistent(self) -> InboundEvent:
+        """Make ``message`` and ``parts`` two views of one message, not two messages.
+
+        A caller supplies whichever is natural — text for the many surfaces that
+        only ever have text, parts for an adapter that took a photo off the
+        wire — and reads either. Letting them diverge is how a media message
+        ends up delivered as its caption alone.
+
+        ``parts`` wins whenever it is present, because it is the richer view:
+        it can express an artefact, and ``message`` cannot. Reconciling only
+        when one side was missing left the case that actually bites — a caller
+        supplying BOTH, inconsistently — to survive validation with two
+        contradictory views, which is the exact divergence this guards against.
+
+        When both were supplied and disagreed, each view held something the
+        other had dropped: text present in ``message`` but in no part is
+        discarded here, and that loss is logged rather than made silent. It is
+        a caller bug — every in-tree producer builds ``parts`` first — and a
+        vanishing caption is far harder to trace from the symptom than from a
+        warning naming the event. Refusing the message outright would lose the
+        whole turn instead of one field, which is the worse trade on an inbound
+        path.
+        """
+        if not self.parts:
+            if self.message:
+                self.parts = [TextPart(text=self.message)]
+            return self
+
+        projection = flatten_text(self.parts)
+        if self.message and self.message != projection:
+            _logger.warning(
+                "InboundEvent on %s carried a message its parts do not express; "
+                "parts win and the divergent text is dropped. Build parts first "
+                "and let message be their projection. dropped=%r kept=%r",
+                self.platform,
+                self.message,
+                projection,
+            )
+        self.message = projection
+        return self
 
 
 class Delta(BaseModel):
@@ -139,9 +194,10 @@ class Executor(Protocol):
 def _reply_target(event: InboundEvent) -> str:
     """The channel address a turn arrived on, as ``platform:chat_id[:thread_id]``.
 
-    Handed to ``agent.run`` so a schedule created mid-conversation defaults its
-    delivery back to this channel (arcagent stays string-only; it never parses
-    this). Mirrors ``DeliveryTarget``'s canonical form without importing it.
+    Handed to the agent's delivery entry point so a schedule created
+    mid-conversation defaults its delivery back to this channel (arcagent stays
+    string-only; it never parses this). Mirrors ``DeliveryTarget``'s canonical
+    form without importing it.
     """
     base = f"{event.platform}:{event.chat_id}"
     return f"{base}:{event.thread_id}" if event.thread_id else base
@@ -166,8 +222,8 @@ def _reply_label(event: InboundEvent) -> str:
 
 # Type alias for the agent factory callable.
 # Signature: async (agent_did: str) -> agent. The agent must expose
-# ``async session(key) -> session`` and the streaming
-# ``run(input, *, session) -> AsyncIterator[StreamEvent]`` (ArcAgent satisfies both).
+# ``deliver_message(*, caller_did, message, session_key, reply_target,
+# reply_label, on_handle) -> str`` (ArcAgent satisfies it).
 AgentFactory = Callable[[str], Any]
 
 
@@ -181,10 +237,9 @@ class AsyncioExecutor:
     Agent integration:
         Accepts an optional ``agent_factory`` async callable with signature
         ``async (agent_did: str) -> agent``.  The returned object must expose
-        ``async session(key)`` and the streaming
-        ``run(input, *, session) -> AsyncIterator[StreamEvent]`` (ArcAgent
-        satisfies both). The executor consumes the stream and adapts each
-        ``TokenEvent`` into a token ``Delta``.
+        ``deliver_message(...)`` (ArcAgent satisfies it). The executor hands the
+        message over and adapts the reply of any turn that delivery opened into
+        a token ``Delta``. It makes no decision about the run itself.
 
         When ``agent_factory`` is None the executor falls back to the
         echo stub so tests can exercise routing/session mechanics without
@@ -209,10 +264,10 @@ class AsyncioExecutor:
 
         Args:
             agent_factory: Optional async callable ``(agent_did: str) -> agent``.
-                When provided, the executor opens the agent's session and
-                streams ``agent.run(...)``, adapting each token into a Delta.
-                When None, the echo stub is used (for tests and dev without
-                a real ArcAgent config).
+                When provided, the executor hands each message to
+                ``agent.deliver_message(...)`` and adapts the reply of a turn
+                that opened into a Delta. When None, the echo stub is used (for
+                tests and dev without a real ArcAgent config).
         """
         self._agent_factory = agent_factory
 
@@ -240,8 +295,8 @@ class AsyncioExecutor:
         """Run ArcAgent in-process for the given event.
 
         Returns an async iterator of Delta chunks.  If an ``agent_factory``
-        was provided the real ArcAgent is invoked; otherwise the echo stub
-        is used.
+        was provided the message is handed to the real ArcAgent's delivery
+        entry point; otherwise the echo stub is used.
 
         Args:
             event: Normalised inbound event.
@@ -262,19 +317,22 @@ class AsyncioExecutor:
 
         When ``_agent_factory`` is set:
           1. ``await _agent_factory(event.agent_did)`` obtains the agent.
-          2. ``await agent.session(event.session_key)`` opens-or-resumes the
-             agent's session for this channel — every turn appends to the
-             persistent SessionManager log at ``<workspace>/sessions/
-             <session_key>.jsonl``, which is what surfaces in arcui and gives
-             reconnect history (Slack/Telegram/Web share the same path).
-          3. ``async for ev in agent.run(message, session=session)`` consumes the
-             real arcrun StreamEvent iterator and emits a Delta per token —
-             ``is_final`` only on the terminal done sentinel (SPEC-027 finishes
-             the M2 fake-streaming TODO; there is no longer a chat/run fork).
+          2. ``await agent.deliver_message(...)`` hands the message over. The
+             AGENT decides what happens to it — join the turn in flight, or open
+             a new one — and the gateway states no preference: no interrupt flag
+             crosses this seam (REQ-302, REQ-303, REQ-312). Opening a turn
+             opens-or-resumes the agent's session for this channel, so every turn
+             still appends to ``<workspace>/sessions/<session_key>.jsonl``, which
+             is what surfaces in arcui and gives reconnect history.
+          3. When the message opened a turn, ``on_handle`` hands back that run and
+             its final content becomes the reply this channel streams. When the
+             message joined a run already in flight there is nothing to stream
+             here: its answer is part of that run's reply, delivered on the turn
+             it joined — one reply, not two.
 
-        An error mid-stream fails closed: the iterator is abandoned, a single
-        fail-closed token Delta is emitted, the done sentinel closes the turn,
-        and no partial-success claim is made (AC-3.2).
+        An error fails closed: a single fail-closed token Delta is emitted, the
+        done sentinel closes the turn, and no partial-success claim is made
+        (AC-3.2).
 
         When ``_agent_factory`` is None the echo stub is used instead so that
         all existing tests continue to pass without a real agent configured.
@@ -284,26 +342,42 @@ class AsyncioExecutor:
         """
         if self._agent_factory is not None:
             turn_id = str(uuid.uuid4())
+            # Typed Any: the run handle is an arcrun type, and arcgateway must
+            # not import a model/runtime package to name it (architecture guard).
+            opened: list[Any] = []
             try:
                 agent = await self._agent_factory(event.agent_did)
-                session = await agent.session(event.session_key)
-                async for stream_event in agent.run(
-                    event.message,
-                    session=session,
+                # ``parts`` only when the message is more than its words. The
+                # agent then translates the references at its own boundary
+                # (PartTranslator, COMP-009); every text-only surface takes the
+                # path it always did, unchanged.
+                extra: dict[str, Any] = {}
+                if any(part.kind != "text" for part in event.parts):
+                    extra["parts"] = [part.model_dump() for part in event.parts]
+                outcome = await agent.deliver_message(
+                    caller_did=event.user_did,
+                    message=event.message,
+                    session_key=event.session_key,
                     reply_target=_reply_target(event),
                     reply_label=_reply_label(event),
-                ):
-                    token_text = arcagent.stream_token_text(stream_event)
-                    if token_text is not None:
+                    on_handle=opened.append,
+                    **extra,
+                )
+                _logger.debug(
+                    "AsyncioExecutor: delivery session=%s outcome=%s",
+                    event.session_key,
+                    outcome,
+                )
+                for handle in opened:
+                    result = await handle.result()
+                    content = result.content or ""
+                    if content:
                         yield Delta(
                             kind="token",
-                            content=token_text,
+                            content=content,
                             is_final=False,
                             turn_id=turn_id,
                         )
-                    # TurnEndEvent is the terminator; the done sentinel below
-                    # carries is_final. Tool events are not surfaced to the
-                    # channel as tokens.
             except Exception as exc:  # reason: fail-closed — log + close turn
                 _logger.exception(
                     "AsyncioExecutor: agent error session=%s: %s",

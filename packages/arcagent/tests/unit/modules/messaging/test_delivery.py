@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from arctrust import AgentIdentity
+from arctrust.session_identity import build_session_key
 from packages.arcagent.tests.unit.modules.messaging.conftest import (
     make_config_dict,
     make_operator_signer,
@@ -141,16 +142,44 @@ class TestHandleIncoming:
         await _handle_incoming(_msg(priority="normal", seq=2))
 
         assert [c["interrupt"] for c in calls] == [True, False]
-        assert all(c["session_key"] == "messaging:inbox" for c in calls)
+        # One session per (this agent, that sender), derived by the session
+        # identity owner — the same key a human on a surface would get. A shared
+        # constant would put every teammate's traffic in one context (REQ-312).
+        expected_key = build_session_key(ident.did, "did:arc:local:peer/aaaa")
+        assert all(c["session_key"] == expected_key for c in calls)
         assert calls[0]["caller_did"] == "did:arc:local:peer/aaaa"
 
     @pytest.mark.asyncio
-    async def test_falls_back_to_agent_run_fn(self, tmp_path: Path) -> None:
-        """Before deliver_fn binds, a pushed message still runs via agent_run_fn."""
+    async def test_two_senders_get_two_sessions(self, tmp_path: Path) -> None:
+        """Different teammates never share a session (REQ-312)."""
         _runtime.configure(
             config=make_config_dict(entity_id="agent://me"),
             workspace=tmp_path,
             identity=_identity(),
+            operator_signer=make_operator_signer(),
+        )
+        st = _runtime.state()
+        calls: list[dict[str, Any]] = []
+
+        async def deliver(**kwargs: Any) -> str:
+            calls.append(kwargs)
+            return "followed_up"
+
+        st.deliver_fn = deliver
+
+        await _handle_incoming(_msg(signer_did="did:arc:local:peer/aaaa"))
+        await _handle_incoming(_msg(signer_did="did:arc:local:peer/bbbb"))
+
+        assert len({c["session_key"] for c in calls}) == 2
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_agent_run_fn(self, tmp_path: Path) -> None:
+        """Before deliver_fn binds, a pushed message still runs via agent_run_fn."""
+        ident = _identity()
+        _runtime.configure(
+            config=make_config_dict(entity_id="agent://me"),
+            workspace=tmp_path,
+            identity=ident,
             operator_signer=make_operator_signer(),
         )
         st = _runtime.state()
@@ -163,7 +192,7 @@ class TestHandleIncoming:
 
         st.agent_run_fn = run_fn
         await _handle_incoming(_msg())
-        assert run_calls == ["messaging:inbox"]
+        assert run_calls == [build_session_key(ident.did, "did:arc:local:peer/aaaa")]
 
 
 class TestInboxLoopPush:

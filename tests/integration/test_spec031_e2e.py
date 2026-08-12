@@ -248,7 +248,12 @@ class _StubAgent:
         # it through that contract. Faking the old attribute would exercise
         # nothing the agent actually calls.
         self._run_coordinator = SessionRunCoordinator()
-        self._run_coordinator.register(SESSION_KEY, cast("arcrun.RunHandle", handle))
+        # interactive=True: SPEC-031 is about a teammate message reaching a
+        # live *conversational* turn. Only an interactive run is an injection
+        # target (D-679) — a background run must never be steered by one.
+        self._run_coordinator.register(
+            SESSION_KEY, cast("arcrun.RunHandle", handle), interactive=True
+        )
         self._active_runs = self._run_coordinator.active_runs
         self._config = SimpleNamespace(security=SimpleNamespace(tier=tier))
         self.started_runs: list[tuple[str, str]] = []
