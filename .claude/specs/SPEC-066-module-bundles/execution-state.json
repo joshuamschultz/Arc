@@ -11,28 +11,28 @@
     },
     "T-950": {
       "description": "(green) Implement capability signing and revocation against the operator key",
-      "status": "in-progress",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-951": {
       "description": "(green) Rework `arc trust approve` / `disapprove` to sign, not pin a hash alone",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-952": {
       "description": "(green) `POST /api/trust/approve` signs through the same function",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-953": {
       "description": "(green) Capability trust panel: render artifact source, then allow approve",
-      "status": "pending",
+      "status": "in-progress",
       "history": [],
       "blockers": [],
       "depends_on": []
@@ -46,63 +46,63 @@
     },
     "T-955": {
       "description": "(green) Signing runbook, security-model section, and README correction",
-      "status": "pending",
+      "status": "in-progress",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-956": {
       "description": "(red) Failing test: manifest canonical bytes are stable and match the arcrun verifier convention",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-957": {
       "description": "(green) `BundleManifest` model and canonical-JSON encoding",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-958": {
       "description": "(green) Bundle signer over canonical manifest bytes",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-959": {
       "description": "(red) Failing tests: verification refuses a bad signature, a hash mismatch, and leaves no partial tree",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-960": {
       "description": "(green) Fail-closed bundle verifier",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-961": {
       "description": "(green) Atomic materializer with read-only mode bits and inverse remove",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-962": {
       "description": "(green) Bundle builder over the repository source catalog",
-      "status": "pending",
+      "status": "done",
       "history": [],
       "blockers": [],
       "depends_on": []
     },
     "T-963": {
       "description": "(red) Security test: agent tools cannot reach the deployment module root",
-      "status": "pending",
+      "status": "in-progress",
       "history": [],
       "blockers": [],
       "depends_on": []
@@ -123,7 +123,7 @@
     },
     "T-966": {
       "description": "(red) Absent-safe suite parametrized over live discovery",
-      "status": "pending",
+      "status": "in-progress",
       "history": [],
       "blockers": [],
       "depends_on": []

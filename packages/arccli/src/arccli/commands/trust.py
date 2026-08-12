@@ -24,16 +24,22 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 import arcagent
 from arcgateway import team_roster
-from arctrust import disapprove
+from arctrust import AuditSink, disapprove
 
 from arccli.commands._shared import dispatch
 from arccli.commands._shared import print_table as _print_table
 from arccli.commands._shared import write as _write
+
+#: Actor recorded when the operator signer cannot be resolved. Only ever paired
+#: with a discarding sink, so it names the degraded case rather than a person.
+_UNRESOLVED_OPERATOR_DID = "did:arc:operator:unresolved"
 
 
 def _err(msg: str) -> None:
@@ -104,6 +110,39 @@ def _operator_seed() -> bytes:
     return seed
 
 
+@contextlib.contextmanager
+def _audit_chain() -> Iterator[tuple[AuditSink, str]]:
+    """Open the deployment's operator-signed WORM chain for one trust change.
+
+    Yields the sink the capability event is recorded on and the operator DID it
+    is attributed to, both resolved from the one on-box operator key so the
+    record and its actor cannot disagree. Opened per command and closed on exit:
+    a ``WormSink`` holds an exclusive ``flock`` for its lifetime, so one left
+    open locks every later writer out.
+
+    An unresolvable signer or an unopenable chain degrades to a discarding sink
+    and a warning instead of stopping the command — an operator must always be
+    able to grant or withdraw trust, and auditing never interrupts the action it
+    audits (NIST AU-5).
+    """
+    from arcstore import resolve_data_dir
+    from arctrust import NullSink
+
+    from arccli.commands.operator import operator_worm_sink
+
+    try:
+        actor = _operator_did()
+        sink = operator_worm_sink(None, resolve_data_dir(None))
+    except (OSError, RuntimeError, ValueError) as exc:
+        _err(f"arc trust: audit chain unavailable ({type(exc).__name__}); change not recorded")
+        yield NullSink(), _UNRESOLVED_OPERATOR_DID
+        return
+    try:
+        yield sink, actor
+    finally:
+        sink.close()
+
+
 def _list(args: argparse.Namespace) -> None:
     agent_id, agent_root, label = _resolve_agent(getattr(args, "agent", None))
     include_loaded = bool(getattr(args, "all", False))
@@ -134,12 +173,14 @@ def _approve(args: argparse.Namespace) -> None:
     seed = _operator_seed()
     approver = _operator_did()
     try:
-        arcagent.sign_capability(
-            Path(target.path),
-            signer_did=approver,
-            private_key=seed,
-            config_path=config_path,
-        )
+        with _audit_chain() as (sink, _):
+            arcagent.sign_capability(
+                Path(target.path),
+                signer_did=approver,
+                private_key=seed,
+                config_path=config_path,
+                audit_sink=sink,
+            )
     except (OSError, ValueError) as exc:
         _err(f"arc trust: could not sign {target.path}: {exc}")
         sys.exit(1)
@@ -167,7 +208,13 @@ def _disapprove(args: argparse.Namespace) -> None:
     )
     target = next((item for item in inventory if item.name == args.name), None)
     if target is not None:
-        arcagent.revoke_capability(Path(target.path), config_path=config_path)
+        with _audit_chain() as (sink, actor):
+            arcagent.revoke_capability(
+                Path(target.path),
+                config_path=config_path,
+                operator_did=actor,
+                audit_sink=sink,
+            )
         _write(
             f"Revoked {args.name} on {agent_id} — signature, trusted key, and hash pin removed."
         )

@@ -25,7 +25,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from arctrust import TofuLayer, generate_keypair, load_validators
+from arctrust import AuditEvent, TofuLayer, generate_keypair, hash_source, load_validators
 from arctrust.identity import AgentIdentity
 
 from arcagent.capabilities import artifact_signing, capability_signing
@@ -107,7 +107,13 @@ def _write_skill(agent_root: Path, name: str) -> Path:
     return skill_md
 
 
-async def _scan(agent_root: Path, *, tier: Tier, trusted_public_key: bytes) -> ReloadDelta:
+async def _scan(
+    agent_root: Path,
+    *,
+    tier: Tier,
+    trusted_public_key: bytes,
+    audit_sink: object | None = None,
+) -> ReloadDelta:
     """Run the real loader over the agent's two agent-writable roots.
 
     The loader pins a SET of keys; these cases each exercise one signer, so they
@@ -117,6 +123,7 @@ async def _scan(agent_root: Path, *, tier: Tier, trusted_public_key: bytes) -> R
     loader = CapabilityLoader(
         scan_roots=[("agent", caps), ("agent-skills", caps / "skills")],
         registry=CapabilityRegistry(),
+        audit_sink=audit_sink,
         import_policy=_PERSONAL_POLICY,
         tofu=TofuLayer(tier, load_validators(_config(agent_root))),
         require_signature=True,
@@ -336,3 +343,191 @@ async def test_operator_and_agent_signed_capabilities_coexist(agent_root: Path) 
         agent_root, tier=Tier.FEDERAL, trusted_public_key=identity.public_key
     )
     assert _outcome(under_agent_key, "notepad").status == "loaded"
+
+
+# ---------------------------------------------------------------------------
+# REQ-323 / COMP-014 — the audit record of a trust mutation
+# ---------------------------------------------------------------------------
+
+
+class _RecordingSink:
+    """A REAL :class:`~arctrust.AuditSink` — records what ``emit()`` delivers.
+
+    Deliberately not a patch of ``arctrust.audit.emit``: patching the emitter
+    proves only that a call was made, while a sink proves the event travelled
+    the real emission path and arrived in the shape a WORM chain would store.
+    """
+
+    def __init__(self) -> None:
+        self.events: list[AuditEvent] = []
+
+    def write(self, event: AuditEvent) -> None:
+        self.events.append(event)
+
+    def only(self, action: str) -> AuditEvent:
+        matched = [event for event in self.events if event.action == action]
+        assert len(matched) == 1, f"expected exactly one {action}, got {[e.action for e in matched]}"
+        return matched[0]
+
+
+class _RecordingLoaderSink:
+    """The loader's audit seam — ``emit(event)``, not the arctrust ``write``."""
+
+    def __init__(self) -> None:
+        self.events: list[AuditEvent] = []
+
+    def emit(self, event: AuditEvent) -> None:
+        self.events.append(event)
+
+
+@pytest.mark.asyncio
+async def test_sign_and_revoke_emit_through_a_real_sink(agent_root: Path) -> None:
+    """One operator action, one audit record — naming operator, path, and hash.
+
+    The hash is asserted against the TOFU pin the SAME call wrote, because an
+    audit line whose hash disagrees with the pin line cannot be used to answer
+    "which bytes did the operator actually approve?".
+    """
+    operator = generate_keypair()
+    tool = _write_tool(agent_root, "ledger")
+    config = _config(agent_root)
+    sink = _RecordingSink()
+
+    capability_signing.sign(
+        tool,
+        signer_did=_OPERATOR_DID,
+        private_key=operator.private_key,
+        config_path=config,
+        audit_sink=sink,
+    )
+
+    pinned_hash = load_validators(config).approved[0].hash
+    signed = sink.only("capability.signed")
+    assert signed.actor_did == _OPERATOR_DID
+    assert signed.target == str(tool)
+    assert signed.outcome == "signed"
+    assert signed.payload_hash == pinned_hash == hash_source(tool.read_text(encoding="utf-8"))
+
+    capability_signing.revoke(
+        tool, config_path=config, operator_did=_OPERATOR_DID, audit_sink=sink
+    )
+
+    revoked = sink.only("capability.signature_revoked")
+    assert revoked.actor_did == _OPERATOR_DID
+    assert revoked.target == str(tool)
+    assert revoked.outcome == "revoked"
+    assert revoked.payload_hash == pinned_hash
+
+
+@pytest.mark.asyncio
+async def test_audit_records_carry_no_key_material(agent_root: Path) -> None:
+    """A trust record proves WHICH bytes were approved, never with what secret.
+
+    Serialized whole, because a seed leaking through ``extra`` or a stringified
+    field would be invisible to a per-field assertion.
+    """
+    operator = generate_keypair()
+    tool = _write_tool(agent_root, "ledger")
+    sink = _RecordingSink()
+
+    capability_signing.sign(
+        tool,
+        signer_did=_OPERATOR_DID,
+        private_key=operator.private_key,
+        config_path=_config(agent_root),
+        audit_sink=sink,
+    )
+    capability_signing.revoke(
+        tool, config_path=_config(agent_root), operator_did=_OPERATOR_DID, audit_sink=sink
+    )
+
+    for event in sink.events:
+        serialized = event.model_dump_json()
+        assert operator.private_key.hex() not in serialized
+        assert str(operator.private_key) not in serialized
+
+
+@pytest.mark.asyncio
+async def test_revocation_of_a_deleted_artifact_still_records(agent_root: Path) -> None:
+    """Revocation tolerates a missing artifact; the audit must not undo that.
+
+    Reading the artifact for its hash is the one new file read ``revoke`` does —
+    an unreadable one costs the record its hash, never the revocation.
+    """
+    operator = generate_keypair()
+    tool = _write_tool(agent_root, "ledger")
+    config = _config(agent_root)
+    capability_signing.sign(
+        tool, signer_did=_OPERATOR_DID, private_key=operator.private_key, config_path=config
+    )
+    sink = _RecordingSink()
+    tool.unlink()
+
+    capability_signing.revoke(
+        tool, config_path=config, operator_did=_OPERATOR_DID, audit_sink=sink
+    )
+
+    revoked = sink.only("capability.signature_revoked")
+    assert revoked.payload_hash is None
+    assert load_validators(config).approved == ()
+
+
+def _refusal(sink: _RecordingLoaderSink, action: str) -> AuditEvent:
+    matched = [event for event in sink.events if event.action == action]
+    assert len(matched) == 1, f"expected one {action}; loader recorded {[e.action for e in sink.events]}"
+    return matched[0]
+
+
+@pytest.mark.asyncio
+async def test_unsigned_refusal_keeps_its_existing_audit_shape(agent_root: Path) -> None:
+    """The signature-floor refusal is the loader's record; T-954 leaves it alone.
+
+    A refusal has no operator — the loader is the actor — so it names the
+    artifact path and the reason only. Locked here so a later change to the
+    signing events cannot quietly reshape the refusal beside them.
+    """
+    operator = generate_keypair()
+    tool = _write_tool(agent_root, "ledger")
+    sink = _RecordingLoaderSink()
+
+    await _scan(
+        agent_root, tier=Tier.FEDERAL, trusted_public_key=operator.public_key, audit_sink=sink
+    )
+
+    deny = _refusal(sink, "capability.signature")
+    assert deny.actor_did == "did:arc:capability-loader"
+    assert deny.target == str(tool)
+    assert deny.outcome == "error"
+    assert deny.extra == {"path": str(tool), "reason": "missing or invalid signature"}
+
+
+@pytest.mark.asyncio
+async def test_drift_refusal_keeps_its_existing_audit_shape(agent_root: Path) -> None:
+    """``capability:deny`` — the TOFU drift refusal — is unchanged too.
+
+    Reached by re-signing edited bytes WITHOUT re-approving them: the signature
+    verifies, so the floor passes and the stale hash pin is what refuses. That is
+    the only way to exercise the deny branch rather than the signature branch.
+    """
+    operator = generate_keypair()
+    tool = _write_tool(agent_root, "ledger")
+    config = _config(agent_root)
+    capability_signing.sign(
+        tool, signer_did=_OPERATOR_DID, private_key=operator.private_key, config_path=config
+    )
+    drifted = tool.read_bytes() + b"\n# edited after approval\n"
+    tool.write_bytes(drifted)
+    artifact_signing.write_signature(
+        tool, drifted, signer_did=_OPERATOR_DID, private_key=operator.private_key
+    )
+    sink = _RecordingLoaderSink()
+
+    await _scan(
+        agent_root, tier=Tier.FEDERAL, trusted_public_key=operator.public_key, audit_sink=sink
+    )
+
+    deny = _refusal(sink, "capability.deny")
+    assert deny.actor_did == "did:arc:capability-loader"
+    assert deny.target == str(tool)
+    assert deny.outcome == "error"
+    assert deny.extra == {"path": str(tool), "reason": "tofu decision deny"}

@@ -13,13 +13,18 @@ here is the verdict a live agent gets.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import Any
 
 import arcagent
 import pytest
 from arcagent.capabilities import artifact_signing
+from arcstore.ingest import WORM_ACTIVE_FILENAME
+from arctrust.audit import verify_chain
 from arctrust.identity import AgentIdentity
 from arctrust.operator import OperatorKey
+from arctrust.policy import OperatorApprovalAuthority
 from arctrust.validators import load_validators
 
 from arccli.commands import operator as operator_cmd
@@ -42,9 +47,15 @@ _VALID_SKILL = (
 
 @pytest.fixture(autouse=True)
 def _hermetic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Point every operator-key path at ``tmp_path`` — never the real ``~/.arc``."""
+    """Point every operator-key AND data path at ``tmp_path`` — never the real ``~/.arc``.
+
+    ``ARCSTORE_DATA_DIR`` matters as much as the key dir: approval now appends to
+    the deployment's WORM chain under the data dir, so without it a test run
+    would write audit records into the developer's own chain.
+    """
     arc_dir = tmp_path / "arc-config"
     monkeypatch.setenv("ARC_CONFIG_DIR", str(arc_dir))
+    monkeypatch.setenv("ARCSTORE_DATA_DIR", str(tmp_path / "arc-data"))
     monkeypatch.setattr(operator_cmd, "DEFAULT_OPERATOR_DIR", arc_dir / "operator")
     monkeypatch.setattr(operator_cmd, "_MACHINE_CONFIG", arc_dir / "arcagent.toml")
 
@@ -52,6 +63,35 @@ def _hermetic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 def _operator_public_key(tmp_path: Path) -> bytes:
     """The public half of the operator key the CLI auto-bootstrapped."""
     return OperatorKey.load(tmp_path / "arc-config" / "operator" / "operator.key").public_key
+
+
+def _operator_key(tmp_path: Path) -> OperatorKey:
+    return OperatorKey.load(tmp_path / "arc-config" / "operator" / "operator.key")
+
+
+def _chain_path(tmp_path: Path) -> Path:
+    """The operator-signed WORM chain the CLI appends its trust changes to."""
+    return tmp_path / "arc-data" / "worm" / WORM_ACTIVE_FILENAME
+
+
+def _chain_events(tmp_path: Path) -> list[dict[str, Any]]:
+    """Every ``AuditEvent`` on that chain, read back off disk.
+
+    Read from the file rather than from a captured sink: what proves the wiring
+    is a record that survived a real ``WormSink.write``.
+    """
+    chain = _chain_path(tmp_path)
+    if not chain.exists():
+        return []
+    return [
+        json.loads(line)["event"] for line in chain.read_text(encoding="utf-8").splitlines() if line
+    ]
+
+
+def _chain_event(tmp_path: Path, action: str) -> dict[str, Any]:
+    matched = [event for event in _chain_events(tmp_path) if event["action"] == action]
+    assert len(matched) == 1, f"expected one {action}; chain has {[e['action'] for e in _chain_events(tmp_path)]}"
+    return matched[0]
 
 
 def _use_vault_transit_custody(tmp_path: Path) -> None:
@@ -316,6 +356,95 @@ def test_multiple_agents_without_flag_errors(
     with pytest.raises(SystemExit) as exc:
         trust_handler(["list"])
     assert exc.value.code == 1
+
+
+def test_approve_and_disapprove_record_on_the_operator_chain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """REQ-323 — both trust changes land on the REAL deployment chain.
+
+    Nothing is patched: the records are read back off the signed hash chain the
+    command opened, so an emission nothing receives fails here. The hash is
+    asserted against the TOFU pin the same command wrote — an audit line that
+    disagrees with the pin cannot answer which bytes the operator approved.
+    """
+    team_root = _team(tmp_path, monkeypatch)
+    _build_agent(team_root, "olivia", tier="enterprise", sign=False)
+    skill = _skill_md(team_root)
+    config = _config(team_root)
+
+    trust_handler(["approve", "reporter"])
+    capsys.readouterr()
+
+    # Resolved after the command: `arc trust` bootstraps the operator key itself.
+    operator_did = OperatorApprovalAuthority(_operator_key(tmp_path).into_signer()).did
+    pinned_hash = load_validators(config).approved[0].hash
+    signed = _chain_event(tmp_path, "capability.signed")
+    assert signed["actor_did"] == operator_did
+    assert signed["target"] == str(skill)
+    assert signed["outcome"] == "signed"
+    assert signed["payload_hash"] == pinned_hash
+
+    trust_handler(["disapprove", "reporter"])
+    capsys.readouterr()
+
+    revoked = _chain_event(tmp_path, "capability.signature_revoked")
+    assert revoked["actor_did"] == operator_did
+    assert revoked["target"] == str(skill)
+    assert revoked["outcome"] == "revoked"
+    assert revoked["payload_hash"] == pinned_hash
+
+
+def test_chain_records_are_signed_and_carry_no_key_material(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The chain verifies under the operator key, and holds no secret.
+
+    ``verify_chain`` is what distinguishes a real sink from a list that happened
+    to collect dicts: it only passes if every record was Ed25519-signed and
+    hash-linked on the way to disk.
+    """
+    team_root = _team(tmp_path, monkeypatch)
+    _build_agent(team_root, "olivia", tier="enterprise", sign=False)
+
+    trust_handler(["approve", "reporter"])
+    trust_handler(["disapprove", "reporter"])
+    capsys.readouterr()
+
+    key = _operator_key(tmp_path)
+    assert verify_chain(_chain_path(tmp_path), key.public_key)
+    raw = _chain_path(tmp_path).read_text(encoding="utf-8")
+    assert key.seed.hex() not in raw
+    assert key.public_key.hex() not in raw
+
+
+def test_a_locked_audit_chain_never_blocks_a_trust_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """AU-5 — auditing must not interrupt the action it audits.
+
+    A ``WormSink`` holds an exclusive flock, so a running agent or dashboard can
+    legitimately hold the chain. An operator must still be able to withdraw
+    trust; the command says so on stderr rather than failing.
+    """
+    from arctrust import WormSink
+
+    team_root = _team(tmp_path, monkeypatch)
+    _build_agent(team_root, "olivia", tier="enterprise", sign=False)
+    trust_handler(["approve", "reporter"])
+    capsys.readouterr()
+
+    _chain_path(tmp_path).parent.mkdir(parents=True, exist_ok=True)
+    holder = WormSink(_chain_path(tmp_path), _operator_key(tmp_path).into_signer())
+    try:
+        trust_handler(["disapprove", "reporter"])
+    finally:
+        holder.close()
+
+    captured = capsys.readouterr()
+    assert "audit chain unavailable" in captured.err
+    assert not arcagent.sidecar_path(_skill_md(team_root)).exists()
+    assert load_validators(_config(team_root)).approved == ()
 
 
 def test_approve_resolves_named_agent(

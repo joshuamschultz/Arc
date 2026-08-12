@@ -19,27 +19,27 @@
   - Components: COMP-010
   - Requirements: REQ-319, REQ-320
   - Acceptance: `sign(artifact, signer, config_path)` writes a detached Ed25519 signature, pins the operator public key as the agent's trusted key, and records the TOFU pin. `revoke()` removes all three. T-949 goes green with no change to the loader.
-- [ ] **T-951**: (green) Rework `arc trust approve` / `disapprove` to sign, not pin a hash alone
+- [x] **T-951**: (green) Rework `arc trust approve` / `disapprove` to sign, not pin a hash alone
   - domain: backend
   - Components: COMP-011
   - Requirements: REQ-319, REQ-320, REQ-321
   - Acceptance: One command signs + pins key + pins hash. The hash-only path and the note conceding it changes nothing at personal tier are deleted, not kept beside. A non-operator caller is refused. Post-approval verdict is re-read through the inventory seam and reports `loaded`.
-- [ ] **T-952**: (green) `POST /api/trust/approve` signs through the same function
+- [x] **T-952**: (green) `POST /api/trust/approve` signs through the same function
   - domain: api
   - Components: COMP-012
   - Requirements: REQ-321, REQ-322
   - Acceptance: Route calls COMP-010 instead of `_approve_pin`. Route table, operator-role gate, roster resolution, audit emission, and the lazy inventory-seam import are untouched. Architecture test still proves arcui imports arcagent only via the seam.
-- [ ] **T-953**: (green) Capability trust panel: render artifact source, then allow approve
+- [x] **T-953**: (green) Capability trust panel: render artifact source, then allow approve
   - domain: ui
   - Components: COMP-013
   - Requirements: REQ-322
   - Acceptance: Gated rows render the artifact source text. The approve action is disabled until the source has been displayed. Rebuild the arcui static bundle and restart, since the server caches `static/index.html`.
-- [ ] **T-954**: (green) Audit events for capability sign, revoke, and refusal
+- [x] **T-954**: (green) Audit events for capability sign, revoke, and refusal
   - domain: infra
   - Components: COMP-014
   - Requirements: REQ-323
   - Acceptance: `capability.signed` and `capability.signature_revoked` emit through the single `arctrust.audit.emit` point carrying operator DID, artifact path, and source hash. Existing `capability:deny` refusals keep their shape. Asserted on both the CLI and the arcui path.
-- [ ] **T-955**: (green) Signing runbook, security-model section, and README correction
+- [x] **T-955**: (green) Signing runbook, security-model section, and README correction
   - domain: infra
   - Components: COMP-016
   - Requirements: REQ-324
@@ -47,37 +47,37 @@
 
 ## Phase 2: Core
 
-- [ ] **T-956**: (red) Failing test: manifest canonical bytes are stable and match the arcrun verifier convention
+- [x] **T-956**: (red) Failing test: manifest canonical bytes are stable and match the arcrun verifier convention
   - domain: test
   - Components: COMP-001
   - Requirements: REQ-325
   - Acceptance: Encoding is byte-identical across key orderings and across process runs. A parity case asserts the same bytes as `arcrun/backends/_verifier.py:canonical_json_payload` for an equivalent payload, so the two encoders cannot drift.
-- [ ] **T-957**: (green) `BundleManifest` model and canonical-JSON encoding
+- [x] **T-957**: (green) `BundleManifest` model and canonical-JSON encoding
   - domain: backend
   - Components: COMP-001
   - Requirements: REQ-325
   - Acceptance: Pydantic model with format_version, module, version, issuer, and files of relative path + sha256. Relative paths reject traversal. `canonical_bytes()` turns T-956 green.
-- [ ] **T-958**: (green) Bundle signer over canonical manifest bytes
+- [x] **T-958**: (green) Bundle signer over canonical manifest bytes
   - domain: auth
   - Components: COMP-002
   - Requirements: REQ-325, REQ-331
   - Acceptance: Produces a detached Ed25519 signature and stamps the issuer. Accepts either a raw key or an `arctrust.Signer`. Never writes payload files.
-- [ ] **T-959**: (red) Failing tests: verification refuses a bad signature, a hash mismatch, and leaves no partial tree
+- [x] **T-959**: (red) Failing tests: verification refuses a bad signature, a hash mismatch, and leaves no partial tree
   - domain: test
   - Components: COMP-003, COMP-004
   - Requirements: REQ-326, REQ-327
   - Acceptance: Three cases: tampered manifest, tampered payload file, and a write interrupted mid-materialize. Each asserts the destination is byte-identical to its pre-call state and the exit is non-zero. A fourth asserts a dev-signed bundle fails verification at federal tier.
-- [ ] **T-960**: (green) Fail-closed bundle verifier
+- [x] **T-960**: (green) Fail-closed bundle verifier
   - domain: auth
   - Components: COMP-003
   - Requirements: REQ-326, REQ-327, REQ-329, REQ-331
   - Acceptance: Verifies the manifest signature against the tier's trusted issuer set, then every declared file hash, before any write. Any exception denies. The dev issuer is trusted at personal tier only, enforced here rather than in the CLI.
-- [ ] **T-961**: (green) Atomic materializer with read-only mode bits and inverse remove
+- [x] **T-961**: (green) Atomic materializer with read-only mode bits and inverse remove
   - domain: backend
   - Components: COMP-004
   - Requirements: REQ-327, REQ-335, REQ-336, REQ-338
   - Acceptance: Stage to a temp sibling, fsync, rename. Files land 0444 inside directories 0555. `remove(name)` deletes the tree and raises if it does not complete. T-959 goes green.
-- [ ] **T-962**: (green) Bundle builder over the repository source catalog
+- [x] **T-962**: (green) Bundle builder over the repository source catalog
   - domain: backend
   - Components: COMP-005
   - Requirements: REQ-328

@@ -10,6 +10,8 @@ is refused and nothing is written; an operator flips a gated capability to
 
 from __future__ import annotations
 
+import json
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -17,12 +19,13 @@ import pytest
 from arcagent.capabilities import artifact_signing
 from arcgateway import team_roster
 from arctrust import OperatorKey, arc_home, default_operator_key_path
+from arctrust.audit import verify_chain
 from arctrust.identity import AgentIdentity
 from arctrust.validators import load_validators
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
-from arcui.audit import UIAuditEvent
+from arcui.audit import MutationWormWriter, UIAuditEvent, build_mutation_worm_writer
 from arcui.auth import AuthConfig, AuthMiddleware
 from arcui.routes.trust import routes as trust_routes
 
@@ -93,12 +96,15 @@ class _SpyAudit:
         return [d["outcome"] for _, d in self.events if d.get("operation") == operation]
 
 
-def _make_client(team_root: Path) -> TestClient:
+def _make_client(team_root: Path, *, worm: MutationWormWriter | None = None) -> TestClient:
     auth = AuthConfig({"viewer_token": "viewer", "operator_token": "operator"})
     app = Starlette(routes=trust_routes)
     app.add_middleware(AuthMiddleware, auth_config=auth)
     app.state.auth_config = auth
     app.state.audit = _SpyAudit()
+    # The signed chain this server holds. Absent by default (a bare app degrades
+    # to log+OTel); supplied by the REQ-323 cases that read records back off it.
+    app.state.audit_worm = worm
     app.state.roster_provider = lambda: team_roster.list_team(
         team_root=team_root, online_ids=set()
     )
@@ -453,3 +459,117 @@ def test_source_of_an_unreadable_artifact_is_404(tmp_path: Path) -> None:
     )
     assert resp.status_code == 404
     assert "cannot read capability source" in resp.json()["error"]
+
+
+# ---------------------------------------------------------------------------
+# REQ-323 / COMP-014 — the capability-level record beside the HTTP mutation
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def worm(tmp_path: Path) -> Iterator[MutationWormWriter]:
+    """The REAL operator-signed chain this server would hold in production.
+
+    A ``WormSink`` keeps an exclusive flock for its lifetime, so the fixture
+    closes it — leaving it open would lock out every later writer in the run.
+    """
+    _bootstrap_operator_key(tmp_path)
+    writer = build_mutation_worm_writer(tmp_path / "ui-data")
+    assert writer is not None, "operator key was bootstrapped; the chain must open"
+    yield writer
+    writer.sink.close()
+
+
+def _chain_path(tmp_path: Path) -> Path:
+    return tmp_path / "ui-data" / "worm" / "audit-chain-arcui.jsonl"
+
+
+def _chain_event(tmp_path: Path, action: str) -> dict[str, Any]:
+    """One event read back OFF DISK — proof the record reached a real sink."""
+    lines = _chain_path(tmp_path).read_text(encoding="utf-8").splitlines()
+    events = [json.loads(line)["event"] for line in lines if line]
+    matched = [event for event in events if event["action"] == action]
+    assert len(matched) == 1, f"expected one {action}; chain has {[e['action'] for e in events]}"
+    return matched[0]
+
+
+def test_approve_and_disapprove_record_on_the_servers_chain(
+    tmp_path: Path, worm: MutationWormWriter
+) -> None:
+    """REQ-323 — the browser path records the same event the CLI path does.
+
+    Read back off the signed chain rather than from a captured sink, so an
+    emission that reaches nothing fails here. ``payload_hash`` is checked against
+    the TOFU pin the same request wrote: an audit line that disagrees with the
+    pin cannot answer which bytes the operator approved.
+    """
+    team_root = tmp_path / "team"
+    team_root.mkdir()
+    _build_agent(team_root, "olivia", tier="enterprise", sign=False)
+    client = _make_client(team_root, worm=worm)
+    body = {"agent_id": "olivia", "name": "reporter"}
+    skill = _skill_md(team_root, "olivia")
+
+    assert client.post("/api/trust/approve", json=body, headers=_OPERATOR).status_code == 200
+
+    pinned_hash = load_validators(team_root / "olivia" / "arcagent.toml").approved[0].hash
+    signed = _chain_event(tmp_path, "capability.signed")
+    assert signed["actor_did"] == worm.operator_did
+    assert signed["target"] == str(skill)
+    assert signed["outcome"] == "signed"
+    assert signed["payload_hash"] == pinned_hash
+
+    assert client.post("/api/trust/disapprove", json=body, headers=_OPERATOR).status_code == 200
+
+    revoked = _chain_event(tmp_path, "capability.signature_revoked")
+    assert revoked["actor_did"] == worm.operator_did
+    assert revoked["target"] == str(skill)
+    assert revoked["outcome"] == "revoked"
+    assert revoked["payload_hash"] == pinned_hash
+
+
+def test_the_capability_record_joins_the_mutation_record_on_one_chain(
+    tmp_path: Path, worm: MutationWormWriter
+) -> None:
+    """One chain, not two: the HTTP mutation and the capability event share it.
+
+    The route already audits ``trust.approve``; the capability event is the new
+    one. Opening a second chain for it would put the two halves of one action in
+    two files, and a ``WormSink``'s exclusive flock would make that fail anyway.
+    """
+    team_root = tmp_path / "team"
+    team_root.mkdir()
+    _build_agent(team_root, "olivia", tier="enterprise", sign=False)
+    client = _make_client(team_root, worm=worm)
+
+    client.post(
+        "/api/trust/approve", json={"agent_id": "olivia", "name": "reporter"}, headers=_OPERATOR
+    )
+
+    lines = _chain_path(tmp_path).read_text(encoding="utf-8").splitlines()
+    actions = [json.loads(line)["event"]["action"] for line in lines if line]
+    assert actions == ["capability.signed", "trust.approve"]
+
+
+def test_the_servers_chain_verifies_and_holds_no_key_material(
+    tmp_path: Path, worm: MutationWormWriter
+) -> None:
+    """The chain verifies under the operator key and leaks no secret.
+
+    ``verify_chain`` is what separates a real sink from a list of dicts: it only
+    passes if every record was Ed25519-signed and hash-linked on the way to disk.
+    """
+    team_root = tmp_path / "team"
+    team_root.mkdir()
+    _build_agent(team_root, "olivia", tier="enterprise", sign=False)
+    client = _make_client(team_root, worm=worm)
+    body = {"agent_id": "olivia", "name": "reporter"}
+
+    client.post("/api/trust/approve", json=body, headers=_OPERATOR)
+    client.post("/api/trust/disapprove", json=body, headers=_OPERATOR)
+
+    key = OperatorKey.load(default_operator_key_path(), generate_if_absent=False)
+    assert verify_chain(_chain_path(tmp_path), key.public_key)
+    raw = _chain_path(tmp_path).read_text(encoding="utf-8")
+    assert key.seed.hex() not in raw
+    assert key.public_key.hex() not in raw

@@ -42,7 +42,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from arcui.audit import emit_mutation_audit
+from arcui.audit import emit_mutation_audit, operator_actor_did, operator_audit_sink
 from arcui.schemas import ErrorResponse
 
 logger = logging.getLogger("arcui.routes.trust")
@@ -271,11 +271,15 @@ async def approve(request: Request) -> JSONResponse:
         return _error(detail, 404)
 
     try:
+        # ``audit_sink`` is the chain this process already holds, so the
+        # capability-level ``capability.signed`` record (REQ-323) lands beside
+        # the HTTP-level mutation record below rather than opening a second one.
         arcagent.sign_capability(
             Path(item.path),
             signer_did=approver,
             private_key=signing_key.seed,
             config_path=agent_root / "arcagent.toml",
+            audit_sink=operator_audit_sink(request),
         )
     except (OSError, ValueError) as exc:
         # A half-applied signing is a capability the operator believes is
@@ -332,7 +336,12 @@ async def disapprove(request: Request) -> JSONResponse:
         if item is None:
             _disapprove_pin(config_path, name=name)
         else:
-            arcagent.revoke_capability(Path(item.path), config_path=config_path)
+            arcagent.revoke_capability(
+                Path(item.path),
+                config_path=config_path,
+                operator_did=operator_actor_did(request),
+                audit_sink=operator_audit_sink(request),
+            )
     except (OSError, ValueError) as exc:
         logger.exception("revocation failed for %s on %s", name, agent_id)
         emit_mutation_audit(
