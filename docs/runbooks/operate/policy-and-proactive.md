@@ -1,6 +1,6 @@
 # Operations Runbook: Policy Pipeline and Proactive Engine
 
-> **Runbooks**  ·  Operate  ·  page 11 of 17  
+> **Runbooks**  ·  Operate  ·  page 11 of 18  
 > **For** Operators deploying and running Arc  
 > [← Agent features](agent-features.md)  ·  [Docs home](../../README.md)  ·  [Hardening →](../security/hardening.md)
 

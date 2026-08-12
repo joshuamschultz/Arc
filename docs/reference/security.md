@@ -607,30 +607,54 @@ and round-trip the rest of the file (comments, key order) via tomlkit.
 
 The agent discovers *which* capabilities are gated; the operator *approves*
 them. This split is the layering (see §6): `arcagent.capabilities.inventory`
-lists gated items, `arctrust.approve` / `arctrust.disapprove` mutate the store.
+lists gated items, and `arcagent.sign_capability` /
+`arcagent.revoke_capability` (SPEC-066 COMP-010) mutate the trust, driving
+`arctrust`'s `approve` / `disapprove` / `pin_key` / `unpin_key` primitives.
 
 **CLI** (`arc trust`, in `arccli.commands.trust`):
 
 ```
 arc trust list [--agent <id>] [--all]        # show gated (non-loaded) capabilities
-arc trust approve <name> [--agent <id>]      # pin the current source hash
-arc trust disapprove <name> [--agent <id>]   # remove a pin (drift / revoke)
+arc trust approve <name> [--agent <id>]      # sign, pin the key, pin the hash
+arc trust disapprove <name> [--agent <id>]   # the exact inverse (drift / revoke)
 ```
 
-`approve` reads the gated item's current source, calls `arctrust.approve` with
-the loader's pin name (`pin_name_for` — a tool's file stem, a skill's folder
-name), records the approver as the on-box operator DID (`~/.arc/operator`), then
-re-scans and reports the post-approval verdict. It even warns you if you approve
-at personal tier, where pins aren't consulted at load:
+`approve` is **one action with three effects**, because passing the load gate
+needs all three and any one alone leaves the capability gated: a detached
+`.arcsig` signature over the artifact bytes (clears the signature floor), the
+signer's verify key pinned into `[security.validators] trusted_keys` (makes that
+signature verifiable), and the source-hash pin under
+`[[security.validators.approved]]` (records the operator's approval of these
+exact bytes). A hash pin on its own never reaches the enterprise/federal
+signature floor, which is why approval is signing.
+
+The signer is always the on-box deployment operator key (`~/.arc/operator`);
+there is no flag to supply an identity. The pin name is the loader's
+(`pin_name_for` — a tool's file stem, a skill's folder name). After signing, the
+command re-scans and reports the post-approval verdict:
 
 ```
-Approved greet on acme-analyst — status now: loaded (approver did:arc:acme:operator/1a2b…).
+Approved greet on acme-analyst — signed, key pinned, hash pinned; status now: loaded (approver did:arc:acme:operator/1a2b…).
 ```
+
+`disapprove` removes all three. The verify key is unpinned only once no other
+artifact under that agent root is still signed by it, so revoking one capability
+never silently gates every other one the same operator signed.
+
+**Custody limit:** capability signing needs the operator seed in-process to
+derive the verify key it pins. Under `custody = "vault_transit"` (the
+enterprise default, forced at federal) the seed never enters the process, so
+both surfaces refuse and sign nothing rather than reach for another key.
 
 **arcui** (`arcui.routes.trust`) is the same operation over HTTP —
-`GET /api/trust/gated`, `POST /api/trust/approve`, `POST /api/trust/disapprove`.
-Mutations are gated on the `operator` role, record the same operator DID as
-approver, and audit every mutation.
+`GET /api/trust/gated`, `GET /api/trust/source`, `POST /api/trust/approve`,
+`POST /api/trust/disapprove` — calling the same `arcagent.sign_capability`
+seam. Mutations are gated on the `operator` role, record the same operator DID
+as approver, and audit every mutation. The approve control is unavailable until
+the artifact source has been displayed (REQ-322).
+
+Operator procedure, including how to read each denial verdict:
+[Signing a Gated Capability](../runbooks/signing-capabilities.md).
 
 ---
 

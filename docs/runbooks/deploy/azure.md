@@ -1,6 +1,6 @@
 # Azure Deployment
 
-> **Runbooks**  ·  Operate  ·  page 4 of 17  
+> **Runbooks**  ·  Operate  ·  page 4 of 18  
 > **For** Operators running Arc on an Azure VM  
 > [← Docker](docker.md)  ·  [Docs home](../../README.md)  ·  [Firecracker →](firecracker.md)
 

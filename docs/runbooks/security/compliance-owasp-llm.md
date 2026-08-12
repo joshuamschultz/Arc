@@ -1,6 +1,6 @@
 # OWASP Top 10 for LLM Applications — control mapping
 
-> **Runbooks**  ·  Operate  ·  page 16 of 17  
+> **Runbooks**  ·  Operate  ·  page 17 of 18  
 > **For** Operators deploying and running Arc  
 > [← NIST 800-53 mapping](compliance-nist-800-53.md)  ·  [Docs home](../../README.md)  ·  [OWASP Agentic mapping →](compliance-owasp-agentic.md)
 

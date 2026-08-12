@@ -111,7 +111,7 @@ A few self-hosted agent projects get mentioned in the same breath as Arc. They'r
 | **Authorization** | ✅ Deny-by-default 5-layer policy, parameter-level | Container mount isolation | App-level | Gateway = trust boundary (config-driven) |
 | **Audit trail** | ✅ Dual, hash-chained (tamper-evident) | App logs | App logs | App logs |
 | **PII redaction** | ✅ Bidirectional at the trust boundary | ❌ | ❌ | ❌ |
-| **Supply-chain integrity** | ✅ Signed skills (Sigstore + Rekor), signed agent-authored capabilities (SPEC-033), AST scan, no SDKs | Container sandbox | — | `THIRD_PARTY_NOTICES`, hardening guide |
+| **Supply-chain integrity** | ✅ Signed skills (Sigstore + Rekor); operator-signed agent-authored capabilities: `arc trust approve` writes a detached Ed25519 signature, pins the signer's verify key, and pins the source hash, so nothing self-executing loads until a human signs it; AST scan; no vendor SDKs | Container sandbox | — | `THIRD_PARTY_NOTICES`, hardening guide |
 | **Code-exec sandbox** | Tier-routed: Firecracker microVM (federal) → Docker container (enterprise/personal default) → stripped local subprocess (personal, explicit opt-in) | Linux container | Docker | Docker + loopback-by-default |
 | **Air-gapped / on-prem** | ✅ Ollama · vLLM · TGI, no API key | ❌ needs Anthropic API | Partial (local models) | Partial (needs model API) |
 | **Compliance mapping** | ✅ NIST 800-53 · FedRAMP · CMMC · OWASP LLM/Agentic | ❌ | ❌ | ❌ |
@@ -782,7 +782,9 @@ The four defenses gate the **untrusted scan root only** — `<workspace>/.capabi
 3. **Restricted builtins** — execute with a scrubbed `__builtins__` dict (36 safe names). `__import__`, `eval`, `exec`, `compile`, `open` are deliberately **not** present.
 4. **Egress proxy** — network only via `ToolContext.http`, which enforces a per-tool origin allowlist (scheme + host + port). Deny-by-default. Every request audit-logged.
 
-Tier gates sit on top: **Federal** refuses agent-authored capabilities entirely. **Enterprise** allows them only after a human records approval via `arc trust approve` (persisted under `[security.validators.approved]`). **Personal** allows them with `[security.validators] auto_run_agent_code = true`.
+Tier gates sit on top, and approval is one operator action with three effects. `arc trust approve <name>` (or arcui's operator-only `POST /api/trust/approve`, the same code path) writes a detached `.arcsig` signature over the artifact bytes, pins the signer's verify key under `[security.validators] trusted_keys`, and pins the source hash under `[[security.validators.approved]]`. All three are needed: the signature clears the enterprise/federal signature floor, the pinned key makes it verifiable, and the hash pin is where a human authorizes these exact bytes.
+
+**Federal** and **Enterprise** both require an operator approval; federal additionally makes a valid signature the floor, so unsigned code is denied before the approval gate is even consulted (federal is *signed AND approved*, strictly stronger). **Personal** loads self-signed agent code, or unsigned code with `[security.validators] auto_run_agent_code = true`. Editing an approved file invalidates both the signature and the hash pin, so drift re-gates the capability. Full procedure: [Signing a Gated Capability](docs/runbooks/signing-capabilities.md).
 
 ### Sandboxed Code Execution (SPEC-036)
 

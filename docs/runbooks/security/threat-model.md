@@ -1,8 +1,8 @@
 # Threat Model — ArcRun
 
-> **Runbooks**  ·  Operate  ·  page 13 of 17  
+> **Runbooks**  ·  Operate  ·  page 14 of 18  
 > **For** Operators deploying and running Arc  
-> [← Hardening](hardening.md)  ·  [Docs home](../../README.md)  ·  [Adversarial tests →](adversarial-tests.md)
+> [← Signing capabilities](../signing-capabilities.md)  ·  [Docs home](../../README.md)  ·  [Adversarial tests →](adversarial-tests.md)
 
 ```mermaid
 flowchart TB

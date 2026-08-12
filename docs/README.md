@@ -112,6 +112,7 @@ Look things up here.
 
 **Security**
 [Hardening](runbooks/security/hardening.md) ·
+[Signing capabilities](runbooks/signing-capabilities.md) ·
 [Threat model](runbooks/security/threat-model.md) ·
 [Adversarial tests](runbooks/security/adversarial-tests.md)
 

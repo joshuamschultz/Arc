@@ -145,6 +145,7 @@ nav:
           - Policy and proactive engine: runbooks/operate/policy-and-proactive.md
       - Security:
           - Hardening: runbooks/security/hardening.md
+          - Signing capabilities: runbooks/signing-capabilities.md
           - Threat model: runbooks/security/threat-model.md
           - Adversarial tests: runbooks/security/adversarial-tests.md
           - NIST 800-53 mapping: runbooks/security/compliance-nist-800-53.md

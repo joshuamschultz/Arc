@@ -1,8 +1,8 @@
 # ArcAgent Security Hardening Runbook
 
-> **Runbooks**  ·  Operate  ·  page 12 of 17  
+> **Runbooks**  ·  Operate  ·  page 12 of 18  
 > **For** Operators deploying and running Arc  
-> [← Policy and proactive engine](../operate/policy-and-proactive.md)  ·  [Docs home](../../README.md)  ·  [Threat model →](threat-model.md)
+> [← Policy and proactive engine](../operate/policy-and-proactive.md)  ·  [Docs home](../../README.md)  ·  [Signing capabilities →](../signing-capabilities.md)
 
 ```mermaid
 flowchart LR
