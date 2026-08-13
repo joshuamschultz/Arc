@@ -1,6 +1,17 @@
 import { useId, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { PackageCheck, Wrench, Sparkles, Check, X, FileCode } from 'lucide-react'
+import {
+  PackageCheck,
+  Wrench,
+  Sparkles,
+  Check,
+  X,
+  FileCode,
+  Eye,
+  EyeOff,
+  ShieldCheck,
+  ShieldOff,
+} from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
 import { OperatorModeToggle } from '@/components/operator-mode-toggle'
 import { Button } from '@/components/ui/button'
@@ -23,11 +34,14 @@ const STATUS_LABEL: Record<GatedCapability['status'], string> = {
   unsigned: 'unsigned',
   invalid: 'invalid signature',
   error: 'error',
+  loaded: 'loaded',
 }
 
 // Severity coloring: an active denial or a verification error is red; a first
 // sighting or a merely-unsigned artifact is amber (needs a look, not alarm); an
-// invalid signature is neutral — the artifact is simply not trusted as-is.
+// invalid signature is neutral — the artifact is simply not trusted as-is. A
+// loaded capability is green: nothing is wrong with it, it is only here because
+// the operator asked to see what they could re-sign.
 const STATUS_CLASS: Record<GatedCapability['status'], string> = {
   deny: 'border-destructive/30 bg-destructive/10 text-destructive',
   error: 'border-destructive/30 bg-destructive/10 text-destructive',
@@ -36,12 +50,14 @@ const STATUS_CLASS: Record<GatedCapability['status'], string> = {
   unsigned:
     'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400',
   invalid: 'border-border bg-muted/40 text-muted-foreground',
+  loaded:
+    'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
 }
 
 // Said once so the tooltip, the accessible description, and the visible hint all
 // carry the same sentence: a greyed-out button that explains nothing is the
 // rubber-stamp risk wearing a different coat.
-const APPROVE_LOCKED = 'Review the source before approving.'
+const APPROVE_LOCKED = 'Review the source before signing.'
 
 /** The artifact text itself — rendered as text, never as markup.
  *
@@ -96,7 +112,17 @@ function GatedCard({ c }: { c: GatedCapability }) {
   // mid-review re-locks the button on the next 4s poll instead of letting a
   // stale reading stand in for a fresh one. Disapprove is never gated:
   // withdrawing trust is always safe.
+  //
+  // The gate applies unchanged to re-signing. If anything it matters MORE
+  // there: the operator already trusts this capability, which is exactly the
+  // state of mind that rubber-stamps a file someone swapped underneath it.
   const reviewed = open && source.data?.hash === c.hash
+
+  // A row that already carries a signature is a re-sign, and re-signing has a
+  // different consequence from a first approval — it moves trust off whoever
+  // signed it before, usually the agent itself. Saying so on the button is the
+  // cheapest place to put that.
+  const signed = c.signer_did !== ''
 
   const resolve = async (decision: 'approve' | 'disapprove') => {
     setBusy(decision)
@@ -138,6 +164,28 @@ function GatedCard({ c }: { c: GatedCapability }) {
             <span className="font-mono text-foreground/80">{shortId(c.hash)}</span>
             <span className="truncate font-mono text-muted-foreground/70">{c.path}</span>
           </div>
+
+          {/* Who signed the bytes on disk. `status` cannot answer this: a
+              capability the AGENT signed itself loads exactly like one the
+              operator signed, and telling those apart is the whole reason an
+              operator would re-sign. Full DID on hover — the row shows the
+              prefix so a wall of them stays scannable. */}
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-1.5 text-xs">
+            {signed ? (
+              <>
+                <ShieldCheck className="size-3.5 text-muted-foreground" />
+                <span className="text-muted-foreground">signed by</span>
+                <span className="font-mono text-foreground/80" title={c.signer_did}>
+                  {shortId(c.signer_did, 28)}
+                </span>
+              </>
+            ) : (
+              <>
+                <ShieldOff className="size-3.5 text-muted-foreground" />
+                <span className="text-muted-foreground">unsigned</span>
+              </>
+            )}
+          </div>
           {c.detail && <p className="mt-2 text-xs text-muted-foreground">{c.detail}</p>}
 
           {/* Any authed role may read the artifact — a viewer who cannot read
@@ -175,7 +223,7 @@ function GatedCard({ c }: { c: GatedCapability }) {
                   title={reviewed ? undefined : APPROVE_LOCKED}
                   aria-describedby={reviewed ? undefined : hintId}
                 >
-                  <Check className="size-3.5" /> Approve
+                  <Check className="size-3.5" /> {signed ? 'Re-sign' : 'Approve'}
                 </Button>
                 <Button
                   variant="ghost"
@@ -217,15 +265,56 @@ function groupByAgent(gated: GatedCapability[]): [string, GatedCapability[]][] {
   return [...groups.entries()]
 }
 
+/** Switches the page between the attention queue and the full inventory.
+ *
+ * Deliberately a filter on one page rather than a second page: an operator
+ * hunting for something to re-sign is doing the same job on the same rows, and
+ * splitting it in two would mean the "sign this" control lived in two places.
+ */
+function IncludeLoadedToggle({
+  on,
+  onChange,
+}: {
+  on: boolean
+  onChange: (next: boolean) => void
+}) {
+  return (
+    <Button
+      type="button"
+      variant={on ? 'default' : 'outline'}
+      size="sm"
+      aria-pressed={on}
+      onClick={() => onChange(!on)}
+      title="Show capabilities that already load, so a hand-edited or agent-signed one can be signed with the operator key."
+    >
+      {on ? <Eye className="size-3.5" /> : <EyeOff className="size-3.5" />}
+      {on ? 'Showing all capabilities' : 'Showing gated only'}
+    </Button>
+  )
+}
+
 export function GatedCapabilitiesPage() {
-  const gated = useGatedCapabilities()
+  // Lowest sufficient rung: a view filter nothing outside this page reads. It
+  // is not persisted on purpose — the gated queue is what an operator should
+  // land on, so the wider view has to be chosen each visit.
+  const [includeLoaded, setIncludeLoaded] = useState(false)
+  const gated = useGatedCapabilities(includeLoaded)
 
   return (
     <div className="flex h-full flex-col">
       <PageHeader
         title="Gated"
-        description="Tools and skills the loader quarantined pending operator trust."
-        actions={<OperatorModeToggle />}
+        description={
+          includeLoaded
+            ? 'Every tool and skill, gated or loaded — sign or re-sign any of them with the operator key.'
+            : 'Tools and skills the loader quarantined pending operator trust.'
+        }
+        actions={
+          <>
+            <IncludeLoadedToggle on={includeLoaded} onChange={setIncludeLoaded} />
+            <OperatorModeToggle />
+          </>
+        }
       />
       <div className="flex-1 overflow-auto p-6">
         <QueryState
@@ -235,7 +324,7 @@ export function GatedCapabilitiesPage() {
             <EmptyState
               icon={<PackageCheck className="size-7" />}
               title="No gated capabilities"
-              description="Tools and skills held back by signing or policy checks will appear here."
+              description="Tools and skills held back by signing or policy checks will appear here. Switch to all capabilities to sign one that already loads."
             />
           }
         >

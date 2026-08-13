@@ -1,8 +1,8 @@
 # Deployment and Operations
 
-> **Runbooks**  ·  Operate  ·  page 1 of 19  
+> **Runbooks**  ·  Operate  ·  page 1 of 20  
 > **For** Operators deploying and running Arc  
-> [Docs home](../../README.md)  ·  [Local →](local.md)
+> [Docs home](../../README.md)  ·  [Bring-up →](up.md)
 
 ---
 

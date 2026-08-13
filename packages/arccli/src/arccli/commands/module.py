@@ -266,6 +266,12 @@ def _trusted_issuers(bundle_root: Path) -> dict[str, bytes]:
     the fail-closed direction — but it is reported so an operator learns that a
     permissions or syntax problem, not a policy decision, is what turned the
     bundle away.
+
+    "No trust file" and "no entry for this issuer" are both policy, not fault:
+    a deployment that has never named a third-party issuer has no file, and a
+    ``--from-source`` bundle's key comes from the caller's ephemeral map rather
+    than from here. Reporting those as "trust store unusable" put a scary error
+    above every successful first install.
     """
     from arctrust.trust_store import TrustStoreError, load_issuer_pubkey
 
@@ -279,7 +285,7 @@ def _trusted_issuers(bundle_root: Path) -> dict[str, bytes]:
         try:
             trusted[claimed] = load_issuer_pubkey(claimed)
         except TrustStoreError as exc:
-            if exc.code != "TRUST_STORE_DID_UNKNOWN":
+            if exc.code not in ("TRUST_STORE_DID_UNKNOWN", "TRUST_STORE_FILE_MISSING"):
                 _err(f"arc module: trust store unusable for issuer {claimed!r} — {exc}")
     return trusted
 
@@ -568,7 +574,6 @@ def _install(args: argparse.Namespace) -> None:
     agent = _resolve_agent(getattr(args, "agent", None))
     tier = _verification_tier(agent.root)
     permissive = bool(getattr(args, "all", False))
-    modules_root = _module_root()
 
     with contextlib.ExitStack() as scratch:
         bundles, ephemeral_issuers = _requested_bundles(args, scratch)
@@ -583,21 +588,140 @@ def _install(args: argparse.Namespace) -> None:
             )
             # Nothing above this line wrote a byte: a refusal in a batch leaves
             # the deployment exactly as it was (REQ-326/327).
-            for bundle in verified:
-                module = bundle.manifest.module
-                installed = arcbundle.materialize(bundle, modules_root, sink=sink, actor_did=actor)
-                arcbundle.copy_capabilities(installed, agent.root, module=module)
-                enable_module(agent.config_path, module)
-                _out(
-                    f"Installed {module} {bundle.manifest.version} "
-                    f"(issuer {bundle.manifest.issuer}, tier {tier}) — "
-                    f"runtime {installed}, enabled for {agent.agent_id}."
-                )
+            for line in _apply_verified(
+                verified,
+                agent_root=agent.root,
+                agent_id=agent.agent_id,
+                tier=tier,
+                sink=sink,
+                actor=actor,
+            ):
+                _out(line)
 
     for name, reason in skipped:
         _out(f"Skipped {name}: {reason}")
     if not verified:
         _out("Nothing installed.")
+
+
+def _apply_verified(
+    verified: Sequence[arcbundle.VerifiedBundle],
+    *,
+    agent_root: Path,
+    agent_id: str,
+    tier: str,
+    sink: AuditSink,
+    actor: str,
+) -> list[str]:
+    """Materialize, copy, trust, and enable each already-verified bundle for one agent.
+
+    The write half of an install, kept separate from the argv half so a
+    bring-up (``arc up``) drives the identical sequence rather than a second
+    version of it that could drift into materializing without enabling.
+
+    Trusting is part of installing, not a follow-up the operator has to know
+    about: the capability loader verifies each module capability against the
+    agent's pinned key set, so a module whose issuer nobody pinned would
+    materialize, enable, and then be refused at load. The key pinned is the one
+    the manifest signature already verified under — never a name looked up again.
+    """
+    modules_root = _module_root()
+    lines: list[str] = []
+    for bundle in verified:
+        module = bundle.manifest.module
+        installed = arcbundle.materialize(bundle, modules_root, sink=sink, actor_did=actor)
+        arcbundle.copy_capabilities(installed, agent_root, module=module)
+        config_path = agent_root / "arcagent.toml"
+        trusted = arcagent.trust_bundled_capabilities(
+            installed,
+            config_path=config_path,
+            issuer_key=bundle.issuer_key,
+            issuer_did=bundle.manifest.issuer,
+            audit_sink=sink,
+        )
+        enable_module(config_path, module)
+        lines.append(
+            f"Installed {module} {bundle.manifest.version} "
+            f"(issuer {bundle.manifest.issuer}, tier {tier}) — "
+            f"runtime {installed}, enabled for {agent_id}, "
+            f"{len(trusted)} capability artifact(s) trusted to that issuer's key."
+        )
+    return lines
+
+
+class ModuleInstallError(RuntimeError):
+    """One module could not be installed. The message is operator-facing.
+
+    Raised instead of exiting so a caller installing across a whole fleet
+    reports every agent rather than dying on the first refusal.
+    """
+
+
+def install_module_for_agent(module: str, *, agent_root: Path, agent_id: str) -> str:
+    """Install one module for one agent, through the same path ``arc module install`` runs.
+
+    The source is whatever the deployment actually permits, never a flag:
+
+    * a **staged bundle** when one exists in the deployment bundle store — the
+      only path an enterprise or federal box has, and the right one everywhere;
+    * otherwise the **development inner loop** (:func:`_build_dev_bundle`),
+      which ``arcbundle.verifier`` accepts at personal tier alone.
+
+    Above personal the second path is refused *here* as well, with the remedy
+    spelled out, so the operator reads "stage a signed bundle" rather than a
+    signature error. That is a message, not the gate: the gate is the verifier,
+    which refuses ``DEV_ISSUER`` above personal regardless of how it was called.
+
+    Returns the one-line install report; raises :class:`ModuleInstallError`
+    when the module cannot be installed on this deployment.
+    """
+    tier = _verification_tier(agent_root)
+    staged = _staged_bundles()
+    bundles: list[Path]
+    ephemeral_issuers: Mapping[str, bytes]
+
+    with contextlib.ExitStack() as scratch:
+        if module in staged:
+            bundles, ephemeral_issuers = [staged[module]], {}
+        elif tier != "personal":
+            raise ModuleInstallError(
+                f"no staged bundle for {module!r} in {_bundle_store()}, and a {tier} "
+                f"deployment does not accept a development signature. Build one on the "
+                f"low side with `arc module bundle {module}` and stage it here with "
+                f"`arc module install --from <bundle>`."
+            )
+        elif module not in _catalog_modules():
+            raise ModuleInstallError(
+                f"no staged bundle for {module!r} in {_bundle_store()} and no module "
+                f"source to build one from. Stage a bundle with `arc module bundle "
+                f"{module}` on a checkout, or point {_SOURCE_ENV} at one."
+            )
+        else:
+            bundles, ephemeral_issuers = _build_dev_bundle(module, scratch)
+
+        with _audit_chain() as (sink, actor):
+            try:
+                verified = [
+                    arcbundle.verify_bundle(
+                        bundle_root,
+                        tier=tier,
+                        trusted_issuers={**ephemeral_issuers, **_trusted_issuers(bundle_root)},
+                        sink=sink,
+                        actor_did=actor,
+                    )
+                    for bundle_root in bundles
+                ]
+            except arcbundle.BundleError as exc:
+                raise ModuleInstallError(str(exc)) from exc
+            lines = _apply_verified(
+                verified,
+                agent_root=agent_root,
+                agent_id=agent_id,
+                tier=tier,
+                sink=sink,
+                actor=actor,
+            )
+    return lines[0] if lines else f"Installed nothing for {module}."
 
 
 def _verify_all(

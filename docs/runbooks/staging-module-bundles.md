@@ -1,6 +1,6 @@
 # Staging Module Bundles Across an Air Gap
 
-> **Runbooks**  ·  Operate  ·  page 14 of 19  
+> **Runbooks**  ·  Operate  ·  page 15 of 20  
 > **For** Operators deploying and running Arc  
 > [← Signing capabilities](signing-capabilities.md)  ·  [Docs home](../README.md)  ·  [Threat model →](security/threat-model.md)
 

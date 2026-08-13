@@ -11,6 +11,7 @@ is refused and nothing is written; an operator flips a gated capability to
 from __future__ import annotations
 
 import json
+import tomllib
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -128,6 +129,12 @@ def _pinned_keys(team_root: Path, name: str) -> tuple[str, ...]:
     return load_validators(team_root / name / "arcagent.toml").trusted_keys
 
 
+def _agent_did(team_root: Path, name: str) -> str:
+    """Agent ``name``'s own DID — the signer of a self-signed artifact."""
+    config = (team_root / name / "arcagent.toml").read_text(encoding="utf-8")
+    return str(tomllib.loads(config)["identity"]["did"])
+
+
 _VIEWER = {"Authorization": "Bearer viewer"}
 _OPERATOR = {"Authorization": "Bearer operator"}
 
@@ -154,7 +161,12 @@ def test_get_gated_lists_new_sighting(tmp_path: Path) -> None:
         "path",
         "hash",
         "detail",
+        # arcui's own enrichment: who signed the artifact on disk right now.
+        # This agent's skill is self-signed with its own DID, which is exactly
+        # the case ``status`` cannot distinguish from an operator signature.
+        "signer_did",
     }
+    assert item["signer_did"].startswith("did:arc:")
 
 
 def test_approve_requires_operator_and_signs_nothing(tmp_path: Path) -> None:
@@ -353,6 +365,169 @@ def test_operator_approve_then_disapprove_round_trip(tmp_path: Path) -> None:
     assert "reporter" in {it["name"] for it in gated_again}
 
 
+# ── Reaching capabilities that already load (pre-sign / re-sign) ─────────────
+#
+# The scenario every test below is built on: personal tier, artifact signed with
+# the AGENT's own DID. The loader is happy — status ``loaded`` — so before
+# SPEC-066's arcui half none of it was reachable from the dashboard: the gated
+# listing filtered it out and approve resolved its target from that same
+# filtered listing. An operator who hand-edited that skill, or who wanted the
+# OPERATOR key on it before promoting the agent to enterprise, had no route.
+
+
+def test_gated_listing_hides_loaded_capabilities_by_default(tmp_path: Path) -> None:
+    """The default view stays the attention queue, not an inventory dump."""
+    team_root = tmp_path / "team"
+    team_root.mkdir()
+    _build_agent(team_root, "olivia", tier="personal", sign=True)
+    client = _make_client(team_root)
+
+    gated = client.get("/api/trust/gated", headers=_VIEWER).json()["gated"]
+    assert gated == []
+
+
+def test_include_loaded_reveals_the_loaded_capability_and_its_signer(tmp_path: Path) -> None:
+    """Opt in and the loaded rows appear, each naming who actually signed it.
+
+    ``status`` cannot answer "who signed this": this artifact is ``loaded`` and
+    signed by the AGENT, which is precisely the case an operator must be able to
+    tell apart from one they signed themselves.
+    """
+    team_root = tmp_path / "team"
+    team_root.mkdir()
+    _build_agent(team_root, "olivia", tier="personal", sign=True)
+    client = _make_client(team_root)
+
+    gated = client.get("/api/trust/gated?include_loaded=1", headers=_VIEWER).json()["gated"]
+    item = next(it for it in gated if it["name"] == "reporter")
+    assert item["status"] == "loaded"
+    assert item["signer_did"] == _agent_did(team_root, "olivia")
+    # The builtin tools ride along too — which is exactly why this is opt-in.
+    assert "write" in {it["name"] for it in gated}
+
+
+def test_include_loaded_is_off_unless_the_flag_is_truthy(tmp_path: Path) -> None:
+    """A stray or negative value must not silently widen the default view."""
+    team_root = tmp_path / "team"
+    team_root.mkdir()
+    _build_agent(team_root, "olivia", tier="personal", sign=True)
+    client = _make_client(team_root)
+
+    for query in ("", "?include_loaded=0", "?include_loaded=false", "?include_loaded=maybe"):
+        assert client.get(f"/api/trust/gated{query}", headers=_VIEWER).json()["gated"] == []
+
+
+def test_source_is_readable_for_a_loaded_capability(tmp_path: Path) -> None:
+    """Without this the re-sign gate could never unlock.
+
+    The approve control unlocks only while the rendered source hash equals the
+    row hash. A loaded capability whose source 404'd would be permanently
+    locked out of re-signing — and an operator with a real need would go find
+    an ungated way to do it.
+    """
+    team_root = tmp_path / "team"
+    team_root.mkdir()
+    _build_agent(team_root, "olivia", tier="personal", sign=True)
+    client = _make_client(team_root)
+
+    row = next(
+        it
+        for it in client.get("/api/trust/gated?include_loaded=1", headers=_VIEWER).json()["gated"]
+        if it["name"] == "reporter"
+    )
+    resp = client.get(
+        "/api/trust/source", params={"agent_id": "olivia", "name": "reporter"}, headers=_VIEWER
+    )
+    assert resp.status_code == 200
+    assert resp.json()["hash"] == row["hash"]
+    assert "name: reporter" in resp.json()["source"]
+
+
+def test_operator_can_sign_a_capability_that_already_loads(tmp_path: Path) -> None:
+    """The gap SPEC-066's arcui half closes: re-signing an agent-signed artifact.
+
+    Nothing about this capability is broken — it loads. The operator is taking
+    custody of it, so the assertion that matters is that the sidecar's signer
+    FLIPS from the agent's DID to the operator's, and the artifact now verifies
+    under the operator key.
+    """
+    _bootstrap_operator_key(tmp_path)
+    team_root = tmp_path / "team"
+    team_root.mkdir()
+    _build_agent(team_root, "olivia", tier="personal", sign=True)
+    client = _make_client(team_root)
+    agent_did = _agent_did(team_root, "olivia")
+
+    resp = client.post(
+        "/api/trust/approve", headers=_OPERATOR, json={"agent_id": "olivia", "name": "reporter"}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "loaded"
+    assert body["resigned"] is True
+    assert body["signer_did"] != agent_did
+
+    skill_md = _skill_md(team_root, "olivia")
+    operator_public = OperatorKey.load(default_operator_key_path()).public_key
+    assert artifact_signing.verify_file(
+        skill_md, skill_md.read_bytes(), trusted_public_key=operator_public
+    )
+    assert operator_public.hex() in _pinned_keys(team_root, "olivia")
+    assert _audit(client).outcomes_for("trust.approve") == ["applied"]
+
+
+def test_a_first_signature_is_reported_as_a_first_signature(tmp_path: Path) -> None:
+    """``resigned`` must distinguish the two, or the UI cannot warn about either."""
+    _bootstrap_operator_key(tmp_path)
+    team_root = tmp_path / "team"
+    team_root.mkdir()
+    _build_agent(team_root, "olivia", tier="enterprise", sign=False)
+    client = _make_client(team_root)
+
+    first = client.post(
+        "/api/trust/approve", headers=_OPERATOR, json={"agent_id": "olivia", "name": "reporter"}
+    )
+    assert first.json()["resigned"] is False
+
+    second = client.post(
+        "/api/trust/approve", headers=_OPERATOR, json={"agent_id": "olivia", "name": "reporter"}
+    )
+    assert second.json()["resigned"] is True
+
+
+def test_resigning_pins_the_edited_bytes_not_the_approved_ones(tmp_path: Path) -> None:
+    """A re-sign signs what is on disk NOW — the whole point after a hand edit.
+
+    The edit invalidates the old signature and the old pin, so the capability is
+    gated again. Re-signing must move BOTH forward: a route that re-wrote the
+    sidecar without re-pinning would leave it gated and look like a no-op.
+    """
+    _bootstrap_operator_key(tmp_path)
+    team_root = tmp_path / "team"
+    team_root.mkdir()
+    _build_agent(team_root, "olivia", tier="enterprise", sign=False)
+    client = _make_client(team_root)
+    client.post(
+        "/api/trust/approve", headers=_OPERATOR, json={"agent_id": "olivia", "name": "reporter"}
+    )
+
+    skill_md = _skill_md(team_root, "olivia")
+    skill_md.write_bytes(skill_md.read_bytes() + b"\n## Extra\n\nhand edited\n")
+    edited = client.get("/api/trust/gated", headers=_VIEWER).json()["gated"]
+    assert next(it for it in edited if it["name"] == "reporter")["status"] != "loaded"
+
+    resp = client.post(
+        "/api/trust/approve", headers=_OPERATOR, json={"agent_id": "olivia", "name": "reporter"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "loaded"
+    assert resp.json()["resigned"] is True
+    operator_public = OperatorKey.load(default_operator_key_path()).public_key
+    assert artifact_signing.verify_file(
+        skill_md, skill_md.read_bytes(), trusted_public_key=operator_public
+    )
+
+
 def test_approve_unknown_capability_is_404(tmp_path: Path) -> None:
     _bootstrap_operator_key(tmp_path)
     team_root = tmp_path / "team"
@@ -446,9 +621,7 @@ def test_source_requires_authentication(tmp_path: Path) -> None:
     _build_agent(team_root, "olivia", tier="enterprise", sign=False)
     client = _make_client(team_root)
 
-    resp = client.get(
-        "/api/trust/source", params={"agent_id": "olivia", "name": "reporter"}
-    )
+    resp = client.get("/api/trust/source", params={"agent_id": "olivia", "name": "reporter"})
     assert resp.status_code == 401
 
 

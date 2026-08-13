@@ -98,6 +98,7 @@ Look things up here.
 
 **Deploy**
 [Overview](runbooks/deploy/overview.md) ·
+[Bring-up (`arc up`)](runbooks/deploy/up.md) ·
 [Local](runbooks/deploy/local.md) ·
 [Docker](runbooks/deploy/docker.md) ·
 [Azure](runbooks/deploy/azure.md) ·

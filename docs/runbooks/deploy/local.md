@@ -1,8 +1,8 @@
 # Single-Node Deployment (embedded gateway)
 
-> **Runbooks**  ·  Operate  ·  page 2 of 19  
+> **Runbooks**  ·  Operate  ·  page 3 of 20  
 > **For** Operators deploying and running Arc  
-> [← Overview](overview.md)  ·  [Docs home](../../README.md)  ·  [Docker →](docker.md)
+> [← Bring-up](up.md)  ·  [Docs home](../../README.md)  ·  [Docker →](docker.md)
 
 ```mermaid
 flowchart LR

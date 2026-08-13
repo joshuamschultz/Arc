@@ -254,6 +254,35 @@ Manage arcteam entity registries, channels, and messaging.
 
 ---
 
+### `arc up` — Supervised bring-up
+
+One command that brings the whole stack up and proves it came up whole:
+preflight, module install, verify, then `arc ui start`. See
+[Bring-up runbook](../runbooks/deploy/up.md).
+
+| Command | Purpose | Example |
+|---|---|---|
+| `arc up` | Preflight → install missing modules → verify → start | `arc up` |
+| `arc up --check` | Validate only; start nothing; non-zero on any problem | `arc up --check` |
+| `arc up --no-install` | Report module state without installing anything | `arc up --no-install` |
+| `arc up --team-root <dir>` | Agent-discovery root; defaults to `./team` if it exists | `arc up --team-root ~/arc/team` |
+| `arc up --port <n>` / `--host <h>` | Dashboard bind; passed through to `arc ui start` | `arc up --port 9000` |
+| `arc up --gateway-config <path>` | Path to `gateway.toml`; passed through | `arc up --gateway-config ./gateway.toml` |
+| `arc up --no-browser` | Do not auto-open a browser tab on loopback start | `arc up --no-browser` |
+
+**Notes:**
+- Any preflight failure (`nats-server` off PATH, no operator key, empty team root,
+  unwritable data dir) stops the bring-up. None of them is fixed silently, and no
+  operator key is ever minted.
+- A module a config enables but the deployment has not materialized is installed
+  through the same path `arc module install` runs. Above personal tier a
+  development signature is refused — stage a signed bundle instead.
+- If anything an agent's config asks for is still missing, `arc up` exits non-zero
+  and **does not start the server**. "Started but degraded" is the failure this
+  command exists to prevent.
+
+---
+
 ### `arc ui` — Multi-agent dashboard
 
 Start and observe the ArcUI real-time dashboard.

@@ -157,6 +157,13 @@ def _module_handler(args: list[str]) -> None:
     module_handler(args)
 
 
+def _up_handler(args: list[str]) -> None:
+    """Dispatch wrapper."""
+    from arccli.commands.up import up_handler
+
+    up_handler(args)
+
+
 def _prompt_handler(args: list[str]) -> None:
     """Dispatch wrapper."""
     from arccli.commands.prompt import prompt_handler
@@ -627,6 +634,14 @@ COMMAND_REGISTRY: list[CommandDef] = [
         args_hint="<subcommand>",
         cli_only=True,
         handler=_module_handler,
+    ),
+    CommandDef(
+        name="up",
+        description="Bring up the whole stack — preflight, modules, verify, start",
+        category="Session",
+        args_hint="[--check] [--team-root <dir>]",
+        cli_only=True,
+        handler=_up_handler,
     ),
     CommandDef(
         name="prompt",

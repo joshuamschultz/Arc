@@ -118,10 +118,14 @@ export interface GatedCapability {
   agent_label: string
   name: string
   kind: 'tool' | 'skill'
-  status: 'deny' | 'new_sighting' | 'unsigned' | 'invalid' | 'error'
+  status: 'deny' | 'new_sighting' | 'unsigned' | 'invalid' | 'error' | 'loaded'
   path: string
   hash: string
   detail: string
+  /** DID of whoever signed the artifact on disk right now; '' when unsigned.
+   *  A loaded capability may be signed by the AGENT itself (SPEC-033), which
+   *  is what lets an operator spot one that has never been through them. */
+  signer_did: string
 }
 export interface GatedResponse {
   gated: GatedCapability[]
@@ -130,10 +134,20 @@ export interface GatedResponse {
 // Polls every 4s: a capability is gated the moment the loader denies, first-
 // sights, or fails to verify it, so newly quarantined tools/skills must surface
 // without a manual refresh — same cadence as approvals.
-export const useGatedCapabilities = () =>
+//
+// `includeLoaded` is part of the query key, not just the URL: the two views
+// are different server responses, so sharing one cache entry would show the
+// gated-only list for a beat after the toggle flips and let a mutation
+// invalidate the wrong one. Both entries still invalidate together on the
+// ['trust','gated'] prefix after an approve.
+export const useGatedCapabilities = (includeLoaded: boolean) =>
   useQuery<GatedResponse>({
-    queryKey: ['trust', 'gated'],
-    queryFn: ({ signal }) => apiGet<GatedResponse>('/api/trust/gated', signal),
+    queryKey: ['trust', 'gated', includeLoaded],
+    queryFn: ({ signal }) =>
+      apiGet<GatedResponse>(
+        includeLoaded ? '/api/trust/gated?include_loaded=1' : '/api/trust/gated',
+        signal,
+      ),
     refetchInterval: 4000,
   })
 

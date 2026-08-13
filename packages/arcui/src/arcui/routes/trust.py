@@ -2,10 +2,19 @@
 
 ``GET  /api/trust/gated``       — list gated (non-loaded) capabilities across the
                                   server's agents (any authed role).
-``GET  /api/trust/source``      — one gated capability's artifact text (any authed
+                                  ``?include_loaded=1`` adds the loaded ones.
+``GET  /api/trust/source``      — one capability's artifact text (any authed
                                   role) so it can be read before it is trusted.
-``POST /api/trust/approve``     — sign a gated capability (operator).
+``POST /api/trust/approve``     — sign a capability (operator).
 ``POST /api/trust/disapprove``  — withdraw that signature (operator).
+
+Signing is not only for what the loader currently refuses. An operator who
+hand-edits a skill that loads fine at personal tier, pre-signs an artifact
+before promoting it to a stricter deployment, or re-signs one they just
+modified is doing the same operator action on a capability whose status is
+``loaded``. So the mutations resolve their target from the FULL inventory while
+the default listing stays gated-only — widening the default would bury "what
+needs my attention" under everything that is already fine.
 
 This module is a pure view: it DISCOVERS gated capabilities via
 ``arcagent.capabilities.inventory`` (arcagent owns loading) and MUTATES trust
@@ -63,6 +72,27 @@ _OPERATOR_KEY_REF = "operator"
 
 def _error(message: str, status: int) -> JSONResponse:
     return JSONResponse(ErrorResponse(error=message).model_dump(mode="json"), status_code=status)
+
+
+def _flag(raw: str | None) -> bool:
+    """Read an opt-in query flag. Anything but a truthy token is off."""
+    return raw is not None and raw.lower() in {"1", "true", "yes", "on"}
+
+
+def _row(item: Any) -> dict[str, Any]:
+    """One inventory item as a wire row, plus WHO signed the artifact on disk.
+
+    ``status`` alone cannot answer "is this signed, and by whom" — at personal
+    tier an unsigned capability loads, and an agent may sign its own artifact
+    with its own DID (SPEC-033) which loads too. Reading the sidecar is what
+    lets an operator tell an operator-signed capability from a self-signed one
+    before deciding to re-sign it. ``signer_did`` is empty when unsigned; only
+    the signer's DID is surfaced — never the public key, never key material.
+    """
+    row: dict[str, Any] = item.model_dump(mode="json")
+    manifest = arcagent.load_signature(Path(item.path))
+    row["signer_did"] = manifest.signer_did if manifest is not None else ""
+    return row
 
 
 def _is_operator(request: Request) -> bool:
@@ -150,7 +180,16 @@ def _operator_did(signer: Signer) -> str:
 
 
 async def list_gated(request: Request) -> JSONResponse:
-    """GET /api/trust/gated — gated capabilities across the server's agents."""
+    """GET /api/trust/gated[?include_loaded=1] — capabilities across the server's agents.
+
+    Gated-only by DEFAULT. This list is the operator's "what needs my attention"
+    queue, and on a healthy fleet the loaded capabilities outnumber the gated
+    ones by an order of magnitude — folding them in unconditionally would turn a
+    short actionable queue into a full inventory dump. ``include_loaded=1`` is
+    the explicit ask from a surface that offers re-signing, so the operator
+    chooses the noise rather than inheriting it.
+    """
+    include_loaded = _flag(request.query_params.get("include_loaded"))
     provider = getattr(request.app.state, "roster_provider", None)
     entries = provider() if provider is not None else []
     gated: list[dict[str, Any]] = []
@@ -158,21 +197,30 @@ async def list_gated(request: Request) -> JSONResponse:
         agent_root = Path(entry.workspace_path)
         try:
             items = await arcagent.list_gated(
-                agent_root, agent_id=entry.agent_id, agent_label=entry.display_name
+                agent_root,
+                agent_id=entry.agent_id,
+                agent_label=entry.display_name,
+                include_loaded=include_loaded,
             )
         except Exception:  # reason: fleet resilience — one bad agent never sinks the list
             logger.warning("trust inventory failed for %s; contributing none", entry.agent_id)
             continue
-        gated.extend(item.model_dump(mode="json") for item in items)
+        gated.extend(_row(item) for item in items)
     return JSONResponse({"gated": gated})
 
 
 async def read_source(request: Request) -> JSONResponse:
-    """GET /api/trust/source?agent_id&name — the artifact text behind a gated row.
+    """GET /api/trust/source?agent_id&name — the artifact text behind a row.
 
     Any authed role may read: reviewing a capability is what the approve gate
     demands first, and a viewer who cannot read it cannot review it. Only the
     operator may act on what they read.
+
+    Resolves against the FULL inventory, loaded included. The approve gate
+    unlocks only when this hash matches the row's hash, so a loaded capability
+    whose source could not be fetched here could never be re-signed — the gate
+    would be permanently locked and the operator would be pushed toward some
+    ungated path to do the same thing.
 
     Fetched per row on demand rather than folded into ``/api/trust/gated``: that
     list polls every few seconds, so bundling artifact text would re-ship every
@@ -195,7 +243,9 @@ async def read_source(request: Request) -> JSONResponse:
         return _error("agent_not_found", 404)
     agent_root, label = resolved
     try:
-        gated = await arcagent.list_gated(agent_root, agent_id=agent_id, agent_label=label)
+        gated = await arcagent.list_gated(
+            agent_root, agent_id=agent_id, agent_label=label, include_loaded=True
+        )
     except Exception:  # reason: an artifact bad enough to break the scan is unreviewable
         logger.warning("trust inventory failed for %s; source unavailable", agent_id)
         return _error(f"cannot read capability source for {name!r}", 404)
@@ -236,7 +286,12 @@ async def _read_body(request: Request) -> tuple[str, str] | JSONResponse:
 
 
 async def approve(request: Request) -> JSONResponse:
-    """POST /api/trust/approve — sign a gated capability (operator)."""
+    """POST /api/trust/approve — sign a capability (operator).
+
+    Resolves the target from the full inventory, so an already-loaded capability
+    can be signed. Signing one that is already signed re-signs its CURRENT bytes
+    and re-pins the hash — the re-sign flow after a hand edit, never a no-op.
+    """
     parsed = await _read_body(request)
     if isinstance(parsed, JSONResponse):
         return parsed
@@ -275,11 +330,13 @@ async def approve(request: Request) -> JSONResponse:
         return _error(f"operator_key_unavailable: {type(exc).__name__}", 500)
     approver = _operator_did(signer)
 
-    # Discover the gated capability (arcagent), sign it (arcagent), re-scan.
-    gated = await arcagent.list_gated(agent_root, agent_id=agent_id, agent_label=label)
+    # Discover the capability (arcagent), sign it (arcagent), re-scan.
+    gated = await arcagent.list_gated(
+        agent_root, agent_id=agent_id, agent_label=label, include_loaded=True
+    )
     item = next((entry for entry in gated if entry.name == name), None)
     if item is None:
-        detail = f"no gated capability named {name!r} for this agent"
+        detail = f"no capability named {name!r} for this agent"
         emit_mutation_audit(
             request, target=target, operation="trust.approve", outcome="denied", detail=detail
         )
@@ -290,6 +347,10 @@ async def approve(request: Request) -> JSONResponse:
             request, target=target, operation="trust.approve", outcome="denied", detail=detail
         )
         return _error(detail, 404)
+
+    # Read BEFORE signing: afterwards every artifact has a sidecar, so this is
+    # the only moment that can tell a first signature from a re-signature.
+    resigned = arcagent.sidecar_path(Path(item.path)).exists()
 
     try:
         # ``audit_sink`` is the chain this process already holds, so the
@@ -318,8 +379,14 @@ async def approve(request: Request) -> JSONResponse:
         agent_root, agent_id=agent_id, agent_label=label, include_loaded=True
     )
     resolved_item = next((entry for entry in after if entry.name == name), item)
-    emit_mutation_audit(request, target=target, operation="trust.approve", outcome="applied")
-    return JSONResponse(resolved_item.model_dump(mode="json"))
+    emit_mutation_audit(
+        request,
+        target=target,
+        operation="trust.approve",
+        outcome="applied",
+        detail="re-signed" if resigned else "signed",
+    )
+    return JSONResponse({**_row(resolved_item), "resigned": resigned})
 
 
 async def disapprove(request: Request) -> JSONResponse:

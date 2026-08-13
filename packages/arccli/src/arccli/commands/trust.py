@@ -182,10 +182,14 @@ def _approve(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     # Re-scan through the inventory seam to report the post-approval verdict.
+    # Matched by PATH, not by name: a refused candidate is reported under its
+    # file/folder name and a LOADED one under the name its metadata declares, so
+    # a successful approval is precisely the case where the name changes. Looking
+    # it up by name told the operator "still gated" every time it had worked.
     after = asyncio.run(
         arcagent.list_gated(agent_root, agent_id=agent_id, agent_label=label, include_loaded=True)
     )
-    resolved = next((item for item in after if item.name == args.name), None)
+    resolved = next((item for item in after if item.path == target.path), None)
     status = resolved.status if resolved is not None else "unknown"
     _write(
         f"Approved {args.name} on {agent_id} — signed, key pinned, hash pinned; "

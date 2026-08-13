@@ -1,6 +1,6 @@
 # Signing a Gated Capability
 
-> **Runbooks**  ·  Operate  ·  page 13 of 19  
+> **Runbooks**  ·  Operate  ·  page 14 of 20  
 > **For** Operators deploying and running Arc  
 > [← Hardening](security/hardening.md)  ·  [Docs home](../README.md)  ·  [Staging module bundles →](staging-module-bundles.md)
 
