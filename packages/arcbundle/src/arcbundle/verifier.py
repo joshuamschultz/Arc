@@ -83,6 +83,12 @@ class VerifiedBundle:
     root: Path
     manifest: BundleManifest
     files: Mapping[str, bytes]
+    issuer_key: bytes
+    """The public key the manifest signature actually verified under.
+
+    Carried rather than looked up again by name: an installer that has to pin
+    this issuer as a trusted capability-verification key must pin the key that
+    passed, not whatever the trust store answers a second later."""
 
 
 def verify_bundle(
@@ -197,7 +203,9 @@ def _verify(
     payload_root = bundle_root / PAYLOAD_DIR
     files = _read_declared_files(payload_root, manifest)
     _refuse_undeclared_files(payload_root, declared=set(files))
-    return VerifiedBundle(root=bundle_root, manifest=manifest, files=files)
+    return VerifiedBundle(
+        root=bundle_root, manifest=manifest, files=files, issuer_key=public_key
+    )
 
 
 def _read_bundle_files(bundle_root: Path) -> tuple[bytes, bytes]:

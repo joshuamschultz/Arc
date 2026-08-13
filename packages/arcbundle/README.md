@@ -33,7 +33,7 @@ no agent stack installed.
 | `signer` | Detached Ed25519 signature over a manifest's canonical bytes |
 | `verifier` | Fail-closed verify: manifest signature, then every declared file hash |
 | `materializer` | Atomic write (stage → fsync → rename), `0444` files in `0555` dirs |
-| `builder` | Package a module folder into a signed `.arcbundle` |
+| `builder` | Package a module folder into a signed `.arcbundle`, signing each adjudicated artifact with a `.arcsig` sidecar |
 | `capability_copy` | Per-agent copy of a module's tools + skills, and its inverse |
 | `_audit` | One emitter per decided outcome; sinks fan out via `arctrust.audit.emit` |
 
@@ -49,6 +49,27 @@ Two destinations, two trust properties, no overlap:
 `capability_copy` copies only the second, per agent, and normalizes the modes on
 the way: a copy that inherited the deployment tree's read-only bits could
 neither be removed nor signed in place.
+
+## Two signatures, one key
+
+The **manifest** signature says *this bundle is what its issuer built*. It is
+checked once, at install, and the bundle directory can be deleted afterwards.
+
+A per-file **`.arcsig`** sidecar beside each adjudicated artifact says *this file
+is what its issuer signed*. That is the question the capability loader asks on
+every scan, long after the bundle is gone: a `module:*` scan root is verified,
+not trusted, so an artifact whose bytes changed since it was signed stops
+loading. `builder` writes those sidecars into the payload, so they are covered by
+the manifest signature and by the verifier's refusal of undeclared files — a
+sidecar swapped in transit is a content-hash mismatch, never a new trust anchor.
+
+Every `.py` is signed, not only `capabilities.py`: the loader imports each `.py`
+at a module root looking for decorated values, and an import runs the file.
+`SKILL.md` too — its text is injected into the agent's prompt.
+
+The key that verified the manifest travels on `VerifiedBundle.issuer_key`, so an
+installer pins the key that actually passed rather than one looked up again by
+name.
 
 ## Audit
 

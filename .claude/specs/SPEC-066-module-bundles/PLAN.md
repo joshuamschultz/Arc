@@ -123,7 +123,7 @@
 
 ## Phase 4: Polish
 
-- [ ] **T-970**: (green) Exclude modules from the wheel; release CI builds and signs bundles
+- [x] **T-970**: (green) Exclude modules from the wheel; release CI builds and signs bundles
   - domain: infra
   - Components: COMP-004, COMP-006
   - Requirements: REQ-336
@@ -133,7 +133,7 @@
   - Components: COMP-002, COMP-005, COMP-008
   - Requirements: REQ-331
   - Acceptance: Bundles one module from the source catalog, signs with a locally generated development key, installs through the identical verify-then-materialize path. Nothing is symlinked and no path skips verification. A dev-signed bundle is refused at enterprise and federal, asserted by T-959's tier case.
-- [ ] **T-972**: (refactor) Migrate all eighteen modules out of the wheel, one at a time
+- [x] **T-972**: (refactor) Migrate all eighteen modules out of the wheel, one at a time
   - domain: mixed
   - Components: COMP-006, COMP-009, COMP-015
   - Requirements: REQ-336, REQ-337, REQ-339

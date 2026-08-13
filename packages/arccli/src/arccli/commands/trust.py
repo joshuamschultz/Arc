@@ -12,6 +12,16 @@ enterprise/federal signature floor, which is why approval is signing.
 ``trust approve <name> [--agent <id>]``      — sign, pin the key, pin the hash.
 ``trust disapprove <name> [--agent <id>]``   — the exact inverse (drift / revoke).
 
+``list`` shows what is GATED (``--all`` for everything), but ``approve`` reaches
+any discoverable capability, gated or already loading. That asymmetry is the
+point. Signing is a statement about bytes, not a repair for a refusal: on a
+personal-tier box a hand-written skill already loads and is never gated, so a
+gated-only approve made it unsignable on the machine it was written on — which
+is exactly the promote-a-laptop-skill-to-a-hardened-box workflow this exists for.
+It also blocks pre-signing before shipping to a stricter tier, and re-signing an
+artifact that loads today but was edited a minute ago. Re-signing is never a
+no-op: it signs what is on disk NOW and re-pins that hash.
+
 ``--agent`` names an agent under the deployment's ``team/`` dir; it is optional
 when the team has exactly one agent. The signer is always the on-box deployment
 operator key — there is no flag to supply an identity, so only an operator-key
@@ -158,20 +168,57 @@ def _list(args: argparse.Namespace) -> None:
     _print_table(["Name", "Kind", "Status", "Signed", "Hash", "Path"], rows)
 
 
+def _resolve_target(
+    agent_id: str, agent_root: Path, label: str, name: str
+) -> arcagent.GatedItem:
+    """Find the capability ``name`` names, gated or already loading.
+
+    Resolved from the FULL inventory, never the gated-only listing. Restricting
+    approval to what is currently gated made the product's headline workflow
+    impossible: on a personal-tier box a hand-written skill already loads, so it
+    is never gated — and so could never be signed on the laptop it was written
+    on. The same restriction blocked pre-signing an artifact before shipping it
+    to a stricter tier, and re-signing one that loads today but was just edited.
+
+    Signing is an operator statement about bytes, not a repair for a refusal.
+    """
+    inventory = asyncio.run(
+        arcagent.list_gated(agent_root, agent_id=agent_id, agent_label=label, include_loaded=True)
+    )
+    matches = [item for item in inventory if item.name == name]
+    if not matches:
+        _err(
+            f"arc trust: no capability named {name!r} for {agent_id}. "
+            f"Run `arc trust list --all --agent {agent_id}` to see every capability."
+        )
+        sys.exit(1)
+    if len({item.path for item in matches}) > 1:
+        # One name, two artifacts — a capability defined at two scan roots, where
+        # precedence decides which one loads. Signing "the first one" would sign
+        # a file the operator did not mean, so make them say which.
+        paths = "\n  ".join(sorted(item.path for item in matches))
+        _err(
+            f"arc trust: {name!r} is ambiguous on {agent_id} — it names several "
+            f"artifacts:\n  {paths}"
+        )
+        sys.exit(1)
+    return matches[0]
+
+
 def _approve(args: argparse.Namespace) -> None:
     agent_id, agent_root, label = _resolve_agent(getattr(args, "agent", None))
     config_path = agent_root / "arcagent.toml"
-    gated = asyncio.run(arcagent.list_gated(agent_root, agent_id=agent_id, agent_label=label))
-    target = next((item for item in gated if item.name == args.name), None)
-    if target is None:
-        _err(f"arc trust: no gated capability named {args.name!r} for {agent_id}")
-        sys.exit(1)
+    target = _resolve_target(agent_id, agent_root, label, args.name)
+    artifact = Path(target.path)
+    # Read BEFORE signing: afterwards every artifact has a sidecar, so this is
+    # the only moment that can tell a first signature from a re-signature.
+    resigned = arcagent.sidecar_path(artifact).exists()
     signer = _operator_signer()
     approver = _operator_did(signer)
     try:
         with _audit_chain() as (sink, _):
             arcagent.sign_capability(
-                Path(target.path),
+                artifact,
                 signer_did=approver,
                 signer=signer,
                 config_path=config_path,
@@ -191,9 +238,11 @@ def _approve(args: argparse.Namespace) -> None:
     )
     resolved = next((item for item in after if item.path == target.path), None)
     status = resolved.status if resolved is not None else "unknown"
+    action = "Re-signed" if resigned else "Signed"
+    over = "over its current bytes" if resigned else "over its bytes"
     _write(
-        f"Approved {args.name} on {agent_id} — signed, key pinned, hash pinned; "
-        f"status now: {status} (approver {approver})."
+        f"{action} {args.name} on {agent_id} {over} — signature written, key pinned, "
+        f"hash pinned; status now: {status} (approver {approver})."
     )
     if status != "loaded":
         detail = resolved.detail if resolved is not None else "no longer visible to the loader"
@@ -249,8 +298,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--all", dest="all", action="store_true", help="Include loaded capabilities too."
     )
 
-    p_approve = subs.add_parser("approve", help="Sign a gated capability with the operator key.")
-    p_approve.add_argument("name", help="Capability name (as shown by `trust list`).")
+    p_approve = subs.add_parser(
+        "approve", help="Sign (or re-sign) any capability with the operator key."
+    )
+    p_approve.add_argument("name", help="Capability name (as shown by `trust list --all`).")
     p_approve.add_argument("--agent", dest="agent", default=None, help="Agent id under team/.")
 
     p_disapprove = subs.add_parser("disapprove", help="Withdraw a capability's signature + pins.")

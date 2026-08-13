@@ -55,9 +55,10 @@ from arcagent.capabilities.artifact_signing import (
     SIDECAR_SUFFIX,
     load_signature,
     sidecar_path,
+    verify_file,
     write_signature_with_signer,
 )
-from arcagent.capabilities.inventory import pin_name_for_path
+from arcagent.capabilities.capability_loader import pin_name_for_path
 
 #: Actor recorded when a revocation arrives without a named operator — a library
 #: caller rather than one of the two operator surfaces. The action still happened
@@ -117,6 +118,83 @@ def sign(
         artifact=artifact,
         operator_did=signer_did,
         source_hash=hash_source(source),
+    )
+
+
+def trust_bundled_capabilities(
+    module_dir: Path,
+    *,
+    config_path: Path,
+    issuer_key: bytes,
+    issuer_did: str,
+    audit_sink: AuditSink | None = None,
+) -> list[Path]:
+    """Record the trust an installed module's already-signed capabilities need.
+
+    A bundle arrives carrying a ``.arcsig`` beside every capability artifact, so
+    the signature half of the gate is already satisfied. The other two halves
+    are per-agent config, and an install is the operator action that grants
+    them: the issuer's key is pinned as a trusted capability-verification key,
+    and each artifact's current bytes are pinned as approved.
+
+    Both are visible where an operator looks — ``[security.validators]`` in the
+    agent's own config, and ``arc trust list`` — because a trust anchor added
+    silently is one nobody can audit or withdraw.
+
+    Args:
+        module_dir: The materialized module directory at the deployment root.
+        config_path: The agent's ``arcagent.toml``, the sole persistence surface.
+        issuer_key: The public key the BUNDLE MANIFEST verified under. Pinning a
+            key that has not already proven itself over the manifest would let a
+            planted sidecar nominate its own trust anchor.
+        issuer_did: Recorded as the approver and as the audit actor.
+        audit_sink: Where the ``capability.bundle_trusted`` records land.
+
+    Returns:
+        The artifacts that were pinned, in sorted path order. An artifact whose
+        sidecar does not verify under ``issuer_key`` is left gated — an install
+        never approves bytes it could not attribute to the issuer.
+    """
+    verified = [
+        artifact
+        for artifact in _signed_artifacts(module_dir)
+        if verify_file(artifact, artifact.read_bytes(), trusted_public_key=issuer_key)
+    ]
+    if not verified:
+        return []
+
+    pin_key(config_path, public_key=issuer_key)
+    for artifact in verified:
+        source = artifact.read_bytes().decode("utf-8")
+        approve(
+            config_path,
+            name=pin_name_for_path(artifact),
+            source=source,
+            approver=issuer_did,
+            timestamp=datetime.now(UTC).isoformat(),
+        )
+        _audit(
+            audit_sink,
+            action="capability.bundle_trusted",
+            outcome="trusted",
+            artifact=artifact,
+            operator_did=issuer_did,
+            source_hash=hash_source(source),
+        )
+    return verified
+
+
+def _signed_artifacts(module_dir: Path) -> list[Path]:
+    """Every artifact under ``module_dir`` that carries a signature sidecar.
+
+    Discovered from the sidecars rather than from a list of expected filenames,
+    so what an install trusts is exactly what the bundle signed — the two cannot
+    drift apart as the capability surface grows.
+    """
+    return sorted(
+        sidecar.with_name(sidecar.name.removesuffix(SIDECAR_SUFFIX))
+        for sidecar in module_dir.rglob(f"*{SIDECAR_SUFFIX}")
+        if sidecar.with_name(sidecar.name.removesuffix(SIDECAR_SUFFIX)).is_file()
     )
 
 
@@ -218,4 +296,4 @@ def _key_still_in_use(agent_root: Path, public_key_hex: str) -> bool:
     return False
 
 
-__all__ = ["revoke", "sign"]
+__all__ = ["revoke", "sign", "trust_bundled_capabilities"]

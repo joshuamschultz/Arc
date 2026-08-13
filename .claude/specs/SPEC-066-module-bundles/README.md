@@ -110,6 +110,70 @@ mount. T-963 exists because this would otherwise have shipped as "mitigated".
 **Good news:** all 17 discovered modules already pass the absent-safe suite, which
 materially de-risks T-972.
 
+### T-972 — the module-capability trust class
+
+**A third trust class, not a third scan root.** `module:*` is now `RootTrust.VERIFIED`:
+it runs the signature floor + TOFU gate exactly like an agent-writable root, and skips
+the AST import allowlist and the ArcRun-isolated proxy. Those two jobs — *prove who
+wrote these bytes* and *contain what they may do* — were fused in one `is_untrusted_root`
+boolean, and a module needs the first without the second. Containment exists for code
+the model wrote; applying it to module code is what made 17 of 18 modules register zero
+tools. `TRUSTED` is now a closed set (`builtins`, `builtins-skills`) and an unclassified
+root falls to `UNTRUSTED`, so forgetting to classify one costs it privilege.
+
+**The loader gates every `.py` at a module root, not just `capabilities.py`.** Found by
+running the change: `_scan_root` imports each top-level `.py` looking for decorated
+values, and an import runs the file. Signing only the declared capability surface would
+have verified the door and not the wall — and left `_runtime.py`, `config.py`, and
+`store.py` permanently gated, which blocks every `reload()` commit (the transactional
+reload refuses while any error is present). `build_bundle` signs every `.py` and every
+`SKILL.md` in the payload.
+
+**Pin names had to be qualified by module.** Every module ships `capabilities.py`, so
+the loader's bare-stem pin name gave all 18 modules ONE TOFU pin: approving the second
+module supersedes the first's hash, and the loader then reads the first as *drifted* —
+a hard DENY for no reason but the name. `pin_name_for_path` moved into the loader (the
+one place both the gate and `arc trust approve` reach) and returns the artifact's path
+within the deployment module root: `scheduler/capabilities`.
+
+**Install grants the trust; it is not a follow-up the operator has to know about.**
+`arc module install` pins the key the MANIFEST verified under (`VerifiedBundle.issuer_key`
+— never a name looked up a second time) and approves each artifact that verifies beneath
+it. Without it a module materializes, enables, and is then refused at load. Both pins land
+in `[security.validators]`, which is what `arc trust list` reads, so nothing is trusted
+invisibly.
+
+**Re-signing had to defeat the deployment root's own hardening.** `materialize` writes
+`0444` inside `0555` so an in-place edit fails loudly. Re-signing is the operator action
+that legitimises such an edit, so `artifact_signing._write` borrows write permission for
+the one write and hands it back — the same restore-then-modify sequence `arcbundle.remove`
+already uses. Asserted both ways: the sidecar is rewritten, and the modes are unchanged
+afterwards.
+
+**Regression found while testing:** `arc trust approve` reported "Still gated" on every
+successful approval. It re-looked-up the item by NAME, but a refused candidate is reported
+under its file/folder name and a loaded one under its metadata name — so a success is
+precisely when the name changes. Now matched by path.
+
+**`arc trust approve` could only sign what was already GATED** (raised by Josh). It resolved
+its target from `list_gated()` without `include_loaded=True`, which made the PRD's headline
+workflow impossible to perform: on a personal-tier box `auto_run_agent_code` lets a
+hand-written skill load, so it is never gated — and so could never be signed on the laptop it
+was written on. Same restriction blocked pre-signing before shipping to a stricter tier, and
+re-signing an artifact that loads today but was edited a minute ago. Approve now resolves from
+the full inventory; `list` keeps its gated-only default. Signing is a statement about bytes,
+not a repair for a refusal. Ambiguity (one name, two artifacts at different scan roots) is now
+an explicit error rather than a silent first-match, and the output distinguishes a first
+signature from a re-signature.
+
+**Two "install" fictions in the test suite.** `test_workpad_e2e` and
+`test_extension_conformance` `copytree`d a module into the deployment root. That was
+indistinguishable from an install while module roots were trusted; it is not now, since
+a copied tree carries no sidecars. Both build, verify, and materialize a real signed
+bundle. Likewise the module-registration unit tests used bare root names (`("tasks", …)`)
+that no production path produces — now `module:tasks`, which is what `agent_lifecycle`
+builds.
+
 ## Decisions taken during implementation
 
 - **D-066-1 — Trusted capability keys are a set, not a single key.** Persisted as
@@ -134,6 +198,26 @@ Feature-specific insights captured here. Global / reusable patterns go to memory
 _(none yet)_
 
 ## Follow-up work found during implementation (NOT in SPEC-066)
+
+- **`arc skill create` writes an UNSIGNED `SKILL.md`** (`arccli/commands/skill.py:233-234`),
+  so a CLI-scaffolded skill does not load above personal tier. Deliberately left unsigned
+  rather than wired up: what that command writes is a stub whose very next instruction is
+  "edit this", and a signature over a stub is invalidated by that edit — leaving a DRIFTED
+  sidecar, which the loader treats as tamper (a hard DENY) rather than as merely unsigned
+  (NEW_SIGHTING). The command also has no `--agent`, so it could pin neither the key nor the
+  hash that a signature needs to be useful. Signing belongs after the content is real; the
+  command now says so as step 3 of its next-steps output, which works because approve is no
+  longer gated-only. Revisit only if `arc skill create` gains agent context.
+
+- **`arc module remove` does not withdraw the trust `arc module install` grants.**
+  Install pins the issuer's key and approves each artifact's hash in the agent's
+  `arcagent.toml`; remove deletes the runtime, the per-agent copy, and the `[modules.NAME]`
+  entry, and leaves both pins behind. Stale approvals are inert (the artifact is gone), but
+  the trusted KEY is a live trust anchor for a module nobody installed. The inverse is not
+  a one-liner: `capability_signing.revoke`'s `_key_still_in_use` scans the AGENT root, while
+  module artifacts live at the deployment root, so it would unpin an issuer whose other
+  modules are still installed. Needs a module-aware `untrust_bundled_capabilities` that
+  checks the whole module root before unpinning. Deliberately not done in T-972.
 
 - **A bundle cannot declare its package dependencies, and `tasks` needs one nobody
   installs.** `modules/tasks/_dispatch_helpers.py:10` does `from arcteam.types import Entity`

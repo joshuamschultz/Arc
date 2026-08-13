@@ -55,7 +55,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import arcbundle
 import pytest
 from arcrun import StreamEvent, ToolContext, TurnEndEvent
-from arctrust import generate_keypair
+from arctrust import ValidatorsConfig, generate_keypair
 
 from arcagent.core.agent import ArcAgent
 from arcagent.core.config import (
@@ -140,6 +140,13 @@ _MODULE_CONFIG: dict[str, dict[str, Any]] = {
 
 _ISSUER = "did:arc:test-operator"
 
+#: The issuer key every bundle in this file is signed with, minted once so the
+#: agent config can pin it the way ``arc module install`` does. Pinning matters:
+#: since T-972 a ``module:*`` root is VERIFIED, so each module's
+#: ``capabilities.py`` must carry a sidecar that verifies under a key this agent
+#: trusts — otherwise the module materializes and then registers nothing.
+_ISSUER_KEYPAIR = generate_keypair()
+
 
 # --------------------------------------------------------------------------
 # Deployment construction — the real SPEC-066 install path
@@ -196,21 +203,20 @@ def _install(deployment: Deployment, names: tuple[str, ...], tmp_path: Path) -> 
     that would refuse an operator refuses here, because these are the same four
     calls behind the same four failures.
     """
-    keypair = generate_keypair()
     staging = tmp_path / "bundles"
     for name in names:
         bundle = arcbundle.build_bundle(
             _SOURCE_CATALOG / name,
             module=name,
             version="1.0.0",
-            private_key=keypair.private_key,
+            private_key=_ISSUER_KEYPAIR.private_key,
             issuer=_ISSUER,
             out=staging / name,
         )
         verified = arcbundle.verify_bundle(
             bundle,
             tier="personal",
-            trusted_issuers={_ISSUER: keypair.public_key},
+            trusted_issuers={_ISSUER: _ISSUER_KEYPAIR.public_key},
         )
         installed = arcbundle.materialize(verified, deployment.modules_root)
         arcbundle.copy_capabilities(installed, deployment.agent_dir, module=name)
@@ -240,7 +246,13 @@ def _config(
         ),
         llm=LLMConfig(model="test/model"),
         identity=IdentityConfig(key_dir=str(deployment.arc_home / "keys")),
-        security=SecurityConfig(operator_key_dir=str(deployment.arc_home / "operator")),
+        security=SecurityConfig(
+            operator_key_dir=str(deployment.arc_home / "operator"),
+            # The bundle issuer's key, pinned exactly as ``arc module install``
+            # pins it. Without it the loader cannot verify any module capability
+            # signature and every module goes dark at load.
+            validators=ValidatorsConfig(trusted_keys=(_ISSUER_KEYPAIR.public_key.hex(),)),
+        ),
         # Telemetry ON. It is on in every real deployment, the audit trail is one
         # of the four pillars, and a suite that switched it off would be unable to
         # tell "this operation emits no audit event" from "auditing was disabled".

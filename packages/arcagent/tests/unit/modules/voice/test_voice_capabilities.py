@@ -71,7 +71,7 @@ class TestLoaderRegistration:
 
         module_dir = Path(voice_caps.__file__).parent
         reg = CapabilityRegistry()
-        loader = CapabilityLoader(scan_roots=[("voice", module_dir)], registry=reg)
+        loader = CapabilityLoader(scan_roots=[("module:voice", module_dir)], registry=reg)
         await loader.scan_and_register()
 
         # Tools

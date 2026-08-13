@@ -10,13 +10,14 @@ is stubbed (external dependency).
 from __future__ import annotations
 
 import asyncio
-import shutil
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import arcbundle
 import pytest
+from arctrust import ValidatorsConfig, generate_keypair
 
 import arcagent
 from arcagent.core.agent import ArcAgent
@@ -27,9 +28,13 @@ from arcagent.core.config import (
     IdentityConfig,
     LLMConfig,
     ModuleEntry,
+    SecurityConfig,
     TelemetryConfig,
 )
 from arcagent.modules.workpad import _runtime
+
+_ISSUER = "did:arc:workpad-e2e-operator"
+_ISSUER_KEYPAIR = generate_keypair()
 
 
 def _config(tmp_path: Path, workspace: Path) -> ArcAgentConfig:
@@ -41,6 +46,12 @@ def _config(tmp_path: Path, workspace: Path) -> ArcAgentConfig:
         identity=IdentityConfig(did="", key_dir=str(tmp_path / "keys"), vault_path=""),
         telemetry=TelemetryConfig(enabled=True),
         context=ContextConfig(max_tokens=10000),
+        # The bundle issuer's key, pinned as ``arc module install`` pins it. A
+        # ``module:*`` root is VERIFIED, so an unpinned issuer means the module
+        # materializes and then registers nothing.
+        security=SecurityConfig(
+            validators=ValidatorsConfig(trusted_keys=(_ISSUER_KEYPAIR.public_key.hex(),))
+        ),
         modules={"workpad": ModuleEntry(enabled=True, config={"every_n_runs": 2})},
     )
 
@@ -61,14 +72,24 @@ def _install_workpad(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Install the workpad module into this test's deployment root.
 
     SPEC-066 REQ-333: discovery reads ``${ARC_CONFIG_DIR}/modules``, so enabling
-    ``[modules.workpad]`` only loads a module an operator installed. Copying the
-    tree is what ``arc module install`` leaves behind.
+    ``[modules.workpad]`` only loads a module an operator installed. Built,
+    verified, and materialized rather than copied, because a copied tree carries
+    no ``.arcsig`` sidecars and a ``module:*`` root is adjudicated by signature —
+    a copy would load nothing and prove nothing.
     """
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc"))
-    shutil.copytree(
+    bundle = arcbundle.build_bundle(
         Path(arcagent.__file__).resolve().parent / "modules" / "workpad",
-        tmp_path / "arc" / "modules" / "workpad",
+        module="workpad",
+        version="1.0.0",
+        private_key=_ISSUER_KEYPAIR.private_key,
+        issuer=_ISSUER,
+        out=tmp_path / "bundles" / "workpad.arcbundle",
     )
+    verified = arcbundle.verify_bundle(
+        bundle, tier="personal", trusted_issuers={_ISSUER: _ISSUER_KEYPAIR.public_key}
+    )
+    arcbundle.materialize(verified, tmp_path / "arc" / "modules")
 
 
 @pytest.mark.asyncio

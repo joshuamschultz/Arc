@@ -1,11 +1,11 @@
 """SPEC arcui-reality-mirror COMP-007 — capability inventory seam.
 
 A single read seam over :class:`CapabilityLoader` that enumerates every skill
-and capability tool an agent would load across the four scan roots (package
-builtins, the global ``${ARC_CONFIG_DIR:-~/.arc}/capabilities`` root, the per-agent
-``<agent>/capabilities`` root, and the agent-authored
-``<agent>/workspace/capabilities`` root) and reports each item's loader/TOFU
-verdict verbatim.
+and capability tool an agent would load across its scan roots (package builtins,
+the global ``${ARC_CONFIG_DIR:-~/.arc}/capabilities`` root, the per-agent
+``<agent>/capabilities`` root, the agent-authored
+``<agent>/workspace/capabilities`` root, and one ``module:<name>`` root per
+enabled module) and reports each item's loader/TOFU verdict verbatim.
 
 arcui consumes this instead of globbing skill or tool paths itself
 (REQ-093/094/096). No discovery or verification logic lives here: the loader
@@ -17,6 +17,7 @@ untouched.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -25,9 +26,15 @@ from arctrust import TofuLayer, ValidatorsConfig, arc_home, hash_source
 from pydantic import BaseModel, ConfigDict
 
 import arcagent.builtins.capabilities as _builtins_pkg
-from arcagent.capabilities.capability_loader import CapabilityLoader, ScanRoot
+from arcagent.capabilities.capability_loader import (
+    MODULE_ROOT_PREFIX,
+    CapabilityLoader,
+    ScanRoot,
+    pin_name_for_path,
+)
 from arcagent.capabilities.capability_registry import CapabilityRegistry
 from arcagent.core.config import CapabilitiesConfig, SecurityConfig, load_config
+from arcagent.core.module_discovery import active_modules, module_root
 from arcagent.tools._dynamic_loader import (
     DEFAULT_IMPORT_POLICY,
     ImportPolicy,
@@ -39,9 +46,6 @@ _logger = logging.getLogger("arcagent.capabilities.inventory")
 # Only skills and capability tools surface in the inventory; hooks, background
 # tasks, and capability classes are out of scope for the arcui capability views.
 _INVENTORY_KINDS: frozenset[str] = frozenset({"skill", "tool"})
-#: The one file a skill folder is gated on — its presence makes the FOLDER the
-#: pin name, matching what the loader looks up.
-_SKILL_MANIFEST = "SKILL.md"
 _KNOWN_TIERS: frozenset[str] = frozenset({"personal", "enterprise", "federal"})
 
 
@@ -89,11 +93,15 @@ def _resolve_scan_roots(
     workspace_dir: Path | None,
     global_root: Path | None,
     builtins_root: Path | None,
+    modules: Sequence[str] = (),
 ) -> list[ScanRoot]:
-    """Build the four-root scan list, mirroring ``setup_capabilities``.
+    """Build the scan list, mirroring ``setup_capabilities``.
 
     Optional roots are included only when they exist on disk, matching the
-    loader's own precedence order (builtins, global, agent, workspace).
+    loader's own precedence order (builtins, global, agent, workspace), and each
+    enabled module contributes its ``module:<name>`` root last — exactly as the
+    live load does. Omitting them would leave a gated module capability
+    invisible to ``arc trust list``, which is the surface that unblocks it.
     """
     builtins = builtins_root if builtins_root is not None else Path(_builtins_pkg.__file__).parent
     roots: list[ScanRoot] = [
@@ -107,6 +115,8 @@ def _resolve_scan_roots(
     append_capability_scan_roots(roots, "agent", agent_dir / "capabilities")
     workspace = workspace_dir if workspace_dir is not None else agent_dir / "workspace"
     append_capability_scan_roots(roots, "workspace", workspace / "capabilities")
+    modules_dir = module_root()
+    roots.extend((f"{MODULE_ROOT_PREFIX}{name}", modules_dir / name) for name in modules)
     return roots
 
 
@@ -135,6 +145,7 @@ async def collect_capability_inventory(
     require_signature: bool = False,
     trusted_public_keys: tuple[bytes, ...] = (),
     import_policy: ImportPolicy = DEFAULT_IMPORT_POLICY,
+    modules: Sequence[str] = (),
 ) -> list[CapabilityInventoryItem]:
     """Enumerate an agent's skills and capability tools with verbatim verdicts.
 
@@ -145,7 +156,7 @@ async def collect_capability_inventory(
     :class:`TofuLayer` with a pinned key surfaces signed workspace sources as
     ``loaded`` and unsigned ones as ``deny``.
     """
-    scan_roots = _resolve_scan_roots(agent_dir, workspace_dir, global_root, builtins_root)
+    scan_roots = _resolve_scan_roots(agent_dir, workspace_dir, global_root, builtins_root, modules)
     loader = CapabilityLoader(
         scan_roots=scan_roots,
         registry=CapabilityRegistry(),
@@ -316,6 +327,7 @@ async def collect_agent_capability_inventory(
         require_signature=posture.require_signature,
         trusted_public_keys=posture.trusted_public_keys,
         import_policy=posture.import_policy,
+        modules=active_modules(config),
     )
     if live_agent is None:
         return AgentCapabilityInventory(items=items, runtime=False, runtime_tools=[])
@@ -406,20 +418,6 @@ def read_capability_source(path: Path) -> str | None:
         return path.read_bytes().decode("utf-8")
     except (OSError, UnicodeDecodeError):
         return None
-
-
-def pin_name_for_path(artifact: Path) -> str:
-    """The name TofuLayer keys the gated ``artifact`` on.
-
-    The loader gates a tool under its file stem and a skill under its FOLDER
-    name (``SKILL.md``'s parent), while a skill's displayed name is its
-    frontmatter name, which can differ. Deriving the pin name from the artifact
-    path keeps an approval aligned with what the loader will look up. Callers
-    pass this to ``arctrust.approve`` / ``arctrust.disapprove``.
-    """
-    if artifact.name == _SKILL_MANIFEST:
-        return artifact.parent.name
-    return artifact.stem
 
 
 def pin_name_for(item: GatedItem) -> str:

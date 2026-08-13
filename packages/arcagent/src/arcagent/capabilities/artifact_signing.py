@@ -20,6 +20,9 @@ without the seed ever entering this process.
 from __future__ import annotations
 
 import logging
+import stat
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 from pathlib import Path
 
 from arctrust import (
@@ -62,10 +65,50 @@ def write_signature_with_signer(
 
 
 def _write(artifact: Path, manifest: ArtifactSignature) -> Path:
-    """Persist ``manifest`` as ``artifact``'s sidecar and return the sidecar path."""
+    """Persist ``manifest`` as ``artifact``'s sidecar and return the sidecar path.
+
+    A module's capability surface lives in the deployment module root, which
+    :mod:`arcbundle.materializer` hardens to ``0444`` inside ``0555`` so an
+    in-place edit fails loudly instead of silently forking a signed module.
+    Re-signing is the operator action that legitimises such an edit, so it
+    borrows write permission for the one write and hands it straight back —
+    the same restore-then-modify sequence ``arcbundle.remove`` uses. Everywhere
+    else (an agent signing in its own workspace) the modes already allow the
+    write and nothing is touched.
+    """
     target = sidecar_path(artifact)
-    target.write_text(manifest.to_json(), encoding="utf-8")
+    payload = manifest.to_json()
+    with _writable(target.parent), _writable(target):
+        target.write_text(payload, encoding="utf-8")
     return target
+
+
+@contextmanager
+def _writable(path: Path) -> Iterator[None]:
+    """Grant the owner write on ``path`` for the block, restoring the mode after.
+
+    A path that does not exist, or whose mode cannot be read or changed, is
+    yielded to unchanged: the write that follows then fails on its own terms
+    with the real errno rather than being masked by a permission fix-up.
+    """
+    try:
+        original = path.stat().st_mode
+    except OSError:
+        yield
+        return
+    if original & stat.S_IWUSR:
+        yield
+        return
+    try:
+        path.chmod(original | stat.S_IWUSR)
+    except OSError:
+        yield
+        return
+    try:
+        yield
+    finally:
+        with suppress(OSError):
+            path.chmod(original)
 
 
 def load_signature(artifact: Path) -> ArtifactSignature | None:

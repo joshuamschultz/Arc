@@ -271,17 +271,14 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
     append_capability_scan_roots(scan_roots, "agent", agent_root / "capabilities")
     append_capability_scan_roots(scan_roots, "workspace", workspace / "capabilities")
 
-    # KNOWN GAP (SDD D-648, escalated 2026-08-12): this root is TRUSTED —
-    # `module:*` is outside `_UNTRUSTED_ROOTS` — while `module_root()` now points
-    # at a deployment directory that bundles write into, so module capabilities
-    # skip the AST validator and the Sign/TOFU gate. The rejected-in-SDD shape,
-    # kept deliberately until the trust class is decided: moving these copies to
-    # the `agent` untrusted root instead makes 17 of the 18 modules register ZERO
-    # tools, because that root also routes through ArcRun-isolated execution and
-    # the agent-authored import allowlist, and module capabilities use `@hook` /
-    # `@background_task` / `@capability` and import stdlib the allowlist blocks.
-    # The fix is a trust class that verifies signatures WITHOUT isolating —
-    # a loader change, not a scan-root change.
+    # `module:*` is its own trust class (RootTrust.VERIFIED): every capability
+    # under it passes the same signature + TOFU gate an agent-writable root does,
+    # because `module_root()` is a deployment directory an install writes into
+    # rather than wheel content. It is NOT isolated — the AST import allowlist
+    # and ArcRun-isolated execution exist to contain code the model wrote, and
+    # applying them to first-party module code made 17 of 18 modules register
+    # zero tools (`@hook` / `@background_task` / `@capability` never register and
+    # the stdlib a module legitimately imports is blocked).
     modules_dir = module_root()
     for mod_name in active_modules(agent._config):
         scan_roots.append((f"module:{mod_name}", modules_dir / mod_name))

@@ -72,7 +72,7 @@ class TestLoaderRegistration:
 
         reg = CapabilityRegistry()
         loader = CapabilityLoader(
-            scan_roots=[("workpad", Path(caps.__file__).parent)], registry=reg
+            scan_roots=[("module:workpad", Path(caps.__file__).parent)], registry=reg
         )
         await loader.scan_and_register()
 

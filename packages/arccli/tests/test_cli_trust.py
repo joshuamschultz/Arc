@@ -390,6 +390,12 @@ def test_capability_signing_is_not_reachable_as_an_agent_tool() -> None:
 def test_unknown_capability_name_exits_nonzero(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """A typo still fails loudly now that approve searches the FULL inventory.
+
+    The message no longer says "gated" because approve is no longer gated-only —
+    it reaches any discoverable capability — so the error names what was searched
+    and how to list it.
+    """
     team_root = _team(tmp_path, monkeypatch)
     _build_agent(team_root, "olivia", tier="enterprise", sign=False)
 
@@ -397,7 +403,9 @@ def test_unknown_capability_name_exits_nonzero(
         trust_handler(["approve", "nonesuch"])
 
     assert exc.value.code == 1
-    assert "no gated capability named 'nonesuch'" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "no capability named 'nonesuch'" in err
+    assert "trust list --all" in err
 
 
 def test_multiple_agents_without_flag_errors(

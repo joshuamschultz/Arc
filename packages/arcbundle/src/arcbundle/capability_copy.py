@@ -11,9 +11,9 @@ box is told to do.
 Three consequences follow from copying rather than loading in place:
 
 * The copies sit inside the agent's existing ``capabilities`` root, so the
-  loader adjudicates them through ``_UNTRUSTED_ROOTS`` unchanged. No trusted
-  root is introduced — a writable directory whose contents are trusted is
-  exactly the hole that set was drawn to close (SDD alternatives D-648, D-649).
+  loader adjudicates them as UNTRUSTED unchanged. No trusted root is introduced
+  — a writable directory whose contents are trusted is exactly the hole that
+  classification was drawn to close (SDD alternatives D-648, D-649).
 * The layout inside the copy mirrors :func:`append_capability_scan_roots`:
   tools directly under the root, skills under ``skills/``. Anything else is
   simply not discovered.

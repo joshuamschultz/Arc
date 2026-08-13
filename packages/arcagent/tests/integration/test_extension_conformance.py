@@ -55,8 +55,10 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+import arcbundle
 import pytest
 from arcrun import ToolContext
+from arctrust import ValidatorsConfig, generate_keypair
 from arctrust.audit import AuditEvent
 
 import arcagent
@@ -69,6 +71,7 @@ from arcagent.core.config import (
     IdentityConfig,
     LLMConfig,
     ModuleEntry,
+    SecurityConfig,
     TelemetryConfig,
     load_config,
 )
@@ -107,6 +110,12 @@ _CALLER = "did:arc:testorg:executor/conformance"
 
 _ECHO = "reference_echo"
 _STORE = "reference_store"
+
+#: The issuer every module bundle in this file is signed with. A ``module:*``
+#: root is VERIFIED, so the agent must pin this key or the connectors module
+#: materializes and then registers nothing.
+_ISSUER = "did:arc:conformance-operator"
+_ISSUER_KEYPAIR = generate_keypair()
 
 #: A credential value nothing else could produce, and the digest the fixture answers
 #: under. Computed here rather than imported from the fixture: a digest shared with the
@@ -173,6 +182,9 @@ def _config(tmp_path: Path, *, modules: dict[str, ModuleEntry] | None = None) ->
         identity=IdentityConfig(did="", key_dir=str(tmp_path / "keys"), vault_path=""),
         telemetry=TelemetryConfig(enabled=True),
         context=ContextConfig(max_tokens=10000),
+        security=SecurityConfig(
+            validators=ValidatorsConfig(trusted_keys=(_ISSUER_KEYPAIR.public_key.hex(),))
+        ),
         modules=modules or {},
     )
 
@@ -225,16 +237,26 @@ def _installed_connectors_module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 
     SPEC-066 REQ-333: discovery reads ``${ARC_CONFIG_DIR}/modules``, so a module
     is present because an operator installed it — never because it shipped in
-    the wheel. Copying the tree is what ``arc module install`` leaves behind,
-    and pinning ``ARC_CONFIG_DIR`` at this test's own ``arc/`` keeps the scan
-    off the machine's real ``~/.arc``.
+    the wheel. Built, verified, and materialized rather than copied: a
+    ``module:*`` root is adjudicated by per-file signature, and a copied tree
+    carries no ``.arcsig`` sidecars, so nothing under it would load. Pinning
+    ``ARC_CONFIG_DIR`` at this test's own ``arc/`` keeps the scan off the
+    machine's real ``~/.arc``.
     """
     arc_dir = _arc_dir(tmp_path)
     monkeypatch.setenv("ARC_CONFIG_DIR", str(arc_dir))
-    shutil.copytree(
+    bundle = arcbundle.build_bundle(
         Path(arcagent.__file__).resolve().parent / "modules" / "connectors",
-        arc_dir / "modules" / "connectors",
+        module="connectors",
+        version="1.0.0",
+        private_key=_ISSUER_KEYPAIR.private_key,
+        issuer=_ISSUER,
+        out=tmp_path / "bundles" / "connectors.arcbundle",
     )
+    verified = arcbundle.verify_bundle(
+        bundle, tier="personal", trusted_issuers={_ISSUER: _ISSUER_KEYPAIR.public_key}
+    )
+    arcbundle.materialize(verified, arc_dir / "modules")
 
 
 def _connections(arc_dir: Path) -> ConnectionRegistry:
@@ -280,6 +302,10 @@ def _write_agent_toml(
         'did = ""',
         f'key_dir = "{agent_dir / "keys"}"',
         'vault_path = ""',
+        "",
+        # The module bundle issuer, pinned as ``arc module install`` pins it.
+        "[security.validators]",
+        f'trusted_keys = ["{_ISSUER_KEYPAIR.public_key.hex()}"]',
     ]
     if connectors_enabled:
         # A per-test data dir, not the machine's. The connection records and the

@@ -4,13 +4,14 @@ COMP-003, serving REQ-281/282/283. These are the tests the whole spec rests on:
 an extension is third-party code, so the one thing that must never happen is it
 arriving through a door that skips the trust gate.
 
-The trusted-root inversion is subtle and silent. ``CapabilityLoader`` only runs
-the AST validator + signature gate when the scan root is untrusted
-(``capability_loader.py:294``, against ``_UNTRUSTED_ROOTS`` at ``:84-94``);
-module roots are appended WITHOUT being listed there
-(``agent_lifecycle.py:152-154``), so they are trusted by absence. A bundle loaded
-through a module-shaped root would inherit that trust and the signature design
-would evaporate with every test still green. Hence:
+The trusted-root inversion is subtle and silent. ``CapabilityLoader`` runs the
+AST validator + the isolated execution path only for a root that classifies as
+``RootTrust.UNTRUSTED``. When this suite was written, module roots were trusted
+by absence — they fell off the end of a membership test — and a bundle loaded
+through a module-shaped root would have inherited that trust with every test
+still green. SPEC-066 T-972 closed that: ``root_trust`` now names three classes
+and defaults to UNTRUSTED, and ``module:*`` is VERIFIED (signature gate, no
+isolation). An extension root is untrusted on both counts and must stay so. Hence:
 
 * the extension root must classify as untrusted (asserted at the classifier, the
   single source of truth — not at a copy);

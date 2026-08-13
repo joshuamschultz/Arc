@@ -233,12 +233,19 @@ def _create(args: argparse.Namespace) -> None:
     skill_md = skill_folder / "SKILL.md"
     skill_md.write_text(_SKILL_TEMPLATE.format(name=name))
 
+    # Deliberately UNSIGNED. What is written here is a stub whose next
+    # instruction is to edit it, and a signature over a stub is invalidated by
+    # that very edit — leaving a drifted sidecar, which the loader treats as
+    # TAMPER (a hard DENY) rather than as merely unsigned. Signing belongs after
+    # the content is real, which is why step 3 exists.
     _write(f"Created skill: {skill_folder}/")
     _write("  SKILL.md, references/, scripts/, templates/")
     _write()
     _write("Next steps:")
     _write(f"  1. Edit {skill_md} (fill description, triggers, tools, all 7 sections)")
     _write(f"  2. arc skill validate {skill_folder}")
+    _write(f"  3. arc trust approve {name} [--agent <id>]  (sign it — it will not")
+    _write("     load above personal tier unsigned; re-run after any later edit)")
 
 
 def _validate(args: argparse.Namespace) -> None:

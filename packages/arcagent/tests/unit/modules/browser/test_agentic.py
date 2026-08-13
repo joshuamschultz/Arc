@@ -80,7 +80,7 @@ async def test_browser_task_registers(tmp_path: Path) -> None:
     (scan_dir / "agentic.py").symlink_to(Path(agentic.__file__))
 
     reg = CapabilityRegistry()
-    loader = CapabilityLoader(scan_roots=[("browser", scan_dir)], registry=reg)
+    loader = CapabilityLoader(scan_roots=[("module:browser", scan_dir)], registry=reg)
     await loader.scan_and_register()
 
     entry = await reg.get_tool("browser_task")

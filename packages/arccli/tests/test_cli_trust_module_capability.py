@@ -76,8 +76,15 @@ def _team(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return team_root
 
 
-def _build_agent(team_root: Path, name: str, *, tier: str) -> Path:
-    """A real agent directory with a real identity and the module enabled."""
+def _build_agent(team_root: Path, name: str, *, tier: str, auto_run: bool = False) -> Path:
+    """A real agent directory with a real identity and the module enabled.
+
+    ``auto_run`` is ``[security.validators] auto_run_agent_code``, which the
+    personal-tier scaffold seeds to ``true``. It is what makes an unsigned
+    hand-written skill LOAD on a laptop — and therefore never appear as gated,
+    which is the whole reason approve cannot be restricted to gated artifacts.
+    Off by default so the module cases below still measure the signature gate.
+    """
     agent_dir = team_root / name
     (agent_dir / "workspace").mkdir(parents=True)
     key_dir = team_root / f"{name}-keys"
@@ -88,11 +95,50 @@ def _build_agent(team_root: Path, name: str, *, tier: str) -> Path:
         f'workspace = "{agent_dir / "workspace"}"\n'
         '[llm]\nmodel = "test/model"\n'
         f'[security]\ntier = "{tier}"\n'
+        f"[security.validators]\nauto_run_agent_code = {str(auto_run).lower()}\n"
         f'[identity]\ndid = "{identity.did}"\nkey_dir = "{key_dir}"\nvault_path = ""\n'
         f"[modules.{_MODULE}]\nenabled = true\n",
         encoding="utf-8",
     )
     return agent_dir
+
+
+_SKILL_MD = """\
+---
+name: {name}
+version: 1.0.0
+description: does {name}
+triggers: [{name}]
+tools: [reload]
+---
+
+## Resources
+
+## Contract
+
+## Knowledge
+
+## Steps
+
+## Anti Patterns
+
+## Examples
+
+## Validation
+"""
+
+
+def _write_unsigned_skill(agent_dir: Path, name: str) -> Path:
+    """Hand-write a skill into the agent's own skills root, with no signature.
+
+    Exactly what a person does on a laptop: create the folder, write the file,
+    sign nothing.
+    """
+    folder = agent_dir / "workspace" / "capabilities" / "skills" / name
+    folder.mkdir(parents=True)
+    skill_md = folder / "SKILL.md"
+    skill_md.write_text(_SKILL_MD.format(name=name), encoding="utf-8")
+    return skill_md
 
 
 def _install_module(tmp_path: Path, agent_dir: Path) -> Path:
@@ -251,3 +297,92 @@ def test_approve_leaves_the_module_root_read_only_afterwards(
 
     assert stat.S_IMODE(installed.stat().st_mode) == dir_mode
     assert stat.S_IMODE(sidecar.stat().st_mode) == sidecar_mode
+
+
+# --------------------------------------------------------------------------
+# Approve reaches any capability, not only a gated one
+# --------------------------------------------------------------------------
+
+
+def test_approve_signs_a_capability_that_is_already_loading(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The PRD's headline workflow: sign on the laptop, promote to a hardened box.
+
+    At personal tier ``auto_run_agent_code`` lets an unsigned skill load, so it is
+    never GATED — and a gated-only approve could not sign it on the machine it was
+    written on. Signing is a statement about bytes, not a repair for a refusal.
+
+    The skill here is unsigned and loading. The assertions are that a signature now
+    exists and that the key and hash are pinned: none of the three could be true if
+    approve had refused to resolve a loaded artifact.
+    """
+    team_root = _team(tmp_path, monkeypatch)
+    agent_dir = _build_agent(team_root, "olivia", tier="personal", auto_run=True)
+    skill_md = _write_unsigned_skill(agent_dir, "reporter")
+    assert asyncio.run(_statuses(agent_dir))["reporter"] == "loaded"
+    assert not arcagent.sidecar_path(skill_md).exists()
+
+    trust_handler(["approve", "reporter"])
+
+    out = capsys.readouterr().out
+    assert "Signed reporter" in out and "Re-signed" not in out
+    operator_key = _operator_public_key(tmp_path)
+    assert arcagent.verify_file(
+        skill_md, skill_md.read_bytes(), trusted_public_key=operator_key
+    ), "an already-loading capability was not signed"
+    validators = load_validators(agent_dir / "arcagent.toml")
+    assert operator_key.hex() in validators.trusted_keys
+    assert "reporter" in {entry.name for entry in validators.approved}
+
+
+def test_approve_twice_re_signs_current_bytes_and_says_so(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A second approve is a re-signature over what is on disk NOW, never a no-op.
+
+    The operator asked for a signature over the current bytes; a command that
+    noticed a sidecar and returned early would leave the pin on stale content
+    while reporting success. The edit between the two approvals is what makes the
+    difference observable: the second hash must differ from the first.
+    """
+    team_root = _team(tmp_path, monkeypatch)
+    agent_dir = _build_agent(team_root, "olivia", tier="personal", auto_run=True)
+    skill_md = _write_unsigned_skill(agent_dir, "reporter")
+    config = agent_dir / "arcagent.toml"
+
+    trust_handler(["approve", "reporter"])
+    first_hash = next(e.hash for e in load_validators(config).approved if e.name == "reporter")
+    capsys.readouterr()
+
+    skill_md.write_text(
+        skill_md.read_text(encoding="utf-8") + "\nA second paragraph.\n", encoding="utf-8"
+    )
+    trust_handler(["approve", "reporter"])
+
+    out = capsys.readouterr().out
+    assert "Re-signed reporter" in out
+    second_hash = next(e.hash for e in load_validators(config).approved if e.name == "reporter")
+    assert second_hash != first_hash, "the re-sign pinned the OLD hash"
+    assert arcagent.verify_file(
+        skill_md,
+        skill_md.read_bytes(),
+        trusted_public_key=_operator_public_key(tmp_path),
+    ), "the sidecar still signs the pre-edit bytes"
+
+
+def test_approve_names_an_unknown_capability_clearly_and_exits_non_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Widening what approve can reach must not make a typo silently succeed."""
+    team_root = _team(tmp_path, monkeypatch)
+    agent_dir = _build_agent(team_root, "olivia", tier="personal", auto_run=True)
+    _write_unsigned_skill(agent_dir, "reporter")
+
+    with pytest.raises(SystemExit) as exit_info:
+        trust_handler(["approve", "raporter"])
+
+    assert exit_info.value.code == 1
+    err = capsys.readouterr().err
+    assert "no capability named 'raporter'" in err
+    assert "trust list --all" in err, "the error does not say how to find the right name"

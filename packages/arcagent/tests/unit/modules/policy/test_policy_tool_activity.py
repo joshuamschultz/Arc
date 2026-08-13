@@ -296,7 +296,7 @@ class TestToolHookRegistration:
 
         module_dir = Path(policy_caps.__file__).parent
         reg = CapabilityRegistry()
-        loader = CapabilityLoader(scan_roots=[("policy", module_dir)], registry=reg)
+        loader = CapabilityLoader(scan_roots=[("module:policy", module_dir)], registry=reg)
         await loader.scan_and_register()
 
         pre = await reg.get_hooks("agent:pre_tool")

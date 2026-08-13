@@ -17,7 +17,9 @@ from arcagent.capabilities.capability_loader import CapabilityLoader
 from arcagent.capabilities.capability_registry import CapabilityRegistry
 from arcagent.capabilities.capability_signing import revoke as revoke_capability
 from arcagent.capabilities.capability_signing import sign as sign_capability
+from arcagent.capabilities.capability_signing import trust_bundled_capabilities
 from arcagent.capabilities.inventory import (
+    GatedItem,
     collect_agent_capability_inventory,
     global_capabilities_root,
     list_gated,
@@ -138,6 +140,7 @@ __all__ = [
     "ConnectorPlan",
     "ContextError",
     "ExtensionError",
+    "GatedItem",
     "HostPrerequisiteDirector",
     "HostVerdict",
     "IdentityError",
@@ -191,6 +194,7 @@ __all__ = [
     "stricter_tier",
     "tier_rank",
     "tool",
+    "trust_bundled_capabilities",
     "validate_skill_folder",
     "verify_file",
     "write_signature",
