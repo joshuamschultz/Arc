@@ -1,0 +1,53 @@
+name: Release module bundles
+
+# SPEC-066 REQ-336. The arc-agent wheel ships no module code, so a release that
+# publishes only the wheel publishes a harness with no capabilities. Each module
+# folder is packaged into a signed bundle here and attached to the release, which
+# is the artifact `arc module install` verifies and materializes.
+#
+# Signing key: repository secrets ARC_RELEASE_SIGNING_KEY (base64 Ed25519 seed)
+# and ARC_RELEASE_ISSUER_DID. The script refuses to emit an unsigned bundle, so
+# a missing secret fails this job rather than publishing something no deployment
+# could verify.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  bundles:
+    name: Build and sign module bundles
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --all-packages --all-groups
+
+      - name: Build and sign every module bundle
+        env:
+          ARC_RELEASE_SIGNING_KEY: ${{ secrets.ARC_RELEASE_SIGNING_KEY }}
+          ARC_RELEASE_ISSUER_DID: ${{ secrets.ARC_RELEASE_ISSUER_DID }}
+        run: uv run python scripts/build_module_bundles.py --out dist/bundles
+
+      - name: Attach the bundles to the release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" dist/bundles/*.tar.gz --clobber
+
+      - name: Upload the bundles as a workflow artifact
+        # The manual-dispatch path has no release to attach to, and an operator
+        # staging an air-gapped install needs the files either way.
+        uses: actions/upload-artifact@v4
+        with:
+          name: module-bundles
+          path: dist/bundles/*.tar.gz

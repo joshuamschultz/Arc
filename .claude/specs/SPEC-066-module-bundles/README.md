@@ -9,7 +9,24 @@
 |---|---|---|
 | PRD | approved | 2026-08-11 |
 | SDD | approved | 2026-08-11 |
-| PLAN | draft | 2026-08-11 |
+| PLAN | complete (25/25) | 2026-08-13 |
+
+**Implementation status:** all 25 tasks done. Full suite 7005 passed / 27 skipped / 0
+failed; ruff clean; `mypy --strict` clean over 445 source files.
+
+**Not covered, carried forward:**
+- **Extensions were never run through the install-and-work path** under the new regime.
+  `extension:*` roots are asserted to keep their untrusted containment, but no test
+  installs an extension and proves it still loads. `modules/connectors/` uses
+  `ExtensionLoader`, so extension installation runs THROUGH a module that is itself now
+  optional — the most likely place for a break.
+- **The key-holder threat is unchanged by this spec.** One operator key signs both
+  capabilities and the WORM audit chain, so whoever holds that file can sign a malicious
+  capability AND forge the trail; `verify_chain` passes because it checks the same public
+  key. Controls that would catch it: `custody = vault_transit` (default at enterprise and
+  federal, NOT personal) and an external witness anchor (`arctrust.witness` exists but
+  `witness_mode` defaults to `offline` at every tier, with no log URL). A personal-tier
+  box therefore has no detection for an attacker who obtains the operator key.
 ## Steering References
 
 - Product: [`../../steering/product.md`](../../steering/product.md)

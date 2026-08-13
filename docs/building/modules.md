@@ -198,6 +198,22 @@ per-agent `capabilities/`, and the workspace `capabilities/` — are scanned unc
 source: `agent_lifecycle.setup_capabilities` appends one `("module:<name>", modules_dir/<name>)`
 scan root **per active module only**.
 
+**A module scan root is verified, not trusted.** `module:<name>` is its own trust class
+(`RootTrust.VERIFIED`): every `.py` and every `SKILL.md` under it must carry a valid
+`.arcsig` sidecar signed by a key the agent has pinned, re-checked on every scan — the same
+per-file mechanism skills and tools already use, so an operator has one model. It is *not*
+isolated: the AST import allowlist and the ArcRun-isolated proxy exist to contain code the
+model wrote, and applying them to module code stops `@hook`, `@background_task`, and
+`@capability` registering at all.
+
+Two consequences for a module author:
+
+* `arc module bundle` writes those sidecars for you, with the key that signs the manifest.
+  You do not hand-sign anything.
+* Editing a module in place at `${ARC_CONFIG_DIR:-~/.arc}/modules/` makes it stop loading.
+  That is the control working. Re-sign it with `arc trust approve <module>/<file-stem>` —
+  e.g. `arc trust approve workpad/capabilities` — or rebuild and reinstall the bundle.
+
 ### `[modules.NAME]` schema
 
 From `ModuleEntry` in `arcagent/core/config.py`:
