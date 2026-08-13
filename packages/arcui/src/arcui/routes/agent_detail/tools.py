@@ -7,6 +7,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+import arcagent
 from arcgateway import fs_reader
 from arcgateway.fs_reader import FileTooLargeError, PathTraversalError
 from starlette.requests import Request
@@ -203,7 +204,7 @@ def _disk_tool_roots(agent_root: Path) -> list[tuple[Path, str]]:
     the same precedence order.
 
     Locations checked (each optional):
-      - ~/.arc/capabilities/*.py                 (global, operator-curated)
+      - ${ARC_CONFIG_DIR:-~/.arc}/capabilities/*.py  (global, operator-curated)
       - team/<agent>/tools/*.py                  (agent-shipped Python tools)
       - team/<agent>/workspace/tools/*.py        (agent-authored runtime tools)
       - team/<agent>/extensions/*                (extension modules)
@@ -211,8 +212,9 @@ def _disk_tool_roots(agent_root: Path) -> list[tuple[Path, str]]:
       - team/<agent>/workspace/capabilities/*.py (agent-authored at runtime)
     """
     return [
-        # Global capabilities root — the loader scans ~/.arc/capabilities/.
-        (Path.home() / ".arc" / "capabilities", "global"),
+        # Global capabilities root — resolved through arcagent's one resolver so
+        # this view and a real load agree, including under ARC_CONFIG_DIR.
+        (arcagent.global_capabilities_root(), "global"),
         (agent_root / "tools", "agent_dir"),
         (agent_root / "workspace" / "tools", "workspace"),
         (agent_root / "extensions", "extension"),

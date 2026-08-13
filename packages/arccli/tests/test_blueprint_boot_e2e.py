@@ -16,13 +16,16 @@ agent's own populated CapabilityRegistry.
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
+import arcagent
 import pytest
 from arcagent.__main__ import _load_config
 from arcagent.core.agent import ArcAgent
 from arcagent.extension.inspect import inspect_extensions
 from arcagent.modules.memory import _runtime as memory_runtime
+from arcbundle.capability_copy import copy_capabilities
 
 from arccli.blueprints import apply_blueprint, dumps_toml, resolve_blueprint
 
@@ -42,6 +45,23 @@ def _materialize(tmp_path: Path, blueprint_name: str, *, deployment_tier: str) -
     target = tmp_path / "arcagent.toml"
     target.write_text(dumps_toml(merged), encoding="utf-8")
     return target
+
+
+@pytest.fixture(autouse=True)
+def _installed_memory_module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Install the memory module into this test's deployment root.
+
+    SPEC-066 REQ-333: a module loads because an operator installed it at
+    ``${ARC_CONFIG_DIR}/modules``, not because it shipped in the wheel. A
+    blueprint enabling ``[modules.memory]`` is therefore no longer sufficient on
+    its own, so the deployment this test boots against has to be staged the way
+    ``arc module install`` stages one — runtime at the deployment root, tools
+    and skills copied into the agent's own capability root.
+    """
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc"))
+    source = Path(arcagent.__file__).resolve().parent / "modules" / "memory"
+    shutil.copytree(source, tmp_path / "arc" / "modules" / "memory")
+    copy_capabilities(source, tmp_path, module="memory")
 
 
 @pytest.fixture(autouse=True)

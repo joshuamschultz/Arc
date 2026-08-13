@@ -19,16 +19,17 @@ from __future__ import annotations
 import importlib
 import logging
 import os
+import sys
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from arcprompt import load_stock
 
 from arcagent.capabilities.capability_loader import CapabilityLoader
 from arcagent.capabilities.capability_registry import CapabilityRegistry
 from arcagent.core.module_bus import EventContext
-from arcagent.core.module_discovery import active_modules, module_statuses
+from arcagent.core.module_discovery import active_modules, module_root, module_statuses
 from arcagent.core.runtime_dependencies import (
     DependencyKey,
     RuntimeBindable,
@@ -39,6 +40,7 @@ from arcagent.core.runtime_dependencies import (
 )
 from arcagent.core.tool_registry import RegisteredTool, ToolTransport
 from arcagent.tools._egress_build import build_egress_proxy
+from arcagent.utils.source_module import exec_source_module
 
 if TYPE_CHECKING:
     from arcagent.core.agent import ArcAgent
@@ -129,6 +131,46 @@ def _resolve_working_dir(
     return None
 
 
+def load_module_runtime(name: str) -> RuntimeModule:
+    """Load ``<module_root>/<name>/_runtime.py`` from the filesystem.
+
+    ONE loader for every module regardless of origin: a module materialized
+    from a signed bundle and a module that happens to still ship in the wheel
+    are loaded the same way, so there is no second, weaker path to audit.
+    Nothing is added to ``sys.path`` — the folder is addressed directly.
+
+    The result is registered under its canonical dotted name because a module's
+    own ``capabilities.py`` reaches its state through
+    ``from arcagent.modules.<name> import _runtime``. A second, path-loaded copy
+    would own its own ``ContextVar`` objects, and every tool in that module
+    would then read state :func:`configure` never touched. Registering also
+    makes the load happen once per process — the semantics ``import_module``
+    gave — so two agents in one process share one runtime object, as the
+    ContextVar isolation already assumes.
+
+    Execution goes through :func:`arcagent.utils.source_module.exec_source_module`,
+    which documents why ``compile()`` + ``exec`` replaces ``exec_module`` here.
+    """
+    dotted = f"arcagent.modules.{name}._runtime"
+    cached = sys.modules.get(dotted)
+    if cached is not None:
+        return cast(RuntimeModule, cached)
+
+    path = module_root() / name / "_runtime.py"
+    module = exec_source_module(path, dotted)
+    # Bind the submodule onto its package exactly as the import machinery does.
+    # The bare ``sys.modules`` entry alone satisfies ``from <pkg> import _runtime``
+    # — that form falls back to ``sys.modules`` — but NOT attribute traversal,
+    # which is how a ``<pkg>._runtime.<attr>`` reference and pytest's string-form
+    # ``monkeypatch.setattr`` resolve. Without this the two disagree about which
+    # object is the runtime, which is the whole failure mode this function exists
+    # to prevent.
+    package = importlib.import_module(f"arcagent.modules.{name}")
+    # ignore reason: this assignment is what CREATES the attribute — nothing declares it.
+    package._runtime = module  # type: ignore[attr-defined]
+    return cast(RuntimeModule, module)
+
+
 async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
     """Wire the SPEC-021 capability subsystem.
 
@@ -191,10 +233,10 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
 
     # Scan roots per SPEC-021 R-001 precedence:
     # 1. builtins + builtin skills (always)
-    # 2. ~/.arc/capabilities/             — global, opt-in by user
-    # 3. <agent_root>/capabilities/       — per-agent
-    # 4. <workspace>/capabilities/       — agent-authored
-    # Plus enabled modules with capabilities.py.
+    # 2. ${ARC_CONFIG_DIR:-~/.arc}/capabilities/ — global, opt-in by user
+    # 3. <agent_root>/capabilities/              — per-agent
+    # 4. <workspace>/capabilities/               — agent-authored
+    # Plus each enabled module's per-agent capability copy, under root 3.
     import arcagent.builtins.capabilities as builtins_pkg
 
     builtins_root = Path(builtins_pkg.__file__).parent
@@ -207,16 +249,31 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
     # under it) and ``<name>-skills`` (its ``skills/`` subdir, where create_skill
     # writes), mirroring the builtins / builtins-skills pair above. Shared with
     # the arcui inventory seam so a UI read and a real load scan the same roots.
-    from arcagent.capabilities.inventory import append_capability_scan_roots
+    from arcagent.capabilities.inventory import (
+        append_capability_scan_roots,
+        append_module_scan_roots,
+        global_capabilities_root,
+    )
 
-    append_capability_scan_roots(scan_roots, "global", Path("~/.arc/capabilities").expanduser())
+    append_capability_scan_roots(scan_roots, "global", global_capabilities_root())
     agent_root = agent._config_path.parent.resolve()
     append_capability_scan_roots(scan_roots, "agent", agent_root / "capabilities")
     append_capability_scan_roots(scan_roots, "workspace", workspace / "capabilities")
 
-    modules_dir = Path(__file__).parent.parent / "modules"
-    for mod_name in active_modules(agent._config):
-        scan_roots.append((f"module:{mod_name}", modules_dir / mod_name))
+    # A module's RUNTIME stays once at the deployment root (configured above);
+    # its CAPABILITY SURFACE is the per-agent copy `arc module install` writes to
+    # `<agent_root>/capabilities/modules/<name>/`, and that copy is what loads
+    # (REQ-337). One load path, not two: a skill or tool that drifts for this
+    # agent must not change what every other agent on the box is told to do.
+    #
+    # `module:*` is its own trust class (RootTrust.VERIFIED): a valid signature
+    # is mandatory at EVERY tier, because the copy sits in a directory the agent
+    # can write. It is NOT isolated — the AST import allowlist and ArcRun
+    # isolation exist to contain code the model wrote, and applying them to
+    # module code made 17 of 18 modules register zero tools (`@hook` /
+    # `@background_task` / `@capability` never register and the stdlib a module
+    # legitimately imports is blocked).
+    append_module_scan_roots(scan_roots, agent_root, active_modules(agent._config))
 
     # SPEC-033 Sign gate: re-verify signatures at load and adjudicate via TOFU.
     # Signature is the floor above personal; personal may relax (auto_run). The
@@ -238,7 +295,7 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
         import_policy=posture.import_policy,
         tofu=posture.tofu,
         require_signature=posture.require_signature,
-        trusted_public_key=posture.trusted_public_key,
+        trusted_public_keys=posture.trusted_public_keys,
         isolation_tier=agent._config.security.tier,
     )
     builtin_runtime.configure(
@@ -321,9 +378,7 @@ def configure_module_runtimes(
         if spec is None:
             raise RuntimeError(f"Enabled module {mod_name!r} has no runtime dependency contract")
         try:
-            runtime_mod: RuntimeModule = importlib.import_module(
-                f"arcagent.modules.{mod_name}._runtime"
-            )
+            runtime_mod = load_module_runtime(mod_name)
             runtime_mod.configure(**spec.kwargs(dependencies, mod_entry.config))
         except Exception as exc:
             if not spec.optional:
@@ -344,11 +399,19 @@ def configure_module_runtimes(
 
 
 def _warn_config_without_folder(agent: ArcAgent) -> None:
-    """Warn (once) about any ``[modules.NAME]`` entry naming an absent folder.
+    """Warn AND audit any ``[modules.NAME]`` entry naming an absent folder.
 
     Discovery is folder-driven, so a config entry with no matching module folder
     can never load. Surface it clearly instead of failing silently — a typo'd or
     stale module name is a config error, not a crash.
+
+    A WARNING alone is not enough once modules ship as separately installed
+    bundles. The agent still boots and still answers, so the operator sees a
+    healthy service while the scheduler never fires and tasks never dispatch —
+    the failure is invisible precisely because nothing crashed. An audit event
+    puts it on the same durable trail an operator already reviews, so "this
+    deployment lost a capability it was configured for" is a queryable fact
+    rather than a line someone had to be tailing logs to catch.
     """
     for name, status in module_statuses(agent._config).items():
         entry = agent._config.modules.get(name)
@@ -356,6 +419,16 @@ def _warn_config_without_folder(agent: ArcAgent) -> None:
             _logger.warning(
                 "Config enables module %r but no module folder is present; skipping", name
             )
+            if agent._telemetry is not None:
+                agent._telemetry.audit_event(
+                    "module.enabled_but_absent",
+                    {
+                        "module": name,
+                        "module_root": str(module_root()),
+                        "reason": "config enables the module but no module folder is present",
+                        "remedy": f"arc module install {name}",
+                    },
+                )
 
 
 def activate_runtime_bindings(agent: ArcAgent) -> None:

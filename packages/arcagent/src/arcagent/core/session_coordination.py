@@ -66,9 +66,7 @@ class SessionRunCoordinator:
         async with self._delivery_locks.setdefault(session_key, asyncio.Lock()):
             yield
 
-    def register(
-        self, session_key: str, handle: arcrun.RunHandle, *, interactive: bool
-    ) -> None:
+    def register(self, session_key: str, handle: arcrun.RunHandle, *, interactive: bool) -> None:
         """Track a live run. ``interactive`` runs are the only injection targets.
 
         A run is interactive when an inbound message opened it. Everything else

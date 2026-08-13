@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 
 from arccli.commands.identity import (
-    DEFAULT_KEY_DIR,
     identity_handler,
     load_signing_authority,
 )
@@ -53,10 +52,6 @@ def test_force_replaces_authority(tmp_path: Path) -> None:
     second = load_signing_authority(tmp_path)
     assert first is not None and second is not None
     assert first.did != second.did
-
-
-def test_default_key_dir_is_under_home() -> None:
-    assert DEFAULT_KEY_DIR == Path("~/.arc/identity").expanduser()
 
 
 def test_init_honors_arc_config_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

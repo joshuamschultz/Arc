@@ -51,7 +51,7 @@ class TestLoaderRegistration:
         # Loader scans .py files in the directory; only capabilities.py
         # has @hook stamps among the policy files.
         reg = CapabilityRegistry()
-        loader = CapabilityLoader(scan_roots=[("policy", module_dir)], registry=reg)
+        loader = CapabilityLoader(scan_roots=[("module:policy", module_dir)], registry=reg)
         await loader.scan_and_register()
 
         prompt_hooks = await reg.get_hooks("agent:assemble_prompt")

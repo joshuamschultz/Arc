@@ -118,10 +118,14 @@ export interface GatedCapability {
   agent_label: string
   name: string
   kind: 'tool' | 'skill'
-  status: 'deny' | 'new_sighting' | 'unsigned' | 'invalid' | 'error'
+  status: 'deny' | 'new_sighting' | 'unsigned' | 'invalid' | 'error' | 'loaded'
   path: string
   hash: string
   detail: string
+  /** DID of whoever signed the artifact on disk right now; '' when unsigned.
+   *  A loaded capability may be signed by the AGENT itself (SPEC-033), which
+   *  is what lets an operator spot one that has never been through them. */
+  signer_did: string
 }
 export interface GatedResponse {
   gated: GatedCapability[]
@@ -130,11 +134,50 @@ export interface GatedResponse {
 // Polls every 4s: a capability is gated the moment the loader denies, first-
 // sights, or fails to verify it, so newly quarantined tools/skills must surface
 // without a manual refresh — same cadence as approvals.
-export const useGatedCapabilities = () =>
+//
+// `includeLoaded` is part of the query key, not just the URL: the two views
+// are different server responses, so sharing one cache entry would show the
+// gated-only list for a beat after the toggle flips and let a mutation
+// invalidate the wrong one. Both entries still invalidate together on the
+// ['trust','gated'] prefix after an approve.
+export const useGatedCapabilities = (includeLoaded: boolean) =>
   useQuery<GatedResponse>({
-    queryKey: ['trust', 'gated'],
-    queryFn: ({ signal }) => apiGet<GatedResponse>('/api/trust/gated', signal),
+    queryKey: ['trust', 'gated', includeLoaded],
+    queryFn: ({ signal }) =>
+      apiGet<GatedResponse>(
+        includeLoaded ? '/api/trust/gated?include_loaded=1' : '/api/trust/gated',
+        signal,
+      ),
     refetchInterval: 4000,
+  })
+
+export interface CapabilitySource {
+  agent_id: string
+  name: string
+  kind: 'tool' | 'skill'
+  path: string
+  hash: string
+  source: string
+}
+
+// Fetched per row only while its source disclosure is open (`enabled`), never
+// folded into the gated list: that list polls every 4s, so carrying artifact
+// text would re-ship every capability's executable source to every open
+// dashboard continuously — and to operators who never asked to read it.
+export const useCapabilitySource = (agentId: string, name: string, enabled: boolean) =>
+  useQuery<CapabilitySource>({
+    queryKey: ['trust', 'source', agentId, name],
+    queryFn: ({ signal }) =>
+      apiGet<CapabilitySource>(
+        `/api/trust/source?agent_id=${encodeURIComponent(agentId)}&name=${encodeURIComponent(name)}`,
+        signal,
+      ),
+    enabled,
+    // Overrides the app-wide 10s staleTime: reopening the panel must re-read
+    // what is on disk NOW, because the approve gate compares this hash to the
+    // polled row hash and a cached body would otherwise keep an edited
+    // artifact locked out until the cache aged out.
+    staleTime: 0,
   })
 
 export const useTeamToolsSkills = () =>

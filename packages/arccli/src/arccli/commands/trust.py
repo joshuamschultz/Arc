@@ -1,21 +1,35 @@
-"""``arc trust`` — operator approval for gated agent capabilities (SPEC-021).
+"""``arc trust`` — operator approval for gated agent capabilities (SPEC-021, SPEC-066).
 
-At enterprise/federal a self-executing capability (an agent-authored tool ``.py``
-or a skill ``SKILL.md``) does not load until an operator pins its source hash
-into the agent's ``[security.validators.approved]`` block. This command is that
-on-box operator surface: it DISCOVERS gated capabilities via
-``arcagent.capabilities.inventory`` (arcagent owns loading) and MUTATES the
-approval store via ``arctrust`` (arctrust owns trust/approval).
+A self-executing capability (an agent-authored tool ``.py`` or a skill
+``SKILL.md``) does not load until an operator SIGNS it. Passing the gate needs
+three things together — a detached signature over the artifact bytes, the
+signer's key pinned as a trusted capability-verification key, and the source
+hash pinned — so this command performs them as one action via
+``arcagent.sign_capability``. A hash pin on its own never reaches the
+enterprise/federal signature floor, which is why approval is signing.
 
 ``trust list [--agent <id>] [--all]``        — show gated capabilities.
-``trust approve <name> [--agent <id>]``       — pin the current source hash.
-``trust disapprove <name> [--agent <id>]``    — remove a pin (drift / revoke).
+``trust approve <name> [--agent <id>]``      — sign, pin the key, pin the hash.
+``trust disapprove <name> [--agent <id>]``   — the exact inverse (drift / revoke).
+
+``list`` shows what is GATED (``--all`` for everything), but ``approve`` reaches
+any discoverable capability, gated or already loading. That asymmetry is the
+point. Signing is a statement about bytes, not a repair for a refusal: on a
+personal-tier box a hand-written skill already loads and is never gated, so a
+gated-only approve made it unsignable on the machine it was written on — which
+is exactly the promote-a-laptop-skill-to-a-hardened-box workflow this exists for.
+It also blocks pre-signing before shipping to a stricter tier, and re-signing an
+artifact that loads today but was edited a minute ago. Re-signing is never a
+no-op: it signs what is on disk NOW and re-pins that hash.
 
 ``--agent`` names an agent under the deployment's ``team/`` dir; it is optional
-when the team has exactly one agent. The approver recorded is the on-box
-deployment operator DID (``~/.arc/operator``) — the same key the agent's gate
-pins to — so an approval is attributable and only an operator-key holder can mint
-one.
+when the team has exactly one agent. The signer is always the on-box deployment
+operator key — there is no flag to supply an identity, so only an operator-key
+holder can mint an approval. Custody is whatever the machine ``[security]``
+block selects: an in-process seed under ``~/.arc/operator``, or a vault/notary
+key that signs by reference and never enters this process. This is a CLI-only
+surface: it is registered on no tool registry and reachable from no chat socket,
+so no model can approve its own code (REQ-321).
 """
 
 from __future__ import annotations
@@ -23,14 +37,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
 
 import arcagent
 from arcgateway import team_roster
-from arctrust import approve, disapprove
+from arctrust import Signer, SignerError, disapprove
 
-from arccli.commands._shared import dispatch
+from arccli.commands._shared import audit_chain, dispatch
 from arccli.commands._shared import print_table as _print_table
 from arccli.commands._shared import write as _write
 
@@ -71,18 +84,37 @@ def _resolve_agent(agent_arg: str | None) -> tuple[str, Path, str]:
     return only.agent_id, Path(only.workspace_path), only.display_name
 
 
-def _operator_did() -> str:
-    """The on-box deployment operator DID recorded as the approver."""
+def _operator_did(signer: Signer) -> str:
+    """The on-box deployment operator DID recorded as the signer/approver."""
     from arctrust.policy import OperatorApprovalAuthority
 
+    return OperatorApprovalAuthority(signer).did
+
+
+def _operator_signer() -> Signer:
+    """The deployment operator signer, or exit with what to do about it.
+
+    Custody is config-selected and this command does not care which one it gets:
+    ``in_process`` signs with the on-disk operator key, ``vault_transit`` signs
+    by reference through the notary/HSM without the seed ever entering this
+    process. An unresolvable transit is fail-closed by construction (NFR-3) —
+    reaching for whatever key happens to be on disk would pin a trust anchor the
+    deployment deliberately moved to a vault.
+    """
     from arccli.commands.operator import resolve_operator_signer
 
-    return OperatorApprovalAuthority(resolve_operator_signer()).did
+    try:
+        return resolve_operator_signer()
+    except SignerError as exc:
+        _err(f"arc trust: cannot resolve the operator signer — {exc}")
+        sys.exit(1)
 
 
-def _now() -> str:
-    """RFC3339 UTC timestamp for the approval record (injected into pure logic)."""
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+def _operator_actor() -> str:
+    """The DID a trust change is attributed to on the audit chain."""
+    from arccli.commands.operator import resolve_operator_signer
+
+    return _operator_did(resolve_operator_signer())
 
 
 def _list(args: argparse.Namespace) -> None:
@@ -104,55 +136,116 @@ def _list(args: argparse.Namespace) -> None:
     _print_table(["Name", "Kind", "Status", "Signed", "Hash", "Path"], rows)
 
 
+def _resolve_target(agent_id: str, agent_root: Path, label: str, name: str) -> arcagent.GatedItem:
+    """Find the capability ``name`` names, gated or already loading.
+
+    Resolved from the FULL inventory, never the gated-only listing. Restricting
+    approval to what is currently gated made the product's headline workflow
+    impossible: on a personal-tier box a hand-written skill already loads, so it
+    is never gated — and so could never be signed on the laptop it was written
+    on. The same restriction blocked pre-signing an artifact before shipping it
+    to a stricter tier, and re-signing one that loads today but was just edited.
+
+    Signing is an operator statement about bytes, not a repair for a refusal.
+    """
+    inventory = asyncio.run(
+        arcagent.list_gated(agent_root, agent_id=agent_id, agent_label=label, include_loaded=True)
+    )
+    matches = [item for item in inventory if item.name == name]
+    if not matches:
+        _err(
+            f"arc trust: no capability named {name!r} for {agent_id}. "
+            f"Run `arc trust list --all --agent {agent_id}` to see every capability."
+        )
+        sys.exit(1)
+    if len({item.path for item in matches}) > 1:
+        # One name, two artifacts — a capability defined at two scan roots, where
+        # precedence decides which one loads. Signing "the first one" would sign
+        # a file the operator did not mean, so make them say which.
+        paths = "\n  ".join(sorted(item.path for item in matches))
+        _err(
+            f"arc trust: {name!r} is ambiguous on {agent_id} — it names several "
+            f"artifacts:\n  {paths}"
+        )
+        sys.exit(1)
+    return matches[0]
+
+
 def _approve(args: argparse.Namespace) -> None:
     agent_id, agent_root, label = _resolve_agent(getattr(args, "agent", None))
     config_path = agent_root / "arcagent.toml"
-    gated = asyncio.run(arcagent.list_gated(agent_root, agent_id=agent_id, agent_label=label))
-    target = next((item for item in gated if item.name == args.name), None)
-    if target is None:
-        _err(f"arc trust: no gated capability named {args.name!r} for {agent_id}")
+    target = _resolve_target(agent_id, agent_root, label, args.name)
+    artifact = Path(target.path)
+    # Read BEFORE signing: afterwards every artifact has a sidecar, so this is
+    # the only moment that can tell a first signature from a re-signature.
+    resigned = arcagent.sidecar_path(artifact).exists()
+    signer = _operator_signer()
+    approver = _operator_did(signer)
+    try:
+        with audit_chain("arc trust", _operator_actor) as (sink, _):
+            arcagent.sign_capability(
+                artifact,
+                signer_did=approver,
+                signer=signer,
+                config_path=config_path,
+                audit_sink=sink,
+            )
+    except (OSError, ValueError) as exc:
+        _err(f"arc trust: could not sign {target.path}: {exc}")
         sys.exit(1)
-    source = arcagent.read_capability_source(Path(target.path))
-    if source is None:
-        _err(f"arc trust: cannot read capability source at {target.path}")
-        sys.exit(1)
-    approver = _operator_did()
-    approve(
-        config_path,
-        name=arcagent.pin_name_for(target),
-        source=source,
-        approver=approver,
-        timestamp=_now(),
-    )
 
     # Re-scan through the inventory seam to report the post-approval verdict.
+    # Matched by PATH, not by name: a refused candidate is reported under its
+    # file/folder name and a LOADED one under the name its metadata declares, so
+    # a successful approval is precisely the case where the name changes. Looking
+    # it up by name told the operator "still gated" every time it had worked.
     after = asyncio.run(
         arcagent.list_gated(agent_root, agent_id=agent_id, agent_label=label, include_loaded=True)
     )
-    resolved = next((item for item in after if item.name == args.name), None)
+    resolved = next((item for item in after if item.path == target.path), None)
     status = resolved.status if resolved is not None else "unknown"
-    _write(f"Approved {args.name} on {agent_id} — status now: {status} (approver {approver}).")
+    action = "Re-signed" if resigned else "Signed"
+    over = "over its current bytes" if resigned else "over its bytes"
+    _write(
+        f"{action} {args.name} on {agent_id} {over} — signature written, key pinned, "
+        f"hash pinned; status now: {status} (approver {approver})."
+    )
     if status != "loaded":
-        _write(
-            "Note: this agent's tier does not consult pinned hashes at load "
-            "(TofuLayer checks pins only at enterprise/federal). The approval is "
-            "recorded but does not change what loads at personal tier."
-        )
+        detail = resolved.detail if resolved is not None else "no longer visible to the loader"
+        _write(f"Still gated: {detail}")
 
 
 def _disapprove(args: argparse.Namespace) -> None:
     agent_id, agent_root, label = _resolve_agent(getattr(args, "agent", None))
     config_path = agent_root / "arcagent.toml"
-    # Resolve the loader's pin name from the current inventory when the artifact
-    # is still present; else treat the given name as the pin name directly (so a
-    # pin for a since-deleted artifact can still be cleared).
     inventory = asyncio.run(
         arcagent.list_gated(agent_root, agent_id=agent_id, agent_label=label, include_loaded=True)
     )
     target = next((item for item in inventory if item.name == args.name), None)
-    pin_name = arcagent.pin_name_for(target) if target is not None else args.name
-    if disapprove(config_path, name=pin_name):
-        _write(f"Removed approval for {args.name} on {agent_id}.")
+    if target is not None:
+        with audit_chain("arc trust", _operator_actor) as (sink, actor):
+            arcagent.revoke_capability(
+                Path(target.path),
+                config_path=config_path,
+                operator_did=actor,
+                audit_sink=sink,
+            )
+        _write(
+            f"Revoked {args.name} on {agent_id} — signature, trusted key, and hash pin removed."
+        )
+        return
+    # The artifact is gone from disk but its pins are not: deleting a capability
+    # file never touched the agent's config. Refusing here would strand a hash
+    # pin AND a trusted verify key in that config with no command able to remove
+    # them — a trust anchor outliving the code it was minted for. Clear what is
+    # still reachable by name; the key cannot be resolved without the artifact's
+    # signature sidecar, so say so rather than imply a full revocation.
+    if disapprove(config_path, name=args.name):
+        _write(
+            f"Removed the hash pin for {args.name} on {agent_id} (artifact already deleted). "
+            "Any trusted key it pinned could not be resolved from a missing artifact — "
+            f"check [security.validators] trusted_keys in {config_path} if it is now unused."
+        )
     else:
         _write(f"No approval was pinned for {args.name} on {agent_id}.")
 
@@ -171,12 +264,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "--all", dest="all", action="store_true", help="Include loaded capabilities too."
     )
 
-    p_approve = subs.add_parser("approve", help="Pin a gated capability's current source hash.")
-    p_approve.add_argument("name", help="Capability name (as shown by `trust list`).")
+    p_approve = subs.add_parser(
+        "approve", help="Sign (or re-sign) any capability with the operator key."
+    )
+    p_approve.add_argument("name", help="Capability name (as shown by `trust list --all`).")
     p_approve.add_argument("--agent", dest="agent", default=None, help="Agent id under team/.")
 
-    p_disapprove = subs.add_parser("disapprove", help="Remove a capability's approval pin.")
-    p_disapprove.add_argument("name", help="Capability name to un-pin.")
+    p_disapprove = subs.add_parser("disapprove", help="Withdraw a capability's signature + pins.")
+    p_disapprove.add_argument("name", help="Capability name to revoke.")
     p_disapprove.add_argument("--agent", dest="agent", default=None, help="Agent id under team/.")
 
     return parser

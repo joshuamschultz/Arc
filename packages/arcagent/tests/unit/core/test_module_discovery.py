@@ -1,15 +1,19 @@
 """Folder-presence module discovery + explicit (default-off) activation.
 
-The loader SCANS ``modules/`` for folders that qualify as a module (both
-``capabilities.py`` and ``_runtime.py`` present), so the full present-set is
-always KNOWN. A discovered module only *loads* when the agent's config enables
-it — discovered-but-not-enabled is a valid, listable, inactive state.
+The loader SCANS the deployment module root — ``${ARC_CONFIG_DIR:-~/.arc}/modules``
+— for folders that qualify as a module (both ``capabilities.py`` and
+``_runtime.py`` present), so the full present-set is always KNOWN. A discovered
+module only *loads* when the agent's config enables it — discovered-but-not-enabled
+is a valid, listable, inactive state.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+import arcagent
 from arcagent.core.config import ModuleEntry
 from arcagent.core.module_discovery import (
     active_modules,
@@ -37,12 +41,43 @@ class _Cfg:
         self.modules = modules
 
 
-def test_discovers_real_modules_shipped_in_tree() -> None:
-    # The real modules/ tree contains the 18 shipped modules; every one has
-    # both capabilities.py and _runtime.py, so discovery must find them all.
-    discovered = discover_modules()
-    for name in ("browser", "memory", "messaging", "planning", "tasks", "voice"):
-        assert name in discovered
+def test_default_root_is_the_deployment_config_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # SPEC-066 REQ-333/336: the scan root is where the OPERATOR installed
+    # signed bundles, not wherever the package happens to be unpacked.
+    _make_module(tmp_path / "modules", "widget")
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
+
+    assert discover_modules() == ["widget"]
+
+
+def test_default_root_is_resolved_per_call_not_at_import(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A root captured at import time freezes whatever the environment said
+    # when this module was first imported — which is long before a service
+    # unit or a test sets the var.
+    _make_module(tmp_path / "a" / "modules", "first")
+    _make_module(tmp_path / "b" / "modules", "second")
+
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "a"))
+    assert discover_modules() == ["first"]
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "b"))
+    assert discover_modules() == ["second"]
+
+
+def test_installed_package_directory_is_never_scanned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # REQ-336: shipping in the wheel must stop being a reason to load. Until
+    # T-970 removes the source, the package still HAS a populated modules/
+    # tree — so an empty deployment root has to report empty anyway.
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
+    shipped = Path(arcagent.__file__).resolve().parent / "modules"
+    assert (shipped / "memory" / "_runtime.py").is_file(), "guard: the wheel still ships modules"
+
+    assert discover_modules() == []
 
 
 def test_discovers_folder_with_both_files(tmp_path: Path) -> None:

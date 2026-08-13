@@ -31,17 +31,32 @@ class WebConfig(ModuleConfig):
     Loaded from::
 
         [modules.web]
-        search_provider = "tavily"
-        extract_provider = "firecrawl"
+        extract_provider = "browser"
         tier = "personal"
         url_allowlist = []
         max_content_bytes = 1_000_000
         pii_redaction_enabled = false
     """
 
-    # Provider selection
-    search_provider: Literal["parallel", "firecrawl", "tavily"] = "tavily"
-    extract_provider: Literal["parallel", "firecrawl", "tavily"] = "firecrawl"
+    # Provider selection.
+    #
+    # ``search_provider`` has NO keyless option: Parallel, Firecrawl and Tavily
+    # all bill for search and there is no engine we may scrape instead. So it
+    # defaults to unset, and ``web_search`` does not register at all. Name a
+    # provider here AND supply its key to turn search on.
+    #
+    # ``extract_provider`` defaults to ``browser`` — the keyless default, which
+    # reads pages through the browser module's Chrome DevTools Protocol backend
+    # and needs no account. The other three are the same paid services; name one
+    # to opt in.
+    search_provider: Literal["parallel", "firecrawl", "tavily"] | None = None
+    extract_provider: Literal["browser", "parallel", "firecrawl", "tavily"] = "browser"
+
+    # CDP endpoint the keyless ``browser`` extract provider attaches to. Empty
+    # launches a local headless Chrome, which the federal tier forbids — a
+    # federal deployment points this at a separately-sandboxed remote endpoint
+    # or ``web_extract`` is withheld rather than failing on every call.
+    browser_cdp_url: str = ""
 
     # Deployment tier — drives allowlist enforcement and PII defaults
     tier: str = "personal"

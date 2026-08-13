@@ -33,7 +33,7 @@ def _configured_agent(tmp_path: Any) -> ArcAgent:
 def _patch_one_runtime(monkeypatch: pytest.MonkeyPatch, runtime: object) -> None:
     monkeypatch.setattr(agent_lifecycle, "active_modules", lambda _config: ["memory"])
     monkeypatch.setattr(agent_lifecycle, "_warn_config_without_folder", lambda _agent: None)
-    monkeypatch.setattr(agent_lifecycle.importlib, "import_module", lambda _name: runtime)
+    monkeypatch.setattr(agent_lifecycle, "load_module_runtime", lambda _name: runtime)
 
 
 def test_renamed_dependency_aborts_instead_of_silently_skipping(

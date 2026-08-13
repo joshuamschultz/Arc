@@ -44,7 +44,7 @@ def build_capability_registry(config: Any, agent_root: Path | None) -> Any | Non
         ("builtins", builtins_root),
         ("builtins-skills", builtins_root / "skills"),
     ]
-    global_root = Path("~/.arc/capabilities").expanduser()
+    global_root = arcagent.global_capabilities_root()
     if global_root.is_dir():
         roots.append(("global", global_root))
     if agent_root is not None:
@@ -52,7 +52,7 @@ def build_capability_registry(config: Any, agent_root: Path | None) -> Any | Non
             path = agent_root / sub
             if path.is_dir():
                 roots.append((name, path))
-    roots.extend(_enabled_module_roots(config))
+    roots.extend(_enabled_module_roots(config, agent_root))
 
     registry = arcagent.CapabilityRegistry()
     loader = arcagent.CapabilityLoader(
@@ -82,24 +82,28 @@ def build_capability_registry(config: Any, agent_root: Path | None) -> Any | Non
     return registry
 
 
-def _enabled_module_roots(config: Any) -> list[tuple[str, Path]]:
-    """Per-module ``capabilities.py`` roots for every ENABLED module.
+def _enabled_module_roots(config: Any, agent_root: Path | None) -> list[tuple[str, Path]]:
+    """Per-module capability roots for every ENABLED module, from the agent's copy.
 
-    Mirrors ``agent_lifecycle.setup_capabilities``'s ``modules_dir`` loop
-    exactly — the same enablement check, the same "module has capabilities.py"
-    gate — so a listing command never diverges from what the agent would
-    actually scan at startup.
+    Built by the same helper ``agent_lifecycle.setup_capabilities`` calls, so a
+    listing command cannot diverge from what the agent scans at startup — the
+    divergence this function previously carried, pointing at the source catalog
+    while the agent loaded from somewhere else entirely.
+
+    A module's capability surface is copied PER AGENT (REQ-337), so a user-wide
+    inspection with no agent in scope has no module capabilities to list.
     """
     import arcagent
 
-    modules_dir = arcagent.modules_path()
+    if agent_root is None:
+        return []
+    enabled = sorted(
+        name
+        for name, entry in getattr(config, "modules", {}).items()
+        if getattr(entry, "enabled", False)
+    )
     roots: list[tuple[str, Path]] = []
-    for mod_name, mod_entry in getattr(config, "modules", {}).items():
-        if not getattr(mod_entry, "enabled", False):
-            continue
-        mod_dir = modules_dir / mod_name
-        if (mod_dir / "capabilities.py").is_file():
-            roots.append((f"module:{mod_name}", mod_dir))
+    arcagent.append_module_scan_roots(roots, agent_root, enabled)
     return roots
 
 

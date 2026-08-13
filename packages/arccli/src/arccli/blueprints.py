@@ -41,16 +41,26 @@ from pathlib import Path
 from typing import Any
 
 import arcagent
+from arctrust import arc_home
 
 _logger = logging.getLogger("arccli.blueprints")
 
-_USER_DIR = Path("~/.arc/blueprints").expanduser()
 _BLUEPRINT_TOML = "blueprint.toml"
 _PERSONA_MD = "persona.md"
 
 # v2 sibling-config tables + declarative arrays, peeled out of the arcagent overlay.
 # Everything NOT in this set stays in the arcagent.toml overlay (unchanged semantics).
 _SIBLING_TABLES: tuple[str, ...] = ("arcllm", "arcrun")
+
+
+def user_blueprint_dir() -> Path:
+    """The user/shared blueprint dir: ``${ARC_CONFIG_DIR:-~/.arc}/blueprints``.
+
+    Resolved per call through :func:`arctrust.arc_home` so an isolated deployment
+    reads ITS presets. A blueprint is signed and provenance-checked, so loading
+    one from the wrong home means verifying against the wrong operator key.
+    """
+    return arc_home() / "blueprints"
 
 
 def dumps_toml(data: dict[str, Any]) -> str:
@@ -182,7 +192,7 @@ def resolve_blueprint(
             packaged, tier, source="packaged", operator_public_key=operator_public_key
         )
 
-    udir = user_dir if user_dir is not None else _USER_DIR
+    udir = user_dir if user_dir is not None else user_blueprint_dir()
     upath = udir / name / _BLUEPRINT_TOML
     if upath.is_file():
         return _resolve_from_toml(
@@ -239,7 +249,7 @@ def list_blueprints(
                     v2=v2,
                 )
             )
-    udir = user_dir if user_dir is not None else _USER_DIR
+    udir = user_dir if user_dir is not None else user_blueprint_dir()
     if udir.is_dir():
         for toml_path in sorted(udir.glob(f"*/{_BLUEPRINT_TOML}")):
             content, meta, overlay, v2 = _parse(toml_path)

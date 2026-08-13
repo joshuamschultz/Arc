@@ -25,8 +25,6 @@ from arccli.commands._shared import dispatch
 from arccli.commands._shared import print_table as _print_table
 from arccli.commands._shared import write as _write
 
-_GLOBAL_CAP_DIR = Path.home() / ".arc" / "capabilities"
-
 _TOOL_TEMPLATE = '''\
 """Capability: {name}
 
@@ -88,8 +86,9 @@ def _list(args: argparse.Namespace) -> None:
     agent_dir: str | None = getattr(args, "agent", None)
 
     dirs_to_scan: list[tuple[str, Path]] = []
-    if _GLOBAL_CAP_DIR.is_dir():
-        dirs_to_scan.append(("global", _GLOBAL_CAP_DIR))
+    global_dir = arcagent.global_capabilities_root()
+    if global_dir.is_dir():
+        dirs_to_scan.append(("global", global_dir))
     if agent_dir:
         agent_root = Path(agent_dir).expanduser().resolve()
         agent_caps = agent_root / "capabilities"
@@ -112,7 +111,7 @@ def _list(args: argparse.Namespace) -> None:
         return
 
     _write("No capability files found.")
-    _write(f"  Global dir: {_GLOBAL_CAP_DIR}")
+    _write(f"  Global dir: {arcagent.global_capabilities_root()}")
     if agent_dir:
         agent_root = Path(agent_dir).expanduser().resolve()
         _write(f"  Agent dir:  {agent_root / 'capabilities'}")
@@ -126,7 +125,7 @@ def _create(args: argparse.Namespace) -> None:
     use_global: bool = getattr(args, "use_global", False)
 
     if use_global:
-        out_dir = _GLOBAL_CAP_DIR
+        out_dir = arcagent.global_capabilities_root()
         out_dir.mkdir(parents=True, exist_ok=True)
     elif target_dir:
         out_dir = Path(target_dir).expanduser().resolve()
@@ -150,10 +149,11 @@ def _install(args: argparse.Namespace) -> None:
     """Install a capability `.py` into ~/.arc/capabilities/."""
     source: str = args.source
     src = Path(source).expanduser().resolve()
-    _GLOBAL_CAP_DIR.mkdir(parents=True, exist_ok=True)
+    global_dir = arcagent.global_capabilities_root()
+    global_dir.mkdir(parents=True, exist_ok=True)
 
     if src.is_file():
-        dest = _GLOBAL_CAP_DIR / src.name
+        dest = global_dir / src.name
         if dest.exists():
             sys.stderr.write(f"Error: Already installed: {dest}\n")
             sys.exit(1)
@@ -166,14 +166,14 @@ def _install(args: argparse.Namespace) -> None:
         for py_file in sorted(src.glob("*.py")):
             if py_file.name.startswith("_"):
                 continue
-            dest = _GLOBAL_CAP_DIR / py_file.name
+            dest = global_dir / py_file.name
             if dest.exists():
                 _write(f"  Skipped (exists): {py_file.name}")
                 continue
             shutil.copy2(py_file, dest)
             _write(f"  Installed: {py_file.name}")
             copied += 1
-        _write(f"\nInstalled {copied} capability file(s) to {_GLOBAL_CAP_DIR}")
+        _write(f"\nInstalled {copied} capability file(s) to {global_dir}")
         return
 
     sys.stderr.write(f"Error: Source not found: {src}\n")

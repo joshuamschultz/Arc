@@ -1,11 +1,11 @@
 """SPEC arcui-reality-mirror COMP-007 — capability inventory seam.
 
 A single read seam over :class:`CapabilityLoader` that enumerates every skill
-and capability tool an agent would load across the four scan roots (package
-builtins, the global ``~/.arc/capabilities`` root, the per-agent
-``<agent>/capabilities`` root, and the agent-authored
-``<agent>/workspace/capabilities`` root) and reports each item's loader/TOFU
-verdict verbatim.
+and capability tool an agent would load across its scan roots (package builtins,
+the global ``${ARC_CONFIG_DIR:-~/.arc}/capabilities`` root, the per-agent
+``<agent>/capabilities`` root, the agent-authored
+``<agent>/workspace/capabilities`` root, and one ``module:<name>`` root per
+enabled module) and reports each item's loader/TOFU verdict verbatim.
 
 arcui consumes this instead of globbing skill or tool paths itself
 (REQ-093/094/096). No discovery or verification logic lives here: the loader
@@ -17,17 +17,25 @@ untouched.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from arctrust import TofuLayer, hash_source
+from arctrust import TofuLayer, ValidatorsConfig, arc_home, hash_source
 from pydantic import BaseModel, ConfigDict
 
 import arcagent.builtins.capabilities as _builtins_pkg
-from arcagent.capabilities.capability_loader import CapabilityLoader, ScanRoot
+from arcagent.capabilities.capability_loader import (
+    MODULE_ROOT_PREFIX,
+    CapabilityLoader,
+    ScanRoot,
+    module_capability_root,
+    pin_name_for_path,
+)
 from arcagent.capabilities.capability_registry import CapabilityRegistry
 from arcagent.core.config import CapabilitiesConfig, SecurityConfig, load_config
+from arcagent.core.module_discovery import active_modules
 from arcagent.tools._dynamic_loader import (
     DEFAULT_IMPORT_POLICY,
     ImportPolicy,
@@ -39,8 +47,26 @@ _logger = logging.getLogger("arcagent.capabilities.inventory")
 # Only skills and capability tools surface in the inventory; hooks, background
 # tasks, and capability classes are out of scope for the arcui capability views.
 _INVENTORY_KINDS: frozenset[str] = frozenset({"skill", "tool"})
-_DEFAULT_GLOBAL_ROOT = Path("~/.arc/capabilities")
 _KNOWN_TIERS: frozenset[str] = frozenset({"personal", "enterprise", "federal"})
+
+
+def global_capabilities_root() -> Path:
+    """Return the operator-curated global capabilities root.
+
+    ``${ARC_CONFIG_DIR:-~/.arc}/capabilities`` — resolved through
+    :func:`arctrust.arc_home`, the single source of truth for the Arc home, so
+    an isolated deployment (or a test) that relocates its config tree does not
+    scan, and cannot write into, the invoking user's real ``~/.arc``.
+
+    Resolved on every call, never cached at import: the env var is routinely set
+    after this module is first imported, and a module-level constant would
+    freeze whatever the environment happened to say at import time.
+
+    This is the ONE resolver for that root. Every surface that shows or scans
+    global capabilities calls it rather than re-deriving the path, because a
+    second literal is how the two answers drifted apart in the first place.
+    """
+    return arc_home() / "capabilities"
 
 
 class CapabilityInventoryItem(BaseModel):
@@ -68,11 +94,16 @@ def _resolve_scan_roots(
     workspace_dir: Path | None,
     global_root: Path | None,
     builtins_root: Path | None,
+    modules: Sequence[str] = (),
 ) -> list[ScanRoot]:
-    """Build the four-root scan list, mirroring ``setup_capabilities``.
+    """Build the scan list, mirroring ``setup_capabilities``.
 
     Optional roots are included only when they exist on disk, matching the
-    loader's own precedence order (builtins, global, agent, workspace).
+    loader's own precedence order (builtins, global, agent, workspace), and each
+    enabled module contributes its ``module:<name>`` root last — exactly as the
+    live load does, from the agent's own capability copy. Omitting them would
+    leave a gated module capability invisible to ``arc trust list``, which is
+    the surface that unblocks it.
     """
     builtins = builtins_root if builtins_root is not None else Path(_builtins_pkg.__file__).parent
     roots: list[ScanRoot] = [
@@ -80,12 +111,13 @@ def _resolve_scan_roots(
         ("builtins-skills", builtins / "skills"),
     ]
     resolved_global = (
-        global_root if global_root is not None else _DEFAULT_GLOBAL_ROOT
+        global_root if global_root is not None else global_capabilities_root()
     ).expanduser()
     append_capability_scan_roots(roots, "global", resolved_global)
     append_capability_scan_roots(roots, "agent", agent_dir / "capabilities")
     workspace = workspace_dir if workspace_dir is not None else agent_dir / "workspace"
     append_capability_scan_roots(roots, "workspace", workspace / "capabilities")
+    append_module_scan_roots(roots, agent_dir, modules)
     return roots
 
 
@@ -104,6 +136,24 @@ def append_capability_scan_roots(roots: list[ScanRoot], name: str, caps_dir: Pat
         roots.append((f"{name}-skills", skills_dir))
 
 
+def append_module_scan_roots(
+    roots: list[ScanRoot], agent_dir: Path, modules: Sequence[str]
+) -> None:
+    """Append the ``module:<name>`` roots for ``modules``, from the AGENT's copy.
+
+    An install copies a module's tools and skills to
+    ``<agent_dir>/capabilities/modules/<name>/`` and leaves its runtime at the
+    deployment root; the copy is what loads, so one agent's capability drift
+    never reaches another's (REQ-337). Both halves of the copy are scanned —
+    tools directly under the root, skills under ``skills/`` — because copying a
+    surface nothing reads is the same dead wiring in a smaller box.
+    """
+    for name in modules:
+        append_capability_scan_roots(
+            roots, f"{MODULE_ROOT_PREFIX}{name}", module_capability_root(agent_dir, name)
+        )
+
+
 async def collect_capability_inventory(
     agent_dir: Path,
     *,
@@ -112,8 +162,9 @@ async def collect_capability_inventory(
     builtins_root: Path | None = None,
     tofu: TofuLayer | None = None,
     require_signature: bool = False,
-    trusted_public_key: bytes | None = None,
+    trusted_public_keys: tuple[bytes, ...] = (),
     import_policy: ImportPolicy = DEFAULT_IMPORT_POLICY,
+    modules: Sequence[str] = (),
 ) -> list[CapabilityInventoryItem]:
     """Enumerate an agent's skills and capability tools with verbatim verdicts.
 
@@ -124,13 +175,13 @@ async def collect_capability_inventory(
     :class:`TofuLayer` with a pinned key surfaces signed workspace sources as
     ``loaded`` and unsigned ones as ``deny``.
     """
-    scan_roots = _resolve_scan_roots(agent_dir, workspace_dir, global_root, builtins_root)
+    scan_roots = _resolve_scan_roots(agent_dir, workspace_dir, global_root, builtins_root, modules)
     loader = CapabilityLoader(
         scan_roots=scan_roots,
         registry=CapabilityRegistry(),
         tofu=tofu,
         require_signature=require_signature,
-        trusted_public_key=trusted_public_key,
+        trusted_public_keys=trusted_public_keys,
         import_policy=import_policy,
         # Task #39: this is a read-only scan over a throwaway registry — a
         # discovered @background_task must never actually start (its body
@@ -173,7 +224,7 @@ class TrustPosture:
 
     tofu: TofuLayer
     require_signature: bool
-    trusted_public_key: bytes | None
+    trusted_public_keys: tuple[bytes, ...]
     import_policy: ImportPolicy
 
 
@@ -187,9 +238,13 @@ def resolve_trust_posture(
 
     ``require_signature`` is the enterprise/federal signature floor; the TOFU
     layer carries the per-tier source-approval policy; the import policy is the
-    tier-resolved allowlist for agent-authored workspace tools. ``trusted_public_key``
-    is the agent's pinned DID key (its own signatures verify against it) — the
-    caller supplies it because it lives with the identity, not the config.
+    tier-resolved allowlist for agent-authored workspace tools.
+
+    The trusted key is a SET: the agent's own DID key (``trusted_public_key``,
+    supplied by the caller because it lives with the identity, not the config)
+    unioned with every operator key pinned in ``[security.validators]``. An
+    operator-signed capability and an agent-self-signed one must both be able to
+    pass, so neither source of keys may evict the other.
     """
     tier = security.tier
     import_policy = resolve_workspace_import_policy(
@@ -204,9 +259,31 @@ def resolve_trust_posture(
     return TrustPosture(
         tofu=tofu,
         require_signature=tier in ("enterprise", "federal"),
-        trusted_public_key=trusted_public_key,
+        trusted_public_keys=_union_trusted_keys(trusted_public_key, security.validators),
         import_policy=import_policy,
     )
+
+
+def _union_trusted_keys(
+    agent_public_key: bytes | None, validators: ValidatorsConfig
+) -> tuple[bytes, ...]:
+    """Agent DID key + persisted operator keys, de-duplicated, order preserved.
+
+    A malformed hex entry is dropped rather than raised on: the pinned set is
+    operator-written config, and one bad row must not brick the load of every
+    other correctly signed capability. Dropping fails closed — the artifact that
+    needed that key stays gated.
+    """
+    keys: list[bytes] = [] if agent_public_key is None else [agent_public_key]
+    for encoded in validators.trusted_keys:
+        try:
+            decoded = bytes.fromhex(encoded)
+        except ValueError:
+            _logger.warning("ignoring malformed trusted_keys entry in [security.validators]")
+            continue
+        if decoded not in keys:
+            keys.append(decoded)
+    return tuple(keys)
 
 
 class RuntimeToolItem(BaseModel):
@@ -267,8 +344,9 @@ async def collect_agent_capability_inventory(
         global_root=global_root,
         tofu=posture.tofu,
         require_signature=posture.require_signature,
-        trusted_public_key=posture.trusted_public_key,
+        trusted_public_keys=posture.trusted_public_keys,
         import_policy=posture.import_policy,
+        modules=active_modules(config),
     )
     if live_agent is None:
         return AgentCapabilityInventory(items=items, runtime=False, runtime_tools=[])
@@ -364,16 +442,11 @@ def read_capability_source(path: Path) -> str | None:
 def pin_name_for(item: GatedItem) -> str:
     """The name TofuLayer keys ``item`` on — NOT always its display name.
 
-    The loader gates a tool under its file stem and a skill under its FOLDER
-    name (``SKILL.md``'s parent), while a skill's displayed ``name`` is its
-    frontmatter name, which can differ. Deriving the pin name from the source
-    path keeps an approval aligned with what the loader will look up. Callers
-    pass this to ``arctrust.approve`` / ``arctrust.disapprove``.
+    A :class:`GatedItem`'s ``path`` is the gated artifact itself (the ``.py``
+    for a tool, ``SKILL.md`` for a skill), so this is :func:`pin_name_for_path`
+    over that path.
     """
-    source = Path(item.path)
-    if item.kind == "skill":
-        return source.parent.name
-    return source.stem
+    return pin_name_for_path(Path(item.path))
 
 
 async def list_gated(
@@ -421,10 +494,12 @@ __all__ = [
     "RuntimeToolItem",
     "TrustPosture",
     "append_capability_scan_roots",
+    "append_module_scan_roots",
     "collect_agent_capability_inventory",
     "collect_capability_inventory",
     "list_gated",
     "pin_name_for",
+    "pin_name_for_path",
     "read_capability_source",
     "resolve_trust_posture",
 ]

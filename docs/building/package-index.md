@@ -14,11 +14,12 @@ Arc is not one program — it's a stack of small, single-purpose packages, each 
 
 ## The Package Inventory
 
-Eighteen directories live under `packages/`. Two (`arcmas`, `arcmodel`) are meta-packages/placeholders — flagged below.
+The table below is the full inventory. Two entries (`arcmas`, `arcmodel`) are meta-packages/placeholders — flagged below.
 
 | Package | Layer | Source Root | One Job | Depends On | Must Never |
 |---|---|---|---|---|---|
 | **arctrust** | Foundation | `packages/arctrust/src/arctrust/` | Security nucleus: DID identity, Ed25519 keypairs, `PolicyPipeline`, WORM chain | nothing in `arc*` | Import any other Arc package |
+| **arcbundle** | Foundation | `packages/arcbundle/src/arcbundle/` | Signed module bundles: manifest, verify, atomic materialize, per-agent capability copy | `arctrust`, Pydantic | Import `arcagent` — or anything else in `arc*` |
 | **arcstore** | Foundation | `packages/arcstore/src/arcstore/` | Operational/observability storage: append-only spool + `StorageBackend` query layer | `arctrust` | Import `arcagent`, `arcui`, `arccli`, `arcrun`, or `arcgateway` |
 | **arcllm** | LLM | `packages/arcllm/src/arcllm/` | Provider-agnostic LLM calls (16 providers), telemetry, budgets, circuit breakers | `arctrust`, `arcstore` | Be called by anything except `arcrun` (and `arc llm` CLI) |
 | **arcprompt** | Runtime | `packages/arcprompt/src/arcprompt/` | Editable, signed, inspectable system-prompt store | `arctrust` | Import anything above it |
@@ -62,8 +63,10 @@ flowchart TB
     TEAM["arcteam\nmulti-agent bus"]
     STORE["arcstore\nspool + SQLite mirror"]
     TRUST["arctrust\nidentity, sign, policy, audit"]
+    BUNDLE["arcbundle\nsigned module bundles"]
 
     CLI --> AGENT
+    CLI --> BUNDLE
     CLI --> RUN
     CLI --> LLM
     CLI --> TEAM
@@ -85,14 +88,20 @@ flowchart TB
     STORE --> TRUST
     LLM --> STORE
     PROMPT --> TRUST
+    BUNDLE --> TRUST
 
     class CLI,UI entry
     class GW surface
     class AGENT agent
     class RUN,MEMORY,SKILL,TEAM runtime
     class LLM llm
-    class STORE,TRUST,PROMPT found
+    class STORE,TRUST,PROMPT,BUNDLE found
 ```
+
+`arcbundle` is a leaf beside `arctrust`, and the arrow into it comes from `arccli` alone.
+`arcagent` never imports it: the agent only ever *reads* an already-materialized directory,
+so the nucleus stays ignorant of distribution entirely. That is also what lets a bundle be
+built and verified on a staging host with no agent stack installed.
 
 ### The One Narrowed Exception
 
@@ -260,6 +269,63 @@ DID.verify(data: bytes, signature: str) -> bool
 AuditLogger.log(action, actor, resource, outcome, metadata) -> AuditRecord
 PolicyPipeline.evaluate(call, ctx) -> Decision
 ```
+
+---
+
+### arcbundle - Signed Module Bundles
+
+**Layer:** Foundation — a leaf beside `arctrust`  
+**Dependencies:** `arctrust` (Ed25519 + canonical JSON) and Pydantic. Nothing else, ever.
+
+#### Purpose
+
+The distribution unit that makes a module's **absence** provable. The `arc-agent` wheel is
+byte-identical across every tier; each module ships as a separately signed bundle, verified
+in full before a single byte reaches disk, and materialized read-only at the deployment root
+outside every agent's tool fence.
+
+It knows nothing about `arcagent`. The agent only reads an already-materialized directory, so
+a bundle can be built or verified on a low-side box with no agent stack present.
+
+#### Key Modules
+
+| Module | Responsibility |
+|---|---|
+| `manifest` | `BundleManifest` model + canonical-JSON encoding — the on-disk shape |
+| `signer` | Detached Ed25519 signature over a manifest's canonical bytes |
+| `verifier` | Fail-closed verify: signature, canonical form, every file hash, undeclared-file sweep |
+| `materializer` | Atomic write (stage → fsync → rename), `0444` files in `0555` directories |
+| `builder` | Package a module folder into a signed `.arcbundle` |
+| `capability_copy` | Per-agent copy of a module's tools + skills, and its inverse |
+
+#### Key Functions
+
+```python
+build_bundle(source_dir, module, version, private_key, issuer, out) -> Path
+verify_bundle(bundle_root, tier, trusted_issuers, sink, actor_did) -> VerifiedBundle
+materialize(verified, dest_root, sink, actor_did) -> Path
+copy_capabilities(module_dir, agent_dir, module) -> Path
+remove(name, dest_root, sink, actor_did) -> None
+remove_capabilities(agent_dir, module) -> bool
+```
+
+#### Invariants
+
+- **Nothing is written before everything is verified.** A failed verify leaves the destination
+  byte-identical to its prior state — no partial tree.
+- **Fail closed.** Any exception during verification denies.
+- **Module runtime is never agent-writable.** `0444` inside `0555`, at the deployment root.
+- **`_runtime.py` is never copied** into the agent-writable capability root.
+
+#### Audit Events
+
+`module.bundle.verified` · `module.signature_invalid` · `module.content_hash_mismatch` ·
+`module.installed` · `module.removed` — each emitted from inside the package at the point the
+outcome is decided.
+
+See [Writing modules](modules.md) for the author's view and
+[Staging module bundles across an air gap](../runbooks/staging-module-bundles.md) for the
+operator procedure.
 
 ---
 

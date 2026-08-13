@@ -15,8 +15,11 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import arcbundle
 import pytest
+from arctrust import ValidatorsConfig, generate_keypair
 
+import arcagent
 from arcagent.core.agent import ArcAgent
 from arcagent.core.config import (
     AgentConfig,
@@ -25,9 +28,13 @@ from arcagent.core.config import (
     IdentityConfig,
     LLMConfig,
     ModuleEntry,
+    SecurityConfig,
     TelemetryConfig,
 )
 from arcagent.modules.workpad import _runtime
+
+_ISSUER = "did:arc:workpad-e2e-operator"
+_ISSUER_KEYPAIR = generate_keypair()
 
 
 def _config(tmp_path: Path, workspace: Path) -> ArcAgentConfig:
@@ -39,6 +46,12 @@ def _config(tmp_path: Path, workspace: Path) -> ArcAgentConfig:
         identity=IdentityConfig(did="", key_dir=str(tmp_path / "keys"), vault_path=""),
         telemetry=TelemetryConfig(enabled=True),
         context=ContextConfig(max_tokens=10000),
+        # The bundle issuer's key, pinned as ``arc module install`` pins it. A
+        # ``module:*`` root is VERIFIED, so an unpinned issuer means the module
+        # materializes and then registers nothing.
+        security=SecurityConfig(
+            validators=ValidatorsConfig(trusted_keys=(_ISSUER_KEYPAIR.public_key.hex(),))
+        ),
         modules={"workpad": ModuleEntry(enabled=True, config={"every_n_runs": 2})},
     )
 
@@ -55,11 +68,45 @@ def _post_respond_event() -> dict[str, Any]:
     }
 
 
+def _install_workpad(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Install the workpad module for this test's agent, the way an operator does.
+
+    SPEC-066 REQ-333/337: discovery reads ``${ARC_CONFIG_DIR}/modules``, so
+    enabling ``[modules.workpad]`` only loads a module an operator installed, and
+    the module's TOOLS are read from the per-agent copy at
+    ``<agent_dir>/capabilities/modules/workpad/`` rather than from the shared
+    deployment tree. All four calls ``arc module install`` makes run here. Built
+    and verified rather than copied by hand, because a hand-copied tree carries
+    no ``.arcsig`` sidecars and a ``module:*`` root is adjudicated by signature —
+    it would load nothing and prove nothing.
+    """
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc"))
+    bundle = arcbundle.build_bundle(
+        Path(arcagent.__file__).resolve().parent / "modules" / "workpad",
+        module="workpad",
+        version="1.0.0",
+        private_key=_ISSUER_KEYPAIR.private_key,
+        issuer=_ISSUER,
+        out=tmp_path / "bundles" / "workpad.arcbundle",
+    )
+    verified = arcbundle.verify_bundle(
+        bundle, tier="personal", trusted_issuers={_ISSUER: _ISSUER_KEYPAIR.public_key}
+    )
+    installed = arcbundle.materialize(verified, tmp_path / "arc" / "modules")
+    arcbundle.copy_capabilities(installed, tmp_path, module="workpad")
+
+
 @pytest.mark.asyncio
-async def test_post_respond_drives_context_rewrite(tmp_path: Path) -> None:
+async def test_post_respond_drives_context_rewrite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_workpad(tmp_path, monkeypatch)
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    agent = ArcAgent(config=_config(tmp_path, workspace))
+    # ``config_path`` is explicit because the agent's capability roots hang off
+    # its parent; the default (relative ``arcagent.toml``) would resolve them
+    # against the process CWD and miss the module copy installed above.
+    agent = ArcAgent(config=_config(tmp_path, workspace), config_path=tmp_path / "arcagent.toml")
     await agent.startup()
 
     # Stub the eval model on the module's live runtime state (external dep only).

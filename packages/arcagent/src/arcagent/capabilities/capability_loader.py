@@ -8,16 +8,16 @@ in precedence order (R-001):
   3. ``<agent_root>/capabilities/``        — per-agent
   4. ``<agent_root>/workspace/capabilities/`` — agent-authored
 
-Per-file flow:
+Per-file flow, selected by the root's :class:`RootTrust` class:
 
-  1. Compute MD5+mtime; ``AstValidationCache`` hit skips re-validation.
-  2. AST validate via :class:`AstValidator` — failure emits
-     ``capability:registration_failed`` and is recorded in the
-     reload diff.
-  3. Apply the TOFU/signature policy gate.
-  4. Trusted package code imports normally. Authored source is parsed for inert
-     ``@tool`` metadata and represented by an ArcRun-isolated RPC proxy.
-  5. Hand to :class:`CapabilityRegistry` (kind-aware register).
+  1. AST validate via :class:`AstValidator` (UNTRUSTED only) — failure emits
+     ``capability:registration_failed`` and is recorded in the reload diff.
+     ``AstValidationCache`` skips re-validation on an MD5+mtime hit.
+  2. Apply the TOFU/signature policy gate (UNTRUSTED and VERIFIED).
+  3. TRUSTED and VERIFIED source imports normally. UNTRUSTED source is parsed
+     for inert ``@tool`` metadata and represented by an ArcRun-isolated RPC
+     proxy — it never enters this process.
+  4. Hand to :class:`CapabilityRegistry` (kind-aware register).
 
 The loader's :meth:`reload` returns the human-readable diff string
 specified by R-005:
@@ -36,11 +36,10 @@ reverse-topo teardown.
 
 from __future__ import annotations
 
-import importlib.util
 import logging
-import sys
 from collections.abc import Iterable
-from pathlib import Path
+from enum import StrEnum
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from arctrust import CapabilitySource, TofuDecision, TofuLayer
@@ -81,49 +80,165 @@ from arcagent.tools._dynamic_loader import (
     AstValidationCache,
     ImportPolicy,
 )
+from arcagent.utils.source_module import exec_source_module
 
-# Roots that go through the AST validator + Sign/TOFU gate + isolated ArcRun
-# execution. Every root an agent can write to is untrusted: ``workspace``
-# (agent-authored), plus ``global`` (~/.arc/capabilities) and ``agent``
-# (<agent_root>/capabilities), where a compromised agent can plant a ``.py``
-# via bash and reload it. Only ``builtins`` / ``builtins-skills`` / ``module:*``
-# — the harness's own shipped package code — are trusted. Operator-placed
-# capabilities in global/agent must be signed or TOFU-approved to load above
-# personal, which is correct for federal (nothing unsigned loads).
-#
-# The ``*-skills`` variants are the ``skills/`` subdir of each agent-writable
-# capabilities root (where ``create_skill``/``update_skill`` write); a
-# ``SKILL.md`` there is injected into the prompt (LLM01/ASI06), so it passes the
-# same gate. ``builtins-skills`` is the ONLY skills root left trusted — shipped
-# package code.
-_UNTRUSTED_ROOTS: frozenset[str] = frozenset(
-    {
-        "workspace",
-        "global",
-        "agent",
-        "workspace-skills",
-        "global-skills",
-        "agent-skills",
-    }
-)
+#: Roots that are the harness's own shipped package code, inside the wheel and
+#: unreachable by any write an agent or an operator makes at runtime. A closed
+#: set, and the ONLY closed set here: everything not named below is classified by
+#: rule, so a scan root nobody thought about cannot become trusted by falling off
+#: the end of a chain of tests. ``builtins-skills`` is the one skills root left
+#: trusted — a ``SKILL.md`` anywhere else is injected into the prompt
+#: (LLM01/ASI06) from a directory somebody can write to, so it passes the gate.
+_TRUSTED_ROOTS: frozenset[str] = frozenset({"builtins", "builtins-skills"})
 
 #: Prefix of a per-extension root — ``extension:<name>`` and its ``-skills``
 #: sibling (SPEC-062 REQ-281). A third-party bundle gets a root named after
 #: itself, so no fixed set can enumerate them: a membership test alone would
-#: call every extension root trusted by absence, exactly as ``module:*`` is.
+#: call every extension root trusted by absence.
 EXTENSION_ROOT_PREFIX = "extension:"
 
+#: Prefix of a per-module root — ``module:<name>`` (SPEC-066). A module arrives
+#: as a signed bundle whose capability surface an install copies into the
+#: AGENT's own capability root, so the bytes that load are neither wheel content
+#: nor read-only: they are verified at load, on every scan, or they do not run.
+MODULE_ROOT_PREFIX = "module:"
+
+#: Where an install puts one agent's copy of a module's tools and skills:
+#: ``<agent_dir>/capabilities/modules/<module>/``. Spelled here rather than
+#: imported from :mod:`arcbundle` — the convention is on disk, and arcagent does
+#: not depend on the package that distributes modules.
+CAPABILITIES_DIR = "capabilities"
+MODULE_COPIES_DIR = "modules"
+
+#: The one file whose presence makes a folder a skill. The FOLDER name is what
+#: TOFU pins, which is why the manifest name is needed to derive a pin name.
+SKILL_MANIFEST = "SKILL.md"
+
 _logger = logging.getLogger("arcagent.capabilities.capability_loader")
+
+
+class RootTrust(StrEnum):
+    """How much of the load-time gate a scan root's contents must pass.
+
+    Three classes, because two collapse a real distinction. The gate does two
+    separable jobs — *prove who wrote these bytes* (signature + TOFU) and
+    *contain what they may do* (AST import allowlist + ArcRun-isolated
+    execution) — and module capabilities need the first without the second.
+    """
+
+    TRUSTED = "trusted"
+    """Shipped package code. No proof asked for, nothing contained."""
+
+    VERIFIED = "verified"
+    """First-party code delivered through a signed bundle: proof required,
+    execution NOT contained. Containment exists to hold code the MODEL wrote;
+    applying it to a module means ``@hook`` / ``@background_task`` /
+    ``@capability`` never register and the stdlib a module legitimately imports
+    is blocked — measured at 17 of 18 modules registering zero tools."""
+
+    UNTRUSTED = "untrusted"
+    """Anything an agent can write: proof required AND execution contained."""
+
+
+def module_capability_root(agent_dir: Path, module: str) -> Path:
+    """Return ``<agent_dir>/capabilities/modules/<module>`` — one agent's copy.
+
+    The single place arcagent spells the copy layout, so the live load, the
+    inventory seam, and the pin-name rule cannot disagree about where a module's
+    capability surface lives for a given agent.
+    """
+    return Path(agent_dir) / CAPABILITIES_DIR / MODULE_COPIES_DIR / module
+
+
+def root_trust(root_name: str) -> RootTrust:
+    """Classify ``root_name`` into its load-time trust class.
+
+    The single load-time trust decision. Every root lands in a named class, and
+    the default is the strictest one: ``workspace`` (agent-authored), ``global``
+    (``~/.arc/capabilities``), ``agent`` (``<agent_root>/capabilities``), their
+    ``*-skills`` siblings, and every ``extension:<name>`` root are all places a
+    compromised agent or a third party can put a ``.py``, and so is any root
+    nobody has classified. Forgetting to classify one costs it privilege rather
+    than granting it.
+    """
+    if root_name in _TRUSTED_ROOTS:
+        return RootTrust.TRUSTED
+    if root_name.startswith(MODULE_ROOT_PREFIX):
+        return RootTrust.VERIFIED
+    return RootTrust.UNTRUSTED
 
 
 def is_untrusted_root(root_name: str) -> bool:
     """Return True if ``root_name`` must pass the AST validator + Sign/TOFU gate.
 
-    The single load-time trust decision. Untrusted is the fixed set of
-    agent-writable roots plus every per-extension root; ``builtins*`` and
-    ``module:*`` — the harness's own shipped package code — stay trusted.
+    Kept as the name every other surface (``extension.loader``, the arcui
+    inventory) asks the question by; it means exactly what it always did —
+    agent-writable, therefore contained.
     """
-    return root_name in _UNTRUSTED_ROOTS or root_name.startswith(EXTENSION_ROOT_PREFIX)
+    return root_trust(root_name) is RootTrust.UNTRUSTED
+
+
+def pin_name_for_path(artifact: Path) -> str:
+    """The name :class:`~arctrust.TofuLayer` keys the gated ``artifact`` on.
+
+    A tool pins under its file stem and a skill under its FOLDER name
+    (``SKILL.md``'s parent), while a skill's displayed name is its frontmatter
+    name, which can differ. Deriving the pin name from the artifact path keeps
+    an approval aligned with what the loader will look up — the loader gates
+    through this function and ``arc trust approve`` pins through it, so the two
+    cannot spell the same artifact differently.
+
+    A module artifact pins under its path WITHIN its module
+    (``scheduler/capabilities``, ``memory/skills/recall``) whether it is read
+    from the deployment root or from an agent's copy of it, because those are
+    the same artifact seen from two places: ``arc module install`` approves the
+    deployment original's bytes and the loader looks the copy up. Two spellings
+    would make every approval an install writes miss.
+
+    The module qualifier is also what keeps modules apart. Every module ships a
+    file named ``capabilities.py``, so a bare stem would give all of them ONE
+    pin name: approving the second module would supersede the first's hash, and
+    the loader would then read the first as drifted — tamper, a hard DENY — for
+    no reason but the name.
+    """
+    relative = _module_relative(artifact)
+    if relative is None:
+        relative = _module_copy_relative(artifact)
+    if relative is None:
+        return artifact.parent.name if artifact.name == SKILL_MANIFEST else artifact.stem
+    base = relative.parent if artifact.name == SKILL_MANIFEST else relative.with_suffix("")
+    return base.as_posix()
+
+
+def _module_relative(artifact: Path) -> PurePosixPath | None:
+    """``artifact``'s path within the deployment module root, or None if outside.
+
+    Resolved against :func:`module_root` at call time, the same way the loader's
+    scan roots are built, so a relocated ``ARC_CONFIG_DIR`` moves both together.
+    """
+    from arcagent.core.module_discovery import module_root
+
+    try:
+        relative = artifact.resolve().relative_to(module_root().expanduser().resolve())
+    except (OSError, ValueError):
+        return None
+    return PurePosixPath(relative.as_posix()) if len(relative.parts) > 1 else None
+
+
+def _module_copy_relative(artifact: Path) -> PurePosixPath | None:
+    """``artifact``'s path within an agent's module copy, or None if outside.
+
+    Matched on the ``capabilities/modules`` marker rather than against a known
+    agent directory: the pin-name rule has no agent in scope, and the marker is
+    the layout :func:`module_capability_root` writes. Searched from the right so
+    the innermost marker wins for a path that happens to repeat it.
+    """
+    parts = artifact.parts
+    for index in range(len(parts) - 1, 0, -1):
+        if parts[index] == MODULE_COPIES_DIR and parts[index - 1] == CAPABILITIES_DIR:
+            tail = parts[index + 1 :]
+            return PurePosixPath(*tail) if len(tail) > 1 else None
+    return None
 
 
 # Type alias for a (root_name, root_path) pair.
@@ -148,7 +263,7 @@ class CapabilityLoader:
         import_policy: ImportPolicy = DEFAULT_IMPORT_POLICY,
         tofu: TofuLayer | None = None,
         require_signature: bool = False,
-        trusted_public_key: bytes | None = None,
+        trusted_public_keys: tuple[bytes, ...] = (),
         trust_backend: TrustBackend | None = None,
         spawn_background_tasks: bool = True,
         isolation_tier: str = "personal",
@@ -168,12 +283,15 @@ class CapabilityLoader:
         self._spawn_background_tasks = spawn_background_tasks
         # SPEC-033 load-path Sign gate. ``tofu`` is the per-tier source-approval
         # policy; ``require_signature`` makes a valid detached signature the
-        # floor (enterprise/federal); ``trusted_public_key`` pins self-authored
-        # signatures to the agent's own DID key. All default off so a bare
-        # library loader keeps pre-SPEC-033 behaviour — production wires them.
+        # floor (enterprise/federal); ``trusted_public_keys`` is the SET of keys
+        # a signature may be pinned to — the agent's own DID key plus every
+        # operator key pinned in ``[security.validators]``, because an
+        # operator-signed and an agent-self-signed capability must both be able
+        # to pass. All default off so a bare library loader keeps pre-SPEC-033
+        # behaviour — production wires them.
         self._tofu = tofu
         self._require_signature = require_signature
-        self._trusted_public_key = trusted_public_key
+        self._trusted_public_keys = trusted_public_keys
         self._trust_backend: TrustBackend = trust_backend or Ed25519TrustBackend()
         self._known_tools: dict[str, str] = {}  # name → version
         self._known_skills: dict[str, str] = {}
@@ -227,7 +345,7 @@ class CapabilityLoader:
             import_policy=self._import_policy,
             tofu=self._tofu,
             require_signature=self._require_signature,
-            trusted_public_key=self._trusted_public_key,
+            trusted_public_keys=self._trusted_public_keys,
             trust_backend=self._trust_backend,
             spawn_background_tasks=False,
             isolation_tier=self._isolation_tier,
@@ -296,46 +414,83 @@ class CapabilityLoader:
         delta: _ReloadDelta,
         seen_tools: set[str],
     ) -> None:
-        if is_untrusted_root(root_name):
-            try:
-                self._ast_cache.validate(path)
-            except Exception as exc:  # reason: best-effort — record + continue
-                detail = _short_error(exc)
-                delta.errors.append((str(path), detail))
-                self._record_tool_outcome(delta, path, root_name, "invalid", detail)
-                await self._emit_registration_failed(path, "python", detail)
-                return
-            gate = await self._passes_trust_gate(path, path.stem, delta)
+        """Register one ``.py`` according to its root's trust class."""
+        trust = root_trust(root_name)
+        if trust is RootTrust.UNTRUSTED:
+            await self._register_contained_python(path, root_name, delta, seen_tools)
+            return
+        if trust is RootTrust.VERIFIED:
+            gate = await self._passes_trust_gate(
+                path,
+                pin_name_for_path(path),
+                delta,
+                require_signature=self._signature_floor(root_name),
+            )
             if not gate.allowed:
                 self._record_tool_outcome(delta, path, root_name, gate.status, gate.detail)
                 return
-            try:
-                source = path.read_text(encoding="utf-8")
-                authored_tools = parse_authored_tools(path)
-            except Exception as exc:  # reason: fail closed before registration
-                detail = _short_error(exc)
-                delta.errors.append((str(path), detail))
-                self._record_tool_outcome(delta, path, root_name, "invalid", detail)
-                await self._emit_registration_failed(path, "python", detail)
-                return
-            for authored in authored_tools:
-                execute = make_isolated_execute(
-                    source=source,
-                    function_name=authored.function_name,
-                    runner=self._isolated_runner_for_tool(),
-                )
-                await self._dispatch_capability(
-                    execute, authored.metadata, path, root_name, delta, seen_tools
-                )
-            return
+        await self._import_python(path, root_name, delta, seen_tools)
 
+    async def _register_contained_python(
+        self,
+        path: Path,
+        root_name: str,
+        delta: _ReloadDelta,
+        seen_tools: set[str],
+    ) -> None:
+        """Adjudicate and register agent-writable source (SPEC-033 B2/C2/D1).
+
+        Validate imports against the tier allowlist, pass the Sign/TOFU gate,
+        then represent each ``@tool`` by an ArcRun-isolated proxy — the source
+        is never imported into this process.
+        """
+        try:
+            self._ast_cache.validate(path)
+        except Exception as exc:  # reason: best-effort — record + continue
+            await self._record_invalid(path, root_name, delta, exc)
+            return
+        gate = await self._passes_trust_gate(
+            path,
+            pin_name_for_path(path),
+            delta,
+            require_signature=self._signature_floor(root_name),
+        )
+        if not gate.allowed:
+            self._record_tool_outcome(delta, path, root_name, gate.status, gate.detail)
+            return
+        try:
+            source = path.read_text(encoding="utf-8")
+            authored_tools = parse_authored_tools(path)
+        except Exception as exc:  # reason: fail closed before registration
+            await self._record_invalid(path, root_name, delta, exc)
+            return
+        for authored in authored_tools:
+            execute = make_isolated_execute(
+                source=source,
+                function_name=authored.function_name,
+                runner=self._isolated_runner_for_tool(),
+            )
+            await self._dispatch_capability(
+                execute, authored.metadata, path, root_name, delta, seen_tools
+            )
+
+    async def _import_python(
+        self,
+        path: Path,
+        root_name: str,
+        delta: _ReloadDelta,
+        seen_tools: set[str],
+    ) -> None:
+        """Import first-party source and register every decorated value in it.
+
+        Reached by TRUSTED and VERIFIED roots alike: once the bytes are proven
+        first-party, the decorators that make a module a module (``@hook``,
+        ``@background_task``, ``@capability``) only exist on an imported object.
+        """
         try:
             module = _load_module(path)
         except Exception as exc:  # reason: best-effort — record + continue
-            detail = _short_error(exc)
-            delta.errors.append((str(path), detail))
-            self._record_tool_outcome(delta, path, root_name, "invalid", detail)
-            await self._emit_registration_failed(path, "python", detail)
+            await self._record_invalid(path, root_name, delta, exc)
             return
 
         for value in vars(module).values():
@@ -344,6 +499,15 @@ class CapabilityLoader:
                 continue
             await self._dispatch_capability(value, meta, path, root_name, delta, seen_tools)
 
+    async def _record_invalid(
+        self, path: Path, root_name: str, delta: _ReloadDelta, exc: BaseException
+    ) -> None:
+        """Record a ``.py`` that could not be read, validated, or imported."""
+        detail = _short_error(exc)
+        delta.errors.append((str(path), detail))
+        self._record_tool_outcome(delta, path, root_name, "invalid", detail)
+        await self._emit_registration_failed(path, "python", detail)
+
     def _isolated_runner_for_tool(self) -> IsolatedRunner:
         runner = self._isolated_runner
         if runner is None:
@@ -351,8 +515,28 @@ class CapabilityLoader:
             self._isolated_runner = runner
         return runner
 
-    async def _passes_trust_gate(self, path: Path, name: str, delta: _ReloadDelta) -> _GateResult:
-        """Fail-closed Sign gate for any agent-writable source (SPEC-033 B2/C2/D1).
+    def _signature_floor(self, root_name: str) -> bool:
+        """Whether a valid signature is mandatory for ``root_name``'s contents.
+
+        Tier-derived everywhere except a VERIFIED (``module:*``) root, where it
+        is unconditional. A module's capability surface is copied into a
+        directory the AGENT can write, and VERIFIED code runs uncontained — no
+        import allowlist, no ArcRun isolation — so the signature is the only
+        thing separating the module an operator installed from anything the
+        agent left in its place.
+
+        ``auto_run_agent_code`` deliberately does not reach it. That toggle
+        admits code the agent WROTE, which is contained when it runs; a module
+        is a distributed artifact with an issuer, so "the operator allowed the
+        agent's own tools" must not also admit unsigned uncontained code.
+        Tampering breaks the signature, and the capability is denied.
+        """
+        return self._require_signature or root_trust(root_name) is RootTrust.VERIFIED
+
+    async def _passes_trust_gate(
+        self, path: Path, name: str, delta: _ReloadDelta, *, require_signature: bool
+    ) -> _GateResult:
+        """Fail-closed Sign gate for any source outside the wheel (SPEC-033 B2/C2/D1).
 
         ``path`` is the signed artifact (a ``.py`` file or a skill's
         ``SKILL.md``); ``name`` is the capability/skill name TOFU keys on.
@@ -360,16 +544,23 @@ class CapabilityLoader:
         :class:`TofuLayer`. Above personal a missing/invalid signature denies
         outright; TOFU governs first-sight (NEW_SIGHTING) and drift (DENY).
         Any evaluation error denies — nothing unsigned or un-adjudicated
-        registers. When no policy is wired (bare library loader) the gate is a
-        no-op, preserving pre-SPEC-033 behaviour.
+        registers.
+
+        ``require_signature`` is the floor for THIS root, resolved by
+        :meth:`_signature_floor`. The no-op escape hatch below stays keyed on the
+        loader's own configuration rather than on that argument: a loader
+        constructed with no trust policy at all is a bare library loader and
+        behaves as it did before SPEC-033. Every agent wires a TOFU layer, so
+        the escape hatch is unreachable in a real load.
 
         Requiring a signature implies a pinned key (SPEC-033 #6): without one,
         arctrust skips key-pinning and accepts any self-consistent signature, so
-        an unpinned floor is no floor. Fail closed.
+        an unpinned floor is no floor. Fail closed — an EMPTY key set is exactly
+        that unpinned floor and denies.
         """
         if self._tofu is None and not self._require_signature:
             return _GateResult(allowed=True)
-        if self._require_signature and self._trusted_public_key is None:
+        if require_signature and not self._trusted_public_keys:
             await self._deny_capability(path, "signature", "signature required but no pinned key")
             delta.errors.append((str(path), "signature: required but no pinned key — denied"))
             return _GateResult(
@@ -377,10 +568,8 @@ class CapabilityLoader:
             )
         try:
             source_bytes = path.read_bytes()
-            signed = self._trust_backend.verify(
-                path, source_bytes, trusted_public_key=self._trusted_public_key
-            )
-            if self._require_signature and not signed:
+            signed = self._verify_against_any_key(path, source_bytes)
+            if require_signature and not signed:
                 await self._deny_capability(path, "signature", "missing or invalid signature")
                 delta.errors.append((str(path), "signature: unsigned/invalid — denied"))
                 return _GateResult(
@@ -403,6 +592,22 @@ class CapabilityLoader:
         delta.errors.append((str(path), f"tofu: {decision.value}"))
         return _GateResult(
             allowed=False, status=decision.value, detail=f"tofu decision {decision.value}"
+        )
+
+    def _verify_against_any_key(self, path: Path, content: bytes) -> bool:
+        """True when ``content``'s sidecar verifies against ANY pinned key.
+
+        The backend contract stays singular-key — one call per pinned key — so
+        every other consumer of :class:`TrustBackend` is untouched. An empty set
+        means no pin at all: only reachable when a signature is not the floor
+        (the gate denies an unpinned floor before we get here), where an
+        unpinned verify asks for attribution rather than authority.
+        """
+        if not self._trusted_public_keys:
+            return self._trust_backend.verify(path, content, trusted_public_key=None)
+        return any(
+            self._trust_backend.verify(path, content, trusted_public_key=key)
+            for key in self._trusted_public_keys
         )
 
     async def _deny_capability(self, path: Path, action: str, reason: str) -> None:
@@ -496,13 +701,15 @@ class CapabilityLoader:
     ) -> None:
         """Record a refused/invalid ``.py`` tool candidate (never executed).
 
-        Name falls back to the file stem and version/description are empty —
-        the module never ran, so no ``@tool`` metadata exists.
+        Name falls back to the TOFU pin name and version/description are empty —
+        the module never ran, so no ``@tool`` metadata exists. The pin name
+        rather than the bare stem, because this is the name an operator types
+        into ``arc trust approve``, and every module's file is ``capabilities.py``.
         """
         delta.outcomes.append(
             CapabilityOutcome(
                 kind="tool",
-                name=path.stem,
+                name=pin_name_for_path(path),
                 version="",
                 description="",
                 scan_root=root_name,
@@ -539,10 +746,16 @@ class CapabilityLoader:
             await self._emit_registration_failed(skill_md, "skill", detail)
             return
         entry = validation.entry
-        # SKILL.md is injected into the agent prompt (LLM01/ASI06), so an
-        # agent-writable skill folder passes the same Sign/TOFU gate as a .py.
-        if is_untrusted_root(root_name):
-            gate = await self._passes_trust_gate(skill_md, folder.name, delta)
+        # SKILL.md is injected into the agent prompt (LLM01/ASI06), so any skill
+        # folder outside the wheel passes the same Sign/TOFU gate as a .py —
+        # agent-writable (UNTRUSTED) and bundle-delivered (VERIFIED) alike.
+        if root_trust(root_name) is not RootTrust.TRUSTED:
+            gate = await self._passes_trust_gate(
+                skill_md,
+                pin_name_for_path(skill_md),
+                delta,
+                require_signature=self._signature_floor(root_name),
+            )
             if not gate.allowed:
                 delta.outcomes.append(
                     CapabilityOutcome(
@@ -691,39 +904,9 @@ def _load_module(path: Path, *, restricted_builtins: dict[str, object] | None = 
 
     The module name is derived from the path so duplicate ``echo.py``
     files at different scan roots produce distinct module objects.
-
-    When ``restricted_builtins`` is supplied (workspace-authored source),
-    the module namespace is seeded with it BEFORE ``exec`` so the source
-    runs under RESTRICTED_BUILTINS + the wrapped ``__import__`` instead of
-    the full builtin surface — pre-seeding ``__builtins__`` makes ``exec``
-    use it rather than injecting real builtins. First-party roots pass
-    ``None`` and keep the trusted import path.
-
-    Reads source + compile + exec directly instead of going through
-    ``spec.loader.exec_module``. The latter consults importlib's .pyc
-    bytecode cache, which is keyed by source mtime — and HFS+ / older
-    APFS / some CI runners report 1-second mtime resolution. Two
-    writes inside the same second produce identical mtimes, and the
-    second reload silently serves the first version's bytecode. The
-    explicit ``compile()`` path bypasses ``__pycache__`` entirely so
-    reload is always honest about file content.
     """
-    source = path.read_text(encoding="utf-8")
     module_name = f"_arc_cap_{path.stem}_{abs(hash(str(path))):x}"
-    spec = importlib.util.spec_from_file_location(module_name, path)
-    if spec is None:
-        raise ImportError(f"could not build spec for {path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    if restricted_builtins is not None:
-        module.__dict__["__builtins__"] = restricted_builtins
-    try:
-        code = compile(source, str(path), "exec")
-        exec(code, module.__dict__)  # noqa: S102 — capability loader executes user code by design
-    except Exception:  # reason: re-raise after log
-        sys.modules.pop(module_name, None)
-        raise
-    return module
+    return exec_source_module(path, module_name, restricted_builtins=restricted_builtins)
 
 
 def _short_error(exc: BaseException) -> str:
@@ -764,9 +947,17 @@ def _topological_sort(
 
 
 __all__ = [
+    "CAPABILITIES_DIR",
     "EXTENSION_ROOT_PREFIX",
+    "MODULE_COPIES_DIR",
+    "MODULE_ROOT_PREFIX",
+    "SKILL_MANIFEST",
     "CapabilityLoader",
     "CapabilityOutcome",
+    "RootTrust",
     "ScanRoot",
     "is_untrusted_root",
+    "module_capability_root",
+    "pin_name_for_path",
+    "root_trust",
 ]

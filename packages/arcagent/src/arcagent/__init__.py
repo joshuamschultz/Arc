@@ -15,8 +15,14 @@ from arcagent.capabilities.artifact_signing import (
 )
 from arcagent.capabilities.capability_loader import CapabilityLoader
 from arcagent.capabilities.capability_registry import CapabilityRegistry
+from arcagent.capabilities.capability_signing import revoke as revoke_capability
+from arcagent.capabilities.capability_signing import sign as sign_capability
+from arcagent.capabilities.capability_signing import trust_bundled_capabilities
 from arcagent.capabilities.inventory import (
+    GatedItem,
+    append_module_scan_roots,
     collect_agent_capability_inventory,
+    global_capabilities_root,
     list_gated,
     pin_name_for,
     read_capability_source,
@@ -56,6 +62,7 @@ from arcagent.core.errors import (
     ToolError,
     ToolVetoedError,
 )
+from arcagent.core.module_discovery import discover_modules, module_root
 from arcagent.core.prompt_context import build_prompt_resolver
 from arcagent.extension.inspect import inspect_extensions
 from arcagent.keys import KeyStatus, KeyStore, default_env_file
@@ -134,6 +141,7 @@ __all__ = [
     "ConnectorPlan",
     "ContextError",
     "ExtensionError",
+    "GatedItem",
     "HostPrerequisiteDirector",
     "HostVerdict",
     "IdentityError",
@@ -151,6 +159,7 @@ __all__ = [
     "ToolError",
     "ToolSpec",
     "ToolVetoedError",
+    "append_module_scan_roots",
     "audit_tier_relaxations",
     "build_prompt_resolver",
     "builtin_capabilities_path",
@@ -159,9 +168,11 @@ __all__ = [
     "deep_merge",
     "default_env_file",
     "deployment_tier",
+    "discover_modules",
     "dumps_toml",
     "find_secret",
     "generate_schedule_id",
+    "global_capabilities_root",
     "inspect_extensions",
     "iter_model_modules",
     "list_gated",
@@ -170,18 +181,22 @@ __all__ = [
     "make_backend",
     "make_spawn_tool",
     "model_config_path",
+    "module_root",
     "modules_path",
     "pin_name_for",
     "read_capability_source",
     "resolve_deployment",
     "resolve_roots",
     "resolve_workspace_import_policy",
+    "revoke_capability",
     "set_workflow_runner",
     "sidecar_path",
+    "sign_capability",
     "stream_token_text",
     "stricter_tier",
     "tier_rank",
     "tool",
+    "trust_bundled_capabilities",
     "validate_skill_folder",
     "verify_file",
     "write_signature",

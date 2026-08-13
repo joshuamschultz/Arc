@@ -11,7 +11,6 @@ Covers the reachable-now defects found in review of the audit-authority split:
 
 from __future__ import annotations
 
-import importlib
 import types
 from pathlib import Path
 from typing import Any
@@ -19,6 +18,7 @@ from typing import Any
 import pytest
 from arctrust import OperatorKey, OperatorKeyIntegrityError, WitnessDivergenceError
 
+from arcagent.core import agent_lifecycle
 from arcagent.core.agent import ArcAgent
 from arcagent.core.config import (
     AgentConfig,
@@ -187,7 +187,9 @@ def test_missing_key_with_prior_chain_fails_startup_closed(tmp_path: Path) -> No
 # ---------------------------------------------------------------------------
 
 
-def _fake_agent_for_modules(tmp_path: Path, module_name: str, fake_mod: Any) -> Any:
+def _fake_agent_for_modules(
+    tmp_path: Path, module_name: str, fake_mod: Any, monkeypatch: Any
+) -> Any:
     cfg = _config(tmp_path)
     agent = ArcAgent(config=cfg, config_path=tmp_path / "arcagent.toml")
     agent._operator_key = OperatorKey.generate()
@@ -195,9 +197,16 @@ def _fake_agent_for_modules(tmp_path: Path, module_name: str, fake_mod: Any) -> 
     agent._identity = None
     agent._telemetry = None
     agent._bus = None
-    # module_name must be a real, discovered module folder — the loader only
-    # configures the present-set (folder-driven discovery). ``enabled=True`` makes
-    # it active; import is monkeypatched to the fake runtime under test.
+    # The loader only configures the present-set (folder-driven discovery over
+    # the deployment module root), so the module has to be materialized there
+    # before ``enabled=True`` makes it active. Loading is then redirected to the
+    # fake runtime under test.
+    installed = tmp_path / "modules" / module_name
+    installed.mkdir(parents=True)
+    (installed / "capabilities.py").write_text("")
+    (installed / "_runtime.py").write_text("")
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(agent_lifecycle, "load_module_runtime", lambda _name: fake_mod)
     agent._config.modules = {module_name: ModuleEntry(enabled=True, config={})}
     return agent
 
@@ -205,8 +214,6 @@ def _fake_agent_for_modules(tmp_path: Path, module_name: str, fake_mod: Any) -> 
 def test_operator_signer_not_delivered_when_configure_omits_the_param(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
-    from arcagent.core import agent_lifecycle
-
     captured: dict[str, Any] = {"operator_signer": "__unset__"}
 
     # A generic module whose configure() does NOT declare operator_signer never
@@ -216,8 +223,7 @@ def test_operator_signer_not_delivered_when_configure_omits_the_param(
         captured["called"] = True
 
     fake_mod = types.SimpleNamespace(configure=_fake_configure)
-    agent = _fake_agent_for_modules(tmp_path, "memory", fake_mod)
-    monkeypatch.setattr(importlib, "import_module", lambda _name: fake_mod)
+    agent = _fake_agent_for_modules(tmp_path, "memory", fake_mod, monkeypatch)
     agent_lifecycle.configure_module_runtimes(agent, agent._workspace)
     assert captured.get("called") is True
     assert captured["operator_signer"] == "__unset__"
@@ -226,16 +232,13 @@ def test_operator_signer_not_delivered_when_configure_omits_the_param(
 def test_operator_signer_delivered_when_configure_declares_the_param(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
-    from arcagent.core import agent_lifecycle
-
     captured: dict[str, Any] = {}
 
     def _fake_configure(*, operator_signer: Any = None, config: Any = None, **_: Any) -> None:
         captured["operator_signer"] = operator_signer
 
     fake_mod = types.SimpleNamespace(configure=_fake_configure)
-    agent = _fake_agent_for_modules(tmp_path, "skills", fake_mod)
-    monkeypatch.setattr(importlib, "import_module", lambda _name: fake_mod)
+    agent = _fake_agent_for_modules(tmp_path, "skills", fake_mod, monkeypatch)
     agent_lifecycle.configure_module_runtimes(agent, agent._workspace)
     # A module declaring operator_signer receives the config-resolved operator
     # SIGNER (seedless under vault_transit), never the raw key/seed.

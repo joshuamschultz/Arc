@@ -10,7 +10,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from arcui.routes.agent_detail.tools import _collect_disk_tools
+import pytest
+
+from arcui.routes.agent_detail.tools import _collect_disk_tools, _disk_tool_roots
 
 _TOOL_SRC = """\
 from arcagent.builtins.capabilities import tool
@@ -42,3 +44,27 @@ def test_operator_capabilities_still_scanned(tmp_path: Path) -> None:
 
 def test_missing_dirs_yield_nothing(tmp_path: Path) -> None:
     assert _collect_disk_tools(tmp_path) == []
+
+
+def test_global_root_follows_arc_config_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The global root is resolved, not hardcoded — and never the real ``~/.arc``.
+
+    This view used to build ``Path.home() / ".arc" / "capabilities"`` itself, so
+    an isolated deployment showed the invoking user's own global tools. It now
+    goes through ``arcagent.global_capabilities_root``, the same resolver a real
+    load uses, so the dashboard and the loader cannot disagree.
+    """
+    relocated = tmp_path / "isolated" / "capabilities"
+    relocated.mkdir(parents=True)
+    (relocated / "curated.py").write_text(_TOOL_SRC.replace("word_count", "curated"), "utf-8")
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "isolated"))
+    agent_root = tmp_path / "agent"
+    agent_root.mkdir()
+
+    roots = _disk_tool_roots(agent_root)
+
+    assert (relocated, "global") in roots
+    assert Path.home() / ".arc" / "capabilities" not in [path for path, _ in roots]
+    assert "curated" in {t["name"] for t in _collect_disk_tools(agent_root)}

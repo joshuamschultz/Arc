@@ -98,8 +98,10 @@ Look things up here.
 
 **Deploy**
 [Overview](runbooks/deploy/overview.md) ·
+[Bring-up (`arc up`)](runbooks/deploy/up.md) ·
 [Local](runbooks/deploy/local.md) ·
 [Docker](runbooks/deploy/docker.md) ·
+[Azure](runbooks/deploy/azure.md) ·
 [Firecracker](runbooks/deploy/firecracker.md) ·
 [Azure OpenAI](runbooks/deploy/azure-openai.md) ·
 [Voice air-gap](runbooks/deploy/voice-air-gap.md)
@@ -112,6 +114,8 @@ Look things up here.
 
 **Security**
 [Hardening](runbooks/security/hardening.md) ·
+[Signing capabilities](runbooks/signing-capabilities.md) ·
+[Staging module bundles](runbooks/staging-module-bundles.md) ·
 [Threat model](runbooks/security/threat-model.md) ·
 [Adversarial tests](runbooks/security/adversarial-tests.md)
 

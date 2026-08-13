@@ -67,7 +67,7 @@ class TestLoaderRegistration:
         (scan_dir / "capabilities.py").symlink_to(module_dir / "capabilities.py")
 
         reg = CapabilityRegistry()
-        loader = CapabilityLoader(scan_roots=[("browser", scan_dir)], registry=reg)
+        loader = CapabilityLoader(scan_roots=[("module:browser", scan_dir)], registry=reg)
         await loader.scan_and_register()
 
         cap_entry = await reg.get_capability("browser")
@@ -84,7 +84,7 @@ class TestLoaderRegistration:
         (scan_dir / "capabilities.py").symlink_to(module_dir / "capabilities.py")
 
         reg = CapabilityRegistry()
-        loader = CapabilityLoader(scan_roots=[("browser", scan_dir)], registry=reg)
+        loader = CapabilityLoader(scan_roots=[("module:browser", scan_dir)], registry=reg)
         await loader.scan_and_register()
 
         # Spot-check a representative subset of tools across categories.

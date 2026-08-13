@@ -14,12 +14,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import arcagent
+
 from arccli.commands._shared import dispatch
 from arccli.commands._shared import print_table as _print_table
 from arccli.commands._shared import write as _write
 from arccli.commands.skill_evals import evals_handler
-
-_GLOBAL_CAP_DIR = Path.home() / ".arc" / "capabilities"
 
 _SKILL_TEMPLATE = """\
 ---
@@ -78,8 +78,9 @@ Outputs the agent must produce:
 def _scan_roots(agent_dir: str | None) -> list[tuple[str, Path]]:
     """Return user-visible scan roots in precedence order."""
     roots: list[tuple[str, Path]] = []
-    if _GLOBAL_CAP_DIR.is_dir():
-        roots.append(("global", _GLOBAL_CAP_DIR))
+    global_dir = arcagent.global_capabilities_root()
+    if global_dir.is_dir():
+        roots.append(("global", global_dir))
     if agent_dir:
         agent_root = Path(agent_dir).expanduser().resolve()
         agent_caps = agent_root / "capabilities"
@@ -212,7 +213,7 @@ def _create(args: argparse.Namespace) -> None:
     use_global: bool = getattr(args, "use_global", False)
 
     if use_global:
-        out_root = _GLOBAL_CAP_DIR
+        out_root = arcagent.global_capabilities_root()
         out_root.mkdir(parents=True, exist_ok=True)
     elif target_dir:
         out_root = Path(target_dir).expanduser().resolve()
@@ -232,12 +233,19 @@ def _create(args: argparse.Namespace) -> None:
     skill_md = skill_folder / "SKILL.md"
     skill_md.write_text(_SKILL_TEMPLATE.format(name=name))
 
+    # Deliberately UNSIGNED. What is written here is a stub whose next
+    # instruction is to edit it, and a signature over a stub is invalidated by
+    # that very edit — leaving a drifted sidecar, which the loader treats as
+    # TAMPER (a hard DENY) rather than as merely unsigned. Signing belongs after
+    # the content is real, which is why step 3 exists.
     _write(f"Created skill: {skill_folder}/")
     _write("  SKILL.md, references/, scripts/, templates/")
     _write()
     _write("Next steps:")
     _write(f"  1. Edit {skill_md} (fill description, triggers, tools, all 7 sections)")
     _write(f"  2. arc skill validate {skill_folder}")
+    _write(f"  3. arc trust approve {name} [--agent <id>]  (sign it — it will not")
+    _write("     load above personal tier unsigned; re-run after any later edit)")
 
 
 def _validate(args: argparse.Namespace) -> None:

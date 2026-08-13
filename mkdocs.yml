@@ -132,6 +132,7 @@ nav:
   - Runbooks:
       - Deploy:
           - Overview: runbooks/deploy/overview.md
+          - Bring-up (arc up): runbooks/deploy/up.md
           - Local: runbooks/deploy/local.md
           - Docker: runbooks/deploy/docker.md
           - Azure: runbooks/deploy/azure.md
@@ -145,6 +146,8 @@ nav:
           - Policy and proactive engine: runbooks/operate/policy-and-proactive.md
       - Security:
           - Hardening: runbooks/security/hardening.md
+          - Signing capabilities: runbooks/signing-capabilities.md
+          - Staging module bundles: runbooks/staging-module-bundles.md
           - Threat model: runbooks/security/threat-model.md
           - Adversarial tests: runbooks/security/adversarial-tests.md
           - NIST 800-53 mapping: runbooks/security/compliance-nist-800-53.md

@@ -127,9 +127,16 @@ markers = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/arcagent"]
-# SPEC-047: guarantee the packaged blueprint presets ship in the wheel regardless of
-# VCS state (they are loaded at runtime by arcagent.blueprints — not optional data).
-artifacts = ["src/arcagent/blueprints/*.toml", "src/arcagent/context/**/*.md"]
+# Ship the packaged context templates regardless of VCS state — they are loaded at
+# runtime, not optional data.
+artifacts = ["src/arcagent/context/**/*.md"]
+# SPEC-066 REQ-336: no module code in the wheel. A module reaches a deployment as a
+# signed bundle materialized to ${ARC_CONFIG_DIR:-~/.arc}/modules/, so a box that was
+# never approved for the browser module does not carry its source. The tree stays in
+# the repository — it is the catalog `arc module bundle` and `--from-source` package
+# from — only the built artifact loses it. One exclusion, no tier condition: the wheel
+# is byte-identical everywhere (D-066-3).
+exclude = ["src/arcagent/modules/*/"]
 
 [tool.coverage.run]
 source = ["arcagent"]

@@ -8,13 +8,12 @@ healthy run right up until a consumer hangs forever or a reply disappears.
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 import pytest
 
 from arcgateway.adapters.in_process import PythonAdapter
-from arcgateway.executor import Delta, InboundEvent
+from arcgateway.executor import InboundEvent
 from arcgateway.session import SessionRouter
 
 

@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 import arcagent
+from arctrust import arc_home
 
 from arccli.commands._arcllm_surface import (
     BUDGET_BLOCK,
@@ -39,7 +40,6 @@ from arccli.commands._shared import print_table as _print_table
 # Constants
 # ---------------------------------------------------------------------------
 
-_GLOBAL_CAP_DIR = Path.home() / ".arc" / "capabilities"
 
 _DEFAULT_IDENTITY = """\
 # Agent Identity
@@ -472,8 +472,15 @@ enabled = false
 priority = 100
 
 [modules.web.config]
-search_provider = "tavily"      # parallel | firecrawl | tavily
-extract_provider = "firecrawl"  # parallel | firecrawl | tavily
+# extract_provider "browser" is KEYLESS — it reads pages through the browser
+# module's Chrome DevTools Protocol backend, so site lookup works with no
+# account. Parallel/Firecrawl/Tavily are paid opt-ins: name one here AND set its
+# key (PARALLEL_API_KEY / FIRECRAWL_API_KEY / TAVILY_API_KEY).
+extract_provider = "browser"    # browser (keyless) | parallel | firecrawl | tavily
+# No keyless web search exists, so search is off until you buy one. Uncomment,
+# name a provider, and set its key — otherwise web_search is not registered.
+# search_provider = "tavily"    # parallel | firecrawl | tavily — all require a key
+browser_cdp_url = ""            # empty launches local Chrome; federal needs a remote one
 tier = "{tier}"               # drives allowlist / PII enforcement
 url_allowlist = []              # glob allowlist (federal requires non-empty)
 max_content_bytes = 1000000     # extracted-content truncation cap
@@ -748,11 +755,21 @@ async def calculate(expression: str) -> str:
         return f"Error: {exc}"
 '''
 
-_ENV_PATHS = [
-    Path.cwd() / ".env",
-    Path.home() / ".arc" / "arc.env",
-    Path.home() / ".env",
-]
+
+def _env_paths() -> list[Path]:
+    """The ``.env`` files an agent command loads, in precedence order.
+
+    ``arc.env`` comes from :func:`arctrust.arc_home` — the same resolver
+    :func:`arcagent.keys.default_env_file` writes through — so a key set by any
+    surface is a key this loader reads. Resolved per call, never frozen at
+    import: ARC_CONFIG_DIR is routinely exported after this module loads, and the
+    cwd can change within one process.
+    """
+    return [
+        Path.cwd() / ".env",
+        arc_home() / "arc.env",
+        Path.home() / ".env",
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -766,9 +783,9 @@ def _load_env(agent_dir: Path | None = None) -> None:
         from dotenv import load_dotenv
     except ImportError:
         return  # dotenv optional for status/read-only commands
-    paths = list(_ENV_PATHS)
+    paths = _env_paths()
     # Honor an isolated ARC_CONFIG_DIR so a self-contained deployment folder's
-    # own .env loads (the ~/.arc default in _ENV_PATHS misses it) — "start up,
+    # own .env loads (the arc-home default in _env_paths misses it) — "start up,
     # config, and go" without exporting keys by hand.
     cfg = os.environ.get("ARC_CONFIG_DIR")
     if cfg:
@@ -978,7 +995,7 @@ def _capability_scan_roots(agent_dir: Path) -> list[tuple[str, Path]]:
     """
     workspace = agent_dir / "workspace"
     return [
-        ("global", _GLOBAL_CAP_DIR),
+        ("global", arcagent.global_capabilities_root()),
         ("agent", agent_dir / "capabilities"),
         ("workspace", workspace / "capabilities"),
     ]
@@ -1051,12 +1068,11 @@ __all__ = [
     "_DEFAULT_CONFIG",
     "_DEFAULT_CONTEXT",
     "_DEFAULT_IDENTITY",
-    "_ENV_PATHS",
-    "_GLOBAL_CAP_DIR",
     "_capability_scan_roots",
     "_default_policy",
     "_discover_runtime_tools",
     "_discover_tools",
+    "_env_paths",
     "_iter_capability_files",
     "_iter_skill_folders",
     "_load_agent_config",

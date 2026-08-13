@@ -14,6 +14,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from arctrust import arc_home
+
 from arccli.commands._shared import dispatch
 from arccli.commands._shared import print_json as _print_json
 from arccli.commands._shared import print_kv as _print_kv
@@ -56,22 +58,50 @@ def _eval_arith(node: ast.AST) -> float:
     raise ValueError("Unsupported expression")
 
 
-_ENV_PATHS = [
-    Path.cwd() / ".env",
-    Path.home() / ".arc" / "arc.env",
-    Path.home() / ".env",
-]
+def _env_paths() -> list[Path]:
+    """The ``.env`` files ``arc run`` loads, in precedence order.
 
-_MACHINE_CONFIG = Path.home() / ".arc" / "arcagent.toml"
-_DIRECT_RUN_AUDIT = Path.home() / ".arc" / "audit" / "direct-run.jsonl"
+    Resolved per call rather than frozen at import: ``ARC_CONFIG_DIR`` is
+    routinely exported after this module loads (a service unit, a test), and the
+    cwd can change within one process. ``arc.env`` — where API keys live — comes
+    from :func:`arctrust.arc_home`, so an isolated deployment reads ITS keys
+    rather than the invoking user's.
+    """
+    return [
+        Path.cwd() / ".env",
+        arc_home() / "arc.env",
+        Path.home() / ".env",
+    ]
+
+
+def _machine_config_path() -> Path:
+    """The deployment's machine-wide ``arcagent.toml``.
+
+    ``${ARC_CONFIG_DIR:-~/.arc}/arcagent.toml``, resolved through
+    :func:`arctrust.arc_home` on every call — the same file
+    ``arccli.commands.operator`` reads, so one box cannot report two different
+    tiers depending on which command asked.
+    """
+    return arc_home() / "arcagent.toml"
+
+
+def _direct_run_audit_path() -> Path:
+    """The direct-run audit trail: ``${ARC_CONFIG_DIR:-~/.arc}/audit/direct-run.jsonl``.
+
+    Follows the deployment, never the invoking user's home. Records written to
+    the wrong home are missing from the chain that should hold them AND present
+    in one that should not — the worst failure mode an audit file has.
+    """
+    return arc_home() / "audit" / "direct-run.jsonl"
 
 
 def _machine_config() -> dict[str, Any]:
-    """Load the machine-wide ``~/.arc/arcagent.toml``, or {} when absent/unreadable."""
-    if not _MACHINE_CONFIG.exists():
+    """Load the deployment's ``arcagent.toml``, or {} when absent/unreadable."""
+    config = _machine_config_path()
+    if not config.exists():
         return {}
     try:
-        with open(_MACHINE_CONFIG, "rb") as f:
+        with open(config, "rb") as f:
             return tomllib.load(f)
     except (OSError, tomllib.TOMLDecodeError):
         return {}
@@ -80,7 +110,7 @@ def _machine_config() -> dict[str, Any]:
 def _machine_isolation() -> tuple[str, str | None]:
     """Resolve ``(tier, relax)`` for direct ``arc run`` code execution.
 
-    Tier comes from ``ARC_TIER`` or the machine-wide ``~/.arc/arcagent.toml``
+    Tier comes from ``ARC_TIER`` or ``${ARC_CONFIG_DIR:-~/.arc}/arcagent.toml``
     ``[security].tier`` and defaults to personal ONLY when the host is genuinely
     unconfigured — so a federal/enterprise host runs sandboxed + audited, never as
     a bare host subprocess. relax comes from ``ARC_RELAX_ISOLATION`` or
@@ -116,11 +146,12 @@ def _worm_sink(identity: Any) -> Any | None:
 
         from arccli.commands.operator import resolve_operator_signer, resolve_record_cipher
 
-        _DIRECT_RUN_AUDIT.parent.mkdir(parents=True, exist_ok=True)
+        chain = _direct_run_audit_path()
+        chain.parent.mkdir(parents=True, exist_ok=True)
         # Config-resolved operator signer (custody + algorithm) — never a bare
         # Ed25519 default (SPEC-037 F3).
         return WormSink(
-            _DIRECT_RUN_AUDIT,
+            chain,
             resolve_operator_signer(),
             cipher=resolve_record_cipher(),
         )
@@ -150,8 +181,10 @@ def _load_env() -> None:
         from dotenv import load_dotenv
     except ImportError:
         return
-    paths = list(_ENV_PATHS)
-    # Honor an isolated ARC_CONFIG_DIR deployment's own .env (not just ~/.arc).
+    paths = _env_paths()
+    # An isolated deployment may keep a plain ``.env`` beside its config. Kept
+    # out of _env_paths() deliberately: with ARC_CONFIG_DIR pointing at the real
+    # home it resolves to ~/.arc/.env, the abandoned file every surface moved off.
     cfg = os.environ.get("ARC_CONFIG_DIR")
     if cfg:
         paths.insert(0, Path(cfg).expanduser() / ".env")

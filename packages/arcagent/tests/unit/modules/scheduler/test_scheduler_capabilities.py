@@ -62,7 +62,7 @@ class TestLoaderRegistration:
 
         module_dir = Path(scheduler_caps.__file__).parent
         reg = CapabilityRegistry()
-        loader = CapabilityLoader(scan_roots=[("scheduler", module_dir)], registry=reg)
+        loader = CapabilityLoader(scan_roots=[("module:scheduler", module_dir)], registry=reg)
         await loader.scan_and_register()
 
         # Capability class registered as LifecycleEntry

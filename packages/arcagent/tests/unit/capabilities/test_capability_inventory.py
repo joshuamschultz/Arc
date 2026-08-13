@@ -164,7 +164,7 @@ class TestCapabilityInventory:
             builtins_root=agent_tree["builtins"],
             global_root=agent_tree["global"],
             tofu=tofu,
-            trusted_public_key=identity.public_key,
+            trusted_public_keys=(identity.public_key,),
         )
 
     async def test_enumerates_all_four_scan_roots(self, agent_tree: dict[str, Path]) -> None:

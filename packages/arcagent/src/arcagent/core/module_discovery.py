@@ -1,10 +1,12 @@
-"""Folder-presence discovery of the modules under :mod:`arcagent.modules`.
+"""Folder-presence discovery of the deployment's installed modules.
 
 A *module* is a folder that ships both a ``capabilities.py`` (the tools/hooks
 the loader scans) and a ``_runtime.py`` (the per-agent state configured at
-startup). Discovery scans the ``modules/`` directory for such folders so the
-full present-set is always KNOWN — no folder can silently contribute nothing
-because it lacks a config entry.
+startup). Discovery scans the deployment module root — ``<arc_home>/modules``,
+i.e. ``${ARC_CONFIG_DIR:-~/.arc}/modules`` — for such folders so the full
+present-set is always KNOWN: no folder can silently contribute nothing because
+it lacks a config entry, and nothing loads merely because it shipped in the
+wheel.
 
 Activation is separate and explicit (product-owner decision, DEFAULT OFF): a
 discovered module *loads* only when the agent's config carries an enabled
@@ -20,8 +22,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-# The shipped modules live next to this package: ``arcagent/modules``.
-_MODULES_DIR = Path(__file__).parent.parent / "modules"
+from arctrust import arc_home
+
+
+def module_root() -> Path:
+    """Return the deployment module root: ``${ARC_CONFIG_DIR:-~/.arc}/modules``.
+
+    Resolved on every call, never cached at import: the env var is routinely
+    set after this module is first imported (tests, a service that exports it
+    in its unit file), and a module-level constant would freeze whatever the
+    environment happened to say at import time.
+    """
+    return arc_home() / "modules"
 
 
 class _ModuleEntry(Protocol):
@@ -52,11 +64,16 @@ def _is_module(path: Path) -> bool:
     )
 
 
-def discover_modules(modules_dir: Path = _MODULES_DIR) -> list[str]:
-    """Return the sorted names of every module folder present on disk."""
-    if not modules_dir.is_dir():
+def discover_modules(modules_dir: Path | None = None) -> list[str]:
+    """Return the sorted names of every module folder present on disk.
+
+    ``modules_dir`` overrides the deployment root; ``None`` (the default)
+    resolves :func:`module_root` at call time.
+    """
+    root = module_root() if modules_dir is None else modules_dir
+    if not root.is_dir():
         return []
-    return sorted(p.name for p in modules_dir.iterdir() if _is_module(p))
+    return sorted(p.name for p in root.iterdir() if _is_module(p))
 
 
 @dataclass(frozen=True)
@@ -73,7 +90,7 @@ class ModuleStatus:
 
 
 def module_statuses(
-    config: _HasModules, modules_dir: Path = _MODULES_DIR
+    config: _HasModules, modules_dir: Path | None = None
 ) -> dict[str, ModuleStatus]:
     """Return the status of every known module name, keyed by name.
 
@@ -95,7 +112,7 @@ def module_statuses(
     return statuses
 
 
-def active_modules(config: _HasModules, modules_dir: Path = _MODULES_DIR) -> list[str]:
+def active_modules(config: _HasModules, modules_dir: Path | None = None) -> list[str]:
     """Return the sorted names of modules that are discovered AND enabled.
 
     This is exactly the set the loader configures and scans — the single seam

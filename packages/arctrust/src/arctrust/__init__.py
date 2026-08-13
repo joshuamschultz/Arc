@@ -67,6 +67,7 @@ TOFU (source approval — gates capability LOAD, not tool invocation):
     approve_source      — Pure ValidatorsConfig mutation: pin name → source hash
     load_validators     — Read ``[security.validators]`` from an arcagent.toml
     approve / disapprove — Pin / unpin a source hash in an arcagent.toml (persisted)
+    pin_key / unpin_key — Add / remove a trusted capability-verification key (persisted)
     persist_validators  — Atomic tomlkit rewrite of the validators block
 
 Paths:
@@ -80,6 +81,7 @@ from arctrust.artifact import (
     ArtifactSignature,
     content_sha256,
     sign_artifact,
+    sign_artifact_with_signer,
     verify_artifact,
 )
 from arctrust.audit import (
@@ -180,6 +182,8 @@ from arctrust.validators import (
     hash_source,
     load_validators,
     persist_validators,
+    pin_key,
+    unpin_key,
 )
 from arctrust.witness import (
     AppendOnlyMediumWitness,
@@ -275,11 +279,14 @@ __all__ = [
     "parse_classification",
     "parse_did",
     "persist_validators",
+    "pin_key",
     "read_verified_anchor",
     "redact_text",
     "register_operator",
     "sign",
     "sign_artifact",
+    "sign_artifact_with_signer",
+    "unpin_key",
     "validate_did",
     "verify",
     "verify_artifact",

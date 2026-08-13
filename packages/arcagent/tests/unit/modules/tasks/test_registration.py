@@ -23,7 +23,7 @@ class TestLoaderRegistration:
 
         module_dir = Path(tasks_caps.__file__).parent
         reg = CapabilityRegistry()
-        loader = CapabilityLoader(scan_roots=[("tasks", module_dir)], registry=reg)
+        loader = CapabilityLoader(scan_roots=[("module:tasks", module_dir)], registry=reg)
         await loader.scan_and_register()
 
         for tool_name in (
@@ -47,7 +47,7 @@ class TestLoaderRegistration:
 
         module_dir = Path(tasks_caps.__file__).parent
         reg = CapabilityRegistry()
-        loader = CapabilityLoader(scan_roots=[("tasks", module_dir)], registry=reg)
+        loader = CapabilityLoader(scan_roots=[("module:tasks", module_dir)], registry=reg)
         await loader.scan_and_register()
 
         read_only = {"list_tasks"}
@@ -79,7 +79,7 @@ class TestLoaderRegistration:
 
         module_dir = Path(tasks_caps.__file__).parent
         reg = CapabilityRegistry()
-        loader = CapabilityLoader(scan_roots=[("tasks", module_dir)], registry=reg)
+        loader = CapabilityLoader(scan_roots=[("module:tasks", module_dir)], registry=reg)
         await loader.scan_and_register()
 
         task_entry = await reg.get_task("tasks_dispatch_loop")

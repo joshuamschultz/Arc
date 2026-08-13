@@ -15,6 +15,7 @@ first line raised the instant the scan registered it.
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -63,3 +64,44 @@ class TestBuildCapabilityRegistryDoesNotSpawn:
         """
         registry = build_capability_registry(_config_with_memory_enabled(), agent_root=None)
         assert registry is not None
+
+
+class TestGlobalRootHonorsArcConfigDir:
+    """The global scan root must follow ``ARC_CONFIG_DIR``, not a literal.
+
+    The builder used to hardcode ``~/.arc/capabilities``, so an isolated
+    deployment listed — and a test suite could WRITE INTO — the invoking user's
+    real arc home. It now resolves through ``arcagent.global_capabilities_root``,
+    the one resolver shared with a real load.
+    """
+
+    def _scan_roots(self, monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, object]]:
+        import arcagent
+
+        captured: dict[str, object] = {}
+        real_init = arcagent.CapabilityLoader.__init__
+
+        def _spy_init(self: object, **kwargs: object) -> None:
+            captured.update(kwargs)
+            real_init(self, **kwargs)  # type: ignore[arg-type]
+
+        class _SpyLoader(arcagent.CapabilityLoader):
+            __init__ = _spy_init  # type: ignore[assignment]
+
+        monkeypatch.setattr(arcagent, "CapabilityLoader", _SpyLoader)
+        build_capability_registry(SimpleNamespace(modules={}), agent_root=None)
+        roots = captured.get("scan_roots")
+        assert isinstance(roots, list)
+        return roots
+
+    def test_relocated_arc_home_is_scanned(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        relocated = tmp_path / "isolated" / "capabilities"
+        relocated.mkdir(parents=True)
+        monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "isolated"))
+
+        roots = self._scan_roots(monkeypatch)
+
+        assert (("global", relocated)) in roots
+        assert not [p for name, p in roots if name == "global" and p != relocated]

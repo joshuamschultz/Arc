@@ -25,10 +25,10 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import arcrun
-from arcagent.parts import PartTranslator
 
 from arcagent.core.config import ContextConfig, SessionConfig
 from arcagent.core.session_internal.manager import SessionManager
+from arcagent.parts import PartTranslator
 
 _SESSION_KEY = "telegram-1001"
 _REF = "inbox/2026-08-11/120000-alice-holiday.jpg"

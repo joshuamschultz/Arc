@@ -1,6 +1,6 @@
 # Firecracker Deployment Guide
 
-> **Runbooks**  ·  Operate  ·  page 5 of 17  
+> **Runbooks**  ·  Operate  ·  page 6 of 20  
 > **For** Operators deploying and running Arc  
 > [← Azure](azure.md)  ·  [Docs home](../../README.md)  ·  [Azure OpenAI →](azure-openai.md)
 

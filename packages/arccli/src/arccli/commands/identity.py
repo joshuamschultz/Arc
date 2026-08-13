@@ -18,30 +18,26 @@ Subcommands:
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
-from arctrust import AgentIdentity
+from arctrust import AgentIdentity, arc_home
 
 from arccli.commands._shared import err as _err
 from arccli.commands._shared import write as _out
 
-# Standalone signing authority lives here (distinct from per-agent key_dirs).
-DEFAULT_KEY_DIR = Path("~/.arc/identity").expanduser()
 _ACTIVE_FILE = "active.did"
 
 
 def _default_key_dir() -> Path:
     """Resolve the signing-authority dir: ``${ARC_CONFIG_DIR:-~/.arc}/identity``.
 
-    Mirrors ``arc init``'s config-dir resolution so an isolated ``ARC_CONFIG_DIR``
-    keeps the key alongside the rest of the Arc config instead of leaking to
-    ``~/.arc``.
+    Resolved through :func:`arctrust.arc_home` — the one place ``~/.arc`` is
+    decided — so an isolated ``ARC_CONFIG_DIR`` keeps the signing authority
+    alongside the rest of that deployment's config instead of leaking to the
+    invoking user's home.
     """
-    env = os.environ.get("ARC_CONFIG_DIR")
-    base = Path(env).expanduser() if env else Path.home() / ".arc"
-    return base / "identity"
+    return arc_home() / "identity"
 
 
 def _resolve_key_dir(args: list[str]) -> Path:

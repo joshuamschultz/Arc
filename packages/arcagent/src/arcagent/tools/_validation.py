@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from arcagent.core.errors import ToolError
+from arcagent.core.module_discovery import module_root
 
 _logger = logging.getLogger("arcagent.tools.validation")
 
@@ -155,6 +156,37 @@ def scan_shell_for_protected_writes(
     return None
 
 
+# Any bare path-shaped token a shell command carries. Redirection targets are
+# only one way in — ``rm -rf <dir>`` and ``mv``/``cp`` never appear after a ``>``
+# — so the module-root guard below looks at every operand, not just redirections.
+_SHELL_TOKEN_RE = re.compile(r"[^\s;|&<>()'\"]+")
+
+
+def scan_shell_for_module_root(command: str, workspace: Path) -> Path | None:
+    """Return the first module-root path a shell command names, else None.
+
+    Companion to :func:`scan_shell_for_protected_writes` for the deployment
+    module root (REQ-335). Deliberately wider than that scan: replacement is
+    not the only attack — deleting a module's tree silently disables the
+    capability at the next startup, and folder-presence discovery reports it as
+    simply not present, with no signature to fail and nothing to alert on.
+
+    Best-effort host-bash guard, like its neighbour (OQ-2): a host shell can
+    still build a path through ``$(...)`` or a variable. It is the personal-tier
+    layer only — enterprise and federal never reach here, because ``bash``
+    routes through arcrun's isolation backend, which bind-mounts the workspace
+    and nothing else.
+    """
+    root = module_root().resolve()
+    ws = workspace.resolve()
+    for match in _SHELL_TOKEN_RE.finditer(command):
+        candidate = Path(match.group(0))
+        resolved = candidate.resolve() if candidate.is_absolute() else (ws / candidate).resolve()
+        if _is_within(resolved, root):
+            return resolved
+    return None
+
+
 def _is_within(path: Path, boundary: Path) -> bool:
     """Check if *path* is inside *boundary* without raising."""
     try:
@@ -197,6 +229,45 @@ def _deny_workspace_path(
         except Exception:  # reason: fail-open — audit must not mask the denial
             _logger.exception("Workspace-path audit sink raised; continuing")
     return ToolError(code=code, message=message, details=details)
+
+
+def enforce_outside_module_root(
+    resolved: Path,
+    *,
+    tool_name: str,
+    file_path: str,
+    caller_did: str = "did:arc:unknown",
+    audit_sink: ProtectedAuditSink | None = None,
+) -> None:
+    """Deny + audit any tool reach into the deployment module root (REQ-335).
+
+    The module root holds executable code the next startup loads, so a tool
+    that can write there is a self-modification primitive: edit ``_runtime.py``
+    and the change outlives every policy the running process enforces (ASI05
+    unexpected code execution, ASI06 memory/context poisoning).
+
+    The deny is unconditional and runs BEFORE the workspace and
+    ``allowed_paths`` checks, because REQ-335 puts the module root outside the
+    fence rather than merely outside the workspace: an operator entry over the
+    Arc home is a plausible config, and it must not hand the agent write access
+    to every module runtime on the box. Mode bits are not the control either —
+    the agent runs as the user that owns the files and can ``chmod`` them back.
+    """
+    root = module_root()
+    if not _is_within(resolved, root):
+        return
+    raise _deny_workspace_path(
+        code="TOOL_PATH_OUTSIDE_WORKSPACE",
+        message=(
+            f"Path '{file_path}' is inside the deployment module root, which is outside "
+            "the agent tool fence; modules are installed and removed by the operator"
+        ),
+        details={"path": str(resolved), "module_root": str(root)},
+        tool_name=tool_name,
+        file_path=file_path,
+        caller_did=caller_did,
+        audit_sink=audit_sink,
+    )
 
 
 def resolve_workspace_path(
@@ -275,6 +346,15 @@ def resolve_workspace_path(
                 )
 
     resolved = unresolved.resolve()
+
+    # REQ-335 — the module root is off limits before any boundary can admit it.
+    enforce_outside_module_root(
+        resolved,
+        tool_name=tool_name,
+        file_path=file_path,
+        caller_did=caller_did,
+        audit_sink=audit_sink,
+    )
 
     # Check workspace boundary, then allowed_paths
     if _is_within(resolved, workspace):

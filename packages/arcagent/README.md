@@ -223,11 +223,13 @@ A **capability** is anything the loader picks up from one of four scan roots —
 | 3 | `<agent_root>/capabilities/` | **untrusted** (same reasoning) | the human operator | per-agent capabilities and skill folders |
 | 4 | `<agent_root>/workspace/.capabilities/` | **untrusted** | the agent itself, at runtime | passes through the AST validator + TOFU + OS sandbox before being imported |
 
-Roots 2-4 all go through the same gate — AST validator, Sign/TOFU check, restricted-builtins exec (`CapabilityLoader._UNTRUSTED_ROOTS`). Only root 1 (`builtins`) and the `module:<mod>` roots below are trusted and skip it entirely — they're the harness's own shipped Python, trusted via the normal package supply chain (`pip-audit`, code review), not a per-load signature check.
+Roots 2-4 all go through the same gate — AST validator, Sign/TOFU check, ArcRun-isolated execution (`CapabilityLoader.root_trust(...) is RootTrust.UNTRUSTED`). Only root 1 (`builtins`) is trusted and skips it entirely — it is the harness's own shipped Python, trusted via the normal package supply chain (`pip-audit`, code review), not a per-load signature check.
+
+There is a third class between them, `RootTrust.VERIFIED`, and the `module:<mod>` roots below are it: **verified but not isolated**. The gate does two separable jobs — *prove who wrote these bytes* and *contain what they may do* — and module code needs the first without the second. Isolation exists to hold code the model wrote; a module is first-party code delivered through a signed bundle, and containing it means `@hook` / `@background_task` / `@capability` never register and the stdlib a module legitimately imports is blocked.
 
 > Override by collision: define `web_search` (a `@tool`) at root 2, then again at root 3, and root 3 wins. The reload diff names it explicitly: `~1 replaced (web_search 1.0.0→1.1.0)`.
 
-Plus: any module in `arcagent/modules/<mod>/` that has `[modules.<mod>].enabled = true` and a `capabilities.py` is loaded as an extra scan root (`module:<mod>`) — trusted, shipped code, same as root 1. Disabled modules are silently skipped.
+Plus: any module installed at `${ARC_CONFIG_DIR:-~/.arc}/modules/<mod>/` that has `[modules.<mod>].enabled = true` is loaded as an extra scan root (`module:<mod>`) — **verified**, not trusted. Every `.py` and `SKILL.md` under it carries a `.arcsig` sidecar written by `arcbundle.build_bundle`, re-verified on every scan against the keys pinned in `[security.validators] trusted_keys` (`arc module install` pins the bundle's issuer). Edit one in place and it stops loading until somebody re-signs it with `arc trust approve <module>/<name>`. Disabled modules are silently skipped.
 
 ### Skill folders
 

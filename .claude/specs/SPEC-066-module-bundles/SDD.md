@@ -158,3 +158,26 @@ No new external services. Ed25519 via PyNaCl through `arctrust` (`.claude/steeri
 ## Open Questions
 
 _(none)_
+
+## Deviations
+
+### DEV-001
+
+- **Date**: 2026-08-13
+- **Spec**: SPEC-066-module-bundles
+- **Reason Category**: security-required
+- **Original Decision**: REQ-337
+- **Status**: approved
+- **Approver**: team-lead
+
+**Description**
+
+REQ-337 requires the per-agent capability copy to be 'subject to the existing untrusted-root trust gate'. It was written before T-972 measured what the UNTRUSTED class actually does to module code: UNTRUSTED applies ArcRun-isolated execution plus the agent-authored AST import allowlist, under which 17 of 18 modules register ZERO tools, because @hook / @background_task / @capability only register on an imported object and the stdlib a module legitimately imports is blocked. Adjudicating the copies as UNTRUSTED would therefore satisfy the wording and deliver a fleet with no working modules. The same conflict is what SDD alternative D-648 hit from the other direction. Separately, the copy was never read at all: the loader scanned the shared deployment root, so REQ-337's isolation goal (per-agent skill drift; 'a shared read-only original cannot serve') was undelivered and capability_copy.py's docstring asserted an isolation boundary that did not exist.
+
+**Proposed Change**
+
+Scan the per-agent copy at <agent_dir>/capabilities/modules/<name>/ as a VERIFIED root and DELETE the shared deployment-root scan, so a module has ONE load path rather than two. VERIFIED requires proof of authorship (signature + TOFU) without containment. Because the copy sits in an agent-writable directory and VERIFIED code runs uncontained, a module capability root requires a valid signature at EVERY tier including personal: independent of require_signature (which is tier-derived) and independent of auto_run_agent_code (which admits code the AGENT wrote, whereas a module is a distributed artifact with an issuer). Tampering breaks the signature and the capability is denied. pin_name_for_path derives the same module-qualified TOFU pin name from the copy as from the deployment original, so approvals written by arc module install still resolve. A module's RUNTIME is unchanged: it stays once at the deployment root, read-only, outside the tool fence.
+
+**Impact**
+
+REQ-337's literal 'untrusted-root' wording is not met; its substance (copy per agent, runtime stays at the deployment root, copies pass the load-time trust gate) is met and, for the first time, actually exercised. Security posture is strictly stronger than the shared-root behaviour it replaces: unsigned module code is now denied at personal tier, where before personal tier had no signature floor at all. Blast radius is per agent instead of deployment-wide. arc trust approve and arc trust list now resolve a module capability to the agent's own copy, so one agent's re-sign no longer touches the shared original. --from-source keeps working because arc module install pins the ephemeral development issuer key it just verified the manifest under into the agent's own [security.validators]; arcbundle.verifier still restricts DEV_ISSUER to personal tier (DEV_ISSUER_TIERS unchanged). Verified end to end: install --from-source, boot a real ArcAgent, scheduler's four tools register.

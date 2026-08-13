@@ -61,9 +61,16 @@ def test_exec_selection_audit_reaches_sink_with_caller_did() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _isolate_machine_config(monkeypatch: pytest.MonkeyPatch, missing: Path) -> None:
-    """Point the machine-config path at a nonexistent file and clear env overrides."""
-    monkeypatch.setattr(run_cmd, "_MACHINE_CONFIG", missing)
+def _isolate_machine_config(monkeypatch: pytest.MonkeyPatch, arc_home: Path) -> None:
+    """Point the whole arc home at an empty dir and clear env overrides.
+
+    ``ARC_CONFIG_DIR`` is the ONLY isolation, deliberately: ``arc run`` resolves
+    the machine config through ``arctrust.arc_home()``, so no module constant
+    needs monkeypatching. A surface that still needed one would be a surface that
+    reads the invoking user's real ``~/.arc/arcagent.toml`` on an isolated
+    deployment — which is exactly the defect this replaces.
+    """
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(arc_home))
     monkeypatch.delenv("ARC_TIER", raising=False)
     monkeypatch.delenv("ARC_RELAX_ISOLATION", raising=False)
 
@@ -71,14 +78,14 @@ def _isolate_machine_config(monkeypatch: pytest.MonkeyPatch, missing: Path) -> N
 def test_unconfigured_host_defaults_personal_local(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    _isolate_machine_config(monkeypatch, tmp_path / "absent.toml")
+    _isolate_machine_config(monkeypatch, tmp_path / "empty-home")
     assert run_cmd._machine_isolation() == ("personal", "local")
 
 
 def test_enterprise_env_routes_to_container_no_local_relax(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    _isolate_machine_config(monkeypatch, tmp_path / "absent.toml")
+    _isolate_machine_config(monkeypatch, tmp_path / "empty-home")
     monkeypatch.setenv("ARC_TIER", "enterprise")
     # Enterprise floor is the container — relax must NOT default to host-local.
     assert run_cmd._machine_isolation() == ("enterprise", None)
@@ -87,15 +94,69 @@ def test_enterprise_env_routes_to_container_no_local_relax(
 def test_federal_env_routes_to_vm_no_local_relax(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    _isolate_machine_config(monkeypatch, tmp_path / "absent.toml")
+    _isolate_machine_config(monkeypatch, tmp_path / "empty-home")
     monkeypatch.setenv("ARC_TIER", "federal")
     assert run_cmd._machine_isolation() == ("federal", None)
 
 
 def test_machine_config_tier_is_sourced(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    cfg = tmp_path / "arcagent.toml"
-    cfg.write_text('[security]\ntier = "enterprise"\n')
-    monkeypatch.setattr(run_cmd, "_MACHINE_CONFIG", cfg)
-    monkeypatch.delenv("ARC_TIER", raising=False)
-    monkeypatch.delenv("ARC_RELAX_ISOLATION", raising=False)
+    arc_home = tmp_path / "deployment"
+    arc_home.mkdir()
+    (arc_home / "arcagent.toml").write_text('[security]\ntier = "enterprise"\n')
+    _isolate_machine_config(monkeypatch, arc_home)
     assert run_cmd._machine_isolation() == ("enterprise", None)
+
+
+def test_machine_config_follows_arc_config_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An isolated deployment's tier must come from ITS arc home, not the user's.
+
+    ``arc run`` used to read ``Path.home() / ".arc" / "arcagent.toml"``, frozen at
+    import. On a box where the deployment declares federal and the invoking user's
+    own home declares nothing, that resolved to "personal" — and personal defaults
+    ``relax`` to host-local execution. The isolation floor was sourced from the
+    wrong file, so a federal deployment ran agent code as a bare host subprocess.
+    """
+    federal_home = tmp_path / "federal-deployment"
+    federal_home.mkdir()
+    (federal_home / "arcagent.toml").write_text('[security]\ntier = "federal"\n')
+    _isolate_machine_config(monkeypatch, federal_home)
+
+    assert run_cmd._machine_isolation() == ("federal", None)
+
+    # Same process, different deployment → different answer. A constant frozen at
+    # import could not do this, which is what made the bug invisible.
+    personal_home = tmp_path / "personal-deployment"
+    personal_home.mkdir()
+    _isolate_machine_config(monkeypatch, personal_home)
+    assert run_cmd._machine_isolation() == ("personal", "local")
+
+
+def test_direct_run_audit_lands_in_the_deployment_arc_home(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The direct-run audit trail follows the deployment, never the user's home.
+
+    An audit file is the one thing that must not leak across deployments: records
+    for an isolated deployment written into ``~/.arc/audit`` are both missing from
+    the chain that should hold them and present in one that should not.
+    """
+    arc_home = tmp_path / "deployment"
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(arc_home))
+
+    assert run_cmd._direct_run_audit_path() == arc_home / "audit" / "direct-run.jsonl"
+    assert Path.home() not in run_cmd._direct_run_audit_path().parents
+
+
+def test_arc_env_is_read_from_the_deployment_arc_home(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``arc.env`` follows the deployment too — it is where API keys live."""
+    arc_home = tmp_path / "deployment"
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(arc_home))
+
+    paths = run_cmd._env_paths()
+
+    assert arc_home / "arc.env" in paths
+    assert Path.home() / ".arc" / "arc.env" not in paths

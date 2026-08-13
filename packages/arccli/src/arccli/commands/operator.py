@@ -21,16 +21,26 @@ from arctrust import (
     SignerConfig,
     SignerError,
     WormSink,
+    arc_home,
     build_signer,
     derive_record_key,
 )
 from arctrust.signer import VAULT_TRANSIT
 
-# Well-known operator-key location (outside any agent workspace tool-sandbox).
-DEFAULT_OPERATOR_DIR = Path("~/.arc/operator").expanduser()
 _KEY_NAME = "operator.key"
-_MACHINE_CONFIG = Path("~/.arc/arcagent.toml").expanduser()
 _OPERATOR_KEY_REF = "operator"
+
+
+def _machine_config_path() -> Path:
+    """The deployment's machine-wide ``arcagent.toml``.
+
+    ``${ARC_CONFIG_DIR:-~/.arc}/arcagent.toml``, resolved through
+    :func:`arctrust.arc_home` on every call — the same root arcui's trust route
+    reads, so the CLI and the dashboard cannot resolve different custody on one
+    box. A constant frozen at import would ignore an env var set afterwards and
+    silently fall back to the invoking user's real home.
+    """
+    return arc_home() / "arcagent.toml"
 
 
 def operator_key_path(arc_dir: Path) -> Path:
@@ -39,8 +49,13 @@ def operator_key_path(arc_dir: Path) -> Path:
 
 
 def load_operator_key(arc_dir: Path | None = None) -> OperatorKey:
-    """Load the operator key, auto-bootstrapping one if absent (zero-config)."""
-    base = Path(arc_dir).expanduser() if arc_dir is not None else DEFAULT_OPERATOR_DIR.parent
+    """Load the operator key, auto-bootstrapping one if absent (zero-config).
+
+    ``arc_dir`` defaults to :func:`arctrust.arc_home`, so an isolated deployment
+    bootstraps and signs with ITS OWN operator key rather than the invoking
+    user's — the same resolution ``arctrust.default_operator_key_path`` uses.
+    """
+    base = Path(arc_dir).expanduser() if arc_dir is not None else arc_home()
     return OperatorKey.load(operator_key_path(base), generate_if_absent=True)
 
 
@@ -56,7 +71,7 @@ def operator_public_key(arc_dir: Path | None = None) -> bytes | None:
     caller can fail closed above the personal tier (an unpinned floor is no floor). A
     present-but-tampered key raises through ``OperatorKey.load`` (covert-erasure guard).
     """
-    base = Path(arc_dir).expanduser() if arc_dir is not None else DEFAULT_OPERATOR_DIR.parent
+    base = Path(arc_dir).expanduser() if arc_dir is not None else arc_home()
     try:
         return OperatorKey.load(operator_key_path(base), generate_if_absent=False).public_key
     except FileNotFoundError:
@@ -85,10 +100,11 @@ def _machine_security() -> Any:
     """
     import arcagent
 
+    config = _machine_config_path()
     block: dict[str, Any] = {}
-    if _MACHINE_CONFIG.exists():
+    if config.exists():
         try:
-            with open(_MACHINE_CONFIG, "rb") as f:
+            with open(config, "rb") as f:
                 block = tomllib.load(f).get("security", {})
         except (OSError, tomllib.TOMLDecodeError):
             block = {}
@@ -176,7 +192,6 @@ def _resolve_transit(sec: Any) -> FileNotaryTransit:
 
 
 __all__ = [
-    "DEFAULT_OPERATOR_DIR",
     "ensure_operator_key",
     "load_operator_key",
     "operator_key_path",

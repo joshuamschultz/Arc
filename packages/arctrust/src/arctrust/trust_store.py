@@ -28,6 +28,24 @@ This module provides that primitive against simple TOML files in ``~/.arc/trust/
     added_at = "2026-04-18T00:00:00Z"
     role = "manifest-signer"
 
+An ``issuers.toml`` entry grants code execution
+----------------------------------------------
+``issuers.toml`` is not only a signature-checking convenience: an issuer key is
+also what makes a signed **module bundle** installable (SPEC-066), and a module's
+capability surface — its tools, hooks, background tasks, and ``@capability``
+classes — is executed IN-PROCESS AND UNCONTAINED once its signature verifies.
+No AST import allowlist, no isolated runner, no sandbox: containment exists to
+hold code the model wrote, and applying it to modules stops them registering at
+all.
+
+Adding a key here therefore means "anything this issuer signs may run with this
+agent's full privileges" — the apt/npm model, where the publisher is vetted once
+instead of every artifact.  That is why nothing in this codebase WRITES this
+file: no CLI, no tool, no agent, no chat surface can add an issuer.  The manual,
+out-of-band edit is itself the authorization step, and deleting the entry is the
+revocation.  Add keys deliberately, from a source the signed artifact had no part
+in, and keep the set as small as the deployment actually needs.
+
 Security properties
 -------------------
 - Files must have 0600 permissions (owner read/write only).  Any group or

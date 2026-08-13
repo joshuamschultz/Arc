@@ -25,9 +25,11 @@ dependencies = [
     "arcllm",
     "arcrun",
     "arc-agent",
+    "arcbundle",
     "arcteam",
     "python-dotenv>=1.2.2",
     "prompt_toolkit>=3.0",
+    "tomlkit>=0.13,<1",
 ]
 
 [project.scripts]

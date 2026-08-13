@@ -28,8 +28,6 @@ from typing import Any
 
 _logger = logging.getLogger("arccli.commands.blueprint")
 
-_USER_BLUEPRINT_DIR = Path("~/.arc/blueprints").expanduser()
-
 
 def _write(msg: str = "") -> None:
     sys.stdout.write(msg + "\n")

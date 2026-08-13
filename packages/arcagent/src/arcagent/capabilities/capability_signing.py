@@ -1,0 +1,299 @@
+"""SPEC-066 COMP-010 — the operator half of the capability trust gate.
+
+The loader has refused unsigned capabilities above personal tier since SPEC-033,
+but nothing shipped that could actually sign one: ``arc trust approve`` pins a
+source hash the signature floor never lets :class:`~arctrust.TofuLayer` reach.
+This module closes that gap.
+
+:func:`sign` is ONE operator action with THREE durable effects, because passing
+the gate needs all three and any one alone leaves the capability gated:
+
+1. the detached ``.arcsig`` sidecar over the artifact bytes — clears the
+   signature floor;
+2. the signer's public key pinned into the agent's ``arcagent.toml`` as a
+   trusted capability-verification key — makes that signature *verifiable*;
+3. the TOFU pin under the loader's pin name — records the operator's approval
+   of these exact bytes.
+
+:func:`revoke` removes all three, returning the capability to gated.
+
+Signing goes through an :class:`arctrust.Signer`, so key custody is the
+deployment's config decision and not this module's business: personal tier signs
+with an in-process Ed25519 seed, while enterprise/federal signs by reference
+through a vault/notary and the seed never enters this process. That is what lets
+the same operator action run at every tier (ADR-019 — tier is stringency, not a
+gate).
+
+This is an operator-only trust mutation on an agent's own config. No private key
+material is logged, echoed, or persisted anywhere by these functions — only the
+verify key ever reaches disk.
+
+Both operator surfaces — ``arc trust`` and ``POST /api/trust/*`` — reach a
+capability's trust through these two functions, which is why the audit record
+(REQ-323, COMP-014) is emitted HERE rather than in each surface: one operator
+action stays one audit record, and the two surfaces cannot drift apart.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from pathlib import Path
+
+from arctrust import (
+    AuditEvent,
+    AuditSink,
+    Signer,
+    approve,
+    disapprove,
+    emit,
+    hash_source,
+    pin_key,
+    unpin_key,
+)
+
+from arcagent.capabilities.artifact_signing import (
+    SIDECAR_SUFFIX,
+    load_signature,
+    sidecar_path,
+    verify_file,
+    write_signature_with_signer,
+)
+from arcagent.capabilities.capability_loader import pin_name_for_path
+
+#: Actor recorded when a revocation arrives without a named operator — a library
+#: caller rather than one of the two operator surfaces. The action still happened
+#: and still gets an actor, matching ``arcui.audit._UI_ACTOR_DID``.
+_UNNAMED_OPERATOR_DID = "did:arc:operator:unnamed"
+
+
+def sign(
+    artifact: Path,
+    *,
+    signer_did: str,
+    signer: Signer,
+    config_path: Path,
+    audit_sink: AuditSink | None = None,
+) -> None:
+    """Sign ``artifact`` and record the trust it needs to load.
+
+    Args:
+        artifact: The gated artifact — a capability ``.py``, or a skill's
+            ``SKILL.md``. Its current bytes are what gets signed and pinned, so
+            a later edit invalidates both (drift is a hard stop, by design).
+        signer_did: DID recorded as the signer, as the TOFU approver, and as the
+            operator the audit record is attributed to.
+        signer: The operator's :class:`arctrust.Signer`. Its public key is what
+            gets pinned as the trusted verification key and its algorithm is
+            what the sidecar records, so an in-process seed and a vault-transit
+            key produce a capability the loader accepts on identical terms.
+        config_path: The agent's ``arcagent.toml`` — the sole persistence
+            surface for both the trusted key and the TOFU pin.
+        audit_sink: Where the ``capability.signed`` record lands. ``None`` — a
+            library caller with no chain — records nothing and is not an error.
+
+    Raises:
+        OSError: The artifact or the config could not be read/written.
+        ValueError: The artifact bytes are not valid UTF-8.
+        arctrust.SignerError: The signer could not produce a signature.
+
+    Errors propagate rather than being swallowed: a half-applied signing is a
+    capability the operator believes is trusted and is not. The audit record is
+    emitted last, so it only ever attests to a signing that fully landed.
+    """
+    content = artifact.read_bytes()
+    source = content.decode("utf-8")
+    write_signature_with_signer(artifact, content, signer_did=signer_did, signer=signer)
+    pin_key(config_path, public_key=signer.public_key)
+    approve(
+        config_path,
+        name=pin_name_for_path(artifact),
+        source=source,
+        approver=signer_did,
+        timestamp=datetime.now(UTC).isoformat(),
+    )
+    _audit(
+        audit_sink,
+        action="capability.signed",
+        outcome="signed",
+        artifact=artifact,
+        operator_did=signer_did,
+        source_hash=hash_source(source),
+    )
+
+
+def trust_bundled_capabilities(
+    module_dir: Path,
+    *,
+    config_path: Path,
+    issuer_key: bytes,
+    issuer_did: str,
+    audit_sink: AuditSink | None = None,
+) -> list[Path]:
+    """Record the trust an installed module's already-signed capabilities need.
+
+    A bundle arrives carrying a ``.arcsig`` beside every capability artifact, so
+    the signature half of the gate is already satisfied. The other two halves
+    are per-agent config, and an install is the operator action that grants
+    them: the issuer's key is pinned as a trusted capability-verification key,
+    and each artifact's current bytes are pinned as approved.
+
+    Both are visible where an operator looks — ``[security.validators]`` in the
+    agent's own config, and ``arc trust list`` — because a trust anchor added
+    silently is one nobody can audit or withdraw.
+
+    Args:
+        module_dir: The materialized module directory at the deployment root.
+        config_path: The agent's ``arcagent.toml``, the sole persistence surface.
+        issuer_key: The public key the BUNDLE MANIFEST verified under. Pinning a
+            key that has not already proven itself over the manifest would let a
+            planted sidecar nominate its own trust anchor.
+        issuer_did: Recorded as the approver and as the audit actor.
+        audit_sink: Where the ``capability.bundle_trusted`` records land.
+
+    Returns:
+        The artifacts that were pinned, in sorted path order. An artifact whose
+        sidecar does not verify under ``issuer_key`` is left gated — an install
+        never approves bytes it could not attribute to the issuer.
+    """
+    verified = [
+        artifact
+        for artifact in _signed_artifacts(module_dir)
+        if verify_file(artifact, artifact.read_bytes(), trusted_public_key=issuer_key)
+    ]
+    if not verified:
+        return []
+
+    pin_key(config_path, public_key=issuer_key)
+    for artifact in verified:
+        source = artifact.read_bytes().decode("utf-8")
+        approve(
+            config_path,
+            name=pin_name_for_path(artifact),
+            source=source,
+            approver=issuer_did,
+            timestamp=datetime.now(UTC).isoformat(),
+        )
+        _audit(
+            audit_sink,
+            action="capability.bundle_trusted",
+            outcome="trusted",
+            artifact=artifact,
+            operator_did=issuer_did,
+            source_hash=hash_source(source),
+        )
+    return verified
+
+
+def _signed_artifacts(module_dir: Path) -> list[Path]:
+    """Every artifact under ``module_dir`` that carries a signature sidecar.
+
+    Discovered from the sidecars rather than from a list of expected filenames,
+    so what an install trusts is exactly what the bundle signed — the two cannot
+    drift apart as the capability surface grows.
+    """
+    return sorted(
+        sidecar.with_name(sidecar.name.removesuffix(SIDECAR_SUFFIX))
+        for sidecar in module_dir.rglob(f"*{SIDECAR_SUFFIX}")
+        if sidecar.with_name(sidecar.name.removesuffix(SIDECAR_SUFFIX)).is_file()
+    )
+
+
+def revoke(
+    artifact: Path,
+    *,
+    config_path: Path,
+    operator_did: str = _UNNAMED_OPERATOR_DID,
+    audit_sink: AuditSink | None = None,
+) -> None:
+    """Withdraw ``artifact``'s signature, trusted key, and TOFU pin.
+
+    The exact inverse of :func:`sign`. The signer's key is unpinned only once no
+    other artifact under the agent root is still signed by it — a shared
+    operator key that another capability depends on must survive one revocation,
+    or revoking a single tool would silently gate everything that operator signed.
+
+    A missing sidecar, key, or pin is not an error: revocation is idempotent, so
+    an interrupted one can always be completed by running it again.
+
+    ``operator_did`` is the operator WITHDRAWING trust, not the one who granted
+    it — the sidecar's signer is being removed, so recording it as the actor
+    would name the wrong person in the audit record.
+    """
+    manifest = load_signature(artifact)
+    sidecar_path(artifact).unlink(missing_ok=True)
+    if manifest is not None and not _key_still_in_use(config_path.parent, manifest.public_key):
+        unpin_key(config_path, public_key=bytes.fromhex(manifest.public_key))
+    disapprove(config_path, name=pin_name_for_path(artifact))
+    _audit(
+        audit_sink,
+        action="capability.signature_revoked",
+        outcome="revoked",
+        artifact=artifact,
+        operator_did=operator_did,
+        source_hash=_source_hash(artifact),
+    )
+
+
+def _audit(
+    sink: AuditSink | None,
+    *,
+    action: str,
+    outcome: str,
+    artifact: Path,
+    operator_did: str,
+    source_hash: str | None,
+) -> None:
+    """Record one capability trust mutation (REQ-323) through ``arctrust.emit``.
+
+    The single emission point for both operator surfaces. A ``None`` sink is a
+    load-bearing case rather than a fault — the same fail-open posture
+    :meth:`CapabilityLoader._audit` takes — so a library caller signing without a
+    chain still signs.
+
+    ``source_hash`` is :func:`arctrust.hash_source` over the artifact's current
+    bytes: the SAME canonical hash the TOFU pin binds to, so an audit line and a
+    pin line for one artifact read identically. Only the path, the operator DID,
+    and that hash are recorded — never key material of any kind.
+    """
+    if sink is None:
+        return
+    emit(
+        AuditEvent(
+            actor_did=operator_did,
+            action=action,
+            target=str(artifact),
+            outcome=outcome,
+            payload_hash=source_hash,
+        ),
+        sink,
+    )
+
+
+def _source_hash(artifact: Path) -> str | None:
+    """The canonical pin hash of ``artifact``'s current bytes, or ``None``.
+
+    Revocation tolerates an artifact that is already gone (its pins are not), so
+    an unreadable artifact costs the audit record its hash — never the
+    revocation itself.
+    """
+    try:
+        return hash_source(artifact.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _key_still_in_use(agent_root: Path, public_key_hex: str) -> bool:
+    """True when any artifact still under ``agent_root`` is signed by that key.
+
+    Runs after the revoked artifact's own sidecar is gone, so it sees exactly
+    the set of signatures that must keep working.
+    """
+    for sidecar in agent_root.rglob(f"*{SIDECAR_SUFFIX}"):
+        artifact = sidecar.with_name(sidecar.name.removesuffix(SIDECAR_SUFFIX))
+        manifest = load_signature(artifact)
+        if manifest is not None and manifest.public_key == public_key_hex:
+            return True
+    return False
+
+
+__all__ = ["revoke", "sign", "trust_bundled_capabilities"]

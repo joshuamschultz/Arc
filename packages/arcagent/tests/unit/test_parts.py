@@ -23,6 +23,7 @@ from typing import Any
 
 import arcrun
 import pytest
+
 from arcagent.parts import PartTranslator
 
 _IMAGE_REF = "inbox/2026-08-11/120000-alice-cat.jpg"

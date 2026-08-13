@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import io
 import json
+import shutil
 from contextlib import redirect_stdout
 from pathlib import Path
 
@@ -69,8 +70,25 @@ def test_tools_json_includes_source_annotation(tmp_path: Path) -> None:
     assert by_name["write"]["source"] == "builtins"
 
 
+def _install_module_copy(agent_dir: Path, module: str) -> None:
+    """Place the per-agent capability copy ``arc module install`` writes (REQ-337).
+
+    A module's tools reach an agent from
+    ``<agent_dir>/capabilities/modules/<name>/``, never from the shared module
+    tree, so a listing that mirrors the real runtime registry has to find one
+    there. Placed for the disabled case too, so that case measures the
+    enablement check rather than a missing file.
+    """
+    import arcagent
+
+    dest = agent_dir / "capabilities" / "modules" / module
+    dest.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(arcagent.modules_path() / module / "capabilities.py", dest / "capabilities.py")
+
+
 def test_tools_includes_enabled_module_tools(tmp_path: Path) -> None:
     agent = _write_agent(tmp_path, extra_toml="[modules.session]\nenabled = true\n")
+    _install_module_copy(agent, "session")
     out = io.StringIO()
     with redirect_stdout(out):
         agent_handler(["tools", str(agent), "--json"])
@@ -81,6 +99,7 @@ def test_tools_includes_enabled_module_tools(tmp_path: Path) -> None:
 
 def test_tools_disabled_module_not_included(tmp_path: Path) -> None:
     agent = _write_agent(tmp_path, extra_toml="[modules.session]\nenabled = false\n")
+    _install_module_copy(agent, "session")
     out = io.StringIO()
     with redirect_stdout(out):
         agent_handler(["tools", str(agent), "--json"])

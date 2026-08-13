@@ -111,6 +111,10 @@ run," a different question from "is it authentically signed."
 | Enterprise | Unknown name → `NEW_SIGHTING` (human approves). Known + matching hash → allow. Known + drifted hash → deny (tamper). |
 | Federal | Unsigned → deny outright. Signed → same human-approval gate as enterprise; self-signing attributes, never authorizes. |
 
+TOFU is only half the load gate; the signature floor runs before it. See
+[Two gates, in order](#two-gates-in-order-the-signature-floor-then-tofu) under
+Pillar 2.
+
 Pins persist in `[security.validators]` in `arcagent.toml`
 (`validators.py`) — write-only by a human via `arc trust approve`, never by
 the agent. The **trust store** (`trust_store.py`) resolves DID → public key
@@ -157,6 +161,61 @@ arcllm request signing (`arcllm/_signing.py`), and backend manifest
 verification (`arcrun/backends/_verifier.py`) all import it directly — as does
 the WORM chain's own `_canonical_event_hash` (`arctrust/audit.py:158`). One
 serializer, one byte form, every signature in the stack.
+
+### Two gates, in order: the signature floor, then TOFU
+
+Sign and TOFU are **two distinct gates evaluated in sequence**, not one check
+with two names. `CapabilityLoader._passes_trust_gate`
+(`packages/arcagent/src/arcagent/capabilities/capability_loader.py:357`) runs
+them in this fixed order for every artifact from an agent-writable root:
+
+```mermaid
+flowchart TB
+    classDef found fill:#002550,stroke:#001A38,color:#FFFFFF
+    classDef agent fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    Art(["capability file or SKILL.md"]):::agent --> Pin{"signature required\nAND a key pinned?"}:::found
+    Pin -->|"required, none pinned"| D1(["DENY: unsigned"]):::agent
+    Pin -->|"ok"| Floor{"1. signature floor\nverify .arcsig vs pinned keys"}:::found
+    Floor -->|"missing or invalid"| D2(["DENY: unsigned"]):::agent
+    Floor -->|"verified"| Tofu{"2. TOFU\noperator approval of these bytes"}:::found
+    Tofu -->|"first sight"| D3(["GATE: new_sighting"]):::agent
+    Tofu -->|"hash drifted"| D4(["DENY: deny"]):::agent
+    Tofu -->|"approved hash"| Load(["load"]):::agent
+```
+
+**Gate 1 is the signature floor.** At enterprise and federal
+`require_signature` is true (`inventory.py:213`). A missing or invalid `.arcsig`
+denies immediately, and the loader **never reaches TOFU**. The floor also fails
+closed on its own precondition: a required signature with an *empty* pinned-key
+set denies before a single signature is read, because an unpinned floor is no
+floor at all (`capability_loader.py:376`).
+
+**Gate 2 is TOFU.** It only ever runs on an artifact that already cleared the
+floor (or, at personal, where no floor applies).
+
+The order encodes the distinction. **A signature proves integrity and
+attribution. It never proves authorization.** It says these bytes are unchanged
+and this DID wrote them. It says nothing about whether the code should run,
+because a compromised agent can sign its own new tool with its own key. TOFU is
+the gate where a *human operator* authorizes specific bytes.
+
+That is why **federal is "signed AND operator-approved," strictly stronger than
+enterprise, not merely different.** Federal does not swap the human gate out for
+a cryptographic one. It adds the floor *underneath* the same enterprise
+human-approval gate: unsigned denies outright, and signed-but-unapproved still
+returns `NEW_SIGHTING` and waits for an operator (`tofu.py:88`). Every federal
+artifact therefore satisfies the enterprise rule plus one more.
+
+**Approval is one action with three durable effects**, because passing both
+gates needs all three (`capabilities/capability_signing.py`): the detached
+`.arcsig` sidecar clears gate 1; the signer's verify key pinned into
+`[security.validators] trusted_keys` makes that signature *verifiable*; the
+source-hash pin under `[[security.validators.approved]]` clears gate 2.
+`arc trust approve` and arcui's `POST /api/trust/approve` both call the one
+`arcagent.sign_capability` seam, so a terminal approval and a browser approval
+are the same code path. `arc trust disapprove` removes all three. The operator
+procedure, including how to read each denial verdict, is
+[Signing a Gated Capability](../runbooks/signing-capabilities.md).
 
 **The operator key** (`operator.py`) is the deployment's audit-signing
 authority — deliberately *not* an `AgentIdentity` (no `sign`, no `did`

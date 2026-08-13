@@ -39,7 +39,6 @@ from __future__ import annotations
 from arccli.commands.agent._common import (
     _CALCULATOR_TOOL,
     _DEFAULT_CONFIG,
-    _GLOBAL_CAP_DIR,
     _capability_scan_roots,
     _discover_tools,
     _iter_capability_files,
@@ -61,7 +60,6 @@ from arccli.commands.agent._dispatch import agent_handler
 __all__ = [
     "_CALCULATOR_TOOL",
     "_DEFAULT_CONFIG",
-    "_GLOBAL_CAP_DIR",
     "_capability_scan_roots",
     "_discover_tools",
     "_iter_capability_files",
