@@ -159,6 +159,14 @@ async def schedule_create(
         resolved_timeout = (
             timeout_seconds if timeout_seconds is not None else st.config.default_timeout_seconds
         )
+        # Default delivery to the channel this turn arrived on — but only a gateway
+        # platform target. Schedule delivery goes through the gateway's
+        # channel_deliver_fn, which cannot reach an arcteam channel (``channel://``),
+        # so a team origin defaults to no auto-delivery rather than a target that
+        # would silently drop when the schedule fires.
+        default_channel = turn_context.inbound_channel()
+        if default_channel and turn_context.is_team_target(default_channel):
+            default_channel = None
         entry = ScheduleEntry.model_validate(
             {
                 "id": generate_schedule_id(),
@@ -169,7 +177,7 @@ async def schedule_create(
                 "every_seconds": every_seconds,
                 "active_hours": active_hours,
                 "timeout_seconds": resolved_timeout,
-                "deliver_to": deliver_to or turn_context.inbound_channel(),
+                "deliver_to": deliver_to or default_channel,
             },
             context=st.config.validation_context(),
         )

@@ -33,4 +33,17 @@ def inbound_channel() -> str | None:
     return _inbound_channel.get()
 
 
-__all__ = ["inbound_channel", "set_inbound_channel"]
+def is_team_target(target: str) -> bool:
+    """True when ``target`` is an arcteam address, not a gateway platform channel.
+
+    The two delivery mediums are distinct. A gateway target is ``platform:chat_id``
+    (telegram/slack/web) delivered through the embedded gateway's
+    ``channel_deliver_fn``; an arcteam target (``channel://``, ``agent://``,
+    ``role://``, ``user://``) is delivered back onto the team bus. Gateway targets
+    never contain ``//`` — a reply to a dashboard group post must go back into the
+    channel, not out to whatever platform the agent was last reached on.
+    """
+    return "://" in target
+
+
+__all__ = ["inbound_channel", "is_team_target", "set_inbound_channel"]

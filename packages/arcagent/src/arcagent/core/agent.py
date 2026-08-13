@@ -660,6 +660,8 @@ class ArcAgent:
         max_cost_usd: float | None = None,
         run_id: str | None = None,
         allowed_strategies: list[str] | None = None,
+        reply_target: str | None = None,
+        reply_label: str | None = None,
     ) -> Any:
         """Run a turn on the ``session_key`` session and collect to a result.
 
@@ -670,6 +672,8 @@ class ArcAgent:
         ``max_tokens`` / ``max_cost_usd`` pin a per-run budget the planner uses
         to slice a step off the plan aggregate (SPEC-040 F2) — the shared
         session (and its trifecta ledger) is preserved either way.
+        ``reply_target`` / ``reply_label`` name the channel this turn arrived on,
+        so a reply (notify_user / a schedule) returns there (see :meth:`run`).
         """
         session = await self.session(session_key)
         return await arcrun.collect(
@@ -681,6 +685,8 @@ class ArcAgent:
                 max_cost_usd=max_cost_usd,
                 run_id=run_id,
                 allowed_strategies=allowed_strategies,
+                reply_target=reply_target,
+                reply_label=reply_label,
             )
         )
 

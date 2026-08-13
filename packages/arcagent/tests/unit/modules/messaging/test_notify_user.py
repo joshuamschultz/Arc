@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from arctrust import AgentIdentity
@@ -98,4 +98,42 @@ class TestNotifyUser:
         out = json.loads(await notify_user(message="   "))
 
         assert "error" in out
+        st.channel_deliver_fn.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_team_channel_origin_replies_in_that_channel(self, tmp_path: Path) -> None:
+        """A turn that arrived from an arcteam channel is answered IN that channel
+        (via the team bus), not on a gateway platform."""
+        st = _configure(tmp_path)
+        st.channel_deliver_fn = AsyncMock()
+        st.svc = MagicMock()
+        st.svc.send = AsyncMock()
+        turn_context.set_inbound_channel("channel://ops")
+
+        out = json.loads(await notify_user(message="done!"))
+
+        assert out["status"] == "sent"
+        assert out["target"] == "channel://ops"
+        st.channel_deliver_fn.assert_not_called()
+        st.svc.send.assert_awaited_once()
+        sent_msg = st.svc.send.await_args.args[0]
+        assert sent_msg.to == ["channel://ops"]
+        assert sent_msg.body == "done!"
+
+    @pytest.mark.asyncio
+    async def test_team_channel_origin_does_not_cross_post_to_telegram(
+        self, tmp_path: Path
+    ) -> None:
+        """Regression: an arcui group post must not be answered on the most-recent
+        gateway platform (the 'latest channel' bug)."""
+        st = _configure(tmp_path)
+        st.channel_deliver_fn = AsyncMock()
+        st.svc = MagicMock()
+        st.svc.send = AsyncMock()
+        known_channels.record(tmp_path, target="telegram:9", label="Telegram — Josh")
+        turn_context.set_inbound_channel("channel://ops")
+
+        out = json.loads(await notify_user(message="hi"))
+
+        assert out["target"] == "channel://ops"
         st.channel_deliver_fn.assert_not_called()

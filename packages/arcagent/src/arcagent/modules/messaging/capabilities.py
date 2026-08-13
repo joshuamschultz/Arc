@@ -199,6 +199,22 @@ def _interrupt_for(msg: Any, identity: Any) -> bool:
     return False
 
 
+def _origin_reply_target(msg: Any) -> tuple[str | None, str | None]:
+    """The arcteam channel a reply to ``msg`` should return to, or (None, None).
+
+    A message posted to a channel (e.g. an operator's group post from the arcui
+    dashboard) is answered IN that channel, so the reply lands where the human
+    wrote it rather than on whatever gateway platform the agent was last reached
+    on. A direct message threads no reply target: ``notify_user`` then reaches the
+    human on their own known channel, never the teammate who sent the DM.
+    """
+    channels = [str(t) for t in (msg.to or []) if str(t).startswith("channel://")]
+    if channels:
+        name = channels[0][len("channel://") :]
+        return channels[0], f"Channel — {name}"
+    return None, None
+
+
 def _format_delivery(msg: Any) -> str:
     """Render one incoming message as a sanitised delivery prompt (LLM01)."""
     sender = sanitize_text(str(msg.sender), max_length=200)
@@ -241,6 +257,7 @@ async def _handle_incoming(message: Any) -> None:
     async with st.processing_lock:
         caller_did = message.signer_did or message.sender
         session_key = _inbox_session(caller_did, st.identity)
+        reply_target, reply_label = _origin_reply_target(message)
         if st.deliver_fn is not None:
             try:
                 await st.deliver_fn(
@@ -248,6 +265,8 @@ async def _handle_incoming(message: Any) -> None:
                     message=_format_delivery(message),
                     session_key=session_key,
                     interrupt=_interrupt_for(message, st.identity),
+                    reply_target=reply_target,
+                    reply_label=reply_label,
                 )
             except asyncio.QueueFull as exc:
                 from arcteam.messenger import RetryableDeliveryError
@@ -256,7 +275,12 @@ async def _handle_incoming(message: Any) -> None:
                 # let subscribe ack this) rather than silently dropping a teammate.
                 raise RetryableDeliveryError(message.id) from exc
         elif st.agent_run_fn is not None:
-            await st.agent_run_fn(_format_delivery(message), session_key=session_key)
+            await st.agent_run_fn(
+                _format_delivery(message),
+                session_key=session_key,
+                reply_target=reply_target,
+                reply_label=reply_label,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -372,6 +396,27 @@ def _notify_target(st: Any) -> str | None:
     return known[0]["target"] if known else None
 
 
+async def _send_to_team(st: Any, target: str, message: str) -> None:
+    """Post a human-facing notification back onto the arcteam bus.
+
+    Used when the current turn arrived from an arcteam channel (``channel://…``):
+    the reply returns to that channel — where the operator is watching in the
+    dashboard — instead of a gateway platform. Classification is stamped from the
+    sender's clearance, same as :func:`messaging_send`.
+    """
+    from arcteam.types import Message
+
+    sender_floor = st.identity.clearance.name if st.identity is not None else "UNCLASSIFIED"
+    await st.svc.send(
+        Message(
+            sender=st.config.entity_id,
+            to=[target],
+            body=message,
+            classification=sender_floor,
+        )
+    )
+
+
 @tool(
     name="notify_user",
     description=(
@@ -394,13 +439,18 @@ async def notify_user(message: str = "") -> str:
     if not message.strip():
         return json.dumps({"error": "message is required"})
     st = _runtime.state()
-    if st.channel_deliver_fn is None:
-        return json.dumps({"error": "no delivery channel is wired (standalone agent)"})
     target = _notify_target(st)
     if not target:
         return json.dumps({"error": "no known channel to notify the user on"})
     try:
-        await st.channel_deliver_fn(target, message)
+        if turn_context.is_team_target(target):
+            # The turn came from an arcteam channel — answer in that channel so the
+            # reply lands where the operator posted, not on a gateway platform.
+            await _send_to_team(st, target, message)
+        elif st.channel_deliver_fn is not None:
+            await st.channel_deliver_fn(target, message)
+        else:
+            return json.dumps({"error": "no delivery channel is wired (standalone agent)"})
     except Exception as exc:  # reason: surface a tool error, don't crash the turn
         _logger.warning("notify_user delivery to %s failed: %s", target, exc)
         return json.dumps({"error": f"delivery failed: {exc}"})

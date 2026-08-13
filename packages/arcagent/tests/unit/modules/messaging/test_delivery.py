@@ -46,6 +46,7 @@ def _msg(
     sender: str = "agent://peer",
     signer_did: str = "did:arc:local:peer/aaaa",
     seq: int = 1,
+    to: list[str] | None = None,
 ) -> MagicMock:
     m = MagicMock()
     m.priority = priority
@@ -56,6 +57,7 @@ def _msg(
     m.seq = seq
     m.body = "hello"
     m.msg_type = "info"
+    m.to = to if to is not None else ["agent://me"]
     return m
 
 
@@ -150,6 +152,53 @@ class TestHandleIncoming:
         assert calls[0]["caller_did"] == "did:arc:local:peer/aaaa"
 
     @pytest.mark.asyncio
+    async def test_channel_post_threads_channel_as_reply_target(self, tmp_path: Path) -> None:
+        """A channel post binds that channel as the turn's reply target, so a
+        reply (notify_user / schedule) returns to the channel it came from."""
+        _runtime.configure(
+            config=make_config_dict(entity_id="agent://me"),
+            workspace=tmp_path,
+            identity=_identity(),
+            operator_signer=make_operator_signer(),
+        )
+        st = _runtime.state()
+        calls: list[dict[str, Any]] = []
+
+        async def deliver(**kwargs: Any) -> str:
+            calls.append(kwargs)
+            return "started"
+
+        st.deliver_fn = deliver
+
+        await _handle_incoming(_msg(to=["channel://ops"], mentions=[]))
+
+        assert calls[0]["reply_target"] == "channel://ops"
+        assert calls[0]["reply_label"] == "Channel — ops"
+
+    @pytest.mark.asyncio
+    async def test_direct_message_threads_no_reply_target(self, tmp_path: Path) -> None:
+        """A teammate DM keeps reply_target None — notify_user still reaches the
+        human on their own channel, not the teammate."""
+        _runtime.configure(
+            config=make_config_dict(entity_id="agent://me"),
+            workspace=tmp_path,
+            identity=_identity(),
+            operator_signer=make_operator_signer(),
+        )
+        st = _runtime.state()
+        calls: list[dict[str, Any]] = []
+
+        async def deliver(**kwargs: Any) -> str:
+            calls.append(kwargs)
+            return "started"
+
+        st.deliver_fn = deliver
+
+        await _handle_incoming(_msg(to=["agent://me"]))
+
+        assert calls[0]["reply_target"] is None
+
+    @pytest.mark.asyncio
     async def test_two_senders_get_two_sessions(self, tmp_path: Path) -> None:
         """Different teammates never share a session (REQ-312)."""
         _runtime.configure(
@@ -186,7 +235,7 @@ class TestHandleIncoming:
         st.deliver_fn = None
         run_calls: list[str] = []
 
-        async def run_fn(prompt: str, session_key: str = "") -> str:
+        async def run_fn(prompt: str, session_key: str = "", **_kwargs: Any) -> str:
             run_calls.append(session_key)
             return "ran"
 
