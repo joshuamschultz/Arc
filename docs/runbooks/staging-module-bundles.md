@@ -169,6 +169,31 @@ anchor another user could have tampered with.
 key across the gap the same way you carry the bundle — as something you verified out of band,
 not as something the bundle told you.
 
+### Adding an issuer key grants that issuer code execution
+
+Be clear about what the entry above buys. A module bundle's capability surface — its tools,
+hooks, background tasks, and `@capability` classes — is first-party code. Once the signature
+verifies, that code is imported and executed **in this process, uncontained**: no AST import
+allowlist, no isolated runner, no sandbox. That is deliberate. Containment exists to hold
+code the *model* wrote; applying it to modules stops `@hook` / `@background_task` /
+`@capability` from ever registering, which is the whole reason a module is delivered signed
+instead of contained.
+
+So the trust decision is the containment. Adding a key to `issuers.toml` means: *anything this
+issuer signs, from now on, runs with the agent's full privileges.* It is the apt/npm model —
+you vet the publisher once, out of band, rather than vetting every artifact. Treat it exactly
+like adding a package repository's signing key to a production host:
+
+- Do it deliberately, by hand, from a key you verified through a channel the bundle had no
+  part in. Never from a DID a bundle, a chat message, or a model told you about.
+- Add the smallest set of issuers the deployment actually needs. Every extra key is another
+  party who can execute code on this box.
+- Removing the entry is how you revoke. There is no separate revocation list — an issuer with
+  no key produces no accepted bundles.
+
+This is why nothing in Arc writes this file for you, and why no tool, chat socket, or agent can
+reach it. The manual edit **is** the authorization step.
+
 A name is not a permission. The install reads the issuer the bundle *claims* only in order to
 look up a key for it. An unknown name resolves to no key and the bundle is refused. A known
 name still has to produce that issuer's signature.
@@ -210,7 +235,8 @@ One command did four things, in this order:
 2. **Materialized** the runtime to `${ARC_CONFIG_DIR:-~/.arc}/modules/web`, `0444` files
    inside `0555` directories, outside every agent's tool fence.
 3. **Copied** the capability surface — `capabilities.py` and `skills/` — into
-   `team/olivia/capabilities/web/`. `_runtime.py` is never copied.
+   `team/olivia/capabilities/modules/web/`, which is the ONLY place the loader reads a
+   module's tools and skills from. `_runtime.py` is never copied.
 4. **Enabled** it, by writing `[modules.web] enabled = true` into the agent's
    `arcagent.toml`.
 
@@ -336,7 +362,7 @@ Removed web from olivia: runtime, capabilities, config entry.
 | Module source catalog (low side) | `arcagent/modules/`, or `$ARC_MODULE_SOURCE` |
 | Staged bundles | `${ARC_CONFIG_DIR:-~/.arc}/bundles/` |
 | Installed module runtime | `${ARC_CONFIG_DIR:-~/.arc}/modules/<name>/` — `0444` in `0555` |
-| Per-agent capability copies | `<agent_dir>/capabilities/<name>/` |
+| Per-agent capability copies | `<agent_dir>/capabilities/modules/<name>/` |
 | Trusted bundle issuers | `${ARC_CONFIG_DIR:-~/.arc}/trust/issuers.toml` — `0600` |
 | Operator key | `${ARC_CONFIG_DIR:-~/.arc}/operator` |
 | Activation | `[modules.<name>]` in `<agent_dir>/arcagent.toml` |

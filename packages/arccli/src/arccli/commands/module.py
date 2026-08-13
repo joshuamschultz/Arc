@@ -39,7 +39,7 @@ import shutil
 import sys
 import tempfile
 import tomllib
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -49,7 +49,7 @@ import arcbundle
 import tomlkit
 from arctrust import AuditSink, arc_home, generate_keypair
 
-from arccli.commands._shared import dispatch
+from arccli.commands._shared import UNRESOLVED_OPERATOR_DID, audit_chain, dispatch
 from arccli.commands._shared import err as _err
 from arccli.commands._shared import print_table as _print_table
 from arccli.commands._shared import write as _out
@@ -67,9 +67,6 @@ _SOURCE_ENV = "ARC_MODULE_SOURCE"
 #: Increasing stringency. Used to take the stricter of two configured tiers —
 #: never to widen one.
 _TIER_ORDER = ("personal", "enterprise", "federal")
-
-_UNRESOLVED_OPERATOR_DID = "did:arc:operator:unresolved"
-
 
 # ---------------------------------------------------------------------------
 # Deployment locations
@@ -290,31 +287,10 @@ def _trusted_issuers(bundle_root: Path) -> dict[str, bytes]:
     return trusted
 
 
-@contextlib.contextmanager
-def _audit_chain() -> Iterator[tuple[AuditSink, str]]:
-    """Open the deployment's operator-signed WORM chain for one module change.
-
-    Held open for the whole command so an install of several bundles lands as
-    one contiguous run of records. An unopenable chain degrades to a discarding
-    sink: auditing never interrupts the action it audits (NIST AU-5).
-    """
-    from arcstore import resolve_data_dir
-    from arctrust import NullSink
-
-    from arccli.commands.operator import operator_worm_sink
-
+def _operator_actor() -> str:
+    """The DID a module change is attributed to on the audit chain."""
     operator = _operator_identity()
-    actor = operator[0] if operator is not None else _UNRESOLVED_OPERATOR_DID
-    try:
-        sink = operator_worm_sink(arc_home(), resolve_data_dir(None))
-    except (OSError, RuntimeError, ValueError) as exc:
-        _err(f"arc module: audit chain unavailable ({type(exc).__name__}); change not recorded")
-        yield NullSink(), actor
-        return
-    try:
-        yield sink, actor
-    finally:
-        sink.close()
+    return operator[0] if operator is not None else UNRESOLVED_OPERATOR_DID
 
 
 # ---------------------------------------------------------------------------
@@ -577,7 +553,7 @@ def _install(args: argparse.Namespace) -> None:
 
     with contextlib.ExitStack() as scratch:
         bundles, ephemeral_issuers = _requested_bundles(args, scratch)
-        with _audit_chain() as (sink, actor):
+        with audit_chain("arc module", _operator_actor) as (sink, actor):
             verified, skipped = _verify_all(
                 bundles,
                 tier=tier,
@@ -699,7 +675,7 @@ def install_module_for_agent(module: str, *, agent_root: Path, agent_id: str) ->
         else:
             bundles, ephemeral_issuers = _build_dev_bundle(module, scratch)
 
-        with _audit_chain() as (sink, actor):
+        with audit_chain("arc module", _operator_actor) as (sink, actor):
             try:
                 verified = [
                     arcbundle.verify_bundle(
@@ -789,7 +765,7 @@ def _remove(args: argparse.Namespace) -> None:
     failures: list[str] = []
     done: list[str] = []
 
-    with _audit_chain() as (sink, actor):
+    with audit_chain("arc module", _operator_actor) as (sink, actor):
         try:
             arcbundle.remove(module, _module_root(), sink=sink, actor_did=actor)
             done.append("runtime")

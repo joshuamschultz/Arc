@@ -16,7 +16,7 @@ orchestrator file slim.
 
 from __future__ import annotations
 
-import importlib.util
+import importlib
 import logging
 import os
 import sys
@@ -40,6 +40,7 @@ from arcagent.core.runtime_dependencies import (
 )
 from arcagent.core.tool_registry import RegisteredTool, ToolTransport
 from arcagent.tools._egress_build import build_egress_proxy
+from arcagent.utils.source_module import exec_source_module
 
 if TYPE_CHECKING:
     from arcagent.core.agent import ArcAgent
@@ -147,10 +148,8 @@ def load_module_runtime(name: str) -> RuntimeModule:
     gave — so two agents in one process share one runtime object, as the
     ContextVar isolation already assumes.
 
-    ``compile()`` + ``exec`` rather than ``exec_module`` for the reason
-    :func:`arcagent.capabilities.capability_loader._load_module` documents: the
-    loader path consults the ``__pycache__`` bytecode cache keyed on 1-second
-    mtime resolution, which serves stale source after a same-second reinstall.
+    Execution goes through :func:`arcagent.utils.source_module.exec_source_module`,
+    which documents why ``compile()`` + ``exec`` replaces ``exec_module`` here.
     """
     dotted = f"arcagent.modules.{name}._runtime"
     cached = sys.modules.get(dotted)
@@ -158,18 +157,7 @@ def load_module_runtime(name: str) -> RuntimeModule:
         return cast(RuntimeModule, cached)
 
     path = module_root() / name / "_runtime.py"
-    spec = importlib.util.spec_from_file_location(dotted, path)
-    if spec is None:
-        raise ImportError(f"could not build spec for {path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[dotted] = module
-    try:
-        exec(  # noqa: S102 — module runtimes are first-party code loaded by design
-            compile(path.read_text(encoding="utf-8"), str(path), "exec"), module.__dict__
-        )
-    except Exception:  # reason: never leave a half-executed module registered
-        sys.modules.pop(dotted, None)
-        raise
+    module = exec_source_module(path, dotted)
     # Bind the submodule onto its package exactly as the import machinery does.
     # The bare ``sys.modules`` entry alone satisfies ``from <pkg> import _runtime``
     # — that form falls back to ``sys.modules`` — but NOT attribute traversal,

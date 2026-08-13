@@ -36,9 +36,7 @@ reverse-topo teardown.
 
 from __future__ import annotations
 
-import importlib.util
 import logging
-import sys
 from collections.abc import Iterable
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
@@ -82,6 +80,7 @@ from arcagent.tools._dynamic_loader import (
     AstValidationCache,
     ImportPolicy,
 )
+from arcagent.utils.source_module import exec_source_module
 
 #: Roots that are the harness's own shipped package code, inside the wheel and
 #: unreachable by any write an agent or an operator makes at runtime. A closed
@@ -905,39 +904,9 @@ def _load_module(path: Path, *, restricted_builtins: dict[str, object] | None = 
 
     The module name is derived from the path so duplicate ``echo.py``
     files at different scan roots produce distinct module objects.
-
-    When ``restricted_builtins`` is supplied (workspace-authored source),
-    the module namespace is seeded with it BEFORE ``exec`` so the source
-    runs under RESTRICTED_BUILTINS + the wrapped ``__import__`` instead of
-    the full builtin surface — pre-seeding ``__builtins__`` makes ``exec``
-    use it rather than injecting real builtins. First-party roots pass
-    ``None`` and keep the trusted import path.
-
-    Reads source + compile + exec directly instead of going through
-    ``spec.loader.exec_module``. The latter consults importlib's .pyc
-    bytecode cache, which is keyed by source mtime — and HFS+ / older
-    APFS / some CI runners report 1-second mtime resolution. Two
-    writes inside the same second produce identical mtimes, and the
-    second reload silently serves the first version's bytecode. The
-    explicit ``compile()`` path bypasses ``__pycache__`` entirely so
-    reload is always honest about file content.
     """
-    source = path.read_text(encoding="utf-8")
     module_name = f"_arc_cap_{path.stem}_{abs(hash(str(path))):x}"
-    spec = importlib.util.spec_from_file_location(module_name, path)
-    if spec is None:
-        raise ImportError(f"could not build spec for {path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    if restricted_builtins is not None:
-        module.__dict__["__builtins__"] = restricted_builtins
-    try:
-        code = compile(source, str(path), "exec")
-        exec(code, module.__dict__)  # noqa: S102 — capability loader executes user code by design
-    except Exception:  # reason: re-raise after log
-        sys.modules.pop(module_name, None)
-        raise
-    return module
+    return exec_source_module(path, module_name, restricted_builtins=restricted_builtins)
 
 
 def _short_error(exc: BaseException) -> str:

@@ -48,7 +48,7 @@ lives in a **third** that never holds module code at all.
 | What | Where | Trust |
 |---|---|---|
 | Module **runtime** — `_runtime.py`, `config.py`, `__init__.py`, and any support files | `${ARC_CONFIG_DIR:-~/.arc}/modules/<name>/` | `0444` files inside `0555` directories, at the deployment root **outside the tool fence**. Only the operator install writes here. |
-| Module **capability surface** — `capabilities.py` and `skills/` | `<agent_dir>/capabilities/<name>/` | The agent's own **untrusted** capability root, adjudicated by the capability loader unchanged. Ordinary `0644` files in `0755` directories. |
+| Module **capability surface** — `capabilities.py` and `skills/` | `<agent_dir>/capabilities/modules/<name>/` | The agent's own capability root, adjudicated as **verified**: a valid signature is required at every tier. Ordinary `0644` files in `0755` directories. |
 | **Agent state** — memory, sessions, `context.md`, the audit chain | `<agent_dir>/workspace/` | Written by the agent. **Never holds module code.** |
 
 `<agent_dir>` is the directory holding the agent's `arcagent.toml`, usually
@@ -72,11 +72,18 @@ poisoning). The copy is an allowlist of exactly two names, `capabilities.py` and
 rather than "everything except `_runtime.py`", so a file added to a module later cannot
 silently become agent-writable code.
 
-Copies land in the agent's **existing** capability root, so the loader adjudicates them
-through its untrusted-root rules unchanged. No trusted root is introduced. A writable
-directory whose contents are trusted is exactly the hole that rule set was drawn to close.
-Signature sidecars (`<file>.arcsig`) travel with the artifacts they sign, so a bundle whose
-capability files were signed upstream stays signed after the copy.
+**The copy is the only thing the loader scans.** The shared deployment tree holds runtime
+and nothing else the agent loads, so a capability that drifts for one agent is invisible to
+every other agent on the box.
+
+That copy sits somewhere the agent can write, so the loader treats a `module:<name>` root as
+**verified**: a valid signature is mandatory at every tier — personal included — and it is
+not relaxed by `auto_run_agent_code`, which exists for code the agent itself wrote. Edit a
+copied `capabilities.py` and it stops loading until somebody re-signs it (`arc trust
+approve`). No trusted root is introduced; a writable directory whose contents are trusted
+without proof is exactly the hole that rule set was drawn to close. Signature sidecars
+(`<file>.arcsig`) travel with the artifacts they sign, so a bundle whose capability files
+were signed upstream stays signed after the copy and loads with no further operator action.
 
 ---
 
