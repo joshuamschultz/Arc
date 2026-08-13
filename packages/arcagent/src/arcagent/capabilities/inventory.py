@@ -2,7 +2,7 @@
 
 A single read seam over :class:`CapabilityLoader` that enumerates every skill
 and capability tool an agent would load across the four scan roots (package
-builtins, the global ``~/.arc/capabilities`` root, the per-agent
+builtins, the global ``${ARC_CONFIG_DIR:-~/.arc}/capabilities`` root, the per-agent
 ``<agent>/capabilities`` root, and the agent-authored
 ``<agent>/workspace/capabilities`` root) and reports each item's loader/TOFU
 verdict verbatim.
@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from arctrust import TofuLayer, ValidatorsConfig, hash_source
+from arctrust import TofuLayer, ValidatorsConfig, arc_home, hash_source
 from pydantic import BaseModel, ConfigDict
 
 import arcagent.builtins.capabilities as _builtins_pkg
@@ -39,11 +39,29 @@ _logger = logging.getLogger("arcagent.capabilities.inventory")
 # Only skills and capability tools surface in the inventory; hooks, background
 # tasks, and capability classes are out of scope for the arcui capability views.
 _INVENTORY_KINDS: frozenset[str] = frozenset({"skill", "tool"})
-_DEFAULT_GLOBAL_ROOT = Path("~/.arc/capabilities")
 #: The one file a skill folder is gated on — its presence makes the FOLDER the
 #: pin name, matching what the loader looks up.
 _SKILL_MANIFEST = "SKILL.md"
 _KNOWN_TIERS: frozenset[str] = frozenset({"personal", "enterprise", "federal"})
+
+
+def global_capabilities_root() -> Path:
+    """Return the operator-curated global capabilities root.
+
+    ``${ARC_CONFIG_DIR:-~/.arc}/capabilities`` — resolved through
+    :func:`arctrust.arc_home`, the single source of truth for the Arc home, so
+    an isolated deployment (or a test) that relocates its config tree does not
+    scan, and cannot write into, the invoking user's real ``~/.arc``.
+
+    Resolved on every call, never cached at import: the env var is routinely set
+    after this module is first imported, and a module-level constant would
+    freeze whatever the environment happened to say at import time.
+
+    This is the ONE resolver for that root. Every surface that shows or scans
+    global capabilities calls it rather than re-deriving the path, because a
+    second literal is how the two answers drifted apart in the first place.
+    """
+    return arc_home() / "capabilities"
 
 
 class CapabilityInventoryItem(BaseModel):
@@ -83,7 +101,7 @@ def _resolve_scan_roots(
         ("builtins-skills", builtins / "skills"),
     ]
     resolved_global = (
-        global_root if global_root is not None else _DEFAULT_GLOBAL_ROOT
+        global_root if global_root is not None else global_capabilities_root()
     ).expanduser()
     append_capability_scan_roots(roots, "global", resolved_global)
     append_capability_scan_roots(roots, "agent", agent_dir / "capabilities")

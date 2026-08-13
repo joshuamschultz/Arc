@@ -10,6 +10,7 @@ is stubbed (external dependency).
 from __future__ import annotations
 
 import asyncio
+import shutil
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -17,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+import arcagent
 from arcagent.core.agent import ArcAgent
 from arcagent.core.config import (
     AgentConfig,
@@ -55,8 +57,25 @@ def _post_respond_event() -> dict[str, Any]:
     }
 
 
+def _install_workpad(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Install the workpad module into this test's deployment root.
+
+    SPEC-066 REQ-333: discovery reads ``${ARC_CONFIG_DIR}/modules``, so enabling
+    ``[modules.workpad]`` only loads a module an operator installed. Copying the
+    tree is what ``arc module install`` leaves behind.
+    """
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc"))
+    shutil.copytree(
+        Path(arcagent.__file__).resolve().parent / "modules" / "workpad",
+        tmp_path / "arc" / "modules" / "workpad",
+    )
+
+
 @pytest.mark.asyncio
-async def test_post_respond_drives_context_rewrite(tmp_path: Path) -> None:
+async def test_post_respond_drives_context_rewrite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_workpad(tmp_path, monkeypatch)
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     agent = ArcAgent(config=_config(tmp_path, workspace))

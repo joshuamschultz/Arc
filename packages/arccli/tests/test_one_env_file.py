@@ -9,17 +9,25 @@ have: it cannot be seen by reading the store back, because reading it back is
 exactly what the store refuses to do.
 
 These tests pin the agreement rather than the string, so the name can move as
-long as everything moves together.
+long as everything moves together — and they now pin it under ``ARC_CONFIG_DIR``
+too. The store resolved its file through ``arctrust.arc_home()`` while both
+loaders hardcoded ``Path.home() / ".arc"``, so on an isolated deployment the two
+sides disagreed again: the key was written where nothing read it. Same bug as
+the original, invisible to a test that only ever looked at the default home.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from arcagent.keys import default_env_file
+from arctrust import arc_home
 
-from arccli.commands.agent._common import _ENV_PATHS as _AGENT_ENV_PATHS
-from arccli.commands.run import _ENV_PATHS as _RUN_ENV_PATHS
+from arccli.commands.agent._common import _env_paths as _agent_env_paths
+from arccli.commands.run import _env_paths as _run_env_paths
+
+_LOADERS = (("run", _run_env_paths), ("agent", _agent_env_paths))
 
 
 def test_the_key_store_writes_the_file_the_deployment_sources() -> None:
@@ -33,13 +41,34 @@ def test_every_env_loader_reads_the_file_the_key_store_writes() -> None:
     Both loaders search a list; what matters is that the user-wide entry is the
     same file :func:`default_env_file` writes — not that the list is identical.
     """
-    written = default_env_file(Path.home() / ".arc")
-    for name, paths in (("run", _RUN_ENV_PATHS), ("agent", _AGENT_ENV_PATHS)):
-        assert written in paths, f"the {name} env loader never reads {written}"
+    written = default_env_file(arc_home())
+    for name, paths in _LOADERS:
+        assert written in paths(), f"the {name} env loader never reads {written}"
+
+
+def test_every_env_loader_agrees_under_an_isolated_arc_config_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The agreement must survive relocation, or the split comes back silently.
+
+    The key store has always resolved through ``arc_home()``. When the loaders
+    hardcoded the real home, ``arc keys set`` on an ``ARC_CONFIG_DIR`` deployment
+    wrote a key that neither loader would ever read — reported saved, never used.
+    """
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "deployment"))
+    written = default_env_file()
+
+    assert written == tmp_path / "deployment" / "arc.env"
+    for name, paths in _LOADERS:
+        resolved = paths()
+        assert written in resolved, f"the {name} env loader never reads {written}"
+        assert Path.home() / ".arc" / "arc.env" not in resolved, (
+            f"the {name} env loader still reads the invoking user's home"
+        )
 
 
 def test_no_surface_still_points_at_the_abandoned_dot_env() -> None:
     """``~/.arc/.env`` is gone. A loader still listing it would resurrect the split."""
     abandoned = Path.home() / ".arc" / ".env"
-    assert abandoned not in _RUN_ENV_PATHS
-    assert abandoned not in _AGENT_ENV_PATHS
+    for name, paths in _LOADERS:
+        assert abandoned not in paths(), f"the {name} env loader resurrects {abandoned}"

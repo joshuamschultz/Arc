@@ -15,6 +15,10 @@ write permission across the tree before unlinking anything.
 The result an operator can point at: module runtime that no agent can modify,
 because the bytes are read-only and the directories holding them are not
 writable by the account the agent runs as.
+
+``module.installed`` and ``module.removed`` are emitted here rather than by the
+caller, for the same reason the verify events are: this is where the outcome is
+decided, so every surface that installs records the same fact.
 """
 
 from __future__ import annotations
@@ -26,7 +30,9 @@ import stat
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
+from arcbundle._audit import emit_installed, emit_removed
 from arcbundle._paths import require_safe_name
 from arcbundle.errors import BundleMaterializeError
 from arcbundle.verifier import VerifiedBundle
@@ -45,7 +51,13 @@ _STAGING_INFIX = ".staging-"
 _BACKUP_INFIX = ".backup-"
 
 
-def materialize(verified: VerifiedBundle, dest_root: Path) -> Path:
+def materialize(
+    verified: VerifiedBundle,
+    dest_root: Path,
+    *,
+    sink: Any | None = None,
+    actor_did: str | None = None,
+) -> Path:
     """Write a verified bundle to ``dest_root`` atomically and return its path.
 
     Args:
@@ -53,6 +65,8 @@ def materialize(verified: VerifiedBundle, dest_root: Path) -> Path:
             that were hashed. Nothing is re-read from the bundle directory, so
             the content written is the content verified.
         dest_root: The deployment module root, outside every agent's tool fence.
+        sink: Audit sink for ``module.installed``. ``None`` logs only.
+        actor_did: Operator identity to attribute the install to.
 
     Returns:
         The materialized module directory, ``dest_root / <module>``.
@@ -90,23 +104,34 @@ def materialize(verified: VerifiedBundle, dest_root: Path) -> Path:
         if backup is not None:
             _discard(backup)
 
-    _logger.info(
-        "module materialized: module=%s version=%s files=%d path=%s",
-        module,
-        verified.manifest.version,
-        len(verified.files),
-        final,
+    emit_installed(
+        bundle=verified.root,
+        module=module,
+        issuer=verified.manifest.issuer,
+        version=verified.manifest.version,
+        path=final,
+        files=len(verified.files),
+        sink=sink,
+        actor_did=actor_did,
     )
     return final
 
 
-def remove(name: str, dest_root: Path) -> None:
+def remove(
+    name: str,
+    dest_root: Path,
+    *,
+    sink: Any | None = None,
+    actor_did: str | None = None,
+) -> None:
     """Delete a materialized module tree, raising if it does not complete.
 
     Args:
         name: Module name — validated as a single path component, so a hostile
             config entry cannot aim this at a tree outside ``dest_root``.
         dest_root: The deployment module root.
+        sink: Audit sink for ``module.removed``. ``None`` logs only.
+        actor_did: Operator identity to attribute the removal to.
 
     Raises:
         BundleMaterializeError: The module is absent, is not a real directory,
@@ -127,7 +152,7 @@ def remove(name: str, dest_root: Path) -> None:
     if target.exists():
         raise BundleMaterializeError(f"{target} survived removal")
 
-    _logger.info("module removed: module=%s path=%s", name, target)
+    emit_removed(module=name, path=target, sink=sink, actor_did=actor_did)
 
 
 def _stage(staging: Path, files: Mapping[str, bytes]) -> None:

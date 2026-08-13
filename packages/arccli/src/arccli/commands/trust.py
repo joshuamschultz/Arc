@@ -14,10 +14,12 @@ enterprise/federal signature floor, which is why approval is signing.
 
 ``--agent`` names an agent under the deployment's ``team/`` dir; it is optional
 when the team has exactly one agent. The signer is always the on-box deployment
-operator key (``~/.arc/operator``) — there is no flag to supply an identity, so
-only an operator-key holder can mint an approval. This is a CLI-only surface: it
-is registered on no tool registry and reachable from no chat socket, so no model
-can approve its own code (REQ-321).
+operator key — there is no flag to supply an identity, so only an operator-key
+holder can mint an approval. Custody is whatever the machine ``[security]``
+block selects: an in-process seed under ``~/.arc/operator``, or a vault/notary
+key that signs by reference and never enters this process. This is a CLI-only
+surface: it is registered on no tool registry and reachable from no chat socket,
+so no model can approve its own code (REQ-321).
 """
 
 from __future__ import annotations
@@ -31,7 +33,7 @@ from pathlib import Path
 
 import arcagent
 from arcgateway import team_roster
-from arctrust import AuditSink, disapprove
+from arctrust import AuditSink, Signer, SignerError, disapprove
 
 from arccli.commands._shared import dispatch
 from arccli.commands._shared import print_table as _print_table
@@ -78,36 +80,30 @@ def _resolve_agent(agent_arg: str | None) -> tuple[str, Path, str]:
     return only.agent_id, Path(only.workspace_path), only.display_name
 
 
-def _operator_did() -> str:
+def _operator_did(signer: Signer) -> str:
     """The on-box deployment operator DID recorded as the signer/approver."""
     from arctrust.policy import OperatorApprovalAuthority
 
+    return OperatorApprovalAuthority(signer).did
+
+
+def _operator_signer() -> Signer:
+    """The deployment operator signer, or exit with what to do about it.
+
+    Custody is config-selected and this command does not care which one it gets:
+    ``in_process`` signs with the on-disk operator key, ``vault_transit`` signs
+    by reference through the notary/HSM without the seed ever entering this
+    process. An unresolvable transit is fail-closed by construction (NFR-3) —
+    reaching for whatever key happens to be on disk would pin a trust anchor the
+    deployment deliberately moved to a vault.
+    """
     from arccli.commands.operator import resolve_operator_signer
 
-    return OperatorApprovalAuthority(resolve_operator_signer()).did
-
-
-def _operator_seed() -> bytes:
-    """The operator seed capability signing needs, or exit with what to do about it.
-
-    Under ``vault_transit`` custody the seed lives in the notary/HSM and never
-    enters this process. There is no correct substitute — signing with another
-    key would pin an unauthorised trust anchor into the agent's config — so the
-    command stops before touching anything.
-    """
-    from arccli.commands.operator import operator_signing_seed
-
-    seed = operator_signing_seed()
-    if seed is None:
-        _err(
-            "arc trust: capability signing requires in-process operator-key custody, "
-            "but this machine is configured custody=vault_transit — the operator seed "
-            "never enters this process, so nothing was signed. Run the approval on a "
-            "host holding the operator key with custody=in_process in "
-            "~/.arc/arcagent.toml, or extend the notary transit to capability signing."
-        )
+    try:
+        return resolve_operator_signer()
+    except SignerError as exc:
+        _err(f"arc trust: cannot resolve the operator signer — {exc}")
         sys.exit(1)
-    return seed
 
 
 @contextlib.contextmanager
@@ -128,10 +124,10 @@ def _audit_chain() -> Iterator[tuple[AuditSink, str]]:
     from arcstore import resolve_data_dir
     from arctrust import NullSink
 
-    from arccli.commands.operator import operator_worm_sink
+    from arccli.commands.operator import operator_worm_sink, resolve_operator_signer
 
     try:
-        actor = _operator_did()
+        actor = _operator_did(resolve_operator_signer())
         sink = operator_worm_sink(None, resolve_data_dir(None))
     except (OSError, RuntimeError, ValueError) as exc:
         _err(f"arc trust: audit chain unavailable ({type(exc).__name__}); change not recorded")
@@ -170,14 +166,14 @@ def _approve(args: argparse.Namespace) -> None:
     if target is None:
         _err(f"arc trust: no gated capability named {args.name!r} for {agent_id}")
         sys.exit(1)
-    seed = _operator_seed()
-    approver = _operator_did()
+    signer = _operator_signer()
+    approver = _operator_did(signer)
     try:
         with _audit_chain() as (sink, _):
             arcagent.sign_capability(
                 Path(target.path),
                 signer_did=approver,
-                private_key=seed,
+                signer=signer,
                 config_path=config_path,
                 audit_sink=sink,
             )

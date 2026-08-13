@@ -18,9 +18,10 @@ from typing import Any
 import pytest
 from arcagent.capabilities import artifact_signing
 from arcgateway import team_roster
-from arctrust import OperatorKey, arc_home, default_operator_key_path
+from arctrust import OperatorKey, arc_home, default_operator_key_path, generate_keypair
 from arctrust.audit import verify_chain
 from arctrust.identity import AgentIdentity
+from arctrust.signer import ECDSA_P256, FileNotaryTransit, Signer, VaultSigner
 from arctrust.validators import load_validators
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
@@ -244,17 +245,67 @@ def test_missing_operator_key_is_500_and_signs_nothing(tmp_path: Path) -> None:
     assert _audit(client).outcomes_for("trust.approve") == ["denied"]
 
 
-def test_vault_transit_custody_refuses_to_sign(tmp_path: Path) -> None:
-    """Under vault-transit custody no seed exists in-process — refuse, never substitute.
+def _use_vault_transit_custody(tmp_path: Path) -> Signer:
+    """Put the deployment on the real federal posture: ECDSA-P256 out-of-process.
 
-    A stale on-disk operator key is present here precisely because that is the
-    dangerous case: signing with it would mint an authority the deployment moved
-    to a vault, so the route must refuse rather than reach for whatever key it
-    can find.
+    ``tier = "federal"`` is what selects ``custody = "vault_transit"`` and
+    ``signing_algorithm = "ecdsa-p256"``; writing them by hand would test a
+    posture no deployment produces. The notary keystore is provisioned with the
+    REAL :class:`FileNotaryTransit`, so the route signs by reference exactly as
+    a federal box does. Returns the signer it is expected to sign with.
+    """
+    keystore = arc_home() / "notary"
+    FileNotaryTransit.provision(
+        keystore, "operator", generate_keypair().private_key, algorithm=ECDSA_P256
+    )
+    (arc_home() / "arcagent.toml").write_text(
+        f'[security]\ntier = "federal"\nnotary_keystore = "{keystore}"\n', encoding="utf-8"
+    )
+    return VaultSigner(FileNotaryTransit(keystore, algorithm=ECDSA_P256), "operator", ECDSA_P256)
+
+
+def test_vault_transit_custody_signs_through_the_notary(tmp_path: Path) -> None:
+    """Approval must WORK under vault custody — the tier this gate exists for.
+
+    The seed never enters this process; the route signs by reference and pins
+    the notary's own ECDSA-P256 verify key. An on-disk operator key is present
+    precisely because it must NOT be the one used: signing with it would mint an
+    authority the deployment deliberately moved to a vault.
+    """
+    _bootstrap_operator_key(tmp_path)
+    signer = _use_vault_transit_custody(tmp_path)
+    team_root = tmp_path / "team"
+    team_root.mkdir()
+    _build_agent(team_root, "olivia", tier="enterprise", sign=False)
+    client = _make_client(team_root)
+
+    resp = client.post(
+        "/api/trust/approve", headers=_OPERATOR, json={"agent_id": "olivia", "name": "reporter"}
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "loaded"
+    skill = _skill_md(team_root, "olivia")
+    manifest = artifact_signing.load_signature(skill)
+    assert manifest is not None
+    assert manifest.algorithm == ECDSA_P256
+    assert manifest.public_key == signer.public_key.hex()
+    on_disk = OperatorKey.load(default_operator_key_path(), generate_if_absent=False)
+    assert manifest.public_key != on_disk.public_key.hex()
+    assert _pinned_keys(team_root, "olivia") == (signer.public_key.hex(),)
+    assert _audit(client).outcomes_for("trust.approve") == ["applied"]
+
+
+def test_vault_transit_without_a_provisioned_notary_refuses(tmp_path: Path) -> None:
+    """A transit that cannot serve the operator key must never fall back.
+
+    The on-disk key is right there; reaching for it would defeat the custody
+    move. Fail closed, audit the denial, and write nothing.
     """
     _bootstrap_operator_key(tmp_path)
     (arc_home() / "arcagent.toml").write_text(
-        '[security]\ncustody = "vault_transit"\n', encoding="utf-8"
+        f'[security]\ntier = "federal"\nnotary_keystore = "{arc_home() / "absent"}"\n',
+        encoding="utf-8",
     )
     team_root = tmp_path / "team"
     team_root.mkdir()
@@ -264,13 +315,9 @@ def test_vault_transit_custody_refuses_to_sign(tmp_path: Path) -> None:
     resp = client.post(
         "/api/trust/approve", headers=_OPERATOR, json={"agent_id": "olivia", "name": "reporter"}
     )
-    assert resp.status_code == 500
-    # The refusal must be actionable: name the cause AND a way out, or the
-    # operator cannot tell it apart from a broken deployment.
-    error = resp.json()["error"]
-    assert error.startswith("operator_key_not_in_process: custody=vault_transit")
-    assert 'custody = "in_process"' in error
 
+    assert resp.status_code == 500
+    assert resp.json()["error"].startswith("operator_key_unavailable")
     assert not artifact_signing.sidecar_path(_skill_md(team_root, "olivia")).exists()
     assert _pinned_keys(team_root, "olivia") == ()
     assert _audit(client).outcomes_for("trust.approve") == ["denied"]

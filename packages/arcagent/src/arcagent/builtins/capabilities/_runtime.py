@@ -536,16 +536,32 @@ def check_secret_content(content: str, file_path: str, *, tool_name: str) -> Non
 
 
 def check_shell_command(command: str, *, tool_name: str = "bash") -> None:
-    """Advisory host-bash goal-lock: deny obvious writes to protected paths.
+    """Advisory host-bash guard: protected paths (REQ-001) + module root (REQ-335).
 
     Best-effort only (OQ-2) — a host shell can evade naive parsing. Real
-    enforcement at enterprise/federal is the sandbox read-only mount (REQ-023).
+    enforcement at enterprise/federal is the sandbox read-only mount (REQ-023),
+    which bind-mounts the workspace and never the module root.
     """
-    from arcagent.tools._validation import scan_shell_for_protected_writes
+    from arcagent.tools._validation import (
+        enforce_outside_module_root,
+        scan_shell_for_module_root,
+        scan_shell_for_protected_writes,
+    )
 
-    hit = scan_shell_for_protected_writes(command, workspace(), _protected_paths_var.get())
+    ws = workspace()
+    hit = scan_shell_for_protected_writes(command, ws, _protected_paths_var.get())
     if hit is not None:
         check_protected(hit, str(hit), tool_name=tool_name)
+    module_hit = scan_shell_for_module_root(command, ws)
+    if module_hit is not None:
+        identity = _identity_var.get()
+        enforce_outside_module_root(
+            module_hit,
+            tool_name=tool_name,
+            file_path=str(module_hit),
+            caller_did=identity.did if identity is not None else "did:arc:unknown",
+            audit_sink=_audit_sink_var.get(),
+        )
 
 
 def loader() -> CapabilityLoader:

@@ -155,7 +155,23 @@ def state() -> _State:
     running turn, never by ambient last-writer-wins global. A missing binding,
     a missing registration, or a DID mismatch refuses the read (raises + audits)
     instead of handing back another agent's Brain.
+
+    An empty registry is reported separately, as a plain "not configured" error.
+    Nothing has been configured for ANY agent in this process, so there is no
+    isolation question to answer — the module is simply not installed, which
+    since SPEC-066 is the ordinary state of a box where no operator ran
+    ``arc module install memory``. Folding that into the isolation branch named
+    the wrong cause ("no agent DID bound" sends the reader after an identity
+    bug) and emitted an ASI03 isolation-fault audit for a routine, benign state,
+    which is noise on the one channel that exists to catch real cross-agent
+    bleed.
     """
+    if not _registry:
+        raise RuntimeError(
+            "memory state read before the memory module was configured; the module is "
+            "not installed at the deployment module root, or [modules.memory] is not "
+            "enabled in this agent's config"
+        )
     did = _current_did.get()
     if not did:
         _fail_closed("no agent DID bound for the running turn", current_did=did)

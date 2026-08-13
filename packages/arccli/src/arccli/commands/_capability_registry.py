@@ -44,7 +44,7 @@ def build_capability_registry(config: Any, agent_root: Path | None) -> Any | Non
         ("builtins", builtins_root),
         ("builtins-skills", builtins_root / "skills"),
     ]
-    global_root = Path("~/.arc/capabilities").expanduser()
+    global_root = arcagent.global_capabilities_root()
     if global_root.is_dir():
         roots.append(("global", global_root))
     if agent_root is not None:

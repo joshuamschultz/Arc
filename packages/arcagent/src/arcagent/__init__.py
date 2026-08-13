@@ -19,6 +19,7 @@ from arcagent.capabilities.capability_signing import revoke as revoke_capability
 from arcagent.capabilities.capability_signing import sign as sign_capability
 from arcagent.capabilities.inventory import (
     collect_agent_capability_inventory,
+    global_capabilities_root,
     list_gated,
     pin_name_for,
     read_capability_source,
@@ -58,6 +59,7 @@ from arcagent.core.errors import (
     ToolError,
     ToolVetoedError,
 )
+from arcagent.core.module_discovery import discover_modules, module_root
 from arcagent.core.prompt_context import build_prompt_resolver
 from arcagent.extension.inspect import inspect_extensions
 from arcagent.keys import KeyStatus, KeyStore, default_env_file
@@ -161,9 +163,11 @@ __all__ = [
     "deep_merge",
     "default_env_file",
     "deployment_tier",
+    "discover_modules",
     "dumps_toml",
     "find_secret",
     "generate_schedule_id",
+    "global_capabilities_root",
     "inspect_extensions",
     "iter_model_modules",
     "list_gated",
@@ -172,6 +176,7 @@ __all__ = [
     "make_backend",
     "make_spawn_tool",
     "model_config_path",
+    "module_root",
     "modules_path",
     "pin_name_for",
     "read_capability_source",

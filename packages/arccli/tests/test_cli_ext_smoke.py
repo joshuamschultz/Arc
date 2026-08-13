@@ -7,6 +7,7 @@ T1.1.5 migration.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -15,12 +16,21 @@ import pytest
 _ARC = Path(__file__).parent.parent.parent.parent / ".venv" / "bin" / "arc"
 
 
-def _arc(*args: str) -> subprocess.CompletedProcess[str]:
-    """Run `arc <args>` and return the CompletedProcess."""
+def _arc(*args: str, arc_home: Path | None = None) -> subprocess.CompletedProcess[str]:
+    """Run `arc <args>` and return the CompletedProcess.
+
+    ``arc_home`` sets ``ARC_CONFIG_DIR`` for the child, which is the ONLY thing
+    needed to keep a write-side command out of the invoking user's real
+    ``~/.arc`` — every path ``arc`` resolves goes through ``arctrust.arc_home()``.
+    """
+    env = dict(os.environ)
+    if arc_home is not None:
+        env["ARC_CONFIG_DIR"] = str(arc_home)
     return subprocess.run(
         [str(_ARC), *args],
         capture_output=True,
         text=True,
+        env=env,
     )
 
 
@@ -149,27 +159,27 @@ class TestExtValidate:
 
 class TestExtInstall:
     def test_install_single_file(self, tmp_path: Path) -> None:
-        """arc ext install copies a .py file to ~/.arc/capabilities/.
+        """``arc ext install`` copies a ``.py`` into the deployment's global root.
 
-        Note: this test creates a real file in ~/.arc/capabilities/.
-        Cleanup is best-effort — acceptable for smoke tests.
+        This used to write into the developer's REAL ``~/.arc/capabilities`` with
+        best-effort cleanup. That is not a test-hygiene nicety: the file is a
+        live capability, and any concurrent test that builds a real ``ArcAgent``
+        scans that directory — so this test intermittently broke unrelated suites
+        for whoever happened to be running at the same time. ``arc ext install``
+        now resolves its target through ``arctrust.arc_home()``, so pointing the
+        child at a tmp ``ARC_CONFIG_DIR`` isolates it completely.
         """
+        arc_home = tmp_path / "arc-home"
         cap_file = tmp_path / "smoke_install_test.py"
         cap_file.write_text(_GOOD_CAPABILITY)
-        global_dir = Path.home() / ".arc" / "capabilities"
-        dest = global_dir / "smoke_install_test.py"
+        dest = arc_home / "capabilities" / "smoke_install_test.py"
 
-        # Clean up leftover from prior run
-        if dest.exists():
-            dest.unlink()
+        result = _arc("ext", "install", str(cap_file), arc_home=arc_home)
 
-        result = _arc("ext", "install", str(cap_file))
         assert result.returncode == 0, f"stderr: {result.stderr}\nstdout: {result.stdout}"
         assert dest.exists()
-
-        # Cleanup
-        if dest.exists():
-            dest.unlink()
+        # The invoking user's real home must be untouched — the whole point.
+        assert not (Path.home() / ".arc" / "capabilities" / "smoke_install_test.py").exists()
 
 
 # Mark to avoid unused import warning

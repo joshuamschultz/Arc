@@ -34,6 +34,29 @@ no agent stack installed.
 | `verifier` | Fail-closed verify: manifest signature, then every declared file hash |
 | `materializer` | Atomic write (stage → fsync → rename), `0444` files in `0555` dirs |
 | `builder` | Package a module folder into a signed `.arcbundle` |
+| `capability_copy` | Per-agent copy of a module's tools + skills, and its inverse |
+| `_audit` | One emitter per decided outcome; sinks fan out via `arctrust.audit.emit` |
+
+## Where a module lands
+
+Two destinations, two trust properties, no overlap:
+
+| What | Where | Who may write it |
+|------|-------|------------------|
+| Runtime (`_runtime.py` and its support) | `${ARC_CONFIG_DIR:-~/.arc}/modules/<name>/` | The operator install only — `0444` in `0555`, outside the tool fence |
+| Capability surface (`capabilities.py`, `skills/`) | `<agent_dir>/capabilities/<name>/` | The agent's own untrusted root, adjudicated by the loader unchanged |
+
+`capability_copy` copies only the second, per agent, and normalizes the modes on
+the way: a copy that inherited the deployment tree's read-only bits could
+neither be removed nor signed in place.
+
+## Audit
+
+`module.bundle.verified`, `module.signature_invalid`,
+`module.content_hash_mismatch`, `module.installed`, `module.removed` — each
+emitted from inside this package at the point the outcome is decided, so every
+surface that installs a bundle records the same fact. Pass `sink=` and
+`actor_did=` to `verify_bundle`, `materialize`, and `remove`.
 
 ## Invariants
 

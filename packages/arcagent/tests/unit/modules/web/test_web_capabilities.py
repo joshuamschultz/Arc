@@ -64,8 +64,10 @@ def _configure(
 class TestWebConfig:
     def test_defaults(self) -> None:
         cfg = WebConfig()
-        assert cfg.search_provider == "tavily"
-        assert cfg.extract_provider == "firecrawl"
+        # No keyless search engine exists, so search ships off; extraction ships
+        # on through the keyless browser backend.
+        assert cfg.search_provider is None
+        assert cfg.extract_provider == "browser"
         assert cfg.tier == "personal"
         assert cfg.url_allowlist == []
         assert cfg.max_content_bytes == 1_000_000

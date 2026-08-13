@@ -25,7 +25,17 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from arctrust import AuditEvent, TofuLayer, generate_keypair, hash_source, load_validators
+from arctrust import (
+    ECDSA_P256,
+    AuditEvent,
+    FileNotaryTransit,
+    InProcessSigner,
+    TofuLayer,
+    VaultSigner,
+    generate_keypair,
+    hash_source,
+    load_validators,
+)
 from arctrust.identity import AgentIdentity
 
 from arcagent.capabilities import artifact_signing, capability_signing
@@ -152,7 +162,7 @@ async def test_operator_signed_capabilities_pass_the_gate(agent_root: Path, tier
         capability_signing.sign(
             artifact,
             signer_did=_OPERATOR_DID,
-            private_key=operator.private_key,
+            signer=InProcessSigner(operator.private_key),
             config_path=_config(agent_root),
         )
 
@@ -178,7 +188,7 @@ async def test_agent_self_signed_capabilities_still_pass(agent_root: Path, tier:
         capability_signing.sign(
             artifact,
             signer_did=identity.did,
-            private_key=identity.signing_seed,
+            signer=InProcessSigner(identity.signing_seed),
             config_path=_config(agent_root),
         )
 
@@ -215,7 +225,7 @@ async def test_sign_writes_signature_trusted_key_and_tofu_pin(agent_root: Path) 
     capability_signing.sign(
         tool,
         signer_did=_OPERATOR_DID,
-        private_key=operator.private_key,
+        signer=InProcessSigner(operator.private_key),
         config_path=config,
     )
 
@@ -238,7 +248,7 @@ async def test_sign_pins_a_skill_under_its_folder_name(agent_root: Path) -> None
     capability_signing.sign(
         skill,
         signer_did=_OPERATOR_DID,
-        private_key=operator.private_key,
+        signer=InProcessSigner(operator.private_key),
         config_path=config,
     )
 
@@ -254,7 +264,7 @@ async def test_revoke_removes_signature_trusted_key_and_tofu_pin(agent_root: Pat
     capability_signing.sign(
         tool,
         signer_did=_OPERATOR_DID,
-        private_key=operator.private_key,
+        signer=InProcessSigner(operator.private_key),
         config_path=config,
     )
 
@@ -294,7 +304,7 @@ async def test_pinned_key_is_consumed_by_the_real_load_posture(agent_root: Path)
     capability_signing.sign(
         tool,
         signer_did=_OPERATOR_DID,
-        private_key=operator.private_key,
+        signer=InProcessSigner(operator.private_key),
         config_path=config,
     )
 
@@ -320,13 +330,13 @@ async def test_operator_and_agent_signed_capabilities_coexist(agent_root: Path) 
     capability_signing.sign(
         operator_tool,
         signer_did=_OPERATOR_DID,
-        private_key=operator.private_key,
+        signer=InProcessSigner(operator.private_key),
         config_path=config,
     )
     capability_signing.sign(
         agent_tool,
         signer_did=identity.did,
-        private_key=identity.signing_seed,
+        signer=InProcessSigner(identity.signing_seed),
         config_path=config,
     )
 
@@ -396,7 +406,7 @@ async def test_sign_and_revoke_emit_through_a_real_sink(agent_root: Path) -> Non
     capability_signing.sign(
         tool,
         signer_did=_OPERATOR_DID,
-        private_key=operator.private_key,
+        signer=InProcessSigner(operator.private_key),
         config_path=config,
         audit_sink=sink,
     )
@@ -433,7 +443,7 @@ async def test_audit_records_carry_no_key_material(agent_root: Path) -> None:
     capability_signing.sign(
         tool,
         signer_did=_OPERATOR_DID,
-        private_key=operator.private_key,
+        signer=InProcessSigner(operator.private_key),
         config_path=_config(agent_root),
         audit_sink=sink,
     )
@@ -458,7 +468,7 @@ async def test_revocation_of_a_deleted_artifact_still_records(agent_root: Path) 
     tool = _write_tool(agent_root, "ledger")
     config = _config(agent_root)
     capability_signing.sign(
-        tool, signer_did=_OPERATOR_DID, private_key=operator.private_key, config_path=config
+        tool, signer_did=_OPERATOR_DID, signer=InProcessSigner(operator.private_key), config_path=config
     )
     sink = _RecordingSink()
     tool.unlink()
@@ -513,7 +523,7 @@ async def test_drift_refusal_keeps_its_existing_audit_shape(agent_root: Path) ->
     tool = _write_tool(agent_root, "ledger")
     config = _config(agent_root)
     capability_signing.sign(
-        tool, signer_did=_OPERATOR_DID, private_key=operator.private_key, config_path=config
+        tool, signer_did=_OPERATOR_DID, signer=InProcessSigner(operator.private_key), config_path=config
     )
     drifted = tool.read_bytes() + b"\n# edited after approval\n"
     tool.write_bytes(drifted)
@@ -531,3 +541,112 @@ async def test_drift_refusal_keeps_its_existing_audit_shape(agent_root: Path) ->
     assert deny.target == str(tool)
     assert deny.outcome == "error"
     assert deny.extra == {"path": str(tool), "reason": "tofu decision deny"}
+
+
+# ---------------------------------------------------------------------------
+# D-066-2 — signing works at EVERY tier, through the tier's own key custody
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("tier", _ABOVE_PERSONAL)
+@pytest.mark.asyncio
+async def test_ecdsa_p256_signed_capabilities_pass_the_gate(agent_root: Path, tier: Tier) -> None:
+    """Federal signs with ECDSA-P256 — the REAL loader gate must accept it.
+
+    Before D-066-2 the verifier hardcoded Ed25519, so the one algorithm the
+    federal tier mandates could neither be produced nor verified: signing was
+    impossible on exactly the deployment this gate exists for.
+    """
+    seed = generate_keypair().private_key
+    signer = InProcessSigner(seed, ECDSA_P256)
+    tool = _write_tool(agent_root, "ledger")
+    skill = _write_skill(agent_root, "audit-brief")
+    for artifact in (tool, skill):
+        capability_signing.sign(
+            artifact,
+            signer_did=_OPERATOR_DID,
+            signer=signer,
+            config_path=_config(agent_root),
+        )
+
+    delta = await _scan(agent_root, tier=tier, trusted_public_key=signer.public_key)
+
+    assert _outcome(delta, "ledger").status == "loaded"
+    assert _outcome(delta, "audit-brief").status == "loaded"
+    assert {"ledger", "audit-brief"} <= set(delta.added)
+
+
+@pytest.mark.asyncio
+async def test_ecdsa_signing_pins_the_ecdsa_key_not_an_ed25519_one(agent_root: Path) -> None:
+    """The pinned trust anchor is the SIGNER's key, at the signer's algorithm.
+
+    The same 32 bytes derive a different public key under each primitive, so
+    pinning the Ed25519 one would leave a federal capability verifiable by a key
+    that never signed it — and gated by a pin its own signature cannot match.
+    """
+    seed = generate_keypair().private_key
+    ed25519_key = generate_keypair().public_key  # not the signer's key
+    signer = InProcessSigner(seed, ECDSA_P256)
+    tool = _write_tool(agent_root, "ledger")
+    config = _config(agent_root)
+
+    capability_signing.sign(tool, signer_did=_OPERATOR_DID, signer=signer, config_path=config)
+
+    trusted = load_validators(config).trusted_keys
+    assert signer.public_key.hex() in trusted
+    assert ed25519_key.hex() not in trusted
+    manifest = artifact_signing.load_signature(tool)
+    assert manifest is not None
+    assert manifest.algorithm == ECDSA_P256
+    assert manifest.public_key == signer.public_key.hex()
+
+
+@pytest.mark.asyncio
+async def test_vault_transit_signed_capability_passes_the_gate(agent_root: Path) -> None:
+    """The federal custody path end to end: the seed never enters this process.
+
+    Uses the real :class:`FileNotaryTransit` — the out-of-process signer a
+    ``custody = "vault_transit"`` deployment actually drives. A fake transit
+    would prove nothing about the path federal runs.
+    """
+    seed = generate_keypair().private_key
+    keystore = agent_root / "notary"
+    FileNotaryTransit.provision(keystore, "operator", seed, algorithm=ECDSA_P256)
+    signer = VaultSigner(
+        FileNotaryTransit(keystore, algorithm=ECDSA_P256), "operator", ECDSA_P256
+    )
+    tool = _write_tool(agent_root, "ledger")
+
+    capability_signing.sign(
+        tool, signer_did=_OPERATOR_DID, signer=signer, config_path=_config(agent_root)
+    )
+
+    delta = await _scan(agent_root, tier=Tier.FEDERAL, trusted_public_key=signer.public_key)
+    assert _outcome(delta, "ledger").status == "loaded"
+
+
+@pytest.mark.asyncio
+async def test_relabelling_a_signed_sidecar_denies_at_the_loader(agent_root: Path) -> None:
+    """Algorithm confusion is refused by the gate, not just by the primitive.
+
+    The signature bytes, the key, and the TOFU pin all stay valid; only the
+    sidecar's ``algorithm`` is swapped. If the loader accepted that, an attacker
+    with write access to a sidecar could choose the verifier — or none at all.
+    """
+    seed = generate_keypair().private_key
+    signer = InProcessSigner(seed, ECDSA_P256)
+    tool = _write_tool(agent_root, "ledger")
+    capability_signing.sign(
+        tool, signer_did=_OPERATOR_DID, signer=signer, config_path=_config(agent_root)
+    )
+    sidecar = artifact_signing.sidecar_path(tool)
+    manifest = artifact_signing.load_signature(tool)
+    assert manifest is not None
+    sidecar.write_text(
+        manifest.model_copy(update={"algorithm": "ed25519"}).to_json(), encoding="utf-8"
+    )
+
+    delta = await _scan(agent_root, tier=Tier.FEDERAL, trusted_public_key=signer.public_key)
+
+    assert _outcome(delta, "ledger").status == "unsigned"
+    assert delta.added == []

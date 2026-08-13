@@ -23,11 +23,12 @@ from arcagent.capabilities import artifact_signing
 from arcstore.ingest import WORM_ACTIVE_FILENAME
 from arctrust.audit import verify_chain
 from arctrust.identity import AgentIdentity
+from arctrust.keypair import generate_keypair
 from arctrust.operator import OperatorKey
 from arctrust.policy import OperatorApprovalAuthority
+from arctrust.signer import ECDSA_P256, FileNotaryTransit, Signer, VaultSigner
 from arctrust.validators import load_validators
 
-from arccli.commands import operator as operator_cmd
 from arccli.commands.registry import COMMAND_REGISTRY
 from arccli.commands.render import gateway_help_lines, slack_subcommand_map, telegram_bot_commands
 from arccli.commands.trust import trust_handler
@@ -49,15 +50,19 @@ _VALID_SKILL = (
 def _hermetic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Point every operator-key AND data path at ``tmp_path`` — never the real ``~/.arc``.
 
-    ``ARCSTORE_DATA_DIR`` matters as much as the key dir: approval now appends to
-    the deployment's WORM chain under the data dir, so without it a test run
-    would write audit records into the developer's own chain.
+    Two env vars are the WHOLE isolation, deliberately: every path the command
+    resolves goes through ``arctrust.arc_home()`` or ``resolve_data_dir``, so no
+    module constant needs monkeypatching. A surface that still needs one is a
+    surface that would ignore ``ARC_CONFIG_DIR`` in a real isolated deployment —
+    see ``test_operator_custody_follows_arc_config_dir_without_monkeypatching``.
+
+    ``ARCSTORE_DATA_DIR`` matters as much as the key dir: approval appends to the
+    deployment's WORM chain under the data dir, so without it a test run would
+    write audit records into the developer's own chain.
     """
     arc_dir = tmp_path / "arc-config"
     monkeypatch.setenv("ARC_CONFIG_DIR", str(arc_dir))
     monkeypatch.setenv("ARCSTORE_DATA_DIR", str(tmp_path / "arc-data"))
-    monkeypatch.setattr(operator_cmd, "DEFAULT_OPERATOR_DIR", arc_dir / "operator")
-    monkeypatch.setattr(operator_cmd, "_MACHINE_CONFIG", arc_dir / "arcagent.toml")
 
 
 def _operator_public_key(tmp_path: Path) -> bytes:
@@ -94,13 +99,26 @@ def _chain_event(tmp_path: Path, action: str) -> dict[str, Any]:
     return matched[0]
 
 
-def _use_vault_transit_custody(tmp_path: Path) -> None:
-    """Configure the machine for out-of-process custody (the federal posture)."""
+def _use_vault_transit_custody(tmp_path: Path) -> Signer:
+    """Put the machine on the real federal posture: ECDSA-P256 out-of-process.
+
+    ``tier = "federal"`` is what selects ``custody = "vault_transit"`` and
+    ``signing_algorithm = "ecdsa-p256"`` — writing them by hand would test a
+    posture no deployment produces. The notary keystore is provisioned with the
+    REAL :class:`FileNotaryTransit`, so the seed lives in the notary and the
+    command signs by reference exactly as a federal box does.
+
+    Returns the signer the command is expected to sign with.
+    """
     arc_dir = tmp_path / "arc-config"
     arc_dir.mkdir(parents=True, exist_ok=True)
+    keystore = arc_dir / "notary"
+    seed = generate_keypair().private_key
+    FileNotaryTransit.provision(keystore, "operator", seed, algorithm=ECDSA_P256)
     (arc_dir / "arcagent.toml").write_text(
-        '[security]\ncustody = "vault_transit"\n', encoding="utf-8"
+        f'[security]\ntier = "federal"\nnotary_keystore = "{keystore}"\n', encoding="utf-8"
     )
+    return VaultSigner(FileNotaryTransit(keystore, algorithm=ECDSA_P256), "operator", ECDSA_P256)
 
 
 def _build_agent(
@@ -264,22 +282,58 @@ def test_approve_reports_the_real_verdict_when_still_gated(
     assert "Still gated" in out
 
 
-def test_vault_transit_custody_refuses_to_sign(
+def test_approve_signs_through_vault_transit_custody(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The seed never enters this process under transit custody — fail closed."""
+    """Signing must WORK on the tier this gate exists for (D-066-2).
+
+    Under ``custody = "vault_transit"`` the seed never enters this process, so
+    the command signs by reference through the notary. The capability still
+    loads, and the pinned trust anchor is the notary's ECDSA-P256 verify key —
+    not some in-process key the deployment deliberately moved to a vault.
+    """
     team_root = _team(tmp_path, monkeypatch)
     _build_agent(team_root, "olivia", tier="enterprise", sign=False)
-    _use_vault_transit_custody(tmp_path)
+    signer = _use_vault_transit_custody(tmp_path)
+    skill = _skill_md(team_root)
+
+    trust_handler(["approve", "reporter"])
+
+    assert "loaded" in capsys.readouterr().out
+    manifest = artifact_signing.load_signature(skill)
+    assert manifest is not None
+    assert manifest.algorithm == ECDSA_P256
+    assert manifest.public_key == signer.public_key.hex()
+    assert artifact_signing.verify_file(
+        skill, skill.read_bytes(), trusted_public_key=signer.public_key
+    )
+    validators = load_validators(_config(team_root))
+    assert signer.public_key.hex() in validators.trusted_keys
+    assert [entry.name for entry in validators.approved] == ["reporter"]
+
+
+def test_vault_transit_without_a_provisioned_notary_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A transit that cannot serve the operator key must never fall back.
+
+    Falling back to whatever key is on disk would mint a trust anchor the
+    deployment moved to a vault — so the command stops before touching anything.
+    """
+    team_root = _team(tmp_path, monkeypatch)
+    _build_agent(team_root, "olivia", tier="enterprise", sign=False)
+    arc_dir = tmp_path / "arc-config"
+    arc_dir.mkdir(parents=True, exist_ok=True)
+    (arc_dir / "arcagent.toml").write_text(
+        f'[security]\ntier = "federal"\nnotary_keystore = "{arc_dir / "absent"}"\n',
+        encoding="utf-8",
+    )
 
     with pytest.raises(SystemExit) as exc:
         trust_handler(["approve", "reporter"])
 
     assert exc.value.code == 1
-    err = capsys.readouterr().err
-    assert "vault_transit" in err
-    assert "custody" in err
-    # Nothing was signed or pinned.
+    assert "vault_transit" in capsys.readouterr().err
     assert not arcagent.sidecar_path(_skill_md(team_root)).exists()
     validators = load_validators(_config(team_root))
     assert validators.trusted_keys == ()
@@ -458,3 +512,32 @@ def test_approve_resolves_named_agent(
 
     assert "on victor" in capsys.readouterr().out
     assert not arcagent.sidecar_path(_skill_md(team_root, "olivia")).exists()
+
+
+def test_operator_custody_follows_arc_config_dir_without_monkeypatching(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``ARC_CONFIG_DIR`` alone must relocate the operator key AND machine config.
+
+    ``arc trust`` used to read both from module constants frozen at import from a
+    literal ``~/.arc``, so an isolated deployment signed with the invoking user's
+    own operator key while arcui — which resolves through ``arctrust.arc_home()``
+    — used the deployment's. Two surfaces, two different signers, same box.
+
+    This case deliberately does NOT monkeypatch the module constants (the
+    ``_hermetic`` fixture no longer needs to): the env var is the only isolation,
+    which is exactly what a real isolated deployment has.
+    """
+    from arctrust import arc_home
+
+    team_root = _team(tmp_path, monkeypatch)
+    _build_agent(team_root, "olivia", tier="enterprise", sign=False)
+
+    trust_handler(["approve", "reporter"])
+
+    assert "loaded" in capsys.readouterr().out
+    relocated_key = arc_home() / "operator" / "operator.key"
+    assert relocated_key.exists(), "operator key was not bootstrapped under ARC_CONFIG_DIR"
+    assert arc_home() == tmp_path / "arc-config"
+    signed_with = OperatorKey.load(relocated_key).public_key.hex()
+    assert signed_with in load_validators(_config(team_root)).trusted_keys

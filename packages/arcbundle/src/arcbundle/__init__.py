@@ -27,15 +27,36 @@ Public surface:
     FILE_MODE / DIR_MODE — the modes materialize applies
     remove              — the inverse; raises if it does not complete
     build_bundle        — package a module folder into a signed .arcbundle
+    copy_capabilities   — per-agent copy of a module's tools + skills
+    remove_capabilities — the inverse; False when there was nothing to remove
+    capability_dir      — the one destination path rule both halves share
+    CAPABILITIES_DIR / CAPABILITY_FILE / SKILLS_DIR / SIGNATURE_SIDECAR_SUFFIX
+                        — the on-disk names the copy is defined in terms of
 
     BundleError         — base of every refusal below
     BundleManifestError / BundleSignatureError / BundleContentHashError /
     BundleMaterializeError — one per failed gate; all mean nothing was installed
+
+Audit events (``module.bundle.verified``, ``module.signature_invalid``,
+``module.content_hash_mismatch``, ``module.installed``, ``module.removed``) are
+emitted from inside this package, at the point each outcome is decided, so every
+surface that installs a bundle records the same fact. Pass ``sink=`` (and
+``actor_did=`` where an operator is known) to ``verify_bundle``, ``materialize``,
+and ``remove``; sinks fan out from ``arctrust.audit.emit`` unchanged.
 """
 
 from __future__ import annotations
 
 from arcbundle.builder import build_bundle
+from arcbundle.capability_copy import (
+    CAPABILITIES_DIR,
+    CAPABILITY_FILE,
+    SIGNATURE_SIDECAR_SUFFIX,
+    SKILLS_DIR,
+    capability_dir,
+    copy_capabilities,
+    remove_capabilities,
+)
 from arcbundle.errors import (
     BundleContentHashError,
     BundleError,
@@ -60,6 +81,8 @@ from arcbundle.verifier import (
 __version__ = "0.9.0"
 
 __all__ = [
+    "CAPABILITIES_DIR",
+    "CAPABILITY_FILE",
     "DEV_ISSUER",
     "DEV_ISSUER_TIERS",
     "DIR_MODE",
@@ -68,6 +91,8 @@ __all__ = [
     "MANIFEST_NAME",
     "PAYLOAD_DIR",
     "SIGNATURE_NAME",
+    "SIGNATURE_SIDECAR_SUFFIX",
+    "SKILLS_DIR",
     "TIERS",
     "BundleContentHashError",
     "BundleError",
@@ -78,8 +103,11 @@ __all__ = [
     "FileEntry",
     "VerifiedBundle",
     "build_bundle",
+    "capability_dir",
+    "copy_capabilities",
     "materialize",
     "remove",
+    "remove_capabilities",
     "sign_manifest",
     "verify_bundle",
 ]

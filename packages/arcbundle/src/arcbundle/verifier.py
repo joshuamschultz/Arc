@@ -10,10 +10,16 @@ Two properties this module owes its callers:
 * **No filesystem mutation on any path.** Verification reads; it never creates,
   writes, or removes. A refusal therefore cannot leave a partial tree, because
   nothing had been written to leave behind.
-* **Fail closed.** There is exactly one ``return``, on the last line, reached
-  only when every gate above it has passed. Each gate catches precisely what it
-  can provoke and converts it into a refusal, so an unexpected exception
+* **Fail closed.** :func:`_verify` has exactly one ``return``, on its last line,
+  reached only when every gate above it has passed. Each gate catches precisely
+  what it can provoke and converts it into a refusal, so an unexpected exception
   propagates as a denial rather than being mistaken for a pass.
+
+:func:`verify_bundle` wraps that gate chain in the audit layer and nothing else.
+One outcome, one emission: a pass emits ``module.bundle.verified``, a signature
+refusal emits ``module.signature_invalid``, a content refusal emits
+``module.content_hash_mismatch``, and each handler re-raises so the verdict a
+caller sees is unchanged by the fact that it was recorded.
 
 The verified payload is carried *in memory* rather than re-read at materialize
 time. That closes the window between "these bytes hashed correctly" and "these
@@ -25,14 +31,20 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from arctrust import verify
 from pydantic import ValidationError
 
+from arcbundle._audit import (
+    UNKNOWN,
+    emit_bundle_verified,
+    emit_content_mismatch,
+    emit_signature_invalid,
+)
 from arcbundle.errors import (
     BundleContentHashError,
     BundleManifestError,
@@ -50,8 +62,6 @@ __all__ = [
     "VerifiedBundle",
     "verify_bundle",
 ]
-
-_logger = logging.getLogger("arcbundle.verifier")
 
 MANIFEST_NAME = "manifest.json"
 SIGNATURE_NAME = "manifest.sig"
@@ -80,6 +90,8 @@ def verify_bundle(
     *,
     tier: str,
     trusted_issuers: Mapping[str, bytes],
+    sink: Any | None = None,
+    actor_did: str | None = None,
 ) -> VerifiedBundle:
     """Verify a bundle in full and return it, or refuse and write nothing.
 
@@ -89,6 +101,9 @@ def verify_bundle(
         tier: Deployment stringency — one of ``TIERS``. An unknown tier denies.
         trusted_issuers: Issuer identifier to 32-byte Ed25519 public key. An
             issuer absent from this mapping is untrusted by definition.
+        sink: Audit sink for the outcome event. ``None`` logs only.
+        actor_did: Operator identity to attribute the event to, when one reached
+            this layer.
 
     Returns:
         The verified bundle, carrying the payload bytes that were hashed.
@@ -100,8 +115,72 @@ def verify_bundle(
         BundleContentHashError: A declared file is missing or altered, or the
             payload tree carries a file the manifest never declared.
     """
+    # Held outside the gate chain so a refusal can still name what it refused —
+    # a signature that fails after the manifest parsed knows its module and
+    # issuer, and an auditor needs both far more than the refusal itself.
+    seen: list[BundleManifest] = []
+    try:
+        verified = _verify(bundle_root, tier=tier, trusted_issuers=trusted_issuers, seen=seen)
+    except BundleSignatureError as exc:
+        module, issuer = _identify(seen)
+        emit_signature_invalid(
+            bundle=bundle_root,
+            module=module,
+            issuer=issuer,
+            reason=str(exc),
+            tier=tier,
+            sink=sink,
+            actor_did=actor_did,
+        )
+        raise
+    except BundleContentHashError as exc:
+        module, issuer = _identify(seen)
+        emit_content_mismatch(
+            bundle=bundle_root,
+            module=module,
+            issuer=issuer,
+            reason=str(exc),
+            tier=tier,
+            sink=sink,
+            actor_did=actor_did,
+        )
+        raise
+
+    emit_bundle_verified(
+        bundle=bundle_root,
+        module=verified.manifest.module,
+        issuer=verified.manifest.issuer,
+        version=verified.manifest.version,
+        tier=tier,
+        files=len(verified.files),
+        sink=sink,
+        actor_did=actor_did,
+    )
+    return verified
+
+
+def _identify(seen: list[BundleManifest]) -> tuple[str, str]:
+    """Return ``(module, issuer)`` from a parsed manifest, or the unknown pair."""
+    if not seen:
+        return UNKNOWN, UNKNOWN
+    return seen[0].module, seen[0].issuer
+
+
+def _verify(
+    bundle_root: Path,
+    *,
+    tier: str,
+    trusted_issuers: Mapping[str, bytes],
+    seen: list[BundleManifest],
+) -> VerifiedBundle:
+    """Run every gate in order and return the verified bundle, or refuse.
+
+    ``seen`` receives the manifest as soon as it parses, so a later refusal can
+    be attributed even though nothing is returned.
+    """
     raw_manifest, signature = _read_bundle_files(bundle_root)
     manifest = _parse_manifest(raw_manifest)
+    seen.append(manifest)
     public_key = _resolve_issuer_key(manifest.issuer, tier=tier, trusted_issuers=trusted_issuers)
 
     if not verify(raw_manifest, signature, public_key):
@@ -118,15 +197,6 @@ def verify_bundle(
     payload_root = bundle_root / PAYLOAD_DIR
     files = _read_declared_files(payload_root, manifest)
     _refuse_undeclared_files(payload_root, declared=set(files))
-
-    _logger.info(
-        "bundle verified: module=%s version=%s issuer=%s tier=%s files=%d",
-        manifest.module,
-        manifest.version,
-        manifest.issuer,
-        tier,
-        len(files),
-    )
     return VerifiedBundle(root=bundle_root, manifest=manifest, files=files)
 
 

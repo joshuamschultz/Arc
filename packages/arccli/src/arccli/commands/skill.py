@@ -14,12 +14,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import arcagent
+
 from arccli.commands._shared import dispatch
 from arccli.commands._shared import print_table as _print_table
 from arccli.commands._shared import write as _write
 from arccli.commands.skill_evals import evals_handler
-
-_GLOBAL_CAP_DIR = Path.home() / ".arc" / "capabilities"
 
 _SKILL_TEMPLATE = """\
 ---
@@ -78,8 +78,9 @@ Outputs the agent must produce:
 def _scan_roots(agent_dir: str | None) -> list[tuple[str, Path]]:
     """Return user-visible scan roots in precedence order."""
     roots: list[tuple[str, Path]] = []
-    if _GLOBAL_CAP_DIR.is_dir():
-        roots.append(("global", _GLOBAL_CAP_DIR))
+    global_dir = arcagent.global_capabilities_root()
+    if global_dir.is_dir():
+        roots.append(("global", global_dir))
     if agent_dir:
         agent_root = Path(agent_dir).expanduser().resolve()
         agent_caps = agent_root / "capabilities"
@@ -212,7 +213,7 @@ def _create(args: argparse.Namespace) -> None:
     use_global: bool = getattr(args, "use_global", False)
 
     if use_global:
-        out_root = _GLOBAL_CAP_DIR
+        out_root = arcagent.global_capabilities_root()
         out_root.mkdir(parents=True, exist_ok=True)
     elif target_dir:
         out_root = Path(target_dir).expanduser().resolve()

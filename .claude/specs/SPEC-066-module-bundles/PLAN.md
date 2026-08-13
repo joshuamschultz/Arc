@@ -85,37 +85,37 @@
 
 ## Phase 3: Integration
 
-- [ ] **T-963**: (red) Security test: agent tools cannot reach the deployment module root
+- [x] **T-963**: (red) Security test: agent tools cannot reach the deployment module root
   - domain: test
   - Components: COMP-004
   - Requirements: REQ-335
   - Acceptance: Drives the real `write`, `edit`, and `bash` tools against paths under `${ARC_CONFIG_DIR}/modules/` and asserts each is refused by the tool fence, not merely by a mode bit. This is the ASI05/ASI06 control and does not ride along on the absent-safe suite.
-- [ ] **T-964**: (green) Move the module scan root to the deployment directory
+- [x] **T-964**: (green) Move the module scan root to the deployment directory
   - domain: backend
   - Components: COMP-006
   - Requirements: REQ-333, REQ-336
   - Acceptance: `_MODULES_DIR` resolves to `${ARC_CONFIG_DIR:-~/.arc}/modules/` through the existing config-dir resolution. The installed package directory is no longer scanned. Folder-presence discovery, `ModuleStatus`, and `active_modules()` semantics are unchanged and their tests still pass untouched.
-- [ ] **T-965**: (green) Load module runtimes by path instead of by import name
+- [x] **T-965**: (green) Load module runtimes by path instead of by import name
   - domain: backend
   - Components: COMP-007
   - Requirements: REQ-334
   - Acceptance: `configure_module_runtimes` uses `spec_from_file_location` against the resolved folder, one loader for every module. The `configure()` signature-introspection kwarg dispatch is unchanged. Nothing is added to `sys.path`.
-- [ ] **T-966**: (red) Absent-safe suite parametrized over live discovery
+- [x] **T-966**: (red) Absent-safe suite parametrized over live discovery
   - domain: test
   - Components: COMP-015
   - Requirements: REQ-339
   - Acceptance: For each name from `discover_modules()`: remove that module's tree, start a real agent, run a turn end to end, assert success. Plus the all-absent case. Parametrization derives from discovery so a module added later is covered without editing the test. Must be green before any module leaves the wheel.
-- [ ] **T-967**: (green) `arc module` command set
+- [x] **T-967**: (green) `arc module` command set
   - domain: backend
   - Components: COMP-008
   - Requirements: REQ-328, REQ-329, REQ-330, REQ-338
   - Acceptance: `list`, `install <names...>`, `install --all`, `install --from <bundle>`, `remove <name>`, `bundle <names...> -o <file>`. Install writes the config entry so install and enable are one step. `--all` installs every module the signed deployment manifest permits and skips the rest without failing. Every subcommand is exercised in its bare form, not only with flags.
-- [ ] **T-968**: (green) Per-agent copy of module tools and skills, and its inverse
+- [x] **T-968**: (green) Per-agent copy of module tools and skills, and its inverse
   - domain: backend
   - Components: COMP-009
   - Requirements: REQ-337, REQ-338
   - Acceptance: Install copies tools and skills to `<agent_dir>/capabilities/<name>/`; runtime is never copied. Copies land in the existing `agent` root and are adjudicated by `_UNTRUSTED_ROOTS` unchanged, loading clean while Arc-signed. Remove deletes runtime, copies, and config entry, exiting non-zero with an explicit error if any part does not complete.
-- [ ] **T-969**: (green) Audit events for bundle verify, refuse, install, and remove
+- [x] **T-969**: (green) Audit events for bundle verify, refuse, install, and remove
   - domain: infra
   - Components: COMP-014
   - Requirements: REQ-332
@@ -128,7 +128,7 @@
   - Components: COMP-004, COMP-006
   - Requirements: REQ-336
   - Acceptance: Hatchling excludes `arcagent/modules/` from the built wheel. Release CI packages each module folder into a signed bundle and publishes them as release assets. A test asserts the built wheel contains no module source. The wheel is byte-identical regardless of target tier.
-- [ ] **T-971**: (green) `arc module install --from-source` for development, signed with a dev key
+- [x] **T-971**: (green) `arc module install --from-source` for development, signed with a dev key
   - domain: infra
   - Components: COMP-002, COMP-005, COMP-008
   - Requirements: REQ-331
@@ -138,7 +138,7 @@
   - Components: COMP-006, COMP-009, COMP-015
   - Requirements: REQ-336, REQ-337, REQ-339
   - Acceptance: Order by risk: `memory` first (its `NullBrain` default already makes absent-safe true and it proves the machinery), then `browser` (the case that motivated the work), then the remaining sixteen. The absent-safe suite runs green after each individual move, not only at the end. Any module that fails is fixed before the next one starts.
-- [ ] **T-973**: (refactor) Module distribution docs and package index
+- [x] **T-973**: (refactor) Module distribution docs and package index
   - domain: infra
   - Components: COMP-016
   - Requirements: REQ-324

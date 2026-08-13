@@ -34,7 +34,15 @@ from pathlib import Path
 from typing import Any
 
 import arcagent
-from arctrust import OperatorKey, arc_home, default_operator_key_path
+from arctrust import (
+    FileNotaryTransit,
+    OperatorKey,
+    Signer,
+    SignerConfig,
+    arc_home,
+    build_signer,
+    default_operator_key_path,
+)
 from arctrust import disapprove as _disapprove_pin
 from arctrust.policy import OperatorApprovalAuthority
 from arctrust.signer import VAULT_TRANSIT
@@ -47,20 +55,10 @@ from arcui.schemas import ErrorResponse
 
 logger = logging.getLogger("arcui.routes.trust")
 
-
-class _OperatorSeedUnavailableError(RuntimeError):
-    """The deployment custodies the operator seed outside this process."""
-
-
-#: What the operator is told when custody puts the seed out of reach. Names the
-#: cause AND the two ways out, because the refusal is otherwise indistinguishable
-#: from a broken deployment and the operator's next move is not obvious.
-_VAULT_CUSTODY_REFUSAL = (
-    f"operator_key_not_in_process: custody={VAULT_TRANSIT}. Signing a capability "
-    "needs the operator seed in this process. Either approve from a deployment "
-    'that holds the seed, or set [security] custody = "in_process" in the machine '
-    "arcagent.toml under your arc home."
-)
+#: The transit key reference the deployment operator key is provisioned under —
+#: the same one ``arccli.commands.operator`` uses, so a notary provisioned for
+#: the CLI serves this route unchanged.
+_OPERATOR_KEY_REF = "operator"
 
 
 def _error(message: str, status: int) -> JSONResponse:
@@ -82,13 +80,13 @@ def _resolve_agent(request: Request, agent_id: str) -> tuple[Path, str] | None:
     return None
 
 
-def _machine_custody() -> str:
-    """The deployment's operator-key custody model, from the machine ``[security]``.
+def _machine_security() -> Any:
+    """The deployment's ``[security]`` block, validated by ``SecurityConfig``.
 
-    Read from the same arc home the operator key itself resolves under, and
-    validated by ``SecurityConfig`` so the tier crypto floor applies (federal and
-    enterprise imply ``vault_transit``). An absent or unparseable config is the
-    personal default, matching ``arccli.commands.operator._machine_security``.
+    Read from the same arc home the operator key itself resolves under, so the
+    tier crypto floor applies (federal implies ``vault_transit`` +
+    ``ecdsa-p256``). An absent or unparseable config is the personal default,
+    matching ``arccli.commands.operator._machine_security``.
     """
     config = arc_home() / "arcagent.toml"
     block: dict[str, Any] = {}
@@ -97,29 +95,58 @@ def _machine_custody() -> str:
             block = tomllib.loads(config.read_text(encoding="utf-8")).get("security", {})
         except (OSError, tomllib.TOMLDecodeError):
             block = {}
-    return str(arcagent.SecurityConfig(**block).custody)
+    return arcagent.SecurityConfig(**block)
 
 
-def _operator_key() -> OperatorKey:
-    """The on-box operator key that signs an approved capability.
+def _operator_signer() -> Signer:
+    """The operator signer that signs an approved capability, at the machine's custody.
 
-    Read-only load (never bootstraps a key — an unpinned operator is no
-    operator); a missing key raises and the caller fails the mutation with 500,
-    exactly like ``routes/approvals.py._operator_authority``.
+    ``in_process`` signs with the on-disk operator key — a read-only load that
+    never bootstraps one, because an unpinned operator is no operator.
+    ``vault_transit`` signs by reference through the notary/HSM and the seed
+    never enters this process; the on-disk key is deliberately NOT consulted
+    there, or a stale file left behind by a custody change would mint an
+    authority the deployment moved to a vault.
 
-    Under ``vault_transit`` custody the seed never enters this process, so there
-    is nothing here that can sign. Refuse rather than reach for whatever key
-    happens to be on disk: a stale file left behind by a custody change would
-    otherwise mint an authority the deployment deliberately moved to a vault.
+    Anything unresolvable raises and the caller fails the mutation with 500,
+    exactly like ``routes/approvals.py._operator_authority`` — never a silent
+    downgrade to whatever key can be found (NFR-3).
     """
-    if _machine_custody() == VAULT_TRANSIT:
-        raise _OperatorSeedUnavailableError(f"custody={VAULT_TRANSIT}")
-    return OperatorKey.load(default_operator_key_path(), generate_if_absent=False)
+    security = _machine_security()
+    if security.custody == VAULT_TRANSIT:
+        return build_signer(
+            SignerConfig(
+                custody=VAULT_TRANSIT,
+                algorithm=security.signing_algorithm,
+                key_ref=_OPERATOR_KEY_REF,
+            ),
+            vault_transit=_transit(security),
+        )
+    key = OperatorKey.load(default_operator_key_path(), generate_if_absent=False)
+    return key.into_signer(security.signing_algorithm)
 
 
-def _operator_did(key: OperatorKey) -> str:
+def _transit(security: Any) -> FileNotaryTransit:
+    """The out-of-process transit, proven able to serve the operator key first.
+
+    Mirrors ``arccli.commands.operator._resolve_transit``: the same keystore
+    convention, so a notary provisioned for the CLI serves this route unchanged.
+    Probing the key here turns a missing keystore into a refusal at resolution
+    time rather than a partial signing later.
+    """
+    keystore = (
+        Path(security.notary_keystore).expanduser()
+        if security.notary_keystore
+        else Path(security.operator_key_dir).expanduser() / "notary"
+    )
+    transit = FileNotaryTransit(keystore, algorithm=security.signing_algorithm)
+    transit.public_key(_OPERATOR_KEY_REF)
+    return transit
+
+
+def _operator_did(signer: Signer) -> str:
     """The deployment operator DID recorded as signer and approver."""
-    return OperatorApprovalAuthority(key.into_signer()).did
+    return OperatorApprovalAuthority(signer).did
 
 
 async def list_gated(request: Request) -> JSONResponse:
@@ -232,18 +259,12 @@ async def approve(request: Request) -> JSONResponse:
     agent_root, label = resolved
 
     try:
-        signing_key = _operator_key()
-    except _OperatorSeedUnavailableError as exc:
-        emit_mutation_audit(
-            request,
-            target=target,
-            operation="trust.approve",
-            outcome="denied",
-            detail=f"operator seed not in this process ({exc})",
-        )
-        return _error(_VAULT_CUSTODY_REFUSAL, 500)
-    except (FileNotFoundError, OSError) as exc:
-        logger.exception("operator key unavailable for trust approval")
+        signer = _operator_signer()
+    except (OSError, RuntimeError, ValueError) as exc:
+        # ``SignerError`` (a RuntimeError) covers an unresolvable transit; OSError
+        # a missing/unreadable key file. Both are "no authority here" — refuse
+        # rather than sign with anything else.
+        logger.exception("operator signer unavailable for trust approval")
         emit_mutation_audit(
             request,
             target=target,
@@ -252,7 +273,7 @@ async def approve(request: Request) -> JSONResponse:
             detail="operator key unavailable",
         )
         return _error(f"operator_key_unavailable: {type(exc).__name__}", 500)
-    approver = _operator_did(signing_key)
+    approver = _operator_did(signer)
 
     # Discover the gated capability (arcagent), sign it (arcagent), re-scan.
     gated = await arcagent.list_gated(agent_root, agent_id=agent_id, agent_label=label)
@@ -277,7 +298,7 @@ async def approve(request: Request) -> JSONResponse:
         arcagent.sign_capability(
             Path(item.path),
             signer_did=approver,
-            private_key=signing_key.seed,
+            signer=signer,
             config_path=agent_root / "arcagent.toml",
             audit_sink=operator_audit_sink(request),
         )

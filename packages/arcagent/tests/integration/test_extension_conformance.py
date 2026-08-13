@@ -59,6 +59,7 @@ import pytest
 from arcrun import ToolContext
 from arctrust.audit import AuditEvent
 
+import arcagent
 from arcagent.capabilities.capability_registry import CapabilityRegistry
 from arcagent.core.agent import ArcAgent
 from arcagent.core.config import (
@@ -216,6 +217,24 @@ def _arc_dir(tmp_path: Path) -> Path:
     root = tmp_path / "arc"
     root.mkdir(parents=True, exist_ok=True)
     return root
+
+
+@pytest.fixture(autouse=True)
+def _installed_connectors_module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Install the ``connectors`` module into this test's deployment root.
+
+    SPEC-066 REQ-333: discovery reads ``${ARC_CONFIG_DIR}/modules``, so a module
+    is present because an operator installed it — never because it shipped in
+    the wheel. Copying the tree is what ``arc module install`` leaves behind,
+    and pinning ``ARC_CONFIG_DIR`` at this test's own ``arc/`` keeps the scan
+    off the machine's real ``~/.arc``.
+    """
+    arc_dir = _arc_dir(tmp_path)
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(arc_dir))
+    shutil.copytree(
+        Path(arcagent.__file__).resolve().parent / "modules" / "connectors",
+        arc_dir / "modules" / "connectors",
+    )
 
 
 def _connections(arc_dir: Path) -> ConnectionRegistry:

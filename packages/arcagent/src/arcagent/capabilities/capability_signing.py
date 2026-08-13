@@ -17,9 +17,16 @@ the gate needs all three and any one alone leaves the capability gated:
 
 :func:`revoke` removes all three, returning the capability to gated.
 
+Signing goes through an :class:`arctrust.Signer`, so key custody is the
+deployment's config decision and not this module's business: personal tier signs
+with an in-process Ed25519 seed, while enterprise/federal signs by reference
+through a vault/notary and the seed never enters this process. That is what lets
+the same operator action run at every tier (ADR-019 — tier is stringency, not a
+gate).
+
 This is an operator-only trust mutation on an agent's own config. No private key
 material is logged, echoed, or persisted anywhere by these functions — only the
-32-byte verify key ever reaches disk.
+verify key ever reaches disk.
 
 Both operator surfaces — ``arc trust`` and ``POST /api/trust/*`` — reach a
 capability's trust through these two functions, which is why the audit record
@@ -35,7 +42,7 @@ from pathlib import Path
 from arctrust import (
     AuditEvent,
     AuditSink,
-    KeyPair,
+    Signer,
     approve,
     disapprove,
     emit,
@@ -48,7 +55,7 @@ from arcagent.capabilities.artifact_signing import (
     SIDECAR_SUFFIX,
     load_signature,
     sidecar_path,
-    write_signature,
+    write_signature_with_signer,
 )
 from arcagent.capabilities.inventory import pin_name_for_path
 
@@ -62,7 +69,7 @@ def sign(
     artifact: Path,
     *,
     signer_did: str,
-    private_key: bytes,
+    signer: Signer,
     config_path: Path,
     audit_sink: AuditSink | None = None,
 ) -> None:
@@ -74,7 +81,10 @@ def sign(
             a later edit invalidates both (drift is a hard stop, by design).
         signer_did: DID recorded as the signer, as the TOFU approver, and as the
             operator the audit record is attributed to.
-        private_key: 32-byte Ed25519 seed. Used in-process only; never written.
+        signer: The operator's :class:`arctrust.Signer`. Its public key is what
+            gets pinned as the trusted verification key and its algorithm is
+            what the sidecar records, so an in-process seed and a vault-transit
+            key produce a capability the loader accepts on identical terms.
         config_path: The agent's ``arcagent.toml`` — the sole persistence
             surface for both the trusted key and the TOFU pin.
         audit_sink: Where the ``capability.signed`` record lands. ``None`` — a
@@ -82,7 +92,8 @@ def sign(
 
     Raises:
         OSError: The artifact or the config could not be read/written.
-        ValueError: ``private_key`` is not a valid 32-byte Ed25519 seed.
+        ValueError: The artifact bytes are not valid UTF-8.
+        arctrust.SignerError: The signer could not produce a signature.
 
     Errors propagate rather than being swallowed: a half-applied signing is a
     capability the operator believes is trusted and is not. The audit record is
@@ -90,9 +101,8 @@ def sign(
     """
     content = artifact.read_bytes()
     source = content.decode("utf-8")
-    public_key = KeyPair.from_seed(private_key).public_key
-    write_signature(artifact, content, signer_did=signer_did, private_key=private_key)
-    pin_key(config_path, public_key=public_key)
+    write_signature_with_signer(artifact, content, signer_did=signer_did, signer=signer)
+    pin_key(config_path, public_key=signer.public_key)
     approve(
         config_path,
         name=pin_name_for_path(artifact),

@@ -10,6 +10,11 @@ Two ``@tool`` functions that mirror the legacy :class:`WebModule` surface:
 State is shared via :mod:`arcagent.modules.web._runtime`. The agent
 configures it once at startup; tools read state lazily on each invocation.
 Provider clients are built lazily by :mod:`arcagent.modules.web._runtime`.
+
+Either tool may be **withheld** on a given deployment — see the block at the
+foot of this file. The capability loader registers whatever in this module's
+namespace carries capability metadata, so a name removed from that namespace
+reaches neither the tool registry nor the prompt manifest.
 """
 
 from __future__ import annotations
@@ -223,3 +228,15 @@ async def _extract(url: str) -> dict[str, Any]:
     )
 
     return final.model_dump()
+
+
+# --- Withholding --------------------------------------------------------------
+#
+# A tool whose provider has no resolvable credential is dropped from this
+# module's namespace before the loader ever sees it, so it registers nowhere and
+# is never offered to the model. ``_runtime.configure()`` made the decision at
+# startup and logged which key was missing; this is only the removal. An agent
+# offered a tool it cannot run will call it, fail on the missing key, and retry
+# — turns spent on a capability the deployment never had (LLM06, LLM10).
+for _withheld in _runtime.withheld_tools():
+    del globals()[_withheld]

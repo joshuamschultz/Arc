@@ -81,6 +81,7 @@ from arctrust.artifact import (
     ArtifactSignature,
     content_sha256,
     sign_artifact,
+    sign_artifact_with_signer,
     verify_artifact,
 )
 from arctrust.audit import (
@@ -284,6 +285,7 @@ __all__ = [
     "register_operator",
     "sign",
     "sign_artifact",
+    "sign_artifact_with_signer",
     "unpin_key",
     "validate_did",
     "verify",
