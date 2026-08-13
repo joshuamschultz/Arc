@@ -145,9 +145,7 @@ def test_copy_of_a_skill_only_module_succeeds(tmp_path: Path, agent_dir: Path) -
     assert (dest / SKILLS_DIR / "triage" / "SKILL.md").exists()
 
 
-def test_copy_refuses_a_module_with_no_capability_surface(
-    tmp_path: Path, agent_dir: Path
-) -> None:
+def test_copy_refuses_a_module_with_no_capability_surface(tmp_path: Path, agent_dir: Path) -> None:
     """Silently copying nothing would report an install that gave the agent
     nothing — the operator must hear about it."""
     source = tmp_path / "modules" / "hollow"

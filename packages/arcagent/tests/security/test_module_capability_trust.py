@@ -374,17 +374,22 @@ async def test_a_gated_module_capability_is_visible_to_list_gated(
     The inventory used to resolve four scan roots and no module roots, so a
     module capability the loader refused was invisible to the only surface that
     could approve it.
+
+    It lists the artifact the LOADER adjudicates — the agent's own copy — because
+    that is the file an operator has to read and re-sign to unblock the module.
+    Approving the shared original would leave this agent gated forever.
     """
     module_dir, _ = _install(tmp_path, monkeypatch)
     config_path = _agent_config(tmp_path, tier="enterprise")
-    _edit(module_dir / "capabilities.py", _CAPABILITIES + "\nEDITED = True\n")
+    copy_dir = arcbundle.copy_capabilities(module_dir, config_path.parent, module=_MODULE)
+    _edit(copy_dir / "capabilities.py", _CAPABILITIES + "\nEDITED = True\n")
 
     gated = await arcagent.list_gated(config_path.parent, agent_id="probe-agent")
 
     names = {item.name for item in gated}
     assert f"{_MODULE}/capabilities" in names, f"module capability not listed; saw {sorted(names)}"
     item = next(item for item in gated if item.name == f"{_MODULE}/capabilities")
-    assert Path(item.path) == module_dir / "capabilities.py"
+    assert Path(item.path) == copy_dir / "capabilities.py"
 
 
 @pytest.mark.parametrize("tier", ["personal", "enterprise", "federal"])

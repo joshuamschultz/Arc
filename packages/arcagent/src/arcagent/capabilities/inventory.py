@@ -30,11 +30,12 @@ from arcagent.capabilities.capability_loader import (
     MODULE_ROOT_PREFIX,
     CapabilityLoader,
     ScanRoot,
+    module_capability_root,
     pin_name_for_path,
 )
 from arcagent.capabilities.capability_registry import CapabilityRegistry
 from arcagent.core.config import CapabilitiesConfig, SecurityConfig, load_config
-from arcagent.core.module_discovery import active_modules, module_root
+from arcagent.core.module_discovery import active_modules
 from arcagent.tools._dynamic_loader import (
     DEFAULT_IMPORT_POLICY,
     ImportPolicy,
@@ -100,8 +101,9 @@ def _resolve_scan_roots(
     Optional roots are included only when they exist on disk, matching the
     loader's own precedence order (builtins, global, agent, workspace), and each
     enabled module contributes its ``module:<name>`` root last — exactly as the
-    live load does. Omitting them would leave a gated module capability
-    invisible to ``arc trust list``, which is the surface that unblocks it.
+    live load does, from the agent's own capability copy. Omitting them would
+    leave a gated module capability invisible to ``arc trust list``, which is
+    the surface that unblocks it.
     """
     builtins = builtins_root if builtins_root is not None else Path(_builtins_pkg.__file__).parent
     roots: list[ScanRoot] = [
@@ -115,8 +117,7 @@ def _resolve_scan_roots(
     append_capability_scan_roots(roots, "agent", agent_dir / "capabilities")
     workspace = workspace_dir if workspace_dir is not None else agent_dir / "workspace"
     append_capability_scan_roots(roots, "workspace", workspace / "capabilities")
-    modules_dir = module_root()
-    roots.extend((f"{MODULE_ROOT_PREFIX}{name}", modules_dir / name) for name in modules)
+    append_module_scan_roots(roots, agent_dir, modules)
     return roots
 
 
@@ -133,6 +134,24 @@ def append_capability_scan_roots(roots: list[ScanRoot], name: str, caps_dir: Pat
     skills_dir = caps_dir / "skills"
     if skills_dir.is_dir():
         roots.append((f"{name}-skills", skills_dir))
+
+
+def append_module_scan_roots(
+    roots: list[ScanRoot], agent_dir: Path, modules: Sequence[str]
+) -> None:
+    """Append the ``module:<name>`` roots for ``modules``, from the AGENT's copy.
+
+    An install copies a module's tools and skills to
+    ``<agent_dir>/capabilities/modules/<name>/`` and leaves its runtime at the
+    deployment root; the copy is what loads, so one agent's capability drift
+    never reaches another's (REQ-337). Both halves of the copy are scanned —
+    tools directly under the root, skills under ``skills/`` — because copying a
+    surface nothing reads is the same dead wiring in a smaller box.
+    """
+    for name in modules:
+        append_capability_scan_roots(
+            roots, f"{MODULE_ROOT_PREFIX}{name}", module_capability_root(agent_dir, name)
+        )
 
 
 async def collect_capability_inventory(
@@ -475,6 +494,7 @@ __all__ = [
     "RuntimeToolItem",
     "TrustPosture",
     "append_capability_scan_roots",
+    "append_module_scan_roots",
     "collect_agent_capability_inventory",
     "collect_capability_inventory",
     "list_gated",

@@ -168,9 +168,7 @@ def _list(args: argparse.Namespace) -> None:
     _print_table(["Name", "Kind", "Status", "Signed", "Hash", "Path"], rows)
 
 
-def _resolve_target(
-    agent_id: str, agent_root: Path, label: str, name: str
-) -> arcagent.GatedItem:
+def _resolve_target(agent_id: str, agent_root: Path, label: str, name: str) -> arcagent.GatedItem:
     """Find the capability ``name`` names, gated or already loading.
 
     Resolved from the FULL inventory, never the gated-only listing. Restricting

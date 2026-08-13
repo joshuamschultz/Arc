@@ -376,7 +376,9 @@ class _RecordingSink:
 
     def only(self, action: str) -> AuditEvent:
         matched = [event for event in self.events if event.action == action]
-        assert len(matched) == 1, f"expected exactly one {action}, got {[e.action for e in matched]}"
+        assert len(matched) == 1, (
+            f"expected exactly one {action}, got {[e.action for e in matched]}"
+        )
         return matched[0]
 
 
@@ -468,7 +470,10 @@ async def test_revocation_of_a_deleted_artifact_still_records(agent_root: Path) 
     tool = _write_tool(agent_root, "ledger")
     config = _config(agent_root)
     capability_signing.sign(
-        tool, signer_did=_OPERATOR_DID, signer=InProcessSigner(operator.private_key), config_path=config
+        tool,
+        signer_did=_OPERATOR_DID,
+        signer=InProcessSigner(operator.private_key),
+        config_path=config,
     )
     sink = _RecordingSink()
     tool.unlink()
@@ -484,7 +489,9 @@ async def test_revocation_of_a_deleted_artifact_still_records(agent_root: Path) 
 
 def _refusal(sink: _RecordingLoaderSink, action: str) -> AuditEvent:
     matched = [event for event in sink.events if event.action == action]
-    assert len(matched) == 1, f"expected one {action}; loader recorded {[e.action for e in sink.events]}"
+    assert len(matched) == 1, (
+        f"expected one {action}; loader recorded {[e.action for e in sink.events]}"
+    )
     return matched[0]
 
 
@@ -523,7 +530,10 @@ async def test_drift_refusal_keeps_its_existing_audit_shape(agent_root: Path) ->
     tool = _write_tool(agent_root, "ledger")
     config = _config(agent_root)
     capability_signing.sign(
-        tool, signer_did=_OPERATOR_DID, signer=InProcessSigner(operator.private_key), config_path=config
+        tool,
+        signer_did=_OPERATOR_DID,
+        signer=InProcessSigner(operator.private_key),
+        config_path=config,
     )
     drifted = tool.read_bytes() + b"\n# edited after approval\n"
     tool.write_bytes(drifted)
@@ -612,9 +622,7 @@ async def test_vault_transit_signed_capability_passes_the_gate(agent_root: Path)
     seed = generate_keypair().private_key
     keystore = agent_root / "notary"
     FileNotaryTransit.provision(keystore, "operator", seed, algorithm=ECDSA_P256)
-    signer = VaultSigner(
-        FileNotaryTransit(keystore, algorithm=ECDSA_P256), "operator", ECDSA_P256
-    )
+    signer = VaultSigner(FileNotaryTransit(keystore, algorithm=ECDSA_P256), "operator", ECDSA_P256)
     tool = _write_tool(agent_root, "ledger")
 
     capability_signing.sign(

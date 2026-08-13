@@ -29,7 +29,6 @@ from typing import Any
 _logger = logging.getLogger("arccli.commands.blueprint")
 
 
-
 def _write(msg: str = "") -> None:
     sys.stdout.write(msg + "\n")
 

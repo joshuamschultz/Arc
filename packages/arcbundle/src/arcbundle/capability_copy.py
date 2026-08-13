@@ -8,15 +8,20 @@ per agent into ``<agent_dir>/capabilities/<module>/``, because a skill that
 improves for one agent must not silently change what every other agent on the
 box is told to do.
 
-Three consequences follow from copying rather than loading in place:
+Four consequences follow from copying rather than loading in place:
 
-* The copies sit inside the agent's existing ``capabilities`` root, so the
-  loader adjudicates them as UNTRUSTED unchanged. No trusted root is introduced
-  — a writable directory whose contents are trusted is exactly the hole that
-  classification was drawn to close (SDD alternatives D-648, D-649).
-* The layout inside the copy mirrors :func:`append_capability_scan_roots`:
-  tools directly under the root, skills under ``skills/``. Anything else is
-  simply not discovered.
+* The copy is the ONLY thing the loader scans for a module's tools and skills —
+  the shared deployment tree is never a scan root — which is what makes one
+  agent's capability drift invisible to every other agent.
+* The loader adjudicates the copy as VERIFIED: a valid signature is mandatory
+  at every tier, on every scan, because this is a directory the agent can write
+  and module code runs uncontained. Signed-or-nothing is what replaces the
+  containment; it is not the UNTRUSTED class, which additionally isolates
+  execution and would stop a module registering anything at all (SDD D-648,
+  D-649, measured at T-972).
+* The layout inside the copy mirrors ``append_capability_scan_roots``: tools
+  directly under the root, skills under ``skills/``. Anything else is simply
+  not discovered.
 * ``_runtime.py`` is never copied. Runtime is deployment state; putting it where
   an agent can write would hand the agent its own execution path (ASI05/ASI06).
 
@@ -53,8 +58,8 @@ __all__ = [
 
 _logger = logging.getLogger("arcbundle.capability_copy")
 
-#: The per-agent root the loader already scans (its ``agent`` / ``agent-skills``
-#: pair). Copies go under it so the loader's set of roots never grows.
+#: The agent's capability root. Copies live under it so everything an agent may
+#: load sits in one place an operator can inspect, back up, and reason about.
 CAPABILITIES_DIR = "capabilities"
 
 #: The one file in a module folder that carries its tools. It is also half of

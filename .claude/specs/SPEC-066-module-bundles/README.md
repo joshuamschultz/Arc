@@ -268,3 +268,37 @@ _(none yet)_
 ## Open Questions
 
 _(none yet)_
+
+## Review outcome (2026-08-13) — FAILED, fixes in progress
+
+`/review spec 066` returned **FAIL** on 8 blocking findings. Evidence at review time:
+7063 passed / 27 skipped / 0 failed; SPEC-066 code coverage 81% line (gate 80%).
+
+**Blocking:**
+1. **REQ-337 unmet — the per-agent capability copy was DEAD CODE.** `grep` for
+   `capability_dir|MODULE_COPIES_DIR|copy_capabilities` over `packages/arcagent/src/`
+   returned zero hits: `arc module install` wrote the copy and nothing ever loaded it. The
+   loader scanned the shared deployment root instead. `capability_copy.py`'s docstring
+   claimed the loader adjudicated the copies as UNTRUSTED and that this isolated one
+   agent's changes from another's — both false. The repo's known "correct producer, dead
+   activating wiring" pattern, shipped again.
+2-8. **Security controls whose refusal paths no test ever executed**: the undeclared-file
+   refusal (zero tests in the repo reference it), the symlink-escape check, the materializer
+   rollback branch, the reinstall/backup path (no test installed a module twice), the
+   missing-manifest/sig refusals, `arc module remove`'s partial-completion for 2 of its 3
+   legs, and `arc up`'s degraded-fleet path. A control that never runs is a claim.
+
+**Downgraded from blocking, with evidence:** the security lens flagged that VERIFIED
+modules run uncontained. True, but `_trusted_issuers()` reads only the operator key plus a
+MANUALLY hand-edited `~/.arc/trust/issuers.toml`, and nothing in the codebase writes that
+file (`grep save_issuer|add_issuer|write_issuer` → nothing); absence is refusal. Same trust
+model as apt/npm. Residue is a documentation gap, not a bypass.
+
+**Review scope limits — recorded so "reviewed" is not overclaimed:**
+- Wave 2 (architecture, reliability) never ran; Wave 1 short-circuited on blocking findings.
+- The coverage lens did NOT reach `builder.py`, `manifest.py`, `signer.py`, `_paths.py`,
+  `_audit.py`, `artifact_signing.py`, `capability_signing.py`, `inventory.py`,
+  `reload_models.py`. The 8 findings are a floor, not a ceiling.
+- Pre-existing gate failures NOT caused by this spec: `arcagent/core` LOC 4520/3500 (was
+  4450 at base `075029aa`; this spec added 70), and `scripts/coverage_report.py` failing on
+  `arcagent.modules.session` / `modules.skills`, both untouched by SPEC-066.

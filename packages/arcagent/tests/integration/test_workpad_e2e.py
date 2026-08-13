@@ -69,13 +69,16 @@ def _post_respond_event() -> dict[str, Any]:
 
 
 def _install_workpad(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Install the workpad module into this test's deployment root.
+    """Install the workpad module for this test's agent, the way an operator does.
 
-    SPEC-066 REQ-333: discovery reads ``${ARC_CONFIG_DIR}/modules``, so enabling
-    ``[modules.workpad]`` only loads a module an operator installed. Built,
-    verified, and materialized rather than copied, because a copied tree carries
+    SPEC-066 REQ-333/337: discovery reads ``${ARC_CONFIG_DIR}/modules``, so
+    enabling ``[modules.workpad]`` only loads a module an operator installed, and
+    the module's TOOLS are read from the per-agent copy at
+    ``<agent_dir>/capabilities/modules/workpad/`` rather than from the shared
+    deployment tree. All four calls ``arc module install`` makes run here. Built
+    and verified rather than copied by hand, because a hand-copied tree carries
     no ``.arcsig`` sidecars and a ``module:*`` root is adjudicated by signature —
-    a copy would load nothing and prove nothing.
+    it would load nothing and prove nothing.
     """
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc"))
     bundle = arcbundle.build_bundle(
@@ -89,7 +92,8 @@ def _install_workpad(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     verified = arcbundle.verify_bundle(
         bundle, tier="personal", trusted_issuers={_ISSUER: _ISSUER_KEYPAIR.public_key}
     )
-    arcbundle.materialize(verified, tmp_path / "arc" / "modules")
+    installed = arcbundle.materialize(verified, tmp_path / "arc" / "modules")
+    arcbundle.copy_capabilities(installed, tmp_path, module="workpad")
 
 
 @pytest.mark.asyncio
@@ -99,7 +103,10 @@ async def test_post_respond_drives_context_rewrite(
     _install_workpad(tmp_path, monkeypatch)
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    agent = ArcAgent(config=_config(tmp_path, workspace))
+    # ``config_path`` is explicit because the agent's capability roots hang off
+    # its parent; the default (relative ``arcagent.toml``) would resolve them
+    # against the process CWD and miss the module copy installed above.
+    agent = ArcAgent(config=_config(tmp_path, workspace), config_path=tmp_path / "arcagent.toml")
     await agent.startup()
 
     # Stub the eval model on the module's live runtime state (external dep only).

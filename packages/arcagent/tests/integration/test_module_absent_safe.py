@@ -96,6 +96,31 @@ def _deployment_root(tmp_path: Path, absent: str | None) -> Path:
     return root
 
 
+def _capability_copies(tmp_path: Path, absent: str | None) -> None:
+    """Give the agent its per-agent copy of every present module's capabilities.
+
+    An install is two placements, not one (REQ-337): the runtime stays at the
+    deployment root and the capability surface is copied to
+    ``<agent_dir>/capabilities/modules/<name>/``, which is where the loader reads
+    a module's tools and skills from. Presence therefore means both, and this
+    function is the second half — without it a "present" module would contribute
+    a runtime and no capability root, which is not a state any install produces.
+
+    Unsigned on purpose: this suite measures which modules reach the loader and
+    whether a turn completes, never which capabilities clear the trust gate
+    (``test_module_capability_trust.py`` owns that).
+    """
+    for name in _MODULE_NAMES:
+        if name == absent:
+            continue
+        source = _SOURCE_CATALOG / name / "capabilities.py"
+        if not source.is_file():
+            continue
+        dest = tmp_path / "capabilities" / "modules" / name
+        dest.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, dest / "capabilities.py")
+
+
 def _agent_config(tmp_path: Path) -> ArcAgentConfig:
     """A config that enables every discovered module.
 
@@ -127,7 +152,9 @@ async def _one_token_turn(*args: Any, **kwargs: Any) -> Any:
     return _events()
 
 
-async def _run_a_turn(config: ArcAgentConfig, tmp_path: Path) -> tuple[ArcAgent, list[StreamEvent]]:
+async def _run_a_turn(
+    config: ArcAgentConfig, tmp_path: Path
+) -> tuple[ArcAgent, list[StreamEvent]]:
     """Start a real agent, run one turn end to end, shut it down.
 
     ``config_path`` is explicit because the agent's capability roots hang off
@@ -190,6 +217,7 @@ async def test_a_turn_completes_with_one_module_absent(
 ) -> None:
     """One module's tree is gone; construction, capability scan, and turn survive."""
     root = _deployment_root(tmp_path, absent=absent)
+    _capability_copies(tmp_path, absent=absent)
     monkeypatch.setenv("ARC_CONFIG_DIR", str(root.parent))
 
     agent, events = await _run_a_turn(_agent_config(tmp_path), tmp_path)

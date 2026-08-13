@@ -99,10 +99,17 @@ _TRUSTED_ROOTS: frozenset[str] = frozenset({"builtins", "builtins-skills"})
 EXTENSION_ROOT_PREFIX = "extension:"
 
 #: Prefix of a per-module root — ``module:<name>`` (SPEC-066). A module arrives
-#: as a signed bundle materialized into the deployment module root, which is a
-#: directory an install writes into rather than wheel content, so it is verified
-#: at load like any other non-package source.
+#: as a signed bundle whose capability surface an install copies into the
+#: AGENT's own capability root, so the bytes that load are neither wheel content
+#: nor read-only: they are verified at load, on every scan, or they do not run.
 MODULE_ROOT_PREFIX = "module:"
+
+#: Where an install puts one agent's copy of a module's tools and skills:
+#: ``<agent_dir>/capabilities/modules/<module>/``. Spelled here rather than
+#: imported from :mod:`arcbundle` — the convention is on disk, and arcagent does
+#: not depend on the package that distributes modules.
+CAPABILITIES_DIR = "capabilities"
+MODULE_COPIES_DIR = "modules"
 
 #: The one file whose presence makes a folder a skill. The FOLDER name is what
 #: TOFU pins, which is why the manifest name is needed to derive a pin name.
@@ -132,6 +139,16 @@ class RootTrust(StrEnum):
 
     UNTRUSTED = "untrusted"
     """Anything an agent can write: proof required AND execution contained."""
+
+
+def module_capability_root(agent_dir: Path, module: str) -> Path:
+    """Return ``<agent_dir>/capabilities/modules/<module>`` — one agent's copy.
+
+    The single place arcagent spells the copy layout, so the live load, the
+    inventory seam, and the pin-name rule cannot disagree about where a module's
+    capability surface lives for a given agent.
+    """
+    return Path(agent_dir) / CAPABILITIES_DIR / MODULE_COPIES_DIR / module
 
 
 def root_trust(root_name: str) -> RootTrust:
@@ -172,14 +189,22 @@ def pin_name_for_path(artifact: Path) -> str:
     through this function and ``arc trust approve`` pins through it, so the two
     cannot spell the same artifact differently.
 
-    An artifact in the deployment module root pins under its path WITHIN that
-    root (``scheduler/capabilities``, ``memory/skills/recall``). Every module
-    ships a file named ``capabilities.py``, so a bare stem would give all of
-    them ONE pin name: approving the second module would supersede the first's
-    hash, and the loader would then read the first as drifted — tamper, a hard
-    DENY — for no reason but the name.
+    A module artifact pins under its path WITHIN its module
+    (``scheduler/capabilities``, ``memory/skills/recall``) whether it is read
+    from the deployment root or from an agent's copy of it, because those are
+    the same artifact seen from two places: ``arc module install`` approves the
+    deployment original's bytes and the loader looks the copy up. Two spellings
+    would make every approval an install writes miss.
+
+    The module qualifier is also what keeps modules apart. Every module ships a
+    file named ``capabilities.py``, so a bare stem would give all of them ONE
+    pin name: approving the second module would supersede the first's hash, and
+    the loader would then read the first as drifted — tamper, a hard DENY — for
+    no reason but the name.
     """
     relative = _module_relative(artifact)
+    if relative is None:
+        relative = _module_copy_relative(artifact)
     if relative is None:
         return artifact.parent.name if artifact.name == SKILL_MANIFEST else artifact.stem
     base = relative.parent if artifact.name == SKILL_MANIFEST else relative.with_suffix("")
@@ -199,6 +224,22 @@ def _module_relative(artifact: Path) -> PurePosixPath | None:
     except (OSError, ValueError):
         return None
     return PurePosixPath(relative.as_posix()) if len(relative.parts) > 1 else None
+
+
+def _module_copy_relative(artifact: Path) -> PurePosixPath | None:
+    """``artifact``'s path within an agent's module copy, or None if outside.
+
+    Matched on the ``capabilities/modules`` marker rather than against a known
+    agent directory: the pin-name rule has no agent in scope, and the marker is
+    the layout :func:`module_capability_root` writes. Searched from the right so
+    the innermost marker wins for a path that happens to repeat it.
+    """
+    parts = artifact.parts
+    for index in range(len(parts) - 1, 0, -1):
+        if parts[index] == MODULE_COPIES_DIR and parts[index - 1] == CAPABILITIES_DIR:
+            tail = parts[index + 1 :]
+            return PurePosixPath(*tail) if len(tail) > 1 else None
+    return None
 
 
 # Type alias for a (root_name, root_path) pair.
@@ -380,7 +421,12 @@ class CapabilityLoader:
             await self._register_contained_python(path, root_name, delta, seen_tools)
             return
         if trust is RootTrust.VERIFIED:
-            gate = await self._passes_trust_gate(path, pin_name_for_path(path), delta)
+            gate = await self._passes_trust_gate(
+                path,
+                pin_name_for_path(path),
+                delta,
+                require_signature=self._signature_floor(root_name),
+            )
             if not gate.allowed:
                 self._record_tool_outcome(delta, path, root_name, gate.status, gate.detail)
                 return
@@ -404,7 +450,12 @@ class CapabilityLoader:
         except Exception as exc:  # reason: best-effort — record + continue
             await self._record_invalid(path, root_name, delta, exc)
             return
-        gate = await self._passes_trust_gate(path, pin_name_for_path(path), delta)
+        gate = await self._passes_trust_gate(
+            path,
+            pin_name_for_path(path),
+            delta,
+            require_signature=self._signature_floor(root_name),
+        )
         if not gate.allowed:
             self._record_tool_outcome(delta, path, root_name, gate.status, gate.detail)
             return
@@ -465,8 +516,28 @@ class CapabilityLoader:
             self._isolated_runner = runner
         return runner
 
-    async def _passes_trust_gate(self, path: Path, name: str, delta: _ReloadDelta) -> _GateResult:
-        """Fail-closed Sign gate for any agent-writable source (SPEC-033 B2/C2/D1).
+    def _signature_floor(self, root_name: str) -> bool:
+        """Whether a valid signature is mandatory for ``root_name``'s contents.
+
+        Tier-derived everywhere except a VERIFIED (``module:*``) root, where it
+        is unconditional. A module's capability surface is copied into a
+        directory the AGENT can write, and VERIFIED code runs uncontained — no
+        import allowlist, no ArcRun isolation — so the signature is the only
+        thing separating the module an operator installed from anything the
+        agent left in its place.
+
+        ``auto_run_agent_code`` deliberately does not reach it. That toggle
+        admits code the agent WROTE, which is contained when it runs; a module
+        is a distributed artifact with an issuer, so "the operator allowed the
+        agent's own tools" must not also admit unsigned uncontained code.
+        Tampering breaks the signature, and the capability is denied.
+        """
+        return self._require_signature or root_trust(root_name) is RootTrust.VERIFIED
+
+    async def _passes_trust_gate(
+        self, path: Path, name: str, delta: _ReloadDelta, *, require_signature: bool
+    ) -> _GateResult:
+        """Fail-closed Sign gate for any source outside the wheel (SPEC-033 B2/C2/D1).
 
         ``path`` is the signed artifact (a ``.py`` file or a skill's
         ``SKILL.md``); ``name`` is the capability/skill name TOFU keys on.
@@ -474,8 +545,14 @@ class CapabilityLoader:
         :class:`TofuLayer`. Above personal a missing/invalid signature denies
         outright; TOFU governs first-sight (NEW_SIGHTING) and drift (DENY).
         Any evaluation error denies — nothing unsigned or un-adjudicated
-        registers. When no policy is wired (bare library loader) the gate is a
-        no-op, preserving pre-SPEC-033 behaviour.
+        registers.
+
+        ``require_signature`` is the floor for THIS root, resolved by
+        :meth:`_signature_floor`. The no-op escape hatch below stays keyed on the
+        loader's own configuration rather than on that argument: a loader
+        constructed with no trust policy at all is a bare library loader and
+        behaves as it did before SPEC-033. Every agent wires a TOFU layer, so
+        the escape hatch is unreachable in a real load.
 
         Requiring a signature implies a pinned key (SPEC-033 #6): without one,
         arctrust skips key-pinning and accepts any self-consistent signature, so
@@ -484,7 +561,7 @@ class CapabilityLoader:
         """
         if self._tofu is None and not self._require_signature:
             return _GateResult(allowed=True)
-        if self._require_signature and not self._trusted_public_keys:
+        if require_signature and not self._trusted_public_keys:
             await self._deny_capability(path, "signature", "signature required but no pinned key")
             delta.errors.append((str(path), "signature: required but no pinned key — denied"))
             return _GateResult(
@@ -493,7 +570,7 @@ class CapabilityLoader:
         try:
             source_bytes = path.read_bytes()
             signed = self._verify_against_any_key(path, source_bytes)
-            if self._require_signature and not signed:
+            if require_signature and not signed:
                 await self._deny_capability(path, "signature", "missing or invalid signature")
                 delta.errors.append((str(path), "signature: unsigned/invalid — denied"))
                 return _GateResult(
@@ -674,7 +751,12 @@ class CapabilityLoader:
         # folder outside the wheel passes the same Sign/TOFU gate as a .py —
         # agent-writable (UNTRUSTED) and bundle-delivered (VERIFIED) alike.
         if root_trust(root_name) is not RootTrust.TRUSTED:
-            gate = await self._passes_trust_gate(skill_md, pin_name_for_path(skill_md), delta)
+            gate = await self._passes_trust_gate(
+                skill_md,
+                pin_name_for_path(skill_md),
+                delta,
+                require_signature=self._signature_floor(root_name),
+            )
             if not gate.allowed:
                 delta.outcomes.append(
                     CapabilityOutcome(
@@ -896,7 +978,9 @@ def _topological_sort(
 
 
 __all__ = [
+    "CAPABILITIES_DIR",
     "EXTENSION_ROOT_PREFIX",
+    "MODULE_COPIES_DIR",
     "MODULE_ROOT_PREFIX",
     "SKILL_MANIFEST",
     "CapabilityLoader",
@@ -904,6 +988,7 @@ __all__ = [
     "RootTrust",
     "ScanRoot",
     "is_untrusted_root",
+    "module_capability_root",
     "pin_name_for_path",
     "root_trust",
 ]

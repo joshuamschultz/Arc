@@ -203,9 +203,7 @@ def _verify(
     payload_root = bundle_root / PAYLOAD_DIR
     files = _read_declared_files(payload_root, manifest)
     _refuse_undeclared_files(payload_root, declared=set(files))
-    return VerifiedBundle(
-        root=bundle_root, manifest=manifest, files=files, issuer_key=public_key
-    )
+    return VerifiedBundle(root=bundle_root, manifest=manifest, files=files, issuer_key=public_key)
 
 
 def _read_bundle_files(bundle_root: Path) -> tuple[bytes, bytes]:

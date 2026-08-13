@@ -89,13 +89,17 @@ def _chain_events(tmp_path: Path) -> list[dict[str, Any]]:
     if not chain.exists():
         return []
     return [
-        json.loads(line)["event"] for line in chain.read_text(encoding="utf-8").splitlines() if line
+        json.loads(line)["event"]
+        for line in chain.read_text(encoding="utf-8").splitlines()
+        if line
     ]
 
 
 def _chain_event(tmp_path: Path, action: str) -> dict[str, Any]:
     matched = [event for event in _chain_events(tmp_path) if event["action"] == action]
-    assert len(matched) == 1, f"expected one {action}; chain has {[e['action'] for e in _chain_events(tmp_path)]}"
+    assert len(matched) == 1, (
+        f"expected one {action}; chain has {[e['action'] for e in _chain_events(tmp_path)]}"
+    )
     return matched[0]
 
 

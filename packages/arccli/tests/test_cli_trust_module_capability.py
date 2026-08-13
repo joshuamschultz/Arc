@@ -142,12 +142,18 @@ def _write_unsigned_skill(agent_dir: Path, name: str) -> Path:
 
 
 def _install_module(tmp_path: Path, agent_dir: Path) -> Path:
-    """Install a signed module the way ``arc module install`` does; return its dir.
+    """Install a signed module the way ``arc module install`` does.
 
-    Built, verified, materialized, and then trusted — the last step being the
-    per-agent config write that pins the issuer's key and approves the bundled
-    bytes. Skipping it would leave the module gated for a reason unrelated to
-    what this file is testing.
+    Built, verified, materialized, copied per agent, and then trusted — the last
+    step being the per-agent config write that pins the issuer's key and approves
+    the bundled bytes. Skipping it would leave the module gated for a reason
+    unrelated to what this file is testing.
+
+    Returns the PER-AGENT COPY at ``<agent_dir>/capabilities/modules/probe/``,
+    because that is the artifact the loader adjudicates and therefore the one an
+    operator edits and re-signs (REQ-337). The shared deployment tree is reached
+    through :func:`_deployment_dir` where a case needs to prove it was left
+    alone.
     """
     source = tmp_path / "src" / _MODULE
     source.mkdir(parents=True)
@@ -167,13 +173,19 @@ def _install_module(tmp_path: Path, agent_dir: Path) -> Path:
         bundle, tier="personal", trusted_issuers={_ISSUER: keypair.public_key}
     )
     installed = arcbundle.materialize(verified, arc_home() / "modules")
+    copied: Path = arcbundle.copy_capabilities(installed, agent_dir, module=_MODULE)
     arcagent.trust_bundled_capabilities(
         installed,
         config_path=agent_dir / "arcagent.toml",
         issuer_key=verified.issuer_key,
         issuer_did=_ISSUER,
     )
-    return installed
+    return copied
+
+
+def _deployment_dir() -> Path:
+    """The shared, read-only module runtime at the deployment root."""
+    return arc_home() / "modules" / _MODULE
 
 
 def _edit_on_the_box(artifact: Path) -> None:
@@ -278,25 +290,33 @@ def test_approve_re_signs_an_edited_module_capability_and_it_loads_again(
 def test_approve_leaves_the_module_root_read_only_afterwards(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Borrowed write permission is handed back.
+    """One agent's re-sign does not touch the shared deployment tree at all.
 
-    The deployment root's modes are a real control against an accidental
-    in-place edit. A re-sign that left the directory writable would quietly
-    retire it for every module on the box.
+    The deployment root's ``0444`` inside ``0555`` is a real control against an
+    accidental in-place edit, and it is shared by every agent on the box. Approve
+    resolves the artifact the loader adjudicates — this agent's own copy — so the
+    original keeps both its modes and its bytes. A command that reached through
+    to the shared tree would re-sign one file on behalf of every agent, and
+    retire the hardening for all of them.
     """
     team_root = _team(tmp_path, monkeypatch)
     agent_dir = _build_agent(team_root, "olivia", tier="enterprise")
-    installed = _install_module(tmp_path, agent_dir)
-    sidecar = arcagent.sidecar_path(installed / "capabilities.py")
-    dir_mode = stat.S_IMODE(installed.stat().st_mode)
-    sidecar_mode = stat.S_IMODE(sidecar.stat().st_mode)
-    assert not dir_mode & stat.S_IWUSR, "the module root was not hardened; nothing to hand back"
-    _edit_on_the_box(installed / "capabilities.py")
+    copied = _install_module(tmp_path, agent_dir)
+    shared = _deployment_dir()
+    shared_sidecar = arcagent.sidecar_path(shared / "capabilities.py")
+    dir_mode = stat.S_IMODE(shared.stat().st_mode)
+    shared_bytes = (shared / "capabilities.py").read_bytes()
+    shared_signature = shared_sidecar.read_bytes()
+    assert not dir_mode & stat.S_IWUSR, "the module root was not hardened; nothing to protect"
+    _edit_on_the_box(copied / "capabilities.py")
 
     trust_handler(["approve", _PIN_NAME])
 
-    assert stat.S_IMODE(installed.stat().st_mode) == dir_mode
-    assert stat.S_IMODE(sidecar.stat().st_mode) == sidecar_mode
+    assert stat.S_IMODE(shared.stat().st_mode) == dir_mode
+    assert (shared / "capabilities.py").read_bytes() == shared_bytes
+    assert shared_sidecar.read_bytes() == shared_signature, (
+        "approve re-signed the SHARED module original on one agent's behalf"
+    )
 
 
 # --------------------------------------------------------------------------

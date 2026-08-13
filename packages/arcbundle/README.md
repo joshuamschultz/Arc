@@ -44,7 +44,7 @@ Two destinations, two trust properties, no overlap:
 | What | Where | Who may write it |
 |------|-------|------------------|
 | Runtime (`_runtime.py` and its support) | `${ARC_CONFIG_DIR:-~/.arc}/modules/<name>/` | The operator install only — `0444` in `0555`, outside the tool fence |
-| Capability surface (`capabilities.py`, `skills/`) | `<agent_dir>/capabilities/<name>/` | The agent's own untrusted root, adjudicated by the loader unchanged |
+| Capability surface (`capabilities.py`, `skills/`) | `<agent_dir>/capabilities/modules/<name>/` | The agent — which is why the loader adjudicates it as verified and requires a valid signature at every tier |
 
 `capability_copy` copies only the second, per agent, and normalizes the modes on
 the way: a copy that inherited the deployment tree's read-only bits could

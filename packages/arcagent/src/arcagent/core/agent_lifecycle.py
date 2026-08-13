@@ -263,6 +263,7 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
     # the arcui inventory seam so a UI read and a real load scan the same roots.
     from arcagent.capabilities.inventory import (
         append_capability_scan_roots,
+        append_module_scan_roots,
         global_capabilities_root,
     )
 
@@ -271,17 +272,20 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
     append_capability_scan_roots(scan_roots, "agent", agent_root / "capabilities")
     append_capability_scan_roots(scan_roots, "workspace", workspace / "capabilities")
 
-    # `module:*` is its own trust class (RootTrust.VERIFIED): every capability
-    # under it passes the same signature + TOFU gate an agent-writable root does,
-    # because `module_root()` is a deployment directory an install writes into
-    # rather than wheel content. It is NOT isolated — the AST import allowlist
-    # and ArcRun-isolated execution exist to contain code the model wrote, and
-    # applying them to first-party module code made 17 of 18 modules register
-    # zero tools (`@hook` / `@background_task` / `@capability` never register and
-    # the stdlib a module legitimately imports is blocked).
-    modules_dir = module_root()
-    for mod_name in active_modules(agent._config):
-        scan_roots.append((f"module:{mod_name}", modules_dir / mod_name))
+    # A module's RUNTIME stays once at the deployment root (configured above);
+    # its CAPABILITY SURFACE is the per-agent copy `arc module install` writes to
+    # `<agent_root>/capabilities/modules/<name>/`, and that copy is what loads
+    # (REQ-337). One load path, not two: a skill or tool that drifts for this
+    # agent must not change what every other agent on the box is told to do.
+    #
+    # `module:*` is its own trust class (RootTrust.VERIFIED): a valid signature
+    # is mandatory at EVERY tier, because the copy sits in a directory the agent
+    # can write. It is NOT isolated — the AST import allowlist and ArcRun
+    # isolation exist to contain code the model wrote, and applying them to
+    # module code made 17 of 18 modules register zero tools (`@hook` /
+    # `@background_task` / `@capability` never register and the stdlib a module
+    # legitimately imports is blocked).
+    append_module_scan_roots(scan_roots, agent_root, active_modules(agent._config))
 
     # SPEC-033 Sign gate: re-verify signatures at load and adjudicate via TOFU.
     # Signature is the floor above personal; personal may relax (auto_run). The

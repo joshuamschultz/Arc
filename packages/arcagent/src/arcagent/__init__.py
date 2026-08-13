@@ -20,6 +20,7 @@ from arcagent.capabilities.capability_signing import sign as sign_capability
 from arcagent.capabilities.capability_signing import trust_bundled_capabilities
 from arcagent.capabilities.inventory import (
     GatedItem,
+    append_module_scan_roots,
     collect_agent_capability_inventory,
     global_capabilities_root,
     list_gated,
@@ -158,6 +159,7 @@ __all__ = [
     "ToolError",
     "ToolSpec",
     "ToolVetoedError",
+    "append_module_scan_roots",
     "audit_tier_relaxations",
     "build_prompt_resolver",
     "builtin_capabilities_path",

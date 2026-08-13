@@ -235,13 +235,16 @@ def _arc_dir(tmp_path: Path) -> Path:
 def _installed_connectors_module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Install the ``connectors`` module into this test's deployment root.
 
-    SPEC-066 REQ-333: discovery reads ``${ARC_CONFIG_DIR}/modules``, so a module
-    is present because an operator installed it — never because it shipped in
-    the wheel. Built, verified, and materialized rather than copied: a
-    ``module:*`` root is adjudicated by per-file signature, and a copied tree
-    carries no ``.arcsig`` sidecars, so nothing under it would load. Pinning
-    ``ARC_CONFIG_DIR`` at this test's own ``arc/`` keeps the scan off the
-    machine's real ``~/.arc``.
+    SPEC-066 REQ-333/337: discovery reads ``${ARC_CONFIG_DIR}/modules``, so a
+    module is present because an operator installed it — never because it
+    shipped in the wheel. All four calls ``arc module install`` makes run here:
+    build, verify, materialize the runtime at the deployment root, and copy the
+    capability surface into the AGENT's own capabilities root, which is the only
+    place the loader reads a module's tools from. Built and verified rather than
+    copied by hand: a ``module:*`` root is adjudicated by per-file signature, and
+    a hand-copied tree carries no ``.arcsig`` sidecars, so nothing under it would
+    load. Pinning ``ARC_CONFIG_DIR`` at this test's own ``arc/`` keeps the scan
+    off the machine's real ``~/.arc``.
     """
     arc_dir = _arc_dir(tmp_path)
     monkeypatch.setenv("ARC_CONFIG_DIR", str(arc_dir))
@@ -256,7 +259,8 @@ def _installed_connectors_module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     verified = arcbundle.verify_bundle(
         bundle, tier="personal", trusted_issuers={_ISSUER: _ISSUER_KEYPAIR.public_key}
     )
-    arcbundle.materialize(verified, arc_dir / "modules")
+    installed = arcbundle.materialize(verified, arc_dir / "modules")
+    arcbundle.copy_capabilities(installed, _agent_home(tmp_path), module="connectors")
 
 
 def _connections(arc_dir: Path) -> ConnectionRegistry:

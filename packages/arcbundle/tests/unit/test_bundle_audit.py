@@ -117,14 +117,10 @@ def test_dev_issuer_at_federal_emits_signature_invalid(
     """The dev-key refusal is a security decision, so it has to be auditable as
     one rather than surfacing only as a CLI message."""
     sink, path, _ = chain
-    bundle = make_bundle(
-        tmp_path / "browser.arcbundle", module="browser", issuer="did:arc:dev"
-    )
+    bundle = make_bundle(tmp_path / "browser.arcbundle", module="browser", issuer="did:arc:dev")
 
     with pytest.raises(BundleSignatureError):
-        verify_bundle(
-            bundle.path, tier="federal", trusted_issuers=bundle.trusted(), sink=sink
-        )
+        verify_bundle(bundle.path, tier="federal", trusted_issuers=bundle.trusted(), sink=sink)
 
     assert _only(path, "module.signature_invalid")["extra"]["issuer"] == "did:arc:dev"
 
@@ -137,9 +133,7 @@ def test_tampered_payload_emits_content_hash_mismatch(
     bundle.payload_file("tools/fetch.py").write_bytes(b"# swapped after signing\n")
 
     with pytest.raises(BundleContentHashError):
-        verify_bundle(
-            bundle.path, tier="personal", trusted_issuers=bundle.trusted(), sink=sink
-        )
+        verify_bundle(bundle.path, tier="personal", trusted_issuers=bundle.trusted(), sink=sink)
 
     assert _actions(path) == ["module.content_hash_mismatch"]
     event = _only(path, "module.content_hash_mismatch")
