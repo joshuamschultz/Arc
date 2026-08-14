@@ -1,105 +1,99 @@
-# DGX deploy findings — 2026-08-13
+# DGX deploy findings
 
-> **Redeploy 2026-08-14:** items 1 and 2 are FIXED in the repo and the DGX now
-> runs the SHIPPED `deploy/systemd/arc.service` verbatim (`diff` vs repo: 0
-> lines) — no hand patches remain. Verified after: service active, health 200, 6
-> agents, 18 modules per agent, 3 workflows visible, 8/8 audit chains verify, 0
-> absent-module warnings, 0 tracebacks. `arc install` ran as `ExecStartPre` and
-> was correctly idempotent ("nothing to build — every enabled module is already
-> installed"). The home migration re-ran as a no-op (`already_migrated: True`).
-> Items 3-6 remain open.
+## Status — 2026-08-14
 
-Problems found deploying `73eda1d9` (Arc-home split) to spark-0290. Fix these
-locally; the DGX was patched by hand where noted, and a hand patch does not reach
-the repo.
+The fleet is live from the shipped `main` with **no hand patches in the code**:
+service active, health 200, six agents, 18 modules each, three workflows, 8/8
+audit chains verifying — and, for the first time, **every one of the six agents
+verified completing a real chat turn** (`ARC-LIVE-OK`, including `simple_olivia`
+on DeepSeek).
 
-## 1. `arc_team()` points at the HIDDEN home — contradicts the agreed layout
+Items 1, 2, 4 and 7 are closed. Items 3, 5 and 6 remain open.
 
-`arctrust.paths.arc_team()` resolves to `~/.arc/team`. The agreed layout is agent
-data in the **non-hidden** `~/arc/team/` — "all files from running agent, trace,
-memory, schedule, etc are in non hidden arc folder (arc/team/...)".
+---
 
-The shipped `deploy/systemd/arc.service` inherits this and passes
-`--team-root %h/.arc/team`, which on a real box is EMPTY — the 6 agents live at
-`~/arc/team`. Starting from the shipped unit would load zero agents.
+## The deploy that looked healthy and answered nothing
 
-*DGX patched by hand:* unit points at `%h/arc/team`.
-**Fix:** decide the canonical location, make `arc_team()` and the shipped unit
-agree, and migrate if it is to move.
+Two deploys in a row were declared healthy on: service active, `/health` 200,
+zero absent-module warnings, zero tracebacks, and a green `arc up --check`. Every
+message still answered `[agent-error] the run failed`.
 
-## 2. `workflows` is missing from the home migration — data goes invisible
+Cause: each agent config carried `operator_key_dir = "~/.arc/operator"` — the
+pre-split path, written by an old scaffold. The home migration moved the key to
+`state/operator/`, so all six agents named an empty directory and
+`ArcAgent.startup` fail-closed on the missing audit authority. The guard behaved
+exactly right; nothing was checking it before the first message.
 
-`arctrust.home_migration._LAYOUT` carries `operator`, `identity`, `trust`,
-`store`, `nats`, `bundles`, `extensions`, `capabilities`, `blueprints`, `modules`
-— but **not `workflows`**. After migrating, the code reads
-`<home>/state/workflows` while the existing bundles sit at `<home>/workflows`.
+**Everything green was measuring something other than what a user does.** Health
+checks the process. Preflight checked the deployment default key. Module warnings
+check the filesystem. Not one of them ran a turn.
 
-On the DGX that hid 3 live workflows: `client-update-workflow`,
-`client-update-workflow-v3`, `seo`. Silent — nothing errors, the workflows simply
-stop existing as far as the runner is concerned.
+### Fixed
 
-*DGX patched by hand:* `mv ~/.arc/workflows ~/.arc/state/workflows`.
-**Fix:** add `"workflows": "workflows_dir"` to `_LAYOUT`, and add a test that
-every accessor in `paths.py` naming a state subdirectory has a `_LAYOUT` entry —
-this is the second instance (extensions was the first) and a list that must be
-kept in sync by hand will drift again.
+- **`arc up --check` now verifies the key each agent actually loads**, resolved
+  through `arcagent.operator_key_path` — the same function `ArcAgent.startup`
+  calls — and names the offending agents plus the remedy. Validated on the live
+  box: it FAILED with all six agents named, and passed only after the configs
+  were corrected.
+- **`tests/journeys/`** — 19 tests that drive what people actually do against a
+  real deployment with only the LLM wire scripted. Mutation-checked: resolving
+  the operator key at its pre-split path fails three of them.
+- **Live data repair**: `operator_key_dir` cleared in all six agent configs so
+  the one resolver owns the path. Backups in `~/arc-toml-backup/`.
 
-## 3. `evaluations/` — 12 failures, and it pollutes other suites
+**A config that spells out a default is a landmine.** It cannot follow the
+resolver when the layout changes, and nothing reports the drift. The current
+scaffold writes `operator_key_dir = ""`; these configs predated it.
 
-- Its scratch agent needs modules installed at the deployment module root and
-  nothing in that suite installs them, so preflight fails
-  `memory_module_configured`. SPEC-066 behavior, not a regression, but it means
-  the eval suite has been broken since modules left the wheel.
-- It has no `ARC_CONFIG_DIR` isolation fixture, so running it in the same session
-  makes 3 arccli tests fail that pass in isolation
-  (`test_cli_init_team.py` ×2, `test_identity_cmd.py::test_init_honors_dir_flag`).
+---
 
-**Fix:** give `evaluations/` the same autouse isolation fixture arcagent/arccli
-now have, and have its harness install the modules its agent enables.
+## Closed
 
-## 4. Cannot drive a chat turn over `/ws/chat` from a script
+**1. `arc_team()` pointed at the hidden home.** Fixed; the shipped systemd unit
+now installs verbatim (`diff` vs repo: 0 lines).
 
-Repeated attempts to dispatch a turn over the WebSocket connect and authenticate
-successfully, then close with no run dispatched and nothing in the journal. The
-frame shape was taken from the real client
-(`packages/arcui/web/src/hooks/use-chat.ts:231` — `{type:'message', text,
-client_seq}`) and still did not dispatch.
+**2. `workflows` missing from the home migration.** Fixed, plus a test that
+derives the accessor list from `paths.py` so the two lists cannot drift again.
+Three live workflows were invisible.
 
-Either the protocol needs another step the client performs elsewhere, or there is
-a real defect in the non-browser path. **Unresolved — the fleet's ability to
-complete a turn is therefore UNVERIFIED by me.** Worth an end-to-end test that
-drives `/ws/chat` headlessly, since today nothing does.
+**4. Could not drive a chat turn from a script.** The protocol needs an auth
+frame (`{"token": …}`) and its `ready` reply *before* the message frame; without
+it the socket closes silently. `receive_json` also blocks with no deadline, so a
+dead pipe hung the run instead of reporting. Both are handled in
+`tests/journeys/`, and `/tmp/turn.py` on the box drives a turn on demand.
 
-## 5. Deep Olivia's model bridge pointed at a dead host
+**7. `arc_team()` ignored `ARC_CONFIG_DIR`.** Introduced while fixing item 1 and
+caught by the journey work: an isolated test resolved the developer's *real*
+`~/arc/team` and could have created agents beside running ones.
 
-`~/.arc/bin/arc-litellm-forward.py` had `TARGET = "promaxgb10-4b18:4000"`, a host
-no longer in the tailnet. Its systemd unit reported `active` because the listener
-binds fine — it only fails on CONNECT, so it looked healthy while every
-`simple_olivia` turn died with `RemoteProtocolError`.
+---
 
-*DGX patched by hand:* `TARGET = "inference-1:4000"`; verified `deepseek-v4`
-returns real completions through the loopback.
-**Fix:** the forwarder should fail its healthcheck when it cannot reach its
-target, rather than reporting active. A bridge that binds but cannot forward is
-the same "looks healthy, does nothing" failure mode as a degraded fleet.
+## Open
 
-## 6. Deployment hygiene
+**3. `evaluations/` — 12 failures, and it pollutes other suites.** Its scratch
+agent needs modules installed at the deployment module root and nothing in the
+suite installs them; it also has no `ARC_CONFIG_DIR` isolation fixture, so it
+makes three arccli tests fail that pass alone. Give it the autouse isolation
+fixture arcagent/arccli now have, and have its harness install the modules its
+agent enables.
 
-- Four stray 0-byte audit chains (`parity-agent`, `race-agent`,
-  `delivery-agent`, `arcui`) were left in the real `~/.arc` by unisolated tests.
-  Now under `state/store/worm/` after migration. Harmless, deletable.
-- `sales_agent` enabled `[modules.memory_acl]`, whose source is an empty dir
-  (only `__pycache__`). Removed from that agent's config by hand. The bundler
-  correctly refuses it, but a stale config entry should be easier to spot —
-  `arc up --check` does now report it as DEGRADED.
+**5. The model bridge reports healthy while unable to forward.**
+`~/.arc/bin/arc-litellm-forward.py` binds fine and only fails on CONNECT, so
+systemd calls it active while every `simple_olivia` turn dies. It should fail its
+healthcheck when it cannot reach its target. (Target is currently correct, and
+`simple_olivia` answers.)
 
-## What went right, and should not regress
+**6. Deployment hygiene.** Four stray 0-byte audit chains (`parity-agent`,
+`race-agent`, `delivery-agent`, `arcui`) left by unisolated tests — harmless,
+deletable. `witness_medium_path` still names the pre-split `~/.arc/witness/…` in
+every config; unused at personal tier, but the same latent defect as
+`operator_key_dir` and it will bite at federal.
 
-`arc up --check` refused to start a fleet where all 6 agents were missing all 17
-modules, and named every gap with its exact remedy. Without it the fleet would
-have come up answering chat with no scheduler, no tasks, and no memory. The
-`ExecStartPre=arc install` line in the shipped unit now makes that state
-unreachable on restart.
+---
 
-All 7 operator-signed audit chains still verified after the home migration —
-the acceptance bar for the whole reorg.
+## What to keep
+
+`arc up --check` refused to start a fleet missing all 17 modules and named every
+gap with its remedy, and it now refuses one whose agents cannot sign. That is the
+right shape: **preflight must check the thing the agent will actually load, not
+the thing the deployment happens to have.** The distinction is the whole bug.
