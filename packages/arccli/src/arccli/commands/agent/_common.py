@@ -156,7 +156,7 @@ signing_algorithm = "{signing_algorithm}"    # ed25519 | ecdsa-p256 (federal for
 custody = "{custody}"           # in_process | vault_transit (enterprise default vault_transit)
 notary_keystore = ""             # vault_transit keystore (empty = <operator_key_dir>/notary)
 require_fips = {require_fips}             # federal floor: fail closed unless FIPS-validated crypto
-witness_medium_path = "~/.arc/state/witness/anchor.log"  # federal witness (outside the key dir)
+witness_medium_path = ""         # federal witness (empty = the deployment witness dir)
 witness_mode = "offline"         # offline | transparency_log
 witness_log_url = ""             # transparency-log endpoint when witness_mode = transparency_log
 

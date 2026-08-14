@@ -492,13 +492,17 @@ class SecurityConfig(BaseModel):
     # rollback past the last anchor is detectable even by a holder of the
     # operator key. Other tiers ignore these.
     witness_medium_path: str = Field(
-        default="~/.arc/witness/anchor.log",
+        default="",
         description=(
             "Append-only medium the federal witness writes operator-signed heads "
             "to. MUST live outside operator_key_dir — the operator-key holder must "
             "not also own the witness, or the rollback check is illusory. Federal "
             "deployments SHOULD point this at a separate host or removable WORM "
-            "medium (a deployment concern, like the vault seam). SPEC-053 REQ-009."
+            "medium (a deployment concern, like the vault seam). SPEC-053 REQ-009. "
+            "Empty resolves arctrust.paths.default_witness_medium_path(). A "
+            "literal default here named the pre-split location and ignored "
+            "ARC_CONFIG_DIR — the same defect that pointed a live fleet's "
+            "operator_key_dir at an empty directory."
         ),
     )
     witness_mode: str = Field(

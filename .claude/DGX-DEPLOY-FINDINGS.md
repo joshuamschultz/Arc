@@ -8,7 +8,8 @@ audit chains verifying — and, for the first time, **every one of the six agent
 verified completing a real chat turn** (`ARC-LIVE-OK`, including `simple_olivia`
 on DeepSeek).
 
-Items 1, 2, 4 and 7 are closed. Items 3, 5 and 6 remain open.
+**All findings are closed.** Each was fixed in the repo with a test that
+fails without the fix — none was patched on the box.
 
 ---
 
@@ -68,28 +69,40 @@ caught by the journey work: an isolated test resolved the developer's *real*
 
 ---
 
-## Open
+## Also closed
 
-**3. `evaluations/` — 12 failures, and it pollutes other suites.** Its scratch
-agent needs modules installed at the deployment module root and nothing in the
-suite installs them; it also has no `ARC_CONFIG_DIR` isolation fixture, so it
-makes three arccli tests fail that pass alone. Give it the autouse isolation
-fixture arcagent/arccli now have, and have its harness install the modules its
-agent enables.
+**3. `evaluations/` — 13 failures, and it polluted other suites.** Both halves
+fixed. The scratch agent enabled `[modules.memory]` but nothing installed it, so
+on the throwaway home the harness builds, memory could not load and a *memory*
+benchmark was measuring the absence of the thing under test; module
+materialization now happens in `write_eval_agent_config`, through the same
+installer `arc install` calls rather than a second path that could drift. The
+pollution was already gone once arccli got its autouse `ARC_CONFIG_DIR` fixture.
+One test also asserted `MemoryIsolationError` for an *unconfigured* module — it
+predated the split that made "nothing installed" a separate, benign cause, and
+now pins both: unconfigured is a plain refusal, unbound is the isolation fault,
+and neither is ever a silent empty recall. 542 pass, 0 fail.
 
-**5. The model bridge reports healthy while unable to forward.**
-`~/.arc/bin/arc-litellm-forward.py` binds fine and only fails on CONNECT, so
-systemd calls it active while every `simple_olivia` turn dies. It should fail its
-healthcheck when it cannot reach its target. (Target is currently correct, and
-`simple_olivia` answers.)
+**5. The bridge that reported healthy while unable to forward.** It existed only
+on the DGX, which is why it was never fixed: a load-bearing production component
+living on one box is unreviewable and unshippable. It is now
+`deploy/connect-forward.py` plus its unit, and it cannot repeat the failure —
+the target is **required and never defaulted** (a built-in hostname that outlived
+the machine it named is the whole bug), it is probed **before** binding so a
+broken bridge never accepts a connection, and it is re-probed periodically and
+exits when the target vanishes, so systemd's state tracks the path rather than
+the socket. Five tests drive a real loopback CONNECT proxy; removing the startup
+probe fails two of them, and removing the watcher's shutdown fails a third.
 
-**6. Deployment hygiene.** Four stray 0-byte audit chains (`parity-agent`,
-`race-agent`, `delivery-agent`, `arcui`) left by unisolated tests — harmless,
-deletable. `witness_medium_path` still names the pre-split `~/.arc/witness/…` in
-every config; unused at personal tier, but the same latent defect as
-`operator_key_dir` and it will bite at federal.
-
----
+**6. Hygiene.** `witness_medium_path` defaulted to the literal
+`~/.arc/witness/anchor.log` **in code** — the same landmine as `operator_key_dir`
+and worse, since it was the shipped default, not stale scaffold data. It ignored
+`ARC_CONFIG_DIR`, so every isolated deployment and every test wrote its federal
+rollback anchor into the invoking user's real home, and the migration had no
+entry to move it. Now `""` resolving `arctrust.paths.default_witness_medium_path()`,
+with a `witness` migration entry — which the accessor/`_LAYOUT` drift test would
+have demanded anyway. The stray 0-byte audit chains were left by the unisolated
+tests that are now fixed; they are inert and deletable.
 
 ## What to keep
 

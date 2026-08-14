@@ -271,10 +271,33 @@ def test_observe_recall_returns_empty_when_nothing_was_injected(bound_memory_sta
     assert observe_recall("a turn no recall ran for") == ""
 
 
-def test_observe_recall_refuses_an_unbound_read() -> None:
-    """Loud, not empty: a failed state read must never look like an empty recall."""
+def test_observe_recall_refuses_a_read_with_no_agent_bound(bound_memory_state: Any) -> None:
+    """Loud, not empty: a failed state read must never look like an empty recall.
+
+    Memory IS configured here and the turn simply has no DID bound — the genuine
+    isolation fault, since handing back a state the running turn cannot be
+    matched to is how one agent's memory reaches another's prompt. Reported empty
+    instead, it would score as a retrieval miss on every question.
+    """
+    from arcagent.modules.memory import _runtime
+
+    _runtime._current_did.set("")
+    with pytest.raises(_runtime.MemoryIsolationError):
+        observe_recall("no agent is bound to this task")
+
+
+def test_observe_recall_names_an_unconfigured_module_as_such() -> None:
+    """Nothing configured for ANY agent is "not installed", not an isolation fault.
+
+    Since modules left the wheel this is the ordinary state of a box where no one
+    ran ``arc module install memory``, and it must not raise
+    ``MemoryIsolationError``: that sends the reader after a cross-agent identity
+    bug and spends the one audit channel that exists to catch real memory bleed.
+    It must still refuse loudly rather than return an empty recall.
+    """
     from arcagent.modules.memory import _runtime
 
     _runtime.reset()
-    with pytest.raises(_runtime.MemoryIsolationError):
-        observe_recall("no agent is bound to this task")
+    with pytest.raises(RuntimeError, match=r"not installed|not enabled") as exc_info:
+        observe_recall("no module is configured at all")
+    assert not isinstance(exc_info.value, _runtime.MemoryIsolationError)

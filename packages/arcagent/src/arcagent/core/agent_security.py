@@ -116,11 +116,24 @@ def resolve_transit(_agent: Any, sec: Any) -> FileNotaryTransit:
     return transit
 
 
+def witness_medium_path(sec: Any) -> Path:
+    """The witness anchor medium a security config names — the ONE spelling.
+
+    Unset resolves the deployment location, so the medium follows a relocated
+    Arc home. A spelled-out default named the pre-split path and ignored
+    ``ARC_CONFIG_DIR``, which is the defect that left a live fleet's
+    ``operator_key_dir`` pointing at an empty directory.
+    """
+    from arctrust.paths import default_witness_medium_path
+
+    configured = sec.witness_medium_path
+    return Path(configured).expanduser() if configured else default_witness_medium_path()
+
+
 def build_witness(agent: Any) -> WitnessAnchor | None:
     if agent._config.security.tier != "federal":
         return None
-    medium = Path(agent._config.security.witness_medium_path).expanduser()
-    return AppendOnlyMediumWitness(medium)
+    return AppendOnlyMediumWitness(witness_medium_path(agent._config.security))
 
 
 def trace_checkpoint_chain_path(agent: Any) -> Path:

@@ -1,0 +1,24 @@
+[Unit]
+# Bridges a host that is only reachable through a CONNECT proxy (tailscaled in
+# userspace mode) to a local TCP port an arcllm base_url can name.
+Description=Arc — loopback bridge to a CONNECT-proxied model host
+After=network-online.target tailscaled.service
+Wants=tailscaled.service
+
+[Service]
+Type=simple
+# ARC_FORWARD_TARGET is required and has no default on purpose: a built-in host
+# that outlives the machine it named is how this bridge reported healthy for
+# weeks while every request through it failed.
+Environment=ARC_FORWARD_TARGET=
+Environment=ARC_FORWARD_LISTEN=127.0.0.1:4000
+Environment=ARC_FORWARD_PROXY=127.0.0.1:1055
+EnvironmentFile=-%h/.arc/config/arc.env
+ExecStart=/usr/bin/python3 %h/arc/deploy/connect-forward.py
+# The process exits when the target is unreachable, so this restart loop is what
+# makes an unreachable target visible instead of a green unit forwarding nothing.
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

@@ -66,6 +66,7 @@ _LAYOUT: dict[str, str] = {
     "skills": "skills_dir",
     "gateway": "gateway_dir",
     "audit": "audit_dir",
+    "witness": "witness_dir",
     "users.json": "users_file",
     # runtime/ — replaced wholesale on update
     "modules": "module_root",

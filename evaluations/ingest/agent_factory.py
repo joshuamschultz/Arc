@@ -201,7 +201,36 @@ def write_eval_agent_config(*, question_id: str, run_dir: Path, tier: str = "per
     (agent_dir / "arcrun.toml").write_text(ARCRUN_EVAL_CONFIG, encoding="utf-8")
 
     _scaffold_workspace(agent_dir, eval_agent_name(question_id))
+    install_enabled_modules(config_path)
     return config_path
+
+
+def install_enabled_modules(config_path: Path) -> list[str]:
+    """Materialize every module this agent's config enables; return their names.
+
+    Modules ship as signed bundles installed at the *deployment* module root, not
+    inside the wheel, so an agent config that merely enables one gets nothing on a
+    home where ``arc install`` has never run — and this harness deliberately
+    builds each agent in a throwaway home. The agent then starts fine and simply
+    has no memory, which for a memory benchmark means measuring the absence of
+    the thing under test.
+
+    Uses the installer ``arc install`` itself calls, so the eval agent is
+    provisioned by the same code path as a real deployment rather than a second
+    one that could drift from it.
+    """
+    import arcagent
+    from arccli.commands.module import install_module_for_agent
+
+    agent_dir = config_path.parent
+    config = arcagent.load_config(config_path)
+    installed: list[str] = []
+    for name, entry in config.modules.items():
+        if not entry.enabled:
+            continue
+        install_module_for_agent(name, agent_root=agent_dir, agent_id=config.agent.name)
+        installed.append(name)
+    return installed
 
 
 def pin_arcstore_data_dir(run_dir: Path) -> Path:
@@ -239,6 +268,7 @@ __all__ = [
     "assert_workspace_contained",
     "build_eval_agent",
     "eval_agent_name",
+    "install_enabled_modules",
     "pin_arcstore_data_dir",
     "render_eval_agent_config",
     "write_eval_agent_config",

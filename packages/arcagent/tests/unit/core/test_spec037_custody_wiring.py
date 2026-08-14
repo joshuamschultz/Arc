@@ -93,6 +93,47 @@ def test_default_notary_keystore_lands_in_the_arc_home_not_the_cwd(
     assert not (tmp_path / "notary").exists(), "keystore was created relative to the cwd"
 
 
+def test_default_witness_medium_follows_the_arc_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unset witness medium must resolve THIS deployment, not a literal path.
+
+    The default was the string ``~/.arc/witness/anchor.log``, which ignores
+    ``ARC_CONFIG_DIR`` entirely: an isolated deployment — and every test — wrote
+    its federal rollback anchor into the invoking user's real home, and the
+    migration had no entry to move it. Federal's rollback check is only
+    meaningful if the anchor is where that deployment actually reads it.
+    """
+    from arctrust.paths import default_witness_medium_path
+
+    from arcagent.core.agent_security import witness_medium_path
+
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc-home"))
+    sec = SecurityConfig()
+    assert sec.witness_medium_path == ""
+
+    resolved = witness_medium_path(sec)
+    assert resolved == default_witness_medium_path()
+    assert tmp_path in resolved.parents, f"{resolved} escaped the isolated home"
+
+
+def test_an_explicit_witness_medium_still_wins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Federal operators point the anchor at separate media — that must still work.
+
+    Without this, resolving the default correctly could just as well be a
+    hard-wired path that ignores the operator's configuration.
+    """
+    from arcagent.core.agent_security import witness_medium_path
+
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc-home"))
+    sec = SecurityConfig()
+    sec.witness_medium_path = str(tmp_path / "worm-media" / "anchor.log")
+
+    assert witness_medium_path(sec) == tmp_path / "worm-media" / "anchor.log"
+
+
 class TestF1VaultTransitWiring:
     async def test_operator_seed_never_in_agent_process(self, tmp_path: Path) -> None:
         from arcagent.core.agent import ArcAgent

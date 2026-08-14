@@ -205,6 +205,21 @@ def default_operator_key_path(base: Base = None) -> Path:
     return operator_dir(base) / OPERATOR_KEY_FILENAME
 
 
+def witness_dir(base: Base = None) -> Path:
+    """Return the federal witness medium's dir: ``<arc_state>/witness``.
+
+    Deliberately NOT under :func:`operator_dir`: the witness exists to make a
+    rollback detectable *by someone holding the operator key*, so an operator who
+    also owns the witness makes the check illusory (SPEC-053 REQ-019).
+    """
+    return arc_state(base) / "witness"
+
+
+def default_witness_medium_path(base: Base = None) -> Path:
+    """Return the witness anchor log: ``<arc_state>/witness/anchor.log``."""
+    return witness_dir(base) / "anchor.log"
+
+
 def identity_dir(base: Base = None) -> Path:
     """Return the signing-authority key dir: ``<arc_state>/identity``."""
     return arc_state(base) / "identity"
@@ -390,6 +405,7 @@ __all__ = [
     "capabilities_dir",
     "config_file",
     "default_operator_key_path",
+    "default_witness_medium_path",
     "dotenv_file",
     "env_file",
     "gateway_dir",
@@ -404,5 +420,6 @@ __all__ = [
     "trust_dir",
     "ui_token_file",
     "users_file",
+    "witness_dir",
     "workflows_dir",
 ]
