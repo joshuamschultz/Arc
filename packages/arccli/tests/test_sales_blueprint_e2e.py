@@ -55,18 +55,18 @@ def test_sales_blueprint_materializes_full_surface(tmp_path: Path) -> None:
     assert fact.is_file() and Path(f"{fact}.arcsig").is_file()
     assert "deal" in fact.read_text().lower()
 
-    # signed CRM capability at the per-agent capabilities root
-    crm = agent / "capabilities" / "crm.py"
-    assert crm.is_file() and Path(f"{crm}.arcsig").is_file()
-    assert "crm_log_deal" in crm.read_text()
-
-    # three signed sales skills at the per-agent skills root
+    # four signed sales skills at the per-agent skills root. The CRM is one of
+    # them, not a capability: a capability at this root runs CONTAINED, with no
+    # arcagent package and no workspace mount, so card-writing Python here could
+    # never run (see tests/architecture/test_blueprint_capabilities_can_run.py).
     skills_root = agent / "capabilities" / "skills"
     assert {p.name for p in skills_root.iterdir()} == {
+        "crm",
         "pre-call-brief",
         "deal-review",
         "follow-up-sweep",
     }
+    assert "crm/deals" in (skills_root / "crm" / "SKILL.md").read_text()
     for skill in skills_root.iterdir():
         assert (skill / "SKILL.md").is_file()
         assert (skill / f"SKILL.md{'.arcsig'}").is_file()
