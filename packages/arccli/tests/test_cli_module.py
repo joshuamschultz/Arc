@@ -174,14 +174,44 @@ def test_bundle_refuses_an_unknown_module(deployment: Path) -> None:
     assert not (_bundle_store(deployment) / "nonexistent.arcbundle").exists()
 
 
-def test_bundle_refuses_to_silently_replace_an_existing_bundle(deployment: Path) -> None:
-    """A half-overwritten bundle would verify against neither manifest."""
-    _run("bundle", "browser")
-    with pytest.raises(SystemExit):
-        _run("bundle", "browser")
+def test_bundle_skips_an_existing_bundle_instead_of_aborting_the_batch(deployment: Path) -> None:
+    """An existing bundle is left untouched and the command carries on.
 
-    _run("bundle", "browser", "--force")  # explicit replacement is fine
-    assert (_bundle_store(deployment) / "browser.arcbundle" / "manifest.json").is_file()
+    The invariant that matters is unchanged — a bundle is never silently
+    half-overwritten, which would leave it verifying against neither manifest.
+    What changed is the cost of hitting it: aborting the whole invocation made
+    re-running after a partial failure impossible, because the operator had to
+    work out by hand which names had already succeeded. The bundle bytes are
+    compared before and after to prove "skipped" really means untouched.
+    """
+    _run("bundle", "browser")
+    bundle = _bundle_store(deployment) / "browser.arcbundle"
+    before = (bundle / "manifest.json").read_bytes()
+
+    _run("bundle", "browser")  # no SystemExit: skipped, not refused
+
+    assert (bundle / "manifest.json").read_bytes() == before, "the skip rewrote the bundle"
+
+    _run("bundle", "browser", "--force")  # explicit replacement is still fine
+    assert (bundle / "manifest.json").is_file()
+
+
+def test_bundle_packages_the_good_modules_when_one_name_is_bad(deployment: Path) -> None:
+    """One unusable module must not cost the others their bundles.
+
+    The real shape is a stale source directory holding nothing but
+    ``__pycache__``, or a config naming a module that no longer exists. Aborting
+    the batch on it meant a single bad name took down seventeen good ones —
+    which is exactly what happened on a real fleet deploy. The command still
+    exits non-zero, so the failure is not swallowed.
+    """
+    with pytest.raises(SystemExit) as exit_info:
+        _run("bundle", "browser", "nonexistent", "memory")
+
+    assert exit_info.value.code == 1
+    assert (_bundle_store(deployment) / "browser.arcbundle").is_dir()
+    assert (_bundle_store(deployment) / "memory.arcbundle").is_dir()
+    assert not (_bundle_store(deployment) / "nonexistent.arcbundle").exists()
 
 
 def test_bundle_writes_one_bundle_per_named_module(deployment: Path) -> None:

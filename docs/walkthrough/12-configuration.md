@@ -388,11 +388,11 @@ distiller.
  `_DEFAULT_CONFIG`
  (`packages/arccli/src/arccli/commands/agent/_common.py:96-569`) — a new
  module needs a block added there or it never appears in a fresh agent's
- `arcagent.toml` at all. As of this file, the scaffold ships 18 module
- blocks (`memory`, `memory_acl`, `workpad`, `user_profile`, `policy`,
+ `arcagent.toml` at all. As of this file, the scaffold ships 17 module
+ blocks (`memory`, `workpad`, `user_profile`, `policy`,
  `skills`, `planning`, `pulse`, `proactive`, `scheduler`, `messaging`,
  `tasks`, `runcontrol`, `slack`, `telegram`, `web`, `voice`, `browser`),
- nine `enabled = true` by default (`memory`, `memory_acl`, `workpad`,
+ eight `enabled = true` by default (`memory`, `workpad`,
  `policy`, `skills`, `scheduler`, `messaging`, `tasks`, `runcontrol`) and
  nine `enabled = false` (`user_profile`, `planning`, `pulse`, `proactive`,
  `slack`, `telegram`, `web`, `voice`, `browser`) because they need external
@@ -463,7 +463,7 @@ given federal treats the vault as mandatory.
 > destructive operation you confirm, not one you run out of habit.
 
 `arc agent create --tier` sets the tier for **every subsystem at once** —
-`[security]`, memory, policy, skills, web, voice, browser, `memory_acl` all
+`[security]`, memory, policy, skills, web, voice, and browser all
 render from the same `tier` template variable
 (`render_agent_config(..., tier=tier)`,
 `packages/arccli/src/arccli/commands/agent/_common.py:575-589`). A config

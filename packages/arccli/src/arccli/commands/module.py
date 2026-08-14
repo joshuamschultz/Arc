@@ -88,13 +88,26 @@ def _module_root() -> Path:
     return arcagent.module_root()
 
 
-def _source_catalog() -> Path:
-    """The module source catalog ``module bundle`` packages from."""
+def _source_catalog_path() -> Path | None:
+    """Where the module source catalog is, or None when this box has none.
+
+    An air-gapped or wheel-only deployment legitimately has no catalog — it
+    installs from transferred bundles — so "absent" is a fact a caller may need
+    to report and carry on from, not an exit.
+    """
     override = os.environ.get(_SOURCE_ENV)
     catalog = Path(override).expanduser() if override else arcagent.modules_path()
-    if not catalog.is_dir():
+    return catalog if catalog.is_dir() else None
+
+
+def _source_catalog() -> Path:
+    """The module source catalog ``module bundle`` packages from."""
+    catalog = _source_catalog_path()
+    if catalog is None:
+        override = os.environ.get(_SOURCE_ENV)
+        looked_at = Path(override).expanduser() if override else arcagent.modules_path()
         _err(
-            f"arc module: no module source catalog at {catalog}. "
+            f"arc module: no module source catalog at {looked_at}. "
             f"Point {_SOURCE_ENV} at a checkout's arcagent/modules directory."
         )
         sys.exit(1)
@@ -453,7 +466,12 @@ def _requested_bundles(
                 "catalog; do not combine it with names, --all, or --from"
             )
             sys.exit(1)
-        return _build_dev_bundle(from_source, scratch)
+        # One named module, so a refusal really is the end of this command.
+        try:
+            return _build_dev_bundle(from_source, scratch)
+        except ModuleInstallError as exc:
+            _err(f"arc module install --from-source: {exc}")
+            sys.exit(1)
 
     if source:
         if names:
@@ -518,16 +536,25 @@ def _build_dev_bundle(
     ``DEV_ISSUER`` at personal tier only and refuses it before it ever consults
     the issuer keys below, so this bundle dies at an enterprise or federal box no
     matter how the command was invoked.
+
+    Raises :class:`ModuleInstallError` rather than exiting. This function runs
+    once per module inside a fleet-wide loop, and a ``sys.exit`` here meant one
+    unpackageable module ended the whole run — every agent after it in roster
+    order silently got nothing. The single-module caller turns the raise back
+    into an exit, where an exit is the right answer.
     """
-    catalog = _source_catalog()
+    catalog = _source_catalog_path()
+    if catalog is None:
+        raise ModuleInstallError(
+            f"no module source catalog to build {name!r} from — point {_SOURCE_ENV} at a "
+            "checkout's arcagent/modules directory."
+        )
     source = catalog / name
     if not source.is_dir():
         available = ", ".join(sorted(p.name for p in catalog.iterdir() if p.is_dir()))
-        _err(
-            f"arc module install --from-source: no module source for {name!r} in "
-            f"{catalog}. Available: {available}"
+        raise ModuleInstallError(
+            f"no module source for {name!r} in {catalog}. Available: {available}"
         )
-        sys.exit(1)
 
     out_dir = Path(scratch.enter_context(tempfile.TemporaryDirectory(prefix="arc-from-source-")))
     keypair = generate_keypair()
@@ -541,8 +568,7 @@ def _build_dev_bundle(
             out=out_dir / f"{name}{BUNDLE_SUFFIX}",
         )
     except arcbundle.BundleError as exc:
-        _err(f"arc module install --from-source: could not package {name} — {exc}")
-        sys.exit(1)
+        raise ModuleInstallError(f"could not package {name} — {exc}") from exc
     return [bundle], {arcbundle.DEV_ISSUER: keypair.public_key}
 
 
@@ -803,6 +829,90 @@ def _remove(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
+class BundleStageError(RuntimeError):
+    """One module could not be packaged into a signed bundle. Operator-facing.
+
+    Raised rather than exited so a caller staging a fleet's worth of modules
+    reports every one of them. A single unusable module source — the shape that
+    really occurs is a stale directory holding nothing but ``__pycache__`` —
+    must not cost the other seventeen their bundles.
+    """
+
+
+def _operator_signer() -> tuple[Any, str]:
+    """The deployment operator signing key and the issuer DID it signs as."""
+    from arctrust.policy import OperatorApprovalAuthority
+
+    from arccli.commands.operator import resolve_operator_signer
+
+    signer = resolve_operator_signer(arc_home())
+    return signer, OperatorApprovalAuthority(signer).did
+
+
+def _package_one(name: str, *, catalog: Path, out_dir: Path, signer: Any, issuer: str) -> Path:
+    """Package one module into ``out_dir``, leaving nothing behind on failure.
+
+    The cleanup is the part that matters. ``build_bundle`` refuses an output
+    path that already exists, so a build that died partway through would make
+    every later attempt fail on a directory the operator never asked for — and
+    ``_staged_bundles`` would meanwhile count that wreckage as a staged bundle
+    and hand it to the verifier. Re-running after a partial failure is the
+    normal case, so it has to be the clean one.
+    """
+    target = out_dir / f"{name}{BUNDLE_SUFFIX}"
+    try:
+        return arcbundle.build_bundle(
+            catalog / name,
+            module=name,
+            version=arcagent.__version__,
+            private_key=signer,
+            issuer=issuer,
+            out=target,
+        )
+    except arcbundle.BundleError as exc:
+        shutil.rmtree(target, ignore_errors=True)
+        raise BundleStageError(f"could not package {name} — {exc}") from exc
+
+
+def stage_bundle(module: str) -> str:
+    """Ensure a staged, operator-signed bundle exists for ``module``.
+
+    This is what makes ``arc module bundle`` an implementation detail rather
+    than a step an operator has to know about. ``arc install`` calls it for
+    every module some agent enables but the deployment lacks, so the sequence
+    "bundle, then install" collapses into one command.
+
+    Operator-signed, not dev-signed, and that is deliberate: the resulting
+    bundle verifies at **every** tier, and it is built once and installed for
+    the whole fleet rather than rebuilt per agent.
+
+    Returns a one-line report; raises :class:`BundleStageError` when this
+    deployment cannot build one.
+    """
+    staged = _staged_bundles()
+    if module in staged:
+        return f"already staged at {staged[module]}"
+
+    catalog = _source_catalog_path()
+    if catalog is None:
+        raise BundleStageError(
+            f"no staged bundle for {module!r} and no module source catalog to build one "
+            f"from. Transfer a bundle into {_bundle_store()}, or point {_SOURCE_ENV} at a "
+            "checkout's arcagent/modules directory."
+        )
+    if not (catalog / module).is_dir():
+        raise BundleStageError(
+            f"no module source for {module!r} in {catalog} — the name in [modules.{module}] "
+            "does not exist. Check it against `arc module list`."
+        )
+
+    out_dir = _bundle_store()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    signer, issuer = _operator_signer()
+    path = _package_one(module, catalog=catalog, out_dir=out_dir, signer=signer, issuer=issuer)
+    return f"built and signed by {issuer} at {path}"
+
+
 def _bundle(args: argparse.Namespace) -> None:
     """Package modules from the source catalog into signed bundles.
 
@@ -810,51 +920,51 @@ def _bundle(args: argparse.Namespace) -> None:
     the same function release CI uses — the local path is the release path with
     a different key, never a shortcut around verification. Runs entirely offline,
     which is what makes it usable on a low-side staging host.
+
+    Every name is attempted and every outcome is reported. An earlier version
+    aborted the whole batch on the first module that was already bundled and on
+    the first one that would not build, which made the ordinary act of re-running
+    after a partial failure impossible: the operator had to work out which names
+    had succeeded and re-invoke with the remainder. An existing bundle is now
+    *skipped* (``--force`` replaces it) and a failure is collected, so a bad
+    module costs only itself. The command still exits non-zero if anything failed.
     """
-    from arctrust.policy import OperatorApprovalAuthority
-
-    from arccli.commands.operator import resolve_operator_signer
-
     catalog = _source_catalog()
     out_dir = Path(args.out).expanduser() if args.out else _bundle_store()
-    signer = resolve_operator_signer(arc_home())
-    issuer = OperatorApprovalAuthority(signer).did
-
-    missing = [name for name in args.names if not (catalog / name).is_dir()]
-    if missing:
-        available = ", ".join(sorted(p.name for p in catalog.iterdir() if p.is_dir()))
-        _err(
-            f"arc module bundle: no module source for {', '.join(missing)}. Available: {available}"
-        )
-        sys.exit(1)
+    signer, issuer = _operator_signer()
 
     out_dir.mkdir(parents=True, exist_ok=True)
     built: list[Path] = []
+    skipped: list[str] = []
+    failed: list[str] = []
     for name in args.names:
         target = out_dir / f"{name}{BUNDLE_SUFFIX}"
         if target.exists():
             if not args.force:
-                _err(f"arc module bundle: {target} already exists; pass --force to replace it")
-                sys.exit(1)
+                skipped.append(f"{name}: already bundled at {target} (pass --force to replace)")
+                continue
             shutil.rmtree(target)
+        if not (catalog / name).is_dir():
+            failed.append(f"{name}: no module source in {catalog}")
+            continue
         try:
             built.append(
-                arcbundle.build_bundle(
-                    catalog / name,
-                    module=name,
-                    version=arcagent.__version__,
-                    private_key=signer,
-                    issuer=issuer,
-                    out=target,
-                )
+                _package_one(name, catalog=catalog, out_dir=out_dir, signer=signer, issuer=issuer)
             )
-        except arcbundle.BundleError as exc:
-            _err(f"arc module bundle: could not package {name} — {exc}")
-            sys.exit(1)
+        except BundleStageError as exc:
+            failed.append(str(exc))
 
     for path in built:
         _out(f"Built {path}")
-    _out(f"\nSigned by {issuer}. Install with: arc module install {' '.join(args.names)}")
+    for line in skipped:
+        _out(f"Skipped {line}")
+    if built:
+        _out(f"\nSigned by {issuer}.")
+    if failed:
+        _err("\narc module bundle: some modules were not packaged:")
+        for line in failed:
+            _err(f"  {line}")
+        sys.exit(1)
 
 
 # ---------------------------------------------------------------------------

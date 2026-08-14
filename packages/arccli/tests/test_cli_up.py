@@ -133,15 +133,23 @@ def _run(*args: str, port: int | None = None) -> None:
 def test_preflight_fails_loudly_when_nats_server_is_absent(
     deployment: Path, started: list[list[str]], monkeypatch: pytest.MonkeyPatch, capsys: Any
 ) -> None:
-    """No broker binary means dead messaging and dead task dispatch — so: stop."""
+    """No broker binary means dead messaging and dead task dispatch — so: stop.
+
+    Both lookup sources are emptied. The resolver searches the usual install
+    directories after ``$PATH`` — that widening is what stopped a correctly
+    provisioned box being refused a deploy — so clearing ``PATH`` alone would
+    leave a developer's own ``/opt/homebrew/bin/nats-server`` answering and this
+    test asserting nothing at all.
+    """
     monkeypatch.setenv("PATH", str(deployment / "empty-bin"))
+    monkeypatch.setattr("arcteam.nats_server._WELL_KNOWN_BIN_DIRS", ())
 
     with pytest.raises(SystemExit) as exit_info:
         _run()
 
     assert exit_info.value.code == 1
     captured = capsys.readouterr()
-    assert "nats-server on PATH" in captured.out
+    assert "nats-server" in captured.out
     assert "FAIL" in captured.out
     assert "preflight failed" in captured.err
     assert started == [], "a failed preflight must not start anything"

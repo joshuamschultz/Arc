@@ -312,10 +312,97 @@ arc ui tail --viewer-token <token> --layer llm
 ```
 
 > For a full node — systemd unit, secrets, Telegram/Slack, verification —
-> see [`docs/deploy/single-node.md`](docs/deploy/single-node.md) and
+> see [`docs/runbooks/deploy/local.md`](docs/runbooks/deploy/local.md) and
 > `scripts/deploy-node.sh`. `scripts/arc-stack.sh` is a separate,
 > non-canonical dev-convenience wrapper around the older per-agent
 > `arc agent serve` pattern — see its header comment before reaching for it.
+
+---
+
+## 📦 Deploy Anywhere — One Command to Install, One to Start
+
+**One command installs. One command starts.**
+
+```bash
+git clone https://github.com/joshuamschultz/Arc.git && cd Arc
+./install.sh analyst      # everything
+arc up                    # start it
+```
+
+That is the whole deployment. `./install.sh` is a shell script for exactly one
+reason — it has to create the Python environment that provides the `arc` binary,
+and a process cannot rebuild the environment it is running inside. Everything
+after that environment exists is `arc install`, which it ends by calling.
+
+| It does | So you never have to |
+|---------|----------------------|
+| Finds or installs `uv`, syncs dependencies | Know where `uv` lives on a box whose `PATH` came from a non-interactive shell |
+| Installs a checksum-verified `nats-server` | Hunt down the broker binary Arc spawns but cannot install |
+| Writes config + mints the operator key | Run `arc init` and remember the tier flags |
+| Creates the agents you name | — |
+| **Builds and signs a bundle for every module the fleet enables** | Discover that `arc module bundle` exists |
+| **Installs every module, for every agent, in one pass** | Loop `arc module install --agent <name>` across a fleet |
+| Exits non-zero if any capability could not be delivered | Find out days later that a scheduler never fired |
+
+Pass any number of agent names (`./install.sh analyst trader marketer`), or none
+if `team/` already has agents. Every step is **idempotent**: an existing uv,
+broker, config, agent, or module is left exactly as it is, and re-running after
+a partial failure is the normal case, not a recovery procedure.
+
+Then set a key and start:
+
+```bash
+arc keys set anthropic    # hidden prompt, stored owner-only
+arc up
+```
+
+### Upgrading an existing deployment
+
+Same command:
+
+```bash
+git pull
+./install.sh              # re-syncs deps and re-installs any missing module
+arc up
+```
+
+**This step is not optional.** Modules are separately signed bundles that do
+**not** live in the wheel, so `git pull && uv sync && systemctl restart` brings
+every agent back with *zero* modules — and that agent still boots, still answers
+chat, and still looks healthy while its scheduler never fires and its tasks
+never dispatch. Nothing crashes, so nothing is noticed. On an already-synced box
+`arc install` alone does the same job.
+
+### The two commands, on their own
+
+| Command | What it does |
+|---------|--------------|
+| **`arc install`** | Bundles, installs, and verifies every module the fleet's configs enable. Idempotent. Non-interactive — a deploy script or systemd `ExecStartPre` can call it. |
+| **`arc up`** | Preflight → install anything missing → verify → start. **Refuses to start a deployment that would come up degraded.** |
+
+### Verify without starting anything
+
+```bash
+arc up --check
+```
+
+Reports the same tables, writes nothing, and starts nothing. **A non-zero exit
+means an agent's config enables a capability the box does not have.** That makes
+it the right check for CI against a node, and the right `ExecStartPre` when you
+want a unit to *fail* rather than write. The shipped
+[`deploy/systemd/arc.service`](deploy/systemd/arc.service) uses `arc install`
+there instead, so a node whose modules vanished under a pull heals itself and
+only fails the unit when it genuinely cannot.
+
+```bash
+arc install --team-root ~/arc/team       # a team dir somewhere other than ./team
+arc up --check --team-root ~/arc/team    # verify that same dir, start nothing
+arc up --port 8420 --host 0.0.0.0        # passed straight through to the dashboard
+arc up --no-install                      # look before anything is written
+arc module list                          # what is bundled / installed / enabled
+```
+
+Full detail: [`docs/runbooks/deploy/up.md`](docs/runbooks/deploy/up.md).
 
 ---
 
@@ -330,7 +417,7 @@ embedded pattern as above, no separate daemon per agent — **one
 > multiple agents, a real team + channels — skip straight to
 > [`scripts/deploy-node.sh`](scripts/deploy-node.sh) (bootstraps everything
 > below in one idempotent run) and
-> [`docs/deploy/team-building.md`](docs/deploy/team-building.md) (the
+> [`docs/runbooks/operate/teams.md`](docs/runbooks/operate/teams.md) (the
 > validated team/channel/persona flow, with example department rosters).
 > The steps here are the manual walkthrough.
 
@@ -654,6 +741,13 @@ Verified skills land under `~/.arc/capabilities/` (root 2) — same precedence r
 arc init                                                  # tier wizard
 arc agent create my-agent --model <provider/model>        # scaffold
 arc agent build my-agent --check                          # validate
+
+# Deploy — one command installs, one starts
+./install.sh <agent>...                                   # fresh clone -> ready (uv, nats, config, modules)
+arc install                                               # already synced: bundle + install every module
+arc up                                                    # preflight -> install -> verify -> start
+arc up --check                                            # verify only; non-zero if degraded
+arc module list                                           # bundled / installed / enabled
 
 # Run
 arc agent chat my-agent                                   # interactive REPL

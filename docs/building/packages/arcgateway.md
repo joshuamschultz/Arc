@@ -495,7 +495,7 @@ def verify_mattermost(post: dict, signing_secret: str) -> bool: ...
 | **ASI01 Goal Hijack** | identity.md immutable |
 | **ASI02 Tool Misuse** | DELEGATE_BLOCKED_TOOLS; disabled_toolsets |
 | **ASI03 Identity Abuse** | Per-child DID via HKDF (M3) |
-| **ASI06 Memory Poisoning** | memory_acl bus veto; skills hub blocks covert writes |
+| **ASI06 Memory Poisoning** | `arcmemory` cross-session ACL; skills hub blocks covert writes |
 | **ASI08 Cascading Failures** | TaskGroup isolation; spawn timeout + budget |
 
 ---

@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import atexit
 import contextlib
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -40,9 +41,50 @@ _INSTALL_HINT = (
     "https://github.com/nats-io/nats-server/releases, then retry"
 )
 
+#: Where a nats-server that is not on ``$PATH`` is nonetheless very likely to be.
+#: ``~/.local/bin`` leads because that is where ``scripts/deploy-node.sh`` puts
+#: the binary it downloads, and it is exactly the directory a non-interactive
+#: ssh command or a systemd unit tends not to have on its PATH.
+_WELL_KNOWN_BIN_DIRS = (
+    "~/.local/bin",
+    "/usr/local/bin",
+    "/opt/homebrew/bin",
+    "/usr/bin",
+    "/usr/sbin",
+    "/snap/bin",
+)
+
 
 class NatsServerUnavailableError(RuntimeError):
     """No usable NATS broker and none could be started (actionable, not fatal)."""
+
+
+def find_nats_server() -> str | None:
+    """Resolve the ``nats-server`` binary, or None when there genuinely is none.
+
+    ``shutil.which`` alone was the whole lookup, and it made a correctly
+    provisioned box look broken: a non-interactive ``ssh host 'arc up --check'``
+    gets a login PATH without ``~/.local/bin``, which is precisely where
+    ``scripts/deploy-node.sh`` installs the binary. The deploy was refused over a
+    broker that was sitting on disk the whole time.
+
+    The fix has to be *here* rather than in the caller that reports it. This
+    function is what :func:`ensure_nats_server` spawns from, so a check written
+    against it can never claim a binary the spawn would not find — two lookups
+    with different reach is how a preflight starts lying in either direction.
+
+    ``$PATH`` still wins: an operator who put a specific build first gets that
+    build, and the extra directories are only consulted when the search would
+    otherwise have failed outright.
+    """
+    found = shutil.which("nats-server")
+    if found:
+        return found
+    for directory in _WELL_KNOWN_BIN_DIRS:
+        candidate = Path(directory).expanduser() / "nats-server"
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return None
 
 
 def parse_host_port(url: str) -> tuple[str, int]:
@@ -116,10 +158,11 @@ async def ensure_nats_server(
     if await broker_listening(host, port):
         return None
 
-    binary = shutil.which("nats-server")
+    binary = find_nats_server()
     if binary is None:
         raise NatsServerUnavailableError(
-            f"no NATS broker reachable at {url} and `nats-server` is not on PATH — {_INSTALL_HINT}"
+            f"no NATS broker reachable at {url} and `nats-server` was not found on PATH "
+            f"or in the usual install directories — {_INSTALL_HINT}"
         )
 
     store_dir.mkdir(parents=True, exist_ok=True)
@@ -155,5 +198,6 @@ __all__ = [
     "NatsServerUnavailableError",
     "broker_listening",
     "ensure_nats_server",
+    "find_nats_server",
     "parse_host_port",
 ]

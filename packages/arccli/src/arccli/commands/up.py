@@ -21,8 +21,9 @@ would come up degraded is not started at all and the command exits non-zero, so
 check that genuinely cannot precede the server — does ``/api/health`` answer —
 is made from a daemon thread beside it and printed when the server is up.
 
-There is no business logic here. Preflight reads seams (``shutil.which``,
-``operator_public_key``, ``arcstore.resolve_data_dir``); the module stage calls
+There is no business logic here. Preflight reads seams
+(``arcteam.find_nats_server``, ``operator_public_key``, ``resolve_data_dir``);
+the module stage calls
 ``arccli.commands.module.install_module_for_agent``, the same verify →
 materialize → copy → enable path ``arc module install`` runs; the start stage
 invokes ``arccli.commands.ui.ui_handler`` in-process rather than shelling out
@@ -33,7 +34,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import shutil
 import socket
 import sys
 import threading
@@ -62,11 +62,20 @@ _WILDCARD_HOSTS = frozenset({"0.0.0.0", "::", "*", ""})  # noqa: S104
 
 @dataclass(frozen=True)
 class Check:
-    """One preflight line: what was checked, whether it passed, what was found."""
+    """One preflight line: what was checked, whether it passed, what was found.
+
+    ``needed_to_install`` separates the two questions a bring-up asks of a box.
+    Every check here is a prerequisite of *running*, so ``arc up`` gates on all
+    of them; only some are prerequisites of *installing*. ``arc install`` must
+    still deliver the modules a config asks for on a box whose broker binary is
+    missing — refusing to write a module because NATS is absent would leave the
+    operator with neither, and the modules are the half that silently rots.
+    """
 
     name: str
     ok: bool
     detail: str
+    needed_to_install: bool = True
 
     @property
     def status(self) -> str:
@@ -150,21 +159,31 @@ def discover_agents(team_root: Path) -> list[tuple[str, Path]]:
 
 
 def _check_nats() -> Check:
-    """``nats-server`` must be on PATH: arcteam spawns it, it is not a wheel dep.
+    """``nats-server`` must be resolvable: arcteam spawns it, it is not a wheel dep.
 
     Without it every agent silently loses team messaging and task dispatch while
     the process itself stays healthy — exactly the degradation this command
     exists to make loud, so a missing binary stops the bring-up.
+
+    Asked through ``arcteam.find_nats_server`` — the identical lookup the spawn
+    uses — rather than a local ``shutil.which``. A check with narrower reach than
+    the thing it checks refused a real deploy over a binary that was installed
+    the whole time, because a non-interactive shell's PATH lacked the directory
+    holding it.
     """
-    found = shutil.which("nats-server")
+    from arcteam.nats_server import find_nats_server
+
+    found = find_nats_server()
     if found:
-        return Check("nats-server on PATH", True, found)
+        return Check("nats-server", True, found, needed_to_install=False)
     return Check(
-        "nats-server on PATH",
+        "nats-server",
         False,
-        "not found — team messaging and task dispatch would be dead. Install it from "
-        "https://github.com/nats-io/nats-server/releases onto PATH, or run "
+        "not found on PATH or in the usual install directories — team messaging and "
+        "task dispatch would be dead. Install it from "
+        "https://github.com/nats-io/nats-server/releases, or run "
         "scripts/deploy-node.sh which does it for you.",
+        needed_to_install=False,
     )
 
 
@@ -242,17 +261,49 @@ def preflight(team_root: Path | None) -> list[Check]:
 # ---------------------------------------------------------------------------
 
 
+def module_present_for(
+    module: str, *, agent_root: Path, materialized: set[str], module_root: Path
+) -> bool:
+    """Is ``module`` actually usable *by this agent*? Two questions, not one.
+
+    Materialization at the deployment module root is shared by the whole fleet.
+    The per-agent half is not: installing also copies the module's tools and
+    skills into the agent's own capability root and pins the issuer key those
+    artifacts are verified against. An agent missing that half loads no module
+    tool at all.
+
+    Asking only the shared question is how a three-agent fleet reported itself
+    whole while two of its agents had nothing — they were added after the
+    modules were already materialized, so every module looked "present" and the
+    install loop skipped them entirely. That is the exact silent capability loss
+    this command exists to catch, hiding inside the command's own predicate.
+
+    The capability copy is only required of a module that has something to copy.
+    ``copy_capabilities`` refuses a module with neither ``capabilities.py`` nor
+    ``skills/``, so demanding a copy from one would mark it missing forever and
+    reinstall it on every run.
+    """
+    from arcbundle import CAPABILITY_FILE, SKILLS_DIR, capability_dir
+
+    if module not in materialized:
+        return False
+    source = module_root / module
+    has_surface = (source / CAPABILITY_FILE).is_file() or (source / SKILLS_DIR).is_dir()
+    return not has_surface or capability_dir(agent_root, module).is_dir()
+
+
 def agent_states(team_root: Path) -> list[AgentState]:
     """Read each agent's config and diff its enabled modules against the disk.
 
     ``arcagent.discover_modules()`` is the agent's own predicate for "this
-    module will load": it is what builds the ``module:<name>`` scan root and
-    what gates runtime configuration. Asking the same question here means the
-    table cannot claim a capability the agent will not have.
+    module is materialized": it is what builds the ``module:<name>`` scan root
+    and what gates runtime configuration. It is necessary and *not* sufficient —
+    see :func:`module_present_for` for the per-agent half it cannot answer.
     """
     import arcagent
 
-    present = set(arcagent.discover_modules())
+    materialized = set(arcagent.discover_modules())
+    module_root = arcagent.module_root()
     states: list[AgentState] = []
     for agent_id, agent_root in discover_agents(team_root):
         try:
@@ -266,7 +317,16 @@ def agent_states(team_root: Path) -> list[AgentState]:
                 agent_id=agent_id,
                 root=agent_root,
                 enabled=enabled,
-                missing=tuple(name for name in enabled if name not in present),
+                missing=tuple(
+                    name
+                    for name in enabled
+                    if not module_present_for(
+                        name,
+                        agent_root=agent_root,
+                        materialized=materialized,
+                        module_root=module_root,
+                    )
+                ),
             )
         )
     return states
@@ -365,6 +425,11 @@ def print_verify(states: list[AgentState], services: list[Service]) -> bool:
     footnote: a MISSING row, repeated on stderr with the exact remedy, and it is
     what turns the exit code non-zero. Service rows are observed state and never
     gate — before a start they are legitimately down.
+
+    ``services`` is empty for ``arc install``, which starts nothing and so has
+    no service state to observe. An empty table with a caption explaining that
+    services are "down by design" would be reporting on a question that was
+    never asked.
     """
     rows: list[list[str]] = []
     for state in states:
@@ -377,9 +442,12 @@ def print_verify(states: list[AgentState], services: list[Service]) -> bool:
             state_label = "MISSING" if module in state.missing else "present"
             rows.append([state.agent_id, module, state_label])
     _print_table(["Agent", "Module", "State"], rows)
-    _out("")
-    _print_table(["Service", "State", "Detail"], [[s.name, s.state, s.detail] for s in services])
-    _out("  (services are reported as observed; before a start they are down by design)")
+    if services:
+        _out("")
+        _print_table(
+            ["Service", "State", "Detail"], [[s.name, s.state, s.detail] for s in services]
+        )
+        _out("  (services are reported as observed; before a start they are down by design)")
     # The DEGRADED lines below go to stderr and must land UNDER the table they
     # explain. Two streams to one terminal only interleave in write order if the
     # buffered one is flushed first.

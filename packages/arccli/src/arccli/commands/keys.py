@@ -33,6 +33,7 @@ from typing import Any, NoReturn, TypeVar
 
 import arcagent
 import arcllm
+from arctrust import arc_home
 
 from arccli.commands._shared import dispatch, err
 from arccli.commands._shared import print_json as _print_json
@@ -43,9 +44,14 @@ T = TypeVar("T")
 
 
 def _arc_dir(args: argparse.Namespace) -> Path:
-    """The Arc config home this invocation acts on."""
+    """The Arc config home this invocation acts on.
+
+    Defaults through ``arc_home()`` rather than ``Path.home()``: an isolated
+    deployment sets ``ARC_CONFIG_DIR``, and a key written outside that tree is a
+    key its own agents will never read.
+    """
     given = getattr(args, "arc_dir", None)
-    return Path(given).expanduser() if given else Path.home() / ".arc"
+    return Path(given).expanduser() if given else arc_home()
 
 
 def _data_dir(args: argparse.Namespace) -> Path:
@@ -196,7 +202,9 @@ def _remove(args: argparse.Namespace) -> None:
 
 def _add_common(parser: argparse.ArgumentParser) -> None:
     """Where this invocation's world lives, so a fleet operator can target one."""
-    parser.add_argument("--arc-dir", default=None, help="Arc config dir (default: ~/.arc).")
+    parser.add_argument(
+        "--arc-dir", default=None, help="Arc config dir (default: ${ARC_CONFIG_DIR:-~/.arc})."
+    )
     parser.add_argument("--data-dir", default=None, help="Operational data dir for audit.")
 
 

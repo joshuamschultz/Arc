@@ -82,11 +82,17 @@ class TestEnsureNatsServer:
     async def test_raises_when_binary_absent(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # Free port + no nats-server on PATH → actionable error, not a traceback.
+        # Free port + no nats-server anywhere → actionable error, not a traceback.
+        #
+        # Both lookup sources have to be emptied. The resolver deliberately falls
+        # back to ~/.local/bin and the other usual install directories after
+        # $PATH, so stubbing `which` alone leaves a developer's own
+        # /opt/homebrew/bin/nats-server answering and this test asserting nothing.
         with socket.socket() as s:
             s.bind(("127.0.0.1", 0))
             free_port = s.getsockname()[1]
         monkeypatch.setattr(nats_server.shutil, "which", lambda _name: None)
+        monkeypatch.setattr(nats_server, "_WELL_KNOWN_BIN_DIRS", ())
         with pytest.raises(NatsServerUnavailableError) as exc:
             await ensure_nats_server(
                 url=f"nats://127.0.0.1:{free_port}", store_dir=tmp_path / "js"

@@ -390,7 +390,7 @@ Both resolvers are TTL-cached (`cache_ttl_seconds`, default 300s) so a live vaul
 
 > **Always reach for `--check` first.** The safe way to "run build" on an agent you care about is `arc agent build <path> --check`. Only add `--force` when you deliberately want the full config surface regenerated from defaults — treat it the same as you would `git reset --hard`: a destructive operation you confirm, not one you run out of habit.
 
-`arc agent create --tier` sets the tier for **every subsystem at once** — `[security]`, memory, policy, skills, web, voice, browser, `memory_acl` all render from the same `tier` template variable. A config that's federal in `[security]` but personal in `[modules.web]` is treated as a hole, not a preference — the renderer refuses an unknown tier string outright (`ValueError`) rather than partially applying one.
+`arc agent create --tier` sets the tier for **every subsystem at once** — `[security]`, memory, policy, skills, web, voice, and browser all render from the same `tier` template variable. A config that's federal in `[security]` but personal in `[modules.web]` is treated as a hole, not a preference — the renderer refuses an unknown tier string outright (`ValueError`) rather than partially applying one.
 
 ---
 

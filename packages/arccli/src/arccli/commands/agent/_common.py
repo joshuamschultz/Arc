@@ -258,16 +258,6 @@ consolidate_interval_seconds = 3600.0  # time-based cadence floor
 #   forget_floor = 0.05                      # edge weight below which links decay away
 #   struct_trigger_min = 0.7                 # structural-recall trigger match floor
 
-[modules.memory_acl]
-enabled = true
-priority = 100
-
-[modules.memory_acl.config]
-tier = "{tier}"                          # federal | enterprise | personal
-federal_default = "private"                # cross-session visibility at federal
-enterprise_default = "shared-with-agent"   # at enterprise
-personal_default = "shared-with-agent"     # at personal
-
 [modules.workpad]
 enabled = true
 priority = 100
@@ -601,9 +591,8 @@ def render_agent_config(*, name: str, tier: str = "personal", did: str = "") -> 
     """Render the full arcagent.toml surface for one agent at one tier.
 
     ``tier`` sets every subsystem's tier at once — [security], memory, policy,
-    skills, web, voice, browser, memory_acl. They are one decision: a config
-    that is federal in [security] but personal in [modules.web] is a hole, not
-    a preference.
+    skills, web, voice, browser. They are one decision: a config that is federal
+    in [security] but personal in [modules.web] is a hole, not a preference.
 
     ``did`` is substituted rather than blanked so a regeneration keeps the
     identity the agent signs its capabilities with and is registered to

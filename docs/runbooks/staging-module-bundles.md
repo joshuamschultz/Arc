@@ -12,8 +12,11 @@ No step needs a network. `arc module bundle` reads a source folder and writes a 
 `arc module install --from` reads that directory and writes the module. Neither contacts a
 package index, a registry, or any other host.
 
-Use this when the target deployment has no route to the build host. On a connected box, the
-same two commands run back to back on one machine.
+Use this when the target deployment has no route to the build host. **On a box that can
+reach its own module sources, do not run these commands at all** — `arc install` builds,
+signs, installs, and verifies every module the fleet's configs enable in one pass, for every
+agent, and is idempotent. See [Bring-up](deploy/up.md). This runbook is the air-gapped
+procedure, where the build and the install happen on two different machines.
 
 ---
 

@@ -89,45 +89,10 @@ ARC_BIN="$REPO_ROOT/.venv/bin/arc"
 ok "venv synced"
 
 # --- 3. nats-server (not a Python dep — arcteam auto-spawns it, needs PATH) --
-if command -v nats-server >/dev/null 2>&1; then
-  ok "nats-server already on PATH: $(command -v nats-server)"
-else
-  log "Installing nats-server..."
-  case "$(uname -m)" in
-    aarch64|arm64) NATS_ARCH="arm64" ;;
-    x86_64)        NATS_ARCH="amd64" ;;
-    *) fail "unsupported arch for nats-server: $(uname -m) — install manually to ~/.local/bin" ;;
-  esac
-  RELEASE_JSON="$(curl -s https://api.github.com/repos/nats-io/nats-server/releases/latest)"
-  NATS_URL="$(echo "$RELEASE_JSON" \
-    | grep -oE "\"browser_download_url\": *\"[^\"]*linux-${NATS_ARCH}\.tar\.gz\"" \
-    | cut -d'"' -f4)"
-  [ -n "$NATS_URL" ] || fail "could not resolve latest nats-server release for linux-${NATS_ARCH}"
-  SHASUMS_URL="$(echo "$RELEASE_JSON" \
-    | grep -oE '"browser_download_url": *"[^"]*/SHA256SUMS"' \
-    | cut -d'"' -f4)"
-
-  TMP_DIR="$(mktemp -d)"
-  TGZ_NAME="$(basename "$NATS_URL")"
-  curl -LsSf -o "$TMP_DIR/$TGZ_NAME" "$NATS_URL"
-
-  if [ -n "$SHASUMS_URL" ]; then
-    EXPECTED_SUM="$(curl -sL "$SHASUMS_URL" | grep "  ${TGZ_NAME}\$" | awk '{print $1}')"
-    ACTUAL_SUM="$(sha256sum "$TMP_DIR/$TGZ_NAME" | awk '{print $1}')"
-    [ -n "$EXPECTED_SUM" ] || fail "SHA256SUMS published but no entry for $TGZ_NAME — refusing to install unverified"
-    [ "$EXPECTED_SUM" = "$ACTUAL_SUM" ] || fail "nats-server checksum mismatch: expected $EXPECTED_SUM got $ACTUAL_SUM"
-    ok "nats-server checksum verified ($ACTUAL_SUM)"
-  else
-    echo "  ! release did not publish SHA256SUMS — proceeding unverified (was verified against v2.14.3 at script-write time)"
-  fi
-
-  tar xzf "$TMP_DIR/$TGZ_NAME" -C "$TMP_DIR"
-  mkdir -p "$HOME/.local/bin"
-  mv "$TMP_DIR"/nats-server-*/nats-server "$HOME/.local/bin/nats-server"
-  chmod +x "$HOME/.local/bin/nats-server"
-  rm -rf "$TMP_DIR"
-  ok "nats-server $("$HOME/.local/bin/nats-server" --version) installed"
-fi
+# Delegated to scripts/install-nats.sh, which install.sh also calls. The
+# checksum verification lives in exactly one place on purpose: a second copy
+# of a verification routine is the copy that quietly stops verifying.
+"$REPO_ROOT/scripts/install-nats.sh"
 
 # --- 4. platform adapter plugin (telegram) -------------------------------
 # arcgateway-telegram is a uv workspace member but, as of this writing, NOT
@@ -223,7 +188,7 @@ done
 
 # gateway.toml routes remote-platform DMs (Telegram etc.) to ONE agent_did.
 # The first agent named on the command line wins; add more agents with
-# docs/deploy/team-building.md if you need a multi-agent roster with
+# docs/runbooks/operate/teams.md if you need a multi-agent roster with
 # per-agent channels.
 PRIMARY_AGENT="${AGENT_NAMES[0]}"
 AGENT_DID="$("$VENV_PY" -c '
@@ -235,6 +200,17 @@ with open(sys.argv[1], "rb") as f:
 "$VENV_PY" scripts/deploy_node_overlays.py gateway-config \
   "$ARC_CONFIG_DIR/gateway.toml" --agent-did "$AGENT_DID"
 ok "agent_did wired into gateway.toml: $AGENT_DID ($PRIMARY_AGENT)"
+
+# --- 8b. modules ----------------------------------------------------------
+# Modules do NOT ship in the wheel. Each is a separately signed bundle that
+# `arc install` verifies and materializes under $ARC_CONFIG_DIR/modules. Skip
+# this and every agent boots, answers chat, and looks healthy while its
+# scheduler never fires and its tasks never dispatch — nothing crashes, so
+# nothing is noticed. Idempotent, and non-zero when a config asks for a
+# capability this box cannot deliver, so a hollow node never reaches systemd.
+log "Installing modules for every agent..."
+"$ARC_BIN" install --team-root "$REPO_ROOT/team" \
+  || fail "arc install could not deliver every module the configs enable (see above)"
 
 # --- 9. systemd user unit -------------------------------------------------
 UNIT_DIR="$HOME/.config/systemd/user"

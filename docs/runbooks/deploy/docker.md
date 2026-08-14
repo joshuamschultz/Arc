@@ -173,8 +173,12 @@ the entrypoint preflights both and says so loudly, because both failure modes
 otherwise look identical to "working" from the outside: recall silently falls
 back to keyword-only. In a stock image neither should ever appear.
 
-**`Config enables module 'memory_acl' but no module folder is present`** —
-harmless; the module is configured but not shipped, and startup continues.
+**`Config enables module 'NAME' but no module folder is present`** — never
+harmless. The agent starts, answers chat, and runs without that capability
+while saying nothing more about it. Run `arc install` to materialize every
+module the config enables; if the name is not in `arc module list`, it is a
+typo or a module that no longer exists and the `[modules.NAME]` block should be
+deleted.
 
 **Telegram adapter warnings on a network blip** — see
 [single-node.md](local.md); the same behavior applies in the container.

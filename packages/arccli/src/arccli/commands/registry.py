@@ -157,6 +157,13 @@ def _module_handler(args: list[str]) -> None:
     module_handler(args)
 
 
+def _install_handler(args: list[str]) -> None:
+    """Dispatch wrapper."""
+    from arccli.commands.install import install_handler
+
+    install_handler(args)
+
+
 def _up_handler(args: list[str]) -> None:
     """Dispatch wrapper."""
     from arccli.commands.up import up_handler
@@ -634,6 +641,14 @@ COMMAND_REGISTRY: list[CommandDef] = [
         args_hint="<subcommand>",
         cli_only=True,
         handler=_module_handler,
+    ),
+    CommandDef(
+        name="install",
+        description="Install every module each agent's config enables, then verify it",
+        category="Session",
+        args_hint="[--team-root <dir>]",
+        cli_only=True,
+        handler=_install_handler,
     ),
     CommandDef(
         name="up",

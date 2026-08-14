@@ -14,6 +14,7 @@ from typing import Any
 
 import arcagent
 import arcllm
+from arctrust import arc_home
 
 from arccli.commands._arcllm_surface import (
     BUDGET_BLOCK,
@@ -240,11 +241,11 @@ def _generate_arcagent_toml(tier: str, blueprint_name: str | None = None) -> tup
         bp = resolve_blueprint(
             blueprint_name,
             tier=tier,
-            operator_public_key=operator_public_key(Path.home() / ".arc"),
+            operator_public_key=operator_public_key(arc_home()),
         )
         base = apply_blueprint(bp, base, deployment_tier=tier)
         effective = str(base.get("security", {}).get("tier", tier))
-        audit_apply(bp, base, Path.home() / ".arc")
+        audit_apply(bp, base, arc_home())
     header = _USER_CONFIG_HEADER.format(pkg="arcagent", tier=tier)
     return header + "\n" + dumps_toml(base), effective
 
@@ -352,7 +353,7 @@ def _init_team_fleet(args: argparse.Namespace) -> None:
 
     # Fleets are GLOBAL under ~/.arc/<team> so a coder created once is reachable from
     # any project (the OpenCode model: the agent's home is global; it works in your cwd).
-    team_root = Path.home() / ".arc" / team
+    team_root = arc_home() / team
     agent_dir = team_root / name
     if agent_dir.exists():
         sys.stderr.write(f"Error: agent already exists: {agent_dir}\n")
@@ -444,7 +445,11 @@ def _init(args: argparse.Namespace) -> None:
         sys.stderr.write(f"Error: Unknown provider '{provider}'.\n")
         sys.exit(1)
 
-    arc_dir = Path(config_dir) if config_dir else Path.home() / ".arc"
+    # Resolved through arc_home(), never Path.home() directly: `arc install` and
+    # `arc up` read the config and the operator key from ${ARC_CONFIG_DIR:-~/.arc},
+    # so a hardcoded ~/.arc here writes a deployment's setup where its own
+    # bring-up will not look for it.
+    arc_dir = Path(config_dir) if config_dir else arc_home()
     arc_dir.mkdir(parents=True, exist_ok=True)
 
     try:
