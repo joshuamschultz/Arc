@@ -42,16 +42,22 @@ def policy_audit_log_path(agent: Any) -> Path:
     return resolve_data_dir() / "worm" / f"audit-chain-{slug}.jsonl"
 
 
-def operator_key_path(agent: Any) -> Path:
-    """The deployment operator key this agent signs its policy chain with.
+def operator_key_path(sec: Any) -> Path:
+    """The operator key file a security config names — the ONE spelling.
 
-    Unset config resolves the ONE shared location, so the agent, the CLI, and the
+    Unset config resolves the shared location, so the agent, the CLI, and the
     gateway sign with the same key; a chain signed with a second key verifies
     against neither.
+
+    Takes the config rather than a live agent so a caller that has not built one
+    — the bring-up preflight — asks this question instead of re-deriving it. The
+    preflight used to check the deployment default while agents loaded a dir
+    their config named, so it passed a fleet green in which every turn died on a
+    missing key.
     """
     from arctrust.paths import OPERATOR_KEY_FILENAME, default_operator_key_path
 
-    configured = agent._config.security.operator_key_dir
+    configured = sec.operator_key_dir
     if not configured:
         return default_operator_key_path()
     return Path(configured).expanduser() / OPERATOR_KEY_FILENAME
@@ -95,7 +101,7 @@ def resolve_transit(_agent: Any, sec: Any) -> FileNotaryTransit:
     keystore = (
         Path(sec.notary_keystore).expanduser()
         if sec.notary_keystore
-        else Path(sec.operator_key_dir).expanduser() / "notary"
+        else operator_key_path(sec).parent / "notary"
     )
     transit = FileNotaryTransit(keystore, algorithm=sec.signing_algorithm)
     try:

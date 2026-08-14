@@ -137,10 +137,16 @@ def arc_team(name: str = "team", base: Base = None) -> Path:
 
     ``base`` (i.e. ``--arc-dir``) still wins when given, so a fully self-contained
     deployment can put everything under one root.
+
+    Precedence, most specific first: explicit ``base`` → ``ARC_TEAM_ROOT`` →
+    ``ARC_CONFIG_DIR`` → ``~/arc``. ``ARC_CONFIG_DIR`` is what every test and
+    every isolated deployment relocates, so a fleet MUST follow it: reading
+    ``~/arc/team`` while the rest of the home was redirected is how a test run
+    creates agents in the developer's own live fleet.
     """
     if base is not None:
         return _base(base) / name
-    override = os.environ.get(ARC_TEAM_ROOT_ENV)
+    override = os.environ.get(ARC_TEAM_ROOT_ENV) or os.environ.get(ARC_CONFIG_DIR_ENV)
     root = Path(override).expanduser() if override else Path.home() / "arc"
     return root / name
 

@@ -66,6 +66,33 @@ def _unsigned_call(agent_did: str) -> ToolCall:
     )
 
 
+def test_default_notary_keystore_lands_in_the_arc_home_not_the_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both custody paths unset must resolve the Arc home, never a relative path.
+
+    The default was ``Path(operator_key_dir).expanduser() / "notary"``, and
+    ``Path("")`` is ``.`` — so an unconfigured deployment put the keystore
+    holding its operator signing material in whatever directory the process
+    happened to start in. Two working directories meant two keystores, and a
+    chain signed under one verifies under neither.
+    """
+    from arctrust.paths import operator_dir
+
+    from arcagent.core.agent_security import resolve_transit
+
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc-home"))
+    monkeypatch.chdir(tmp_path)
+    sec = SecurityConfig()
+    assert sec.operator_key_dir == "" and sec.notary_keystore == ""
+
+    with pytest.raises(SignerError) as exc_info:
+        resolve_transit(None, sec)
+
+    assert str(operator_dir() / "notary") in str(exc_info.value)
+    assert not (tmp_path / "notary").exists(), "keystore was created relative to the cwd"
+
+
 class TestF1VaultTransitWiring:
     async def test_operator_seed_never_in_agent_process(self, tmp_path: Path) -> None:
         from arcagent.core.agent import ArcAgent

@@ -214,7 +214,7 @@ class ArcAgent:
         outside the workspace tool-sandbox so agent-invoked file tools cannot
         write or replace it.
         """
-        return agent_security.operator_key_path(self)
+        return agent_security.operator_key_path(self._config.security)
 
     def _resolve_operator_signer(self, sec: Any) -> Signer:
         """Resolve the operator audit/approval signer from custody config (F1).

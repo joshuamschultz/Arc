@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from arctrust.paths import arc_team
 
 from arctui.entry import _flag_value, _maybe_prompt_trust, _resolve_endpoint, _resolve_team_root
 from arctui.serve import Endpoint, GatewayNeedsTokenError
@@ -43,7 +44,9 @@ def test_flag_value_missing_returns_none() -> None:
 
 
 def test_resolve_team_root_default() -> None:
-    assert _resolve_team_root([]) == Path.home() / ".arc" / "team"
+    # The default is whatever the ONE resolver says; re-spelling it here is
+    # how this assertion outlived the layout it described.
+    assert _resolve_team_root([]) == arc_team()
 
 
 def test_resolve_team_root_explicit() -> None:
@@ -56,8 +59,8 @@ def test_resolve_team_root_root_alias() -> None:
 
 
 def test_resolve_team_root_team_is_global() -> None:
-    # `arc tui --team coding` resolves the GLOBAL fleet ~/.arc/coding (findable from any cwd).
-    assert _resolve_team_root(["--team", "coding"]) == Path.home() / ".arc" / "coding"
+    # `arc tui --team coding` resolves the GLOBAL fleet (findable from any cwd).
+    assert _resolve_team_root(["--team", "coding"]) == arc_team("coding")
 
 
 # --------------------------------------------------------------------------- #

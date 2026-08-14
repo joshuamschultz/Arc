@@ -38,7 +38,7 @@ def test_roots_resolve_under_arc_config_dir(arc_root: Path) -> None:
     assert paths.arc_runtime() == arc_root / "runtime" / "current"
 
 
-def test_the_fleet_lives_outside_the_hidden_home(arc_root: Path) -> None:
+def test_the_fleet_lives_outside_the_hidden_home(monkeypatch: pytest.MonkeyPatch) -> None:
     """A fleet is the OPERATOR's work, not Arc's own business.
 
     The home holds framework, config and keys, and an update is allowed to
@@ -46,24 +46,41 @@ def test_the_fleet_lives_outside_the_hidden_home(arc_root: Path) -> None:
     visible the operator can back up and inspect, that nothing an update touches
     can reach — and outside any code checkout, since agent data committed into
     the repo is what made a production ``git pull`` collide with live memory.
+
+    This is the DEFAULT-root claim, so the env is cleared: it is what a real box
+    resolves, and the fleet on the box must not sit inside ``~/.arc``.
     """
+    monkeypatch.delenv("ARC_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("ARC_TEAM_ROOT", raising=False)
+
     assert paths.arc_team() == Path.home() / "arc" / "team"
-    assert arc_root not in paths.arc_team().parents
+    assert paths.arc_home() not in paths.arc_team().parents
 
 
 def test_arc_team_root_env_relocates_only_the_fleet(
     arc_root: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """``ARC_TEAM_ROOT`` moves the fleet without moving the home."""
+    """``ARC_TEAM_ROOT`` moves the fleet without moving the home, and wins."""
     monkeypatch.setenv("ARC_TEAM_ROOT", str(tmp_path / "fleet"))
 
     assert paths.arc_team() == tmp_path / "fleet" / "team"
     assert paths.arc_home() == arc_root
 
 
-def test_arc_team_accepts_an_alternate_fleet_name() -> None:
+def test_arc_config_dir_carries_the_fleet_into_isolation(arc_root: Path) -> None:
+    """A relocated home takes its fleet with it — otherwise isolation is a lie.
+
+    ``ARC_CONFIG_DIR`` is what every test and every self-contained deployment
+    sets. When ``arc_team`` ignored it, an isolated run still resolved the real
+    ``~/arc/team``: a test that created an agent created it in the developer's
+    own live fleet, beside agents that were running.
+    """
+    assert paths.arc_team() == arc_root / "team"
+
+
+def test_arc_team_accepts_an_alternate_fleet_name(arc_root: Path) -> None:
     """``arc init --team coding`` names the fleet directory."""
-    assert paths.arc_team("coding") == Path.home() / "arc" / "coding"
+    assert paths.arc_team("coding") == arc_root / "coding"
 
 
 def test_arc_runtime_version_is_a_sibling_of_current(arc_root: Path) -> None:
@@ -131,9 +148,9 @@ def test_arc_team_resolves_its_own_env_per_call(
 ) -> None:
     """Same per-call guarantee as above, for the one accessor with its own root.
 
-    ``arc_team`` is excluded from the ``ARC_CONFIG_DIR`` sweep on purpose — the
-    fleet does NOT live under the Arc home — but it must still read its env on
-    every call rather than freezing an import-time value.
+    ``arc_team`` is excluded from the ``ARC_CONFIG_DIR`` sweep on purpose — on a
+    real box the fleet does NOT live under the Arc home — but it must still read
+    its env on every call rather than freezing an import-time value.
     """
     first, second = tmp_path / "first", tmp_path / "second"
 

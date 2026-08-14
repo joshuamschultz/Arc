@@ -33,6 +33,7 @@ to ``arc``.
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import socket
 import sys
@@ -47,6 +48,8 @@ from urllib.parse import urlsplit
 from arccli.commands._shared import err as _err
 from arccli.commands._shared import print_table as _print_table
 from arccli.commands._shared import write as _out
+
+_logger = logging.getLogger(__name__)
 
 #: How long the post-start watcher waits for the server to answer /api/health.
 HEALTH_TIMEOUT_S = 60.0
@@ -187,13 +190,42 @@ def _check_nats() -> Check:
     )
 
 
-def _check_operator_key() -> Check:
-    """An operator key must already exist. This never mints one.
+def _agent_operator_keys(team_root: Path | None) -> dict[Path, list[str]]:
+    """Map every operator-key file the fleet will load -> the agents loading it.
+
+    Resolved through ``arcagent.operator_key_path`` — the same function
+    ``ArcAgent.startup`` calls — so this cannot check one spelling while the
+    agents load another. An unreadable config contributes nothing: it is already
+    its own reported failure in :func:`agent_states`.
+    """
+    import arcagent
+
+    if team_root is None or not team_root.is_dir():
+        return {}
+    by_key: dict[Path, list[str]] = {}
+    for agent_id, agent_root in discover_agents(team_root):
+        try:
+            config = arcagent.load_config(agent_root / "arcagent.toml")
+        except Exception as exc:  # reason: agent_states is where this is reported
+            _logger.debug("operator-key check skipped %s: unreadable config (%s)", agent_id, exc)
+            continue
+        by_key.setdefault(arcagent.operator_key_path(config.security), []).append(agent_id)
+    return by_key
+
+
+def _check_operator_key(team_root: Path | None) -> Check:
+    """Every operator key the fleet loads must already exist. This never mints one.
 
     The operator key is the trust anchor a bundle, a blueprint, and a prompt
     overlay are pinned to, and the identity the audit chain is signed with.
     Minting one here would hand a bring-up the authority to decide what this
     deployment trusts — an unpinned operator is no operator.
+
+    ``security.operator_key_dir`` lets a config name its own custody directory,
+    so the deployment default is not necessarily the key any agent loads.
+    Checking only the default passed a fleet green whose every agent named an
+    empty directory: the dashboard served, health returned 200, the logs were
+    clean, and every message answered ``[agent-error] the run failed``.
     """
     from arctrust import arc_home
 
@@ -211,6 +243,22 @@ def _check_operator_key() -> Check:
             f"none under {home} — module signatures cannot be verified and the audit "
             "chain has no signer. Create one with `arc init`, the setup wizard that "
             "mints and pins it.",
+        )
+
+    dangling = {
+        key: agents for key, agents in _agent_operator_keys(team_root).items() if not key.is_file()
+    }
+    if dangling:
+        named = "; ".join(
+            f"{key} ({', '.join(sorted(agents))})" for key, agents in dangling.items()
+        )
+        return Check(
+            "operator key",
+            False,
+            f"present under {home}, but these agents name an operator_key_dir holding no "
+            f"key and cannot sign their audit chain: {named}. Clear "
+            "`security.operator_key_dir` in each config to use the deployment key, or "
+            "restore the named key from custody.",
         )
     return Check("operator key", True, f"present under {home}")
 
@@ -253,7 +301,12 @@ def _check_data_dir() -> Check:
 
 def preflight(team_root: Path | None) -> list[Check]:
     """Run every precondition check. Nothing here fixes anything."""
-    return [_check_nats(), _check_operator_key(), _check_team_root(team_root), _check_data_dir()]
+    return [
+        _check_nats(),
+        _check_operator_key(team_root),
+        _check_team_root(team_root),
+        _check_data_dir(),
+    ]
 
 
 # ---------------------------------------------------------------------------

@@ -51,6 +51,7 @@ from arcagent.connections import (
     resolve_roots,
 )
 from arcagent.core.agent import ArcAgent
+from arcagent.core.agent_security import operator_key_path
 from arcagent.core.arcteam_bootstrap import make_backend
 from arcagent.core.config import ArcAgentConfig, SecurityConfig, deep_merge, load_config
 from arcagent.core.errors import (
@@ -183,6 +184,7 @@ __all__ = [
     "model_config_path",
     "module_root",
     "modules_path",
+    "operator_key_path",
     "pin_name_for",
     "read_capability_source",
     "resolve_deployment",

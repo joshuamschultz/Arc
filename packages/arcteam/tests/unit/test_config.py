@@ -3,7 +3,7 @@
 from pathlib import Path
 
 import pytest
-from arctrust.paths import nats_dir
+from arctrust.paths import arc_team, nats_dir
 
 from arcteam.config import (
     TeamConfig,
@@ -39,7 +39,7 @@ class TestTeamConfig:
     def test_defaults(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("ARC_CONFIG_DIR", raising=False)
         cfg = TeamConfig()
-        assert cfg.root == Path.home() / ".arc" / "team"
+        assert cfg.root == arc_team()
         assert cfg.max_body_bytes == 65536
         assert cfg.default_poll_limit == 10
 
@@ -50,7 +50,7 @@ class TestTeamConfig:
 
     def test_root_falls_back_without_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("ARC_CONFIG_DIR", raising=False)
-        assert TeamConfig().root == Path.home() / ".arc" / "team"
+        assert TeamConfig().root == arc_team()
 
     def test_explicit_root_wins_over_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Explicit root beats ARC_CONFIG_DIR (mirrors CLI ``--root`` precedence)."""

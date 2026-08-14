@@ -2,7 +2,6 @@
 
 import textwrap
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from arctrust.paths import default_operator_key_path
@@ -483,11 +482,6 @@ class TestUIConfig:
 class TestSecurityConfigOperatorKey:
     """SPEC-053 T-06 — operator-key custody config (REQ-004/005)."""
 
-    @staticmethod
-    def _stub(sec: SecurityConfig) -> SimpleNamespace:
-        """The one attribute :func:`operator_key_path` reads off an agent."""
-        return SimpleNamespace(_config=SimpleNamespace(security=sec))
-
     def test_operator_key_defaults(self) -> None:
         """Unconfigured custody defers to the deployment resolver, not a literal.
 
@@ -497,7 +491,7 @@ class TestSecurityConfigOperatorKey:
         """
         sec = SecurityConfig()
         assert sec.operator_key_dir == ""
-        assert operator_key_path(self._stub(sec)) == default_operator_key_path()
+        assert operator_key_path(sec) == default_operator_key_path()
         assert sec.operator_vault_path == ""
         assert sec.witness_mode == "offline"
         assert sec.witness_log_url == ""

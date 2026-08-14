@@ -173,6 +173,54 @@ def test_preflight_fails_when_no_operator_key_exists(
     assert not operator_key_path(deployment / "arc").exists(), "preflight minted a key"
 
 
+def test_preflight_fails_when_an_agent_names_an_operator_dir_holding_no_key(
+    deployment: Path, started: list[list[str]], capsys: Any
+) -> None:
+    """The key that must exist is the one the AGENT loads, not the deployment default.
+
+    ``security.operator_key_dir`` lets a config name its own custody directory,
+    and an agent whose named directory holds no key cannot start: the operator
+    key is the audit authority every turn signs its chain with, so
+    ``ArcAgent.startup`` raises before the first token.
+
+    Checking only the deployment default passed a whole fleet green while every
+    agent pointed somewhere empty — the dashboard served, health returned 200,
+    the logs were clean, and every single message answered ``[agent-error] the
+    run failed``. A preflight that verifies a key nobody loads verifies nothing.
+    """
+    agent = deployment / "team" / "josh_agent"
+    elsewhere = deployment / "custody-that-moved"
+    elsewhere.mkdir()
+    (agent / "arcagent.toml").write_text(
+        _agent_toml(agent) + f"operator_key_dir = '{elsewhere}'\n", encoding="utf-8"
+    )
+
+    checks = {check.name: check for check in up_cmd.preflight(deployment / "team")}
+    assert checks["operator key"].ok is False
+    assert str(elsewhere) in checks["operator key"].detail
+    # The roster id, not the directory — it is what the operator pastes into the remedy.
+    assert "josh" in checks["operator key"].detail
+
+    with pytest.raises(SystemExit) as exit_info:
+        _run()
+
+    assert exit_info.value.code == 1
+    assert started == [], "an agent that cannot sign its audit chain must not be started"
+    assert not (elsewhere / "operator.key").exists(), "preflight minted a key"
+
+
+def test_preflight_passes_when_every_agent_uses_the_deployment_operator_key(
+    deployment: Path,
+) -> None:
+    """The default (unset) case still resolves the one shared key — no false alarm.
+
+    The paired negative above only proves a check that fires; without this, a
+    check hard-wired to FAIL would satisfy it just as well.
+    """
+    checks = {check.name: check for check in up_cmd.preflight(deployment / "team")}
+    assert checks["operator key"].ok is True
+
+
 def test_preflight_fails_when_the_team_root_holds_no_agent(
     deployment: Path, started: list[list[str]], capsys: Any
 ) -> None:

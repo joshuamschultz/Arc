@@ -1,60 +1,15 @@
-"""End-to-end tests for the SPEC-023 web chat pipeline.
+"""Air-gap check on the served static bundle.
 
-Skipped unless ``ARC_E2E=1`` so they don't run in standard CI but are
-available for local dress-rehearsal. The full-chat-turn case wants a
-real ``team/`` directory; it self-skips if that isn't present.
+The full chat turn that used to live here is now ``tests/journeys/`` — it was
+gated on ``ARC_E2E=1`` *and* on a ``team/concierge_agent`` directory absent from
+every checkout, so it never ran and never caught anything. The journey suite
+drives the same pipe against a real agent with a scripted model, by default.
 """
 
 from __future__ import annotations
 
-import os
 import re
 from pathlib import Path
-
-import pytest
-from arcgateway.config import GatewayConfig
-from starlette.testclient import TestClient
-
-from arcui.auth import AuthConfig
-from arcui.server import create_app
-
-pytestmark = pytest.mark.skipif(
-    os.environ.get("ARC_E2E") != "1",
-    reason="E2E tests require ARC_E2E=1",
-)
-
-VIEWER_TOKEN = "viewer-tok-e2e"
-
-
-def test_full_chat_turn_with_real_agent(tmp_path: Path) -> None:
-    """A real ArcAgent loaded from ``team/`` answers a browser prompt.
-
-    The test spins up a TestClient with a gateway_config that points at
-    the local ``team/`` directory. If no ``team/concierge_agent`` is
-    present we skip — the operator runs this only when the demo agent
-    is in place.
-    """
-    repo_root = Path(__file__).resolve().parents[5]
-    team_root = repo_root / "team"
-    if not (team_root / "concierge_agent").is_dir():
-        pytest.skip("no concierge_agent in team/; set up local team to run this test")
-
-    cfg = GatewayConfig.from_toml_str("[platforms.web]\nenabled = true\n")
-    auth = AuthConfig({"viewer_token": VIEWER_TOKEN, "operator_token": "op"})
-    app = create_app(team_root=team_root, auth_config=auth, gateway_config=cfg)
-    with TestClient(app) as client:
-        with client.websocket_connect("/ws/chat/concierge") as ws:
-            ws.send_json({"token": VIEWER_TOKEN})
-            ready = ws.receive_json()
-            assert ready["type"] == "ready"
-            ws.send_json({"type": "message", "text": "What is your name?"})
-            # We can't predict the LLM's output verbatim — wait for any
-            # message frame from the agent within reasonable bounds.
-            for _ in range(30):
-                frame = ws.receive_json()
-                if frame.get("type") == "message" and frame.get("from") == "agent":
-                    return
-            raise AssertionError("did not receive agent message")
 
 
 def test_air_gap_no_external_references_in_static_bundle() -> None:
