@@ -1,7 +1,7 @@
 """PhaseRunner (COMP-017 / REQ-202, REQ-203) — the strictly sequential outer loop.
 
 One question at a time, one live ``ArcAgent`` at a time. That single decision is
-what keeps the flocked WORM audit chain, the shared ``~/.arc/store`` SQLite,
+what keeps the flocked WORM audit chain, the shared ``~/.arc/state/store`` SQLite,
 provider rate-limit cascades and ``contextvars`` sibling-task hazards out of this
 harness entirely — so there is no semaphore, no ``asyncio.gather`` and no
 backpressure logic anywhere below, and a test asserts the source stays that way.

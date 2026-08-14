@@ -6,7 +6,7 @@
 # customer state lives on the /data volume.
 #
 # HOME=/data is load-bearing, not cosmetic. Arc resolves its config dir
-# (${ARC_CONFIG_DIR:-~/.arc}), its store (~/.arc/store), and its identity keys
+# (${ARC_CONFIG_DIR:-~/.arc}), its store (~/.arc/state/store), and its identity keys
 # (~/.arcagent/keys) from the home directory, so pointing HOME at the volume
 # puts all three on persistent storage without threading a separate env var
 # through each one.

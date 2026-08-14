@@ -3,7 +3,7 @@
 # module surface is listed at the bottom under [llm.modules.*], commented at its
 # packaged default — uncomment a line to override that module for THIS agent
 # only. arcllm's OWN global module + provider defaults live in the user-wide
-# ~/.arc/arcllm.toml ([defaults]/[modules]/[vault]), read by arcllm itself.
+# ~/.arc/config/arcllm.toml ([defaults]/[modules]/[vault]), read by arcllm itself.
 
 [llm]
 model = "anthropic/claude-sonnet-4-5-20250929"  # ArcLLM model id (provider/model)

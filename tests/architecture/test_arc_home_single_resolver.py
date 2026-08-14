@@ -45,7 +45,24 @@ _ENV_VAR = "ARC_CONFIG_DIR"
 #: or in the PACKAGED tree (``blueprints`` ships inside the wheel as well). Those
 #: are legitimately composed off their own root.
 _HOME_ONLY_LEAVES = frozenset(
-    {"operator.key", "users.json", "connections.toml", "gateway.toml", "arc.env"}
+    {
+        "operator.key",
+        "users.json",
+        "connections.toml",
+        "gateway.toml",
+        "arc.env",
+        # Directory-shaped leaves. The file names above catch
+        # ``Path(arc_dir) / "operator" / "operator.key"``; these catch the
+        # half-composed form ``Path(base) / "identity"``, which is how the
+        # ``arc identity init --dir`` drift survived the split — the same base
+        # produced ``X/identity`` from the flag and ``X/state/identity`` from the
+        # env var. Only names that exist NOWHERE else: not in an agent directory,
+        # not in the packaged tree, not a repo folder (which is why ``extensions``
+        # and ``blueprints`` stay out — both are also source-tree directories).
+        "operator",
+        "identity",
+        "nats",
+    }
 )
 
 

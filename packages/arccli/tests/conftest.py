@@ -14,10 +14,12 @@ duration of the test.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
 import pytest
+from arctrust.paths import ARC_CONFIG_DIR_ENV
 
 
 @pytest.fixture
@@ -51,3 +53,20 @@ def _block_browser_launch() -> Iterator[None]:
     """
     with patch("webbrowser.open", return_value=True):
         yield
+
+
+@pytest.fixture(autouse=True)
+def _isolated_arc_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Relocate the Arc home so no test can reach the developer's real ``~/.arc``.
+
+    Without this, a test that resolves any :mod:`arctrust.paths` accessor writes
+    into the invoking user's own deployment: this suite was observed rewriting
+    the real viewer token and APPENDING to the real operator-signed WORM chain.
+    Both are live state a developer depends on, and the WORM chain additionally
+    enforces a single writer, so a polluting test also fails outright beside any
+    concurrent run — diagnosing the machine rather than the code.
+
+    Autouse and set before every other fixture body, so a test that names its own
+    ``ARC_CONFIG_DIR`` still wins (its ``setenv`` lands after this one).
+    """
+    monkeypatch.setenv(ARC_CONFIG_DIR_ENV, str(tmp_path / "arc-home"))

@@ -209,7 +209,7 @@ def pin_arcstore_data_dir(run_dir: Path) -> Path:
 
     ``ARCSTORE_DATA_DIR`` outranks the ``[arcstore] data_dir`` written above
     (``arcstore.config.resolve_data_dir``), so an operator shell that exports it
-    would pool all 500 runs — and the developer's own ``~/.arc/store`` — into one
+    would pool all 500 runs — and the developer's own ``~/.arc/state/store`` — into one
     database. Setting it here is what makes the emitted value hold.
     """
     data_dir = (run_dir / ARCSTORE_DIR_NAME).resolve()

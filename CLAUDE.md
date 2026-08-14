@@ -47,7 +47,27 @@ All of these are
 - optional imports, imported separately and specifically
 
 
-### 3. Agent state stays in the workspace — never via LLM file tools (ADR-029)
+### 3. One resolver per Arc-home path
+
+`~/.arc` is split by lifecycle: `runtime/` is **replaced wholesale** on update,
+`config/` is **preserved**, `state/` (operator key, identity, trust store,
+arcstore, NATS, bundles) and `team/` are **never touched**. Runtimes install side
+by side under `runtime/<version>/` behind a `current` symlink, so an update is an
+atomic flip and a rollback is flipping it back.
+
+Every path under it comes from a named accessor in `arctrust.paths` —
+`arc_config()`, `arc_state()`, `trust_dir()`, `config_file("arcagent.toml")`,
+`module_root()`, … Each takes an optional explicit base for `--arc-dir`.
+
+- **Never** compose your own (`arc_home() / "operator"`) and never re-read
+  `ARC_CONFIG_DIR`. A split resolver is how one surface came to read a different
+  directory than another, and how a test wrote into a developer's real `~/.arc`.
+- Resolve **per call**, never at import — `ARC_CONFIG_DIR` is routinely exported
+  after a module loads.
+- Enforced by `tests/architecture/test_arc_home_single_resolver.py`.
+- Agent runtime data never lives in the code checkout; `team/` is gitignored.
+
+### 4. Agent state stays in the workspace — never via LLM file tools (ADR-029)
 
 An agent's own state — memory, sessions, `context.md`, identity, the audit chain — is written with **direct filesystem I/O to the agent's workspace** (its home). It must **never** be saved by calling the LLM-facing tools (`write` / `bash` / `edit`).
 
@@ -60,7 +80,7 @@ An agent's own state — memory, sessions, `context.md`, identity, the audit cha
 
 Breaking this re-couples "where the agent works" to "where the agent lives" and defeats the coding-agent model.
 
-### 4. No legacy / backward-compat shims
+### 5. No legacy / backward-compat shims
 
 This codebase is local-only and not deployed. **Never** add migration helpers, deprecation shims, vestigial methods, or "kept for compatibility" code.
 
@@ -68,7 +88,7 @@ This codebase is local-only and not deployed. **Never** add migration helpers, d
 - **One line beats five.** Don't replace a one-line fix with a multi-method "resolver + helper + warner." Smallest correct change wins.
 - No comments explaining what changed or why this is "the new way." Code is current reality; commit messages hold history.
 
-### 5. Leave it correct — no skipping pre-existing errors
+### 6. Leave it correct — no skipping pre-existing errors
 
 - If `ruff check`, `mypy`, or any quality gate surfaces an error during your work, **fix it now** — regardless of who introduced it or when.
 - Never report "pre-existing — not my problem." The repo is left clean every session, commit, and PR. Inherited debt is paid when seen.

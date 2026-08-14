@@ -47,7 +47,7 @@ def run_dir(tmp_path: Path) -> Path:
 def isolated_arc_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Point HOME and the Arc config root at throwaway dirs.
 
-    The developer's own `~/.arc/arcagent.toml` merges under every per-agent
+    The developer's own `~/.arc/config/arcagent.toml` merges under every per-agent
     config, so an unisolated `load_config` would read values this harness never
     wrote — and a stray key there could mask a setting we failed to emit.
     """

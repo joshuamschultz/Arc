@@ -91,7 +91,7 @@ AgentFactory = Callable[..., Awaitable["ArcAgent"]]
 def isolated_arc_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Point HOME, the Arc config root and arcstore at throwaway directories.
 
-    The developer's `~/.arc/arcagent.toml` merges under every per-agent config,
+    The developer's `~/.arc/config/arcagent.toml` merges under every per-agent config,
     so an unisolated run would build an agent from settings the harness never
     wrote — and `ARCSTORE_DATA_DIR` outranks the emitted `[arcstore] data_dir`,
     so it is pinned here for `monkeypatch` to restore afterwards.

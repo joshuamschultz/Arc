@@ -11,6 +11,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
+from arctrust.paths import arc_team
 
 from arccli.commands.init import init_handler
 
@@ -29,8 +30,10 @@ def test_init_team_scaffolds_coder_with_persona(
     monkeypatch.chdir(tmp_path)
     init_handler(["--team", "coding", "--blueprint", "coding", "--name", "coder"])
 
-    # Fleets are GLOBAL under ~/.arc/<team> (HOME is isolated by the fixture), not cwd.
-    agent_dir = Path.home() / ".arc" / "coding" / "coder"
+    # Fleets are GLOBAL under the deployment's team root, not cwd. Resolved
+    # through the accessor so the assertion tracks the Arc home wherever the
+    # suite's isolation puts it.
+    agent_dir = arc_team("coding") / "coder"
     assert (agent_dir / "arcagent.toml").is_file()
 
     cfg = tomllib.loads((agent_dir / "arcagent.toml").read_text(encoding="utf-8"))
@@ -47,8 +50,8 @@ def test_init_team_default_agent_name_is_blueprint(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     init_handler(["--team", "coding", "--blueprint", "coding"])
-    # No --name → agent named after the blueprint; global under ~/.arc.
-    assert (Path.home() / ".arc" / "coding" / "coding" / "arcagent.toml").is_file()
+    # No --name → agent named after the blueprint; global under the team root.
+    assert (arc_team("coding") / "coding" / "arcagent.toml").is_file()
 
 
 def test_init_team_unknown_blueprint_exits(

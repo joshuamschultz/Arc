@@ -44,7 +44,7 @@ def run_dir(tmp_path: Path) -> Path:
 def isolated_arc_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Point HOME and the Arc config root at throwaway dirs.
 
-    Two reasons. The developer's `~/.arc/arcagent.toml` merges under every
+    Two reasons. The developer's `~/.arc/config/arcagent.toml` merges under every
     per-agent config (`_compose_raw_config`), so an unisolated run would read a
     workspace value the harness never wrote. And COMP-006 exists precisely to
     avoid `arc agent create`, which mints identities into `~/.arcagent/keys` —

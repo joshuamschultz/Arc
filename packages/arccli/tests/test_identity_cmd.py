@@ -66,16 +66,20 @@ def test_init_honors_arc_config_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 
 
 def test_init_honors_dir_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """--dir sets the config base; the key lands under <dir>/identity (F5).
+    """``--dir X`` and ``ARC_CONFIG_DIR=X`` must name the SAME key dir (F5).
 
-    Spelled out rather than resolved through :func:`identity_dir`: ``--dir``
-    composes its own ``<dir>/identity`` in ``arccli.commands.identity``, so the
-    accessor and this flag do not currently agree.
+    They used to disagree: the flag composed ``<dir>/identity`` by hand while
+    the accessor answered ``<dir>/state/identity``, so one spelling wrote the
+    signing authority where the other would never look for it. Asserted through
+    the accessor AND against the env-var route, so a future split fails here.
     """
     monkeypatch.delenv("ARC_CONFIG_DIR", raising=False)
     identity_handler(["init", "--dir", str(tmp_path)])
-    loaded = load_signing_authority(tmp_path / "identity")
+    loaded = load_signing_authority(identity_dir(tmp_path))
     assert loaded is not None and loaded.did.startswith("did:arc:")
+
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
+    assert identity_dir() == identity_dir(tmp_path), "--dir and ARC_CONFIG_DIR disagree"
 
 
 def test_key_dir_flag_overrides_arc_config_dir(

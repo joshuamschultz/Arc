@@ -423,23 +423,27 @@ version = "0.7.0"
 source = { editable = "packages/arccli" }
 dependencies = [
     { name = "arc-agent" },
+    { name = "arcbundle" },
     { name = "arcllm" },
     { name = "arcrun" },
     { name = "arcteam" },
     { name = "click" },
     { name = "prompt-toolkit" },
     { name = "python-dotenv" },
+    { name = "tomlkit" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "arc-agent", editable = "packages/arcagent" },
+    { name = "arcbundle", editable = "packages/arcbundle" },
     { name = "arcllm", editable = "packages/arcllm" },
     { name = "arcrun", editable = "packages/arcrun" },
     { name = "arcteam", editable = "packages/arcteam" },
     { name = "click", specifier = ">=8.0" },
     { name = "prompt-toolkit", specifier = ">=3.0" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
+    { name = "tomlkit", specifier = ">=0.13,<1" },
 ]
 
 [[package]]
