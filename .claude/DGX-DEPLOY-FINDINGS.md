@@ -104,6 +104,17 @@ with a `witness` migration entry — which the accessor/`_LAYOUT` drift test wou
 have demanded anyway. The stray 0-byte audit chains were left by the unisolated
 tests that are now fixed; they are inert and deletable.
 
+## New, and not mine to fix silently
+
+**`sales_agent`'s `crm_pipeline` cannot run: the box user is not in the `docker`
+group.** Isolated capabilities execute in a container, and `/var/run/docker.sock`
+is `root:docker 0660`, so every invocation dies with
+`permission denied ... unix:///var/run/docker.sock`. Pre-existing and unrelated to
+this work; chat, schedules, tasks and memory are unaffected. The error message is
+already precise, so this is a one-line box change — `sudo usermod -aG docker
+joshuamschultz` and re-login — which needs root and is therefore Josh's call, not
+something to do unannounced.
+
 ## What to keep
 
 `arc up --check` refused to start a fleet missing all 17 modules and named every
