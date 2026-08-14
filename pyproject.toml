@@ -123,6 +123,10 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "A", "S", "T20", "RUF"]
 [tool.ruff.lint.per-file-ignores]
 "**/tests/**/*.py" = ["S101", "S105", "S106", "E402", "S603"]
 "scripts/**/*.py" = ["T201"]
+# Operator scripts run outside the venv/package on a deployed box: their stdout
+# IS the interface (a deploy gate reads it), so print is correct here, and the
+# one URL they open is a fixed localhost dashboard address.
+"deploy/**/*.py" = ["T201", "S310"]
 # SBOM report generator: emits a wide-table markdown doc with unicode symbols
 # (arrows, ×) and a status print — line-length/ambiguous-unicode/print lints
 # do not apply to generated report content.
