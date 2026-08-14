@@ -36,12 +36,34 @@ def test_roots_resolve_under_arc_config_dir(arc_root: Path) -> None:
     assert paths.arc_state() == arc_root / "state"
     assert paths.arc_runtime_root() == arc_root / "runtime"
     assert paths.arc_runtime() == arc_root / "runtime" / "current"
-    assert paths.arc_team() == arc_root / "team"
 
 
-def test_arc_team_accepts_an_alternate_fleet_name(arc_root: Path) -> None:
-    """``arc init --team coding`` puts the fleet at ``<home>/coding``."""
-    assert paths.arc_team("coding") == arc_root / "coding"
+def test_the_fleet_lives_outside_the_hidden_home(arc_root: Path) -> None:
+    """A fleet is the OPERATOR's work, not Arc's own business.
+
+    The home holds framework, config and keys, and an update is allowed to
+    replace parts of it. Agent traces, sessions and memory must sit somewhere
+    visible the operator can back up and inspect, that nothing an update touches
+    can reach — and outside any code checkout, since agent data committed into
+    the repo is what made a production ``git pull`` collide with live memory.
+    """
+    assert paths.arc_team() == Path.home() / "arc" / "team"
+    assert arc_root not in paths.arc_team().parents
+
+
+def test_arc_team_root_env_relocates_only_the_fleet(
+    arc_root: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``ARC_TEAM_ROOT`` moves the fleet without moving the home."""
+    monkeypatch.setenv("ARC_TEAM_ROOT", str(tmp_path / "fleet"))
+
+    assert paths.arc_team() == tmp_path / "fleet" / "team"
+    assert paths.arc_home() == arc_root
+
+
+def test_arc_team_accepts_an_alternate_fleet_name() -> None:
+    """``arc init --team coding`` names the fleet directory."""
+    assert paths.arc_team("coding") == Path.home() / "arc" / "coding"
 
 
 def test_arc_runtime_version_is_a_sibling_of_current(arc_root: Path) -> None:
@@ -62,7 +84,6 @@ def test_arc_runtime_version_is_a_sibling_of_current(arc_root: Path) -> None:
         "arc_state",
         "arc_runtime",
         "arc_runtime_root",
-        "arc_team",
         "operator_dir",
         "default_operator_key_path",
         "identity_dir",
@@ -103,6 +124,26 @@ def test_every_accessor_honors_env_set_after_import(
     assert before != after
     assert first in before.parents or before == first
     assert second in after.parents or after == second
+
+
+def test_arc_team_resolves_its_own_env_per_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same per-call guarantee as above, for the one accessor with its own root.
+
+    ``arc_team`` is excluded from the ``ARC_CONFIG_DIR`` sweep on purpose — the
+    fleet does NOT live under the Arc home — but it must still read its env on
+    every call rather than freezing an import-time value.
+    """
+    first, second = tmp_path / "first", tmp_path / "second"
+
+    monkeypatch.setenv("ARC_TEAM_ROOT", str(first))
+    before = paths.arc_team()
+    monkeypatch.setenv("ARC_TEAM_ROOT", str(second))
+    after = paths.arc_team()
+
+    assert before == first / "team"
+    assert after == second / "team"
 
 
 def test_unset_env_falls_back_to_dot_arc_under_home(monkeypatch: pytest.MonkeyPatch) -> None:

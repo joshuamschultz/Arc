@@ -60,6 +60,7 @@ _LAYOUT: dict[str, str] = {
     "nats": "nats_dir",
     "bundles": "bundles_dir",
     "extensions": "extensions_dir",
+    "workflows": "workflows_dir",
     "capabilities": "capabilities_dir",
     "blueprints": "blueprints_dir",
     "skills": "skills_dir",

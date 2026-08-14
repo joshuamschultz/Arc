@@ -38,6 +38,11 @@ from pathlib import Path
 ARC_CONFIG_DIR_ENV = "ARC_CONFIG_DIR"
 """Environment override relocating the entire Arc home."""
 
+#: Relocates the FLEET root only. Separate from ARC_CONFIG_DIR because agent data
+#: and Arc's own home have different lifecycles: an update may replace parts of
+#: the home and must never be able to reach a running agent's memory.
+ARC_TEAM_ROOT_ENV = "ARC_TEAM_ROOT"
+
 _CURRENT = "current"
 """Name of the symlink pointing at the active runtime version."""
 
@@ -119,13 +124,25 @@ def arc_runtime_version(version: str, base: Base = None) -> Path:
 
 
 def arc_team(name: str = "team", base: Base = None) -> Path:
-    """Return a fleet root: ``<arc_home>/<name>`` (default ``team``).
+    """Return a fleet root: ``${ARC_TEAM_ROOT:-~/arc}/<name>`` (default ``team``).
 
-    Per-agent traces, sessions, memory, and workspace. Outside ``runtime/`` so
-    an update cannot reach it, and outside any code checkout so ``git pull``
-    cannot collide with a running agent. ``name`` carries ``arc init --team``.
+    Per-agent traces, sessions, memory, and workspace. Deliberately NOT under the
+    hidden Arc home: the home is Arc's own business — framework, config, keys —
+    and an update is allowed to replace parts of it. A fleet is the operator's
+    work, so it lives somewhere visible they can back up, inspect, and move,
+    and nothing an update touches can reach it.
+
+    It is also outside any code checkout. Agent data committed into the repo is
+    what made a production ``git pull`` collide with running agents' memory.
+
+    ``base`` (i.e. ``--arc-dir``) still wins when given, so a fully self-contained
+    deployment can put everything under one root.
     """
-    return _base(base) / name
+    if base is not None:
+        return _base(base) / name
+    override = os.environ.get(ARC_TEAM_ROOT_ENV)
+    root = Path(override).expanduser() if override else Path.home() / "arc"
+    return root / name
 
 
 # ---------------------------------------------------------------------------
@@ -350,6 +367,7 @@ def activate_runtime(version: str, base: Base = None) -> Path:
 
 __all__ = [
     "ARC_CONFIG_DIR_ENV",
+    "ARC_TEAM_ROOT_ENV",
     "OPERATOR_KEY_FILENAME",
     "Base",
     "activate_runtime",
