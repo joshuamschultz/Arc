@@ -1,5 +1,14 @@
 # DGX deploy findings — 2026-08-13
 
+> **Redeploy 2026-08-14:** items 1 and 2 are FIXED in the repo and the DGX now
+> runs the SHIPPED `deploy/systemd/arc.service` verbatim (`diff` vs repo: 0
+> lines) — no hand patches remain. Verified after: service active, health 200, 6
+> agents, 18 modules per agent, 3 workflows visible, 8/8 audit chains verify, 0
+> absent-module warnings, 0 tracebacks. `arc install` ran as `ExecStartPre` and
+> was correctly idempotent ("nothing to build — every enabled module is already
+> installed"). The home migration re-ran as a no-op (`already_migrated: True`).
+> Items 3-6 remain open.
+
 Problems found deploying `73eda1d9` (Arc-home split) to spark-0290. Fix these
 locally; the DGX was patched by hand where noted, and a hand patch does not reach
 the repo.
