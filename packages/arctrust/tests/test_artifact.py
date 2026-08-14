@@ -121,9 +121,7 @@ def test_vault_transit_signer_signs_without_the_seed_in_process(tmp_path: Path) 
     seed = generate_keypair().private_key
     keystore = tmp_path / "notary"
     FileNotaryTransit.provision(keystore, "operator", seed, algorithm=ECDSA_P256)
-    signer = VaultSigner(
-        FileNotaryTransit(keystore, algorithm=ECDSA_P256), "operator", ECDSA_P256
-    )
+    signer = VaultSigner(FileNotaryTransit(keystore, algorithm=ECDSA_P256), "operator", ECDSA_P256)
     content = b"vault-signed bytes"
 
     manifest = sign_artifact_with_signer(content, signer_did="did:arc:op", signer=signer)

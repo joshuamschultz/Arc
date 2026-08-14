@@ -86,8 +86,7 @@ class MediaCustodian:
         store = self._media_store_for(event.agent_did) if self._media_store_for else None
         if store is None:
             _logger.warning(
-                "Media on %s for %s has no resolvable workspace — naming %r instead "
-                "of storing it",
+                "Media on %s for %s has no resolvable workspace — naming %r instead of storing it",
                 channel,
                 event.agent_did,
                 pending.declared_name,
@@ -153,9 +152,7 @@ class MediaCustodian:
     @staticmethod
     def _named(pending: PendingMedia, reason: str) -> TextPart:
         """An artefact that could not be kept, as the words the agent still sees."""
-        return TextPart(
-            text=f"[{pending.kind} not stored: {pending.declared_name} ({reason})]"
-        )
+        return TextPart(text=f"[{pending.kind} not stored: {pending.declared_name} ({reason})]")
 
 
 __all__ = ["MediaCustodian"]

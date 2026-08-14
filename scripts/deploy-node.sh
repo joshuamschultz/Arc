@@ -63,6 +63,11 @@ ENABLE_TELEGRAM="${ARC_ENABLE_TELEGRAM:-0}"
 TELEGRAM_ALLOWED_USER_IDS="${ARC_TELEGRAM_ALLOWED_USER_IDS:-}"
 ENV_FILE="${ARC_ENV_FILE:-$REPO_ROOT/.env}"
 ARC_CONFIG_DIR="${ARC_CONFIG_DIR:-$HOME/.arc}"
+# The fleet lives OUTSIDE the code checkout. Putting it inside is what dropped
+# 1,700 files of agent traces, sessions, memory and workspace into a live
+# deployment's repo, so every `git pull` afterwards collided with a running
+# agent. `team/` is also in .gitignore, but the layout is the real fix.
+ARC_TEAM_ROOT="${ARC_TEAM_ROOT:-$ARC_CONFIG_DIR/team}"
 
 log()  { echo "→ $*"; }
 ok()   { echo "  ✓ $*"; }
@@ -124,8 +129,8 @@ if [ "$ENABLE_TELEGRAM" = "1" ]; then
   [ -n "$TELEGRAM_BOT_TOKEN" ] || fail "ARC_ENABLE_TELEGRAM=1 but ARCAGENT_TELEGRAM_BOT_TOKEN missing from $ENV_FILE"
 fi
 
-mkdir -p "$ARC_CONFIG_DIR"
-ARC_ENV="$ARC_CONFIG_DIR/arc.env"
+mkdir -p "$ARC_CONFIG_DIR/config"
+ARC_ENV="$ARC_CONFIG_DIR/config/arc.env"
 if [ -f "$ARC_ENV" ]; then
   ok "$ARC_ENV already present — leaving viewer/operator tokens pinned"
 else
@@ -149,8 +154,8 @@ set -a
 set +a
 
 # --- 6. arc init -----------------------------------------------------------
-if [ -f "$ARC_CONFIG_DIR/gateway.toml" ]; then
-  ok "arc init already run — leaving ~/.arc/*.toml as-is"
+if [ -f "$ARC_CONFIG_DIR/config/gateway.toml" ]; then
+  ok "arc init already run — leaving ~/.arc/config/*.toml as-is"
 else
   log "arc init --tier $TIER --provider $PROVIDER..."
   "$ARC_BIN" init --tier "$TIER" --provider "$PROVIDER"
@@ -159,9 +164,9 @@ fi
 # --- 7. config overlays (idempotent — safe to re-run every time) -----------
 log "Applying user-wide config overlays..."
 "$VENV_PY" scripts/deploy_node_overlays.py agent-config \
-  "$ARC_CONFIG_DIR/arcagent.toml" --provider "$PROVIDER" --model "${AGENT_MODEL#*/}"
+  "$ARC_CONFIG_DIR/config/arcagent.toml" --provider "$PROVIDER" --model "${AGENT_MODEL#*/}"
 
-GATEWAY_ARGS=(gateway-config "$ARC_CONFIG_DIR/gateway.toml")
+GATEWAY_ARGS=(gateway-config "$ARC_CONFIG_DIR/config/gateway.toml")
 if [ "$ENABLE_TELEGRAM" = "1" ]; then
   GATEWAY_ARGS+=(--enable-telegram)
   if [ -n "$TELEGRAM_ALLOWED_USER_IDS" ]; then
@@ -173,17 +178,17 @@ fi
 "$VENV_PY" scripts/deploy_node_overlays.py "${GATEWAY_ARGS[@]}"
 
 # --- 8. agent create — one or more, first one wins gateway routing --------
-mkdir -p team
+mkdir -p "$ARC_TEAM_ROOT"
 for AGENT_NAME in "${AGENT_NAMES[@]}"; do
-  if [ -d "team/$AGENT_NAME" ]; then
-    ok "team/$AGENT_NAME already exists"
+  if [ -d "$ARC_TEAM_ROOT/$AGENT_NAME" ]; then
+    ok "$ARC_TEAM_ROOT/$AGENT_NAME already exists"
   else
     log "Creating agent $AGENT_NAME ($AGENT_MODEL)..."
-    "$ARC_BIN" agent create "$AGENT_NAME" --dir team --model "$AGENT_MODEL"
+    "$ARC_BIN" agent create "$AGENT_NAME" --dir "$ARC_TEAM_ROOT" --model "$AGENT_MODEL"
   fi
   "$VENV_PY" scripts/deploy_node_overlays.py agent-config \
-    "team/$AGENT_NAME/arcagent.toml" --provider "$PROVIDER" --model "${AGENT_MODEL#*/}"
-  "$ARC_BIN" agent build "team/$AGENT_NAME" --check
+    "$ARC_TEAM_ROOT/$AGENT_NAME/arcagent.toml" --provider "$PROVIDER" --model "${AGENT_MODEL#*/}"
+  "$ARC_BIN" agent build "$ARC_TEAM_ROOT/$AGENT_NAME" --check
 done
 
 # gateway.toml routes remote-platform DMs (Telegram etc.) to ONE agent_did.
@@ -195,21 +200,21 @@ AGENT_DID="$("$VENV_PY" -c '
 import sys, tomllib
 with open(sys.argv[1], "rb") as f:
     print(tomllib.load(f).get("identity", {}).get("did", ""))
-' "team/$PRIMARY_AGENT/arcagent.toml")"
-[ -n "$AGENT_DID" ] || fail "could not read minted DID from team/$PRIMARY_AGENT/arcagent.toml"
+' "$ARC_TEAM_ROOT/$PRIMARY_AGENT/arcagent.toml")"
+[ -n "$AGENT_DID" ] || fail "could not read minted DID from $ARC_TEAM_ROOT/$PRIMARY_AGENT/arcagent.toml"
 "$VENV_PY" scripts/deploy_node_overlays.py gateway-config \
-  "$ARC_CONFIG_DIR/gateway.toml" --agent-did "$AGENT_DID"
+  "$ARC_CONFIG_DIR/config/gateway.toml" --agent-did "$AGENT_DID"
 ok "agent_did wired into gateway.toml: $AGENT_DID ($PRIMARY_AGENT)"
 
 # --- 8b. modules ----------------------------------------------------------
 # Modules do NOT ship in the wheel. Each is a separately signed bundle that
-# `arc install` verifies and materializes under $ARC_CONFIG_DIR/modules. Skip
+# `arc install` verifies and materializes under $ARC_CONFIG_DIR/runtime/current/modules. Skip
 # this and every agent boots, answers chat, and looks healthy while its
 # scheduler never fires and its tasks never dispatch — nothing crashes, so
 # nothing is noticed. Idempotent, and non-zero when a config asks for a
 # capability this box cannot deliver, so a hollow node never reaches systemd.
 log "Installing modules for every agent..."
-"$ARC_BIN" install --team-root "$REPO_ROOT/team" \
+"$ARC_BIN" install --team-root "$ARC_TEAM_ROOT" \
   || fail "arc install could not deliver every module the configs enable (see above)"
 
 # --- 9. systemd user unit -------------------------------------------------

@@ -19,6 +19,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from arctrust.paths import capabilities_dir
 
 from arccli.commands._capability_registry import build_capability_registry
 
@@ -97,7 +98,7 @@ class TestGlobalRootHonorsArcConfigDir:
     def test_relocated_arc_home_is_scanned(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        relocated = tmp_path / "isolated" / "capabilities"
+        relocated = capabilities_dir(tmp_path / "isolated")
         relocated.mkdir(parents=True)
         monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "isolated"))
 

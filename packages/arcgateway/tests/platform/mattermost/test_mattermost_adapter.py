@@ -568,7 +568,9 @@ class TestConstructionAudit:
         async def _noop(e: InboundEvent) -> None:
             pass
 
-        with patch("arcgateway.adapters.mattermost.adapter.MattermostAdapter._audit") as mock_audit:
+        with patch(
+            "arcgateway.adapters.mattermost.adapter.MattermostAdapter._audit"
+        ) as mock_audit:
             MattermostAdapter(
                 server_url="http://localhost:8065",
                 bot_token=_PAT_CANARY,
@@ -588,7 +590,7 @@ class TestConstructionAudit:
 
 class TestSplitMessage:
     def test_short_message_not_split(self) -> None:
-        chunks = split_message("hello", 100, boundaries=('\n\n', '\n', ' '))
+        chunks = split_message("hello", 100, boundaries=("\n\n", "\n", " "))
         assert chunks == ["hello"]
 
     def test_empty_message_returns_empty(self) -> None:
@@ -596,23 +598,23 @@ class TestSplitMessage:
 
     def test_long_message_splits_at_paragraph_boundary(self) -> None:
         text = "A" * 50 + "\n\n" + "B" * 50
-        chunks = split_message(text, 60, boundaries=('\n\n', '\n', ' '))
+        chunks = split_message(text, 60, boundaries=("\n\n", "\n", " "))
         assert len(chunks) == 2
         assert chunks[0] == "A" * 50
         assert chunks[1] == "B" * 50
 
     def test_long_message_splits_at_newline(self) -> None:
         text = "A" * 50 + "\n" + "B" * 50
-        chunks = split_message(text, 60, boundaries=('\n\n', '\n', ' '))
+        chunks = split_message(text, 60, boundaries=("\n\n", "\n", " "))
         assert len(chunks) == 2
 
     def test_very_long_word_split_at_max(self) -> None:
         text = "X" * 200
-        chunks = split_message(text, 100, boundaries=('\n\n', '\n', ' '))
+        chunks = split_message(text, 100, boundaries=("\n\n", "\n", " "))
         assert all(len(c) <= 100 for c in chunks)
         assert "".join(chunks) == text
 
     def test_exact_max_length_not_split(self) -> None:
         text = "A" * 100
-        chunks = split_message(text, 100, boundaries=('\n\n', '\n', ' '))
+        chunks = split_message(text, 100, boundaries=("\n\n", "\n", " "))
         assert chunks == [text]

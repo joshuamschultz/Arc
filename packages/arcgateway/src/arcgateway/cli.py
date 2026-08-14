@@ -267,9 +267,9 @@ def cmd_setup() -> None:
     defaults so operators can fill in their platform tokens. Does NOT
     overwrite an existing file.
     """
-    from arcgateway.config import _config_base_dir
+    from arctrust.paths import config_file
 
-    config_path = (_config_base_dir() / "gateway.toml").expanduser().resolve()
+    config_path = config_file("gateway.toml").expanduser().resolve()
     config_path.parent.mkdir(parents=True, exist_ok=True)
 
     if config_path.exists():

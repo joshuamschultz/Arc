@@ -27,6 +27,7 @@ from __future__ import annotations
 import ast
 import base64
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,7 @@ from arcagent.capabilities import artifact_signing
 from arcgateway import team_roster
 from arctrust import OperatorKey, default_operator_key_path
 from arctrust.identity import AgentIdentity
+from arctrust.paths import operator_dir
 from starlette.applications import Starlette
 from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.testclient import TestClient
@@ -73,7 +75,7 @@ def _operator_seed(tmp_path: Path) -> bytes:
     Returned so H3/H4 can search for the real bytes rather than a placeholder —
     a leak test that greps for a string the process never held proves nothing.
     """
-    key_path = tmp_path / "arc" / "operator" / "operator.key"
+    key_path = default_operator_key_path(tmp_path / "arc")
     key_path.parent.mkdir(parents=True, exist_ok=True)
     key = OperatorKey.load(key_path, generate_if_absent=True)
     seed: bytes = key.seed
@@ -454,23 +456,31 @@ def test_h3_a_signer_failure_names_the_error_type_not_the_key(tmp_path: Path) ->
 #: The traversal forms are percent-encoded because httpx collapses literal
 #: ``..`` segments client-side, so only the encoded ones actually arrive at the
 #: server — which is also the only form a real attacker would send.
-_DIRECT = [
-    "/assets/operator/operator.key",
-    "/assets/operator.key",
-    "/assets/arc/operator/operator.key",
-    "/operator/operator.key",
-    "/operator.key",
-    "/.arc/operator/operator.key",
-    "/api/system-config/operator",
-]
-_TRAVERSALS = [
-    *_DIRECT,
-    "/assets/%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2foperator%2foperator.key",
-    "/assets/..%2f..%2f..%2f..%2foperator%2foperator.key",
-    "/assets/%2e%2e/%2e%2e/%2e%2e/operator/operator.key",
-    "/assets/....//....//operator/operator.key",
-    "/api/system-config/%2e%2e%2f%2e%2e%2foperator%2foperator",
-]
+
+
+def _leak_urls(target: Path, home: Path) -> list[str]:
+    """Both escape shapes above, aimed at where ``target`` really sits in the home.
+
+    Built from the resolved path rather than a spelled-out ``operator/operator.key``
+    so moving the key inside the Arc home cannot leave this pointed at a file no
+    deployment holds — which would pass while serving the real one.
+    """
+    tail = target.relative_to(home).as_posix()
+    encoded = tail.replace("/", "%2f")
+    up_encoded = "%2e%2e%2f" * 4
+    up_dots = "..%2f" * 4
+    return [
+        f"/assets/{tail}",
+        f"/assets/{target.name}",
+        f"/assets/arc/{tail}",
+        f"/{tail}",
+        f"/{target.name}",
+        f"/.arc/{tail}",
+        f"/assets/{up_encoded}{encoded}",
+        f"/assets/{up_dots}{encoded}",
+        f"/assets/%2e%2e/%2e%2e/%2e%2e/{tail}",
+        f"/assets/....//....//{tail}",
+    ]
 
 
 def test_h4_no_route_serves_the_operator_key_file(tmp_path: Path) -> None:
@@ -488,6 +498,11 @@ def test_h4_no_route_serves_the_operator_key_file(tmp_path: Path) -> None:
     secrets = _secret_forms(seed)
     key_path = default_operator_key_path()
     assert key_path.read_bytes() == seed, "the key file is not the raw seed this test searches for"
+    urls = [
+        *_leak_urls(key_path, tmp_path / "arc"),
+        "/api/system-config/operator",
+        "/api/system-config/%2e%2e%2f%2e%2e%2foperator%2foperator",
+    ]
 
     from arcui.server import create_app
 
@@ -496,7 +511,7 @@ def test_h4_no_route_serves_the_operator_key_file(tmp_path: Path) -> None:
     app.state.auth_config = auth
     client = TestClient(app)
 
-    for path in _TRAVERSALS:
+    for path in urls:
         for headers in ({}, _OPERATOR):
             resp = client.get(path, headers=headers)
             assert seed not in resp.content, f"{path} served the operator key bytes"
@@ -512,7 +527,7 @@ def test_h4_the_whole_operator_directory_is_unreachable(tmp_path: Path) -> None:
     incident as reaching the key itself.
     """
     _operator_seed(tmp_path)
-    marker = default_operator_key_path().parent / "notary" / "operator.priv"
+    marker = operator_dir() / "notary" / "operator.priv"
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text("NOTARY-KEYSTORE-MARKER", encoding="utf-8")
 
@@ -522,13 +537,7 @@ def test_h4_the_whole_operator_directory_is_unreachable(tmp_path: Path) -> None:
     app.state.auth_config = AuthConfig({"viewer_token": "viewer", "operator_token": "operator"})
     client = TestClient(app)
 
-    for path in (
-        "/assets/operator/notary/operator.priv",
-        "/assets/notary/operator.priv",
-        "/assets/%2e%2e%2f%2e%2e%2f%2e%2e%2foperator%2fnotary%2foperator.priv",
-        "/assets/..%2f..%2f..%2foperator%2fnotary%2foperator.priv",
-        "/operator/notary/operator.priv",
-    ):
+    for path in _leak_urls(marker, tmp_path / "arc"):
         resp = client.get(path, headers=_OPERATOR)
         assert b"NOTARY-KEYSTORE-MARKER" not in resp.content
 
@@ -555,9 +564,9 @@ def fenced_agent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, P
     from arcagent.builtins.capabilities import _runtime
 
     arc_home = tmp_path / "arc"
-    operator_dir = arc_home / "operator"
-    operator_dir.mkdir(parents=True, exist_ok=True)
-    operator_key = operator_dir / "operator.key"
+    key_dir = operator_dir(arc_home)
+    key_dir.mkdir(parents=True, exist_ok=True)
+    operator_key = default_operator_key_path(arc_home)
     operator_key.write_text("SENTINEL-OPERATOR-KEY", encoding="utf-8")
 
     team_root = tmp_path / "team"
@@ -569,11 +578,10 @@ def fenced_agent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, P
     _runtime.configure(
         workspace=team_root / "olivia" / "workspace", allowed_paths=None, tier="personal"
     )
-    import os
-
-    assert os.access(operator_dir, os.W_OK) and os.access(operator_key, os.W_OK)
+    assert os.access(key_dir, os.W_OK) and os.access(operator_key, os.W_OK)
     return {
-        "operator_dir": operator_dir,
+        "operator_dir": key_dir,
+        "workspace": team_root / "olivia" / "workspace",
         "operator_key": operator_key,
         "foreign_sidecar": artifact_signing.sidecar_path(_skill_md(team_root, "marcus")),
     }
@@ -632,7 +640,7 @@ async def test_h5_a_relative_traversal_is_refused_too(fenced_agent: dict[str, Pa
     from arcagent.core.errors import ToolError
 
     target = fenced_agent["operator_key"]
-    relative = str(Path("..") / ".." / ".." / "arc" / "operator" / "operator.key")
+    relative = os.path.relpath(target, fenced_agent["workspace"])
 
     with pytest.raises(ToolError) as caught:
         await write(relative, "attacker-seed")

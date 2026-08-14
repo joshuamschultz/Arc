@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from arctrust.paths import arc_config, config_file
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
@@ -30,17 +31,17 @@ _ARCRUN_TOML = "[loop]\nmax_turns = 20\n"
 
 
 def _client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, Path]:
-    config_root = tmp_path / "arc-config"
-    config_root.mkdir()
-    (config_root / "arcllm.toml").write_text(_ARCLLM_TOML, encoding="utf-8")
-    (config_root / "arcrun.toml").write_text(_ARCRUN_TOML, encoding="utf-8")
-    monkeypatch.setenv("ARC_CONFIG_DIR", str(config_root))
+    home = tmp_path / "arc-home"
+    arc_config(home).mkdir(parents=True)
+    config_file("arcllm.toml", home).write_text(_ARCLLM_TOML, encoding="utf-8")
+    config_file("arcrun.toml", home).write_text(_ARCRUN_TOML, encoding="utf-8")
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(home))
 
     auth = AuthConfig({"viewer_token": "viewer", "operator_token": "operator"})
     app = Starlette(routes=system_config_routes.routes)
     app.add_middleware(AuthMiddleware, auth_config=auth)
     app.state.auth_config = auth
-    return TestClient(app), config_root
+    return TestClient(app), home
 
 
 def _get(client: TestClient, file: str, token: str = "viewer"):
@@ -89,8 +90,8 @@ def test_unknown_file_is_404(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
 def test_missing_file_returns_empty_sections(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    client, config_root = _client(tmp_path, monkeypatch)
-    (config_root / "arcrun.toml").unlink()
+    client, home = _client(tmp_path, monkeypatch)
+    config_file("arcrun.toml", home).unlink()
     resp = _get(client, "arcrun")
     assert resp.status_code == 200
     assert resp.json() == {"file": "arcrun", "sections": {}, "mtime": 0.0}
@@ -99,14 +100,14 @@ def test_missing_file_returns_empty_sections(
 def test_patch_merges_and_preserves_comments(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    client, config_root = _client(tmp_path, monkeypatch)
+    client, home = _client(tmp_path, monkeypatch)
     resp = _patch(client, "arcrun", {"loop": {"max_turns": 42}})
     assert resp.status_code == 200
     assert resp.json()["sections"]["loop"]["max_turns"] == 42
 
     resp2 = _patch(client, "arcllm", {"defaults": {"temperature": 0.1}})
     assert resp2.status_code == 200
-    on_disk = (config_root / "arcllm.toml").read_text(encoding="utf-8")
+    on_disk = config_file("arcllm.toml", home).read_text(encoding="utf-8")
     assert "keep the comment" in on_disk  # comment survived the round-trip
     assert "temperature = 0.1" in on_disk
     assert 'provider = "anthropic"' in on_disk  # untouched key preserved
@@ -125,8 +126,8 @@ def test_patch_unknown_file_is_404(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 
 
 def test_patch_missing_file_is_404(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    client, config_root = _client(tmp_path, monkeypatch)
-    (config_root / "arcrun.toml").unlink()
+    client, home = _client(tmp_path, monkeypatch)
+    config_file("arcrun.toml", home).unlink()
     resp = _patch(client, "arcrun", {"loop": {"max_turns": 5}})
     assert resp.status_code == 404
 

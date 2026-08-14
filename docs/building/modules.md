@@ -47,7 +47,7 @@ lives in a **third** that never holds module code at all.
 
 | What | Where | Trust |
 |---|---|---|
-| Module **runtime** — `_runtime.py`, `config.py`, `__init__.py`, and any support files | `${ARC_CONFIG_DIR:-~/.arc}/modules/<name>/` | `0444` files inside `0555` directories, at the deployment root **outside the tool fence**. Only the operator install writes here. |
+| Module **runtime** — `_runtime.py`, `config.py`, `__init__.py`, and any support files | `${ARC_CONFIG_DIR:-~/.arc}/runtime/current/modules/<name>/` | `0444` files inside `0555` directories, at the deployment root **outside the tool fence**. Only the operator install writes here. |
 | Module **capability surface** — `capabilities.py` and `skills/` | `<agent_dir>/capabilities/modules/<name>/` | The agent's own capability root, adjudicated as **verified**: a valid signature is required at every tier. Ordinary `0644` files in `0755` directories. |
 | **Agent state** — memory, sessions, `context.md`, the audit chain | `<agent_dir>/workspace/` | Written by the agent. **Never holds module code.** |
 
@@ -167,7 +167,7 @@ planner) · `policy` (ACE self-learning adaptation) · `proactive` (proactive ex
 The two steps are independent and live in `arcagent/core/module_discovery.py`.
 
 **Discovery is folder-driven, at the deployment root.** `module_root()` resolves
-`${ARC_CONFIG_DIR:-~/.arc}/modules` on every call — never cached at import, because the env
+`${ARC_CONFIG_DIR:-~/.arc}/runtime/current/modules` on every call — never cached at import, because the env
 var is routinely set after first import (tests, a service unit that exports it). A folder
 qualifies iff it is a non-underscore directory containing both `capabilities.py` and
 `_runtime.py` (`_is_module`). `discover_modules()` returns the sorted names of every
@@ -199,7 +199,7 @@ can never load, so `_warn_config_without_folder` surfaces it once at startup as 
 error rather than failing silently.
 
 **Contrast with the always-scanned capability roots.** Modules are one of several capability
-sources the `CapabilityLoader` scans. The others — builtins, `~/.arc/capabilities/`, the
+sources the `CapabilityLoader` scans. The others — builtins, `~/.arc/state/capabilities/`, the
 per-agent `capabilities/`, and the workspace `capabilities/` — are scanned unconditionally
 (builtins) or by user opt-in, independent of `[modules.*]`. Modules are the config-gated
 source: `agent_lifecycle.setup_capabilities` appends one `("module:<name>", modules_dir/<name>)`
@@ -217,7 +217,7 @@ Two consequences for a module author:
 
 * `arc module bundle` writes those sidecars for you, with the key that signs the manifest.
   You do not hand-sign anything.
-* Editing a module in place at `${ARC_CONFIG_DIR:-~/.arc}/modules/` makes it stop loading.
+* Editing a module in place at `${ARC_CONFIG_DIR:-~/.arc}/runtime/current/modules/` makes it stop loading.
   That is the control working. Re-sign it with `arc trust approve <module>/<file-stem>` —
   e.g. `arc trust approve workpad/capabilities` — or rebuild and reinstall the bundle.
 
@@ -324,7 +324,7 @@ export ARC_MODULE_SOURCE=~/Projects/arc/packages/arcagent/src/arcagent/modules
 arc module bundle echo
 ```
 
-The bundle lands in the deployment bundle store, `${ARC_CONFIG_DIR:-~/.arc}/bundles/`, as
+The bundle lands in the deployment bundle store, `${ARC_CONFIG_DIR:-~/.arc}/state/bundles/`, as
 `echo.arcbundle`. Pass `-o <dir>` to write it somewhere else, and `--force` to replace an
 existing bundle of the same name.
 

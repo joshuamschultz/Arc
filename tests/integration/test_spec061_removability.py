@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from arctrust.paths import workflows_dir
 
 _ONE_NODE = """
 [workflow]
@@ -95,20 +96,20 @@ def _isolated_arc(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     built over the in-process bus rather than reaching for a NATS server that a
     test machine has no reason to be running.
     """
-    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc"))
     monkeypatch.setenv("ARCSTORE_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("ARCTEAM_NATS_URL", "")
 
 
 @pytest.fixture
 def arc_dir(tmp_path: Path) -> Path:
-    """The config dir with a bootstrapped operator key, as first run leaves it."""
+    """The Arc home with a bootstrapped operator key, as first run leaves it."""
     from arccli.commands.operator import load_operator_key
 
-    config = tmp_path / "config"
-    config.mkdir(parents=True, exist_ok=True)
-    load_operator_key(config)
-    return config
+    home = tmp_path / "arc"
+    home.mkdir(parents=True, exist_ok=True)
+    load_operator_key(home)
+    return home
 
 
 def _write_bundle(root: Path, document: str = _TWO_NODES, wid: str = "onboarding") -> Path:
@@ -163,7 +164,8 @@ def test_the_whole_operator_lifecycle_runs_from_the_command_line(
     workflow_handler(["unarchive", "onboarding", "--dir", str(arc_dir)])
     assert "Unarchived onboarding" in capsys.readouterr().out
 
-    workflow_handler(["sign", str(arc_dir / "workflows" / "onboarding"), "--dir", str(arc_dir)])
+    bundle = workflows_dir(arc_dir) / "onboarding"
+    workflow_handler(["sign", str(bundle), "--dir", str(arc_dir)])
     assert "Signed workflow.toml" in capsys.readouterr().out
 
     workflow_handler(["run", "onboarding", "--dir", str(arc_dir)])
@@ -177,7 +179,7 @@ def test_the_whole_operator_lifecycle_runs_from_the_command_line(
 
     workflow_handler(["purge", "onboarding", "--force", "--dir", str(arc_dir)])
     assert "Purged onboarding." in capsys.readouterr().out
-    assert not (arc_dir / "workflows" / "onboarding").exists()
+    assert not bundle.exists()
 
 
 def _run_row(run_id: str) -> dict[str, Any]:
@@ -232,6 +234,7 @@ def test_the_authoring_lifecycle_runs_from_the_agent_tools(arc_dir: Path) -> Non
         workflow_inspect,
         workflow_list,
     )
+    from arccli.commands.operator import operator_key_path
     from arctrust import AgentIdentity, OperatorKey
 
     async def _drive() -> None:
@@ -241,7 +244,7 @@ def test_the_authoring_lifecycle_runs_from_the_agent_tools(arc_dir: Path) -> Non
             workspace=arc_dir,
             identity=AgentIdentity.generate(org="local", agent_type="agent"),
             operator_signer=OperatorKey.load(
-                arc_dir / "operator" / "operator.key", generate_if_absent=False
+                operator_key_path(arc_dir), generate_if_absent=False
             ).into_signer(),
         )
         try:
@@ -282,6 +285,7 @@ def test_a_run_completes_end_to_end_with_no_dashboard(arc_dir: Path) -> None:
 
     The dashboard renders runs; nothing about progressing one may depend on it.
     """
+    from arccli.commands.operator import operator_key_path
     from arcstore.backends.sqlite import SqliteBackend
     from arcstore.tasks import TaskStore
     from arcteam.workflow.runner import build_workflow_runner
@@ -305,7 +309,7 @@ def test_a_run_completes_end_to_end_with_no_dashboard(arc_dir: Path) -> None:
             runner = build_workflow_runner(
                 tier="personal",
                 task_store_backend=backend,
-                runner_key_path=arc_dir / "operator" / "operator.key",
+                runner_key_path=operator_key_path(arc_dir),
                 workspace_root=arc_dir,
                 registry=Registry({"sales": SALES_DID, "ops": OPS_DID}),
             )

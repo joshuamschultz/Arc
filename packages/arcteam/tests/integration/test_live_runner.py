@@ -22,6 +22,7 @@ import pytest
 from arcstore.backends.sqlite import SqliteBackend
 from arcstore.tasks import TaskStore
 from arctrust import OperatorKey
+from arctrust.paths import arc_state, default_operator_key_path, workflows_dir
 
 from arcteam.workflow.runner import build_workflow_runner
 
@@ -71,22 +72,25 @@ async def deployment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
     """A real workspace: operator key, workflow bundle, and store backend.
 
     ``ARC_CONFIG_DIR`` points at that workspace so the key the host resolves for
-    itself — ``<config dir>/operator/operator.key`` — is the one written here.
+    itself — :func:`arctrust.paths.default_operator_key_path` — is written here.
     Left unset, the host reaches into the developer's real ``~/.arc`` and this
     file's verdict depends on whether that machine happens to have a key, and on
     whatever any earlier test in the process left the variable pointing at.
     """
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
-    key_path = tmp_path / "operator" / "operator.key"
+    key_path = default_operator_key_path(tmp_path)
     OperatorKey.generate().save(key_path)
 
-    bundle = tmp_path / "workflows" / "onboarding"
+    bundle = workflows_dir(tmp_path) / "onboarding"
     bundle.mkdir(parents=True)
     (bundle / "workflow.toml").write_text(WORKFLOW)
 
     backend = SqliteBackend(tmp_path / "store.db")
     await backend.start()
-    yield tmp_path, key_path, backend
+    # The workspace root is the STATE root, matching both production callers:
+    # `arc workflow` passes arc_state(arc_dir), and the gateway host derives it
+    # from the operator key path. A test on a third root proves nothing.
+    yield arc_state(tmp_path), key_path, backend
     await backend.stop()
 
 
@@ -268,11 +272,11 @@ async def wired(tmp_path: Path, monkeypatch: Any) -> Any:
     from arcteam.storage import MemoryBackend
     from arcteam.types import Entity, EntityType
 
-    key_path = tmp_path / "operator" / "operator.key"
+    key_path = default_operator_key_path(tmp_path)
     key = OperatorKey.generate()
     key.save(key_path)
 
-    bundle = tmp_path / "workflows" / "narrated"
+    bundle = workflows_dir(tmp_path) / "narrated"
     bundle.mkdir(parents=True)
     (bundle / "workflow.toml").write_text(CHANNEL_WORKFLOW)
 

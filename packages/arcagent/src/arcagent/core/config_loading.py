@@ -8,7 +8,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-from arctrust import arc_home
+from arctrust.paths import config_file
 
 from arcagent.core.errors import ConfigError
 
@@ -68,7 +68,7 @@ def parse_toml(path: Path) -> dict[str, Any]:
 
 def sibling_chain(filename: str, agent_dir: Path) -> dict[str, Any]:
     data: dict[str, Any] = {}
-    user_path = arc_home() / filename
+    user_path = config_file(filename)
     if user_path.exists():
         data = parse_toml(user_path)
     per_agent = agent_dir / filename
@@ -79,7 +79,7 @@ def sibling_chain(filename: str, agent_dir: Path) -> dict[str, Any]:
 
 def compose_raw_config(path: Path, *, default_model: str) -> dict[str, Any]:
     raw: dict[str, Any] = {}
-    user_agent = arc_home() / "arcagent.toml"
+    user_agent = config_file("arcagent.toml")
     if user_agent.exists():
         raw = parse_toml(user_agent)
     raw = deep_merge(raw, parse_toml(path))

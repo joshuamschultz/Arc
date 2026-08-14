@@ -26,6 +26,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from arctrust.paths import arc_home, audit_dir, config_file
+
 _logger = logging.getLogger("arccli.commands.blueprint")
 
 
@@ -161,7 +163,7 @@ def _worm_sink(arc_dir: Path) -> Any:
 
     from arccli.commands.operator import resolve_operator_signer, resolve_record_cipher
 
-    chain = arc_dir / ".audit" / "blueprints.worm"
+    chain = audit_dir(arc_dir) / "blueprints.worm"
     chain.parent.mkdir(parents=True, exist_ok=True)
     return WormSink(chain, resolve_operator_signer(arc_dir), cipher=resolve_record_cipher(arc_dir))
 
@@ -175,7 +177,7 @@ def _list(args: argparse.Namespace) -> None:
     from arccli.blueprints import list_blueprints
     from arccli.commands.operator import operator_public_key
 
-    arc_dir = Path(getattr(args, "config_dir", None) or Path.home() / ".arc")
+    arc_dir = Path(getattr(args, "config_dir", None) or arc_home())
     rows = [
         [bp.name, bp.version, bp.tier, bp.source, _signed_label(bp)]
         for bp in list_blueprints(operator_public_key=operator_public_key(arc_dir))
@@ -197,7 +199,7 @@ def _show(args: argparse.Namespace) -> None:
     from arccli.commands.operator import operator_public_key
 
     tier = getattr(args, "tier", None) or "personal"
-    arc_dir = Path(getattr(args, "config_dir", None) or Path.home() / ".arc")
+    arc_dir = Path(getattr(args, "config_dir", None) or arc_home())
     bp = resolve_blueprint(args.name, tier=tier, operator_public_key=operator_public_key(arc_dir))
     _write(f"# blueprint: {bp.name} v{bp.version} (tier={bp.tier}, source={bp.source})")
     _write(dumps_toml(bp.overlay).rstrip())
@@ -208,7 +210,7 @@ def _verify(args: argparse.Namespace) -> None:
     from arccli.commands.operator import operator_public_key
 
     tier = getattr(args, "tier", None) or "personal"
-    arc_dir = Path(getattr(args, "config_dir", None) or Path.home() / ".arc")
+    arc_dir = Path(getattr(args, "config_dir", None) or arc_home())
     try:
         bp = resolve_blueprint(
             args.name, tier=tier, operator_public_key=operator_public_key(arc_dir)
@@ -225,7 +227,7 @@ def _verify(args: argparse.Namespace) -> None:
 
 
 def _apply(args: argparse.Namespace) -> None:
-    arc_dir = Path(getattr(args, "config_dir", None) or Path.home() / ".arc")
+    arc_dir = Path(getattr(args, "config_dir", None) or arc_home())
     agent_dir: str | None = getattr(args, "agent", None)
     dry_run = getattr(args, "dry_run", False)
 
@@ -239,7 +241,7 @@ def _apply(args: argparse.Namespace) -> None:
     target = (
         Path(agent_dir).expanduser().resolve() / "arcagent.toml"
         if agent_dir
-        else arc_dir / "arcagent.toml"
+        else config_file("arcagent.toml", arc_dir)
     )
     deployment_tier = _deployment_tier(target, arc_dir)
 
@@ -301,7 +303,7 @@ def _apply_full(name: str, agent_dir: Path, arc_dir: Path) -> None:
 
 def _deployment_tier(target: Path, arc_dir: Path) -> str:
     """The deployment's baseline tier: the target's own tier, else the ~/.arc default."""
-    for path in (target, arc_dir / "arcagent.toml"):
+    for path in (target, config_file("arcagent.toml", arc_dir)):
         if path.is_file():
             try:
                 raw = tomllib.loads(path.read_text(encoding="utf-8"))
@@ -324,7 +326,7 @@ def _sign(args: argparse.Namespace) -> None:
 
     from arccli.commands.operator import load_operator_key
 
-    arc_dir = Path(getattr(args, "config_dir", None) or Path.home() / ".arc")
+    arc_dir = Path(getattr(args, "config_dir", None) or arc_home())
     operator = load_operator_key(arc_dir)
     # DC-4 known limitation: write_signature needs the raw seed; a vault_transit
     # (federal) operator key has no in-process seed and must sign out-of-band.

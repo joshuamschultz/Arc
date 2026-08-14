@@ -1,7 +1,7 @@
 """The agent's own tools cannot reach the deployment module root.
 
 SPEC-066 T-963 (REQ-335). Phase 3 moves module runtime out of the wheel and
-onto the filesystem at ``${ARC_CONFIG_DIR:-~/.arc}/modules/``. That is the
+onto the filesystem at :func:`arctrust.paths.module_root`. That is the
 first time executable agent code lives in a directory the process can see at
 runtime, so a tool that can write there is a self-modification primitive: the
 agent edits ``_runtime.py``, the next startup imports it, and the change
@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from arctrust.paths import module_root
 
 from arcagent.builtins.capabilities import _runtime
 from arcagent.builtins.capabilities.bash import bash
@@ -50,13 +51,16 @@ class _Deployment:
 
     @property
     def traversal(self) -> str:
-        """``<workspace>/../modules/memory/_runtime.py`` — the same file, relative.
+        """The same runtime file, named relative to the workspace.
+
+        Derived from the two real paths rather than spelled out, so it keeps
+        naming the file the fence must refuse wherever the module root moves.
 
         A fence that compares path *strings* against the workspace prefix
         accepts this and rejects the absolute form; only resolving first and
         then testing ancestry rejects both.
         """
-        return str(Path("..") / "modules" / "memory" / "_runtime.py")
+        return os.path.relpath(self.runtime_file, self.workspace)
 
 
 def _writable(path: Path) -> bool:
@@ -67,21 +71,27 @@ def _writable(path: Path) -> bool:
 def deployment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Deployment:
     """A deployment module root that the test user can genuinely write to.
 
-    The workspace is a *sibling* of ``modules/`` under the same Arc home, so
-    the traversal shape is a real one-hop escape rather than an artificial
-    walk up to the filesystem root.
+    The root is placed through :func:`arctrust.paths.module_root`, because the
+    fence recognises the root the resolver names — a root staged anywhere else
+    would be refused only as "not the workspace", which is the weaker half of
+    REQ-335 and would still pass with the module-root exclusion deleted.
+
+    The workspace sits under the same Arc home, so the traversal shape is a
+    real escape within one deployment rather than an artificial walk up to the
+    filesystem root.
     """
     arc_home = tmp_path / "arc"
-    module_root = arc_home / "modules"
-    runtime_file = module_root / "memory" / "_runtime.py"
+    modules_root = module_root(arc_home)
+    runtime_file = modules_root / "memory" / "_runtime.py"
     runtime_file.parent.mkdir(parents=True)
     runtime_file.write_text(_RUNTIME_SOURCE)
     workspace = arc_home / "workspace"
     workspace.mkdir()
 
-    # Deliberately permissive: 0755 dirs, 0644 file. The materializer's 0444/0555
-    # is a second layer, and this suite must not be able to borrow it.
-    for directory in (arc_home, module_root, runtime_file.parent):
+    # Deliberately permissive: 0755 dirs, 0644 file, all the way down from the
+    # Arc home. The materializer's 0444/0555 is a second layer, and this suite
+    # must not be able to borrow it.
+    for directory in (*(p for p in reversed(runtime_file.parents) if p.is_relative_to(arc_home)),):
         directory.chmod(stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
     runtime_file.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH)
 
@@ -89,7 +99,7 @@ def deployment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Deployment:
     _runtime.configure(workspace=workspace, allowed_paths=None, tier="personal")
     return _Deployment(
         arc_home=arc_home,
-        module_root=module_root,
+        module_root=modules_root,
         runtime_file=runtime_file,
         workspace=workspace,
     )

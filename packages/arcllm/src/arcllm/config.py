@@ -9,13 +9,13 @@ no-op (current behavior preserved).
 """
 
 import ipaddress
-import os
 import re
 import tomllib
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from arctrust.paths import config_file
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -53,7 +53,7 @@ def _is_private_overlay_address(host: str) -> bool:
     try:
         addr = ipaddress.ip_address(host)
     except ValueError:
-        return False        # a name, not an address
+        return False  # a name, not an address
     return any(addr in net for net in _OVERLAY_NETWORKS)
 
 
@@ -331,11 +331,9 @@ def model_config_path() -> Path:
 def _user_config_path() -> Path | None:
     """Return the user-override config path, or None if absent.
 
-    Path: ``${ARC_CONFIG_DIR:-~/.arc}/arcllm.toml``.
+    Path: :func:`arctrust.paths.config_file` for ``arcllm.toml``.
     """
-    base = os.environ.get("ARC_CONFIG_DIR")
-    root = Path(base).expanduser() if base else Path.home() / ".arc"
-    arcllm_toml = root / "arcllm.toml"
+    arcllm_toml = config_file("arcllm.toml")
     return arcllm_toml if arcllm_toml.exists() else None
 
 

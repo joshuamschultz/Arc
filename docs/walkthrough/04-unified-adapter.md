@@ -266,7 +266,7 @@ Walkthroughs: `walkthroughs/arcllm/02-config-loading.ipynb`,
 modules — each one an `LLMProvider` implementation that wraps another
 `LLMProvider` (`BaseModule` in `modules/base.py`) and delegates. Every module
 is off by default except the four marked below; a caller enables or disables
-any of them per `load_model()` call, or via `config.toml` / `~/.arc/arcllm.toml`.
+any of them per `load_model()` call, or via `config.toml` / `~/.arc/config/arcllm.toml`.
 
 Stacking order is fixed in `registry.py:421-427` and documented as
 load-bearing — reordering it changes security guarantees, not just behavior:
@@ -453,7 +453,7 @@ Walkthrough: `walkthroughs/arcllm/14-trace-store.ipynb`.
 ### Config
 
 Two layers, later wins: the packaged `packages/arcllm/src/arcllm/config.toml`
-is the base; `${ARC_CONFIG_DIR:-~/.arc}/arcllm.toml` deep-merges over it if
+is the base; `${ARC_CONFIG_DIR:-~/.arc}/config/arcllm.toml` deep-merges over it if
 present (dicts merge, lists/scalars replace). `config.py` defines the typed
 Pydantic schema (`GlobalConfig`, `ModuleConfig` with `extra="allow"` so
 module-specific keys pass through untyped-but-preserved) and validates on

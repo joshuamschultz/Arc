@@ -1958,6 +1958,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#arc-up-supervised-bring-up" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        arc up — Supervised bring-up
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#arc-ui-multi-agent-dashboard" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2304,6 +2315,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -2381,6 +2396,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../runbooks/deploy/up/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bring-up (arc up)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../runbooks/deploy/local/" class="md-nav__link">
         
   
@@ -2417,6 +2460,34 @@
     
   
     Docker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/deploy/azure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Azure
   
 
     
@@ -2722,6 +2793,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -2779,6 +2854,62 @@
     
   
     Hardening
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/signing-capabilities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Signing capabilities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/staging-module-bundles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Staging module bundles
   
 
     
@@ -3158,6 +3289,17 @@
     <span class="md-ellipsis">
       
         arc team — Team messaging
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#arc-up-supervised-bring-up" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        arc up — Supervised bring-up
       
     </span>
   </a>
@@ -3582,7 +3724,7 @@
 7 required sections: Resources, Contract, Knowledge, Steps, Anti Patterns, Examples,
 Validation) plus optional <code>references/</code>, <code>scripts/</code>, <code>templates/</code>, <code>assets/</code>. The
 unified <code>CapabilityLoader</code> discovers skills from four scan roots: the package builtins,
-<code>~/.arc/capabilities/</code> (global), <code>&lt;agent&gt;/capabilities/</code> (per-agent, trusted), and
+<code>~/.arc/state/capabilities/</code> (global), <code>&lt;agent&gt;/capabilities/</code> (per-agent, trusted), and
 <code>&lt;agent&gt;/workspace/capabilities/</code> (agent-authored, untrusted).</p>
 <table>
 <thead>
@@ -3615,7 +3757,7 @@ unified <code>CapabilityLoader</code> discovers skills from four scan roots: the
 </tr>
 <tr>
 <td><code>arc skill create &lt;name&gt; --global</code></td>
-<td>Write to <code>~/.arc/capabilities/&lt;name&gt;/</code></td>
+<td>Write to <code>~/.arc/state/capabilities/&lt;name&gt;/</code></td>
 <td><code>arc skill create shared-tool --global</code></td>
 </tr>
 <tr>
@@ -3676,12 +3818,12 @@ Capability files use the same four scan roots as <code>arc skill</code>.</p>
 </tr>
 <tr>
 <td><code>arc ext create &lt;name&gt; --global</code></td>
-<td>Write to <code>~/.arc/capabilities/</code></td>
+<td>Write to <code>~/.arc/state/capabilities/</code></td>
 <td><code>arc ext create shared-tool --global</code></td>
 </tr>
 <tr>
 <td><code>arc ext install &lt;source&gt;</code></td>
-<td>Install a <code>.py</code> file or directory into <code>~/.arc/capabilities/</code></td>
+<td>Install a <code>.py</code> file or directory into <code>~/.arc/state/capabilities/</code></td>
 <td><code>arc ext install my_capability.py</code></td>
 </tr>
 <tr>
@@ -3709,7 +3851,7 @@ preset <strong>under</strong> the target's existing config (identity + user keys
 clobber-write), floors the tier by stringency-max (a blueprint can only raise a floor, never
 weaken federal), and materializes the concrete <code>arcagent.toml</code>. Three packaged presets ship
 provenance-trusted: <code>personal-assistant</code>, <code>enterprise-ops</code>, <code>federal-analyst</code>. User presets
-live in <code>~/.arc/blueprints/</code> and must be signed with <code>arc blueprint sign</code> (pinned to the
+live in <code>~/.arc/state/blueprints/</code> and must be signed with <code>arc blueprint sign</code> (pinned to the
 deployment operator key above <code>personal</code>).</p>
 <table>
 <thead>
@@ -3722,7 +3864,7 @@ deployment operator key above <code>personal</code>).</p>
 <tbody>
 <tr>
 <td><code>arc blueprint list</code></td>
-<td>List packaged + <code>~/.arc/blueprints</code> presets</td>
+<td>List packaged + <code>~/.arc/state/blueprints</code> presets</td>
 <td><code>arc blueprint list</code></td>
 </tr>
 <tr>
@@ -3884,6 +4026,67 @@ deployment operator key above <code>personal</code>).</p>
 <p><strong>Global options (apply to all <code>arc team</code> subcommands):</strong>
 - <code>--root &lt;path&gt;</code> — override team data root directory
 - <code>--json</code> — JSON output mode</p>
+<hr />
+<h3 id="arc-up-supervised-bring-up"><code>arc up</code> — Supervised bring-up<a class="headerlink" href="#arc-up-supervised-bring-up" title="Permanent link">&para;</a></h3>
+<p>One command that brings the whole stack up and proves it came up whole:
+preflight, module install, verify, then <code>arc ui start</code>. See
+<a href="../../runbooks/deploy/up/">Bring-up runbook</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>arc up</code></td>
+<td>Preflight → install missing modules → verify → start</td>
+<td><code>arc up</code></td>
+</tr>
+<tr>
+<td><code>arc up --check</code></td>
+<td>Validate only; start nothing; non-zero on any problem</td>
+<td><code>arc up --check</code></td>
+</tr>
+<tr>
+<td><code>arc up --no-install</code></td>
+<td>Report module state without installing anything</td>
+<td><code>arc up --no-install</code></td>
+</tr>
+<tr>
+<td><code>arc up --team-root &lt;dir&gt;</code></td>
+<td>Agent-discovery root; defaults to <code>./team</code> if it exists</td>
+<td><code>arc up --team-root ~/arc/team</code></td>
+</tr>
+<tr>
+<td><code>arc up --port &lt;n&gt;</code> / <code>--host &lt;h&gt;</code></td>
+<td>Dashboard bind; passed through to <code>arc ui start</code></td>
+<td><code>arc up --port 9000</code></td>
+</tr>
+<tr>
+<td><code>arc up --gateway-config &lt;path&gt;</code></td>
+<td>Path to <code>gateway.toml</code>; passed through</td>
+<td><code>arc up --gateway-config ./gateway.toml</code></td>
+</tr>
+<tr>
+<td><code>arc up --no-browser</code></td>
+<td>Do not auto-open a browser tab on loopback start</td>
+<td><code>arc up --no-browser</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Notes:</strong>
+- Any preflight failure (<code>nats-server</code> off PATH, no operator key, empty team root,
+  unwritable data dir) stops the bring-up. None of them is fixed silently, and no
+  operator key is ever minted.
+- A module a config enables but the deployment has not materialized is installed
+  through the same path <code>arc module install</code> runs. Above personal tier a
+  development signature is refused — stage a signed bundle instead.
+- If anything an agent's config asks for is still missing, <code>arc up</code> exits non-zero
+  and <strong>does not start the server</strong>. "Started but degraded" is the failure this
+  command exists to prevent.</p>
 <hr />
 <h3 id="arc-ui-multi-agent-dashboard"><code>arc ui</code> — Multi-agent dashboard<a class="headerlink" href="#arc-ui-multi-agent-dashboard" title="Permanent link">&para;</a></h3>
 <p>Start and observe the ArcUI real-time dashboard.</p>
@@ -4194,7 +4397,7 @@ Consolidation (entity cards + facts + insights) is opt-in via <code>distill_prov
 <code>brain = "none"</code> for a memory-less agent. (The framework code default — an agent with no
 <code>[modules.memory]</code> config at all — remains <code>none</code>, so federal deployments stay memory-off
 unless a config/blueprint opts in.)</p>
-<p>Skills and capability <code>.py</code> files are discovered from <code>~/.arc/capabilities/</code> (global) plus
+<p>Skills and capability <code>.py</code> files are discovered from <code>~/.arc/state/capabilities/</code> (global) plus
 per-agent <code>capabilities/</code> / <code>workspace/capabilities/</code> — there is no separate <code>[extensions]</code>
 config section; see <code>arc skill</code> / <code>arc ext</code> above.</p>
 <p>For the full TOML schema, see <code>arcagent.core.config.ArcAgentConfig</code>.</p>

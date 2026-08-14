@@ -155,8 +155,7 @@ async def test_inbound_image_reaches_the_gateway(adapter_spec: AdapterUnderTest)
     await adapter_spec.deliver(adapter, adapter_spec.image_payload())
 
     assert adapter._on_message.await_count == 1, (
-        f"{adapter_spec.name}: a photo produced NO inbound event at all — "
-        "the handler never saw it"
+        f"{adapter_spec.name}: a photo produced NO inbound event at all — the handler never saw it"
     )
     event = adapter._on_message.await_args.args[0]
     parts = getattr(event, "parts", None)

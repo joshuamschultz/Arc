@@ -24,6 +24,7 @@ import json
 from pathlib import Path
 
 import pytest
+from arctrust.paths import extensions_dir
 
 from arccli.commands.connector import _SUBCOMMAND_MAP, connector_handler
 
@@ -47,9 +48,9 @@ def _bundle(root: Path, name: str, *, version: str = "1.0.0", description: str =
 
 @pytest.fixture
 def fleet_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A fleet-wide ``<arc_home>/extensions`` holding one bundle."""
+    """The user-wide bundle root — resolved, never composed — holding one bundle."""
     home = tmp_path / "arc_home"
-    root = home / "extensions"
+    root = extensions_dir(home)
     _bundle(root, "github", description="Read pull requests, issues, and CI runs.")
     monkeypatch.setenv("ARC_CONFIG_DIR", str(home))
     monkeypatch.delenv("ARC_EXTENSIONS_ROOT", raising=False)

@@ -2381,6 +2381,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -2458,6 +2462,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../runbooks/deploy/up/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bring-up (arc up)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../runbooks/deploy/local/" class="md-nav__link">
         
   
@@ -2494,6 +2526,34 @@
     
   
     Docker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/deploy/azure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Azure
   
 
     
@@ -2799,6 +2859,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -2856,6 +2920,62 @@
     
   
     Hardening
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/signing-capabilities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Signing capabilities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/staging-module-bundles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Staging module bundles
   
 
     
@@ -3573,7 +3693,7 @@ actually load.</p>
 <p>The same <code>arc ext</code> namespace also manages <strong>capability files</strong> — single
 <code>.py</code> files stamped with <code>@tool</code> / <code>@hook</code> / <code>@background_task</code> — across four
 scan roots, in precedence order: <code>arcagent/builtins/capabilities/</code> (package),
-<code>~/.arc/capabilities/</code> (global), <code>&lt;agent&gt;/capabilities/</code> (per-agent,
+<code>~/.arc/state/capabilities/</code> (global), <code>&lt;agent&gt;/capabilities/</code> (per-agent,
 trusted), <code>&lt;agent&gt;/workspace/capabilities/</code> (agent-authored, untrusted,
 AST-validated) (<code>extensions.py:1-12</code>). This is the lightest-weight seam in
 Arc: <code>arc ext create my_tool</code> scaffolds a <code>@tool</code>-decorated file, no
@@ -3603,7 +3723,7 @@ personal blueprint cannot weaken a federal deployment.</p>
 <p>Packaged presets (<code>personal-assistant.toml</code>, <code>enterprise-ops.toml</code>,
 <code>federal-analyst.toml</code>, all in the same directory) ship inside the verified
 wheel and are provenance-trusted with no sidecar. A <strong>user</strong> preset from
-<code>~/.arc/blueprints/</code> must be signed and, above <code>personal</code>, its signature is
+<code>~/.arc/state/blueprints/</code> must be signed and, above <code>personal</code>, its signature is
 <strong>pinned</strong> to the deployment operator's key — an unpinned gate accepts any
 self-signed forgery, so resolution denies fail-closed when the operator key
 cannot be resolved (<code>loader.py:26-32</code>, <code>resolve_blueprint</code> at <code>:116-128</code>).

@@ -38,13 +38,13 @@ if TYPE_CHECKING:
 _logger = logging.getLogger("arcgateway.bootstrap")
 
 
-
 # Inbound artefact ceiling (SPEC-065 REQ-299). 20 MiB is the smallest ceiling
 # the supported platforms impose on a bot download (Telegram's Bot API caps
 # getFile at 20 MB), so a larger value here would accept artefacts the adapter
 # could never fetch. Not yet operator-configurable — the spec leaves retention
 # and sizing open, and one honest constant beats a config key nothing reads.
 _MEDIA_CEILING_BYTES = 20 * 1024 * 1024
+
 
 class EmbeddedGateway(NamedTuple):
     """Bundle of components arcui needs to host the gateway runtime.
@@ -333,6 +333,7 @@ async def _compose_embedded(
     # Slash-command registry + persisted session-rotation epochs. The epoch DB
     # sits beside the pairing DB so "New session" survives a gateway restart.
     command_registry = build_default_registry()
+
     def _media_store_for(agent_did: str) -> MediaStore | None:
         """Resolve the addressed agent's own artefact store (SPEC-065 COMP-002).
 
@@ -346,9 +347,7 @@ async def _compose_embedded(
         agent_dir = _resolve_agent_dir(team_root, agent_did)
         if agent_dir is None:
             return None
-        return MediaStore(
-            workspace=agent_dir / "workspace", max_bytes=_MEDIA_CEILING_BYTES
-        )
+        return MediaStore(workspace=agent_dir / "workspace", max_bytes=_MEDIA_CEILING_BYTES)
 
     session_router = SessionRouter(
         executor=executor,

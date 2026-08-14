@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import NoReturn
 
 from arctrust.audit import AuditEvent, AuditSink, emit
-from arctrust.paths import arc_home
+from arctrust.paths import extensions_dir
 from pydantic import ValidationError
 
 from arcagent.core.errors import ExtensionError
@@ -95,7 +95,7 @@ def resolve_extension_roots(base_dir: Path | None = None) -> tuple[Path, ...]:
     override = os.environ.get(EXTENSIONS_ROOT_ENV)
     if override:
         candidates.append(Path(override).expanduser())
-    candidates.append(arc_home() / BUNDLES_DIRNAME)
+    candidates.append(extensions_dir())
 
     roots: list[Path] = []
     seen: set[Path] = set()

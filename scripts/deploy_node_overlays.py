@@ -38,7 +38,7 @@ def _save(path: Path, doc: tomlkit.TOMLDocument) -> None:
 def apply_agent_overlay(path: Path, provider: str, model: str) -> None:
     """Set [eval] provider/model and turn on [modules.skills] (arcskill/personal).
 
-    Safe on both ~/.arc/arcagent.toml and team/<agent>/arcagent.toml — same
+    Safe on both ~/.arc/config/arcagent.toml and <team>/<agent>/arcagent.toml — same
     schema (arcagent/core/config.py::EvalConfig,
     arcagent/modules/skills/config.py::SkillsConfig).
     """

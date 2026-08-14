@@ -566,9 +566,9 @@ def _bundle_root(st: _runtime._State, node: WorkflowNode) -> Path | None:
     if node.bundle_root:
         stamped = Path(node.bundle_root)
         return stamped if stamped.is_dir() else None
-    from arcteam.config import default_config_dir
+    from arctrust.paths import workflows_dir
 
-    bundle = _confined(default_config_dir() / "workflows", node.workflow_id)
+    bundle = _confined(workflows_dir(), node.workflow_id)
     return bundle if bundle is not None and bundle.is_dir() else None
 
 

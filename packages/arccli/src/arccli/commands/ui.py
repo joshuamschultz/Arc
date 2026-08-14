@@ -21,6 +21,7 @@ from pathlib import Path
 from types import FrameType
 from typing import Any, Protocol
 
+from arctrust.paths import ui_token_file
 from arcui._constants import BOOTSTRAP_HASH_KEY, LOOPBACK_HOSTS
 
 from arccli.commands._shared import dispatch
@@ -84,12 +85,11 @@ def _mask_token(token: str) -> str:
 def _persist_local_viewer_token(token: str) -> None:
     """Persist the loopback viewer token 0600 so a same-user ``arc tui`` can attach.
 
-    Path mirrors ``arctui.serve.default_token_path`` — a filesystem contract, not
-    shared code, so arccli need not import the optional arctui package. Only
+    Both sides resolve the path through :func:`arctrust.paths.ui_token_file`, so
+    arccli need not import the optional arctui package to agree with it. Only
     called on loopback binds; never persists a token reachable off-box.
     """
-    root = Path(os.environ.get("ARC_CONFIG_DIR", str(Path.home() / ".arc")))
-    path = root / "ui" / "viewer-token"
+    path = ui_token_file()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(token, encoding="utf-8")

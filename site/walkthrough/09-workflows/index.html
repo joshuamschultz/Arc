@@ -2260,6 +2260,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -2337,6 +2341,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../runbooks/deploy/up/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bring-up (arc up)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../runbooks/deploy/local/" class="md-nav__link">
         
   
@@ -2373,6 +2405,34 @@
     
   
     Docker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/deploy/azure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Azure
   
 
     
@@ -2678,6 +2738,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -2735,6 +2799,62 @@
     
   
     Hardening
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/signing-capabilities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Signing capabilities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/staging-module-bundles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Staging module bundles
   
 
     
@@ -3244,17 +3364,19 @@ first two matter most for correctness:</p>
  (<code>packages/arcgateway/src/arcgateway/session_pairing.py:104</code>) checks a
  static allowlist first, then falls through to a live SQLite read against
  <code>PairingStore</code>. An unapproved user never reaches the agent — see §9.1.1.</li>
-<li><strong>The pre-await race guard.</strong> Whether a session is "already active" is
- checked and the <code>_active_sessions</code> dict is written to <em>synchronously</em>, with
- no <code>await</code> in between (<code>session.py:377-398</code>) — Python's cooperative
- scheduling guarantees no other coroutine can interleave between two
- synchronous statements. A second message for the same session while a turn
- is in flight is queued by <code>QueueManager</code>
- (<code>packages/arcgateway/src/arcgateway/session_queue.py:33</code>, bounded at 100
- events per session, idle-evicted after 1h) and replayed sequentially once
- the active turn finishes.</li>
-<li><strong>Dispatch.</strong> The chosen <code>Executor</code> runs the turn.
- <code>AsyncioExecutor</code> (<code>executor.py:147</code>) is used at personal/enterprise tier;
+<li><strong>The pre-await race guard.</strong> It lives in the agent, not the gateway. The
+ router hands every message over and decides nothing; <code>ArcAgent.deliver_message()</code>
+ serialises the decision per session
+ (<code>SessionRunCoordinator.delivery</code>,
+ <code>packages/arcagent/src/arcagent/core/session_coordination.py</code>) so that two
+ messages arriving in the same event-loop tick cannot both open a turn. A
+ second message for a session whose turn is in flight joins that turn as a
+ follow-up rather than starting another; a background run (a schedule, a
+ consolidation pass) is never an injection target and is never interrupted.
+ The live run's injection queues are bounded at 16, past which the surplus is
+ refused to the sender rather than dropped.</li>
+<li><strong>Dispatch.</strong> The chosen <code>Executor</code> delivers the message to the agent.
+ <code>AsyncioExecutor</code> is used at personal/enterprise tier;
  <code>SubprocessExecutor</code> at federal tier spawns an isolated
  <code>arc-agent-worker</code> subprocess per session (OS-level isolation for
  CMMC/FedRAMP). Deltas stream back through <code>StreamBridge</code>
@@ -3272,12 +3394,13 @@ which writes an <code>approved</code> row into the <em>same</em> SQLite file the
 gateway reads — no in-memory allowlist to go stale, so approval takes effect
 on the very next message. Five failed approval attempts lock the platform out
 for 1h (<code>PairingThrottle</code>,
-<code>packages/arcgateway/src/arcgateway/pairing_throttle.py:38</code>). At federal tier,
+<code>packages/arcgateway/src/arcgateway/pairing.py:294</code>). At <em>every</em> tier,
 approval additionally requires an Ed25519 signature over
 <code>sha256(code + minted_at_iso)</code> from the operator's key
-(<code>PairingSignatureVerifier</code>, <code>pairing_signature.py</code>); enterprise warns when a
-signature is absent but still allows the approval; personal ignores
-signatures. <code>[platforms.&lt;name&gt;].allowed_user_ids</code> seeds a static allowlist so
+(<code>PairingSignatureVerifier</code>, <code>packages/arcgateway/src/arcgateway/pairing.py:501</code>).
+The tier picks the trust anchor, never whether the signature is checked:
+federal chains to operator/issuer anchors, personal accepts the operator's
+self-signed key. <code>[platforms.&lt;name&gt;].allowed_user_ids</code> seeds a static allowlist so
 known users skip the DM dance entirely
 (<code>packages/arcgateway/src/arcgateway/pairing_allowlist.py:42</code>) — but only when
 <code>[security].require_pairing = true</code>, otherwise pairing is a no-op by design
@@ -3735,12 +3858,12 @@ equivalent restart) is required before a rebuilt bundle is served.</p>
 <tbody>
 <tr>
 <td><code>packages/arcgateway/src/arcgateway/session.py</code></td>
-<td><code>SessionRouter</code> — identity resolution, pairing gate, race guard, queueing</td>
+<td><code>SessionRouter</code> — identity resolution, pairing gate, handoff to the agent's delivery entry point</td>
 <td>Session-key policy, message routing</td>
 </tr>
 <tr>
-<td><code>packages/arcgateway/src/arcgateway/pairing.py</code>, <code>pairing_throttle.py</code>, <code>pairing_signature.py</code>, <code>pairing_allowlist.py</code>, <code>pairing_postgres.py</code></td>
-<td>DM pairing store, throttle policy, federal signature verification, static allowlist wiring</td>
+<td><code>packages/arcgateway/src/arcgateway/pairing.py</code>, <code>pairing_allowlist.py</code></td>
+<td>DM pairing store, throttle policy, signature verification, static allowlist wiring</td>
 <td>Anything about who's allowed to talk to an agent</td>
 </tr>
 <tr>

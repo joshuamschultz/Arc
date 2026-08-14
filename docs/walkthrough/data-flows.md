@@ -132,7 +132,7 @@ flowchart TB
 
     subgraph "Capability Sources"
         S1[Builtins<br/>packages/arcagent/tools]:::source
-        S2[Global<br/>~/.arc/capabilities]:::source
+        S2[Global<br/>~/.arc/state/capabilities]:::source
         S3[Agent<br/>agent/capabilities]:::source
         S4[Workspace<br/>workspace/.capabilities]:::source
     end
@@ -635,34 +635,57 @@ erDiagram
 
 ### Disk Layout
 
-Two independent path roots exist:
+`~/.arc` is split by **lifecycle**, so replacing the framework cannot destroy
+anything irreplaceable. Every path below is resolved by exactly one named
+accessor in `arctrust.paths` — no surface composes its own (enforced by
+`tests/architecture/test_arc_home_single_resolver.py`).
 
-- **`arc_home()`** — `${ARC_CONFIG_DIR:-~/.arc}` — user-wide config root (operator key, trust store, shared config files)
-- **`resolve_data_dir()`** — `${ARCSTORE_DATA_DIR:-~/.arc/store}` — arcstore data root (spool, WORM mirror, SQLite mirrors)
+| Root | Accessor | On update |
+|---|---|---|
+| `~/.arc/runtime/<version>/` (+ `current` symlink) | `arc_runtime()` | **replaced wholesale** |
+| `~/.arc/config/` | `arc_config()` | preserved |
+| `~/.arc/state/` | `arc_state()` | **never touched** |
+| `~/.arc/team/` | `arc_team()` | **never touched** |
+
+`resolve_data_dir()` — `${ARCSTORE_DATA_DIR}` or `store_dir()` — is arcstore's
+data root (spool, WORM mirror, SQLite mirrors) and lives under `state/`.
 
 ```text
-~/.arc/                                  # arc_home() — user-wide config root
-├── arcllm.toml                          # provider/model defaults (shared layer)
-├── arcagent.toml                        # agent-runtime defaults (shared layer)
-├── gateway.toml                         # embedded gateway: platforms, agent_did
-├── arc.env                              # 0600 — viewer/operator tokens, secrets
-├── operator/
-│   ├── operator.key                     # 0600 — Ed25519 seed, the audit authority
-│   └── operator.key.pub                 # 0644 — anti-erasure/anti-swap sentinel
-├── trust/
-│   ├── operators.toml                   # 0600 — pairing-approver pubkeys
-│   └── issuers.toml                     # 0600 — manifest-signer pubkeys
-├── team/                                # default team root
-│   └── <agent>/                         # one dir per agent — see agent-root tree below
-└── store/                               # resolve_data_dir() default
-    ├── spool/
-    │   └── operational-YYYY-MM-DD.jsonl # 0600 — always-on telemetry, daily rotation
-    ├── worm/
-    │   ├── audit-chain-<agent>.jsonl    # per-agent WORM chain (single-writer flock)
-    │   └── audit-chain-<agent>.<seq>.jsonl  # rotated segments (100k records / 50MB)
-    └── store/
-        ├── arcui.db                     # arcui's SQLite mirror (WAL)
-        └── arcstore.db                  # agent process's SQLite mirror (WAL)
+~/.arc/                                  # arc_home()
+├── runtime/                             # arc_runtime_root() — disposable
+│   ├── current -> 0.9.0/                # atomic symlink; an update flips it
+│   └── 0.9.0/
+│       └── modules/                     # module_root() — re-materialized by `arc install`
+├── config/                              # arc_config() — preserved across an update
+│   ├── arcllm.toml                      # provider/model defaults (shared layer)
+│   ├── arcagent.toml                    # agent-runtime defaults (shared layer)
+│   ├── arcrun.toml                      # loop defaults (shared layer)
+│   ├── gateway.toml                     # embedded gateway: platforms, agent_did
+│   ├── connections.toml                 # connected accounts + per-agent grants
+│   └── arc.env                          # 0600 — viewer/operator tokens, secrets
+├── state/                               # arc_state() — NEVER touched by an update
+│   ├── operator/                        # operator_dir()
+│   │   ├── operator.key                 # 0600 — Ed25519 seed, the audit authority
+│   │   └── operator.key.pub             # 0644 — anti-erasure/anti-swap sentinel
+│   ├── identity/                        # identity_dir() — signing-authority keys
+│   ├── trust/                           # trust_dir()
+│   │   ├── operators.toml               # 0600 — pairing-approver pubkeys
+│   │   └── issuers.toml                 # 0600 — manifest-signer pubkeys
+│   ├── bundles/                         # bundles_dir() — staged signed bundles
+│   ├── nats/jetstream/                  # nats_dir() — team broker state
+│   ├── workflows/                       # workflows_dir() — signed ArcFlow bundles
+│   ├── users.json                       # users_file()
+│   └── store/                           # store_dir() = resolve_data_dir() default
+│       ├── spool/
+│       │   └── operational-YYYY-MM-DD.jsonl # 0600 — always-on telemetry, daily rotation
+│       ├── worm/
+│       │   ├── audit-chain-<agent>.jsonl    # per-agent WORM chain (single-writer flock)
+│       │   └── audit-chain-<agent>.<seq>.jsonl  # rotated segments (100k records / 50MB)
+│       └── store/
+│           ├── arcui.db                 # arcui's SQLite mirror (WAL)
+│           └── arcstore.db              # agent process's SQLite mirror (WAL)
+└── team/                                # arc_team() — NEVER touched by an update
+    └── <agent>/                         # one dir per agent — see agent-root tree below
 
 <agent-root>/                            # e.g. ~/.arc/team/<agent>/
 ├── arcagent.toml                        # per-agent config
@@ -681,6 +704,13 @@ Two independent path roots exist:
         ├── insights/*.md                # insight store
         └── daily-log/*.md               # curated daily summaries
 ```
+
+Two rules follow from the table, and both have already cost a live box: never
+put the fleet inside the code checkout (every `git pull` then collides with a
+running agent), and never overwrite `~/.arc` wholesale (that destroys the
+operator key, and every WORM chain it signed becomes unverifiable). Replace
+`runtime/` — nothing else. `arc install` migrates a pre-split flat home into
+this layout once, by moving rather than copying, and rolls back on failure.
 
 ### The Spool — Always-On Operational Telemetry
 
@@ -725,9 +755,9 @@ Two independent path roots exist:
 | Credential | Location | Mode | Custody |
 |---|---|---|---|
 | Agent DID keypair | `~/.arcagent/keys/<did>.key` / `.pub` | `0700` dir | Vault resolver seam supports Azure KV, file, env backends |
-| Operator key | `~/.arc/operator/operator.key` | `0600`, `O_NOFOLLOW` | In-process by default; VaultSigner/VaultTransit for external custody |
-| Trust store | `~/.arc/trust/operators.toml`, `issuers.toml` | `0600` | Public keys only |
-| UI tokens | `~/.arc/arc.env` | `0600` | Minted once, pinned |
+| Operator key | `~/.arc/state/operator/operator.key` | `0600`, `O_NOFOLLOW` | In-process by default; VaultSigner/VaultTransit for external custody |
+| Trust store | `~/.arc/state/trust/operators.toml`, `issuers.toml` | `0600` | Public keys only |
+| UI tokens | `~/.arc/config/arc.env` | `0600` | Minted once, pinned |
 
 ### Retention and Deletion
 

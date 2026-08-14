@@ -86,6 +86,7 @@ import time
 from pathlib import Path
 from typing import Any, Literal
 
+from arctrust.paths import gateway_pairing_db
 from pydantic import BaseModel
 
 _logger = logging.getLogger("arcgateway.pairing")
@@ -814,7 +815,7 @@ class PairingStore:
                            Defaults to ``~/.arc/trust``.
         """
         if db_path is None:
-            db_path = Path.home() / ".arc" / "gateway" / "pairing.db"
+            db_path = gateway_pairing_db()
 
         if tier is not None:
             resolved_tier: Tier = tier

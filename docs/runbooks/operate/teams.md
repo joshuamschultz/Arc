@@ -27,7 +27,7 @@ coder, marketer, trader) on the same box that also routes Telegram DMs.
 ```bash
 cd ~/arc
 export PATH="$HOME/.local/bin:$PATH"
-set -a; source ~/.arc/arc.env; set +a
+set -a; source ~/.arc/config/arc.env; set +a
 
 .venv/bin/arc agent create josh_agent     --dir team --model anthropic/claude-sonnet-5
 .venv/bin/arc agent create coder_agent    --dir team --model anthropic/claude-sonnet-5
@@ -150,7 +150,7 @@ new.
 
 One process, same as single-node deployment — no separate "start the
 team" step. `arc ui start --team-root team --gateway-config
-~/.arc/gateway.toml` (or the systemd unit) loads every agent under
+~/.arc/config/gateway.toml` (or the systemd unit) loads every agent under
 `team/` on demand and serves the whole roster.
 
 Remote-platform DMs (Telegram, Slack) route to exactly **one** agent —

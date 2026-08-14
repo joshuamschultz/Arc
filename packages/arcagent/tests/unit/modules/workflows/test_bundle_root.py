@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from arctrust.paths import workflows_dir
 
 
 def _state(tmp_path: Path, workflows_dir: str = "workflows") -> Any:
@@ -37,7 +38,7 @@ def test_the_root_is_the_deployment_dir_not_the_agent_workspace(
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "config"))
     state = _state(tmp_path)
     try:
-        assert _runtime._bundle_root(state) == tmp_path / "config" / "workflows"
+        assert _runtime._bundle_root(state) == workflows_dir(tmp_path / "config")
     finally:
         _runtime.reset()
 
@@ -46,16 +47,15 @@ def test_the_root_matches_what_the_runner_dispatches_from(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Same directory, resolved independently by both sides."""
-    from arcteam.config import default_config_dir
-
     from arcagent.modules.workflows import _runtime
 
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "config"))
     state = _state(tmp_path)
     try:
-        # ``build_workflow_runner`` uses ``<workspace_root>/workflows`` where the
-        # gateway's workspace_root is the deployment config dir.
-        assert _runtime._bundle_root(state) == default_config_dir() / "workflows"
+        # The CLI signer, the fleet runner, and the tasks module all take the
+        # root from the deployment resolver; this module composes its own from
+        # the configured name, so the two have to land on the same directory.
+        assert _runtime._bundle_root(state) == workflows_dir()
     finally:
         _runtime.reset()
 

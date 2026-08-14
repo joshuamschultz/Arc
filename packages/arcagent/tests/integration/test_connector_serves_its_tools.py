@@ -458,7 +458,9 @@ async def test_a_connection_whose_name_the_rule_rejects_can_still_be_removed(
     """
     world = _World(tmp_path, bundle=_CLI_BUNDLE)
     _write_cli_bundle(world.root, poisoned=False)
-    world.registry().path.write_text(
+    registry_file = world.registry().path
+    registry_file.parent.mkdir(parents=True, exist_ok=True)
+    registry_file.write_text(
         f'[connections."{_ILLEGAL_INSTANCE}"]\nextension = "{_CLI_BUNDLE}"\n',
         encoding="utf-8",
     )

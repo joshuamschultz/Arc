@@ -21,8 +21,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from arcagent.modules.connectors.install import connector_env_file
 from arcgateway import team_roster
 from arctrust.identity import AgentIdentity
+from arctrust.paths import arc_team, extensions_dir
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
@@ -125,18 +127,18 @@ def _arc_dir(world: Path) -> Path:
 
 
 def _bundles(world: Path) -> Path:
-    return _arc_dir(world) / "extensions"
+    return extensions_dir(_arc_dir(world))
 
 
 def _env_file(world: Path) -> Path:
-    return _arc_dir(world) / "connections.env"
+    return connector_env_file(_arc_dir(world))
 
 
 def _agent(world: Path) -> tuple[TestClient, str, Path]:
     identity = AgentIdentity.generate(org="arc", agent_type="exec")
     key_dir = world / "keys"
     identity.save_keys(key_dir)
-    team_root = _arc_dir(world) / "team"
+    team_root = arc_team(base=_arc_dir(world))
     agent_dir = team_root / _AGENT
     (agent_dir / "workspace").mkdir(parents=True)
     (agent_dir / "arcagent.toml").write_text(

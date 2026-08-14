@@ -161,8 +161,7 @@ def test_the_adapter_does_not_re_implement_a_gateway_responsibility(spec: Any) -
                 violations.append(f"{source.name}:{line}: {match.group(0)!r} — {why}")
 
     assert not violations, (
-        f"{spec.name}: adapter re-implements gateway responsibilities:\n"
-        + "\n".join(violations)
+        f"{spec.name}: adapter re-implements gateway responsibilities:\n" + "\n".join(violations)
     )
 
 

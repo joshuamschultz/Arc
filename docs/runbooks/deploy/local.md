@@ -28,6 +28,48 @@ from `--team-root` on demand.
 (idempotent). This doc explains what it does and why, for anyone deploying
 by hand or debugging a failed run.
 
+
+## The Arc home layout
+
+`~/.arc` is split by **lifecycle**, so updating Arc is "replace the runtime
+and restart" without risking anything irreplaceable:
+
+| Path | Holds | On update |
+|---|---|---|
+| `~/.arc/runtime/<version>/` (+ a `current` symlink) | the framework — code, venv, modules | **replaced wholesale** |
+| `~/.arc/config/` | `arcagent.toml`, `arcllm.toml`, `arcrun.toml`, `gateway.toml`, `connections.toml`, `arc.env` | preserved |
+| `~/.arc/state/` | operator key, identity, trust store, arcstore DB, NATS JetStream, staged bundles | **never touched** |
+| `~/.arc/team/<agent>/` | per-agent traces, sessions, memory, workspace | **never touched** |
+
+Because runtimes install side by side, an update is an atomic `current`
+symlink flip and a rollback is flipping it back.
+
+Two rules follow, and both have already cost a live box:
+
+* **Never put the fleet inside the code checkout.** Agent runtime data under
+  the checkout means every `git pull` collides with a running agent — 1,700
+  files, on the DGX. `team/` is in `.gitignore` so it cannot be committed
+  again, but the layout is what actually prevents it: keep the fleet under
+  `~/.arc/team`, never under the directory you pull into.
+* **Never overwrite `~/.arc` wholesale.** That directory holds the operator
+  signing key. Every WORM audit chain is signed with it; destroy it and the
+  chains it signed can no longer be verified. Replace `runtime/`, nothing else.
+
+### Migrating an existing box
+
+Deployments made before the split have everything flat at `~/.arc`.
+`arc install` moves each entry into the root that matches its lifecycle —
+once, idempotently, and by moving rather than copying, so a failure part-way
+rolls back and leaves the box exactly as it was. Run it before `arc up`:
+
+```bash
+ssh host 'cd ~/arc && .venv/bin/arc install'
+```
+
+A second run prints nothing and exits 0. If it refuses because a destination
+is already occupied, both copies are real data — resolve that by hand rather
+than deleting either.
+
 > **Architecture ruling (2026-07-10): the embedded pattern is canonical**
 > at every tier — and, as of the latest fix, the *only* working
 > agent-execution path at every tier. `scripts/arc-stack.sh` — the older
@@ -117,7 +159,7 @@ crash — it logs a warning and skips that platform (see Troubleshooting).
 
 ### Secrets file
 
-Create `~/.arc/arc.env` (0600) with the values `arc ui start` needs at
+Create `~/.arc/config/arc.env` (0600) with the values `arc ui start` needs at
 runtime. Do this in a single remote shell invocation so secret values never
 appear in your local terminal history or an orchestrating agent's
 transcript:
@@ -125,19 +167,19 @@ transcript:
 ```bash
 ssh host 'bash -s' <<'REMOTE'
 set -euo pipefail
-mkdir -p ~/.arc
+mkdir -p ~/.arc/config
 ANTHROPIC_API_KEY=$(grep -m1 '^ANTHROPIC_API_KEY=' ~/arc/.env | cut -d= -f2-)
 TELEGRAM_BOT_TOKEN=$(grep -m1 '^ARCAGENT_TELEGRAM_BOT_TOKEN=' ~/arc/.env | cut -d= -f2-)
 VIEWER_TOKEN=$(openssl rand -hex 32)
 OPERATOR_TOKEN=$(openssl rand -hex 32)
 umask 077
-cat > ~/.arc/arc.env <<INNER
+cat > ~/.arc/config/arc.env <<INNER
 ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY
 TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN
 VIEWER_TOKEN=$VIEWER_TOKEN
 OPERATOR_TOKEN=$OPERATOR_TOKEN
 INNER
-chmod 600 ~/.arc/arc.env
+chmod 600 ~/.arc/config/arc.env
 REMOTE
 ```
 
@@ -154,7 +196,7 @@ exists for the same reason.
 ssh host 'cd ~/arc && .venv/bin/arc init --tier personal --provider anthropic'
 ```
 
-Writes `~/.arc/{arcllm.toml,arcagent.toml,gateway.toml}`. `deploy-node.sh`
+Writes `~/.arc/config/{arcllm.toml,arcagent.toml,gateway.toml}`. `deploy-node.sh`
 skips this step if `gateway.toml` already exists — re-running `arc init`
 against an already-customized host would either hang on an interactive
 overwrite prompt or (with `--quick`) silently clobber those customizations.
@@ -170,7 +212,7 @@ deploy_node_overlays.py` applies all of these idempotently via `tomlkit`
 (preserves comments/formatting, safe to re-run, never clobbers a value you
 set by hand unless you re-pass the matching flag):
 
-**`~/.arc/arcagent.toml`** — model for policy eval and the skill improver,
+**`~/.arc/config/arcagent.toml`** — model for policy eval and the skill improver,
 plus the skills adapter:
 
 ```toml
@@ -191,7 +233,7 @@ Note the **nested** shape — `enabled` lives at the module level, while
 (`arcagent/modules/skills/config.py::SkillsConfig`). A flat
 `[modules.skills] adapter = "arcskill"` looks plausible but is wrong.
 
-**`~/.arc/gateway.toml`** — web chat adapter (required when passing an
+**`~/.arc/config/gateway.toml`** — web chat adapter (required when passing an
 explicit `--gateway-config`; omitting the flag auto-builds a web-only
 default, but an explicit file must opt in itself) and Telegram:
 
@@ -219,7 +261,7 @@ adapter's audit log for the rejected `user_id` (or `@userinfobot`).
 
 ```bash
 ssh host 'cd ~/arc && export PATH="$HOME/.local/bin:$PATH" && \
-  set -a && source ~/.arc/arc.env && set +a && \
+  set -a && source ~/.arc/config/arc.env && set +a && \
   .venv/bin/arc agent create josh_agent --dir team --model anthropic/claude-sonnet-5'
 ```
 
@@ -232,7 +274,7 @@ embedded gateway knows which identity to route platform DMs to
 
 Apply the same `[eval]`/`[modules.skills]` deltas to
 `team/<agent>/arcagent.toml` too, even though the user-wide
-`~/.arc/arcagent.toml` already sets them — belt-and-suspenders against the
+`~/.arc/config/arcagent.toml` already sets them — belt-and-suspenders against the
 per-instance merge missing them.
 
 Validate before wiring into systemd:
@@ -262,7 +304,7 @@ After=network-online.target
 WorkingDirectory=%h/arc
 Environment=PATH=%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 EnvironmentFile=%h/.arc/arc.env
-ExecStart=%h/arc/.venv/bin/arc ui start --host 0.0.0.0 --port 8420 --team-root %h/arc/team --gateway-config %h/.arc/gateway.toml --no-browser --viewer-token ${VIEWER_TOKEN} --operator-token ${OPERATOR_TOKEN}
+ExecStart=%h/arc/.venv/bin/arc ui start --host 0.0.0.0 --port 8420 --team-root %h/.arc/team --gateway-config %h/.arc/gateway.toml --no-browser --viewer-token ${VIEWER_TOKEN} --operator-token ${OPERATOR_TOKEN}
 Restart=on-failure
 RestartSec=5
 
@@ -276,7 +318,7 @@ WantedBy=default.target
 - `Environment=PATH=...` must include `~/.local/bin` — that's how
  `shutil.which("nats-server")` finds the broker binary at startup, so
  `arc ui start` can auto-spawn its own managed NATS child bound to a
- persistent store dir (`~/.arc/nats/jetstream`, survives restarts).
+ persistent store dir (`~/.arc/state/nats/jetstream`, survives restarts).
 - `EnvironmentFile=%h/.arc/arc.env` supplies `ANTHROPIC_API_KEY`,
  `TELEGRAM_BOT_TOKEN`, `VIEWER_TOKEN`, `OPERATOR_TOKEN` at process start.
 
@@ -391,7 +433,7 @@ fixed-path config). Use the embedded path instead — it's the only one
 that works today, at every tier:
 
 ```bash
-arc ui start --team-root team --gateway-config ~/.arc/gateway.toml
+arc ui start --team-root ~/.arc/team --gateway-config ~/.arc/config/gateway.toml
 ```
 
 `arcgateway stop`/`status` still work normally for managing a daemon
@@ -444,7 +486,7 @@ curl -s "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/getMe"
 
 Returns the bot's `username`/`id`. If it doesn't match the bot you're
 DMing in Telegram, you're pointed at the wrong token — check
-`~/.arc/arc.env` and restart the service after fixing it (the allowlist
+`~/.arc/config/arc.env` and restart the service after fixing it (the allowlist
 and token are both read at adapter construction, not live-reloaded).
 
 ## Deployment pattern: embedded is canonical

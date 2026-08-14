@@ -5,7 +5,7 @@ After=network-online.target
 [Service]
 WorkingDirectory=%h/arc
 Environment=PATH=%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-EnvironmentFile=%h/.arc/arc.env
+EnvironmentFile=%h/.arc/config/arc.env
 # Modules are separately signed bundles that do not live in the wheel, so a
 # `git pull && uv sync && systemctl restart` otherwise brings the fleet back with
 # ZERO modules — agents that boot, answer chat, and look healthy while their
@@ -13,8 +13,8 @@ EnvironmentFile=%h/.arc/arc.env
 # when it cannot, which fails the unit instead of serving a hollow agent.
 # It also fails on a missing nats-server, so the Environment=PATH above must
 # reach it — %h/.local/bin is where scripts/deploy-node.sh puts the binary.
-ExecStartPre=%h/arc/.venv/bin/arc install --team-root %h/arc/team
-ExecStart=%h/arc/.venv/bin/arc ui start --host 0.0.0.0 --port 8420 --team-root %h/arc/team --gateway-config %h/.arc/gateway.toml --no-browser --viewer-token ${VIEWER_TOKEN} --operator-token ${OPERATOR_TOKEN}
+ExecStartPre=%h/arc/.venv/bin/arc install --team-root %h/.arc/team
+ExecStart=%h/arc/.venv/bin/arc ui start --host 0.0.0.0 --port 8420 --team-root %h/.arc/team --gateway-config %h/.arc/config/gateway.toml --no-browser --viewer-token ${VIEWER_TOKEN} --operator-token ${OPERATOR_TOKEN}
 Restart=on-failure
 RestartSec=5
 

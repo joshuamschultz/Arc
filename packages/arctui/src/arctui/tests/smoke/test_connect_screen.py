@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from arctrust.paths import config_file
 from textual.widgets import Button, Input, Label, OptionList
 
 from arctui.app import ArcTUI
@@ -194,7 +195,7 @@ def _rendered(transcript: TranscriptView) -> str:
 
 def _connections(agent_dir: Path) -> dict[str, Any]:
     """The deployment's connections, read back off disk exactly as the runtime does."""
-    path = _arc_dir(agent_dir) / "connections.toml"
+    path = config_file("connections.toml", _arc_dir(agent_dir))
     if not path.is_file():
         return {}
     table = tomllib.loads(path.read_text(encoding="utf-8")).get("connections", {})

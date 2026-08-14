@@ -78,14 +78,14 @@ Every failure stops the bring-up, because every one of them produces a
 ### 2. Modules — install what the config enables
 
 For each agent, `arc up` compares `[modules.NAME] enabled = true` against what
-is actually materialized under `${ARC_CONFIG_DIR:-~/.arc}/modules/` and installs
+is actually materialized under `${ARC_CONFIG_DIR:-~/.arc}/runtime/current/modules/` and installs
 the difference through the same verify → materialize → copy → enable path
 [`arc module install`](../staging-module-bundles.md) runs. Nothing about
 verification is bypassed.
 
 The source is whatever the deployment permits — never a flag:
 
-* a **staged bundle** in `${ARC_CONFIG_DIR:-~/.arc}/bundles/`, when one exists;
+* a **staged bundle** in `${ARC_CONFIG_DIR:-~/.arc}/state/bundles/`, when one exists;
 * otherwise the **development inner loop**, which is dev-signed and which
   `arcbundle` accepts at **personal tier only**.
 

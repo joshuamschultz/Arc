@@ -26,6 +26,7 @@ from arcagent.core.agent import ArcAgent
 from arcagent.extension.inspect import inspect_extensions
 from arcagent.modules.memory import _runtime as memory_runtime
 from arcbundle.capability_copy import copy_capabilities
+from arctrust.paths import module_root
 
 from arccli.blueprints import apply_blueprint, dumps_toml, resolve_blueprint
 
@@ -60,7 +61,7 @@ def _installed_memory_module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     """
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc"))
     source = Path(arcagent.__file__).resolve().parent / "modules" / "memory"
-    shutil.copytree(source, tmp_path / "arc" / "modules" / "memory")
+    shutil.copytree(source, module_root(tmp_path / "arc") / "memory")
     copy_capabilities(source, tmp_path, module="memory")
 
 

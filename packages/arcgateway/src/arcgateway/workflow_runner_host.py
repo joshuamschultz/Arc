@@ -139,9 +139,9 @@ def _resolve_runner_key_path() -> Path:
     arcteam's RunnerIdentity's job, COMP-011). This function only names the
     path.
     """
-    from arcteam.config import default_config_dir
+    from arctrust.paths import default_operator_key_path
 
-    return default_config_dir() / "operator" / "operator.key"
+    return default_operator_key_path()
 
 
 async def _default_runner_factory(*, tier: str, key_path: Path) -> WorkflowRunnerProtocol:

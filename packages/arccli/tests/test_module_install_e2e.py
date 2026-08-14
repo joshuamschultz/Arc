@@ -31,6 +31,7 @@ import arcagent
 import pytest
 from arcbundle import capability_dir
 from arcrun import StreamEvent, TurnEndEvent
+from arctrust.paths import module_root
 
 from arccli.commands import module as module_cmd
 
@@ -139,7 +140,7 @@ async def test_from_source_install_gives_a_running_agent_the_capability(
     module_cmd.module_handler(["install", "--from-source", module])
 
     # The three filesystem outcomes, each with a different trust property.
-    assert (deployment / "arc" / "modules" / module / "_runtime.py").is_file()
+    assert (module_root(deployment / "arc") / module / "_runtime.py").is_file()
     assert (capability_dir(agent_dir, module) / "capabilities.py").is_file()
     assert not (capability_dir(agent_dir, module) / "_runtime.py").exists()
 

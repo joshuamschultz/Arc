@@ -30,6 +30,7 @@ from typing import Any
 
 import pytest
 from arcagent.extension.attachment import ProbeResult, Requirement, ToolResult, ToolSpec
+from arctrust.paths import config_file
 
 from arccli.commands.connector import _SUBCOMMAND_MAP, connector_handler
 
@@ -244,7 +245,7 @@ def _answer_prompts(monkeypatch: pytest.MonkeyPatch, value: str = _TOKEN) -> lis
 
 def _connections(arc_dir: Path) -> dict[str, Any]:
     """The deployment's connections, as they are actually written to disk."""
-    path = arc_dir / "connections.toml"
+    path = config_file("connections.toml", arc_dir)
     if not path.is_file():
         return {}
     parsed = tomllib.loads(path.read_text(encoding="utf-8")).get("connections", {})
@@ -292,7 +293,7 @@ class TestAdd:
         block = _connections(arc_dir)[_INSTANCE]
         assert block["extension"] == _EXTENSION
         assert block["approval"] == "outbound"
-        assert _TOKEN not in (arc_dir / "connections.toml").read_text(encoding="utf-8")
+        assert _TOKEN not in config_file("connections.toml", arc_dir).read_text(encoding="utf-8")
 
     def test_reports_the_tools_the_probe_found(
         self,

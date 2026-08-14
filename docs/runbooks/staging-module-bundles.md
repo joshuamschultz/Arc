@@ -48,7 +48,7 @@ Two properties decide how you handle the media.
 **On the low side** you need:
 
 - A checkout of the module source catalog.
-- An operator key on that host, at `${ARC_CONFIG_DIR:-~/.arc}/operator`. `arc module bundle`
+- An operator key on that host, at `${ARC_CONFIG_DIR:-~/.arc}/state/operator`. `arc module bundle`
   signs with it and stamps its DID into the manifest as the issuer.
 - That operator signer configured for **Ed25519**. A bundle signature is Ed25519 by
   definition, and a signer offering another algorithm is refused before anything is written:
@@ -57,7 +57,7 @@ Two properties decide how you handle the media.
   bundle signatures are ed25519; signer offers 'ecdsa-p256'
   ```
 
-  A machine whose `~/.arc/arcagent.toml` sets `[security] tier = "federal"` forces
+  A machine whose `~/.arc/config/arcagent.toml` sets `[security] tier = "federal"` forces
   `ecdsa-p256`, so **a federal-configured host cannot build a bundle.** That is why the build
   runs on the low side.
 
@@ -88,7 +88,7 @@ Each named module becomes **its own bundle**. Three names produce three
 `<module>.arcbundle` directories, not one combined file.
 
 By default they land in the deployment bundle store,
-`${ARC_CONFIG_DIR:-~/.arc}/bundles/`. Write them straight to the transfer media with `-o`:
+`${ARC_CONFIG_DIR:-~/.arc}/state/bundles/`. Write them straight to the transfer media with `-o`:
 
 ```bash
 arc module bundle web browser -o /media/transfer/bundles
@@ -150,7 +150,7 @@ There are exactly two sources, and both are explicit.
 If the low side and the high side hold the same operator key, the bundle verifies with no
 further setup.
 
-**Source 2 — `${ARC_CONFIG_DIR:-~/.arc}/trust/issuers.toml`.** For any other issuer, add its
+**Source 2 — `${ARC_CONFIG_DIR:-~/.arc}/state/trust/issuers.toml`.** For any other issuer, add its
 entry:
 
 ```toml
@@ -161,7 +161,7 @@ role = "manifest-signer"
 ```
 
 ```bash
-chmod 0600 ~/.arc/trust/issuers.toml
+chmod 0600 ~/.arc/state/trust/issuers.toml
 ```
 
 **The file must be `0600`.** Any group- or other-readable mode is refused with
@@ -235,7 +235,7 @@ One command did four things, in this order:
 
 1. **Verified** the signature, the manifest's canonical form, every declared file hash, and
    that the payload carries nothing undeclared.
-2. **Materialized** the runtime to `${ARC_CONFIG_DIR:-~/.arc}/modules/web`, `0444` files
+2. **Materialized** the runtime to `${ARC_CONFIG_DIR:-~/.arc}/runtime/current/modules/web`, `0444` files
    inside `0555` directories, outside every agent's tool fence.
 3. **Copied** the capability surface — `capabilities.py` and `skills/` — into
    `team/olivia/capabilities/modules/web/`, which is the ONLY place the loader reads a
@@ -251,7 +251,7 @@ sitting on disk doing nothing, which is the exact ambiguity signed distribution 
 No flag selects the stringency a bundle is verified at. It is the **stricter** of two
 configured tiers:
 
-- the machine's `${ARC_CONFIG_DIR:-~/.arc}/arcagent.toml` `[security] tier`
+- the machine's `${ARC_CONFIG_DIR:-~/.arc}/config/arcagent.toml` `[security] tier`
 - the target agent's `<agent_dir>/arcagent.toml` `[security] tier`
 
 So a federal agent cannot be handed a weakly-signed module by running the install from a
@@ -318,7 +318,7 @@ and the issuer. A successful verify emits `module.bundle.verified`, and the writ
 Stage them into the deployment bundle store and install by name:
 
 ```bash
-cp -r /srv/staging/*.arcbundle ~/.arc/bundles/
+cp -r /srv/staging/*.arcbundle ~/.arc/state/bundles/
 arc module install web browser scheduler --agent olivia
 ```
 
@@ -363,11 +363,11 @@ Removed web from olivia: runtime, capabilities, config entry.
 | Thing | Path |
 |---|---|
 | Module source catalog (low side) | `arcagent/modules/`, or `$ARC_MODULE_SOURCE` |
-| Staged bundles | `${ARC_CONFIG_DIR:-~/.arc}/bundles/` |
-| Installed module runtime | `${ARC_CONFIG_DIR:-~/.arc}/modules/<name>/` — `0444` in `0555` |
+| Staged bundles | `${ARC_CONFIG_DIR:-~/.arc}/state/bundles/` |
+| Installed module runtime | `${ARC_CONFIG_DIR:-~/.arc}/runtime/current/modules/<name>/` — `0444` in `0555` |
 | Per-agent capability copies | `<agent_dir>/capabilities/modules/<name>/` |
-| Trusted bundle issuers | `${ARC_CONFIG_DIR:-~/.arc}/trust/issuers.toml` — `0600` |
-| Operator key | `${ARC_CONFIG_DIR:-~/.arc}/operator` |
+| Trusted bundle issuers | `${ARC_CONFIG_DIR:-~/.arc}/state/trust/issuers.toml` — `0600` |
+| Operator key | `${ARC_CONFIG_DIR:-~/.arc}/state/operator` |
 | Activation | `[modules.<name>]` in `<agent_dir>/arcagent.toml` |
 
 `${ARC_CONFIG_DIR}` scopes all of it. An isolated deployment never reaches into the invoking

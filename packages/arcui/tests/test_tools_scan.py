@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from arctrust.paths import capabilities_dir
 
 from arcui.routes.agent_detail.tools import _collect_disk_tools, _disk_tool_roots
 
@@ -56,7 +57,7 @@ def test_global_root_follows_arc_config_dir(
     goes through ``arcagent.global_capabilities_root``, the same resolver a real
     load uses, so the dashboard and the loader cannot disagree.
     """
-    relocated = tmp_path / "isolated" / "capabilities"
+    relocated = capabilities_dir(tmp_path / "isolated")
     relocated.mkdir(parents=True)
     (relocated / "curated.py").write_text(_TOOL_SRC.replace("word_count", "curated"), "utf-8")
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "isolated"))
@@ -66,5 +67,5 @@ def test_global_root_follows_arc_config_dir(
     roots = _disk_tool_roots(agent_root)
 
     assert (relocated, "global") in roots
-    assert Path.home() / ".arc" / "capabilities" not in [path for path, _ in roots]
+    assert capabilities_dir(Path.home() / ".arc") not in [path for path, _ in roots]
     assert "curated" in {t["name"] for t in _collect_disk_tools(agent_root)}

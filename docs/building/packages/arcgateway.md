@@ -68,7 +68,7 @@ flowchart LR
 **Important:** The standalone `arcgateway start` daemon unconditionally refuses to start at every tier because it has no working agent-execution path. Use the embedded path instead:
 
 ```bash
-arc ui start --team-root team --gateway-config ~/.arc/gateway.toml
+arc ui start --team-root team --gateway-config ~/.arc/config/gateway.toml
 ```
 
 ### Two Planes Architecture
@@ -133,7 +133,7 @@ signing_secret_env = "MATTERMOST_SIGNING_SECRET"
 
 ### Secrets File
 
-Create `~/.arc/arc.env` (0600 permissions):
+Create `~/.arc/config/arc.env` (0600 permissions):
 
 ```bash
 # Required
@@ -415,7 +415,7 @@ A federal-tier instance with 8 GB RAM sustains roughly 100 concurrent sessions.
 
 ```bash
 # Start gateway (embedded)
-arc ui start --team-root team --gateway-config ~/.arc/gateway.toml
+arc ui start --team-root team --gateway-config ~/.arc/config/gateway.toml
 
 # Pairing
 arc gateway pair approve <CODE>   # Approve pending pairing

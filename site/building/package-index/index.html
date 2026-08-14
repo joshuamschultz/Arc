@@ -1243,6 +1243,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#arcbundle-signed-module-bundles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        arcbundle - Signed Module Bundles
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#arcstore-storage-backend" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2431,6 +2442,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -2508,6 +2523,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../runbooks/deploy/up/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bring-up (arc up)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../runbooks/deploy/local/" class="md-nav__link">
         
   
@@ -2544,6 +2587,34 @@
     
   
     Docker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/deploy/azure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Azure
   
 
     
@@ -2849,6 +2920,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -2906,6 +2981,62 @@
     
   
     Hardening
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/signing-capabilities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Signing capabilities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/staging-module-bundles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Staging module bundles
   
 
     
@@ -3309,6 +3440,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#arcbundle-signed-module-bundles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        arcbundle - Signed Module Bundles
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#arcstore-storage-backend" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3536,7 +3678,7 @@
 <p>Arc is not one program — it's a stack of small, single-purpose packages, each one only allowed to depend on the packages <em>below</em> it, never the ones beside or above it. Think of it like a building: the foundation (identity, signing, storage) can't lean on the walls, the walls can't lean on the roof, and the roof can't reach down and rewire the foundation. If you're adding a feature, 90% of the work is deciding which floor of the building it belongs on.</p>
 <hr />
 <h2 id="the-package-inventory">The Package Inventory<a class="headerlink" href="#the-package-inventory" title="Permanent link">&para;</a></h2>
-<p>Eighteen directories live under <code>packages/</code>. Two (<code>arcmas</code>, <code>arcmodel</code>) are meta-packages/placeholders — flagged below.</p>
+<p>The table below is the full inventory. Two entries (<code>arcmas</code>, <code>arcmodel</code>) are meta-packages/placeholders — flagged below.</p>
 <table>
 <thead>
 <tr>
@@ -3556,6 +3698,14 @@
 <td>Security nucleus: DID identity, Ed25519 keypairs, <code>PolicyPipeline</code>, WORM chain</td>
 <td>nothing in <code>arc*</code></td>
 <td>Import any other Arc package</td>
+</tr>
+<tr>
+<td><strong>arcbundle</strong></td>
+<td>Foundation</td>
+<td><code>packages/arcbundle/src/arcbundle/</code></td>
+<td>Signed module bundles: manifest, verify, atomic materialize, per-agent capability copy</td>
+<td><code>arctrust</code>, Pydantic</td>
+<td>Import <code>arcagent</code> — or anything else in <code>arc*</code></td>
 </tr>
 <tr>
 <td><strong>arcstore</strong></td>
@@ -3717,8 +3867,10 @@
     TEAM["arcteam\nmulti-agent bus"]
     STORE["arcstore\nspool + SQLite mirror"]
     TRUST["arctrust\nidentity, sign, policy, audit"]
+    BUNDLE["arcbundle\nsigned module bundles"]
 
     CLI --&gt; AGENT
+    CLI --&gt; BUNDLE
     CLI --&gt; RUN
     CLI --&gt; LLM
     CLI --&gt; TEAM
@@ -3740,13 +3892,18 @@
     STORE --&gt; TRUST
     LLM --&gt; STORE
     PROMPT --&gt; TRUST
+    BUNDLE --&gt; TRUST
 
     class CLI,UI entry
     class GW surface
     class AGENT agent
     class RUN,MEMORY,SKILL,TEAM runtime
     class LLM llm
-    class STORE,TRUST,PROMPT found</code></pre>
+    class STORE,TRUST,PROMPT,BUNDLE found</code></pre>
+<p><code>arcbundle</code> is a leaf beside <code>arctrust</code>, and the arrow into it comes from <code>arccli</code> alone.
+<code>arcagent</code> never imports it: the agent only ever <em>reads</em> an already-materialized directory,
+so the nucleus stays ignorant of distribution entirely. That is also what lets a bundle be
+built and verified on a staging host with no agent stack installed.</p>
 <h3 id="the-one-narrowed-exception">The One Narrowed Exception<a class="headerlink" href="#the-one-narrowed-exception" title="Permanent link">&para;</a></h3>
 <p><code>arcui</code> needs the Knowledge/Capabilities "Reality Mirror" views to show what an agent <em>actually</em> loads. That requires reading <code>arcagent</code> internals. Rather than blow the boundary open, the fix is narrowed to a single seam:</p>
 <blockquote>
@@ -4006,10 +4163,79 @@
 <a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">PolicyPipeline</span><span class="o">.</span><span class="n">evaluate</span><span class="p">(</span><span class="n">call</span><span class="p">,</span> <span class="n">ctx</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Decision</span>
 </code></pre></div>
 <hr />
+<h3 id="arcbundle-signed-module-bundles">arcbundle - Signed Module Bundles<a class="headerlink" href="#arcbundle-signed-module-bundles" title="Permanent link">&para;</a></h3>
+<p><strong>Layer:</strong> Foundation — a leaf beside <code>arctrust</code><br />
+<strong>Dependencies:</strong> <code>arctrust</code> (Ed25519 + canonical JSON) and Pydantic. Nothing else, ever.</p>
+<h4 id="purpose_1">Purpose<a class="headerlink" href="#purpose_1" title="Permanent link">&para;</a></h4>
+<p>The distribution unit that makes a module's <strong>absence</strong> provable. The <code>arc-agent</code> wheel is
+byte-identical across every tier; each module ships as a separately signed bundle, verified
+in full before a single byte reaches disk, and materialized read-only at the deployment root
+outside every agent's tool fence.</p>
+<p>It knows nothing about <code>arcagent</code>. The agent only reads an already-materialized directory, so
+a bundle can be built or verified on a low-side box with no agent stack present.</p>
+<h4 id="key-modules">Key Modules<a class="headerlink" href="#key-modules" title="Permanent link">&para;</a></h4>
+<table>
+<thead>
+<tr>
+<th>Module</th>
+<th>Responsibility</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>manifest</code></td>
+<td><code>BundleManifest</code> model + canonical-JSON encoding — the on-disk shape</td>
+</tr>
+<tr>
+<td><code>signer</code></td>
+<td>Detached Ed25519 signature over a manifest's canonical bytes</td>
+</tr>
+<tr>
+<td><code>verifier</code></td>
+<td>Fail-closed verify: signature, canonical form, every file hash, undeclared-file sweep</td>
+</tr>
+<tr>
+<td><code>materializer</code></td>
+<td>Atomic write (stage → fsync → rename), <code>0444</code> files in <code>0555</code> directories</td>
+</tr>
+<tr>
+<td><code>builder</code></td>
+<td>Package a module folder into a signed <code>.arcbundle</code></td>
+</tr>
+<tr>
+<td><code>capability_copy</code></td>
+<td>Per-agent copy of a module's tools + skills, and its inverse</td>
+</tr>
+</tbody>
+</table>
+<h4 id="key-functions_1">Key Functions<a class="headerlink" href="#key-functions_1" title="Permanent link">&para;</a></h4>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">build_bundle</span><span class="p">(</span><span class="n">source_dir</span><span class="p">,</span> <span class="n">module</span><span class="p">,</span> <span class="n">version</span><span class="p">,</span> <span class="n">private_key</span><span class="p">,</span> <span class="n">issuer</span><span class="p">,</span> <span class="n">out</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Path</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">verify_bundle</span><span class="p">(</span><span class="n">bundle_root</span><span class="p">,</span> <span class="n">tier</span><span class="p">,</span> <span class="n">trusted_issuers</span><span class="p">,</span> <span class="n">sink</span><span class="p">,</span> <span class="n">actor_did</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">VerifiedBundle</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">materialize</span><span class="p">(</span><span class="n">verified</span><span class="p">,</span> <span class="n">dest_root</span><span class="p">,</span> <span class="n">sink</span><span class="p">,</span> <span class="n">actor_did</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Path</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">copy_capabilities</span><span class="p">(</span><span class="n">module_dir</span><span class="p">,</span> <span class="n">agent_dir</span><span class="p">,</span> <span class="n">module</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Path</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="n">remove</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">dest_root</span><span class="p">,</span> <span class="n">sink</span><span class="p">,</span> <span class="n">actor_did</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="n">remove_capabilities</span><span class="p">(</span><span class="n">agent_dir</span><span class="p">,</span> <span class="n">module</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span>
+</code></pre></div>
+<h4 id="invariants">Invariants<a class="headerlink" href="#invariants" title="Permanent link">&para;</a></h4>
+<ul>
+<li><strong>Nothing is written before everything is verified.</strong> A failed verify leaves the destination
+  byte-identical to its prior state — no partial tree.</li>
+<li><strong>Fail closed.</strong> Any exception during verification denies.</li>
+<li><strong>Module runtime is never agent-writable.</strong> <code>0444</code> inside <code>0555</code>, at the deployment root.</li>
+<li><strong><code>_runtime.py</code> is never copied</strong> into the agent-writable capability root.</li>
+</ul>
+<h4 id="audit-events">Audit Events<a class="headerlink" href="#audit-events" title="Permanent link">&para;</a></h4>
+<p><code>module.bundle.verified</code> · <code>module.signature_invalid</code> · <code>module.content_hash_mismatch</code> ·
+<code>module.installed</code> · <code>module.removed</code> — each emitted from inside the package at the point the
+outcome is decided.</p>
+<p>See <a href="../modules/">Writing modules</a> for the author's view and
+<a href="../../runbooks/staging-module-bundles/">Staging module bundles across an air gap</a> for the
+operator procedure.</p>
+<hr />
 <h3 id="arcstore-storage-backend">arcstore - Storage Backend<a class="headerlink" href="#arcstore-storage-backend" title="Permanent link">&para;</a></h3>
 <p><strong>Layer:</strong> Foundation<br />
 <strong>Dependencies:</strong> arctrust</p>
-<h4 id="purpose_1">Purpose<a class="headerlink" href="#purpose_1" title="Permanent link">&para;</a></h4>
+<h4 id="purpose_2">Purpose<a class="headerlink" href="#purpose_2" title="Permanent link">&para;</a></h4>
 <p>Unified storage interface for sessions, memory, tasks, and audit logs.</p>
 <h4 id="key-classes_1">Key Classes<a class="headerlink" href="#key-classes_1" title="Permanent link">&para;</a></h4>
 <table>
@@ -4051,17 +4277,17 @@
 </tbody>
 </table>
 <h4 id="storage-layout">Storage Layout<a class="headerlink" href="#storage-layout" title="Permanent link">&para;</a></h4>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>workspace/
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>├── sessions/*.jsonl      # Session transcripts
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>├── memory/               # Memory index
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>├── tasks/                # Task store
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>└── audit/                # Audit logs
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>workspace/
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>├── sessions/*.jsonl      # Session transcripts
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>├── memory/               # Memory index
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>├── tasks/                # Task store
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>└── audit/                # Audit logs
 </code></pre></div>
 <hr />
 <h3 id="arcllm-llm-client">arcllm - LLM Client<a class="headerlink" href="#arcllm-llm-client" title="Permanent link">&para;</a></h3>
 <p><strong>Layer:</strong> LLM<br />
 <strong>Dependencies:</strong> arctrust, arcstore</p>
-<h4 id="purpose_2">Purpose<a class="headerlink" href="#purpose_2" title="Permanent link">&para;</a></h4>
+<h4 id="purpose_3">Purpose<a class="headerlink" href="#purpose_3" title="Permanent link">&para;</a></h4>
 <p>Zero-SDK HTTP client for 16 LLM providers with security modules.</p>
 <h4 id="supported-providers">Supported Providers<a class="headerlink" href="#supported-providers" title="Permanent link">&para;</a></h4>
 <table>
@@ -4192,17 +4418,17 @@
 </tr>
 </tbody>
 </table>
-<h4 id="key-functions_1">Key Functions<a class="headerlink" href="#key-functions_1" title="Permanent link">&para;</a></h4>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">arcllm</span><span class="p">(</span><span class="n">provider</span><span class="p">,</span> <span class="n">model</span><span class="p">,</span> <span class="n">tools</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LLMClient</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">LLMClient</span><span class="o">.</span><span class="n">chat</span><span class="p">(</span><span class="n">messages</span><span class="p">,</span> <span class="n">tools</span><span class="p">,</span> <span class="n">temperature</span><span class="p">,</span> <span class="n">max_tokens</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ChatResponse</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">LLMClient</span><span class="o">.</span><span class="n">embed</span><span class="p">(</span><span class="n">texts</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">]]</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">LLMClient</span><span class="o">.</span><span class="n">count_tokens</span><span class="p">(</span><span class="n">text</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span>
+<h4 id="key-functions_2">Key Functions<a class="headerlink" href="#key-functions_2" title="Permanent link">&para;</a></h4>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">arcllm</span><span class="p">(</span><span class="n">provider</span><span class="p">,</span> <span class="n">model</span><span class="p">,</span> <span class="n">tools</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LLMClient</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">LLMClient</span><span class="o">.</span><span class="n">chat</span><span class="p">(</span><span class="n">messages</span><span class="p">,</span> <span class="n">tools</span><span class="p">,</span> <span class="n">temperature</span><span class="p">,</span> <span class="n">max_tokens</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ChatResponse</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="n">LLMClient</span><span class="o">.</span><span class="n">embed</span><span class="p">(</span><span class="n">texts</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">]]</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="n">LLMClient</span><span class="o">.</span><span class="n">count_tokens</span><span class="p">(</span><span class="n">text</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span>
 </code></pre></div>
 <hr />
 <h3 id="arcprompt-prompt-engine">arcprompt - Prompt Engine<a class="headerlink" href="#arcprompt-prompt-engine" title="Permanent link">&para;</a></h3>
 <p><strong>Layer:</strong> Runtime<br />
 <strong>Dependencies:</strong> arctrust</p>
-<h4 id="purpose_3">Purpose<a class="headerlink" href="#purpose_3" title="Permanent link">&para;</a></h4>
+<h4 id="purpose_4">Purpose<a class="headerlink" href="#purpose_4" title="Permanent link">&para;</a></h4>
 <p>Prompt building, templating, and context management with signing.</p>
 <h4 id="key-classes_3">Key Classes<a class="headerlink" href="#key-classes_3" title="Permanent link">&para;</a></h4>
 <table>
@@ -4227,15 +4453,15 @@
 </tr>
 </tbody>
 </table>
-<h4 id="key-functions_2">Key Functions<a class="headerlink" href="#key-functions_2" title="Permanent link">&para;</a></h4>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">PromptResolver</span><span class="o">.</span><span class="n">resolve</span><span class="p">(</span><span class="n">package</span><span class="p">,</span> <span class="n">name</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">build_prompt</span><span class="p">(</span><span class="n">task</span><span class="p">,</span> <span class="n">context</span><span class="p">,</span> <span class="n">system_prompt</span><span class="p">,</span> <span class="n">skills</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span>
+<h4 id="key-functions_3">Key Functions<a class="headerlink" href="#key-functions_3" title="Permanent link">&para;</a></h4>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">PromptResolver</span><span class="o">.</span><span class="n">resolve</span><span class="p">(</span><span class="n">package</span><span class="p">,</span> <span class="n">name</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">build_prompt</span><span class="p">(</span><span class="n">task</span><span class="p">,</span> <span class="n">context</span><span class="p">,</span> <span class="n">system_prompt</span><span class="p">,</span> <span class="n">skills</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span>
 </code></pre></div>
 <hr />
 <h3 id="arcrun-execution-loop">arcrun - Execution Loop<a class="headerlink" href="#arcrun-execution-loop" title="Permanent link">&para;</a></h3>
 <p><strong>Layer:</strong> Runtime<br />
 <strong>Dependencies:</strong> arcllm, arctrust, arcstore</p>
-<h4 id="purpose_4">Purpose<a class="headerlink" href="#purpose_4" title="Permanent link">&para;</a></h4>
+<h4 id="purpose_5">Purpose<a class="headerlink" href="#purpose_5" title="Permanent link">&para;</a></h4>
 <p>Think-act-observe execution loop with sandboxing.</p>
 <h4 id="key-classes_4">Key Classes<a class="headerlink" href="#key-classes_4" title="Permanent link">&para;</a></h4>
 <table>
@@ -4268,9 +4494,9 @@
 </tr>
 </tbody>
 </table>
-<h4 id="key-functions_3">Key Functions<a class="headerlink" href="#key-functions_3" title="Permanent link">&para;</a></h4>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">run_turn</span><span class="p">(</span><span class="n">agent</span><span class="p">,</span> <span class="n">task</span><span class="p">,</span> <span class="n">session_id</span><span class="p">,</span> <span class="n">max_turns</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Result</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">Sandbox</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="n">code</span><span class="p">,</span> <span class="n">timeout</span><span class="p">,</span> <span class="n">memory_limit</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ExecutionResult</span>
+<h4 id="key-functions_4">Key Functions<a class="headerlink" href="#key-functions_4" title="Permanent link">&para;</a></h4>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">run_turn</span><span class="p">(</span><span class="n">agent</span><span class="p">,</span> <span class="n">task</span><span class="p">,</span> <span class="n">session_id</span><span class="p">,</span> <span class="n">max_turns</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Result</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="n">Sandbox</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="n">code</span><span class="p">,</span> <span class="n">timeout</span><span class="p">,</span> <span class="n">memory_limit</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ExecutionResult</span>
 </code></pre></div>
 <h4 id="sandbox-features">Sandbox Features<a class="headerlink" href="#sandbox-features" title="Permanent link">&para;</a></h4>
 <table>
@@ -4313,7 +4539,7 @@
 <h3 id="arcskill-skill-hub">arcskill - Skill Hub<a class="headerlink" href="#arcskill-skill-hub" title="Permanent link">&para;</a></h3>
 <p><strong>Layer:</strong> Agent<br />
 <strong>Dependencies:</strong> arctrust</p>
-<h4 id="purpose_5">Purpose<a class="headerlink" href="#purpose_5" title="Permanent link">&para;</a></h4>
+<h4 id="purpose_6">Purpose<a class="headerlink" href="#purpose_6" title="Permanent link">&para;</a></h4>
 <p>Verified skill installation with Sigstore/Rekor verification.</p>
 <h4 id="key-classes_5">Key Classes<a class="headerlink" href="#key-classes_5" title="Permanent link">&para;</a></h4>
 <table>
@@ -4358,7 +4584,7 @@
 <h3 id="arcskillimprover-skill-self-improvement">arcskill.improver - Skill Self-Improvement<a class="headerlink" href="#arcskillimprover-skill-self-improvement" title="Permanent link">&para;</a></h3>
 <p><strong>Layer:</strong> Agent<br />
 <strong>Dependencies:</strong> arctrust, arcllm, arcrun</p>
-<h4 id="purpose_6">Purpose<a class="headerlink" href="#purpose_6" title="Permanent link">&para;</a></h4>
+<h4 id="purpose_7">Purpose<a class="headerlink" href="#purpose_7" title="Permanent link">&para;</a></h4>
 <p>Code repair and optimization via golden-task gate.</p>
 <h4 id="edit-budgets">Edit Budgets<a class="headerlink" href="#edit-budgets" title="Permanent link">&para;</a></h4>
 <table>
@@ -4391,7 +4617,7 @@
 <h3 id="arcmemory-memory-system">arcmemory - Memory System<a class="headerlink" href="#arcmemory-memory-system" title="Permanent link">&para;</a></h3>
 <p><strong>Layer:</strong> Agent<br />
 <strong>Dependencies:</strong> arctrust, arcllm, arcstore, arcprompt</p>
-<h4 id="purpose_7">Purpose<a class="headerlink" href="#purpose_7" title="Permanent link">&para;</a></h4>
+<h4 id="purpose_8">Purpose<a class="headerlink" href="#purpose_8" title="Permanent link">&para;</a></h4>
 <p>Dual-speed, four-store, analogical memory: markdown source + SQLite index.</p>
 <h4 id="key-classes_6">Key Classes<a class="headerlink" href="#key-classes_6" title="Permanent link">&para;</a></h4>
 <table>
@@ -4451,7 +4677,7 @@
 <h3 id="arcteam-multi-agent-coordination">arcteam - Multi-Agent Coordination<a class="headerlink" href="#arcteam-multi-agent-coordination" title="Permanent link">&para;</a></h3>
 <p><strong>Layer:</strong> Agent<br />
 <strong>Dependencies:</strong> arctrust, arcstore</p>
-<h4 id="purpose_8">Purpose<a class="headerlink" href="#purpose_8" title="Permanent link">&para;</a></h4>
+<h4 id="purpose_9">Purpose<a class="headerlink" href="#purpose_9" title="Permanent link">&para;</a></h4>
 <p>Entity registry, messaging, and team coordination via NATS.</p>
 <h4 id="key-classes_7">Key Classes<a class="headerlink" href="#key-classes_7" title="Permanent link">&para;</a></h4>
 <table>
@@ -4515,7 +4741,7 @@
 <h3 id="arcagent-agent-framework">arcagent - Agent Framework<a class="headerlink" href="#arcagent-agent-framework" title="Permanent link">&para;</a></h3>
 <p><strong>Layer:</strong> Agent<br />
 <strong>Dependencies:</strong> arctrust, arcllm, arcrun, arcstore, arcskill, arcteam, arcmemory</p>
-<h4 id="purpose_9">Purpose<a class="headerlink" href="#purpose_9" title="Permanent link">&para;</a></h4>
+<h4 id="purpose_10">Purpose<a class="headerlink" href="#purpose_10" title="Permanent link">&para;</a></h4>
 <p>Main agent implementation with tools, skills, and memory-as-tools.</p>
 <h4 id="key-classes_8">Key Classes<a class="headerlink" href="#key-classes_8" title="Permanent link">&para;</a></h4>
 <table>
@@ -4541,9 +4767,9 @@
 </tbody>
 </table>
 <h4 id="tool-decorator">Tool Decorator<a class="headerlink" href="#tool-decorator" title="Permanent link">&para;</a></h4>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nd">@tool</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">description</span><span class="p">,</span> <span class="n">classification</span><span class="p">,</span> <span class="n">version</span><span class="p">)</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="k">def</span><span class="w"> </span><span class="nf">my_tool</span><span class="p">(</span><span class="o">...</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="o">...</span><span class="p">:</span>
-<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>    <span class="o">...</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nd">@tool</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">description</span><span class="p">,</span> <span class="n">classification</span><span class="p">,</span> <span class="n">version</span><span class="p">)</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="k">def</span><span class="w"> </span><span class="nf">my_tool</span><span class="p">(</span><span class="o">...</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="o">...</span><span class="p">:</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>    <span class="o">...</span>
 </code></pre></div>
 <h4 id="classifications">Classifications<a class="headerlink" href="#classifications" title="Permanent link">&para;</a></h4>
 <table>
@@ -4576,7 +4802,7 @@
 <h3 id="arcui-dashboard">arcui - Dashboard<a class="headerlink" href="#arcui-dashboard" title="Permanent link">&para;</a></h3>
 <p><strong>Layer:</strong> Surface<br />
 <strong>Dependencies:</strong> arcstore, arcgateway, arcteam, arctrust, arcskill, arcllm, arcagent (inventory seam only)</p>
-<h4 id="purpose_10">Purpose<a class="headerlink" href="#purpose_10" title="Permanent link">&para;</a></h4>
+<h4 id="purpose_11">Purpose<a class="headerlink" href="#purpose_11" title="Permanent link">&para;</a></h4>
 <p>Web dashboard for monitoring and control.</p>
 <h4 id="planes">Planes<a class="headerlink" href="#planes" title="Permanent link">&para;</a></h4>
 <table>
@@ -4605,7 +4831,7 @@
 <h3 id="arcgateway-chat-platform-daemon">arcgateway - Chat Platform Daemon<a class="headerlink" href="#arcgateway-chat-platform-daemon" title="Permanent link">&para;</a></h3>
 <p><strong>Layer:</strong> Surface<br />
 <strong>Dependencies:</strong> arcagent</p>
-<h4 id="purpose_11">Purpose<a class="headerlink" href="#purpose_11" title="Permanent link">&para;</a></h4>
+<h4 id="purpose_12">Purpose<a class="headerlink" href="#purpose_12" title="Permanent link">&para;</a></h4>
 <p>Integration with chat platforms; owns agent data-plane reads.</p>
 <h4 id="key-classes_9">Key Classes<a class="headerlink" href="#key-classes_9" title="Permanent link">&para;</a></h4>
 <table>
@@ -4638,54 +4864,54 @@
 <h3 id="arccli-cli-interface">arccli - CLI Interface<a class="headerlink" href="#arccli-cli-interface" title="Permanent link">&para;</a></h3>
 <p><strong>Layer:</strong> Entry<br />
 <strong>Dependencies:</strong> arcagent, arcteam, arcskill</p>
-<h4 id="purpose_12">Purpose<a class="headerlink" href="#purpose_12" title="Permanent link">&para;</a></h4>
+<h4 id="purpose_13">Purpose<a class="headerlink" href="#purpose_13" title="Permanent link">&para;</a></h4>
 <p>Command-line interface for all Arc operations.</p>
 <h4 id="cli-commands">CLI Commands<a class="headerlink" href="#cli-commands" title="Permanent link">&para;</a></h4>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c1"># Agent</span>
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>arc<span class="w"> </span>agent<span class="w"> </span>create<span class="w"> </span>NAME
-<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>arc<span class="w"> </span>agent<span class="w"> </span>build<span class="w"> </span>NAME<span class="w"> </span><span class="o">[</span>--check<span class="o">]</span>
-<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>arc<span class="w"> </span>agent<span class="w"> </span>chat<span class="w"> </span>NAME
-<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>arc<span class="w"> </span>agent<span class="w"> </span>run<span class="w"> </span>NAME<span class="w"> </span>TASK
-<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>arc<span class="w"> </span>agent<span class="w"> </span>serve<span class="w"> </span>NAME
-<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>arc<span class="w"> </span>agent<span class="w"> </span>status<span class="w"> </span>NAME
-<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a>
-<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="c1"># LLM</span>
-<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a>arc<span class="w"> </span>llm<span class="w"> </span>providers
-<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a>arc<span class="w"> </span>llm<span class="w"> </span>models<span class="w"> </span><span class="o">[</span>--tools<span class="o">]</span>
-<a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a>arc<span class="w"> </span>llm<span class="w"> </span>validate
-<a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a>
-<a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a><span class="c1"># Skills</span>
-<a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a>arc<span class="w"> </span>skill<span class="w"> </span>list
-<a id="__codelineno-7-16" name="__codelineno-7-16" href="#__codelineno-7-16"></a>arc<span class="w"> </span>skill<span class="w"> </span>search<span class="w"> </span>QUERY
-<a id="__codelineno-7-17" name="__codelineno-7-17" href="#__codelineno-7-17"></a>arc<span class="w"> </span>skill<span class="w"> </span>create<span class="w"> </span>NAME
-<a id="__codelineno-7-18" name="__codelineno-7-18" href="#__codelineno-7-18"></a>
-<a id="__codelineno-7-19" name="__codelineno-7-19" href="#__codelineno-7-19"></a><span class="c1"># Capabilities</span>
-<a id="__codelineno-7-20" name="__codelineno-7-20" href="#__codelineno-7-20"></a>arc<span class="w"> </span>ext<span class="w"> </span>list
-<a id="__codelineno-7-21" name="__codelineno-7-21" href="#__codelineno-7-21"></a>arc<span class="w"> </span>ext<span class="w"> </span>create<span class="w"> </span>NAME
-<a id="__codelineno-7-22" name="__codelineno-7-22" href="#__codelineno-7-22"></a>
-<a id="__codelineno-7-23" name="__codelineno-7-23" href="#__codelineno-7-23"></a><span class="c1"># Team</span>
-<a id="__codelineno-7-24" name="__codelineno-7-24" href="#__codelineno-7-24"></a>arc<span class="w"> </span>team<span class="w"> </span>init
-<a id="__codelineno-7-25" name="__codelineno-7-25" href="#__codelineno-7-25"></a>arc<span class="w"> </span>team<span class="w"> </span>register<span class="w"> </span>ID
-<a id="__codelineno-7-26" name="__codelineno-7-26" href="#__codelineno-7-26"></a>arc<span class="w"> </span>team<span class="w"> </span>status
-<a id="__codelineno-7-27" name="__codelineno-7-27" href="#__codelineno-7-27"></a>
-<a id="__codelineno-7-28" name="__codelineno-7-28" href="#__codelineno-7-28"></a><span class="c1"># UI</span>
-<a id="__codelineno-7-29" name="__codelineno-7-29" href="#__codelineno-7-29"></a>arc<span class="w"> </span>ui<span class="w"> </span>start<span class="w"> </span><span class="o">[</span>--show-tokens<span class="o">]</span>
-<a id="__codelineno-7-30" name="__codelineno-7-30" href="#__codelineno-7-30"></a>arc<span class="w"> </span>ui<span class="w"> </span>tail<span class="w"> </span><span class="o">[</span>--viewer-token<span class="w"> </span>TOKEN<span class="o">]</span>
-<a id="__codelineno-7-31" name="__codelineno-7-31" href="#__codelineno-7-31"></a>
-<a id="__codelineno-7-32" name="__codelineno-7-32" href="#__codelineno-7-32"></a><span class="c1"># Blueprints</span>
-<a id="__codelineno-7-33" name="__codelineno-7-33" href="#__codelineno-7-33"></a>arc<span class="w"> </span>blueprint<span class="w"> </span>list
-<a id="__codelineno-7-34" name="__codelineno-7-34" href="#__codelineno-7-34"></a>arc<span class="w"> </span>blueprint<span class="w"> </span>verify<span class="w"> </span>PATH
-<a id="__codelineno-7-35" name="__codelineno-7-35" href="#__codelineno-7-35"></a>arc<span class="w"> </span>blueprint<span class="w"> </span>publish<span class="w"> </span>PATH
-<a id="__codelineno-7-36" name="__codelineno-7-36" href="#__codelineno-7-36"></a>
-<a id="__codelineno-7-37" name="__codelineno-7-37" href="#__codelineno-7-37"></a><span class="c1"># Security</span>
-<a id="__codelineno-7-38" name="__codelineno-7-38" href="#__codelineno-7-38"></a>arc<span class="w"> </span>security<span class="w"> </span>status
-<a id="__codelineno-7-39" name="__codelineno-7-39" href="#__codelineno-7-39"></a>arc<span class="w"> </span>security<span class="w"> </span>validate
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c1"># Agent</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>arc<span class="w"> </span>agent<span class="w"> </span>create<span class="w"> </span>NAME
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>arc<span class="w"> </span>agent<span class="w"> </span>build<span class="w"> </span>NAME<span class="w"> </span><span class="o">[</span>--check<span class="o">]</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>arc<span class="w"> </span>agent<span class="w"> </span>chat<span class="w"> </span>NAME
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>arc<span class="w"> </span>agent<span class="w"> </span>run<span class="w"> </span>NAME<span class="w"> </span>TASK
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>arc<span class="w"> </span>agent<span class="w"> </span>serve<span class="w"> </span>NAME
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>arc<span class="w"> </span>agent<span class="w"> </span>status<span class="w"> </span>NAME
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="c1"># LLM</span>
+<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>arc<span class="w"> </span>llm<span class="w"> </span>providers
+<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a>arc<span class="w"> </span>llm<span class="w"> </span>models<span class="w"> </span><span class="o">[</span>--tools<span class="o">]</span>
+<a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a>arc<span class="w"> </span>llm<span class="w"> </span>validate
+<a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a>
+<a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a><span class="c1"># Skills</span>
+<a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a>arc<span class="w"> </span>skill<span class="w"> </span>list
+<a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a>arc<span class="w"> </span>skill<span class="w"> </span>search<span class="w"> </span>QUERY
+<a id="__codelineno-8-17" name="__codelineno-8-17" href="#__codelineno-8-17"></a>arc<span class="w"> </span>skill<span class="w"> </span>create<span class="w"> </span>NAME
+<a id="__codelineno-8-18" name="__codelineno-8-18" href="#__codelineno-8-18"></a>
+<a id="__codelineno-8-19" name="__codelineno-8-19" href="#__codelineno-8-19"></a><span class="c1"># Capabilities</span>
+<a id="__codelineno-8-20" name="__codelineno-8-20" href="#__codelineno-8-20"></a>arc<span class="w"> </span>ext<span class="w"> </span>list
+<a id="__codelineno-8-21" name="__codelineno-8-21" href="#__codelineno-8-21"></a>arc<span class="w"> </span>ext<span class="w"> </span>create<span class="w"> </span>NAME
+<a id="__codelineno-8-22" name="__codelineno-8-22" href="#__codelineno-8-22"></a>
+<a id="__codelineno-8-23" name="__codelineno-8-23" href="#__codelineno-8-23"></a><span class="c1"># Team</span>
+<a id="__codelineno-8-24" name="__codelineno-8-24" href="#__codelineno-8-24"></a>arc<span class="w"> </span>team<span class="w"> </span>init
+<a id="__codelineno-8-25" name="__codelineno-8-25" href="#__codelineno-8-25"></a>arc<span class="w"> </span>team<span class="w"> </span>register<span class="w"> </span>ID
+<a id="__codelineno-8-26" name="__codelineno-8-26" href="#__codelineno-8-26"></a>arc<span class="w"> </span>team<span class="w"> </span>status
+<a id="__codelineno-8-27" name="__codelineno-8-27" href="#__codelineno-8-27"></a>
+<a id="__codelineno-8-28" name="__codelineno-8-28" href="#__codelineno-8-28"></a><span class="c1"># UI</span>
+<a id="__codelineno-8-29" name="__codelineno-8-29" href="#__codelineno-8-29"></a>arc<span class="w"> </span>ui<span class="w"> </span>start<span class="w"> </span><span class="o">[</span>--show-tokens<span class="o">]</span>
+<a id="__codelineno-8-30" name="__codelineno-8-30" href="#__codelineno-8-30"></a>arc<span class="w"> </span>ui<span class="w"> </span>tail<span class="w"> </span><span class="o">[</span>--viewer-token<span class="w"> </span>TOKEN<span class="o">]</span>
+<a id="__codelineno-8-31" name="__codelineno-8-31" href="#__codelineno-8-31"></a>
+<a id="__codelineno-8-32" name="__codelineno-8-32" href="#__codelineno-8-32"></a><span class="c1"># Blueprints</span>
+<a id="__codelineno-8-33" name="__codelineno-8-33" href="#__codelineno-8-33"></a>arc<span class="w"> </span>blueprint<span class="w"> </span>list
+<a id="__codelineno-8-34" name="__codelineno-8-34" href="#__codelineno-8-34"></a>arc<span class="w"> </span>blueprint<span class="w"> </span>verify<span class="w"> </span>PATH
+<a id="__codelineno-8-35" name="__codelineno-8-35" href="#__codelineno-8-35"></a>arc<span class="w"> </span>blueprint<span class="w"> </span>publish<span class="w"> </span>PATH
+<a id="__codelineno-8-36" name="__codelineno-8-36" href="#__codelineno-8-36"></a>
+<a id="__codelineno-8-37" name="__codelineno-8-37" href="#__codelineno-8-37"></a><span class="c1"># Security</span>
+<a id="__codelineno-8-38" name="__codelineno-8-38" href="#__codelineno-8-38"></a>arc<span class="w"> </span>security<span class="w"> </span>status
+<a id="__codelineno-8-39" name="__codelineno-8-39" href="#__codelineno-8-39"></a>arc<span class="w"> </span>security<span class="w"> </span>validate
 </code></pre></div>
 <hr />
 <h3 id="arctui-terminal-ui">arctui - Terminal UI<a class="headerlink" href="#arctui-terminal-ui" title="Permanent link">&para;</a></h3>
 <p><strong>Layer:</strong> Entry<br />
 <strong>Dependencies:</strong> arccli</p>
-<h4 id="purpose_13">Purpose<a class="headerlink" href="#purpose_13" title="Permanent link">&para;</a></h4>
+<h4 id="purpose_14">Purpose<a class="headerlink" href="#purpose_14" title="Permanent link">&para;</a></h4>
 <p>Terminal interface for agent chat.</p>
 <hr />
 <h2 id="dont-mix-concerns-rules">Don't-Mix-Concerns Rules<a class="headerlink" href="#dont-mix-concerns-rules" title="Permanent link">&para;</a></h2>
@@ -4738,7 +4964,7 @@
 <hr />
 <h2 id="architecture-tests">Architecture Tests<a class="headerlink" href="#architecture-tests" title="Permanent link">&para;</a></h2>
 <p>Run to verify layering:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>pytest<span class="w"> </span>tests/architecture/<span class="w"> </span>packages/*/tests/architecture/
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>pytest<span class="w"> </span>tests/architecture/<span class="w"> </span>packages/*/tests/architecture/
 </code></pre></div>
 <table>
 <thead>

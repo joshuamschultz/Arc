@@ -18,7 +18,6 @@ import datetime
 import importlib
 import importlib.util
 import json
-import os
 import sys
 import tomllib
 from dataclasses import dataclass
@@ -26,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 import arcagent
-from arctrust import arc_home
+from arctrust.paths import dotenv_file, env_file
 
 from arccli.commands._arcllm_surface import (
     BUDGET_BLOCK,
@@ -151,13 +150,13 @@ classification_enforced = false  # fail closed on missing clearance (federal pos
 # error_cascade_max = 5          # (federal floor; unset = disabled at personal)
 loop_max_parallel = 10
 policy_audit_log = ""            # WORM policy-decision chain (empty = <workspace>/audit/)
-operator_key_dir = "~/.arc/operator"  # deployment operator key dir (audit authority)
+operator_key_dir = ""            # empty = the deployment operator key dir (audit authority)
 operator_vault_path = ""         # resolve operator key via vault instead of disk
 signing_algorithm = "{signing_algorithm}"    # ed25519 | ecdsa-p256 (federal forces ecdsa-p256)
 custody = "{custody}"           # in_process | vault_transit (enterprise default vault_transit)
 notary_keystore = ""             # vault_transit keystore (empty = <operator_key_dir>/notary)
 require_fips = {require_fips}             # federal floor: fail closed unless FIPS-validated crypto
-witness_medium_path = "~/.arc/witness/anchor.log"  # federal witness (outside operator_key_dir)
+witness_medium_path = "~/.arc/state/witness/anchor.log"  # federal witness (outside the key dir)
 witness_mode = "offline"         # offline | transparency_log
 witness_log_url = ""             # transparency-log endpoint when witness_mode = transparency_log
 
@@ -748,15 +747,15 @@ async def calculate(expression: str) -> str:
 def _env_paths() -> list[Path]:
     """The ``.env`` files an agent command loads, in precedence order.
 
-    ``arc.env`` comes from :func:`arctrust.arc_home` — the same resolver
+    ``arc.env`` comes from :func:`arctrust.paths.env_file` — the same resolver
     :func:`arcagent.keys.default_env_file` writes through — so a key set by any
     surface is a key this loader reads. Resolved per call, never frozen at
-    import: ARC_CONFIG_DIR is routinely exported after this module loads, and the
+    import: the Arc home is routinely relocated after this module loads, and the
     cwd can change within one process.
     """
     return [
         Path.cwd() / ".env",
-        arc_home() / "arc.env",
+        env_file(),
         Path.home() / ".env",
     ]
 
@@ -772,13 +771,9 @@ def _load_env(agent_dir: Path | None = None) -> None:
         from dotenv import load_dotenv
     except ImportError:
         return  # dotenv optional for status/read-only commands
-    paths = _env_paths()
-    # Honor an isolated ARC_CONFIG_DIR so a self-contained deployment folder's
-    # own .env loads (the arc-home default in _env_paths misses it) — "start up,
-    # config, and go" without exporting keys by hand.
-    cfg = os.environ.get("ARC_CONFIG_DIR")
-    if cfg:
-        paths.insert(0, Path(cfg).expanduser() / ".env")
+    # The deployment's own .env wins over the ambient ones, so a self-contained
+    # folder is "start up, config, and go" without exporting keys by hand.
+    paths = [dotenv_file(), *_env_paths()]
     if agent_dir is not None:
         paths.insert(0, agent_dir / ".env")
     for env_path in paths:

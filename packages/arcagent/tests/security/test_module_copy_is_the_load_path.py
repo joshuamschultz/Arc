@@ -39,6 +39,7 @@ import arcbundle
 import pytest
 from arcrun import StreamEvent, TurnEndEvent
 from arctrust import ValidatorsConfig, generate_keypair
+from arctrust.paths import module_root
 
 import arcagent
 from arcagent.capabilities.capability_loader import module_capability_root, pin_name_for_path
@@ -85,7 +86,7 @@ class Deployment:
 
     @property
     def modules_root(self) -> Path:
-        return self.arc_home / "modules"
+        return module_root(self.arc_home)
 
 
 def _deployment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Deployment:

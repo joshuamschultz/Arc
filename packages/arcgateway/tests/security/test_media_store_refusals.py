@@ -30,9 +30,7 @@ def test_a_composed_path_that_escapes_the_inbox_is_refused(
     """
     import arcgateway.media_store as media_store
 
-    monkeypatch.setattr(
-        media_store, "_compose_name", lambda **_kwargs: "../../escaped.bin"
-    )
+    monkeypatch.setattr(media_store, "_compose_name", lambda **_kwargs: "../../escaped.bin")
 
     with pytest.raises(ValueError, match="escaped the inbox"):
         _store(tmp_path).store(

@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock
 import arcbundle
 import pytest
 from arctrust import ValidatorsConfig, generate_keypair
+from arctrust.paths import module_root
 
 import arcagent
 from arcagent.core.agent import ArcAgent
@@ -71,7 +72,7 @@ def _post_respond_event() -> dict[str, Any]:
 def _install_workpad(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Install the workpad module for this test's agent, the way an operator does.
 
-    SPEC-066 REQ-333/337: discovery reads ``${ARC_CONFIG_DIR}/modules``, so
+    SPEC-066 REQ-333/337: discovery reads :func:`arctrust.paths.module_root`, so
     enabling ``[modules.workpad]`` only loads a module an operator installed, and
     the module's TOOLS are read from the per-agent copy at
     ``<agent_dir>/capabilities/modules/workpad/`` rather than from the shared
@@ -92,7 +93,7 @@ def _install_workpad(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     verified = arcbundle.verify_bundle(
         bundle, tier="personal", trusted_issuers={_ISSUER: _ISSUER_KEYPAIR.public_key}
     )
-    installed = arcbundle.materialize(verified, tmp_path / "arc" / "modules")
+    installed = arcbundle.materialize(verified, module_root(tmp_path / "arc"))
     arcbundle.copy_capabilities(installed, tmp_path, module="workpad")
 
 

@@ -43,7 +43,18 @@ def policy_audit_log_path(agent: Any) -> Path:
 
 
 def operator_key_path(agent: Any) -> Path:
-    return Path(agent._config.security.operator_key_dir).expanduser() / "operator.key"
+    """The deployment operator key this agent signs its policy chain with.
+
+    Unset config resolves the ONE shared location, so the agent, the CLI, and the
+    gateway sign with the same key; a chain signed with a second key verifies
+    against neither.
+    """
+    from arctrust.paths import OPERATOR_KEY_FILENAME, default_operator_key_path
+
+    configured = agent._config.security.operator_key_dir
+    if not configured:
+        return default_operator_key_path()
+    return Path(configured).expanduser() / OPERATOR_KEY_FILENAME
 
 
 def resolve_operator_signer(agent: Any, sec: Any) -> Signer:

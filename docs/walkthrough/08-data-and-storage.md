@@ -35,10 +35,10 @@ the same path.
 - **`resolve_data_dir()`** (`packages/arcstore/src/arcstore/config.py:26`) —
  the arcstore *data* root: `${ARCSTORE_DATA_DIR:-<[arcstore].data_dir>:-~/.arc/store}`.
  Holds the spool, the WORM mirror source, and the SQLite mirrors. Its
- default literally lands one level inside `arc_home()`, at `~/.arc/store` —
+ default literally lands one level inside `arc_home()`, at `~/.arc/state/store` —
  and the SQLite mirrors then nest one further `store/` segment inside that
  (`store_db_path()`, `packages/arcstore/src/arcstore/config.py:42`), so the
- fully-resolved default for a mirror DB is `~/.arc/store/store/arcui.db`.
+ fully-resolved default for a mirror DB is `~/.arc/state/store/store/arcui.db`.
  This is a real, verified path shape (three independent call sites agree:
  `arcstore/config.py`, `arcui/observe.py:158`, `arcagent/core/agent.py:203`),
  not a typo in this document.
@@ -497,9 +497,9 @@ consolidation and dedup passes write.) Entities add `name`, `entity_type`,
 | Credential | Location | Mode | Custody |
 |---|---|---|---|
 | Agent DID keypair | `~/.arcagent/keys/<did>.key` / `.pub` (`config.py:118`) | `0700` dir, key file secured on read | In-process seed by default; `vault_resolver` seam (`packages/arcagent/src/arcagent/core/vault_resolver.py`) resolves from Azure KV / file / env backends instead when `[vault].backend` is set |
-| Operator key (audit authority) | `~/.arc/operator/operator.key` (+ `.pub` sentinel) | `0600`, `O_NOFOLLOW`, owner-uid checked, parent dir `0700` (`operator.py:228-254`) | In-process by default; `Signer` seam supports `VaultSigner`/`FileNotaryTransit` custody where the seed never enters the agent process (`packages/arctrust/src/arctrust/signer.py`) |
-| Trust store (pairing/manifest pubkeys) | `~/.arc/trust/operators.toml`, `issuers.toml` | must be `0600` or `TrustStoreError` | Public keys only — no private material |
-| Viewer/operator UI tokens | `~/.arc/arc.env` | `0600` | Minted once, pinned for the volume's life |
+| Operator key (audit authority) | `~/.arc/state/operator/operator.key` (+ `.pub` sentinel) | `0600`, `O_NOFOLLOW`, owner-uid checked, parent dir `0700` (`operator.py:228-254`) | In-process by default; `Signer` seam supports `VaultSigner`/`FileNotaryTransit` custody where the seed never enters the agent process (`packages/arctrust/src/arctrust/signer.py`) |
+| Trust store (pairing/manifest pubkeys) | `~/.arc/state/trust/operators.toml`, `issuers.toml` | must be `0600` or `TrustStoreError` | Public keys only — no private material |
+| Viewer/operator UI tokens | `~/.arc/config/arc.env` | `0600` | Minted once, pinned for the volume's life |
 
 **Reconciling the "credentials never touch the filesystem" rule with the
 code, honestly**: the on-disk `0600` operator key and agent key files are

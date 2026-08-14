@@ -13,6 +13,7 @@ import stat
 from pathlib import Path
 
 from arctrust.operator import OperatorKey
+from arctrust.paths import default_operator_key_path
 
 from arccli.commands.init import _init
 
@@ -27,7 +28,7 @@ def _run_init(tier: str, config_dir: Path, *, quick: bool = False) -> None:
 
 def test_init_creates_operator_key_with_secure_modes(tmp_path: Path) -> None:
     _run_init("personal", tmp_path)
-    key = tmp_path / "operator" / "operator.key"
+    key = default_operator_key_path(tmp_path)
     assert key.exists()
     assert stat.S_IMODE(key.stat().st_mode) == 0o600
     assert stat.S_IMODE(key.parent.stat().st_mode) == 0o700
@@ -38,16 +39,16 @@ def test_init_creates_operator_key_with_secure_modes(tmp_path: Path) -> None:
 
 def test_init_is_idempotent_on_operator_key(tmp_path: Path) -> None:
     _run_init("personal", tmp_path, quick=True)
-    first = (tmp_path / "operator" / "operator.key").read_bytes()
+    first = default_operator_key_path(tmp_path).read_bytes()
     _run_init("personal", tmp_path, quick=True)  # re-run must NOT regenerate the key
-    second = (tmp_path / "operator" / "operator.key").read_bytes()
+    second = default_operator_key_path(tmp_path).read_bytes()
     assert first == second
 
 
 def test_init_prints_operator_fingerprint_at_federal(tmp_path: Path, capsys: object) -> None:
     _run_init("federal", tmp_path)
     out = capsys.readouterr().out  # type: ignore[attr-defined]
-    key = tmp_path / "operator" / "operator.key"
+    key = default_operator_key_path(tmp_path)
     assert key.exists()
     # Enterprise/federal print the operator pubkey fingerprint for out-of-band
     # recording (anti-genesis-substitution + witness bootstrap).

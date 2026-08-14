@@ -529,6 +529,15 @@ def watch_health(host: str, port: int) -> None:
 def _up(args: argparse.Namespace) -> None:
     """Run the stages in order, stopping at the first that would degrade."""
     check_only: bool = args.check
+
+    # Split a pre-lifecycle flat ``~/.arc`` before ANY stage resolves a path.
+    # `arc install` does this too, and the systemd unit runs it first — but a
+    # bare `arc up` on an un-migrated box would otherwise read an empty config
+    # root and come up with none of the operator's settings, looking healthy.
+    # Idempotent: on an already-split home this is a silent no-op.
+    from arccli.commands.install import migrate_layout_or_exit
+
+    migrate_layout_or_exit()
     team_root = resolve_team_root(args.team_root)
 
     _out("Preflight")

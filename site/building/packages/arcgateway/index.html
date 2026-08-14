@@ -2652,6 +2652,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -2729,6 +2733,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../runbooks/deploy/up/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bring-up (arc up)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../runbooks/deploy/local/" class="md-nav__link">
         
   
@@ -2765,6 +2797,34 @@
     
   
     Docker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../runbooks/deploy/azure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Azure
   
 
     
@@ -3070,6 +3130,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -3127,6 +3191,62 @@
     
   
     Hardening
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../runbooks/signing-capabilities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Signing capabilities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../runbooks/staging-module-bundles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Staging module bundles
   
 
     
@@ -4020,7 +4140,7 @@
     class ING,SQL found
     class REST,CHAT,TEAMWS surface</code></pre>
 <p><strong>Important:</strong> The standalone <code>arcgateway start</code> daemon unconditionally refuses to start at every tier because it has no working agent-execution path. Use the embedded path instead:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>arc<span class="w"> </span>ui<span class="w"> </span>start<span class="w"> </span>--team-root<span class="w"> </span>team<span class="w"> </span>--gateway-config<span class="w"> </span>~/.arc/gateway.toml
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>arc<span class="w"> </span>ui<span class="w"> </span>start<span class="w"> </span>--team-root<span class="w"> </span>team<span class="w"> </span>--gateway-config<span class="w"> </span>~/.arc/config/gateway.toml
 </code></pre></div>
 <h3 id="two-planes-architecture">Two Planes Architecture<a class="headerlink" href="#two-planes-architecture" title="Permanent link">&para;</a></h3>
 <ul>
@@ -4069,7 +4189,7 @@
 <a id="__codelineno-3-26" name="__codelineno-3-26" href="#__codelineno-3-26"></a><span class="n">signing_secret_env</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;MATTERMOST_SIGNING_SECRET&quot;</span>
 </code></pre></div>
 <h3 id="secrets-file">Secrets File<a class="headerlink" href="#secrets-file" title="Permanent link">&para;</a></h3>
-<p>Create <code>~/.arc/arc.env</code> (0600 permissions):</p>
+<p>Create <code>~/.arc/config/arc.env</code> (0600 permissions):</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># Required</span>
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="nv">ANTHROPIC_API_KEY</span><span class="o">=</span>sk-ant-...
 <a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="nv">TELEGRAM_BOT_TOKEN</span><span class="o">=</span>...
@@ -4473,7 +4593,7 @@
 <hr />
 <h2 id="cli-commands">CLI Commands<a class="headerlink" href="#cli-commands" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="c1"># Start gateway (embedded)</span>
-<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>arc<span class="w"> </span>ui<span class="w"> </span>start<span class="w"> </span>--team-root<span class="w"> </span>team<span class="w"> </span>--gateway-config<span class="w"> </span>~/.arc/gateway.toml
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>arc<span class="w"> </span>ui<span class="w"> </span>start<span class="w"> </span>--team-root<span class="w"> </span>team<span class="w"> </span>--gateway-config<span class="w"> </span>~/.arc/config/gateway.toml
 <a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>
 <a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="c1"># Pairing</span>
 <a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a>arc<span class="w"> </span>gateway<span class="w"> </span>pair<span class="w"> </span>approve<span class="w"> </span>&lt;CODE&gt;<span class="w">   </span><span class="c1"># Approve pending pairing</span>
@@ -4603,7 +4723,7 @@
 </tr>
 <tr>
 <td><strong>ASI06 Memory Poisoning</strong></td>
-<td>memory_acl bus veto; skills hub blocks covert writes</td>
+<td><code>arcmemory</code> cross-session ACL; skills hub blocks covert writes</td>
 </tr>
 <tr>
 <td><strong>ASI08 Cascading Failures</strong></td>

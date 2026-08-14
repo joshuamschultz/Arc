@@ -2,8 +2,8 @@
 
 A *module* is a folder that ships both a ``capabilities.py`` (the tools/hooks
 the loader scans) and a ``_runtime.py`` (the per-agent state configured at
-startup). Discovery scans the deployment module root — ``<arc_home>/modules``,
-i.e. ``${ARC_CONFIG_DIR:-~/.arc}/modules`` — for such folders so the full
+startup). Discovery scans the deployment module root
+(:func:`arctrust.paths.module_root`, under the replaceable runtime) for such folders so the full
 present-set is always KNOWN: no folder can silently contribute nothing because
 it lacks a config entry, and nothing loads merely because it shipped in the
 wheel.
@@ -22,18 +22,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from arctrust import arc_home
+from arctrust.paths import module_root as _module_root
 
 
 def module_root() -> Path:
-    """Return the deployment module root: ``${ARC_CONFIG_DIR:-~/.arc}/modules``.
-
-    Resolved on every call, never cached at import: the env var is routinely
-    set after this module is first imported (tests, a service that exports it
-    in its unit file), and a module-level constant would freeze whatever the
-    environment happened to say at import time.
-    """
-    return arc_home() / "modules"
+    """Return the deployment module root — :func:`arctrust.paths.module_root`."""
+    return _module_root()
 
 
 class _ModuleEntry(Protocol):

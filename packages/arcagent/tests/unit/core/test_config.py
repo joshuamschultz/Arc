@@ -2,9 +2,12 @@
 
 import textwrap
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from arctrust.paths import default_operator_key_path
 
+from arcagent.core.agent_security import operator_key_path
 from arcagent.core.config import (
     AgentConfig,
     ContextConfig,
@@ -480,9 +483,21 @@ class TestUIConfig:
 class TestSecurityConfigOperatorKey:
     """SPEC-053 T-06 — operator-key custody config (REQ-004/005)."""
 
+    @staticmethod
+    def _stub(sec: SecurityConfig) -> SimpleNamespace:
+        """The one attribute :func:`operator_key_path` reads off an agent."""
+        return SimpleNamespace(_config=SimpleNamespace(security=sec))
+
     def test_operator_key_defaults(self) -> None:
+        """Unconfigured custody defers to the deployment resolver, not a literal.
+
+        The empty default is the whole point: a spelled-out path here ignored
+        ``ARC_CONFIG_DIR``, so an isolated deployment's agent signed its WORM
+        chain with the invoking user's operator key.
+        """
         sec = SecurityConfig()
-        assert sec.operator_key_dir == "~/.arc/operator"
+        assert sec.operator_key_dir == ""
+        assert operator_key_path(self._stub(sec)) == default_operator_key_path()
         assert sec.operator_vault_path == ""
         assert sec.witness_mode == "offline"
         assert sec.witness_log_url == ""

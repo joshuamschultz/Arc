@@ -2266,6 +2266,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -2343,6 +2347,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../runbooks/deploy/up/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bring-up (arc up)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../runbooks/deploy/local/" class="md-nav__link">
         
   
@@ -2379,6 +2411,34 @@
     
   
     Docker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/deploy/azure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Azure
   
 
     
@@ -2684,6 +2744,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -2741,6 +2805,62 @@
     
   
     Hardening
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/signing-capabilities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Signing capabilities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/staging-module-bundles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Staging module bundles
   
 
     
@@ -3261,7 +3381,7 @@ concerns"):</p>
 <td>One file per provider: <code>[provider]</code> connection settings + <code>[models.*]</code> metadata (context window, pricing, tool/vision support) + optional <code>[[endpoints]]</code> load-balancing pool. Never user-edited in place — override via the per-agent <code>arcllm.toml</code></td>
 </tr>
 <tr>
-<td><code>arcagent/blueprints/*.toml</code> (packaged) + <code>~/.arc/blueprints/*.toml</code> (user)</td>
+<td><code>arcagent/blueprints/*.toml</code> (packaged) + <code>~/.arc/state/blueprints/*.toml</code> (user)</td>
 <td>arcagent</td>
 <td>A <code>[blueprint]</code>-headed config <strong>overlay</strong> applied at <code>arc blueprint apply</code> / <code>arc init --blueprint</code> time — write-time, not a runtime layer (see below)</td>
 </tr>
@@ -3270,7 +3390,7 @@ concerns"):</p>
 <p>And two config roots that are read directly by their own package, referenced
 (never redefined) by everyone else:</p>
 <ul>
-<li><code>arcllm/config.toml</code> (packaged) + <code>${ARC_CONFIG_DIR:-~/.arc}/arcllm.toml</code>
+<li><code>arcllm/config.toml</code> (packaged) + <code>${ARC_CONFIG_DIR:-~/.arc}/config/arcllm.toml</code>
  (user) — arcllm's own <code>[defaults]</code>/<code>[modules]</code>/<code>[vault]</code>, loaded by
  <code>arcllm.config.load_global_config()</code>. This is the <em>other</em> reading of the
  file named <code>arcllm.toml</code> — see the precedence section for why that's safe.</li>
@@ -3292,7 +3412,7 @@ used rather than folded into <code>arcagent.toml</code>:</p>
  arcagent <code>[modules.memory.config]</code> block only <em>selects and bounds</em> the
  Brain (see below) — the dynamics live here, not in arcagent.</li>
 <li><strong>arcgateway</strong> — <code>GatewayConfig</code>, loaded from
- <code>${ARC_CONFIG_DIR:-~/.arc}/gateway.toml</code>: <code>[gateway]</code> (tier, agent DID,
+ <code>${ARC_CONFIG_DIR:-~/.arc}/config/gateway.toml</code>: <code>[gateway]</code> (tier, agent DID,
  runtime dir), <code>[security]</code> (<code>require_pairing</code>), <code>[platforms.*]</code> (the <code>web</code>
  adapter is schema'd in-core; every other platform block is captured
  generically via <code>extra="allow"</code> and handed as a raw dict to its adapter
@@ -3644,11 +3764,11 @@ distiller.</p>
  <code>_DEFAULT_CONFIG</code>
  (<code>packages/arccli/src/arccli/commands/agent/_common.py:96-569</code>) — a new
  module needs a block added there or it never appears in a fresh agent's
- <code>arcagent.toml</code> at all. As of this file, the scaffold ships 18 module
- blocks (<code>memory</code>, <code>memory_acl</code>, <code>workpad</code>, <code>user_profile</code>, <code>policy</code>,
+ <code>arcagent.toml</code> at all. As of this file, the scaffold ships 17 module
+ blocks (<code>memory</code>, <code>workpad</code>, <code>user_profile</code>, <code>policy</code>,
  <code>skills</code>, <code>planning</code>, <code>pulse</code>, <code>proactive</code>, <code>scheduler</code>, <code>messaging</code>,
  <code>tasks</code>, <code>runcontrol</code>, <code>slack</code>, <code>telegram</code>, <code>web</code>, <code>voice</code>, <code>browser</code>),
- nine <code>enabled = true</code> by default (<code>memory</code>, <code>memory_acl</code>, <code>workpad</code>,
+ eight <code>enabled = true</code> by default (<code>memory</code>, <code>workpad</code>,
  <code>policy</code>, <code>skills</code>, <code>scheduler</code>, <code>messaging</code>, <code>tasks</code>, <code>runcontrol</code>) and
  nine <code>enabled = false</code> (<code>user_profile</code>, <code>planning</code>, <code>pulse</code>, <code>proactive</code>,
  <code>slack</code>, <code>telegram</code>, <code>web</code>, <code>voice</code>, <code>browser</code>) because they need external
@@ -3753,7 +3873,7 @@ from defaults — treat it the same as you would <code>git reset --hard</code>: 
 destructive operation you confirm, not one you run out of habit.</p>
 </blockquote>
 <p><code>arc agent create --tier</code> sets the tier for <strong>every subsystem at once</strong> —
-<code>[security]</code>, memory, policy, skills, web, voice, browser, <code>memory_acl</code> all
+<code>[security]</code>, memory, policy, skills, web, voice, and browser all
 render from the same <code>tier</code> template variable
 (<code>render_agent_config(..., tier=tier)</code>,
 <code>packages/arccli/src/arccli/commands/agent/_common.py:575-589</code>). A config

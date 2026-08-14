@@ -30,6 +30,7 @@ import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 
+from arctrust.paths import skills_dir
 from pydantic import BaseModel, ConfigDict
 
 from arcskill.hub.config import HubConfig
@@ -48,7 +49,6 @@ from arcskill.lock import HubLockFile, SkillLockEntry
 logger = logging.getLogger(__name__)
 
 # Default base installation directory.
-_DEFAULT_INSTALL_BASE = Path.home() / ".arc" / "skills"
 
 
 # ---------------------------------------------------------------------------
@@ -202,7 +202,7 @@ def install(
             "Add it to [[skills.hub.sources]] in your config."
         )
 
-    base = install_base or _DEFAULT_INSTALL_BASE
+    base = install_base or skills_dir()
     quarantine_dir = base / ".hub" / "quarantine" / name.replace("/", "__")
     quarantine_dir.mkdir(parents=True, exist_ok=True)
 
@@ -262,7 +262,7 @@ def uninstall(
     """
     _assert_hub_enabled(config)
 
-    base = install_base or _DEFAULT_INSTALL_BASE
+    base = install_base or skills_dir()
     install_path = base / name.replace("/", "__")
 
     if install_path.exists():

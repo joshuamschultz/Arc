@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 from arctrust.audit import AuditEvent
+from arctrust.paths import arc_config
 
 from arcagent.core.errors import ExtensionError
 from arcagent.keys import ENV_FILENAME, KeyStatus, KeyStore, default_env_file
@@ -237,12 +238,14 @@ def test_the_default_env_file_is_the_one_the_deployment_sources(
 ) -> None:
     """``arc.env`` — the name the systemd unit sources and the gateway writes.
 
-    Pinned as a literal on purpose: this is the one place the name is allowed to
-    be spelled out, because agreeing with the deployment is the whole property.
+    The *name* is pinned as a literal on purpose: this is the one place it is
+    allowed to be spelled out, because agreeing with the deployment is the whole
+    property. The directory comes from the resolver, so relocating the config
+    root moves this file with it instead of stranding it.
     """
     monkeypatch.setenv("ARC_CONFIG_DIR", "/tmp/arc-home-under-test")
-    assert default_env_file() == Path("/tmp/arc-home-under-test/arc.env")
+    assert default_env_file() == arc_config() / "arc.env"
 
 
 def test_an_overridden_arc_dir_still_goes_through_the_one_resolver(tmp_path: Path) -> None:
-    assert default_env_file(tmp_path) == tmp_path / ENV_FILENAME
+    assert default_env_file(tmp_path) == arc_config(tmp_path) / ENV_FILENAME

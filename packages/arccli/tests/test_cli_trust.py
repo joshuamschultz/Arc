@@ -25,6 +25,7 @@ from arctrust.audit import verify_chain
 from arctrust.identity import AgentIdentity
 from arctrust.keypair import generate_keypair
 from arctrust.operator import OperatorKey
+from arctrust.paths import config_file, default_operator_key_path
 from arctrust.policy import OperatorApprovalAuthority
 from arctrust.signer import ECDSA_P256, FileNotaryTransit, Signer, VaultSigner
 from arctrust.validators import load_validators
@@ -67,11 +68,11 @@ def _hermetic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _operator_public_key(tmp_path: Path) -> bytes:
     """The public half of the operator key the CLI auto-bootstrapped."""
-    return OperatorKey.load(tmp_path / "arc-config" / "operator" / "operator.key").public_key
+    return OperatorKey.load(default_operator_key_path(tmp_path / "arc-config")).public_key
 
 
 def _operator_key(tmp_path: Path) -> OperatorKey:
-    return OperatorKey.load(tmp_path / "arc-config" / "operator" / "operator.key")
+    return OperatorKey.load(default_operator_key_path(tmp_path / "arc-config"))
 
 
 def _chain_path(tmp_path: Path) -> Path:
@@ -119,7 +120,9 @@ def _use_vault_transit_custody(tmp_path: Path) -> Signer:
     keystore = arc_dir / "notary"
     seed = generate_keypair().private_key
     FileNotaryTransit.provision(keystore, "operator", seed, algorithm=ECDSA_P256)
-    (arc_dir / "arcagent.toml").write_text(
+    machine_config = config_file("arcagent.toml", arc_dir)
+    machine_config.parent.mkdir(parents=True, exist_ok=True)
+    machine_config.write_text(
         f'[security]\ntier = "federal"\nnotary_keystore = "{keystore}"\n', encoding="utf-8"
     )
     return VaultSigner(FileNotaryTransit(keystore, algorithm=ECDSA_P256), "operator", ECDSA_P256)
@@ -328,7 +331,9 @@ def test_vault_transit_without_a_provisioned_notary_fails_closed(
     _build_agent(team_root, "olivia", tier="enterprise", sign=False)
     arc_dir = tmp_path / "arc-config"
     arc_dir.mkdir(parents=True, exist_ok=True)
-    (arc_dir / "arcagent.toml").write_text(
+    machine_config = config_file("arcagent.toml", arc_dir)
+    machine_config.parent.mkdir(parents=True, exist_ok=True)
+    machine_config.write_text(
         f'[security]\ntier = "federal"\nnotary_keystore = "{arc_dir / "absent"}"\n',
         encoding="utf-8",
     )
@@ -548,7 +553,7 @@ def test_operator_custody_follows_arc_config_dir_without_monkeypatching(
     trust_handler(["approve", "reporter"])
 
     assert "loaded" in capsys.readouterr().out
-    relocated_key = arc_home() / "operator" / "operator.key"
+    relocated_key = default_operator_key_path()
     assert relocated_key.exists(), "operator key was not bootstrapped under ARC_CONFIG_DIR"
     assert arc_home() == tmp_path / "arc-config"
     signed_with = OperatorKey.load(relocated_key).public_key.hex()

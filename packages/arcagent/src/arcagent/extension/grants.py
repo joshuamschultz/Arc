@@ -36,6 +36,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from arctrust.paths import config_file
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from arcagent.core.errors import ExtensionError
@@ -109,7 +110,7 @@ class ConnectionRegistry:
     @property
     def path(self) -> Path:
         """Where the deployment's connections live — what a surface tells an operator."""
-        return self._arc_dir / CONNECTIONS_FILENAME
+        return config_file(CONNECTIONS_FILENAME, self._arc_dir)
 
     # --- reading ---------------------------------------------------------
 
@@ -232,8 +233,12 @@ class ConnectionRegistry:
 
     def _write(self, document: dict[str, Any]) -> None:
         """Replace the file atomically, owner-only from creation."""
-        self._arc_dir.mkdir(parents=True, exist_ok=True)
-        temp = self._arc_dir / f".{CONNECTIONS_FILENAME}.tmp.{os.getpid()}.{os.urandom(6).hex()}"
+        # The file's own directory, not the Arc home: the temp file is renamed
+        # onto the target, so both must live in the directory being created.
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temp = (
+            self.path.parent / f".{CONNECTIONS_FILENAME}.tmp.{os.getpid()}.{os.urandom(6).hex()}"
+        )
         fd = os.open(str(temp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         try:
             os.write(fd, dumps_toml(document).encode("utf-8"))

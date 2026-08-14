@@ -47,7 +47,8 @@ from typing import Any
 import arcagent
 import arcbundle
 import tomlkit
-from arctrust import AuditSink, arc_home, generate_keypair
+from arctrust import AuditSink, generate_keypair
+from arctrust.paths import arc_home, bundles_dir, config_file
 
 from arccli.commands._shared import UNRESOLVED_OPERATOR_DID, audit_chain, dispatch
 from arccli.commands._shared import err as _err
@@ -75,7 +76,7 @@ _TIER_ORDER = ("personal", "enterprise", "federal")
 
 def _bundle_store() -> Path:
     """The staged-bundle directory: ``${ARC_CONFIG_DIR:-~/.arc}/bundles``."""
-    return arc_home() / BUNDLE_DIR
+    return bundles_dir()
 
 
 def _module_root() -> Path:
@@ -149,7 +150,7 @@ def _verification_tier(agent_root: Path | None) -> str:
     beyond it. Taking the maximum means installing for a federal agent applies
     federal rules even when the machine config has not caught up.
     """
-    candidates = [_configured_tier(arc_home() / "arcagent.toml")]
+    candidates = [_configured_tier(config_file("arcagent.toml"))]
     if agent_root is not None:
         candidates.append(_configured_tier(agent_root / "arcagent.toml"))
     found = [tier for tier in candidates if tier is not None]

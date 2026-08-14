@@ -26,6 +26,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
+from arctrust.paths import arc_team
+
 if TYPE_CHECKING:
     from arctui.roster import AgentRef
     from arctui.serve import Endpoint
@@ -35,7 +37,7 @@ _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", ""})
 
 _logger = logging.getLogger("arctui.entry")
 
-_DEFAULT_TEAM_ROOT = Path.home() / ".arc" / "team"
+
 _DEFAULT_HOST = "127.0.0.1"
 _DEFAULT_PORT = 8420
 
@@ -88,9 +90,9 @@ def _resolve_team_root(args: list[str]) -> Path:
     """
     team = _flag_value(args, "--team")
     if team:
-        return Path.home() / ".arc" / team
+        return arc_team(team)
     troot = _flag_value(args, "--root") or _flag_value(args, "--team-root")
-    return Path(troot).expanduser() if troot else _DEFAULT_TEAM_ROOT
+    return Path(troot).expanduser() if troot else arc_team()
 
 
 async def _resolve_endpoint(args: list[str], agent_id: str, team_root: Path) -> Endpoint:

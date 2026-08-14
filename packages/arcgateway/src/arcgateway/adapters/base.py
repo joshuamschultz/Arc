@@ -33,6 +33,7 @@ from arcgateway.parts import Part, TextPart
 #: Artefact classes the part vocabulary carries (mirrors ``MediaPart.kind``).
 MediaKind = Literal["image", "file", "audio"]
 
+
 class MediaTooLargeOnWireError(Exception):
     """A fetch was abandoned because the artefact passed the ceiling mid-read.
 

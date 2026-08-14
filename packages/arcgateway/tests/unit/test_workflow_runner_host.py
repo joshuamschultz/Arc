@@ -111,13 +111,14 @@ async def test_start_runner_host_starts_a_real_runner(
     contract is still covered, by the test below that makes construction raise.
     """
     from arctrust import OperatorKey
+    from arctrust.paths import default_operator_key_path
 
-    config_dir = tmp_path / "config"
+    arc_dir = tmp_path / "arc"
     store_dir = tmp_path / "store"
-    monkeypatch.setenv("ARC_CONFIG_DIR", str(config_dir))
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(arc_dir))
     monkeypatch.setenv("ARCSTORE_DATA_DIR", str(store_dir))
     OperatorKey.load(
-        config_dir / "operator" / "operator.key",
+        default_operator_key_path(arc_dir),
         generate_if_absent=True,
     )
 

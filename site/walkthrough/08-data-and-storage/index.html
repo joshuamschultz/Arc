@@ -2271,6 +2271,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -2348,6 +2352,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../runbooks/deploy/up/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bring-up (arc up)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../runbooks/deploy/local/" class="md-nav__link">
         
   
@@ -2384,6 +2416,34 @@
     
   
     Docker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/deploy/azure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Azure
   
 
     
@@ -2689,6 +2749,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -2746,6 +2810,62 @@
     
   
     Hardening
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/signing-capabilities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Signing capabilities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/staging-module-bundles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Staging module bundles
   
 
     
@@ -3237,10 +3357,10 @@ the same path.</p>
 <li><strong><code>resolve_data_dir()</code></strong> (<code>packages/arcstore/src/arcstore/config.py:26</code>) —
  the arcstore <em>data</em> root: <code>${ARCSTORE_DATA_DIR:-&lt;[arcstore].data_dir&gt;:-~/.arc/store}</code>.
  Holds the spool, the WORM mirror source, and the SQLite mirrors. Its
- default literally lands one level inside <code>arc_home()</code>, at <code>~/.arc/store</code> —
+ default literally lands one level inside <code>arc_home()</code>, at <code>~/.arc/state/store</code> —
  and the SQLite mirrors then nest one further <code>store/</code> segment inside that
  (<code>store_db_path()</code>, <code>packages/arcstore/src/arcstore/config.py:42</code>), so the
- fully-resolved default for a mirror DB is <code>~/.arc/store/store/arcui.db</code>.
+ fully-resolved default for a mirror DB is <code>~/.arc/state/store/store/arcui.db</code>.
  This is a real, verified path shape (three independent call sites agree:
  <code>arcstore/config.py</code>, <code>arcui/observe.py:158</code>, <code>arcagent/core/agent.py:203</code>),
  not a typo in this document.</li>
@@ -3722,19 +3842,19 @@ consolidation and dedup passes write.) Entities add <code>name</code>, <code>ent
 </tr>
 <tr>
 <td>Operator key (audit authority)</td>
-<td><code>~/.arc/operator/operator.key</code> (+ <code>.pub</code> sentinel)</td>
+<td><code>~/.arc/state/operator/operator.key</code> (+ <code>.pub</code> sentinel)</td>
 <td><code>0600</code>, <code>O_NOFOLLOW</code>, owner-uid checked, parent dir <code>0700</code> (<code>operator.py:228-254</code>)</td>
 <td>In-process by default; <code>Signer</code> seam supports <code>VaultSigner</code>/<code>FileNotaryTransit</code> custody where the seed never enters the agent process (<code>packages/arctrust/src/arctrust/signer.py</code>)</td>
 </tr>
 <tr>
 <td>Trust store (pairing/manifest pubkeys)</td>
-<td><code>~/.arc/trust/operators.toml</code>, <code>issuers.toml</code></td>
+<td><code>~/.arc/state/trust/operators.toml</code>, <code>issuers.toml</code></td>
 <td>must be <code>0600</code> or <code>TrustStoreError</code></td>
 <td>Public keys only — no private material</td>
 </tr>
 <tr>
 <td>Viewer/operator UI tokens</td>
-<td><code>~/.arc/arc.env</code></td>
+<td><code>~/.arc/config/arc.env</code></td>
 <td><code>0600</code></td>
 <td>Minted once, pinned for the volume's life</td>
 </tr>

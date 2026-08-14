@@ -169,7 +169,7 @@ for i in $(seq 1 60); do
     echo
     echo "  Running: $ACR.azurecr.io/arc:$SHA"
     echo "  Dashboard: $TARGET"
-    echo "  Token:     ssh $HOST \"sudo docker compose -f $REMOTE_DIR/docker-compose.yml exec -T arc sh -c 'grep VIEWER_TOKEN \\\$HOME/.arc/arc.env'\""
+    echo "  Token:     ssh $HOST \"sudo docker compose -f $REMOTE_DIR/docker-compose.yml exec -T arc sh -c 'grep VIEWER_TOKEN \\\$HOME/.arc/config/arc.env'\""
     exit 0
   fi
   sleep 5

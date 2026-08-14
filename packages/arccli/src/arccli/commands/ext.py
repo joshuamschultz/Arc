@@ -35,6 +35,8 @@ from __future__ import annotations
 
 import arcagent
 
+from arctrust.paths import arc_home
+
 
 @arcagent.tool(
     description="<one-sentence imperative description>",
@@ -284,8 +286,15 @@ def _load_flat_config(agent_dir: str | None) -> object:
     """
     import tomllib
 
-    base = Path(agent_dir).expanduser().resolve() if agent_dir else Path.home() / ".arc"
-    path = base / "arcagent.toml"
+    from arctrust.paths import config_file
+
+    # An agent directory holds its own arcagent.toml; with no agent named, fall
+    # back to the deployment-wide one, which lives under the config root.
+    path = (
+        Path(agent_dir).expanduser().resolve() / "arcagent.toml"
+        if agent_dir
+        else config_file("arcagent.toml")
+    )
     if not path.is_file():
         sys.stderr.write(f"Error: no arcagent.toml at {path}. Pass --agent DIR.\n")
         sys.exit(1)

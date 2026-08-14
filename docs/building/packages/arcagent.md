@@ -118,7 +118,7 @@ flowchart LR
     classDef result fill:#D6E6FF,stroke:#0073FE,color:#002550
 
     Builtins[Builtins<br/>packages/arcagent/tools]:::source --> Scan[Security Scan]:::source
-    Global[Global<br/>~/.arc/capabilities]:::source --> Scan
+    Global[Global<br/>~/.arc/state/capabilities]:::source --> Scan
     Agent[Agent<br/>agent/capabilities]:::source --> Scan
     Workspace[Workspace<br/>workspace/.capabilities]:::source --> Scan
     Scan --> Active[Active Capabilities]:::result
@@ -129,7 +129,7 @@ flowchart LR
 | Source | Trust Level | Override |
 |--------|-------------|----------|
 | Builtins | Trusted | No |
-| Global (`~/.arc/capabilities`) | Trusted | Yes |
+| Global (`~/.arc/state/capabilities`) | Trusted | Yes |
 | Agent (`agent/capabilities`) | Trusted | Yes |
 | Workspace (`workspace/.capabilities`) | Untrusted | Yes (but marked) |
 

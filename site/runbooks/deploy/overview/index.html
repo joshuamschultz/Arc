@@ -16,7 +16,7 @@
         <link rel="prev" href="../../../reference/glossary/">
       
       
-        <link rel="next" href="../local/">
+        <link rel="next" href="../up/">
       
       
         
@@ -2077,6 +2077,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -2773,6 +2777,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../up/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bring-up (arc up)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../local/" class="md-nav__link">
         
   
@@ -2809,6 +2841,34 @@
     
   
     Docker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../azure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Azure
   
 
     
@@ -3114,6 +3174,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -3171,6 +3235,62 @@
     
   
     Hardening
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../signing-capabilities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Signing capabilities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../staging-module-bundles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Staging module bundles
   
 
     
@@ -4055,9 +4175,9 @@
 
 <h1 id="deployment-and-operations">Deployment and Operations<a class="headerlink" href="#deployment-and-operations" title="Permanent link">&para;</a></h1>
 <blockquote>
-<p><strong>Runbooks</strong>  ·  Operate  ·  page 1 of 16<br />
+<p><strong>Runbooks</strong>  ·  Operate  ·  page 1 of 20<br />
 <strong>For</strong> Operators deploying and running Arc<br />
-<a href="../../../">Docs home</a>  ·  <a href="../local/">Local →</a></p>
+<a href="../../../">Docs home</a>  ·  <a href="../up/">Bring-up →</a></p>
 </blockquote>
 <hr />
 <h2 id="deployment-options">Deployment Options<a class="headerlink" href="#deployment-options" title="Permanent link">&para;</a></h2>
@@ -4620,11 +4740,14 @@
 <a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a><span class="c1"># Backup workspace</span>
 <a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a>tar<span class="w"> </span>-czf<span class="w"> </span>workspace-backup-<span class="k">$(</span>date<span class="w"> </span>+%Y%m%d<span class="k">)</span>.tar.gz<span class="w"> </span>workspace/
 <a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a>
-<a id="__codelineno-21-7" name="__codelineno-21-7" href="#__codelineno-21-7"></a><span class="c1"># Backup keys</span>
-<a id="__codelineno-21-8" name="__codelineno-21-8" href="#__codelineno-21-8"></a>tar<span class="w"> </span>-czf<span class="w"> </span>keys-backup-<span class="k">$(</span>date<span class="w"> </span>+%Y%m%d<span class="k">)</span>.tar.gz<span class="w"> </span>~/.arc/keys/
-<a id="__codelineno-21-9" name="__codelineno-21-9" href="#__codelineno-21-9"></a>
-<a id="__codelineno-21-10" name="__codelineno-21-10" href="#__codelineno-21-10"></a><span class="c1"># Backup audit</span>
-<a id="__codelineno-21-11" name="__codelineno-21-11" href="#__codelineno-21-11"></a>tar<span class="w"> </span>-czf<span class="w"> </span>audit-backup-<span class="k">$(</span>date<span class="w"> </span>+%Y%m%d<span class="k">)</span>.tar.gz<span class="w"> </span>workspace/audit/
+<a id="__codelineno-21-7" name="__codelineno-21-7" href="#__codelineno-21-7"></a><span class="c1"># Backup the irreplaceable state: operator signing key, identities, trust</span>
+<a id="__codelineno-21-8" name="__codelineno-21-8" href="#__codelineno-21-8"></a><span class="c1"># store, arcstore DB, broker state. This is the one directory whose loss</span>
+<a id="__codelineno-21-9" name="__codelineno-21-9" href="#__codelineno-21-9"></a><span class="c1"># cannot be undone — without the operator key, every WORM audit chain it</span>
+<a id="__codelineno-21-10" name="__codelineno-21-10" href="#__codelineno-21-10"></a><span class="c1"># signed becomes unverifiable.</span>
+<a id="__codelineno-21-11" name="__codelineno-21-11" href="#__codelineno-21-11"></a>tar<span class="w"> </span>-czf<span class="w"> </span>state-backup-<span class="k">$(</span>date<span class="w"> </span>+%Y%m%d<span class="k">)</span>.tar.gz<span class="w"> </span>~/.arc/state/
+<a id="__codelineno-21-12" name="__codelineno-21-12" href="#__codelineno-21-12"></a>
+<a id="__codelineno-21-13" name="__codelineno-21-13" href="#__codelineno-21-13"></a><span class="c1"># Backup audit</span>
+<a id="__codelineno-21-14" name="__codelineno-21-14" href="#__codelineno-21-14"></a>tar<span class="w"> </span>-czf<span class="w"> </span>audit-backup-<span class="k">$(</span>date<span class="w"> </span>+%Y%m%d<span class="k">)</span>.tar.gz<span class="w"> </span>workspace/audit/
 </code></pre></div>
 <h3 id="recovery">Recovery<a class="headerlink" href="#recovery" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="c1"># Restore workspace</span>
@@ -4695,7 +4818,7 @@
 <a id="__codelineno-25-5" name="__codelineno-25-5" href="#__codelineno-25-5"></a>arc<span class="w"> </span>security<span class="w"> </span>rotate-operator-key
 <a id="__codelineno-25-6" name="__codelineno-25-6" href="#__codelineno-25-6"></a>
 <a id="__codelineno-25-7" name="__codelineno-25-7" href="#__codelineno-25-7"></a><span class="c1"># Backup before rotation</span>
-<a id="__codelineno-25-8" name="__codelineno-25-8" href="#__codelineno-25-8"></a>cp<span class="w"> </span>~/.arc/keys/agent_did.key<span class="w"> </span>~/.arc/keys/agent_did.key.backup
+<a id="__codelineno-25-8" name="__codelineno-25-8" href="#__codelineno-25-8"></a>cp<span class="w"> </span>-a<span class="w"> </span>~/.arc/state/operator<span class="w"> </span>~/.arc/state/operator.backup
 </code></pre></div>
 <h3 id="audit-review">Audit Review<a class="headerlink" href="#audit-review" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="c1"># Review audit trail</span>

@@ -32,7 +32,7 @@ from nacl.exceptions import InvalidkeyError
 
 from arctrust.identity import did_from_public_key
 from arctrust.keypair import generate_keypair
-from arctrust.paths import arc_home
+from arctrust.paths import users_file
 
 # Mention-safe: starts alphanumeric, no spaces, no dots (which would collide
 # with sentence punctuation when an agent writes "@josh.").
@@ -51,8 +51,8 @@ class UserStoreError(RuntimeError):
 
 
 def default_users_path() -> Path:
-    """``<arc_home>/users.json`` — one store per deployment."""
-    return arc_home() / "users.json"
+    """``<arc_state>/users.json`` — one store per deployment."""
+    return users_file()
 
 
 @dataclass(frozen=True)

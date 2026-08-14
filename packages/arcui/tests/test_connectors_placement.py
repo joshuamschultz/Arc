@@ -36,8 +36,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from arcagent.modules.connectors.install import connector_env_file
 from arcgateway import team_roster
 from arctrust.identity import AgentIdentity
+from arctrust.paths import arc_team, extensions_dir
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
@@ -136,7 +138,7 @@ def _arc_dir(world: Path) -> Path:
 
 def _env_file(world: Path) -> Path:
     """The one owner-only file a connector credential may be written to."""
-    return _arc_dir(world) / "connections.env"
+    return connector_env_file(_arc_dir(world))
 
 
 def _agent(world: Path) -> tuple[TestClient, str, Path]:
@@ -144,7 +146,7 @@ def _agent(world: Path) -> tuple[TestClient, str, Path]:
     identity = AgentIdentity.generate(org="arc", agent_type="exec")
     key_dir = world / "keys"
     identity.save_keys(key_dir)
-    team_root = _arc_dir(world) / "team"
+    team_root = arc_team(base=_arc_dir(world))
     agent_dir = team_root / _AGENT
     (agent_dir / "workspace").mkdir(parents=True)
     (agent_dir / "arcagent.toml").write_text(
@@ -167,7 +169,7 @@ def _agent(world: Path) -> tuple[TestClient, str, Path]:
 
 def _write_bundle(world: Path, *, placed: bool = True) -> Path:
     """Put the bundle on the DEPLOYMENT's search path; there is no agent-local one."""
-    bundle = _arc_dir(world) / "extensions" / _EXTENSION
+    bundle = extensions_dir(_arc_dir(world)) / _EXTENSION
     bundle.mkdir(parents=True, exist_ok=True)
     (bundle / "extension.toml").write_text(_manifest(placed=placed), encoding="utf-8")
     return bundle

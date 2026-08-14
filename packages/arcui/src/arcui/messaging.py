@@ -102,10 +102,10 @@ def _operator_signer() -> Any | None:
     deployment has not been initialised, so the builder degrades rather than
     minting a signing authority from the observer.
     """
-    from arcteam.config import default_config_dir
     from arctrust import OperatorKey
+    from arctrust.paths import default_operator_key_path
 
-    key_path = default_config_dir() / "operator" / "operator.key"
+    key_path = default_operator_key_path()
     try:
         return OperatorKey.load(key_path, generate_if_absent=False).into_signer()
     except (OSError, ValueError, RuntimeError):
@@ -139,12 +139,12 @@ def _operator_messaging() -> _OperatorMessaging | None:
     generated here — a missing key degrades the forwarder to ``None`` exactly as
     the channel routes degrade when no audit authority exists.
     """
-    from arcteam.config import default_config_dir
     from arcteam.crypto import MessageSigner
     from arctrust import OperatorKey
     from arctrust.identity import did_from_public_key
+    from arctrust.paths import default_operator_key_path
 
-    key_path = default_config_dir() / "operator" / "operator.key"
+    key_path = default_operator_key_path()
     try:
         op = OperatorKey.load(key_path, generate_if_absent=False)
     except (OSError, ValueError, RuntimeError):

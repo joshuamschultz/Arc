@@ -1,8 +1,8 @@
 """SPEC-064 T-005 — the catalog searches an ordered path, and can list it.
 
 D-584: a bundle resolves from ``<agent>/extensions``, then
-``$ARC_EXTENSIONS_ROOT``, then ``<arc_home>/extensions``. Two properties are
-what the ordering exists for, and both are asserted rather than assumed:
+``$ARC_EXTENSIONS_ROOT``, then :func:`arctrust.paths.bundles_dir`. Two properties
+are what the ordering exists for, and both are asserted rather than assumed:
 
 * **First hit wins by NAME, not by root.** An agent-local ``jira`` overrides the
   fleet's ``jira`` — and every other fleet bundle stays reachable. A search path
@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 from arctrust.audit import AuditEvent
+from arctrust.paths import extensions_dir
 
 from arcagent.core.errors import ExtensionError
 from arcagent.core.tier import Tier
@@ -196,14 +197,14 @@ def test_resolve_extension_roots_orders_agent_then_env_then_arc_home(
     env_root = tmp_path / "shared"
     env_root.mkdir()
     home = tmp_path / "arc_home"
-    (home / "extensions").mkdir(parents=True)
+    extensions_dir(home).mkdir(parents=True)
     monkeypatch.setenv("ARC_EXTENSIONS_ROOT", str(env_root))
     monkeypatch.setenv("ARC_CONFIG_DIR", str(home))
 
     assert resolve_extension_roots(agent) == (
         agent / "extensions",
         env_root,
-        home / "extensions",
+        extensions_dir(home),
     )
 
 
@@ -212,11 +213,11 @@ def test_resolve_extension_roots_drops_absent_paths(
 ) -> None:
     """A path that is not there is not searched, and is not an error."""
     home = tmp_path / "arc_home"
-    (home / "extensions").mkdir(parents=True)
+    extensions_dir(home).mkdir(parents=True)
     monkeypatch.setenv("ARC_CONFIG_DIR", str(home))
     monkeypatch.setenv("ARC_EXTENSIONS_ROOT", str(tmp_path / "missing"))
 
-    assert resolve_extension_roots(tmp_path / "no-such-agent") == (home / "extensions",)
+    assert resolve_extension_roots(tmp_path / "no-such-agent") == (extensions_dir(home),)
 
 
 def test_resolve_extension_roots_works_without_an_agent(
@@ -224,8 +225,8 @@ def test_resolve_extension_roots_works_without_an_agent(
 ) -> None:
     """There is a fleet-wide answer: a surface may ask before choosing an agent."""
     home = tmp_path / "arc_home"
-    (home / "extensions").mkdir(parents=True)
+    extensions_dir(home).mkdir(parents=True)
     monkeypatch.setenv("ARC_CONFIG_DIR", str(home))
     monkeypatch.delenv("ARC_EXTENSIONS_ROOT", raising=False)
 
-    assert resolve_extension_roots() == (home / "extensions",)
+    assert resolve_extension_roots() == (extensions_dir(home),)

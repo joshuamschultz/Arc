@@ -50,6 +50,7 @@ from pathlib import Path
 from typing import Any, NoReturn
 
 import arcagent
+from arctrust.paths import arc_home
 
 from arccli.commands._shared import dispatch, err
 from arccli.commands._shared import print_json as _print_json
@@ -83,7 +84,7 @@ def _connections(args: argparse.Namespace) -> arcagent.Connections:
 
     try:
         world = arcagent.resolve_deployment(
-            arc_dir=getattr(args, "arc_dir", None) or Path.home() / ".arc",
+            arc_dir=getattr(args, "arc_dir", None) or arc_home(),
             data_dir=getattr(args, "data_dir", None),
             extensions_root=getattr(args, "extensions_root", None),
             env_file=getattr(args, "env_file", None),

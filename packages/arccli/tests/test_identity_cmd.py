@@ -6,6 +6,7 @@ import stat
 from pathlib import Path
 
 import pytest
+from arctrust.paths import identity_dir, trust_dir
 
 from arccli.commands.identity import (
     identity_handler,
@@ -58,14 +59,19 @@ def test_init_honors_arc_config_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     """ARC_CONFIG_DIR redirects the key under <dir>/identity, not ~/.arc (F5)."""
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
     identity_handler(["init"])
-    key_dir = tmp_path / "identity"
+    key_dir = identity_dir(tmp_path)
     loaded = load_signing_authority(key_dir)
     assert loaded is not None and loaded.did.startswith("did:arc:")
     assert (key_dir / "active.did").exists()
 
 
 def test_init_honors_dir_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """--dir sets the config base; the key lands under <dir>/identity (F5)."""
+    """--dir sets the config base; the key lands under <dir>/identity (F5).
+
+    Spelled out rather than resolved through :func:`identity_dir`: ``--dir``
+    composes its own ``<dir>/identity`` in ``arccli.commands.identity``, so the
+    accessor and this flag do not currently agree.
+    """
     monkeypatch.delenv("ARC_CONFIG_DIR", raising=False)
     identity_handler(["init", "--dir", str(tmp_path)])
     loaded = load_signing_authority(tmp_path / "identity")
@@ -80,7 +86,7 @@ def test_key_dir_flag_overrides_arc_config_dir(
     explicit = tmp_path / "explicit"
     identity_handler(["init", "--key-dir", str(explicit)])
     assert load_signing_authority(explicit) is not None
-    assert not (tmp_path / "env" / "identity" / "active.did").exists()
+    assert not (identity_dir(tmp_path / "env") / "active.did").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -104,10 +110,10 @@ def test_init_registers_operator_in_trust_store(
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
     identity_handler(["init"])
 
-    identity = load_signing_authority(tmp_path / "identity")
+    identity = load_signing_authority(identity_dir(tmp_path))
     assert identity is not None
 
-    pubkey = load_operator_pubkey(identity.did, trust_dir=tmp_path / "trust")
+    pubkey = load_operator_pubkey(identity.did, trust_dir=trust_dir(tmp_path))
     assert pubkey == identity.public_key
 
 
@@ -119,8 +125,8 @@ def test_force_reregisters_rotated_key(tmp_path: Path, monkeypatch: pytest.Monke
     identity_handler(["init"])
     identity_handler(["init", "--force"])
 
-    identity = load_signing_authority(tmp_path / "identity")
+    identity = load_signing_authority(identity_dir(tmp_path))
     assert identity is not None
 
-    pubkey = load_operator_pubkey(identity.did, trust_dir=tmp_path / "trust")
+    pubkey = load_operator_pubkey(identity.did, trust_dir=trust_dir(tmp_path))
     assert pubkey == identity.public_key

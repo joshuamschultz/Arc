@@ -39,12 +39,12 @@ Two more file kinds sit alongside these:
 | File | Owns | Purpose |
 |---|---|---|
 | `arcllm/providers/*.toml` (packaged) | arcllm | One file per provider: `[provider]` connection settings + `[models.*]` metadata (context window, pricing, tool/vision support) + optional `[[endpoints]]` load-balancing pool. Never user-edited in place — override via the per-agent `arcllm.toml` |
-| `arcagent/blueprints/*.toml` (packaged) + `~/.arc/blueprints/*.toml` (user) | arcagent | A `[blueprint]`-headed config **overlay** applied at `arc blueprint apply` / `arc init --blueprint` time — write-time, not a runtime layer (see below) |
+| `arcagent/blueprints/*.toml` (packaged) + `~/.arc/state/blueprints/*.toml` (user) | arcagent | A `[blueprint]`-headed config **overlay** applied at `arc blueprint apply` / `arc init --blueprint` time — write-time, not a runtime layer (see below) |
 
 And two config roots that are read directly by their own package, referenced
 (never redefined) by everyone else:
 
-- `arcllm/config.toml` (packaged) + `${ARC_CONFIG_DIR:-~/.arc}/arcllm.toml`
+- `arcllm/config.toml` (packaged) + `${ARC_CONFIG_DIR:-~/.arc}/config/arcllm.toml`
  (user) — arcllm's own `[defaults]`/`[modules]`/`[vault]`, loaded by
  `arcllm.config.load_global_config()`. This is the *other* reading of the
  file named `arcllm.toml` — see the precedence section for why that's safe.
@@ -66,7 +66,7 @@ used rather than folded into `arcagent.toml`:
  arcagent `[modules.memory.config]` block only *selects and bounds* the
  Brain (see below) — the dynamics live here, not in arcagent.
 - **arcgateway** — `GatewayConfig`, loaded from
- `${ARC_CONFIG_DIR:-~/.arc}/gateway.toml`: `[gateway]` (tier, agent DID,
+ `${ARC_CONFIG_DIR:-~/.arc}/config/gateway.toml`: `[gateway]` (tier, agent DID,
  runtime dir), `[security]` (`require_pairing`), `[platforms.*]` (the `web`
  adapter is schema'd in-core; every other platform block is captured
  generically via `extra="allow"` and handed as a raw dict to its adapter

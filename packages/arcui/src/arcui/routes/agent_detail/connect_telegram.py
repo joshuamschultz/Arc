@@ -60,17 +60,16 @@ async def connect_telegram_route(request: Request) -> JSONResponse:
         return _error("user_id must be your Telegram numeric user ID.", 400)
 
     from arcgateway.connect import connect_telegram
-    from arcteam.config import default_config_dir
+    from arctrust.paths import config_file, env_file
 
-    cfg_dir = default_config_dir()
     try:
         result = connect_telegram(
             agent_slug=agent_root.name,
             agent_did=_agent_did(agent_root),
             token=token,
             user_id=user_id,
-            gateway_config=cfg_dir / "gateway.toml",
-            env_file=cfg_dir / "arc.env",
+            gateway_config=config_file("gateway.toml"),
+            env_file=env_file(),
         )
     except ValueError as exc:
         # The message never contains the token (validation is format-only).

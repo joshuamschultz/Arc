@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+from arctrust.paths import nats_dir
 
 from arcteam.config import (
     TeamConfig,
@@ -11,16 +12,25 @@ from arcteam.config import (
 
 
 class TestJetstreamStoreDir:
-    """The JetStream store dir mirrors the team-root config-dir resolution."""
+    """The JetStream store resolves through the one accessor, under ``state/``.
+
+    Broker state is irreplaceable, so it must land where an update never reaches
+    — and it must be the SAME directory ``arctrust.paths.nats_dir`` answers, or a
+    surface that starts the broker and one that connects to it end up on
+    different buses with an inbox that reads empty.
+    """
 
     def test_honors_arc_config_dir(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """An isolated ARC_CONFIG_DIR keeps the NATS store local (leak bug)."""
         monkeypatch.setenv("ARC_CONFIG_DIR", "/tmp/isotest/config")
-        assert default_jetstream_store_dir() == Path("/tmp/isotest/config/nats/jetstream")
+        assert default_jetstream_store_dir() == nats_dir() / "jetstream"
+        assert default_jetstream_store_dir() == Path("/tmp/isotest/config/state/nats/jetstream")
 
     def test_falls_back_without_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("ARC_CONFIG_DIR", raising=False)
-        assert default_jetstream_store_dir() == Path.home() / ".arc" / "nats" / "jetstream"
+        assert (
+            default_jetstream_store_dir() == Path.home() / ".arc" / "state" / "nats" / "jetstream"
+        )
 
 
 class TestTeamConfig:

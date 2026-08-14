@@ -88,8 +88,7 @@ def test_platforms_are_discovered_by_scanning_for_the_descriptor() -> None:
 
     missing = _REQUIRED_PLATFORMS - found
     assert not missing, (
-        f"platforms not discovered by directory scan: {sorted(missing)} "
-        f"(found: {sorted(found)})"
+        f"platforms not discovered by directory scan: {sorted(missing)} (found: {sorted(found)})"
     )
 
 
@@ -121,8 +120,7 @@ def test_a_new_folder_is_available_with_no_registry_edit(probe_folder: str) -> N
 
     source = Path(registry.__file__).read_text(encoding="utf-8")
     assert probe_folder not in source, (
-        "the new platform's name appears in registry.py — it was not discovered "
-        "by a scan"
+        "the new platform's name appears in registry.py — it was not discovered by a scan"
     )
 
 

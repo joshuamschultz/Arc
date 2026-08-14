@@ -14,9 +14,10 @@ GOOD = "correct-horse-battery"
 @pytest.fixture
 def users(tmp_path, monkeypatch):
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
+    from arctrust.paths import users_file
     from arctrust.users import OPERATOR, UserStore
 
-    store = UserStore(tmp_path / "users.json")
+    store = UserStore(users_file(tmp_path))
     store.add("boss@example.com", GOOD, roles=(OPERATOR,))
     store.add("watcher@example.com", GOOD)
     return store

@@ -2316,6 +2316,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -2393,6 +2397,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../runbooks/deploy/up/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bring-up (arc up)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../runbooks/deploy/local/" class="md-nav__link">
         
   
@@ -2429,6 +2461,34 @@
     
   
     Docker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/deploy/azure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Azure
   
 
     
@@ -2734,6 +2794,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -2791,6 +2855,62 @@
     
   
     Hardening
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/signing-capabilities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Signing capabilities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/staging-module-bundles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Staging module bundles
   
 
     
@@ -3347,14 +3467,14 @@ placeholders — flagged below, not glossed over.</p>
 <td><code>packages/arcrun/src/arcrun/</code></td>
 <td>The execution loop — the <em>only</em> runtime path to <code>arcllm</code></td>
 <td><code>arcllm</code>, <code>arctrust</code>, <code>arcstore</code></td>
-<td>Import <code>arcagent</code>; call <code>arcllm.registry.load_model()</code> directly; own tool/skill/memory logic; hold per-agent state in a module-level global</td>
+<td>Import <code>arcagent</code>; couple to ArcLLM's internal module layout; own tool/skill/memory logic; hold per-agent state in a module-level global</td>
 </tr>
 <tr>
 <td><strong>arcagent</strong></td>
 <td><code>packages/arcagent/src/arcagent/</code></td>
-<td>The agent: identity + tools + skills + memory-as-tools + extensions. Uses <code>arcrun</code> to execute</td>
-<td><code>arctrust</code>, <code>arcllm</code>, <code>arcrun</code>, <code>arcprompt</code>, <code>mcp</code></td>
-<td>Import <code>arcgateway</code> or <code>arcui</code>; make LLM calls or run a loop itself</td>
+<td>The headless agent: identity + tools + skills + memory-as-tools + extensions. Uses <code>arcrun</code> to execute</td>
+<td><code>arcrun</code>, <code>arctrust</code>, <code>arcprompt</code>, <code>mcp</code></td>
+<td>Import <code>arcllm</code>, <code>arcgateway</code>, or <code>arcui</code>; make LLM calls or run a loop itself</td>
 </tr>
 <tr>
 <td><strong>arcstore</strong></td>
@@ -3422,9 +3542,9 @@ placeholders — flagged below, not glossed over.</p>
 <tr>
 <td><strong>arcui</strong></td>
 <td><code>packages/arcui/src/arcui/</code></td>
-<td><strong>Observe</strong> (read agent history from <code>arcstore</code> via REST) + limited <strong>Interact</strong> (<code>/ws/chat</code>, <code>/ws/team</code>)</td>
-<td><code>arcstore</code>, <code>arcgateway</code>, <code>arcteam</code>, <code>arctrust</code>, <code>arcskill</code>, <code>arcllm</code> (config editing only)</td>
-<td>Import <code>arcagent</code> for anything except the single <code>arcagent.capabilities.inventory</code> seam</td>
+<td><strong>Observe</strong> ArcAgent history + limited <strong>Interact</strong> (<code>/ws/chat</code>, <code>/ws/team</code>)</td>
+<td><code>arcagent</code>, <code>arcstore</code>, <code>arcgateway</code>, <code>arcteam</code>, <code>arctrust</code>, <code>arcskill</code></td>
+<td>Bypass ArcAgent to invoke <code>arcrun</code> or <code>arcllm</code>; make ArcAgent depend on the UI</td>
 </tr>
 <tr>
 <td><strong>arccli</strong></td>

@@ -103,8 +103,39 @@ def stage_bundles(states: list[up.AgentState]) -> list[list[str]]:
     return rows
 
 
+def migrate_layout_or_exit() -> None:
+    """Split a flat Arc home into runtime / config / state, once, before anything reads it.
+
+    This runs FIRST because every stage below it resolves a path: preflight loads
+    the operator key, the bundle stage reads the staged-bundle store, and the
+    module stage writes under the runtime. Migrating after any of them would have
+    them answer from the pre-split layout and then quietly disagree with the
+    post-split one.
+
+    A failure here stops the install rather than continuing on a home whose
+    signing key may be half-moved — the migration itself has already rolled back
+    by the time this sees the error, so the box is left exactly as it was.
+    """
+    from arctrust.home_migration import MigrationError, migrate_arc_home
+
+    try:
+        result = migrate_arc_home()
+    except MigrationError as exc:
+        _err(f"arc install: {exc}")
+        sys.exit(1)
+    if result.already_migrated:
+        return
+    _out("Layout")
+    _print_table(
+        ["Moved", "To"],
+        [[str(src.name), str(dst)] for src, dst in result.moved],
+    )
+    _out("")
+
+
 def _install(args: argparse.Namespace) -> None:
     """Install what every agent's config enables, then verify it really landed."""
+    migrate_layout_or_exit()
     _out("Preflight")
     team_root, checks = _preflight_or_exit(up.resolve_team_root(args.team_root))
 

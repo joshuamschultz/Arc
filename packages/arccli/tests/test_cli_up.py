@@ -21,6 +21,7 @@ from typing import Any
 
 import arcagent
 import pytest
+from arctrust.paths import module_root
 
 from arccli.commands import up as up_cmd
 
@@ -210,7 +211,7 @@ def test_a_config_enabled_but_absent_module_is_installed_and_then_starts(
     _run()
 
     # Materialized at the deployment root — the folder the agent actually scans.
-    assert (deployment / "arc" / "modules" / _MODULE / "_runtime.py").is_file()
+    assert (module_root(deployment / "arc") / _MODULE / "_runtime.py").is_file()
     assert _MODULE in arcagent.discover_modules()
     # And the per-agent capability copy the install path also writes.
     from arcbundle import capability_dir
@@ -229,7 +230,7 @@ def test_a_present_module_is_reported_and_not_reinstalled(
     """Second run of the same bring-up is a report, not a second install."""
     _enable(deployment, _MODULE)
     _run()
-    marker = deployment / "arc" / "modules" / _MODULE / "_runtime.py"
+    marker = module_root(deployment / "arc") / _MODULE / "_runtime.py"
     first = marker.stat().st_mtime_ns
 
     capsys.readouterr()
@@ -257,7 +258,9 @@ def test_federal_refuses_a_dev_signed_auto_install(
     captured = capsys.readouterr()
     assert "REFUSED" in captured.out
     assert "arc module bundle" in captured.out
-    assert not (deployment / "arc" / "modules" / _MODULE).exists(), "federal got the module anyway"
+    assert not (module_root(deployment / "arc") / _MODULE).exists(), (
+        "federal got the module anyway"
+    )
     assert started == [], "a federal box must not start with a capability it was denied"
 
 
@@ -277,7 +280,7 @@ def test_no_install_skips_the_module_stage_entirely(
 
     assert exit_info.value.code == 1  # still missing, so still degraded
     assert "--no-install" in capsys.readouterr().out
-    assert not (deployment / "arc" / "modules" / _MODULE).exists()
+    assert not (module_root(deployment / "arc") / _MODULE).exists()
 
 
 # ---------------------------------------------------------------------------
@@ -326,7 +329,7 @@ def test_check_starts_nothing_and_exits_non_zero_on_a_missing_module(
 
     assert exit_info.value.code == 1
     assert "MISSING" in capsys.readouterr().out
-    assert not (deployment / "arc" / "modules" / _MODULE).exists(), "--check installed something"
+    assert not (module_root(deployment / "arc") / _MODULE).exists(), "--check installed something"
     assert started == []
 
 

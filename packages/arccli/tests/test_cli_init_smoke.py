@@ -13,6 +13,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from arctrust.paths import config_file
 
 _ARC = Path(__file__).parent.parent.parent.parent / ".venv" / "bin" / "arc"
 
@@ -76,12 +77,12 @@ class TestInitTierPersonal:
     def test_init_personal_writes_config(self, tmp_path: Path) -> None:
         """arc init --tier personal writes arcllm.toml (primary config file)."""
         _arc("init", "--tier", "personal", "--provider", "anthropic", "--dir", str(tmp_path))
-        assert (tmp_path / "arcllm.toml").exists()
+        assert config_file("arcllm.toml", tmp_path).exists()
 
     def test_init_personal_config_has_tier(self, tmp_path: Path) -> None:
         """arc init --tier personal writes tier comment into arcllm.toml."""
         _arc("init", "--tier", "personal", "--provider", "anthropic", "--dir", str(tmp_path))
-        content = (tmp_path / "arcllm.toml").read_text()
+        content = config_file("arcllm.toml", tmp_path).read_text()
         assert "personal" in content
 
     def test_init_shows_summary(self, tmp_path: Path) -> None:
@@ -103,7 +104,7 @@ class TestInitTierEnterprise:
     def test_init_enterprise_writes_config(self, tmp_path: Path) -> None:
         """arc init --tier enterprise writes arcllm.toml (primary config file)."""
         _arc("init", "--tier", "enterprise", "--provider", "openai", "--dir", str(tmp_path))
-        assert (tmp_path / "arcllm.toml").exists()
+        assert config_file("arcllm.toml", tmp_path).exists()
 
 
 class TestInitQuick:
@@ -115,7 +116,7 @@ class TestInitQuick:
     def test_init_quick_writes_config(self, tmp_path: Path) -> None:
         """arc init --quick writes arcllm.toml (primary config file)."""
         _arc("init", "--quick", "--provider", "anthropic", "--dir", str(tmp_path))
-        assert (tmp_path / "arcllm.toml").exists()
+        assert config_file("arcllm.toml", tmp_path).exists()
 
 
 class TestInitQuickNonInteractive:
@@ -137,7 +138,7 @@ class TestInitQuickNonInteractive:
 
         self._no_input(monkeypatch)
         init_handler(["--quick", "--dir", str(tmp_path)])  # must not raise
-        assert (tmp_path / "arcllm.toml").exists()
+        assert config_file("arcllm.toml", tmp_path).exists()
 
     def test_quick_defaults_provider_anthropic(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -146,7 +147,7 @@ class TestInitQuickNonInteractive:
 
         self._no_input(monkeypatch)
         init_handler(["--quick", "--dir", str(tmp_path)])
-        assert 'provider = "anthropic"' in (tmp_path / "arcllm.toml").read_text()
+        assert 'provider = "anthropic"' in config_file("arcllm.toml", tmp_path).read_text()
 
     def test_quick_honors_provider_flag(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -155,7 +156,7 @@ class TestInitQuickNonInteractive:
 
         self._no_input(monkeypatch)
         init_handler(["--quick", "--provider", "openai", "--dir", str(tmp_path)])
-        assert 'provider = "openai"' in (tmp_path / "arcllm.toml").read_text()
+        assert 'provider = "openai"' in config_file("arcllm.toml", tmp_path).read_text()
 
 
 # Mark to avoid unused import warning

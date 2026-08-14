@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from arctrust.paths import config_file
 
 from arccli.commands.connector import connector_handler
 
@@ -183,7 +184,7 @@ def test_neither_value_is_echoed_into_the_config_or_the_terminal(
 
     captured = capsys.readouterr()
     config: dict[str, Any] = tomllib.loads(
-        (arc_dir / "connections.toml").read_text(encoding="utf-8")
+        config_file("connections.toml", arc_dir).read_text(encoding="utf-8")
     )
     assert config["connections"][_INSTANCE]["extension"] == _EXTENSION
     for rendered in (captured.out + captured.err, str(config)):

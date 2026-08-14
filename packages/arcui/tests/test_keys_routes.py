@@ -14,6 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from arcagent import default_env_file
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
@@ -149,5 +150,4 @@ def test_a_viewer_may_read_but_never_write(client: TestClient) -> None:
 
 def test_a_viewer_refused_a_write_stores_nothing(client: TestClient, tmp_path: Path) -> None:
     _put(client, _DECLARED, _SENTINEL, token="viewer")
-    env_file = tmp_path / "arc" / ".env"
-    assert not env_file.exists()
+    assert not default_env_file(tmp_path / "arc").exists()

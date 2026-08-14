@@ -15,20 +15,19 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from arctrust.paths import store_dir
 from pydantic import BaseModel, ConfigDict, Field
 
 ENV_DATA_DIR = "ARCSTORE_DATA_DIR"
 """Environment override for the Arc data directory (highest precedence)."""
-
-_DEFAULT_SUBPATH = (".arc", "store")
 
 
 def resolve_data_dir(configured: str | Path | None = None) -> Path:
     """Resolve the Arc data directory with a single, shared precedence rule.
 
     Precedence (SPEC-026 §13.2): ``ARCSTORE_DATA_DIR`` env  >  configured
-    ``[arcstore].data_dir``  >  ``~/.arc/store`` default. Every entry point
-    calls this same function so a direct ``arc llm`` call and a later
+    ``[arcstore].data_dir``  >  :func:`arctrust.paths.store_dir`. Every entry
+    point calls this same function so a direct ``arc llm`` call and a later
     ``arc agent serve`` agree on the spool/store path.
     """
     env = os.environ.get(ENV_DATA_DIR)
@@ -36,7 +35,7 @@ def resolve_data_dir(configured: str | Path | None = None) -> Path:
         return Path(env).expanduser()
     if configured:
         return Path(configured).expanduser()
-    return Path.home().joinpath(*_DEFAULT_SUBPATH)
+    return store_dir()
 
 
 def store_db_path(data_dir: str | Path | None = None) -> Path:

@@ -1,8 +1,10 @@
 """Tests for ArcLLM config loading."""
 
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from arctrust.paths import config_file
 
 from arcllm import ArcLLMConfigError, ArcLLMError
 from arcllm.config import (
@@ -294,9 +296,9 @@ def test_http_single_label_service_name_allowed(base_url):
 @pytest.mark.parametrize(
     "base_url",
     [
-        "http://100.80.212.52:4000",       # a Tailscale node, low in the range
-        "http://100.64.0.1:8000",          # first usable address in 100.64/10
-        "http://100.127.255.254:11434",    # last address in 100.64/10
+        "http://100.80.212.52:4000",  # a Tailscale node, low in the range
+        "http://100.64.0.1:8000",  # first usable address in 100.64/10
+        "http://100.127.255.254:11434",  # last address in 100.64/10
         "http://[fd7a:115c:a1e0::1]:4000",  # Tailscale's IPv6 ULA prefix
     ],
 )
@@ -462,13 +464,25 @@ weight = 1
     assert len(config.endpoints) == 1
 
 
-# --- Operator provider overrides (${ARC_CONFIG_DIR:-~/.arc}/arcllm.toml) ---
+# --- Operator provider overrides (arctrust.paths.config_file: <arc_config>/arcllm.toml) ---
+
+
+def _write_override(arc_home: Path, body: str) -> None:
+    """Write the deployment's arcllm.toml where the loader actually reads it.
+
+    Resolved through the accessor rather than joined by hand: a fixture written
+    to a path the loader no longer reads is a green test proving nothing.
+    """
+    path = config_file("arcllm.toml", arc_home)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
 
 
 def test_operator_override_replaces_provider_base_url(tmp_path, monkeypatch):
     """A deployment repoints a provider at its own endpoint without editing the package."""
-    (tmp_path / "arcllm.toml").write_text(
-        '[providers.litellm.provider]\nbase_url = "http://my-proxy:4000"\napi_key_required = true\n'
+    _write_override(
+        tmp_path,
+        '[providers.litellm.provider]\nbase_url = "http://my-proxy:4000"\napi_key_required = true\n',
     )
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
 
@@ -482,9 +496,7 @@ def test_operator_override_replaces_provider_base_url(tmp_path, monkeypatch):
 
 
 def test_operator_override_leaves_other_providers_untouched(tmp_path, monkeypatch):
-    (tmp_path / "arcllm.toml").write_text(
-        '[providers.litellm.provider]\nbase_url = "http://my-proxy:4000"\n'
-    )
+    _write_override(tmp_path, '[providers.litellm.provider]\nbase_url = "http://my-proxy:4000"\n')
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
 
     assert load_provider_config("anthropic").provider.base_url == "https://api.anthropic.com"
@@ -492,8 +504,8 @@ def test_operator_override_leaves_other_providers_untouched(tmp_path, monkeypatc
 
 def test_operator_override_is_validated(tmp_path, monkeypatch):
     """An override is held to the same rules as a packaged file — plain HTTP to a routable host."""
-    (tmp_path / "arcllm.toml").write_text(
-        '[providers.litellm.provider]\nbase_url = "http://proxy.example.com:4000"\n'
+    _write_override(
+        tmp_path, '[providers.litellm.provider]\nbase_url = "http://proxy.example.com:4000"\n'
     )
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
 

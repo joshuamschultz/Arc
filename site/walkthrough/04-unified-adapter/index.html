@@ -2271,6 +2271,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -2348,6 +2352,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../runbooks/deploy/up/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bring-up (arc up)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../runbooks/deploy/local/" class="md-nav__link">
         
   
@@ -2384,6 +2416,34 @@
     
   
     Docker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/deploy/azure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Azure
   
 
     
@@ -2689,6 +2749,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -2746,6 +2810,62 @@
     
   
     Hardening
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/signing-capabilities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Signing capabilities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/staging-module-bundles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Staging module bundles
   
 
     
@@ -3603,7 +3723,7 @@ mistake is <code>BaseAdapter._check_tool_capability()</code>.</p>
 modules — each one an <code>LLMProvider</code> implementation that wraps another
 <code>LLMProvider</code> (<code>BaseModule</code> in <code>modules/base.py</code>) and delegates. Every module
 is off by default except the four marked below; a caller enables or disables
-any of them per <code>load_model()</code> call, or via <code>config.toml</code> / <code>~/.arc/arcllm.toml</code>.</p>
+any of them per <code>load_model()</code> call, or via <code>config.toml</code> / <code>~/.arc/config/arcllm.toml</code>.</p>
 <p>Stacking order is fixed in <code>registry.py:421-427</code> and documented as
 load-bearing — reordering it changes security guarantees, not just behavior:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>Otel → Queue → Telemetry → Audit → Guardrails → Injection →
@@ -3860,7 +3980,7 @@ only establishes that <code>arcllm</code> is the sole writer of LLM-call traces.
 Walkthrough: <code>walkthroughs/arcllm/14-trace-store.ipynb</code>.</p>
 <h3 id="config">Config<a class="headerlink" href="#config" title="Permanent link">&para;</a></h3>
 <p>Two layers, later wins: the packaged <code>packages/arcllm/src/arcllm/config.toml</code>
-is the base; <code>${ARC_CONFIG_DIR:-~/.arc}/arcllm.toml</code> deep-merges over it if
+is the base; <code>${ARC_CONFIG_DIR:-~/.arc}/config/arcllm.toml</code> deep-merges over it if
 present (dicts merge, lists/scalars replace). <code>config.py</code> defines the typed
 Pydantic schema (<code>GlobalConfig</code>, <code>ModuleConfig</code> with <code>extra="allow"</code> so
 module-specific keys pass through untyped-but-preserved) and validates on

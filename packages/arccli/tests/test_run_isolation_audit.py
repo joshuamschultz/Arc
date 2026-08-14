@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 from arctrust import AuditEvent
+from arctrust.paths import audit_dir, config_file, env_file
 
 from arccli.commands import run as run_cmd
 
@@ -102,7 +103,8 @@ def test_federal_env_routes_to_vm_no_local_relax(
 def test_machine_config_tier_is_sourced(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     arc_home = tmp_path / "deployment"
     arc_home.mkdir()
-    (arc_home / "arcagent.toml").write_text('[security]\ntier = "enterprise"\n')
+    config_file("arcagent.toml", arc_home).parent.mkdir(parents=True)
+    config_file("arcagent.toml", arc_home).write_text('[security]\ntier = "enterprise"\n')
     _isolate_machine_config(monkeypatch, arc_home)
     assert run_cmd._machine_isolation() == ("enterprise", None)
 
@@ -120,7 +122,8 @@ def test_machine_config_follows_arc_config_dir(
     """
     federal_home = tmp_path / "federal-deployment"
     federal_home.mkdir()
-    (federal_home / "arcagent.toml").write_text('[security]\ntier = "federal"\n')
+    config_file("arcagent.toml", federal_home).parent.mkdir(parents=True)
+    config_file("arcagent.toml", federal_home).write_text('[security]\ntier = "federal"\n')
     _isolate_machine_config(monkeypatch, federal_home)
 
     assert run_cmd._machine_isolation() == ("federal", None)
@@ -145,7 +148,7 @@ def test_direct_run_audit_lands_in_the_deployment_arc_home(
     arc_home = tmp_path / "deployment"
     monkeypatch.setenv("ARC_CONFIG_DIR", str(arc_home))
 
-    assert run_cmd._direct_run_audit_path() == arc_home / "audit" / "direct-run.jsonl"
+    assert run_cmd._direct_run_audit_path() == audit_dir(arc_home) / "direct-run.jsonl"
     assert Path.home() not in run_cmd._direct_run_audit_path().parents
 
 
@@ -158,5 +161,5 @@ def test_arc_env_is_read_from_the_deployment_arc_home(
 
     paths = run_cmd._env_paths()
 
-    assert arc_home / "arc.env" in paths
-    assert Path.home() / ".arc" / "arc.env" not in paths
+    assert env_file(arc_home) in paths
+    assert env_file(Path.home() / ".arc") not in paths

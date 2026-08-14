@@ -136,7 +136,7 @@ The lightest-weight seam for adding tools/hooks/background tasks:
 # Precedence order (highest wins):
 <agent>/workspace/capabilities/     # Agent-authored, AST-validated
 <agent>/capabilities/               # Per-agent, trusted
-~/.arc/capabilities/               # Global user capabilities
+~/.arc/state/capabilities/               # Global user capabilities
 arcagent/builtins/capabilities/      # Package built-ins
 ```
 
@@ -271,7 +271,7 @@ See [API_REFERENCE.md](../reference/api.md) for full adapter protocol.
 packages/arcagent/tools/my_capability.py
 
 # Global user capability
-~/.arc/capabilities/my_capability.py
+~/.arc/state/capabilities/my_capability.py
 
 # Agent-specific capability
 my-agent/capabilities/my_capability.py

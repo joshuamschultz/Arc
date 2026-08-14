@@ -71,9 +71,9 @@ async def test_a_reply_for_an_unregistered_platform_is_logged_not_lost(
     with caplog.at_level("WARNING"):
         await router._send_reply(_event(), "the answer nobody will hear")
 
-    assert any(
-        "no outbound adapter" in record.message for record in caplog.records
-    ), "a reply was dropped with nothing in the log to say so"
+    assert any("no outbound adapter" in record.message for record in caplog.records), (
+        "a reply was dropped with nothing in the log to say so"
+    )
 
 
 class _NullExecutor:

@@ -136,9 +136,7 @@ def _build_gateway(workspace: Path, *, max_bytes: int = _MAX_BYTES) -> _Gateway:
         adapter=outbound,
         # Per-agent resolver, not a shared store: the router serves the whole
         # fleet but a workspace belongs to one agent (ADR-029).
-        media_store_for=lambda _agent_did: MediaStore(
-            workspace=workspace, max_bytes=max_bytes
-        ),
+        media_store_for=lambda _agent_did: MediaStore(workspace=workspace, max_bytes=max_bytes),
     )
     return _Gateway(router=router, agent=agent, outbound=outbound, workspace=workspace)
 
@@ -237,8 +235,12 @@ def _import_adapter(platform: str, class_name: str) -> Any:
 
 
 def _telegram_update(
-    *, text: str | None = None, caption: str | None = None, photo: bool = False,
-    document: str | None = None, declared_size: int | None = None,
+    *,
+    text: str | None = None,
+    caption: str | None = None,
+    photo: bool = False,
+    document: str | None = None,
+    declared_size: int | None = None,
 ) -> Any:
     """A Telegram Update as python-telegram-bot would deliver it."""
     update = MagicMock()
@@ -306,11 +308,7 @@ def _assert_no_bytes_in_envelope(envelope: Any) -> None:
     """The bytes must not have ridden along — raw or base64."""
     import base64
 
-    dumped = (
-        envelope.model_dump_json()
-        if hasattr(envelope, "model_dump_json")
-        else repr(envelope)
-    )
+    dumped = envelope.model_dump_json() if hasattr(envelope, "model_dump_json") else repr(envelope)
     assert _MARKER.decode() not in dumped, (
         "the artefact's bytes travelled inside the envelope — they belong in "
         "the workspace, not in the queue, the session log or the prompt"
@@ -365,9 +363,7 @@ async def test_a_photo_reaches_the_agent_as_a_reference(tmp_path: Path) -> None:
     await _deliver(adapter, _telegram_update(photo=True), wire)
 
     images = _media_parts(gateway.parts(), "image")
-    assert images, (
-        "the agent received no image part — a photo still produces nothing it can use"
-    )
+    assert images, "the agent received no image part — a photo still produces nothing it can use"
 
     stored = _resolve_ref(tmp_path, images[0].ref)
     assert stored.is_file(), f"the media reference {images[0].ref!r} points at no file"
@@ -401,9 +397,7 @@ async def test_a_captioned_photo_produces_both_parts(tmp_path: Path) -> None:
     wire = _telegram_wire(_IMAGE_BYTES)
     adapter = _telegram_adapter(wire, gateway.router.handle)
 
-    await _deliver(
-        adapter, _telegram_update(photo=True, caption="look at this chart"), wire
-    )
+    await _deliver(adapter, _telegram_update(photo=True, caption="look at this chart"), wire)
     first = [getattr(part, "kind", None) for part in gateway.parts()]
 
     texts = [part for part in gateway.parts() if getattr(part, "kind", None) == "text"]
@@ -495,9 +489,7 @@ async def test_the_ceiling_is_enforced_against_the_bytes_not_the_claim(
     wire = _telegram_wire(oversized)
     adapter = _telegram_adapter(wire, gateway.router.handle)
 
-    await _deliver(
-        adapter, _telegram_update(document="small.bin", declared_size=8), wire
-    )
+    await _deliver(adapter, _telegram_update(document="small.bin", declared_size=8), wire)
 
     assert gateway.inbox_files() == [], (
         "an artefact over the ceiling was written to the workspace because the "

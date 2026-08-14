@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from arctrust.paths import gateway_pairing_db, gateway_runtime_dir
 
 from arcgateway.config import GatewayConfig, WebPlatformConfig
 
@@ -88,7 +89,7 @@ def test_runtime_dir_default_honors_arc_config_dir(
 ) -> None:
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
     cfg = GatewayConfig.from_toml_str("")
-    assert cfg.gateway.runtime_dir == (tmp_path / "gateway" / "run").resolve()
+    assert cfg.gateway.runtime_dir == gateway_runtime_dir(tmp_path).resolve()
 
 
 def test_pairing_db_path_default_honors_arc_config_dir(
@@ -96,7 +97,7 @@ def test_pairing_db_path_default_honors_arc_config_dir(
 ) -> None:
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
     cfg = GatewayConfig.from_toml_str("")
-    assert cfg.pairing.db_path == (tmp_path / "gateway" / "pairing.db").resolve()
+    assert cfg.pairing.db_path == gateway_pairing_db(tmp_path).resolve()
 
 
 def test_runtime_dir_default_falls_back_to_home_without_arc_config_dir(
@@ -104,4 +105,4 @@ def test_runtime_dir_default_falls_back_to_home_without_arc_config_dir(
 ) -> None:
     monkeypatch.delenv("ARC_CONFIG_DIR", raising=False)
     cfg = GatewayConfig.from_toml_str("")
-    assert cfg.gateway.runtime_dir == Path.home() / ".arc" / "gateway" / "run"
+    assert cfg.gateway.runtime_dir == gateway_runtime_dir(Path.home() / ".arc")

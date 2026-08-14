@@ -314,7 +314,7 @@ arc agent create my-agent --blueprint hub://researcher
 ### Team Share
 
 ```bash
-# Team blueprints are stored in ~/.arc/blueprints/
+# Team blueprints are stored in ~/.arc/state/blueprints/
 arc agent create my-agent --blueprint team://my-team/researcher
 ```
 

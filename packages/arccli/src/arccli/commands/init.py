@@ -14,7 +14,7 @@ from typing import Any
 
 import arcagent
 import arcllm
-from arctrust import arc_home
+from arctrust.paths import arc_home, arc_team, config_file
 
 from arccli.commands._arcllm_surface import (
     BUDGET_BLOCK,
@@ -353,7 +353,7 @@ def _init_team_fleet(args: argparse.Namespace) -> None:
 
     # Fleets are GLOBAL under ~/.arc/<team> so a coder created once is reachable from
     # any project (the OpenCode model: the agent's home is global; it works in your cwd).
-    team_root = arc_home() / team
+    team_root = arc_team(team)
     agent_dir = team_root / name
     if agent_dir.exists():
         sys.stderr.write(f"Error: agent already exists: {agent_dir}\n")
@@ -459,10 +459,10 @@ def _init(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     targets: list[tuple[Path, str]] = [
-        (arc_dir / "arcllm.toml", _generate_arcllm_toml(tier, provider)),
-        (arc_dir / "arcrun.toml", _generate_arcrun_toml(tier)),
-        (arc_dir / "arcagent.toml", arcagent_content),
-        (arc_dir / "gateway.toml", _generate_gateway_toml(tier)),
+        (config_file("arcllm.toml", arc_dir), _generate_arcllm_toml(tier, provider)),
+        (config_file("arcrun.toml", arc_dir), _generate_arcrun_toml(tier)),
+        (config_file("arcagent.toml", arc_dir), arcagent_content),
+        (config_file("gateway.toml", arc_dir), _generate_gateway_toml(tier)),
     ]
 
     existing = [p for p, _ in targets if p.exists()]
@@ -474,6 +474,7 @@ def _init(args: argparse.Namespace) -> None:
             return
 
     for path, content in targets:
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
 
     env_path = arcagent.default_env_file(arc_dir)
@@ -492,7 +493,7 @@ def _init(args: argparse.Namespace) -> None:
         _write(f"  Operator key fingerprint: {operator.public_key.hex()[:16]}")
 
     if tier in ("enterprise", "federal"):
-        team_dir = arc_dir / "team"
+        team_dir = arc_team(base=arc_dir)
         for sub in ("entities", "channels", "cursors"):
             (team_dir / sub).mkdir(parents=True, exist_ok=True)
 

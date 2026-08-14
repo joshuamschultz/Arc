@@ -11,6 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from arctrust.paths import arc_team
+
 
 @dataclass(frozen=True)
 class AgentRef:
@@ -27,9 +29,8 @@ class AgentRef:
 
 def default_team_root() -> Path:
     """The global team root (``~/.arc/team``) — arc's fleet discovery location."""
-    from arctrust.paths import arc_home
 
-    return arc_home() / "team"
+    return arc_team()
 
 
 def list_agents(team_root: Path | None = None) -> list[AgentRef]:

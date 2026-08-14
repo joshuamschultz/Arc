@@ -34,9 +34,11 @@ from arcagent.extension.grants import ConnectionRegistry
 from arcagent.extension.platforms import host_platform
 from arcagent.modules.connectors import _runtime
 from arcagent.modules.connectors.capabilities import Connectors
+from arcagent.modules.connectors.install import connector_env_file
 from arcagent.tools.human_gate import HumanGate
 from arcgateway import team_roster
 from arctrust.identity import AgentIdentity
+from arctrust.paths import arc_team, extensions_dir
 from arctrust.signer import InProcessSigner
 from nacl.signing import SigningKey
 from starlette.applications import Starlette
@@ -375,12 +377,12 @@ def _arc_dir(world: Path) -> Path:
 
 def _bundles(world: Path) -> Path:
     """The deployment's bundle root. There is deliberately no agent-local one."""
-    return _arc_dir(world) / "extensions"
+    return extensions_dir(_arc_dir(world))
 
 
 def _env_file(world: Path) -> Path:
     """The one owner-only file every connector credential is written to."""
-    return _arc_dir(world) / "connections.env"
+    return connector_env_file(_arc_dir(world))
 
 
 def _agent(world: Path) -> tuple[TestClient, str, Path]:
@@ -393,7 +395,7 @@ def _agent(world: Path) -> tuple[TestClient, str, Path]:
     identity = AgentIdentity.generate(org="arc", agent_type="exec")
     key_dir = world / "keys"
     identity.save_keys(key_dir)
-    team_root = _arc_dir(world) / "team"
+    team_root = arc_team(base=_arc_dir(world))
     agent_dir = team_root / _AGENT
     (agent_dir / "workspace").mkdir(parents=True)
     (agent_dir / "arcagent.toml").write_text(
@@ -450,7 +452,7 @@ def _install(
 
 def _defined(world: Path) -> dict[str, Any]:
     """The deployment's connections, read off disk exactly as the runtime reads them."""
-    path = _arc_dir(world) / "connections.toml"
+    path = ConnectionRegistry(_arc_dir(world)).path
     if not path.is_file():
         return {}
     table = tomllib.loads(path.read_text(encoding="utf-8")).get("connections", {})
@@ -672,7 +674,7 @@ _REFUSED_INSTANCE = "personal-dropbox"
 
 def _handwritten_connection(world: Path, instance: str) -> None:
     """A connection block no surface would have written — hand-edited into place."""
-    path = _arc_dir(world) / "connections.toml"
+    path = ConnectionRegistry(_arc_dir(world)).path
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         f'[connections."{instance}"]\nextension = "{_EXTENSION}"\n'
@@ -767,7 +769,7 @@ def _revoke(client: TestClient, agents: list[str], *, token: str = "operator") -
 
 def _second_agent(world: Path, name: str = "second_agent") -> str:
     """Another agent in the same fleet, so a grant to one is provably not a grant to both."""
-    agent_dir = _arc_dir(world) / "team" / name
+    agent_dir = arc_team(base=_arc_dir(world)) / name
     (agent_dir / "workspace").mkdir(parents=True)
     (agent_dir / "arcagent.toml").write_text(
         f'[agent]\nname = "{name}"\norg = "arc"\ntype = "exec"\n'
@@ -808,9 +810,9 @@ async def _start_agent(world: Path, agent: str) -> ToolRegistry:
             "arc_dir": str(_arc_dir(world)),
         },
         telemetry=None,
-        workspace=_arc_dir(world) / "team" / agent / "workspace",
+        workspace=arc_team(base=_arc_dir(world)) / agent / "workspace",
         identity=identity,
-        config_path=_arc_dir(world) / "team" / agent / "arcagent.toml",
+        config_path=arc_team(base=_arc_dir(world)) / agent / "arcagent.toml",
         tool_registry=registry,
         tier="personal",
         human_gate=gate,

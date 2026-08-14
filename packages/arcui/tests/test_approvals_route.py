@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 from arcstore.approvals import ApprovalStore, PendingApproval
 from arcstore.backends.sqlite import SqliteBackend
-from arctrust import OperatorKey
+from arctrust import OperatorKey, default_operator_key_path
 from arctrust.policy import (
     OperatorApprovalAuthority,
     ToolCall,
@@ -142,7 +142,7 @@ def test_viewer_cannot_approve(tmp_path: Path) -> None:
 def test_operator_approve_mints_verifiable_pinned_grant(tmp_path: Path) -> None:
     call = _call()
     # Pre-create the on-box operator key the route will sign with.
-    OperatorKey.load(tmp_path / "operator" / "operator.key", generate_if_absent=True)
+    OperatorKey.load(default_operator_key_path(tmp_path), generate_if_absent=True)
     app, auth = _make_app(tmp_path, _hash_call(call))
     client = TestClient(app)
 
@@ -153,7 +153,7 @@ def test_operator_approve_mints_verifiable_pinned_grant(tmp_path: Path) -> None:
     assert row.status == "approved"
     grant = grant_from_wire(row.grant)
     assert verify_approval(call, grant) is True
-    key = OperatorKey.load(tmp_path / "operator" / "operator.key", generate_if_absent=False)
+    key = OperatorKey.load(default_operator_key_path(tmp_path), generate_if_absent=False)
     assert grant.approver_did == OperatorApprovalAuthority(key.into_signer()).did
 
 

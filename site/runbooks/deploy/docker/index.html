@@ -16,7 +16,7 @@
         <link rel="prev" href="../local/">
       
       
-        <link rel="next" href="../firecracker/">
+        <link rel="next" href="../azure/">
       
       
         
@@ -2077,6 +2077,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -2134,6 +2138,34 @@
     
   
     Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../up/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bring-up (arc up)
   
 
     
@@ -2339,6 +2371,34 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../azure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Azure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -2636,6 +2696,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -2693,6 +2757,62 @@
     
   
     Hardening
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../signing-capabilities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Signing capabilities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../staging-module-bundles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Staging module bundles
   
 
     
@@ -3099,9 +3219,9 @@
 
 <h1 id="docker-deployment">Docker Deployment<a class="headerlink" href="#docker-deployment" title="Permanent link">&para;</a></h1>
 <blockquote>
-<p><strong>Runbooks</strong>  ·  Operate  ·  page 3 of 16<br />
+<p><strong>Runbooks</strong>  ·  Operate  ·  page 4 of 20<br />
 <strong>For</strong> Operators deploying and running Arc<br />
-<a href="../local/">← Local</a>  ·  <a href="../../../">Docs home</a>  ·  <a href="../firecracker/">Firecracker →</a></p>
+<a href="../local/">← Local</a>  ·  <a href="../../../">Docs home</a>  ·  <a href="../azure/">Azure →</a></p>
 </blockquote>
 <pre class="mermaid"><code>flowchart LR
     classDef a fill:#D6E6FF,stroke:#0073FE,color:#002550
@@ -3297,8 +3417,12 @@ the same volume:</p>
 the entrypoint preflights both and says so loudly, because both failure modes
 otherwise look identical to "working" from the outside: recall silently falls
 back to keyword-only. In a stock image neither should ever appear.</p>
-<p><strong><code>Config enables module 'memory_acl' but no module folder is present</code></strong> —
-harmless; the module is configured but not shipped, and startup continues.</p>
+<p><strong><code>Config enables module 'NAME' but no module folder is present</code></strong> — never
+harmless. The agent starts, answers chat, and runs without that capability
+while saying nothing more about it. Run <code>arc install</code> to materialize every
+module the config enables; if the name is not in <code>arc module list</code>, it is a
+typo or a module that no longer exists and the <code>[modules.NAME]</code> block should be
+deleted.</p>
 <p><strong>Telegram adapter warnings on a network blip</strong> — see
 <a href="../local/">single-node.md</a>; the same behavior applies in the container.</p>
 

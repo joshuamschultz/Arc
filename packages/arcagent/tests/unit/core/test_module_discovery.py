@@ -1,6 +1,6 @@
 """Folder-presence module discovery + explicit (default-off) activation.
 
-The loader SCANS the deployment module root — ``${ARC_CONFIG_DIR:-~/.arc}/modules``
+The loader SCANS the deployment module root — :func:`arctrust.paths.module_root`
 — for folders that qualify as a module (both ``capabilities.py`` and
 ``_runtime.py`` present), so the full present-set is always KNOWN. A discovered
 module only *loads* when the agent's config enables it — discovered-but-not-enabled
@@ -12,6 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from arctrust.paths import module_root
 
 import arcagent
 from arcagent.core.config import ModuleEntry
@@ -46,7 +47,7 @@ def test_default_root_is_the_deployment_config_dir(
 ) -> None:
     # SPEC-066 REQ-333/336: the scan root is where the OPERATOR installed
     # signed bundles, not wherever the package happens to be unpacked.
-    _make_module(tmp_path / "modules", "widget")
+    _make_module(module_root(tmp_path), "widget")
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
 
     assert discover_modules() == ["widget"]
@@ -58,8 +59,8 @@ def test_default_root_is_resolved_per_call_not_at_import(
     # A root captured at import time freezes whatever the environment said
     # when this module was first imported — which is long before a service
     # unit or a test sets the var.
-    _make_module(tmp_path / "a" / "modules", "first")
-    _make_module(tmp_path / "b" / "modules", "second")
+    _make_module(module_root(tmp_path / "a"), "first")
+    _make_module(module_root(tmp_path / "b"), "second")
 
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "a"))
     assert discover_modules() == ["first"]

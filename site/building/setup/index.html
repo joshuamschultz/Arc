@@ -2588,6 +2588,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -2665,6 +2669,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../runbooks/deploy/up/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bring-up (arc up)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../runbooks/deploy/local/" class="md-nav__link">
         
   
@@ -2701,6 +2733,34 @@
     
   
     Docker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/deploy/azure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Azure
   
 
     
@@ -3006,6 +3066,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -3063,6 +3127,62 @@
     
   
     Hardening
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/signing-capabilities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Signing capabilities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/staging-module-bundles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Staging module bundles
   
 
     
@@ -4341,7 +4461,7 @@
 <blockquote>
 <p><strong>Always reach for <code>--check</code> first.</strong> The safe way to "run build" on an agent you care about is <code>arc agent build &lt;path&gt; --check</code>. Only add <code>--force</code> when you deliberately want the full config surface regenerated from defaults — treat it the same as you would <code>git reset --hard</code>: a destructive operation you confirm, not one you run out of habit.</p>
 </blockquote>
-<p><code>arc agent create --tier</code> sets the tier for <strong>every subsystem at once</strong> — <code>[security]</code>, memory, policy, skills, web, voice, browser, <code>memory_acl</code> all render from the same <code>tier</code> template variable. A config that's federal in <code>[security]</code> but personal in <code>[modules.web]</code> is treated as a hole, not a preference — the renderer refuses an unknown tier string outright (<code>ValueError</code>) rather than partially applying one.</p>
+<p><code>arc agent create --tier</code> sets the tier for <strong>every subsystem at once</strong> — <code>[security]</code>, memory, policy, skills, web, voice, and browser all render from the same <code>tier</code> template variable. A config that's federal in <code>[security]</code> but personal in <code>[modules.web]</code> is treated as a hole, not a preference — the renderer refuses an unknown tier string outright (<code>ValueError</code>) rather than partially applying one.</p>
 <hr />
 <h2 id="directory-structure">Directory Structure<a class="headerlink" href="#directory-structure" title="Permanent link">&para;</a></h2>
 <p>After installation, Arc uses these directories:</p>

@@ -7,7 +7,7 @@ SAME directory:
   * ``arcrun.toml``   — the agentic-loop controls (``[arcrun]`` root)
 
 Each file-family deep-merges independently (packaged defaults < user-wide
-``${ARC_CONFIG_DIR}/<file>.toml`` < per-agent ``<dir>/<file>.toml``); the three
+:func:`arctrust.paths.config_file` < per-agent ``<dir>/<file>.toml``); the three
 merged results are then composed into one :class:`ArcAgentConfig`. A missing
 sibling falls through to packaged/Pydantic defaults.
 """
@@ -18,11 +18,13 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from arctrust.paths import config_file
 
 from arcagent.core.config import DEFAULT_MODEL, load_config
 
 
 def _write(path: Path, body: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(textwrap.dedent(body))
 
 
@@ -148,7 +150,7 @@ class TestPerFileLayering:
         user_dir.mkdir()
         monkeypatch.setenv("ARC_CONFIG_DIR", str(user_dir))
         _write(
-            user_dir / "arcllm.toml",
+            config_file("arcllm.toml", user_dir),
             """\
             [llm]
             model = "user/wide-model"
@@ -171,7 +173,7 @@ class TestPerFileLayering:
         user_dir = tmp_path / "userarc"
         user_dir.mkdir()
         monkeypatch.setenv("ARC_CONFIG_DIR", str(user_dir))
-        _write(user_dir / "arcrun.toml", "max_turns = 3\n")
+        _write(config_file("arcrun.toml", user_dir), "max_turns = 3\n")
         agent = tmp_path / "agent"
         agent.mkdir()
         _write(agent / "arcagent.toml", '[agent]\nname = "layered"\n')

@@ -14,7 +14,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from arctrust import arc_home
+from arctrust.paths import audit_dir, config_file, dotenv_file, env_file
 
 from arccli.commands._shared import dispatch
 from arccli.commands._shared import print_json as _print_json
@@ -69,7 +69,7 @@ def _env_paths() -> list[Path]:
     """
     return [
         Path.cwd() / ".env",
-        arc_home() / "arc.env",
+        env_file(),
         Path.home() / ".env",
     ]
 
@@ -82,7 +82,7 @@ def _machine_config_path() -> Path:
     ``arccli.commands.operator`` reads, so one box cannot report two different
     tiers depending on which command asked.
     """
-    return arc_home() / "arcagent.toml"
+    return config_file("arcagent.toml")
 
 
 def _direct_run_audit_path() -> Path:
@@ -92,7 +92,7 @@ def _direct_run_audit_path() -> Path:
     the wrong home are missing from the chain that should hold them AND present
     in one that should not — the worst failure mode an audit file has.
     """
-    return arc_home() / "audit" / "direct-run.jsonl"
+    return audit_dir() / "direct-run.jsonl"
 
 
 def _machine_config() -> dict[str, Any]:
@@ -181,13 +181,9 @@ def _load_env() -> None:
         from dotenv import load_dotenv
     except ImportError:
         return
-    paths = _env_paths()
-    # An isolated deployment may keep a plain ``.env`` beside its config. Kept
-    # out of _env_paths() deliberately: with ARC_CONFIG_DIR pointing at the real
-    # home it resolves to ~/.arc/.env, the abandoned file every surface moved off.
-    cfg = os.environ.get("ARC_CONFIG_DIR")
-    if cfg:
-        paths.insert(0, Path(cfg).expanduser() / ".env")
+    # An isolated deployment may keep a plain ``.env`` beside its config, and it
+    # wins over the ambient ones so a self-contained folder stays self-contained.
+    paths = [dotenv_file(), *_env_paths()]
     for env_path in paths:
         if env_path.exists():
             load_dotenv(env_path)

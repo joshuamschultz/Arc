@@ -31,6 +31,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from arctrust.audit import AuditEvent
+from arctrust.paths import arc_team, config_file
 from arctrust.signer import InProcessSigner
 from nacl.signing import SigningKey
 
@@ -102,9 +103,9 @@ class _Deployment:
         shutil.copytree(
             _FIXTURE_DIR, self.root / _BUNDLE, ignore=shutil.ignore_patterns("__pycache__")
         )
-        # The real fleet layout: agents live at ``<arc_dir>/team/<name>``, which is
-        # where `arctui.roster` and the connection seam both look for one's tier.
-        self.agents_dir = self.arc_dir / "team"
+        # The real fleet layout: agents live in the deployment's team root, which
+        # is where `arctui.roster` and the connection seam both look for one's tier.
+        self.agents_dir = arc_team(base=self.arc_dir)
         for name in (*_GRANTED, *_UNGRANTED):
             self.agent_dir(name)
         self.sink = _RecordingSink()
@@ -414,9 +415,9 @@ def _harden(deployment: _Deployment, agent: str, tier: str) -> None:
 
 def _fleet_tier(deployment: _Deployment, tier: str) -> None:
     """Set the deployment's own floor, in the file the whole stack already merges."""
-    (deployment.arc_dir / "arcagent.toml").write_text(
-        f'[security]\ntier = "{tier}"\n', encoding="utf-8"
-    )
+    fleet = config_file("arcagent.toml", deployment.arc_dir)
+    fleet.parent.mkdir(parents=True, exist_ok=True)
+    fleet.write_text(f'[security]\ntier = "{tier}"\n', encoding="utf-8")
 
 
 async def test_a_connection_is_served_at_its_strictest_grantee(

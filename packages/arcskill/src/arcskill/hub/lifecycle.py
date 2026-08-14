@@ -27,6 +27,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from arctrust.paths import skills_dir
+
 from arcskill.hub.config import HubConfig
 from arcskill.hub.errors import CRLUnreachable
 from arcskill.lock import HubLockFile
@@ -128,7 +130,7 @@ def quarantine_skill(
     if not config.enabled:
         return False
 
-    base = install_base or Path.home() / ".arc" / "skills"
+    base = install_base or skills_dir()
     return _quarantine_one(name, base, lock_path)
 
 
@@ -219,7 +221,7 @@ def _quarantine_matching(
     if not revoked_hashes:
         return []
 
-    base = install_base or Path.home() / ".arc" / "skills"
+    base = install_base or skills_dir()
     try:
         lock = HubLockFile.load(lock_path)
     except Exception as exc:  # reason: fail-open — log + continue

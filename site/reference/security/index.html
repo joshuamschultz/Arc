@@ -2620,6 +2620,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -2697,6 +2701,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../runbooks/deploy/up/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bring-up (arc up)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../runbooks/deploy/local/" class="md-nav__link">
         
   
@@ -2733,6 +2765,34 @@
     
   
     Docker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/deploy/azure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Azure
   
 
     
@@ -3038,6 +3098,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -3095,6 +3159,62 @@
     
   
     Hardening
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/signing-capabilities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Signing capabilities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/staging-module-bundles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Staging module bundles
   
 
     
@@ -4446,7 +4566,7 @@ writes):</p>
 <tr>
 <td>2</td>
 <td><code>global</code> / <code>global-skills</code></td>
-<td><code>~/.arc/capabilities/</code></td>
+<td><code>~/.arc/state/capabilities/</code></td>
 <td><strong>untrusted</strong></td>
 </tr>
 <tr>
@@ -4597,23 +4717,43 @@ and round-trip the rest of the file (comments, key order) via tomlkit.</p>
 <h3 id="the-operator-flow">The operator flow<a class="headerlink" href="#the-operator-flow" title="Permanent link">&para;</a></h3>
 <p>The agent discovers <em>which</em> capabilities are gated; the operator <em>approves</em>
 them. This split is the layering (see §6): <code>arcagent.capabilities.inventory</code>
-lists gated items, <code>arctrust.approve</code> / <code>arctrust.disapprove</code> mutate the store.</p>
+lists gated items, and <code>arcagent.sign_capability</code> /
+<code>arcagent.revoke_capability</code> (SPEC-066 COMP-010) mutate the trust, driving
+<code>arctrust</code>'s <code>approve</code> / <code>disapprove</code> / <code>pin_key</code> / <code>unpin_key</code> primitives.</p>
 <p><strong>CLI</strong> (<code>arc trust</code>, in <code>arccli.commands.trust</code>):</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>arc trust list [--agent &lt;id&gt;] [--all]        # show gated (non-loaded) capabilities
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>arc trust approve &lt;name&gt; [--agent &lt;id&gt;]      # pin the current source hash
-<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>arc trust disapprove &lt;name&gt; [--agent &lt;id&gt;]   # remove a pin (drift / revoke)
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>arc trust approve &lt;name&gt; [--agent &lt;id&gt;]      # sign, pin the key, pin the hash
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>arc trust disapprove &lt;name&gt; [--agent &lt;id&gt;]   # the exact inverse (drift / revoke)
 </code></pre></div>
-<p><code>approve</code> reads the gated item's current source, calls <code>arctrust.approve</code> with
-the loader's pin name (<code>pin_name_for</code> — a tool's file stem, a skill's folder
-name), records the approver as the on-box operator DID (<code>~/.arc/operator</code>), then
-re-scans and reports the post-approval verdict. It even warns you if you approve
-at personal tier, where pins aren't consulted at load:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>Approved greet on acme-analyst — status now: loaded (approver did:arc:acme:operator/1a2b…).
+<p><code>approve</code> is <strong>one action with three effects</strong>, because passing the load gate
+needs all three and any one alone leaves the capability gated: a detached
+<code>.arcsig</code> signature over the artifact bytes (clears the signature floor), the
+signer's verify key pinned into <code>[security.validators] trusted_keys</code> (makes that
+signature verifiable), and the source-hash pin under
+<code>[[security.validators.approved]]</code> (records the operator's approval of these
+exact bytes). A hash pin on its own never reaches the enterprise/federal
+signature floor, which is why approval is signing.</p>
+<p>The signer is always the on-box deployment operator key (<code>~/.arc/state/operator</code>);
+there is no flag to supply an identity. The pin name is the loader's
+(<code>pin_name_for</code> — a tool's file stem, a skill's folder name). After signing, the
+command re-scans and reports the post-approval verdict:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>Approved greet on acme-analyst — signed, key pinned, hash pinned; status now: loaded (approver did:arc:acme:operator/1a2b…).
 </code></pre></div>
+<p><code>disapprove</code> removes all three. The verify key is unpinned only once no other
+artifact under that agent root is still signed by it, so revoking one capability
+never silently gates every other one the same operator signed.</p>
+<p><strong>Custody limit:</strong> capability signing needs the operator seed in-process to
+derive the verify key it pins. Under <code>custody = "vault_transit"</code> (the
+enterprise default, forced at federal) the seed never enters the process, so
+both surfaces refuse and sign nothing rather than reach for another key.</p>
 <p><strong>arcui</strong> (<code>arcui.routes.trust</code>) is the same operation over HTTP —
-<code>GET /api/trust/gated</code>, <code>POST /api/trust/approve</code>, <code>POST /api/trust/disapprove</code>.
-Mutations are gated on the <code>operator</code> role, record the same operator DID as
-approver, and audit every mutation.</p>
+<code>GET /api/trust/gated</code>, <code>GET /api/trust/source</code>, <code>POST /api/trust/approve</code>,
+<code>POST /api/trust/disapprove</code> — calling the same <code>arcagent.sign_capability</code>
+seam. Mutations are gated on the <code>operator</code> role, record the same operator DID
+as approver, and audit every mutation. The approve control is unavailable until
+the artifact source has been displayed (REQ-322).</p>
+<p>Operator procedure, including how to read each denial verdict:
+<a href="../../runbooks/signing-capabilities/">Signing a Gated Capability</a>.</p>
 <hr />
 <h3 id="end-to-end-pipeline">End-to-end pipeline<a class="headerlink" href="#end-to-end-pipeline" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>AUTHOR                     LOAD-GATE (per file, untrusted roots only)              REGISTER + INVOKE

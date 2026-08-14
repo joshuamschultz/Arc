@@ -118,7 +118,7 @@ Pillar 2.
 Pins persist in `[security.validators]` in `arcagent.toml`
 (`validators.py`) — write-only by a human via `arc trust approve`, never by
 the agent. The **trust store** (`trust_store.py`) resolves DID → public key
-against `0600` `~/.arc/trust/{operators,issuers}.toml`, backing operator
+against `0600` `~/.arc/state/trust/{operators,issuers}.toml`, backing operator
 pairing signatures and backend-manifest issuer signatures.
 
 ---

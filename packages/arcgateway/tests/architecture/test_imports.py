@@ -299,7 +299,9 @@ def test_every_in_tree_platform_exports_the_descriptor() -> None:
     missing = [
         folder.name
         for folder in adapters_dir.iterdir()
-        if folder.is_dir() and not folder.name.startswith("_") and (folder / "__init__.py").exists()
+        if folder.is_dir()
+        and not folder.name.startswith("_")
+        and (folder / "__init__.py").exists()
         if "PLATFORM" not in (folder / "__init__.py").read_text(encoding="utf-8")
     ]
 

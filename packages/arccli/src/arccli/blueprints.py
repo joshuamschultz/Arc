@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import Any
 
 import arcagent
-from arctrust import arc_home
+from arctrust.paths import blueprints_dir
 
 _logger = logging.getLogger("arccli.blueprints")
 
@@ -54,13 +54,13 @@ _SIBLING_TABLES: tuple[str, ...] = ("arcllm", "arcrun")
 
 
 def user_blueprint_dir() -> Path:
-    """The user/shared blueprint dir: ``${ARC_CONFIG_DIR:-~/.arc}/blueprints``.
+    """The user/shared blueprint dir — :func:`arctrust.paths.blueprints_dir`.
 
     Resolved per call through :func:`arctrust.arc_home` so an isolated deployment
     reads ITS presets. A blueprint is signed and provenance-checked, so loading
     one from the wrong home means verifying against the wrong operator key.
     """
-    return arc_home() / "blueprints"
+    return blueprints_dir()
 
 
 def dumps_toml(data: dict[str, Any]) -> str:

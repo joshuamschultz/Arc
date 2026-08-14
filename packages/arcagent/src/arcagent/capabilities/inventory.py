@@ -22,7 +22,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from arctrust import TofuLayer, ValidatorsConfig, arc_home, hash_source
+from arctrust import TofuLayer, ValidatorsConfig, hash_source
+from arctrust.paths import capabilities_dir
 from pydantic import BaseModel, ConfigDict
 
 import arcagent.builtins.capabilities as _builtins_pkg
@@ -53,20 +54,11 @@ _KNOWN_TIERS: frozenset[str] = frozenset({"personal", "enterprise", "federal"})
 def global_capabilities_root() -> Path:
     """Return the operator-curated global capabilities root.
 
-    ``${ARC_CONFIG_DIR:-~/.arc}/capabilities`` — resolved through
-    :func:`arctrust.arc_home`, the single source of truth for the Arc home, so
-    an isolated deployment (or a test) that relocates its config tree does not
+    :func:`arctrust.paths.capabilities_dir` is the single source of truth, so an
+    isolated deployment (or a test) that relocates its config tree does not
     scan, and cannot write into, the invoking user's real ``~/.arc``.
-
-    Resolved on every call, never cached at import: the env var is routinely set
-    after this module is first imported, and a module-level constant would
-    freeze whatever the environment happened to say at import time.
-
-    This is the ONE resolver for that root. Every surface that shows or scans
-    global capabilities calls it rather than re-deriving the path, because a
-    second literal is how the two answers drifted apart in the first place.
     """
-    return arc_home() / "capabilities"
+    return capabilities_dir()
 
 
 class CapabilityInventoryItem(BaseModel):

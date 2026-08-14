@@ -251,9 +251,7 @@ def _parse_coverage_json(
         # Scoring 0/0 as zero fails straight-line code for having no `if` to
         # test, which pushes toward either dropping it from the gate or adding
         # a branch to satisfy the arithmetic — both worse than measuring it.
-        branch_pct = (
-            (covered_branches / total_branches * 100.0) if total_branches > 0 else 100.0
-        )
+        branch_pct = (covered_branches / total_branches * 100.0) if total_branches > 0 else 100.0
 
         results[display_name] = {"line": line_pct, "branch": branch_pct}
 

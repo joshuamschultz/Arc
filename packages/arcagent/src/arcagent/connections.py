@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from arctrust.audit import AuditEvent, AuditSink, emit
+from arctrust.paths import arc_team, config_file, default_operator_key_path
 
 from arcagent.connection_catalog import AuditChain, CatalogEntry, ClosableSink, catalog
 from arcagent.core.errors import ExtensionError
@@ -102,12 +103,10 @@ TIER_WOULD_RISE = "CONNECTION_TIER_WOULD_RISE"
 #: was resolved at.
 PLAN_TIER_TOO_LOW = "CONNECTION_PLAN_TIER_TOO_LOW"
 
-#: The fleet-wide config every agent's own config merges over, and the directory
-#: agent directories live in. Both are what the rest of the stack already reads —
-#: ``core/config.py`` composes ``<arc_dir>/arcagent.toml`` under every agent's
-#: file, and ``arctui.roster`` enumerates ``<arc_dir>/team/*/arcagent.toml``.
+#: The fleet-wide config every agent's own config merges over. What the rest of
+#: the stack already reads — ``core/config.py`` composes it under every agent's
+#: file, and ``arctui.roster`` enumerates ``<arc_team>/*/arcagent.toml``.
 _FLEET_CONFIG = "arcagent.toml"
-_TEAM_DIRNAME = "team"
 
 #: Stringency order. A connection two agents share is served at the strictest of
 #: them, because a store that satisfies the laxest satisfies nobody else.
@@ -116,10 +115,6 @@ _STRINGENCY = (Tier.PERSONAL, Tier.ENTERPRISE, Tier.FEDERAL)
 #: Refusal code for a credential no manifest declares — the allowlist that stops
 #: a rotation from writing an arbitrary entry into the agent's credential file.
 UNDECLARED_CREDENTIAL = "CONNECTOR_SECRET_UNDECLARED"
-
-#: The operator key an extension bundle's signatures are pinned to, under an
-#: Arc config dir. Read-only here — see :meth:`Connections.install`.
-_OPERATOR_KEY = ("operator", "operator.key")
 
 
 def _refuse(code: str, message: str, **details: Any) -> ExtensionError:
@@ -221,7 +216,7 @@ def resolve_roots(
 def deployment_tier(arc_dir: Path | str | None = None) -> Tier:
     """The tier floor this deployment runs at.
 
-    Read from ``<arc_dir>/arcagent.toml``, which is the fleet-wide layer
+    Read from the deployment's ``arcagent.toml`` (under the config root), the fleet-wide layer
     ``core/config.py`` already merges under every agent's own config — not a new
     setting. A deployment that has never been hardened answers ``personal``, which
     is the shipped default that file itself carries.
@@ -230,20 +225,20 @@ def deployment_tier(arc_dir: Path | str | None = None) -> Tier:
     connected needs the tier a manifest is parsed at and nothing else — a
     deployment that has connected nothing yet still has an answer.
     """
-    return _tier_of(_read_toml(_root(arc_dir) / _FLEET_CONFIG))
+    return _tier_of(_read_toml(config_file(_FLEET_CONFIG, _root(arc_dir))))
 
 
 def agent_tier(agent: str, arc_dir: Path | str | None = None) -> Tier:
     """One agent's effective tier, never below the deployment's floor.
 
-    The agent's own ``<arc_dir>/team/<agent>/arcagent.toml`` merges over the fleet
+    The agent's own ``<arc_team>/<agent>/arcagent.toml`` merges over the fleet
     file, which is exactly how that agent will run. The floor is then applied as a
     lower bound rather than a default: a per-agent block declaring ``personal``
     under a federal deployment is a downgrade of the deployment's own posture, and
     a shared account must not be the thing that grants it.
     """
     root = _root(arc_dir)
-    own = _read_toml(root / _TEAM_DIRNAME / agent / _FLEET_CONFIG)
+    own = _read_toml(arc_team(base=root) / agent / _FLEET_CONFIG)
     return _strictest([deployment_tier(root), _tier_of(own)])
 
 
@@ -254,7 +249,7 @@ def deployment_egress_allow(arc_dir: Path | str | None = None) -> tuple[str, ...
     agent still applies its own list when a verb is registered; this one decides
     whether the account may be connected at all.
     """
-    raw = _read_toml(_root(arc_dir) / _FLEET_CONFIG)
+    raw = _read_toml(config_file(_FLEET_CONFIG, _root(arc_dir)))
     tools = raw.get("tools", {})
     policy = tools.get("policy", {}) if isinstance(tools, dict) else {}
     allow = policy.get("egress_allow", []) if isinstance(policy, dict) else []
@@ -273,7 +268,9 @@ def _tier_of(raw: Mapping[str, Any]) -> Tier:
 
 
 def _root(arc_dir: Path | str | None) -> Path:
-    return Path(arc_dir).expanduser() if arc_dir else _arc_home()
+    from arctrust.paths import arc_home
+
+    return Path(arc_dir).expanduser() if arc_dir else arc_home()
 
 
 def _read_toml(path: Path) -> dict[str, Any]:
@@ -303,7 +300,7 @@ def _operator_key(arc_dir: Path) -> Any:
     from arctrust import OperatorKey
 
     try:
-        return OperatorKey.load(arc_dir.joinpath(*_OPERATOR_KEY), generate_if_absent=False)
+        return OperatorKey.load(default_operator_key_path(arc_dir), generate_if_absent=False)
     except (FileNotFoundError, OSError):
         return None
 
@@ -323,12 +320,6 @@ def _operator_did(arc_dir: Path) -> str:
     if key is None:
         return UNKEYED_OPERATOR_DID
     return str(OperatorApprovalAuthority(key.into_signer()).did)
-
-
-def _arc_home() -> Path:
-    from arctrust.paths import arc_home
-
-    return arc_home()
 
 
 def _data_dir(given: Path | str | None) -> Path:

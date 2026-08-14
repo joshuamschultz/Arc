@@ -31,7 +31,7 @@ from pathlib import Path
 
 import arcrun
 from arctrust.audit import AuditEvent, AuditSink, emit
-from arctrust.paths import arc_home
+from arctrust.paths import env_file
 
 from arcagent.core.errors import ExtensionError
 from arcagent.extension.secrets import EnvFile
@@ -60,7 +60,7 @@ ENV_FILENAME = "arc.env"
 
 
 def default_env_file(arc_dir: Path | None = None) -> Path:
-    """The file every surface writes provider keys to: ``<arc_home>/arc.env``.
+    """The file every surface writes provider keys to: ``<arc_config>/arc.env``.
 
     Resolved here so no two surfaces can drift onto different files — a key set in
     one and invisible to the other is indistinguishable from a key that failed to
@@ -68,7 +68,7 @@ def default_env_file(arc_dir: Path | None = None) -> Path:
     CLI's ``--arc-dir`` override, so pointing one command at one deployment's world
     still goes through this resolver.
     """
-    return (arc_dir or arc_home()) / ENV_FILENAME
+    return env_file(arc_dir)
 
 
 class KeyStore:

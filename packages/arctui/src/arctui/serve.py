@@ -28,6 +28,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from arctrust.paths import ui_token_file
+
 from arctui.gateway_client import GatewayError
 
 _DEFAULT_HOST = "127.0.0.1"
@@ -71,8 +73,7 @@ class Endpoint:
 
 def default_token_path() -> Path:
     """Where ``arc ui start`` persists its loopback viewer token for local reuse."""
-    root = Path(os.environ.get("ARC_CONFIG_DIR", str(Path.home() / ".arc")))
-    return root / "ui" / "viewer-token"
+    return ui_token_file()
 
 
 def write_persisted_token(token: str, *, path: Path | None = None) -> None:

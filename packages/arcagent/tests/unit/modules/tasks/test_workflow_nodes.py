@@ -21,6 +21,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from arctrust import AgentIdentity
+from arctrust.paths import workflows_dir
 from packages.arcagent.tests.unit.modules.tasks.conftest import make_registry
 
 _SCHEMA: dict[str, Any] = {
@@ -628,7 +629,7 @@ class TestTheBundleFollowsTheNode:
         from arcagent.modules.tasks.node_execution import node_from_task
 
         monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "config"))
-        bundle = tmp_path / "config" / "workflows" / "onboarding"
+        bundle = workflows_dir(tmp_path / "config") / "onboarding"
         bundle.mkdir(parents=True)
         node = node_from_task(MagicMock(metadata=_node_block(workflow="onboarding")))
         assert node is not None

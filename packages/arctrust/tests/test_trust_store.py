@@ -346,12 +346,13 @@ class TestDefaultTrustDirHonorsArcConfigDir:
     def test_register_and_load_use_arc_config_dir_when_no_override(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """With no explicit trust_dir, both calls land under $ARC_CONFIG_DIR/trust.
+        """With no explicit trust_dir, both calls land in ``arctrust.paths.trust_dir()``.
 
         This is what makes `arc identity init`'s self-registration visible to
         the live gateway's PairingStore under an isolated ARC_CONFIG_DIR
         deployment (e.g. the DGX setup) — both sides must resolve the same
-        default directory.
+        default directory. The trust store is irreplaceable state, so that
+        directory sits under ``state/`` where an update cannot reach it.
         """
         monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
         sk = SigningKey.generate()
@@ -359,7 +360,7 @@ class TestDefaultTrustDirHonorsArcConfigDir:
 
         register_operator(did, bytes(sk.verify_key))
 
-        expected_file = tmp_path / "trust" / "operators.toml"
+        expected_file = tmp_path / "state" / "trust" / "operators.toml"
         assert expected_file.exists()
 
         invalidate_cache()

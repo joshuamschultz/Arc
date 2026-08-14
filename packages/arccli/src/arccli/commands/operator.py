@@ -25,9 +25,9 @@ from arctrust import (
     build_signer,
     derive_record_key,
 )
+from arctrust.paths import config_file, default_operator_key_path, operator_dir
 from arctrust.signer import VAULT_TRANSIT
 
-_KEY_NAME = "operator.key"
 _OPERATOR_KEY_REF = "operator"
 
 
@@ -40,12 +40,19 @@ def _machine_config_path() -> Path:
     box. A constant frozen at import would ignore an env var set afterwards and
     silently fall back to the invoking user's real home.
     """
-    return arc_home() / "arcagent.toml"
+    return config_file("arcagent.toml")
 
 
-def operator_key_path(arc_dir: Path) -> Path:
-    """Resolve the operator-key file under an Arc config dir."""
-    return Path(arc_dir).expanduser() / "operator" / _KEY_NAME
+def operator_key_path(arc_dir: Path | None = None) -> Path:
+    """Resolve the operator-key file — through the ONE accessor that owns it.
+
+    Composing ``arc_dir / "operator"`` here read the PRE-SPLIT location while
+    :func:`arctrust.default_operator_key_path` resolved ``state/operator/``, so
+    ``arc init`` minted a key under one path and the gateway's workflow runner
+    looked under another — signing with a key nothing could find, and degrading
+    to ``RunnerIdentityUnavailableError`` with "workflows will not progress".
+    """
+    return default_operator_key_path(arc_dir)
 
 
 def load_operator_key(arc_dir: Path | None = None) -> OperatorKey:
@@ -171,12 +178,23 @@ def operator_worm_sink(arc_dir: Path | None, data_dir: Path) -> WormSink:
     )
 
 
+def _notary_default(operator_key_dir: str) -> Path:
+    """The vault_transit keystore that sits beside the operator key.
+
+    Empty ``operator_key_dir`` means the deployment's own operator dir, so the
+    keystore follows the key rather than pinning a literal the key no longer
+    lives under.
+    """
+    base = Path(operator_key_dir).expanduser() if operator_key_dir else operator_dir()
+    return base / "notary"
+
+
 def _resolve_transit(sec: Any) -> FileNotaryTransit:
     """Resolve the out-of-process transit for CLI vault_transit signing."""
     keystore = (
         Path(sec.notary_keystore).expanduser()
         if sec.notary_keystore
-        else Path(sec.operator_key_dir).expanduser() / "notary"
+        else _notary_default(sec.operator_key_dir)
     )
     transit = FileNotaryTransit(keystore, algorithm=sec.signing_algorithm)
     try:

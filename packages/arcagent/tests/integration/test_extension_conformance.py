@@ -60,6 +60,7 @@ import pytest
 from arcrun import ToolContext
 from arctrust import ValidatorsConfig, generate_keypair
 from arctrust.audit import AuditEvent
+from arctrust.paths import module_root
 
 import arcagent
 from arcagent.capabilities.capability_registry import CapabilityRegistry
@@ -235,8 +236,8 @@ def _arc_dir(tmp_path: Path) -> Path:
 def _installed_connectors_module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Install the ``connectors`` module into this test's deployment root.
 
-    SPEC-066 REQ-333/337: discovery reads ``${ARC_CONFIG_DIR}/modules``, so a
-    module is present because an operator installed it — never because it
+    SPEC-066 REQ-333/337: discovery reads :func:`arctrust.paths.module_root`, so
+    a module is present because an operator installed it — never because it
     shipped in the wheel. All four calls ``arc module install`` makes run here:
     build, verify, materialize the runtime at the deployment root, and copy the
     capability surface into the AGENT's own capabilities root, which is the only
@@ -259,7 +260,7 @@ def _installed_connectors_module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     verified = arcbundle.verify_bundle(
         bundle, tier="personal", trusted_issuers={_ISSUER: _ISSUER_KEYPAIR.public_key}
     )
-    installed = arcbundle.materialize(verified, arc_dir / "modules")
+    installed = arcbundle.materialize(verified, module_root(arc_dir))
     arcbundle.copy_capabilities(installed, _agent_home(tmp_path), module="connectors")
 
 

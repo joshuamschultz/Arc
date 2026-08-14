@@ -210,7 +210,7 @@ class ArcAgent:
     def _operator_key_path(self) -> Path:
         """Resolve the operator-key file (SPEC-053 REQ-004).
 
-        Lives under ``security.operator_key_dir`` (default ``~/.arc/operator``),
+        Lives under ``security.operator_key_dir`` (empty = ``arctrust.paths.operator_dir()``),
         outside the workspace tool-sandbox so agent-invoked file tools cannot
         write or replace it.
         """

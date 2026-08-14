@@ -28,6 +28,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from arctrust.paths import config_file, gateway_runtime_dir
 
 from arcgateway.cli import (
     _wire_adapters,
@@ -116,7 +117,7 @@ def test_cmd_stop_no_runtime_dir_honors_arc_config_dir(
 ) -> None:
     """Omitting --runtime-dir resolves it via GatewayConfig.load() (ARC_CONFIG_DIR)."""
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
-    pid_file = tmp_path / "gateway" / "run" / "gateway.pid"
+    pid_file = gateway_runtime_dir(tmp_path) / "gateway.pid"
     pid_file.parent.mkdir(parents=True)
     pid_file.write_text("54321\n", encoding="utf-8")
 
@@ -158,7 +159,7 @@ def test_cmd_status_no_runtime_dir_honors_arc_config_dir(
 ) -> None:
     """Omitting --runtime-dir resolves it via GatewayConfig.load() (ARC_CONFIG_DIR)."""
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
-    pid_file = tmp_path / "gateway" / "run" / "gateway.pid"
+    pid_file = gateway_runtime_dir(tmp_path) / "gateway.pid"
     pid_file.parent.mkdir(parents=True)
     pid_file.write_text("13579\n", encoding="utf-8")
 
@@ -209,7 +210,7 @@ def test_cmd_status_unreadable_marker(tmp_path: Path) -> None:
 def test_cmd_setup_creates_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """cmd_setup creates gateway.toml when it doesn't exist."""
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
-    config_path = tmp_path / "gateway.toml"
+    config_path = config_file("gateway.toml", tmp_path)
 
     cmd_setup()
 
@@ -222,7 +223,7 @@ def test_cmd_setup_creates_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
 def test_cmd_setup_sets_0600_permissions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """cmd_setup creates gateway.toml with 0600 permissions."""
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
-    config_path = tmp_path / "gateway.toml"
+    config_path = config_file("gateway.toml", tmp_path)
 
     cmd_setup()
 
@@ -235,7 +236,8 @@ def test_cmd_setup_does_not_overwrite_existing(
 ) -> None:
     """cmd_setup does NOT overwrite an existing gateway.toml."""
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
-    config_path = tmp_path / "gateway.toml"
+    config_path = config_file("gateway.toml", tmp_path)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
     original_content = "existing config"
     config_path.write_text(original_content, encoding="utf-8")
 
@@ -345,7 +347,9 @@ def test_cmd_start_no_config_path_uses_arc_config_dir(
     called, since cmd_start exits before reaching asyncio.run either way.
     """
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
-    (tmp_path / "gateway.toml").write_text(
+    gateway_toml = config_file("gateway.toml", tmp_path)
+    gateway_toml.parent.mkdir(parents=True, exist_ok=True)
+    gateway_toml.write_text(
         """
 [gateway]
 tier = "personal"

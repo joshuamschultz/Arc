@@ -1,11 +1,11 @@
-"""The global capabilities root resolves through ``arc_home()``, not a literal.
+"""The global capabilities root resolves through the one resolver, not a literal.
 
-``arctrust.arc_home()`` is the single source of truth for ``~/.arc`` and honors
-``ARC_CONFIG_DIR`` so a test or an alternate deployment can relocate the whole
-config tree. Every consumer that hardcoded ``Path("~/.arc/capabilities")``
-silently opted out of that: an isolated deployment scanned — and a test suite
-WROTE INTO — the invoking user's real arc home. These cases pin the resolver so
-that cannot come back.
+:func:`arctrust.paths.capabilities_dir` is the single source of truth for the
+operator-curated capability root, and it honors ``ARC_CONFIG_DIR`` so a test or
+an alternate deployment can relocate the whole tree. Every consumer that
+hardcoded ``Path("~/.arc/capabilities")`` silently opted out of that: an isolated
+deployment scanned — and a test suite WROTE INTO — the invoking user's real arc
+home. These cases pin the resolver so that cannot come back.
 
 The unset-env default is asserted explicitly because it is the common path: the
 fix must relocate the root under ``ARC_CONFIG_DIR`` and change nothing at all
@@ -17,6 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from arctrust.paths import capabilities_dir
 
 from arcagent.capabilities.inventory import (
     collect_capability_inventory,
@@ -32,16 +33,17 @@ _TOOL = (
 
 
 def test_unset_arc_config_dir_keeps_todays_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No env var → exactly ``~/.arc/capabilities``, as before the fix."""
+    """No env var → the capability root under the real home, as before the fix."""
     monkeypatch.delenv("ARC_CONFIG_DIR", raising=False)
-    assert global_capabilities_root() == Path.home() / ".arc" / "capabilities"
+    assert global_capabilities_root() == capabilities_dir()
+    assert global_capabilities_root().is_relative_to(Path.home() / ".arc")
 
 
 def test_arc_config_dir_relocates_the_global_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "isolated"))
-    assert global_capabilities_root() == tmp_path / "isolated" / "capabilities"
+    assert global_capabilities_root() == capabilities_dir(tmp_path / "isolated")
 
 
 def test_the_root_is_resolved_per_call_not_frozen_at_import(
@@ -56,7 +58,7 @@ def test_the_root_is_resolved_per_call_not_frozen_at_import(
     first = global_capabilities_root()
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "second"))
     assert global_capabilities_root() != first
-    assert global_capabilities_root() == tmp_path / "second" / "capabilities"
+    assert global_capabilities_root() == capabilities_dir(tmp_path / "second")
 
 
 @pytest.mark.asyncio
@@ -70,8 +72,9 @@ async def test_inventory_scans_the_relocated_global_root(
     planted under ``ARC_CONFIG_DIR`` and found through the seam a real scan uses.
     """
     arc_home = tmp_path / "isolated"
-    (arc_home / "capabilities").mkdir(parents=True)
-    (arc_home / "capabilities" / "relocated.py").write_text(_TOOL, encoding="utf-8")
+    root = capabilities_dir(arc_home)
+    root.mkdir(parents=True)
+    (root / "relocated.py").write_text(_TOOL, encoding="utf-8")
     monkeypatch.setenv("ARC_CONFIG_DIR", str(arc_home))
     agent_dir = tmp_path / "agent"
     agent_dir.mkdir()

@@ -12,6 +12,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from arctrust.paths import capabilities_dir
 
 _ARC = Path(__file__).parent.parent.parent.parent / ".venv" / "bin" / "arc"
 
@@ -172,14 +173,15 @@ class TestExtInstall:
         arc_home = tmp_path / "arc-home"
         cap_file = tmp_path / "smoke_install_test.py"
         cap_file.write_text(_GOOD_CAPABILITY)
-        dest = arc_home / "capabilities" / "smoke_install_test.py"
+        dest = capabilities_dir(arc_home) / "smoke_install_test.py"
 
         result = _arc("ext", "install", str(cap_file), arc_home=arc_home)
 
         assert result.returncode == 0, f"stderr: {result.stderr}\nstdout: {result.stdout}"
         assert dest.exists()
         # The invoking user's real home must be untouched — the whole point.
-        assert not (Path.home() / ".arc" / "capabilities" / "smoke_install_test.py").exists()
+        real_home = capabilities_dir(Path.home() / ".arc") / "smoke_install_test.py"
+        assert not real_home.exists()
 
 
 # Mark to avoid unused import warning

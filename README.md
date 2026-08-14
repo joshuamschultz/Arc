@@ -669,7 +669,7 @@ Tools, skills, hooks, and background tasks are all **capabilities** — picked u
 | # | Root | Trust | Source | Purpose |
 |---|------|-------|--------|---------|
 | 1 | `arcagent/builtins/capabilities/` | trusted | ships with the package | `bash`, `read`, `write`, `edit`, `find`, `grep`, `ls`, `reload` + the self-mod tools and skill folders |
-| 2 | `~/.arc/capabilities/` | trusted | the human operator | global, opt-in capabilities shared across every agent |
+| 2 | `~/.arc/state/capabilities/` | trusted | the human operator | global, opt-in capabilities shared across every agent |
 | 3 | `<agent>/capabilities/` | trusted | the human operator | per-agent capabilities |
 | 4 | `<agent>/workspace/.capabilities/` | **untrusted** | the agent itself, at runtime | passes through AST validator + (future) TOFU + OS sandbox before import |
 
@@ -730,7 +730,7 @@ For supply-chain-secure third-party skills (Sigstore + Rekor + static scan + san
 enabled = true
 ```
 
-Verified skills land under `~/.arc/capabilities/` (root 2) — same precedence rules apply.
+Verified skills land under `~/.arc/state/capabilities/` (root 2) — same precedence rules apply.
 
 ---
 
@@ -869,7 +869,7 @@ An agent's `identity.md`, its policy configuration, and `context.md` are immutab
 
 ### Dynamic Tool Safety (Four Defense Layers)
 
-The four defenses gate the **untrusted scan root only** — `<workspace>/.capabilities/`, where the agent itself can write Python. Builtins, `~/.arc/capabilities/`, and `<agent>/capabilities/` are operator-curated and skip the AST gate.
+The four defenses gate the **untrusted scan root only** — `<workspace>/.capabilities/`, where the agent itself can write Python. Builtins, `~/.arc/state/capabilities/`, and `<agent>/capabilities/` are operator-curated and skip the AST gate.
 
 1. **Source encoding check** — reject non-UTF-8 coding declarations. Codec attacks have to lose **before** the AST parser sees the source.
 2. **AST validator** — rejects 9 categories of bypass: privileged imports (`os`, `ctypes`, `subprocess`, `pickle`, `sys`, ...), frame traversal (`gi_frame`, `f_back`, `__subclasses__`), dynamic execution (`eval`, `exec`, `compile`, `__import__`), `sys.modules` subscription, `__builtins__` assignment, `__init_subclass__` definitions, starred `__builtins__` unpacking. Cites real CVEs (2023-37271, 2025-68668, 2025-22153).

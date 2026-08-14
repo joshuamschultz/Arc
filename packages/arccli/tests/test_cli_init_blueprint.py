@@ -14,6 +14,8 @@ import sys
 import tomllib
 from pathlib import Path
 
+from arctrust.paths import config_file
+
 
 def _arc(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
@@ -37,7 +39,7 @@ def test_init_blueprint_writes_merged_arcagent_config(tmp_path: Path) -> None:
         str(tmp_path),
     )
     assert result.returncode == 0, f"stderr: {result.stderr}\nstdout: {result.stdout}"
-    written = tomllib.loads((tmp_path / "arcagent.toml").read_text(encoding="utf-8"))
+    written = tomllib.loads(config_file("arcagent.toml", tmp_path).read_text(encoding="utf-8"))
     assert written["modules"]["memory"]["config"]["brain"] == "arcmemory"
     assert written["security"]["tier"] == "personal"
 
@@ -56,7 +58,7 @@ def test_init_blueprint_floors_tier_up(tmp_path: Path) -> None:
         str(tmp_path),
     )
     assert result.returncode == 0, f"stderr: {result.stderr}"
-    written = tomllib.loads((tmp_path / "arcagent.toml").read_text(encoding="utf-8"))
+    written = tomllib.loads(config_file("arcagent.toml", tmp_path).read_text(encoding="utf-8"))
     assert written["security"]["tier"] == "federal"
     assert "raised from" in result.stdout
 
@@ -69,7 +71,7 @@ def test_init_rejects_open_tier(tmp_path: Path) -> None:
 
 def test_init_arcllm_toml_uses_personal_vocab(tmp_path: Path) -> None:
     _arc("init", "--tier", "personal", "--provider", "anthropic", "--dir", str(tmp_path))
-    content = (tmp_path / "arcllm.toml").read_text(encoding="utf-8")
+    content = config_file("arcllm.toml", tmp_path).read_text(encoding="utf-8")
     assert "personal" in content
     # Guard the REMOVED "open" tier alias — as a standalone word, not the
     # substring (the module surface legitimately carries half_open_max_calls).

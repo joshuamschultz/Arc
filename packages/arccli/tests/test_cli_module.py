@@ -24,6 +24,7 @@ from typing import Any
 import pytest
 from arcbundle import capability_dir
 from arctrust import OperatorKey, generate_keypair
+from arctrust.paths import bundles_dir, default_operator_key_path, module_root, trust_dir
 from arctrust.trust_store import invalidate_cache
 
 from arccli.commands import module as module_cmd
@@ -85,12 +86,17 @@ def _agent_dir(deployment: Path) -> Path:
     return deployment / "team" / "josh_agent"
 
 
+def _arc_home(deployment: Path) -> Path:
+    """The deployment's Arc home — what ``ARC_CONFIG_DIR`` points the CLI at."""
+    return deployment / "arc"
+
+
 def _module_root(deployment: Path) -> Path:
-    return deployment / "arc" / "modules"
+    return module_root(_arc_home(deployment))
 
 
 def _bundle_store(deployment: Path) -> Path:
-    return deployment / "arc" / "bundles"
+    return bundles_dir(_arc_home(deployment))
 
 
 def _run(*args: str) -> None:
@@ -162,7 +168,7 @@ def test_bundle_signs_with_the_deployment_operator_key(deployment: Path) -> None
     manifest = json.loads(
         (_bundle_store(deployment) / "browser.arcbundle" / "manifest.json").read_bytes()
     )
-    key = OperatorKey.load(deployment / "arc" / "operator" / "operator.key")
+    key = OperatorKey.load(default_operator_key_path(_arc_home(deployment)))
     assert manifest["issuer"].startswith("did:arc:")
     assert key.public_key  # the key really was created on the box, not assumed
 
@@ -692,7 +698,7 @@ def test_the_audit_records_the_operator_not_the_subsystem(deployment: Path) -> N
     worm = next((deployment / "store" / "worm").glob("*.jsonl"))
     events = [json.loads(line)["event"] for line in worm.read_text().splitlines() if line.strip()]
     installed = next(e for e in events if e["action"] == "module.installed")
-    key = OperatorKey.load(deployment / "arc" / "operator" / "operator.key")
+    key = OperatorKey.load(default_operator_key_path(_arc_home(deployment)))
     assert installed["actor_did"].startswith("did:arc:")
     assert installed["actor_did"] != "did:arc:system:module-installer"
     assert key.public_key
@@ -773,9 +779,9 @@ def _reissue_as_dev(deployment: Path, bundle: Path) -> None:
 
 def _register_issuer(deployment: Path, did: str, public_key: bytes) -> None:
     """Write a real ``issuers.toml`` entry at the 0600 the trust store demands."""
-    trust_dir = deployment / "arc" / "trust"
-    trust_dir.mkdir(parents=True, exist_ok=True)
-    path = trust_dir / "issuers.toml"
+    issuers = trust_dir(_arc_home(deployment))
+    issuers.mkdir(parents=True, exist_ok=True)
+    path = issuers / "issuers.toml"
     encoded = base64.b64encode(public_key).decode("ascii")
     path.write_text(f'[issuers."{did}"]\npublic_key = "{encoded}"\n', encoding="utf-8")
     path.chmod(0o600)

@@ -361,5 +361,3 @@ async def test_audit_chain_shows_interleaved_platform_events(
     assert all(e.agent_did == _AGENT_DID for e in web_events), (
         "All web events must carry the agent DID for audit attribution"
     )
-
-

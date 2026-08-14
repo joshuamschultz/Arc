@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 from arcgateway import team_roster
+from arctrust.paths import config_file, env_file
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
@@ -55,10 +56,10 @@ def _build_app(team_root: Path) -> Starlette:
 
 @pytest.fixture
 def ctx(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, Path]:
-    cfg_dir = tmp_path / "cfg"
-    monkeypatch.setenv("ARC_CONFIG_DIR", str(cfg_dir))
+    home = tmp_path / "arc"
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(home))
     team_root = _build_team_dir(tmp_path)
-    return TestClient(_build_app(team_root)), cfg_dir
+    return TestClient(_build_app(team_root)), home
 
 
 # The roster id is the agent's short name ([agent].name == "sales" for sales_agent/).
@@ -76,18 +77,18 @@ def test_viewer_is_refused(ctx: tuple[TestClient, Path]) -> None:
 
 
 def test_bad_token_refused_writes_nothing(ctx: tuple[TestClient, Path]) -> None:
-    client, cfg_dir = ctx
+    client, home = ctx
     r = client.post(
         _URL,
         json={"token": "not-a-token", "user_id": 1},
         headers={"Authorization": "Bearer op"},
     )
     assert r.status_code == 400
-    assert not (cfg_dir / "arc.env").exists()
+    assert not env_file(home).exists()
 
 
 def test_operator_connect_wires_block_token_in_env(ctx: tuple[TestClient, Path]) -> None:
-    client, cfg_dir = ctx
+    client, home = ctx
     r = client.post(
         _URL,
         json={"token": _GOOD_TOKEN, "user_id": 8293394811},
@@ -99,10 +100,11 @@ def test_operator_connect_wires_block_token_in_env(ctx: tuple[TestClient, Path])
     assert body["restart_required"] is True
     assert body["block"] == "sales_agent_telegram"
     # token in env, bound in config, NEVER the token itself in config
-    assert _GOOD_TOKEN in (cfg_dir / "arc.env").read_text()
-    gw = tomllib.loads((cfg_dir / "gateway.toml").read_text())
+    assert _GOOD_TOKEN in env_file(home).read_text()
+    gateway = config_file("gateway.toml", home)
+    gw = tomllib.loads(gateway.read_text())
     assert gw["platforms"]["sales_agent_telegram"]["agent_did"] == "did:arc:local:executor/7e3e"
-    assert _GOOD_TOKEN not in (cfg_dir / "gateway.toml").read_text()
+    assert _GOOD_TOKEN not in gateway.read_text()
 
 
 def test_user_id_must_be_int(ctx: tuple[TestClient, Path]) -> None:

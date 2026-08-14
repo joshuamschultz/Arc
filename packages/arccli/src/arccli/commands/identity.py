@@ -21,7 +21,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from arctrust import AgentIdentity, arc_home
+from arctrust import AgentIdentity
+from arctrust.paths import identity_dir, trust_dir
 
 from arccli.commands._shared import err as _err
 from arccli.commands._shared import write as _out
@@ -37,7 +38,7 @@ def _default_key_dir() -> Path:
     alongside the rest of that deployment's config instead of leaking to the
     invoking user's home.
     """
-    return arc_home() / "identity"
+    return identity_dir()
 
 
 def _resolve_key_dir(args: list[str]) -> Path:
@@ -47,7 +48,10 @@ def _resolve_key_dir(args: list[str]) -> Path:
         return Path(explicit).expanduser()
     base = _parse_opt(args, "--dir", "")
     if base:
-        return Path(base).expanduser() / "identity"
+        # Through the accessor, so ``--dir X`` and ``ARC_CONFIG_DIR=X`` name the
+        # SAME directory. Composing ``X / "identity"`` here meant one flag wrote
+        # the signing authority where the other would never look for it.
+        return identity_dir(base)
     return _default_key_dir()
 
 
@@ -63,7 +67,7 @@ def _resolve_trust_dir(args: list[str], key_dir: Path) -> Path | None:
     """
     base = _parse_opt(args, "--dir", "")
     if base:
-        return Path(base).expanduser() / "trust"
+        return trust_dir(base)
     if "--key-dir" in args:
         return key_dir / "trust"
     return None

@@ -432,11 +432,14 @@ class SecurityConfig(BaseModel):
     # (the audited subject must not be the audit authority) and is loaded
     # read-only from OUTSIDE the workspace tool-sandbox (AU-9(2)/AU-10).
     operator_key_dir: str = Field(
-        default="~/.arc/operator",
+        default="",
         description=(
             "Directory holding the deployment operator key (audit authority). "
             "Kept outside the agent workspace; private key is 0600, dir 0700. "
-            "SPEC-053."
+            "Empty resolves arctrust.paths.operator_dir() — the same directory "
+            "the CLI and gateway use. A literal default here ignored "
+            "ARC_CONFIG_DIR, so an isolated deployment's agent signed its chain "
+            "with the invoking user's key. SPEC-053."
         ),
     )
     operator_vault_path: str = Field(

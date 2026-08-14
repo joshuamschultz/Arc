@@ -89,9 +89,7 @@ def test_the_other_platforms_still_load_alongside_a_broken_one(
     )
 
 
-def test_the_loaded_roster_is_logged(
-    broken_folder: str, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_the_loaded_roster_is_logged(broken_folder: str, caplog: pytest.LogCaptureFixture) -> None:
     """One line names every platform that did load.
 
     Without it, a platform that silently stopped working is indistinguishable
@@ -168,9 +166,7 @@ def test_an_absent_platform_does_not_stop_a_present_one(
         built_names.append(ctx.name)
         return _StubAdapter(ctx.name)
 
-    spec = registry.AdapterSpec(
-        name="present", requires=(), supports=(), build=_build
-    )
+    spec = registry.AdapterSpec(name="present", requires=(), supports=(), build=_build)
     monkeypatch.setattr(registry, "discover_adapters", lambda: [spec])
 
     registry.build_adapters(

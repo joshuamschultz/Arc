@@ -20,6 +20,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from arctrust.paths import config_file
 
 from arccli.commands.identity import identity_handler
 from arccli.commands.registry import (
@@ -30,7 +31,9 @@ from arccli.commands.registry import (
 
 
 def _write_gateway_toml(tmp_path: Path, db_path: Path) -> None:
-    (tmp_path / "gateway.toml").write_text(
+    path = config_file("gateway.toml", tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
         f"""\
 [gateway]
 tier = "personal"

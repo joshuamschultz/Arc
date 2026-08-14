@@ -155,8 +155,7 @@ async def test_a_reply_carrying_a_file_is_delivered_as_a_file(tmp_path: Path) ->
     )
 
     assert bot.send_document.await_count == 1, (
-        "the file part was not delivered as a document — an agent still cannot "
-        "send a file back"
+        "the file part was not delivered as a document — an agent still cannot send a file back"
     )
     assert "quarterly report" in _delivered_text(bot), "the text part was dropped"
 
@@ -203,9 +202,7 @@ async def test_a_kind_the_platform_does_not_declare_degrades_to_a_description(
     tmp_path: Path,
 ) -> None:
     """Declared incapability: the gateway knows before it tries (REQ-310/311)."""
-    spec = next(
-        (s for s in registry.discover_adapters() if s.name == "telegram"), None
-    )
+    spec = next((s for s in registry.discover_adapters() if s.name == "telegram"), None)
     assert spec is not None, "telegram is not in the discovered roster"
 
     unsupported = next(
@@ -237,9 +234,7 @@ async def test_a_kind_the_platform_does_not_declare_degrades_to_a_description(
         f"a {unsupported!r} part the platform does not declare produced no "
         "delivery at all — the turn was lost"
     )
-    assert artefact.name in said, (
-        f"the degradation text does not name the file: {said!r}"
-    )
+    assert artefact.name in said, f"the degradation text does not name the file: {said!r}"
 
 
 async def test_a_file_the_wire_refuses_degrades_to_a_description(

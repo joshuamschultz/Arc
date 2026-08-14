@@ -101,7 +101,6 @@ def _media_turns() -> list[dict[str, Any]]:
     ]
 
 
-
 def _composed_media_turn() -> str:
     """Compose the media turn exactly as the agent does, via the real translator."""
     from arcagent.parts import PartTranslator

@@ -23,16 +23,32 @@ from pathlib import Path
 import pytest
 from arcagent.keys import default_env_file
 from arctrust import arc_home
+from arctrust.paths import env_file
 
 from arccli.commands.agent._common import _env_paths as _agent_env_paths
 from arccli.commands.run import _env_paths as _run_env_paths
 
 _LOADERS = (("run", _run_env_paths), ("agent", _agent_env_paths))
 
+#: The shipped unit is the deployment-side half of the contract.
+_UNIT = Path(__file__).resolve().parents[3] / "deploy" / "systemd" / "arc.service"
+
 
 def test_the_key_store_writes_the_file_the_deployment_sources() -> None:
-    """The systemd unit's ``EnvironmentFile=%h/.arc/arc.env`` is the contract."""
-    assert default_env_file(Path("/tmp/arcworld")) == Path("/tmp/arcworld/arc.env")
+    """The systemd unit's ``EnvironmentFile=`` is the contract, so pin it to the unit.
+
+    Read off the shipped unit rather than restated as a string: the store and the
+    unit are the two halves that have to name one file, and a test that spells the
+    path itself agrees with neither when the layout moves.
+    """
+    assert default_env_file(Path("/tmp/arcworld")) == env_file(Path("/tmp/arcworld"))
+
+    sourced = next(
+        line.split("=", 1)[1].strip()
+        for line in _UNIT.read_text(encoding="utf-8").splitlines()
+        if line.startswith("EnvironmentFile=")
+    )
+    assert sourced.replace("%h", "/home/arc") == str(default_env_file(Path("/home/arc/.arc")))
 
 
 def test_every_env_loader_reads_the_file_the_key_store_writes() -> None:
@@ -58,7 +74,7 @@ def test_every_env_loader_agrees_under_an_isolated_arc_config_dir(
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "deployment"))
     written = default_env_file()
 
-    assert written == tmp_path / "deployment" / "arc.env"
+    assert written == env_file(tmp_path / "deployment")
     for name, paths in _LOADERS:
         resolved = paths()
         assert written in resolved, f"the {name} env loader never reads {written}"

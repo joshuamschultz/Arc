@@ -285,9 +285,7 @@ class MediaStore:
                 continue
             return path
 
-        raise FileExistsError(
-            f"{_MAX_COLLISIONS} artefacts already share {day_dir / name}"
-        )
+        raise FileExistsError(f"{_MAX_COLLISIONS} artefacts already share {day_dir / name}")
 
     def _assert_inside_inbox(self, path: Path) -> None:
         """Belt and braces: prove by ancestry that the target is inside the inbox.
@@ -301,9 +299,7 @@ class MediaStore:
             raise ValueError(f"composed path {resolved} escaped the inbox")
 
 
-def _compose_name(
-    *, clock: str, sender: str, stem: str, ext: str, ordinal: int
-) -> str:
+def _compose_name(*, clock: str, sender: str, stem: str, ext: str, ordinal: int) -> str:
     """Build the single filename component, bounded to NAME_MAX.
 
     The gateway's own fields (time, sender, collision ordinal, extension) are

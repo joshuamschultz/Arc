@@ -2305,6 +2305,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -2382,6 +2386,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../runbooks/deploy/up/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bring-up (arc up)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../runbooks/deploy/local/" class="md-nav__link">
         
   
@@ -2418,6 +2450,34 @@
     
   
     Docker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/deploy/azure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Azure
   
 
     
@@ -2723,6 +2783,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -2780,6 +2844,62 @@
     
   
     Hardening
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/signing-capabilities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Signing capabilities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/staging-module-bundles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Staging module bundles
   
 
     
@@ -3657,7 +3777,7 @@ argument can never impersonate another identity.</p>
 <code>packages/arcagent/src/arcagent/capabilities/</code> is where tools and skills get
 <em>discovered</em> before <code>ToolRegistry</code> ever sees them. <code>CapabilityLoader</code>
 (<code>capabilities/capability_loader.py:1-34</code>) scans four roots in precedence
-order — <code>arcagent/builtins/capabilities/</code> (package-internal), <code>~/.arc/capabilities/</code>
+order — <code>arcagent/builtins/capabilities/</code> (package-internal), <code>~/.arc/state/capabilities/</code>
 (global extensions), <code>&lt;agent_root&gt;/capabilities/</code> (agent-declared), and
 <code>&lt;agent_root&gt;/workspace/capabilities/</code> (agent-authored at runtime). Only
 root 1 (plus <code>builtins-skills</code>) is trusted outright; the other three are
@@ -3801,7 +3921,7 @@ improver's <code>build_bundle_view(skill_name, skill_dir / "SKILL.md")</code>
 (<code>improver/improver.py:82</code>, <code>improver/sandbox_runner.py:154</code>) is the same
 file shape <code>create_skill</code> scaffolds (Part B) and the hub installs.</p>
 <p><code>lock.py</code> (<code>packages/arcskill/src/arcskill/lock.py</code>) records every
-hub-installed skill in <code>~/.arc/skills/.hub/lock.json</code> — content hash, Rekor
+hub-installed skill in <code>~/.arc/state/skills/.hub/lock.json</code> — content hash, Rekor
 UUID, SLSA level, scanner verdict — written atomically (temp file +
 <code>os.replace</code>) so a crash never leaves a partial record.</p>
 <h3 id="the-load-path-hub-install-pipeline">The load path — hub install pipeline<a class="headerlink" href="#the-load-path-hub-install-pipeline" title="Permanent link">&para;</a></h3>
@@ -3955,7 +4075,7 @@ signed by the same agent-DID <code>Signer</code> seam <code>create_skill</code> 
 </tr>
 <tr>
 <td><code>packages/arcskill/src/arcskill/lock.py</code></td>
-<td>Install ledger (<code>~/.arc/skills/.hub/lock.json</code>)</td>
+<td>Install ledger (<code>~/.arc/state/skills/.hub/lock.json</code>)</td>
 </tr>
 <tr>
 <td><code>packages/arcskill/src/arcskill/improver/engine.py</code></td>

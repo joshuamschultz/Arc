@@ -351,9 +351,7 @@ class TelegramAdapter:
             },
         )
 
-    async def _send_text(
-        self, chat_id: int | str, text: str, reply_to_id: int | None
-    ) -> int:
+    async def _send_text(self, chat_id: int | str, text: str, reply_to_id: int | None) -> int:
         """Put words on the chat, split by the gateway at Telegram's limit."""
         chunks = split_for_platform(self, text)
         for chunk in chunks:
@@ -416,13 +414,9 @@ class TelegramAdapter:
         """
         bot = self._application.bot
         if part.kind == "image":
-            await bot.send_photo(
-                chat_id=chat_id, photo=payload, reply_to_message_id=reply_to_id
-            )
+            await bot.send_photo(chat_id=chat_id, photo=payload, reply_to_message_id=reply_to_id)
         elif part.kind == "audio":
-            await bot.send_audio(
-                chat_id=chat_id, audio=payload, reply_to_message_id=reply_to_id
-            )
+            await bot.send_audio(chat_id=chat_id, audio=payload, reply_to_message_id=reply_to_id)
         else:
             await bot.send_document(
                 chat_id=chat_id,
@@ -966,7 +960,6 @@ class TelegramAdapter:
             outcome=_outcome,
             extra=data,
         )
-
 
 
 # ── Error classification helpers ──────────────────────────────────────────────

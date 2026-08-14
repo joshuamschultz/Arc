@@ -19,9 +19,10 @@ from typing import Any
 import pytest
 from arcagent.capabilities import artifact_signing
 from arcgateway import team_roster
-from arctrust import OperatorKey, arc_home, default_operator_key_path, generate_keypair
+from arctrust import OperatorKey, default_operator_key_path, generate_keypair
 from arctrust.audit import verify_chain
 from arctrust.identity import AgentIdentity
+from arctrust.paths import config_file
 from arctrust.signer import ECDSA_P256, FileNotaryTransit, Signer, VaultSigner
 from arctrust.validators import load_validators
 from starlette.applications import Starlette
@@ -52,9 +53,16 @@ def _isolated_arc(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _bootstrap_operator_key(tmp_path: Path) -> None:
-    key_path = tmp_path / "arc" / "operator" / "operator.key"
+    key_path = default_operator_key_path(tmp_path / "arc")
     key_path.parent.mkdir(parents=True, exist_ok=True)
     OperatorKey.load(key_path, generate_if_absent=True)
+
+
+def _write_fleet_config(tmp_path: Path, body: str) -> None:
+    """Write the deployment-wide ``arcagent.toml`` where the route reads it."""
+    path = config_file("arcagent.toml", tmp_path / "arc")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
 
 
 def _build_agent(team_root: Path, name: str, *, tier: str, sign: bool) -> None:
@@ -266,12 +274,12 @@ def _use_vault_transit_custody(tmp_path: Path) -> Signer:
     REAL :class:`FileNotaryTransit`, so the route signs by reference exactly as
     a federal box does. Returns the signer it is expected to sign with.
     """
-    keystore = arc_home() / "notary"
+    keystore = tmp_path / "notary"
     FileNotaryTransit.provision(
         keystore, "operator", generate_keypair().private_key, algorithm=ECDSA_P256
     )
-    (arc_home() / "arcagent.toml").write_text(
-        f'[security]\ntier = "federal"\nnotary_keystore = "{keystore}"\n', encoding="utf-8"
+    _write_fleet_config(
+        tmp_path, f'[security]\ntier = "federal"\nnotary_keystore = "{keystore}"\n'
     )
     return VaultSigner(FileNotaryTransit(keystore, algorithm=ECDSA_P256), "operator", ECDSA_P256)
 
@@ -315,9 +323,8 @@ def test_vault_transit_without_a_provisioned_notary_refuses(tmp_path: Path) -> N
     move. Fail closed, audit the denial, and write nothing.
     """
     _bootstrap_operator_key(tmp_path)
-    (arc_home() / "arcagent.toml").write_text(
-        f'[security]\ntier = "federal"\nnotary_keystore = "{arc_home() / "absent"}"\n',
-        encoding="utf-8",
+    _write_fleet_config(
+        tmp_path, f'[security]\ntier = "federal"\nnotary_keystore = "{tmp_path / "absent"}"\n'
     )
     team_root = tmp_path / "team"
     team_root.mkdir()

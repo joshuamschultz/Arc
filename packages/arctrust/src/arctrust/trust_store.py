@@ -70,7 +70,6 @@ from __future__ import annotations
 
 import base64
 import logging
-import os
 import stat
 import time
 import tomllib
@@ -78,6 +77,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
+
+from arctrust.paths import trust_dir as trust_dir_path
 
 _logger = logging.getLogger("arctrust.trust_store")
 
@@ -118,20 +119,6 @@ _ISSUERS_FILE: Final[str] = "issuers.toml"
 _CACHE_TTL_SECONDS: Final[int] = 60
 
 
-def _default_trust_dir() -> Path:
-    """Resolve the trust dir: ``${ARC_CONFIG_DIR:-~/.arc}/trust``.
-
-    Mirrors the base-directory resolution used across Arc for config,
-    identity keys, and team data (see ``arccli.commands.identity``,
-    ``arcgateway.config.GatewayConfig.load``) so an isolated
-    ``ARC_CONFIG_DIR`` deployment keeps the trust store alongside the rest
-    of its config instead of leaking to the real ``~/.arc``.
-    """
-    env = os.environ.get("ARC_CONFIG_DIR")
-    base = Path(env).expanduser() if env else Path.home() / ".arc"
-    return base / "trust"
-
-
 @dataclass(frozen=True)
 class _CacheEntry:
     """TTL cache entry for a loaded trust-store file."""
@@ -166,7 +153,7 @@ def load_operator_pubkey(
             or DID not registered.
     """
     records = _load_cached(
-        directory=trust_dir or _default_trust_dir(),
+        directory=trust_dir or trust_dir_path(),
         filename=_OPERATORS_FILE,
         top_level_key="operators",
         cache=_operator_cache,
@@ -218,7 +205,7 @@ def register_operator(
     if len(public_key) != 32:
         raise ValueError(f"public_key must be 32 bytes, got {len(public_key)}")
 
-    directory = (trust_dir or _default_trust_dir()).expanduser().resolve()
+    directory = (trust_dir or trust_dir_path()).expanduser().resolve()
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / _OPERATORS_FILE
 
@@ -279,7 +266,7 @@ def load_issuer_pubkey(
             or DID not registered.
     """
     records = _load_cached(
-        directory=trust_dir or _default_trust_dir(),
+        directory=trust_dir or trust_dir_path(),
         filename=_ISSUERS_FILE,
         top_level_key="issuers",
         cache=_issuer_cache,

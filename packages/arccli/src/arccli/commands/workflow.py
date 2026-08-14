@@ -55,6 +55,7 @@ from arcteam.workflow.control_plane import ControlPlaneResult, OperationIssue, W
 from arcteam.workflow.runner_contracts import Tier, ValidationIssueLike
 from arctrust import WormSink
 from arctrust.audit import AuditEvent, AuditSink, emit
+from arctrust.paths import arc_state, config_file, workflows_dir
 
 from arccli.commands._shared import dispatch, err, print_json, print_table, write
 from arccli.commands.operator import load_operator_key, operator_key_path, operator_public_key
@@ -74,10 +75,10 @@ def _arc_dir(args: argparse.Namespace) -> Path:
     look healthy and no workflow is ever signed, which is the silent shape
     this feature has produced repeatedly.
     """
-    from arcteam.config import default_config_dir
+    from arctrust.paths import arc_home
 
     override = getattr(args, "config_dir", None)
-    return Path(override).expanduser() if override else default_config_dir()
+    return Path(override).expanduser() if override else arc_home()
 
 
 def _deployment_tier(arc_dir: Path) -> Tier:
@@ -87,7 +88,7 @@ def _deployment_tier(arc_dir: Path) -> Tier:
     per call, so the gate that refuses an unsigned workflow and the audit event
     that records the refusal can never disagree about the posture.
     """
-    path = arc_dir / "arcagent.toml"
+    path = config_file("arcagent.toml", arc_dir)
     if path.is_file():
         try:
             raw = tomllib.loads(path.read_text(encoding="utf-8"))
@@ -169,7 +170,7 @@ def _store_audit_hook(sink: AuditSink, tier: Tier) -> WorkflowAuditHook:
 
 
 def _resolve_bundle_signer(
-    root: Path, *, tier: Tier = "personal", sink: AuditSink | None = None
+    root: Path, arc_dir: Path | None, *, tier: Tier = "personal", sink: AuditSink | None = None
 ) -> DefinitionStore:
     """The real arcteam ``DefinitionStore`` (COMP-005) rooted at ``root``.
 
@@ -177,11 +178,20 @@ def _resolve_bundle_signer(
     lives at ``<root>/<workflow_id>/``. ``operator_public_key`` is what pins
     verification — a bundle signed by any other key reads as unsigned, which is
     the whole point of pinning (SPEC-047 HIGH-1).
+
+    The Arc home is passed in, never derived from ``root``. Walking up from the
+    bundle root read the home correctly only while bundles sat at ``<home>/
+    workflows``; once they moved to ``<home>/state/workflows`` the same hop
+    landed on ``<home>/state`` and pinned against ``<home>/state/state/operator/
+    operator.key``, which never exists. Every signed bundle then read INVALID —
+    ``sign`` still exited 0, ``verify`` exited 1, and no workflow could run above
+    personal tier. ``root`` is also operator-supplied in the ``verify``/``sign``
+    paths, so its parent is not the home to begin with.
     """
     return DefinitionStore(
         root,
         tier=tier,
-        operator_public_key=operator_public_key(root.parent),
+        operator_public_key=operator_public_key(arc_dir),
         audit=_store_audit_hook(sink, tier) if sink is not None else None,
     )
 
@@ -258,14 +268,16 @@ async def _resolve_control_plane(
         tier=tier,
         task_store_backend=backend,
         runner_key_path=operator_key_path(arc_dir),
-        workspace_root=arc_dir,
+        workspace_root=arc_state(arc_dir),
         operator_public_key=operator_public_key(arc_dir),
         audit_sink=sink,
         registry=owners,
         narrator=narrator,
     )
     plane = WorkflowControlPlane(
-        definitions=_resolve_bundle_signer(_workflows_root(arc_dir), tier=tier, sink=sink),
+        definitions=_resolve_bundle_signer(
+            _workflows_root(arc_dir), arc_dir, tier=tier, sink=sink
+        ),
         parse=_parse,
         validate=_validator(_workflows_root(arc_dir)),
         runner=runner,
@@ -313,14 +325,14 @@ def _validator(root: Path) -> Callable[..., Sequence[ValidationIssueLike]]:
 
 
 def _workflows_root(arc_dir: Path) -> Path:
-    """Where bundles live: ``<arc_dir>/workflows``.
+    """Where bundles live: :func:`arctrust.paths.workflows_dir`.
 
     Must match what ``build_workflow_runner`` derives from its key path
     (``workspace_root / "workflows"``) — a CLI that signs into a different
     directory than the runner reads would leave every definition looking
     unsigned to the engine.
     """
-    return arc_dir / "workflows"
+    return workflows_dir(arc_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -437,7 +449,9 @@ def _with_plane(
 def _store(args: argparse.Namespace) -> DefinitionStore:
     """The read-side definition store for ``list`` / ``show`` (no audit writes)."""
     arc_dir = _arc_dir(args)
-    return _resolve_bundle_signer(_workflows_root(arc_dir), tier=_deployment_tier(arc_dir))
+    return _resolve_bundle_signer(
+        _workflows_root(arc_dir), arc_dir, tier=_deployment_tier(arc_dir)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -481,7 +495,9 @@ def _sign(args: argparse.Namespace) -> None:
     sink = _audit_sink()
     try:
         bundle = sign_definition(
-            _resolve_bundle_signer(bundle_dir.parent, tier=_deployment_tier(arc_dir), sink=sink),
+            _resolve_bundle_signer(
+                bundle_dir.parent, arc_dir, tier=_deployment_tier(arc_dir), sink=sink
+            ),
             bundle_dir.name,
             signer_did=f"operator:{operator.public_key.hex()[:16]}",
             private_key=seed,
@@ -509,7 +525,7 @@ def _verify(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     arc_dir = _arc_dir(args)
-    store = _resolve_bundle_signer(bundle_dir.parent, tier=_deployment_tier(arc_dir))
+    store = _resolve_bundle_signer(bundle_dir.parent, arc_dir, tier=_deployment_tier(arc_dir))
     try:
         bundle = store.load(bundle_dir.name)
     except WorkflowError as exc:

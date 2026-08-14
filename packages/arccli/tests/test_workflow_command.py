@@ -17,6 +17,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
+from arctrust.paths import config_file, default_operator_key_path, workflows_dir
 
 from arccli.commands import workflow as wf_cmd
 from arccli.commands.workflow import workflow_handler
@@ -87,10 +88,10 @@ def test_resolve_bundle_signer_returns_the_real_definition_store(arc_dir: Path) 
     """``_resolve_bundle_signer`` must hand back arcteam's own COMP-005 store."""
     from arcteam.workflow import DefinitionStore
 
-    store = wf_cmd._resolve_bundle_signer(arc_dir / "workflows")
+    store = wf_cmd._resolve_bundle_signer(workflows_dir(arc_dir), arc_dir)
 
     assert isinstance(store, DefinitionStore)
-    assert store.root == arc_dir / "workflows"
+    assert store.root == workflows_dir(arc_dir)
 
 
 def test_module_never_names_the_plural_arcteam_workflows_package() -> None:
@@ -118,7 +119,7 @@ def test_sign_writes_arcsig_that_verifies_against_pinned_operator_key(
     ``arc workflow sign`` is the ONLY path to signed status, so at enterprise
     or federal tier a broken signer means no workflow can ever run.
     """
-    bundle = _write_bundle(arc_dir / "workflows")
+    bundle = _write_bundle(workflows_dir(arc_dir))
 
     workflow_handler(["sign", str(bundle), "--dir", str(arc_dir)])
 
@@ -133,10 +134,10 @@ def test_sign_writes_arcsig_that_verifies_against_pinned_operator_key(
 
 def test_signed_bundle_reads_as_signed_through_the_store(arc_dir: Path) -> None:
     """Trust must be visible to the engine, not only to the CLI's own printout."""
-    bundle = _write_bundle(arc_dir / "workflows")
+    bundle = _write_bundle(workflows_dir(arc_dir))
     workflow_handler(["sign", str(bundle), "--dir", str(arc_dir)])
 
-    store = wf_cmd._resolve_bundle_signer(arc_dir / "workflows")
+    store = wf_cmd._resolve_bundle_signer(workflows_dir(arc_dir), arc_dir)
     loaded = store.load("onboarding")
 
     assert loaded.is_verified is True
@@ -148,7 +149,7 @@ def test_verify_refuses_a_bundle_signed_by_a_foreign_key(arc_dir: Path) -> None:
     from arcteam.workflow import DefinitionStore, sign_definition
     from arctrust import OperatorKey
 
-    root = arc_dir / "workflows"
+    root = workflows_dir(arc_dir)
     _write_bundle(root)
     attacker = OperatorKey.load(arc_dir / "attacker.key", generate_if_absent=True)
     sign_definition(
@@ -167,7 +168,7 @@ def test_verify_refuses_a_bundle_signed_by_a_foreign_key(arc_dir: Path) -> None:
 def test_verify_reports_invalid_for_unsigned_bundle(
     arc_dir: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    bundle = _write_bundle(arc_dir / "workflows")
+    bundle = _write_bundle(workflows_dir(arc_dir))
 
     with pytest.raises(SystemExit) as exc:
         workflow_handler(["verify", str(bundle), "--dir", str(arc_dir)])
@@ -198,7 +199,7 @@ def test_sign_never_resolves_the_control_plane(
         raise AssertionError("arc workflow sign must never resolve the control plane")
 
     monkeypatch.setattr(wf_cmd, "_resolve_control_plane", _must_not_be_called)
-    bundle = _write_bundle(arc_dir / "workflows")
+    bundle = _write_bundle(workflows_dir(arc_dir))
 
     workflow_handler(["sign", str(bundle), "--dir", str(arc_dir)])
 
@@ -219,10 +220,10 @@ def test_list_reports_no_workflows(arc_dir: Path, capsys: pytest.CaptureFixture[
 def test_list_renders_real_bundles_and_hides_archived(
     arc_dir: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    root = arc_dir / "workflows"
+    root = workflows_dir(arc_dir)
     _write_bundle(root, "onboarding")
     _write_bundle(root, "renewal")
-    wf_cmd._resolve_bundle_signer(root).archive("renewal", actor_did="did:arc:test")
+    wf_cmd._resolve_bundle_signer(root, arc_dir).archive("renewal", actor_did="did:arc:test")
 
     workflow_handler(["list", "--dir", str(arc_dir)])
     visible = capsys.readouterr().out
@@ -239,7 +240,7 @@ def test_show_prints_the_real_definition_and_trust(
 ) -> None:
     import json
 
-    _write_bundle(arc_dir / "workflows")
+    _write_bundle(workflows_dir(arc_dir))
 
     workflow_handler(["show", "onboarding", "--dir", str(arc_dir)])
 
@@ -284,7 +285,7 @@ def test_create_writes_a_draft_through_the_real_control_plane(
     workflow_handler(["create", str(source), "--dir", str(arc_dir)])
 
     assert "Created draft workflow onboarding v1 (status=draft)" in capsys.readouterr().out
-    assert (arc_dir / "workflows" / "onboarding" / "workflow.toml").is_file()
+    assert (workflows_dir(arc_dir) / "onboarding" / "workflow.toml").is_file()
 
 
 def test_create_relays_typed_validation_errors_and_exits_nonzero(
@@ -356,13 +357,13 @@ def test_archive_unarchive_round_trip_through_the_plane(
     capsys.readouterr()
 
     workflow_handler(["archive", "onboarding", "--dir", str(arc_dir)])
-    assert (arc_dir / "workflows" / "onboarding" / "archived.json").is_file()
+    assert (workflows_dir(arc_dir) / "onboarding" / "archived.json").is_file()
 
     workflow_handler(["unarchive", "onboarding", "--dir", str(arc_dir)])
     out = capsys.readouterr().out
     assert "Archived onboarding." in out
     assert "Unarchived onboarding (status=draft)." in out
-    assert not (arc_dir / "workflows" / "onboarding" / "archived.json").exists()
+    assert not (workflows_dir(arc_dir) / "onboarding" / "archived.json").exists()
 
 
 def test_purge_destroys_a_workflow_with_no_runs(
@@ -374,7 +375,7 @@ def test_purge_destroys_a_workflow_with_no_runs(
     workflow_handler(["purge", "onboarding", "--dir", str(arc_dir)])
 
     assert "Purged onboarding." in capsys.readouterr().out
-    assert not (arc_dir / "workflows" / "onboarding").exists()
+    assert not (workflows_dir(arc_dir) / "onboarding").exists()
 
 
 def test_purge_refuses_while_a_real_run_references_the_workflow(
@@ -417,10 +418,10 @@ def test_purge_refuses_while_a_real_run_references_the_workflow(
 
     assert exc.value.code == 1
     assert "refusing to purge" in capsys.readouterr().err
-    assert (arc_dir / "workflows" / "onboarding").is_dir()
+    assert (workflows_dir(arc_dir) / "onboarding").is_dir()
 
     workflow_handler(["purge", "onboarding", "--force", "--dir", str(arc_dir)])
-    assert not (arc_dir / "workflows" / "onboarding").exists()
+    assert not (workflows_dir(arc_dir) / "onboarding").exists()
 
 
 def test_run_refuses_an_unknown_workflow_cleanly(
@@ -443,7 +444,7 @@ def test_signed_definition_round_trips_from_create_through_sign(
     definition unsigned to the engine.
     """
     workflow_handler(["create", str(_write_bundle(tmp_path / "src")), "--dir", str(arc_dir)])
-    landed = arc_dir / "workflows" / "onboarding"
+    landed = workflows_dir(arc_dir) / "onboarding"
     capsys.readouterr()
 
     workflow_handler(["sign", str(landed), "--dir", str(arc_dir)])
@@ -469,17 +470,17 @@ def test_no_dir_flag_lands_where_the_runner_reads(
 
     workflow_handler(["create", str(_write_bundle(tmp_path / "src"))])
 
-    assert (arc_dir / "workflows" / "onboarding" / "workflow.toml").is_file()
+    assert (workflows_dir(arc_dir) / "onboarding" / "workflow.toml").is_file()
     capsys.readouterr()
 
     # The root build_workflow_runner derives from its key path, unchanged.
     from arccli.commands.operator import operator_key_path
 
-    assert operator_key_path(arc_dir).parent.parent == arc_dir
+    assert operator_key_path(arc_dir) == default_operator_key_path(arc_dir)
     assert build_workflow_runner is not None
 
-    workflow_handler(["sign", str(arc_dir / "workflows" / "onboarding")])
-    workflow_handler(["verify", str(arc_dir / "workflows" / "onboarding")])
+    workflow_handler(["sign", str(workflows_dir(arc_dir) / "onboarding")])
+    workflow_handler(["verify", str(workflows_dir(arc_dir) / "onboarding")])
     assert "VALID" in capsys.readouterr().out
 
 
@@ -494,12 +495,12 @@ def test_first_run_on_a_fresh_config_dir_needs_no_setup_step(
     ("No operator key ...") and every mutation was unreachable until the
     operator ran some other command first.
     """
-    assert not (tmp_path / "operator" / "operator.key").exists()
+    assert not default_operator_key_path(tmp_path).exists()
 
     workflow_handler(["create", str(_write_bundle(tmp_path / "src"))])
 
     assert "Created draft workflow onboarding" in capsys.readouterr().out
-    assert (tmp_path / "operator" / "operator.key").is_file()
+    assert default_operator_key_path(tmp_path).is_file()
 
 
 def test_editing_a_signed_bundle_drops_the_signature(
@@ -508,7 +509,7 @@ def test_editing_a_signed_bundle_drops_the_signature(
     """Authoring can never confer trust: a revision returns to draft (REQ-223)."""
     source = _write_bundle(tmp_path / "src")
     workflow_handler(["create", str(source), "--dir", str(arc_dir)])
-    workflow_handler(["sign", str(arc_dir / "workflows" / "onboarding"), "--dir", str(arc_dir)])
+    workflow_handler(["sign", str(workflows_dir(arc_dir) / "onboarding"), "--dir", str(arc_dir)])
     capsys.readouterr()
 
     (source / "workflow.toml").write_text(
@@ -528,7 +529,7 @@ def test_editing_a_signed_bundle_drops_the_signature(
     )
 
     assert "status=draft" in capsys.readouterr().out
-    assert not (arc_dir / "workflows" / "onboarding" / "workflow.toml.arcsig").exists()
+    assert not (workflows_dir(arc_dir) / "onboarding" / "workflow.toml.arcsig").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -578,6 +579,8 @@ def test_workflow_handler_empty_args_prints_help_and_exits_zero(
 def test_deployment_tier_is_read_from_config_not_guessed(arc_dir: Path) -> None:
     """Tier flows from construction; a stringency dial the CLI must not invent."""
     assert wf_cmd._deployment_tier(arc_dir) == "personal"
-    (arc_dir / "arcagent.toml").write_text('[security]\ntier = "federal"\n', encoding="utf-8")
+    machine_config = config_file("arcagent.toml", arc_dir)
+    machine_config.parent.mkdir(parents=True, exist_ok=True)
+    machine_config.write_text('[security]\ntier = "federal"\n', encoding="utf-8")
     assert wf_cmd._deployment_tier(arc_dir) == "federal"
     assert tomllib is not None

@@ -70,9 +70,18 @@ TOFU (source approval — gates capability LOAD, not tool invocation):
     pin_key / unpin_key — Add / remove a trusted capability-verification key (persisted)
     persist_validators  — Atomic tomlkit rewrite of the validators block
 
-Paths:
-    arc_home            — ``${ARC_CONFIG_DIR:-~/.arc}`` user-wide config root
-    default_operator_key_path — ``<arc_home>/operator/operator.key``
+Paths (``arctrust.paths`` — the ONE resolver; never compose your own):
+    arc_home            — ``${ARC_CONFIG_DIR:-~/.arc}``, parent of the four roots
+    arc_runtime         — ``<arc_home>/runtime/current``, replaced on update
+    arc_config          — ``<arc_home>/config``, preserved on update
+    arc_state           — ``<arc_home>/state``, never touched by an update
+    arc_team            — ``<arc_home>/team``, never touched by an update
+    config_file / env_file                — one config file under ``arc_config``
+    operator_dir / default_operator_key_path / identity_dir / trust_dir /
+    store_dir / nats_dir / bundles_dir / capabilities_dir / blueprints_dir /
+    skills_dir / gateway_* / audit_dir / users_file — one path under ``arc_state``
+    module_root         — ``<arc_runtime>/modules``
+    activate_runtime    — atomic ``current`` symlink flip (update / rollback)
 """
 
 __version__ = "0.9.0"
@@ -117,7 +126,34 @@ from arctrust.identity import (
 )
 from arctrust.keypair import KeyPair, generate_keypair, sign, verify
 from arctrust.operator import OperatorKey, OperatorKeyIntegrityError
-from arctrust.paths import arc_home, default_operator_key_path
+from arctrust.paths import (
+    activate_runtime,
+    arc_config,
+    arc_home,
+    arc_runtime,
+    arc_runtime_root,
+    arc_runtime_version,
+    arc_state,
+    arc_team,
+    audit_dir,
+    blueprints_dir,
+    bundles_dir,
+    capabilities_dir,
+    config_file,
+    default_operator_key_path,
+    env_file,
+    gateway_dir,
+    gateway_pairing_db,
+    gateway_runtime_dir,
+    identity_dir,
+    module_root,
+    nats_dir,
+    operator_dir,
+    skills_dir,
+    store_dir,
+    trust_dir,
+    users_file,
+)
 from arctrust.policy import (
     ClassificationLayer,
     ClearanceContext,
@@ -250,14 +286,26 @@ __all__ = [
     "WormSink",
     "__version__",
     "aba_checksum_valid",
+    "activate_runtime",
     "algorithm_is_fips_approved",
     "approve",
     "approve_source",
+    "arc_config",
     "arc_home",
+    "arc_runtime",
+    "arc_runtime_root",
+    "arc_runtime_version",
+    "arc_state",
+    "arc_team",
     "assert_fips_if_required",
+    "audit_dir",
+    "blueprints_dir",
     "build_pipeline",
     "build_signer",
+    "bundles_dir",
     "canonical_json",
+    "capabilities_dir",
+    "config_file",
     "content_sha256",
     "default_operator_key_path",
     "default_users_path",
@@ -266,16 +314,24 @@ __all__ = [
     "disapprove",
     "dominates",
     "emit",
+    "env_file",
     "fips_backend_active",
+    "gateway_dir",
+    "gateway_pairing_db",
+    "gateway_runtime_dir",
     "generate_did",
     "generate_keypair",
     "hash_source",
     "iban_mod97_valid",
+    "identity_dir",
     "invalidate_cache",
     "load_issuer_pubkey",
     "load_operator_pubkey",
     "load_validators",
     "luhn_valid",
+    "module_root",
+    "nats_dir",
+    "operator_dir",
     "parse_classification",
     "parse_did",
     "persist_validators",
@@ -286,7 +342,11 @@ __all__ = [
     "sign",
     "sign_artifact",
     "sign_artifact_with_signer",
+    "skills_dir",
+    "store_dir",
+    "trust_dir",
     "unpin_key",
+    "users_file",
     "validate_did",
     "verify",
     "verify_artifact",

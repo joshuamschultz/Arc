@@ -42,6 +42,7 @@ import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
+from arctrust.paths import skills_dir
 from pydantic import BaseModel, Field
 
 
@@ -126,7 +127,7 @@ class HubLockFile(BaseModel):
     @classmethod
     def default_path(cls) -> Path:
         """Return the default lock file path: ``~/.arc/skills/.hub/lock.json``."""
-        return Path.home() / ".arc" / "skills" / ".hub" / "lock.json"
+        return skills_dir() / ".hub" / "lock.json"
 
     @classmethod
     def load(cls, path: Path | None = None) -> HubLockFile:

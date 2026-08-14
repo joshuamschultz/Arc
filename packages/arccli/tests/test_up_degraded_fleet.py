@@ -35,6 +35,7 @@ from typing import Any
 
 import arcagent
 import pytest
+from arctrust.paths import module_root
 
 from arccli.commands import up as up_cmd
 
@@ -182,7 +183,7 @@ def test_a_fleet_with_one_unreadable_config_installs_the_rest_and_still_refuses_
 
     # 2. The healthy agent really was installed — materialized at the deployment
     #    root the agent scans, copied into its own tree, and reported as such.
-    assert (fleet / "arc" / "modules" / _MODULE / "_runtime.py").is_file()
+    assert (module_root(fleet / "arc") / _MODULE / "_runtime.py").is_file()
     assert _MODULE in arcagent.discover_modules()
     from arcbundle import capability_dir
 
@@ -229,7 +230,7 @@ def test_check_refuses_the_same_fleet_without_installing_anything(
     captured = capsys.readouterr()
     assert all("UNREADABLE" in row for row in _rows_for(captured.out, "broken"))
     assert "DEGRADED: broken — config unreadable" in captured.err
-    assert not (fleet / "arc" / "modules" / _MODULE).exists(), "--check installed something"
+    assert not (module_root(fleet / "arc") / _MODULE).exists(), "--check installed something"
     assert started == []
 
 
@@ -270,7 +271,7 @@ def test_bootstrap_skips_the_install_for_the_unreadable_agent_only(fleet: Path) 
     assert [row[2] for row in broken_rows] == ["UNREADABLE"]
     assert "CONFIG_VALIDATION" in broken_rows[0][3]
     assert next(row[:3] for row in rows if row[1] == _MODULE) == ["healthy", _MODULE, "installed"]
-    assert (fleet / "arc" / "modules" / _MODULE).is_dir()
+    assert (module_root(fleet / "arc") / _MODULE).is_dir()
 
 
 def test_print_verify_is_not_whole_when_a_config_is_unreadable(fleet: Path, capsys: Any) -> None:

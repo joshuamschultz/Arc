@@ -2075,6 +2075,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -2152,6 +2156,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../deploy/up/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bring-up (arc up)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../deploy/local/" class="md-nav__link">
         
   
@@ -2188,6 +2220,34 @@
     
   
     Docker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deploy/azure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Azure
   
 
     
@@ -2680,6 +2740,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -2737,6 +2801,62 @@
     
   
     Hardening
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../signing-capabilities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Signing capabilities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../staging-module-bundles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Staging module bundles
   
 
     
@@ -3187,7 +3307,7 @@
 
 <h1 id="building-a-team-of-agents">Building a Team of Agents<a class="headerlink" href="#building-a-team-of-agents" title="Permanent link">&para;</a></h1>
 <blockquote>
-<p><strong>Runbooks</strong>  ·  Operate  ·  page 7 of 16<br />
+<p><strong>Runbooks</strong>  ·  Operate  ·  page 9 of 20<br />
 <strong>For</strong> Operators deploying and running Arc<br />
 <a href="../../deploy/voice-air-gap/">← Voice air-gap</a>  ·  <a href="../../../">Docs home</a>  ·  <a href="../tasks/">Tasks →</a></p>
 </blockquote>
@@ -3208,7 +3328,7 @@ coder, marketer, trader) on the same box that also routes Telegram DMs.</p>
 <h2 id="1-create-each-agent">1. Create each agent<a class="headerlink" href="#1-create-each-agent" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nb">cd</span><span class="w"> </span>~/arc
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">PATH</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$HOME</span><span class="s2">/.local/bin:</span><span class="nv">$PATH</span><span class="s2">&quot;</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="nb">set</span><span class="w"> </span>-a<span class="p">;</span><span class="w"> </span><span class="nb">source</span><span class="w"> </span>~/.arc/arc.env<span class="p">;</span><span class="w"> </span><span class="nb">set</span><span class="w"> </span>+a
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="nb">set</span><span class="w"> </span>-a<span class="p">;</span><span class="w"> </span><span class="nb">source</span><span class="w"> </span>~/.arc/config/arc.env<span class="p">;</span><span class="w"> </span><span class="nb">set</span><span class="w"> </span>+a
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>.venv/bin/arc<span class="w"> </span>agent<span class="w"> </span>create<span class="w"> </span>josh_agent<span class="w">     </span>--dir<span class="w"> </span>team<span class="w"> </span>--model<span class="w"> </span>anthropic/claude-sonnet-5
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>.venv/bin/arc<span class="w"> </span>agent<span class="w"> </span>create<span class="w"> </span>coder_agent<span class="w">    </span>--dir<span class="w"> </span>team<span class="w"> </span>--model<span class="w"> </span>anthropic/claude-sonnet-5
@@ -3302,7 +3422,7 @@ new.</p>
 <h2 id="6-serve">6. Serve<a class="headerlink" href="#6-serve" title="Permanent link">&para;</a></h2>
 <p>One process, same as single-node deployment — no separate "start the
 team" step. <code>arc ui start --team-root team --gateway-config
-~/.arc/gateway.toml</code> (or the systemd unit) loads every agent under
+~/.arc/config/gateway.toml</code> (or the systemd unit) loads every agent under
 <code>team/</code> on demand and serves the whole roster.</p>
 <p>Remote-platform DMs (Telegram, Slack) route to exactly <strong>one</strong> agent —
 whichever DID is in <code>gateway.toml</code>'s <code>[gateway].agent_did</code>. A multi-agent

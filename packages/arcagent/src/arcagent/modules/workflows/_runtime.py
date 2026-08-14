@@ -291,12 +291,19 @@ def _bundle_root(st: _State) -> Path:
     agent-authored workflow real on disk and invisible to everything that could
     sign or run it.
     """
-    configured = Path(st.config.workflows_dir)
-    if configured.is_absolute():
-        return configured
-    from arcteam.config import default_config_dir
+    from arctrust.paths import arc_state, workflows_dir
 
-    return default_config_dir() / configured
+    configured = st.config.workflows_dir
+    if not configured:
+        return workflows_dir()
+    if Path(configured).is_absolute():
+        return Path(configured)
+    # A relative override is still relative to the state root, but the DEFAULT
+    # goes through the accessor: composing ``arc_state() / "workflows"`` agreed
+    # with `arc workflow` only while the config default happened to be that
+    # same literal. Change the default and the module would write where nothing
+    # can sign or run it — the failure this docstring describes.
+    return arc_state() / configured
 
 
 def _build_control_plane(st: _State, runs: Any) -> None:

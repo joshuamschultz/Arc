@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 from arctrust import OperatorKey, OperatorKeyIntegrityError, WitnessDivergenceError
+from arctrust.paths import module_root
 
 from arcagent.core import agent_lifecycle
 from arcagent.core.agent import ArcAgent
@@ -201,7 +202,7 @@ def _fake_agent_for_modules(
     # the deployment module root), so the module has to be materialized there
     # before ``enabled=True`` makes it active. Loading is then redirected to the
     # fake runtime under test.
-    installed = tmp_path / "modules" / module_name
+    installed = module_root(tmp_path) / module_name
     installed.mkdir(parents=True)
     (installed / "capabilities.py").write_text("")
     (installed / "_runtime.py").write_text("")

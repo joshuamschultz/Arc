@@ -53,6 +53,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from arctrust.paths import gateway_runtime_dir
+
 from arcgateway.adapters._reconnect import FailedAdapter, reconnect_watcher
 from arcgateway.adapters.base import BasePlatformAdapter
 from arcgateway.executor import AsyncioExecutor, Executor, SubprocessExecutor
@@ -64,7 +66,7 @@ if TYPE_CHECKING:
 _logger = logging.getLogger("arcgateway.runner")
 
 # Default runtime directory for the clean-shutdown marker file
-_DEFAULT_RUNTIME_DIR = Path.home() / ".arc" / "gateway" / "run"
+
 
 # Reconnect watcher poll interval (seconds)
 _RECONNECT_POLL_INTERVAL = 5.0
@@ -156,7 +158,7 @@ class GatewayRunner:
         """
         self._adapters: list[BasePlatformAdapter] = adapters or []
         self._executor: Executor = executor or AsyncioExecutor()
-        self._runtime_dir: Path = runtime_dir or _DEFAULT_RUNTIME_DIR
+        self._runtime_dir: Path = runtime_dir or gateway_runtime_dir()
         self._session_router = SessionRouter(
             executor=self._executor,
             pairing_store=pairing_store,

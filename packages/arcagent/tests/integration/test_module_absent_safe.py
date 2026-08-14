@@ -21,7 +21,7 @@ Absence is injected by ``ARC_CONFIG_DIR`` alone — nothing here patches the
 discovery seam. Before T-964 that was impossible, so this file carried a
 ``_bind_module_root`` helper that pre-bound ``modules_dir`` on
 :mod:`arcagent.core.agent_lifecycle`; T-964 moved the scan root to
-``${ARC_CONFIG_DIR}/modules/`` and the helper was deleted with it. The
+:func:`arctrust.paths.module_root` and the helper was deleted with it. The
 difference matters: every case below now reaches the module root the way a
 real deployment does, so a discovery path that only worked under a
 monkeypatched seam shows up here as a failure instead of hiding behind one.
@@ -49,6 +49,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from arcrun import StreamEvent, TurnEndEvent
+from arctrust.paths import module_root
 
 from arcagent.core.agent import ArcAgent
 from arcagent.core.config import (
@@ -81,13 +82,22 @@ atexit.register(shutil.rmtree, _STAGED_ROOT.parent, True)
 _MODULE_NAMES: list[str] = discover_modules(_STAGED_ROOT)
 
 
+def _arc_home(tmp_path: Path) -> Path:
+    """The deployment home this case runs against — what ``ARC_CONFIG_DIR`` names."""
+    return tmp_path / "arc"
+
+
 def _deployment_root(tmp_path: Path, absent: str | None) -> Path:
     """Build a module root holding every discovered module except ``absent``.
+
+    Placed through :func:`arctrust.paths.module_root` rather than composed by
+    hand, so a case stages its modules where a real install puts them and where
+    discovery reads them — the two cannot drift apart here.
 
     Copies rather than symlinks: the tree a materialized bundle leaves behind
     is real files, and T-965 loads each ``_runtime.py`` by filesystem path.
     """
-    root = tmp_path / "arc" / "modules"
+    root = module_root(_arc_home(tmp_path))
     root.mkdir(parents=True)
     for name in _MODULE_NAMES:
         if name == absent:
@@ -205,8 +215,8 @@ def test_discovery_resolves_the_deployment_config_dir(
     decides what loads, and the absent-safe cases below can only simulate what
     production does for real.
     """
-    root = _deployment_root(tmp_path, absent=_MODULE_NAMES[0])
-    monkeypatch.setenv("ARC_CONFIG_DIR", str(root.parent))
+    _deployment_root(tmp_path, absent=_MODULE_NAMES[0])
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(_arc_home(tmp_path)))
 
     assert discover_modules() == [n for n in _MODULE_NAMES if n != _MODULE_NAMES[0]]
 
@@ -216,9 +226,9 @@ async def test_a_turn_completes_with_one_module_absent(
     absent: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """One module's tree is gone; construction, capability scan, and turn survive."""
-    root = _deployment_root(tmp_path, absent=absent)
+    _deployment_root(tmp_path, absent=absent)
     _capability_copies(tmp_path, absent=absent)
-    monkeypatch.setenv("ARC_CONFIG_DIR", str(root.parent))
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(_arc_home(tmp_path)))
 
     agent, events = await _run_a_turn(_agent_config(tmp_path), tmp_path)
 
@@ -236,9 +246,8 @@ async def test_a_turn_completes_with_every_module_absent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The fresh-box case: a signed deployment where nothing has been installed yet."""
-    root = tmp_path / "arc" / "modules"
-    root.mkdir(parents=True)
-    monkeypatch.setenv("ARC_CONFIG_DIR", str(root.parent))
+    module_root(_arc_home(tmp_path)).mkdir(parents=True)
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(_arc_home(tmp_path)))
 
     agent, events = await _run_a_turn(_agent_config(tmp_path), tmp_path)
 

@@ -33,9 +33,10 @@ from pathlib import Path
 import arcagent
 import arcbundle
 import pytest
-from arctrust import arc_home, generate_keypair
+from arctrust import generate_keypair
 from arctrust.identity import AgentIdentity
 from arctrust.operator import OperatorKey
+from arctrust.paths import default_operator_key_path, module_root
 from arctrust.validators import load_validators
 
 from arccli.commands.trust import trust_handler
@@ -172,7 +173,7 @@ def _install_module(tmp_path: Path, agent_dir: Path) -> Path:
     verified = arcbundle.verify_bundle(
         bundle, tier="personal", trusted_issuers={_ISSUER: keypair.public_key}
     )
-    installed = arcbundle.materialize(verified, arc_home() / "modules")
+    installed = arcbundle.materialize(verified, module_root())
     copied: Path = arcbundle.copy_capabilities(installed, agent_dir, module=_MODULE)
     arcagent.trust_bundled_capabilities(
         installed,
@@ -185,7 +186,7 @@ def _install_module(tmp_path: Path, agent_dir: Path) -> Path:
 
 def _deployment_dir() -> Path:
     """The shared, read-only module runtime at the deployment root."""
-    return arc_home() / "modules" / _MODULE
+    return module_root() / _MODULE
 
 
 def _edit_on_the_box(artifact: Path) -> None:
@@ -195,7 +196,7 @@ def _edit_on_the_box(artifact: Path) -> None:
 
 
 def _operator_public_key(tmp_path: Path) -> bytes:
-    return OperatorKey.load(tmp_path / "arc-config" / "operator" / "operator.key").public_key
+    return OperatorKey.load(default_operator_key_path(tmp_path / "arc-config")).public_key
 
 
 async def _statuses(agent_dir: Path) -> dict[str, str]:

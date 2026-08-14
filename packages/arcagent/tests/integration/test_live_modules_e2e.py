@@ -2,7 +2,7 @@
 
 SPEC-066 takes every module out of the ``arc-agent`` wheel and delivers it as a
 separately signed bundle, verified in full, materialized read-only at
-``${ARC_CONFIG_DIR:-~/.arc}/modules/``, with each module's capability surface
+the deployment module root, with each module's capability surface
 copied per agent into ``<agent_dir>/capabilities/<name>/``. That is a change to
 how an agent *acquires its abilities*, so "the unit tests pass" is not evidence
 that a deployed agent still has them.
@@ -56,6 +56,7 @@ import arcbundle
 import pytest
 from arcrun import StreamEvent, ToolContext, TurnEndEvent
 from arctrust import ValidatorsConfig, generate_keypair
+from arctrust.paths import identity_dir, module_root, operator_dir
 
 from arcagent.core.agent import ArcAgent
 from arcagent.core.config import (
@@ -163,7 +164,9 @@ class Deployment:
 
     @property
     def modules_root(self) -> Path:
-        return self.arc_home / "modules"
+        # Through the resolver: a bundle materialized anywhere else is a bundle
+        # discovery never sees, which is the whole failure this suite watches for.
+        return module_root(self.arc_home)
 
     @property
     def config_path(self) -> Path:
@@ -245,9 +248,9 @@ def _config(
             workspace=str(deployment.workspace),
         ),
         llm=LLMConfig(model="test/model"),
-        identity=IdentityConfig(key_dir=str(deployment.arc_home / "keys")),
+        identity=IdentityConfig(key_dir=str(identity_dir(deployment.arc_home))),
         security=SecurityConfig(
-            operator_key_dir=str(deployment.arc_home / "operator"),
+            operator_key_dir=str(operator_dir(deployment.arc_home)),
             # The bundle issuer's key, pinned exactly as ``arc module install``
             # pins it. Without it the loader cannot verify any module capability
             # signature and every module goes dark at load.
@@ -929,7 +932,7 @@ async def test_enabled_but_absent_module_leaves_the_agent_without_its_tools(
     """What actually happens today, asserted rather than assumed.
 
     This is the upgrade every fleet agent takes: the wheel stops carrying module
-    source, ``~/.arc/modules`` is empty until an operator installs bundles, and
+    source, the deployment module root is empty until an operator installs, and
     the agent's existing ``arcagent.toml`` still says ``[modules.scheduler]
     enabled = true``. The agent boots, completes turns, and has none of the
     tools its config claims.

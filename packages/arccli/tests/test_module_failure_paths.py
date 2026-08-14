@@ -43,6 +43,8 @@ import arcbundle
 import pytest
 from arcbundle import capability_dir
 from arctrust import generate_keypair
+from arctrust.paths import bundles_dir, config_file, default_operator_key_path, module_root
+from arctrust.paths import trust_dir as trust_store_dir
 from arctrust.trust_store import invalidate_cache
 
 from arccli.commands import module as module_cmd
@@ -96,12 +98,17 @@ def _agent_dir(deployment: Path) -> Path:
     return deployment / "team" / "josh_agent"
 
 
+def _arc_home(deployment: Path) -> Path:
+    """The deployment's Arc home — what ``ARC_CONFIG_DIR`` points the CLI at."""
+    return deployment / "arc"
+
+
 def _module_root(deployment: Path) -> Path:
-    return deployment / "arc" / "modules"
+    return module_root(_arc_home(deployment))
 
 
 def _bundle_store(deployment: Path) -> Path:
-    return deployment / "arc" / "bundles"
+    return bundles_dir(_arc_home(deployment))
 
 
 def _run(*args: str) -> None:
@@ -160,7 +167,9 @@ def test_an_unparseable_tier_config_stops_the_command(
     answer available here: it would verify a development signature on a box
     whose unreadable config may well have said ``federal``.
     """
-    (deployment / "arc" / "arcagent.toml").write_text("[security\ntier = ", encoding="utf-8")
+    machine_config = config_file("arcagent.toml", _arc_home(deployment))
+    machine_config.parent.mkdir(parents=True, exist_ok=True)
+    machine_config.write_text("[security\ntier = ", encoding="utf-8")
 
     with pytest.raises(SystemExit) as exit_info:
         _run("install", "--from-source", "browser")
@@ -201,7 +210,7 @@ def test_a_deployment_that_declares_no_tier_verifies_at_personal(deployment: Pat
     (_agent_dir(deployment) / "arcagent.toml").write_text(
         "[agent]\nname = 'josh'\n", encoding="utf-8"
     )
-    assert not (deployment / "arc" / "arcagent.toml").exists()
+    assert not config_file("arcagent.toml", _arc_home(deployment)).exists()
 
     _run("install", "--from-source", "browser")
 
@@ -365,7 +374,7 @@ def test_a_tampered_operator_key_refuses_the_install_it_would_have_trusted(
     resolved the bundle it signed is simply not trusted — absence is refusal,
     which is the fail-closed direction — and no crash escapes."""
     _run("bundle", "browser")
-    key = deployment / "arc" / "operator" / "operator.key"
+    key = default_operator_key_path(_arc_home(deployment))
     key.chmod(0o600)
     key.write_text("not a key at all", encoding="utf-8")
 
@@ -389,7 +398,7 @@ def test_an_unusable_trust_store_is_reported_as_a_fault_not_a_policy_decision(
         issuer="did:arc:someone-else",
         private_key=generate_keypair().private_key,
     )
-    trust = deployment / "arc" / "trust"
+    trust = trust_store_dir(_arc_home(deployment))
     trust.mkdir(parents=True, exist_ok=True)
     store = trust / "issuers.toml"
     store.write_text('[issuers."did:arc:someone-else"\npublic_key = ', encoding="utf-8")

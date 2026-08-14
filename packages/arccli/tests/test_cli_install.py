@@ -39,6 +39,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import arcagent
 import pytest
+from arctrust.paths import bundles_dir, module_root, operator_dir
 
 from arccli.commands import install as install_cmd
 from arccli.commands import up as up_cmd
@@ -128,7 +129,7 @@ def _fingerprint(root: Path) -> str:
     identical.
     """
     digest = hashlib.sha256()
-    for target in (root / "arc" / "modules", root / "team"):
+    for target in (module_root(root / "arc"), root / "team"):
         for path in sorted(p for p in target.rglob("*") if p.is_file()):
             digest.update(str(path.relative_to(root)).encode())
             digest.update(path.read_bytes())
@@ -157,7 +158,7 @@ def test_a_fresh_deployment_gets_every_module_its_config_enables(
 
     discovered = set(arcagent.discover_modules())
     for module in _MODULES:
-        assert (deployment / "arc" / "modules" / module).is_dir()
+        assert (module_root(deployment / "arc") / module).is_dir()
         assert module in discovered, f"the agent's own predicate does not find {module}"
 
     from arcbundle import capability_dir
@@ -299,7 +300,7 @@ def test_no_operator_key_stops_the_install_before_anything_is_written(
     anyway would mean materializing unverified code. The command refuses, points
     at ``arc init``, and leaves the module root untouched.
     """
-    for key in sorted((deployment / "arc" / "operator").iterdir()):
+    for key in sorted(operator_dir(deployment / "arc").iterdir()):
         key.unlink()
 
     with pytest.raises(SystemExit) as exit_info:
@@ -310,7 +311,7 @@ def test_no_operator_key_stops_the_install_before_anything_is_written(
     assert "operator key" in captured.out
     assert "arc init" in captured.out
     assert "nothing was installed" in captured.err
-    assert not (deployment / "arc" / "modules").exists()
+    assert not module_root(deployment / "arc").exists()
 
 
 def test_a_missing_nats_server_installs_the_modules_and_still_fails_the_command(
@@ -466,7 +467,7 @@ def test_bundles_are_built_automatically_when_none_are_staged(
     at the missing first step. ``arc install`` stages what the fleet needs, signed
     with the deployment operator key so the result verifies at every tier.
     """
-    store = deployment / "arc" / "bundles"
+    store = bundles_dir(deployment / "arc")
     assert not store.exists(), "the deployment already had staged bundles"
 
     install_cmd.install_handler([])
