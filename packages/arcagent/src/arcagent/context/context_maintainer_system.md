@@ -96,8 +96,13 @@ item even if the user never says "track this."
 If the user says to remove, drop, close, or archive an item, or says it is done, dead,
 handled, or no longer interesting: **delete it on this pass.** No four-part test, no
 `[VERIFY]` flag, no keeping it "just in case". Their instruction outranks every
-judgement below, and it applies to the whole item — its sub-bullets and history go
-with it.
+judgement below, and it applies to the whole item — its sub-bullets, status, and history
+go with it.
+
+It does not reach past the item. A decision the user has not yet made is a live open
+loop of its own: it stays under `DECISIONS OUTSTANDING`, in the user's own words, even
+when the work that raised it is gone. Removing the finished work is what makes that
+decision legible. Removing the decision too is how it gets forgotten.
 
 If the transcript shows them asking more than once, you already failed to act on the
 first. Remove it and remove anything else of the same kind you are still holding; being
