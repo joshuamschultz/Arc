@@ -39,6 +39,7 @@ from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder, IndexRebuilder
 from arcmemory.react_adapter import ReactLoop, run_react_loop
 from arcmemory.retrieve import Retriever
+from arcmemory.stores.procedural import ProceduralStore
 from arcmemory.types import ConsolidationResult, RecallCard, Scope, Situation
 
 
@@ -215,6 +216,42 @@ class ArcMemoryBrain:
             embedder=self._embedder,
             seed_vocabulary=self._seed_vocab,
         ).rebuild()
+
+    async def list_procedures(self, *, session_id: str | None = None) -> str:
+        """Every playbook's slug + trigger + counters, WITHOUT its steps.
+
+        The index an agent scans to ask "is there already a way we do this?" — cheap
+        enough to afford on any turn, which is the whole point: the full step lists of
+        a mature store do not fit, so the alternative to this listing is not reading
+        them all, it is never consulting them.
+        """
+        store = ProceduralStore(self._workspace)
+        summaries = store.list_summaries()
+        if not summaries:
+            return "(no procedures recorded)"
+        return "\n".join(
+            f"- {s.slug} | {s.title} | when_to_use: {s.when_to_use} "
+            f"(used {s.use_count}x, revised {s.revisions}x)"
+            for s in summaries
+        )
+
+    async def get_procedure(self, slug: str, *, session_id: str | None = None) -> str:
+        """One playbook in full, and record the use.
+
+        Reading IS the use — it is the only point at which the system can learn which
+        playbooks earn their keep. ``use_count`` previously moved only on writes, so a
+        live store held 36 procedures and no evidence that any had been reached for.
+        """
+        store = ProceduralStore(self._workspace)
+        procedure = store.read(slug)
+        if procedure is None:
+            return f"(no procedure {slug!r})"
+        store.increment_use(procedure.slug)
+        steps = "\n".join(f"{i}. {step}" for i, step in enumerate(procedure.steps, start=1))
+        return (
+            f"{procedure.title}\nwhen_to_use: {procedure.when_to_use}\n"
+            f"(used {procedure.use_count + 1}x, revised {procedure.revisions}x)\n{steps}"
+        )
 
     async def authorize(self, operation: str, *, caller_did: str = "") -> bool:
         """Provider-side ACL gate the host's generic memory adapter consults per op.

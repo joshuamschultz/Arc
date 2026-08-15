@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import NamedTuple
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -154,6 +155,22 @@ class DaySummary(BaseModel):
         )
 
 
+class ProcedureSummary(NamedTuple):
+    """One line of the procedure index: enough to choose a card, without its steps.
+
+    A fleet accumulates dozens of procedures and their full step lists will not fit
+    in a turn. The trigger (``when_to_use``) is what decides relevance, so it is the
+    one body field worth carrying — and keeping steps off this type means a caller
+    cannot accidentally spend the context it exists to save.
+    """
+
+    slug: str
+    title: str
+    when_to_use: str
+    use_count: int
+    revisions: int
+
+
 class Procedure(BaseModel):
     """A how-to card — a repeatable process, findable by its trigger.
 
@@ -166,7 +183,14 @@ class Procedure(BaseModel):
     title: str
     when_to_use: str = ""
     steps: list[str] = Field(default_factory=list)
+    #: Times this playbook was actually REACHED FOR — bumped by ``ProceduralStore.use``.
+    #: Distinct from ``revisions`` because the two answer different questions, and
+    #: conflating them made a much-refined procedure indistinguishable from a
+    #: much-used one: a live store of 36 read 28 at 1 and 8 at 2, none of which was
+    #: evidence of use, because only writes were ever counted.
     use_count: int = 0
+    #: Times the card was written or evolved — how settled the playbook is.
+    revisions: int = 0
     classification: str = "unclassified"
 
 

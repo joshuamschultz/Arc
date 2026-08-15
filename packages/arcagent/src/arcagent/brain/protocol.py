@@ -72,6 +72,25 @@ class Brain(Protocol):
         """Re-derive the disposable indices from the source-of-truth files."""
         ...
 
+    async def list_procedures(self, *, session_id: str | None = None) -> str:
+        """The procedure index: every playbook's trigger, WITHOUT its steps.
+
+        Procedures are how the operator wants work done, and a fleet accumulates
+        dozens whose full step lists will not fit in a turn. Listing triggers only
+        is what makes "is there already a way we do this?" an affordable question —
+        without it the agent answers from a skill and the playbook is never reached.
+        """
+        ...
+
+    async def get_procedure(self, slug: str, *, session_id: str | None = None) -> str:
+        """One procedure in full, and RECORD that it was used.
+
+        Reading is the use: it is the only moment the system learns which playbooks
+        earn their keep. Counting writes instead left a live store of 36 procedures
+        showing no evidence that any had ever been reached for.
+        """
+        ...
+
 
 class NullBrain:
     """The default no-op Brain: memory off, zero files, never errors.
@@ -109,6 +128,12 @@ class NullBrain:
 
     async def rebuild_index(self, *, session_id: str | None = None) -> None:
         return None
+
+    async def list_procedures(self, *, session_id: str | None = None) -> str:
+        return ""
+
+    async def get_procedure(self, slug: str, *, session_id: str | None = None) -> str:
+        return ""
 
 
 __all__ = ["Brain", "NullBrain"]

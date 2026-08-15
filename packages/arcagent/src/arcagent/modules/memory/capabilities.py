@@ -255,6 +255,58 @@ async def memory_search(query: str, top_k: int = 5) -> str:
     return text or "No memory results found."
 
 
+# -- procedure tools ------------------------------------------------------
+
+
+@tool(
+    name="procedure_list",
+    description=(
+        "List the operator's recorded procedures — slug, title and the situation each "
+        "answers to. Steps are NOT included; read the one that matches."
+    ),
+    classification="read_only",
+    when_to_use=(
+        "BEFORE doing any recurring task the operator may already have a way of doing, "
+        "and before recording a new procedure (so an existing one is updated, not "
+        "duplicated). Cheap: triggers only, never the steps."
+    ),
+)
+async def procedure_list() -> str:
+    """The procedure index — cheap enough to consult whenever a task might have one."""
+    st = _runtime.state()
+    if not st.active:
+        return "Memory is not enabled for this agent."
+    if not await _acl_allows("memory.search", st.agent_did):
+        return "(no procedures recorded)"
+    text = await st.brain.list_procedures()
+    await _audit("memory.procedure_listed", {"tool": True})
+    return text
+
+
+@tool(
+    name="procedure_get",
+    description=(
+        "Read one recorded procedure in full: its trigger and its numbered steps. "
+        "Reading it records that it was used."
+    ),
+    classification="read_only",
+    when_to_use=(
+        "After procedure_list shows a procedure covering the task at hand — to follow "
+        "it, to check every step was done, or to see its current steps before updating it."
+    ),
+)
+async def procedure_get(slug: str) -> str:
+    """One playbook in full. Reading is the use, which is how usage gets measured."""
+    st = _runtime.state()
+    if not st.active:
+        return "Memory is not enabled for this agent."
+    if not await _acl_allows("memory.search", st.agent_did):
+        return f"(no procedure {slug!r})"
+    text = await st.brain.get_procedure(slug)
+    await _audit("memory.procedure_used", {"slug": slug, "tool": True})
+    return text
+
+
 # -- Consolidation scheduler ---------------------------------------------
 
 

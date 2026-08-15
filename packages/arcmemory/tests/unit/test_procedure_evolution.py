@@ -70,7 +70,10 @@ def test_upsert_keeps_steps_the_distiller_did_not_mention(workspace: Path) -> No
     assert loaded is not None
     # Unmentioned steps survive IN THEIR ORIGINAL POSITION — the card stays runnable.
     assert loaded.steps == _SEO_STEPS
-    assert loaded.use_count == 2
+    # Two writes are two REVISIONS. They are not two uses: counting them as such is
+    # what left a live store of 36 procedures with no usage signal at all.
+    assert loaded.revisions == 2
+    assert loaded.use_count == 0
 
 
 def test_upsert_removes_only_explicitly_dropped_steps(workspace: Path) -> None:
