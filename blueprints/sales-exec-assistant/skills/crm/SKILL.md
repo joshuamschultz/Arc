@@ -1,155 +1,130 @@
 ---
 name: crm
-description: "Maintain the revenue book of business as interlinked markdown cards under workspace/crm/ — contacts, companies, deals, meetings, commitments — and read the pipeline back. Cards are append-only and cross-linked by [[slug]] so a deal resolves to its company, champion, and meetings. TRIGGER: any mention of a person, account, deal, meeting outcome, or promise made either way ('log this', 'we agreed to', 'they moved to procurement'), and any request for the open pipeline. SKIP: judging whether a deal is healthy (use deal-review), preparing for a specific call (use pre-call-brief), or listing what is overdue across accounts (use follow-up-sweep) — those READ these cards, they do not write them."
-version: 2.0.0
+description: "Maintain the revenue book of business — contacts, companies, deals, meetings, commitments — as append-only cards under workspace/crm/, and read the open pipeline back. Card writing runs through scripts/crm.py so slugs, timestamps, links and append semantics are exact; this skill supplies the judgement about what to log. TRIGGER: any mention of a person, account, deal, meeting outcome, or promise made either way ('log this', 'we agreed to', 'they moved to procurement'), and any request for the pipeline. SKIP: judging whether a deal is healthy (use deal-review), preparing for a specific call (use pre-call-brief), or listing what is overdue across accounts (use follow-up-sweep) — those READ these cards, they do not write them."
+version: 3.0.0
 ---
 
-## Files
+## Resources
 
-- `crm/contacts/<slug>.md` — one card per person.
-- `crm/companies/<slug>.md` — one card per account.
-- `crm/deals/<slug>.md` — one card per opportunity.
-- `crm/meetings/<title-slug>-YYYYMMDD.md` — one card per meeting.
-- `crm/commitments/commitments.md` — the single running commitments log.
-
-All paths are relative to the agent's own workspace, written with the ordinary
-file tools (`read`, `write`, `ls`, `grep`). There is no CRM tool to call and none
-is needed — this is the agent's own workspace.
+(auto-filled by the loader)
 
 ## Contract
 
-Log to the CRM such that:
+Every CRM write goes through `scripts/crm.py`. Given something worth recording:
 
-1. Every entity named lands on its card at `crm/<kind>/<slug>.md`.
-2. The card is **appended to, never rewritten**: read it, add the new entry at
-   the end, write the whole file back. Prior entries are the account's history;
-   losing one loses the story.
-3. A new card starts with exactly this header and nothing else:
-
-   ```
-   # <Title>
-
-   - slug: <slug>
-   - type: <kind>
-   ```
-
-4. Each entry is a UTC timestamp heading followed by `- key: value` lines,
-   omitting every field with no value.
-5. A reference to another entity is written `[[slug]]`, never a bare name, so the
-   cards stay a graph.
-6. A deal logged with no `next_step` is reported back with a warning.
-7. The reply names what was logged in one line. Nothing else in the workspace is
-   modified.
+1. The right entity kind is chosen and the values are passed as flags.
+2. The script writes the card; it is never hand-written with `write` or `edit`.
+3. The reply names what was logged, in one line.
+4. A deal logged with no next step is flagged out loud.
+5. Nothing else in the workspace is modified.
 
 ## Knowledge
 
-- **The slug is the identity.** Lowercase the name, replace every run of
-  non-alphanumeric characters with `-`, strip leading/trailing `-`. `3G Lighting`
-  → `3g-lighting`; `Helen Li` → `helen-li`. A second spelling silently forks one
-  account into two, and neither half then tells the truth.
-- **Append-only is why the pipeline can be read at all.** The current stage is
-  the *last* `- stage:` in the file; every earlier one is history worth keeping.
-- **No scheduled next step is the strongest slip predictor there is** — that is
-  why a deal without one is flagged out loud rather than logged quietly.
-- Commitments are the one exception to one-card-per-entity: they all append to
-  `crm/commitments/commitments.md`. When a commitment names a deal, also append
-  `- commitment:` and `- due:` to that deal's card, so the promise is visible to
-  anyone reading the deal.
-- **Get the timestamp from the clock, not from memory**: run
-  `date -u +'%Y-%m-%d %H:%M'` and use exactly what it returns. The prompt
-  carries the date but not the time, so a timestamp written from memory lands
-  at `00:00` and every card logged that day sorts as if it happened at midnight.
-- Never invent a stage, value, or date that was not said. An empty field is
-  honest; a guessed one becomes someone's forecast.
+**Why a script and not prose.** Slugging, the UTC timestamp, the card header, the
+append-never-rewrite, which fields render as `[[slug]]`, and which value counts as
+current are all mechanical — and each is a thing that, re-derived per call, is
+eventually derived differently. A slug spelled two ways forks one account into two
+cards that each tell half the truth; a timestamp written from memory lands at
+`00:00`; a card "tidied" on the way past loses the history the pipeline is read
+from. The script settles all of it, the same way every time. What is left here is
+the part that actually needs judgement: which entity this is, whether the stage
+really moved, and what is worth recording at all.
 
-### Fields by kind
+**The judgement the script cannot make:**
 
-| Kind | Fields |
-|---|---|
-| `contacts` | `name`, `role`, `employer` (link), `deal_role`, `email` |
-| `companies` | `name`, `industry` |
-| `deals` | `name`, `company` (link), `stage`, `value`, `next_step`, `next_step_owner`, `champion` (link) |
-| `meetings` | `title`, `attendees`, `deal` (link), `follow_ups` |
-| `commitments` | `commitment`, `owner`, `due`, `deal` (link) |
-
-Free-text context goes on a final `- note:` line.
+- **Is this the same entity, or a new one?** The script slugs whatever name it is
+  given. Give it the name already on the card — check with
+  `ls crm/contacts/` or `grep -ril "<name>" crm/` before inventing a variant.
+- **Did the stage actually move,** or is it being restated? Log the move; do not
+  re-log an unchanged stage just because it came up.
+- **Never invent a stage, value, or date that was not said.** Omit the flag
+  entirely — an empty field is honest, a guessed one becomes someone's forecast.
+- **No scheduled next step is the strongest slip predictor there is.** The script
+  flags it; say it out loud rather than burying it.
+- A commitment that names a deal is logged twice on purpose — once to the
+  commitments log, once to that deal — so run the script for each.
 
 ## Steps
 
-**To log an entity:**
+**To log something** (run from the workspace, which is where the shell already is):
 
-1. Run `date -u +'%Y-%m-%d %H:%M'` to get the real timestamp.
-2. Derive the slug from the name (see Knowledge).
-3. `read` `crm/<kind>/<slug>.md`. If it does not exist, start from the header
-   block in the Contract.
-4. Append a blank line, then `## <UTC timestamp>`, then one `- key: value` line
-   per non-empty field for that kind, then `- note: <context>` if there is any.
-5. `write` the whole file back — header, every prior entry, and the new one.
-6. Reply in one line naming what was logged. For a deal with no `next_step`, add
-   `⚠ no next step set — schedule one.`
+```bash
+python3 capabilities/skills/crm/scripts/crm.py log deal \
+  --name "3G Lighting — scheduling/MRP opportunity" \
+  --company "3G Lighting" --stage "Procurement" \
+  --next-step "Security review" --champion "Helen Li"
+```
 
-**To summarize the pipeline:**
+Kinds and their flags — pass only what was actually said:
 
-1. `ls` `crm/deals/` to list the deal cards.
-2. `read` each one.
-3. For each, take the **last** `- stage:` and the **last** `- next_step:`.
-4. Report one line per deal:
-   `- <slug>: [<stage>] next: <next_step>`, using `no next step ⚠` when absent,
-   under a `Pipeline:` heading.
-5. With no deal cards at all, reply `No deals logged yet.`
+| Kind | Flags |
+|---|---|
+| `contact` | `--name` (required), `--role`, `--company`… see `--help` |
+| `company` | `--name` (required), `--industry` |
+| `deal` | `--name` (required), `--company`, `--stage`, `--value`, `--next-step`, `--next-step-owner`, `--champion` |
+| `meeting` | `--title` (required), `--attendees`, `--deal`, `--follow-ups` |
+| `commitment` | `--commitment` (required), `--owner`, `--due`, `--deal` |
+
+Every kind also takes `--note` for free-text context. Run
+`python3 capabilities/skills/crm/scripts/crm.py log <kind> --help` when unsure —
+the script is the schema, and a mistyped flag is refused rather than written.
+
+**To read the pipeline:**
+
+```bash
+python3 capabilities/skills/crm/scripts/crm.py pipeline
+```
+
+Report its output as-is. It already reports each deal's latest stage and next
+step, and marks deals with no next step.
+
+## Steps — before logging a name you have not seen
+
+1. `grep -ril "<name>" crm/` to find an existing card.
+2. If one exists, pass the name exactly as that card records it.
+3. Only if nothing matches is this a new entity.
 
 ## Red Flags & Rationalizations
 
 | Thought | Reality |
 |---|---|
-| "I'll just write the card fresh, it's cleaner." | That deletes the account's history. Read first, append, write the whole file back. |
-| "The name is close enough to the existing card." | Close enough forks the account. Derive the slug by the rule and match it exactly. |
-| "They didn't say a stage, I'll infer one." | An invented stage becomes someone's forecast. Leave it out. |
-| "I'll link by name, it's more readable." | A bare name is not a link. `[[slug]]` is what makes the cards a graph. |
-| "No next step was mentioned, so I'll log it quietly." | That is the strongest slip signal there is. Log it and say so. |
-| "The pipeline should show the first stage I find." | Cards are append-only; the first is the oldest. Take the last. |
-| "I know roughly what time it is." | You know the date, not the time. Run `date -u` or the entry lands at 00:00. |
+| "I'll just write the card with `write`, it's one file." | Then the slug, timestamp and append are yours to get right, every time, forever. Use the script. |
+| "The name is close enough to the existing card." | Close enough forks the account. `grep` first, then pass the recorded name. |
+| "They didn't give a stage, I'll infer one." | An invented stage becomes someone's forecast. Omit the flag. |
+| "No next step was mentioned, so I'll log it quietly." | It is the strongest slip signal there is. The script flags it; repeat the flag. |
+| "The commitment mentions a deal, one run covers it." | Two runs: the commitments log and the deal card. |
+| "I'll fix the card format by hand afterwards." | Hand edits are exactly what the script exists to prevent. |
 
 ## Validation
 
 A log is correct when:
 
-- [ ] The card exists at `crm/<kind>/<slug>.md` with the exact header block.
-- [ ] Every prior entry is still present, unmodified.
-- [ ] The new entry has a UTC `## YYYY-MM-DD HH:MM` heading taken from `date -u`,
-      not `00:00`.
-- [ ] Every field with a value is present; no empty-valued field was written.
-- [ ] Every entity reference is `[[slug]]`, not a bare name.
-- [ ] A deal with no `next_step` was flagged in the reply.
+- [ ] It was written by `scripts/crm.py`, not by `write` or `edit`.
+- [ ] The name passed matches the existing card's name when one existed.
+- [ ] Only fields that were actually stated were passed.
+- [ ] A deal with no next step was flagged in the reply.
+- [ ] A commitment naming a deal was logged to both.
 
-A pipeline summary is correct when every deal card appears exactly once, with its
-**latest** stage and next step.
+A pipeline report is correct when it is the script's output, unedited.
 
 ## Examples
 
-**Logging a deal that moved:**
+**A deal that moved:**
 
 > "3G Lighting moved to procurement — Helen's championing it, next step is the
-> security review by Friday."
+> security review."
 
-Reads `crm/deals/3g-lighting-scheduling-mrp-opportunity.md`, appends:
-
-```
-
-## 2026-08-14 17:20
-- name: 3G Lighting — scheduling/MRP opportunity
-- company: [[3g-lighting]]
-- stage: Procurement
-- next_step: Security review
-- next_step_owner: Helen
-- champion: [[helen-li]]
+```bash
+python3 capabilities/skills/crm/scripts/crm.py log deal \
+  --name "3G Lighting — scheduling/MRP opportunity" --company "3G Lighting" \
+  --stage "Procurement" --next-step "Security review" --champion "Helen Li"
 ```
 
 Reply: `Logged deal '3G Lighting — scheduling/MRP opportunity' [Procurement]`
 
-**A deal with no next step:**
+**A deal with nothing scheduled:**
 
-Reply: `Logged deal 'Northwind expansion' [Discovery]  ⚠ no next step set — schedule one.`
+Reply: `Logged deal 'Northwind expansion' [Discovery] ⚠ no next step set — schedule one.`
 
 **A pipeline review:**
 
