@@ -249,7 +249,12 @@ async def _handle_incoming(message: Any) -> None:
         # member. The channel stream itself remains the record; nothing to retry
         # or steer, so no follow_up.
         return
-    if _is_channel_broadcast(message) and not await _passes_channel_triage(message, st):
+    # An un-addressed channel post reaches every member. Each may answer it; none
+    # may KEEP it — otherwise one operator message to one agent lands permanently in
+    # every other member's memory. Triage decides whether to reply, never whether to
+    # remember, and is fail-open besides.
+    is_broadcast = _is_channel_broadcast(message)
+    if is_broadcast and not await _passes_channel_triage(message, st):
         # An un-addressed channel post this agent's role does not concern: the
         # cheap triage said no, so skip the full run (the expensive fan-out this
         # gate exists to prevent). Still ack-and-ignore -- nothing to steer.
@@ -267,6 +272,7 @@ async def _handle_incoming(message: Any) -> None:
                     interrupt=_interrupt_for(message, st.identity),
                     reply_target=reply_target,
                     reply_label=reply_label,
+                    overheard=is_broadcast,
                 )
             except asyncio.QueueFull as exc:
                 from arcteam.messenger import RetryableDeliveryError

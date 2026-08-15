@@ -701,6 +701,7 @@ class ArcAgent:
         session_key: str,
         reply_target: str | None = None,
         reply_label: str | None = None,
+        overheard: bool = False,
     ) -> arcrun.RunHandle:
         """Start an async, steerable run and track its handle under ``session_key``.
 
@@ -719,6 +720,7 @@ class ArcAgent:
             session_key=session_key,
             reply_target=reply_target,
             reply_label=reply_label,
+            overheard=overheard,
         )
 
     async def quick_classify(self, *, system: str, user: str, max_tokens: int = 8) -> str:
@@ -763,6 +765,7 @@ class ArcAgent:
         reply_label: str | None = None,
         parts: Sequence[Mapping[str, Any]] | None = None,
         on_handle: Callable[[arcrun.RunHandle], None] | None = None,
+        overheard: bool = False,
     ) -> str:
         """Deliver one inbound message — from a human surface or a teammate.
 
@@ -813,6 +816,7 @@ class ArcAgent:
                     session_key=session_key,
                     reply_target=reply_target,
                     reply_label=reply_label,
+                    overheard=overheard,
                 )
                 if on_handle is not None:
                     on_handle(started)

@@ -231,7 +231,11 @@ def track_active_run(
 
 
 def bind_inbound_channel(
-    agent: ArcAgent, reply_target: str | None, reply_label: str | None
+    agent: ArcAgent,
+    reply_target: str | None,
+    reply_label: str | None,
+    *,
+    overheard: bool = False,
 ) -> None:
     """Bind the turn's inbound channel and remember it as a delivery target.
 
@@ -241,6 +245,9 @@ def bind_inbound_channel(
     arrived on). ``reply_target`` is None for non-channel runs.
     """
     turn_context.set_inbound_channel(reply_target)
+    # Bound here, beside the channel, for the same reason: a contextvar set across
+    # the executor->agent task boundary does not reliably reach the loop's hooks.
+    turn_context.set_overheard(overheard)
     if reply_target:
         # Remember this channel so arcui can offer it as a delivery-target
         # dropdown (a raw chat_id exists only here on the inbound path).
@@ -313,11 +320,12 @@ async def _dispatch_stream_locked(
     reply_target: str | None,
     reply_label: str | None,
     allowed_strategies: list[str] | None,
+    overheard: bool = False,
 ) -> AsyncIterator[arcrun.StreamEvent]:
     """Execute a turn after its session serialization lock is held."""
     agent._ensure_started()
     activate_runtime_bindings(agent)
-    bind_inbound_channel(agent, reply_target, reply_label)
+    bind_inbound_channel(agent, reply_target, reply_label, overheard=overheard)
     telemetry, bus, model, provider, prompt, bridge = await build_run_context(agent, input_text)
     await session.append_message(prompt.session_record(input_text))
     history = wire_messages(session.get_messages())
@@ -394,6 +402,7 @@ async def start_tracked_run(
     session_key: str,
     reply_target: str | None = None,
     reply_label: str | None = None,
+    overheard: bool = False,
 ) -> arcrun.RunHandle:
     """Start an async, steerable run for ``session_key`` and track its handle.
 
@@ -415,7 +424,7 @@ async def start_tracked_run(
     try:
         agent._ensure_started()
         activate_runtime_bindings(agent)
-        bind_inbound_channel(agent, reply_target, reply_label)
+        bind_inbound_channel(agent, reply_target, reply_label, overheard=overheard)
         _telemetry, _bus, model, provider, prompt, bridge = await build_run_context(
             agent, input_text
         )

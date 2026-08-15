@@ -221,6 +221,74 @@ def test_preflight_passes_when_every_agent_uses_the_deployment_operator_key(
     assert checks["operator key"].ok is True
 
 
+def test_preflight_refuses_two_agents_sharing_one_identity(
+    deployment: Path, started: list[list[str]], capsys: Any
+) -> None:
+    """Two agents on one DID silently become one agent with merged memory.
+
+    The memory runtime registers state per DID, last write wins, and its own guard
+    compares DID to DID — so a shared DID passes every check while one agent's
+    consolidation runs over the other's episodes. Worse for a shared workspace: the
+    markdown card stores take a workspace with NO scope at all, so entities,
+    insights, procedures and events merge outright.
+
+    Nothing anywhere enforces uniqueness. A fleet that is fine today is fine by luck
+    of configuration, and the failure is silent when that luck runs out.
+    """
+    first = deployment / "team" / "josh_agent"
+    second = deployment / "team" / "twin_agent"
+    (second / "workspace").mkdir(parents=True)
+    shared = "[identity]\ndid = 'did:arc:testorg:executor/deadbeef'\n"
+    (first / "arcagent.toml").write_text(
+        _agent_toml(first).replace("[identity]\n", shared), encoding="utf-8"
+    )
+    (second / "arcagent.toml").write_text(
+        _agent_toml(second).replace("[identity]\n", shared).replace("name = 'josh'", "name = 'twin'"),
+        encoding="utf-8",
+    )
+
+    checks = {check.name: check for check in up_cmd.preflight(deployment / "team")}
+    assert checks["agent identity"].ok is False
+    assert "deadbeef" in checks["agent identity"].detail
+
+    with pytest.raises(SystemExit) as exit_info:
+        _run()
+
+    assert exit_info.value.code == 1
+    assert started == [], "a fleet with two agents on one identity must not start"
+
+
+def test_preflight_refuses_two_agents_sharing_one_workspace(
+    deployment: Path, started: list[list[str]]
+) -> None:
+    """A shared workspace merges both agents' memory cards outright."""
+    first = deployment / "team" / "josh_agent"
+    second = deployment / "team" / "twin_agent"
+    (second / "workspace").mkdir(parents=True)
+    (second / "arcagent.toml").write_text(
+        _agent_toml(second)
+        .replace(f"workspace = '{second / 'workspace'}'", f"workspace = '{first / 'workspace'}'")
+        .replace("name = 'josh'", "name = 'twin'"),
+        encoding="utf-8",
+    )
+
+    checks = {check.name: check for check in up_cmd.preflight(deployment / "team")}
+    assert checks["agent identity"].ok is False
+    assert "workspace" in checks["agent identity"].detail.lower()
+
+
+def test_preflight_passes_on_a_fleet_of_distinct_agents(deployment: Path) -> None:
+    """The paired positive: a normal fleet must not be refused by this check."""
+    second = deployment / "team" / "other_agent"
+    (second / "workspace").mkdir(parents=True)
+    (second / "arcagent.toml").write_text(
+        _agent_toml(second).replace("name = 'josh'", "name = 'other'"), encoding="utf-8"
+    )
+
+    checks = {check.name: check for check in up_cmd.preflight(deployment / "team")}
+    assert checks["agent identity"].ok is True
+
+
 def test_preflight_fails_when_the_team_root_holds_no_agent(
     deployment: Path, started: list[list[str]], capsys: Any
 ) -> None:

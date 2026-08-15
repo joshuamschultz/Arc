@@ -24,6 +24,7 @@ import logging
 import time
 from typing import Any
 
+from arcagent.core import turn_context
 from arcagent.modules.memory import _runtime
 from arcagent.tools._decorator import background_task, hook, tool
 from arcagent.utils.audit import safe_audit
@@ -206,6 +207,11 @@ async def capture_user(ctx: Any) -> None:
     """
     st = _runtime.state()
     if not st.active:
+        return
+    if turn_context.overheard():
+        # A channel post addressed to nobody wakes every member agent. Each may
+        # answer it; none may keep it. Retaining here is how one operator message
+        # to one agent ends up permanently in every other agent's memory.
         return
     text = str(ctx.data.get("task", "")).strip()
     await _capture(st, text, kind="user")

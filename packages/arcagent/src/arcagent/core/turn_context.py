@@ -28,6 +28,32 @@ def set_inbound_channel(target: str | None) -> None:
     _inbound_channel.set(target)
 
 
+_overheard: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "arcagent_overheard", default=False
+)
+
+
+def set_overheard(value: bool) -> None:
+    """Mark the current turn as driven by a message this agent merely OVERHEARD.
+
+    An un-addressed post to a shared channel wakes every member, so each one runs a
+    turn on a message that named nobody. Answering is the design; retaining is not —
+    otherwise one operator's message to the sales agent lands permanently in the
+    trader's memory, the marketer's, and every other member's, and in all of their
+    future prompts.
+
+    Triage cannot carry this distinction: it decides "is replying my job?", never
+    "is this mine to keep?", and it is fail-open, so an agent that stayed silent has
+    usually still stored the message.
+    """
+    _overheard.set(value)
+
+
+def overheard() -> bool:
+    """Whether this turn came from a broadcast addressed to nobody in particular."""
+    return _overheard.get()
+
+
 def inbound_channel() -> str | None:
     """The current turn's inbound channel target, or None if not a channel turn."""
     return _inbound_channel.get()
@@ -46,4 +72,10 @@ def is_team_target(target: str) -> bool:
     return "://" in target
 
 
-__all__ = ["inbound_channel", "is_team_target", "set_inbound_channel"]
+__all__ = [
+    "inbound_channel",
+    "is_team_target",
+    "overheard",
+    "set_inbound_channel",
+    "set_overheard",
+]

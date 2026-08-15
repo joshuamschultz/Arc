@@ -263,6 +263,59 @@ def _check_operator_key(team_root: Path | None) -> Check:
     return Check("operator key", True, f"present under {home}")
 
 
+def _check_agent_identity(team_root: Path | None) -> Check:
+    """No two agents may share a DID or a workspace — either one merges their memory.
+
+    The memory runtime registers state per DID, last write wins, and its own guard
+    compares DID to DID, so a shared DID passes every check while one agent's
+    consolidation runs over the other's episodes. A shared workspace is worse: the
+    markdown card stores take a workspace with NO scope at all, so entities,
+    insights, procedures and events merge outright.
+
+    Nothing else in the stack enforces either. A fleet that is fine today is fine by
+    luck of configuration, and the failure mode when that luck runs out is silent —
+    which is the reason to spend a preflight line on it.
+    """
+    import arcagent
+
+    if team_root is None or not team_root.is_dir():
+        return Check("agent identity", True, "no team root to check")
+
+    by_did: dict[str, list[str]] = {}
+    by_workspace: dict[Path, list[str]] = {}
+    for agent_id, agent_root in discover_agents(team_root):
+        try:
+            config = arcagent.load_config(agent_root / "arcagent.toml")
+        except Exception as exc:  # reason: agent_states is where this is reported
+            _logger.debug("identity check skipped %s: unreadable config (%s)", agent_id, exc)
+            continue
+        if did := config.identity.did.strip():
+            by_did.setdefault(did, []).append(agent_id)
+        workspace = Path(config.agent.workspace).expanduser()
+        resolved = workspace if workspace.is_absolute() else (agent_root / workspace)
+        by_workspace.setdefault(resolved.resolve(), []).append(agent_id)
+
+    clashes = [
+        f"DID {did} is claimed by {', '.join(sorted(ids))}"
+        for did, ids in by_did.items()
+        if len(ids) > 1
+    ]
+    clashes += [
+        f"workspace {path} is shared by {', '.join(sorted(ids))}"
+        for path, ids in by_workspace.items()
+        if len(ids) > 1
+    ]
+    if clashes:
+        return Check(
+            "agent identity",
+            False,
+            "; ".join(clashes)
+            + ". Two agents on one identity silently become one agent with merged "
+            "memory. Give each its own DID (`arc agent build --force`) and workspace.",
+        )
+    return Check("agent identity", True, f"{len(by_workspace)} agent(s), all distinct")
+
+
 def _check_team_root(team_root: Path | None) -> Check:
     """The team root must resolve and hold at least one agent."""
     if team_root is None:
@@ -305,6 +358,7 @@ def preflight(team_root: Path | None) -> list[Check]:
         _check_nats(),
         _check_operator_key(team_root),
         _check_team_root(team_root),
+        _check_agent_identity(team_root),
         _check_data_dir(),
     ]
 
