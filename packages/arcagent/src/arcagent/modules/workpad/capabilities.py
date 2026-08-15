@@ -25,6 +25,7 @@ import asyncio
 import logging
 import os
 import time
+from datetime import date
 from typing import Any
 
 import arcrun
@@ -207,8 +208,14 @@ async def perform_maintenance(st: _runtime._State, model: Any, transcript_text: 
 
 
 def _render_input(current_context: str, transcript_text: str) -> str:
-    """Render the maintainer's user turn: current file + recent activity."""
+    """Render the maintainer's user turn: current file + recent activity.
+
+    Today's date is supplied because the model has no clock: asked to stamp the
+    file it invents one, and a wrong date makes every staleness judgement in the
+    prompt wrong with it.
+    """
     return (
+        f"Today's date is {date.today().isoformat()}.\n\n"
         "CURRENT context.md (may be empty):\n"
         f"{current_context.strip() or '(empty)'}\n\n"
         "RECENT SESSION ACTIVITY since the last update:\n"
