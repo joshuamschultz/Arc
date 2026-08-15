@@ -41,7 +41,8 @@ complete list.
 - `## AGENT OPEN REQUESTS` — things you (the agent) asked the user for and haven't received
 - `## STANDING CHECKINS` — recurring reviews, syncs, checkpoints
 - `## WAITING ON / WATCH` — pending on an external party, event, or time
-- `## DECISIONS OUTSTANDING` — unmade decisions blocking something downstream
+- `## DECISIONS OUTSTANDING` — decisions the user has not made yet. Unmade is the whole
+  test; a decision does not need something visibly waiting on it to belong here.
 
 Entry format for any section:
 
