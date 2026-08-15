@@ -228,3 +228,45 @@ class TestShutdownAndContract:
         # hand back another agent's cockpit.
         with pytest.raises(RuntimeError, match="no agent DID bound"):
             await track_runs(_post_respond("x", "y"))
+
+
+class TestMaintainerInput:
+    """The maintainer's user turn and the prompt that governs it.
+
+    The rewrite is a single-shot call whose whole reply becomes context.md, so
+    two things it cannot get from anywhere else have to be in the input: what
+    day it is, and the authority to delete.
+    """
+
+    def test_render_input_supplies_todays_date(self) -> None:
+        from datetime import date
+
+        from arcagent.modules.workpad.capabilities import _render_input
+
+        # Without this the model invents a date, and every staleness judgement
+        # in the prompt is then anchored to a year that never happened.
+        assert date.today().isoformat() in _render_input("# CONTEXT", "did a thing")
+
+    def test_prompt_makes_the_user_word_final(self) -> None:
+        from arcprompt import load_stock
+
+        prompt = load_stock("arcagent", "context_maintainer_system").lower()
+
+        # An explicit "remove this" must outrank the judgement tests below it.
+        # Without that precedence a finished-but-undecided item satisfies no
+        # removal test and is kept forever, however many times it is asked for.
+        assert "the user's word is final" in prompt
+        assert "outranks" in prompt
+
+        # ...but not so far that an unmade decision goes with it.
+        assert "decisions outstanding" in prompt
+
+    def test_prompt_asks_for_the_file_and_nothing_else(self) -> None:
+        from arcprompt import load_stock
+
+        prompt = load_stock("arcagent", "context_maintainer_system")
+
+        # The reply IS the file. A prompt that also asks for a change report
+        # gets one — written into the cockpit, loaded on every later turn.
+        assert "written to `context.md` verbatim" in prompt
+        assert "session report" in prompt.lower()

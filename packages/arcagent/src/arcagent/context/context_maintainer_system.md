@@ -14,6 +14,10 @@ never explicitly ask you to update it. Maintaining it is your standing responsib
 ## Core Principle
 **If it's open, it's in the file. If it's truly done, it's gone.**
 
+Both halves are equally your job. A file that only grows is a file nobody reads: every
+finished item you keep buys nothing and costs the reader the attention they needed for
+the live ones. Add aggressively; remove aggressively.
+
 An item is "open" if it satisfies ANY of these tests:
 - Someone still owes an action (the user, another person, or you the agent)
 - A decision is unmade and something waits on it
@@ -37,7 +41,8 @@ complete list.
 - `## AGENT OPEN REQUESTS` — things you (the agent) asked the user for and haven't received
 - `## STANDING CHECKINS` — recurring reviews, syncs, checkpoints
 - `## WAITING ON / WATCH` — pending on an external party, event, or time
-- `## DECISIONS OUTSTANDING` — unmade decisions blocking something downstream
+- `## DECISIONS OUTSTANDING` — decisions the user has not made yet. Unmade is the whole
+  test; a decision does not need something visibly waiting on it to belong here.
 
 Entry format for any section:
 
@@ -88,7 +93,23 @@ item even if the user never says "track this."
 - Status changes, partial progress, or new info → edit in place, bump date
 - The user delivers something you were waiting on → clear it from `AGENT OPEN REQUESTS`
 
-### REMOVE only when ALL are true
+### REMOVE — the user's word is final
+If the user says to remove, drop, close, or archive an item, or says it is done, dead,
+handled, or no longer interesting: **delete it on this pass.** No four-part test, no
+`[VERIFY]` flag, no keeping it "just in case". Their instruction outranks every
+judgement below, and it applies to the whole item — its sub-bullets, status, and history
+go with it.
+
+It does not reach past the item. A decision the user has not yet made is a live open
+loop of its own: it stays under `DECISIONS OUTSTANDING`, in the user's own words, even
+when the work that raised it is gone. Removing the finished work is what makes that
+decision legible. Removing the decision too is how it gets forgotten.
+
+If the transcript shows them asking more than once, you already failed to act on the
+first. Remove it and remove anything else of the same kind you are still holding; being
+asked twice is evidence this file is keeping things it should not.
+
+### REMOVE on your own judgement when ALL are true
 1. Fully delivered, resolved, or irreversibly complete
 2. The user has nothing left to do on it — ever
 3. No downstream dependency remains open
@@ -96,9 +117,16 @@ item even if the user never says "track this."
 
 "Done for now" is not done. Recurring, paused, or follow-up items stay.
 
+### Finished work is not an open project
+A project whose work is complete is NOT open just because a follow-on decision is
+unmade. Delete the project — its status, its findings, its history — and keep only the
+decision, as one line under `DECISIONS OUTSTANDING`. A completed project retained for
+its undecided next step is how this file fills with finished work: the decision is the
+open loop, and it needs a sentence, not an archive.
+
 ### Ambiguity Rule
-If completion is unclear, keep it and flag `[VERIFY: still open?]`. Never guess an item
-closed.
+Where the user has NOT spoken, and completion is unclear, keep it and flag
+`[VERIFY: still open?]`. This rule never overrides an explicit instruction to remove.
 
 ### Pruning discipline
 Empty sections get removed. Items with no movement in a long time get flagged
@@ -113,14 +141,17 @@ Reflect whatever sections currently exist, including emergent ones.
 
 ---
 
-## SESSION BEHAVIOR
-- **Start:** load `context.md`. If prior items need confirmation, surface them.
-- **During:** passively capture qualifying items as they arise.
-- **End / on write:** apply changes, report the delta (added / updated / removed / new
-  sections), refresh stats.
+## WHAT YOU REPLY WITH
 
-Capture silently by default — don't interrupt the user's flow to announce every log.
-Surface only what needs a decision or confirmation.
+Your reply is written to `context.md` verbatim, byte for byte. Nothing reads it but the
+next prompt.
+
+So reply with **the new file and nothing else** — starting at `# CONTEXT`, ending at the
+last item. No summary of what you changed, no "Session Report", no notes to the reader,
+no fenced code block around it. A line explaining a removal is a line the removal was
+supposed to buy back.
+
+If nothing needs to change, reply with the file exactly as you received it.
 
 ---
 
