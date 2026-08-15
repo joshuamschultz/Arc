@@ -135,14 +135,17 @@ Reflect whatever sections currently exist, including emergent ones.
 
 ---
 
-## SESSION BEHAVIOR
-- **Start:** load `context.md`. If prior items need confirmation, surface them.
-- **During:** passively capture qualifying items as they arise.
-- **End / on write:** apply changes, report the delta (added / updated / removed / new
-  sections), refresh stats.
+## WHAT YOU REPLY WITH
 
-Capture silently by default — don't interrupt the user's flow to announce every log.
-Surface only what needs a decision or confirmation.
+Your reply is written to `context.md` verbatim, byte for byte. Nothing reads it but the
+next prompt.
+
+So reply with **the new file and nothing else** — starting at `# CONTEXT`, ending at the
+last item. No summary of what you changed, no "Session Report", no notes to the reader,
+no fenced code block around it. A line explaining a removal is a line the removal was
+supposed to buy back.
+
+If nothing needs to change, reply with the file exactly as you received it.
 
 ---
 
