@@ -66,7 +66,12 @@ def test_sales_blueprint_materializes_full_surface(tmp_path: Path) -> None:
         "deal-review",
         "follow-up-sweep",
     }
-    assert "crm/deals" in (skills_root / "crm" / "SKILL.md").read_text()
+    # The CRM skill's determinism lives in its bundled script, so materializing
+    # the SKILL.md without it would ship a skill whose every instruction is a
+    # command that cannot run.
+    crm_script = skills_root / "crm" / "scripts" / "crm.py"
+    assert crm_script.is_file(), f"the crm skill materialized without its script: {crm_script}"
+    assert "def slugify" in crm_script.read_text()
     for skill in skills_root.iterdir():
         assert (skill / "SKILL.md").is_file()
         assert (skill / f"SKILL.md{'.arcsig'}").is_file()
