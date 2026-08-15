@@ -118,6 +118,26 @@ class ArcLLMEmbedder:
         )
 
 
+def unwrap_envelope(data: dict[str, Any], expected: str) -> dict[str, Any]:
+    """Return the object holding ``expected``, opening a single-key envelope if needed.
+
+    Structured-output modes sometimes return the answer nested inside one provider
+    key — ``{"$parameter": {...}}``, ``{"output": {...}}`` — instead of at the top
+    level. Every distiller call reads its own key straight off the parsed dict, so a
+    wrapped response silently became "no facts", "no insights", "merge nothing": a
+    total failure indistinguishable from a considered negative answer. It was
+    observed live on both the merge-confirm and step-consolidation calls.
+
+    Narrow on purpose: exactly one key, whose value is a dict, and only when
+    ``expected`` is not already present — so a legitimate one-key answer is never
+    mistaken for an envelope.
+    """
+    if expected in data or len(data) != 1:
+        return data
+    inner = next(iter(data.values()))
+    return inner if isinstance(inner, dict) else data
+
+
 class ArcLLMDistiller:
     """arcmemory ``Distiller`` seam backed by an arcllm structured completion.
 
@@ -134,14 +154,14 @@ class ArcLLMDistiller:
     async def extract_facts(self, events: list[Event]) -> FactExtraction:
         """One structured completion → additive semantic facts (REQ-031/032/033)."""
         data = await self._complete(
-            load_stock("arcmemory", "distill_fact"), self._render_events(events)
+            load_stock("arcmemory", "distill_fact"), self._render_events(events), "facts"
         )
         return FactExtraction.model_validate(data)
 
     async def mint_insights(self, events: list[Event], facts: list[Fact]) -> InsightMint:
         """One structured completion → minted abstractions, the centerpiece (REQ-050)."""
         user = f"{self._render_events(events)}\n\nKnown facts:\n{self._render_facts(facts)}"
-        data = await self._complete(load_stock("arcmemory", "distill_insight"), user)
+        data = await self._complete(load_stock("arcmemory", "distill_insight"), user, "insights")
         return InsightMint.model_validate(data)
 
     async def extract_procedures(
@@ -157,20 +177,22 @@ class ArcLLMDistiller:
             f"{self._render_events(events)}\n\n"
             f"Existing procedure cards:\n{self._render_procedures(existing)}"
         )
-        data = await self._complete(load_stock("arcmemory", "distill_procedure"), user)
+        data = await self._complete(
+            load_stock("arcmemory", "distill_procedure"), user, "procedures"
+        )
         return ProcedureExtraction.model_validate(data)
 
     async def extract_events(self, episodes: list[Event]) -> EventExtraction:
         """One structured completion → things that happened in the USER's life."""
         data = await self._complete(
-            load_stock("arcmemory", "distill_event"), self._render_events(episodes)
+            load_stock("arcmemory", "distill_event"), self._render_events(episodes), "events"
         )
         return EventExtraction.model_validate(data)
 
     async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
         """One structured completion → meeting-minutes daily notes (chronological)."""
         data = await self._complete(
-            load_stock("arcmemory", "distill_day"), self._render_events(events)
+            load_stock("arcmemory", "distill_day"), self._render_events(events), "timeline"
         )
         return DaySummaryDraft.model_validate(data)
 
@@ -180,7 +202,7 @@ class ArcLLMDistiller:
         """One bounded call → the existing slug this candidate IS, or None (new)."""
         listing = "\n".join(f"- {slug}" for slug in candidates)
         user = f"New candidate: {name} (type: {entity_type})\nExisting cards:\n{listing}"
-        data = await self._complete(load_stock("arcmemory", "distill_disambiguate"), user)
+        data = await self._complete(load_stock("arcmemory", "distill_disambiguate"), user, "slug")
         chosen = data.get("slug")
         if not isinstance(chosen, str) or not chosen.strip():
             return None
@@ -201,7 +223,9 @@ class ArcLLMDistiller:
         if len(steps) < 2:
             return []
         numbered = "\n".join(f"{i}. {text}" for i, text in enumerate(steps, start=1))
-        data = await self._complete(load_stock("arcmemory", "consolidate_steps"), numbered)
+        data = await self._complete(
+            load_stock("arcmemory", "consolidate_steps"), numbered, "steps"
+        )
         out: list[tuple[str, list[int]]] = []
         for item in data.get("steps", []):
             if not isinstance(item, dict):
@@ -228,7 +252,9 @@ class ArcLLMDistiller:
             return []
         slugs = {ref.slug for ref in group}
         data = await self._complete(
-            load_stock("arcmemory", "distill_find_contradictions"), self._render_cards(group)
+            load_stock("arcmemory", "distill_find_contradictions"),
+            self._render_cards(group),
+            "contradicting",
         )
         named = data.get("contradicting", [])
         if not isinstance(named, list):
@@ -249,7 +275,9 @@ class ArcLLMDistiller:
                 continue
             slugs = {ref.slug for ref in group}
             data = await self._complete(
-                load_stock("arcmemory", "distill_merge_confirm"), self._render_cards(group)
+                load_stock("arcmemory", "distill_merge_confirm"),
+                self._render_cards(group),
+                "merge",
             )
             for sub in data.get("merge", []):
                 if not isinstance(sub, list):
@@ -259,8 +287,13 @@ class ArcLLMDistiller:
                     confirmed.append(picked)
         return confirmed
 
-    async def _complete(self, system: str, user: str) -> dict[str, Any]:
-        """Run one bounded JSON completion and parse the object (provider-agnostic)."""
+    async def _complete(self, system: str, user: str, expects: str = "") -> dict[str, Any]:
+        """Run one bounded JSON completion and parse the object (provider-agnostic).
+
+        ``expects`` names the key the caller will read, so a provider that nests its
+        answer in a single-key envelope is unwrapped here rather than read as an
+        empty answer at every call site (see :func:`unwrap_envelope`).
+        """
         messages = [
             arcllm.Message(role="system", content=system),
             arcllm.Message(role="user", content=user),
@@ -268,9 +301,8 @@ class ArcLLMDistiller:
         provider = self._provider_factory()
         response = await provider.invoke(messages, response_format={"type": "json_object"})
         parsed = response.parsed_content
-        if isinstance(parsed, dict):
-            return parsed
-        return self._parse(response.content)
+        data = parsed if isinstance(parsed, dict) else self._parse(response.content)
+        return unwrap_envelope(data, expects) if expects else data
 
     @staticmethod
     def _parse(content: str | None) -> dict[str, Any]:
