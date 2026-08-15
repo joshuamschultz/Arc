@@ -830,3 +830,109 @@ async def test_a_single_card_store_still_reports_its_pass(workspace, db, scope) 
 
     assert await consolidator.merge_entities() == []
     assert len(_pass_events(sink)) == 1
+
+
+# ---------------------------------------------------------------------------
+# Exact-name de-dup: decide the mechanical part in code
+# ---------------------------------------------------------------------------
+
+
+class ContradictionFinder:
+    """Names the cards a narrow model call says CANNOT be the same entity."""
+
+    def __init__(self, contradicting: list[str] | None = None) -> None:
+        self.contradicting = contradicting or []
+        self.asked: list[list[str]] = []
+
+    async def confirm_entity_merges(self, groups: list) -> list[list[str]]:  # pragma: no cover
+        raise AssertionError("an exact-name cluster must not go through the open question")
+
+    async def find_contradictions(self, group: list) -> list[str]:
+        self.asked.append([ref.slug for ref in group])
+        return list(self.contradicting)
+
+
+def _person(store: SemanticStore, slug: str, name: str, pred: str, value: str) -> None:
+    store.write_fact(slug, pred, value, name=name, entity_type="person")
+
+
+async def test_identical_name_and_type_merges_without_asking_the_open_question(
+    workspace, db, scope
+) -> None:
+    """The live failure: two cards, same name, same type, nothing contradicting.
+
+    Asked "are these the same entity?", the model declined this case run after run
+    even with the prompt recalibrated — and its verdicts varied on an unchanged
+    prompt. Identical name and type is not a judgement call, it is a fact about the
+    store, so it is settled in code; the model is left the question it can actually
+    answer, which is whether a fact contradicts.
+    """
+    store = SemanticStore(workspace, WeightedGraph(db), scope=scope.key)
+    _person(store, "ben-nnl", "Ben (NNL/TMAC)", "is", "NNL-side contact, role unconfirmed")
+    _person(store, "ben-nnl-contact", "Ben (NNL/TMAC)", "is", "Client contact on the NNL side")
+
+    finder = ContradictionFinder()
+    consolidator = Consolidator(
+        db,
+        workspace,
+        scope,
+        distiller=_distiller(),
+        config=MemoryConfig(),
+        embedder=SubstringEmbedder(),
+        confirmer=finder,
+    )
+
+    merged = await consolidator.merge_entities()
+
+    assert len(merged) == 1, f"the duplicate was not folded: {merged}"
+    assert finder.asked, "the narrow contradiction question was never asked"
+
+
+async def test_a_contradicting_card_is_kept_apart(workspace, db, scope) -> None:
+    """Two real people can share a name — the model's job is to spot that.
+
+    Without this the change would be "merge anything with the same name", which
+    trades a duplicate for the far worse failure of fusing two people.
+    """
+    store = SemanticStore(workspace, WeightedGraph(db), scope=scope.key)
+    _person(store, "chris-acme", "Chris Taylor", "employer", "Acme")
+    _person(store, "chris-globex", "Chris Taylor", "employer", "Globex")
+
+    finder = ContradictionFinder(contradicting=["chris-globex"])
+    consolidator = Consolidator(
+        db,
+        workspace,
+        scope,
+        distiller=_distiller(),
+        config=MemoryConfig(),
+        embedder=SubstringEmbedder(),
+        confirmer=finder,
+    )
+
+    assert await consolidator.merge_entities() == []
+    assert set(store.slugs()) == {"chris-acme", "chris-globex"}
+
+
+async def test_a_failed_contradiction_check_merges_nothing(workspace, db, scope) -> None:
+    """Fail closed: no answer is not the same as "no contradiction"."""
+
+    class Broken(ContradictionFinder):
+        async def find_contradictions(self, group: list) -> list[str]:
+            raise RuntimeError("provider down")
+
+    store = SemanticStore(workspace, WeightedGraph(db), scope=scope.key)
+    _person(store, "ben-a", "Ben (NNL/TMAC)", "is", "contact")
+    _person(store, "ben-b", "Ben (NNL/TMAC)", "is", "contact")
+
+    consolidator = Consolidator(
+        db,
+        workspace,
+        scope,
+        distiller=_distiller(),
+        config=MemoryConfig(),
+        embedder=SubstringEmbedder(),
+        confirmer=Broken(),
+    )
+
+    assert await consolidator.merge_entities() == []
+    assert set(store.slugs()) == {"ben-a", "ben-b"}

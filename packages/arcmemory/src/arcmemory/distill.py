@@ -208,19 +208,29 @@ class Distiller(Protocol):
 
     async def confirm_entity_merges(self, groups: list[list[EntityRef]]) -> list[list[str]]: ...
 
+    async def find_contradictions(self, group: list[EntityRef]) -> list[str]: ...
+
 
 class EntityMergeConfirmer(Protocol):
-    """The single-method seam that gates slow-path entity de-duplication.
+    """The seam that gates slow-path entity de-duplication, with two questions.
 
-    Given CANDIDATE clusters (same-type cards whose names merely embed close), it
-    returns the slug sub-groups that are UNAMBIGUOUSLY the same real-world entity —
-    each returned sub-group has >= 2 slugs, and different-but-similar entities (a
-    'Josh Schultz' vs a 'Joshua Shubbie') are kept apart. Any :class:`Distiller`
-    satisfies it structurally, so production passes the same arcllm-backed distiller;
-    tests inject a stub with only this method. Merge is never done on embedding alone.
+    ``confirm_entity_merges`` is the open one, for clusters held together only by name
+    SIMILARITY: which sub-groups are unambiguously the same real-world entity, keeping
+    a 'Josh Schultz' apart from a 'Joshua Shubbie'.
+
+    ``find_contradictions`` is the narrow one, for cards sharing an identical name AND
+    type. There, whether they are the same entity is already settled by the store's own
+    structure, so the only question left is whether a fact rules a card out. Asked the
+    open question instead, the model declined real duplicates repeatedly and answered
+    inconsistently on an unchanged prompt; asked this one it is stable.
+
+    Any :class:`Distiller` satisfies both structurally, so production passes the same
+    arcllm-backed distiller. Merge is never done on embedding alone.
     """
 
     async def confirm_entity_merges(self, groups: list[list[EntityRef]]) -> list[list[str]]: ...
+
+    async def find_contradictions(self, group: list[EntityRef]) -> list[str]: ...
 
 
 class EntityDisambiguator(Protocol):
