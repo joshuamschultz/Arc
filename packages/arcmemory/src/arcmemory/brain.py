@@ -38,9 +38,9 @@ from arcmemory.distill import Distiller
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder, IndexRebuilder
 from arcmemory.react_adapter import ReactLoop, run_react_loop
-from arcmemory.retrieve import Retriever
+from arcmemory.retrieve import Retriever, attributed_cards
 from arcmemory.stores.procedural import ProceduralStore
-from arcmemory.types import ConsolidationResult, RecallCard, Scope, Situation
+from arcmemory.types import ConsolidationResult, Recall, RecallCard, Scope, Situation
 
 
 class _ScopeBundle:
@@ -152,6 +152,7 @@ class ArcMemoryBrain:
         result = await bundle.retriever.retrieve(
             situation, clearance=clr, top_k=top_k, budget=budget
         )
+        self._emit_recall_attribution(result.recalls)
         return result.text
 
     async def recall(
@@ -216,6 +217,33 @@ class ArcMemoryBrain:
             embedder=self._embedder,
             seed_vocabulary=self._seed_vocab,
         ).rebuild()
+
+    def _emit_recall_attribution(self, recalls: list[Recall]) -> None:
+        """Record WHICH cards a recall surfaced, not merely that one happened.
+
+        Memory audited that a recall occurred and whether it returned anything — never
+        what it returned — so nothing downstream could ask whether surfacing a given
+        card actually helped. That question is the entire basis for improving retrieval
+        over time, and it cannot be asked retroactively: the attribution has to be
+        written at the moment the bundle is built.
+
+        Cards only, and deduplicated. Per-chunk credit starves on a real store (1,528
+        indexed chunks against a handful of turns an hour), which is why the unit is
+        the card an operator edits and consolidation merges.
+        """
+        cards = attributed_cards(recalls)
+        if not cards:
+            return
+        emit(
+            AuditEvent(
+                actor_did=self._scope(None).agent_did,
+                action="memory.recall_attributed",
+                target="memory",
+                outcome="allow",
+                extra={"cards": cards},
+            ),
+            self._audit,
+        )
 
     async def list_procedures(self, *, session_id: str | None = None) -> str:
         """Every playbook's slug + trigger + counters, WITHOUT its steps.

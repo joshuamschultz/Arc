@@ -74,9 +74,7 @@ class _Chunk(BaseModel):
 _RAW_PREFIX = "event:"
 
 
-def _ensure_curated_present(
-    fused: list[tuple[str, float]], top_k: int
-) -> list[tuple[str, float]]:
+def _ensure_curated_present(fused: list[tuple[str, float]], top_k: int) -> list[tuple[str, float]]:
     """Give the best curated chunk a place when raw events would take every slot.
 
     Curated cards and every raw episodic event share one pool ranked on text
