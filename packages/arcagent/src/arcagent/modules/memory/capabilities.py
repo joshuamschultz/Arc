@@ -255,6 +255,41 @@ async def memory_search(query: str, top_k: int = 5) -> str:
     return text or "No memory results found."
 
 
+#: Told once per session, not per turn — the guidance is identical on every turn,
+#: so it belongs in the cached prefix rather than being re-billed each time.
+_PROCEDURE_GUIDANCE = (
+    "Procedures are the operator's own recorded ways of doing things, and they take "
+    "precedence over your default approach.\n"
+    "- Before carrying out a task that could recur, call `procedure_list` to see "
+    "whether one already covers it, then `procedure_get` to follow its steps.\n"
+    "- Before recording a new procedure, call `procedure_list` first and update the "
+    "existing card instead of creating a duplicate — a split playbook means neither "
+    "half is the method.\n"
+    "- After doing the work, `procedure_get` is also how you check every step was "
+    "actually done.\n"
+    "The listing carries only each procedure's trigger, never its steps, so it is "
+    "cheap to consult."
+)
+
+
+@hook(event="agent:assemble_prompt", priority=_RECALL_PRIORITY)
+async def inject_procedure_guidance(ctx: Any) -> None:
+    """Point the agent at its procedures — having the tools is not the same as using them.
+
+    A model with a hundred tools does not call one it was never pointed at: an agent
+    holding 36 recorded procedures answered from a skill and never opened the matching
+    playbook. Injected whenever memory is live, including when the store is still
+    empty, because the "list before you record" half is what prevents the duplicates
+    in the first place.
+    """
+    st = _runtime.state()
+    if not st.active:
+        return
+    sections = ctx.data.get("sections")
+    if isinstance(sections, dict):
+        sections["procedures"] = _PROCEDURE_GUIDANCE
+
+
 # -- procedure tools ------------------------------------------------------
 
 

@@ -66,7 +66,7 @@ _TURN_SECTIONS = frozenset({"planning", "recall", "teams"})
 # section we cannot vouch for defaults to the run tier instead: an unknown
 # volatile section must never sit in front of the session-stable segment.
 _SESSION_SECTIONS = frozenset(
-    {"capabilities", "identity", "memory_status", "policy", "skill_usage"}
+    {"capabilities", "identity", "memory_status", "policy", "procedures", "skill_usage"}
 )
 
 # Fixed positions inside their tier; everything else sorts alphabetically.
