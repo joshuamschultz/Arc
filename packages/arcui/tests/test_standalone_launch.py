@@ -111,7 +111,11 @@ def test_arc_ui_start_smoke() -> None:
 
         with urllib.request.urlopen(f"http://{_HOST}:{_PORT}/api/health", timeout=3) as resp:
             body = json.loads(resp.read())
-        assert body == {"status": "ok"}
+        assert body["status"] == "ok"
+        # The deployed bundle's filename rides along so a long-lived tab can notice
+        # it is running code the server no longer has — the stale-tab-after-deploy
+        # failure that broke two pages on one deploy.
+        assert body["bundle"].startswith("index-")
 
         # 3. /api/stats returns 200 with the viewer token (push /ws endpoint
         #    deleted in SPEC-026 FR-5; HTTP auth boundary verified here instead).

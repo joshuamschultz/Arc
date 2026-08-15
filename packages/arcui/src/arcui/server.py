@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -66,9 +67,24 @@ logger = logging.getLogger(__name__)
 _STATIC_DIR = Path(__file__).parent / "static"
 
 
+#: The main entry bundle in the served HTML (``/assets/index-<hash>.js``).
+_BUNDLE_RE = re.compile(r"/assets/(index-[A-Za-z0-9_-]+\.js)")
+
+
 async def _health(request: Request) -> JSONResponse:
-    """GET /api/health — simple health check."""
-    return JSONResponse({"status": "ok"})
+    """GET /api/health — health check, carrying the deployed bundle's filename.
+
+    ``bundle`` is what lets a long-lived tab notice it is running code the server
+    no longer has. Asset filenames are content-hashed and a deploy deletes the old
+    ones, so a tab open across one asks for chunks that are gone ("Importing a
+    module script failed") or renders new API shapes with old components (React
+    "objects are not valid as a child"). Both happened on the same deploy, and no
+    cache header can fix either — the page is already in memory and never asks for
+    HTML again. Comparing this against its own script name is how it finds out.
+    """
+    return JSONResponse(
+        {"status": "ok", "bundle": getattr(request.app.state, "bundle_name", "")}
+    )
 
 
 async def _agent_info(request: Request) -> JSONResponse:
@@ -305,6 +321,14 @@ def create_app(
         cached_index_html = None
         cached_sw_js = None
 
+    # The deployed main bundle's filename, read out of the served HTML. Content-
+    # hashed, so it changes on every rebuild — which is exactly what makes it a
+    # usable "are you running current code?" answer for a long-lived tab.
+    _bundle_name = ""
+    if cached_index_html:
+        _match = _BUNDLE_RE.search(cached_index_html)
+        _bundle_name = _match.group(1) if _match else ""
+
     # Starlette lifespan replaces the deprecated `on_startup=` parameter.
     from contextlib import asynccontextmanager
 
@@ -476,6 +500,7 @@ def create_app(
 
     app.state.index_html = cached_index_html
     app.state.sw_js = cached_sw_js
+    app.state.bundle_name = _bundle_name
     app.state._extra_startup_hooks = []
     app.state.audit = UIAuditLogger()
     # Operator mutations (task/approval/cancellation/file writes) also append to a
