@@ -324,10 +324,10 @@ class TestEntities:
             resp = client.get("/api/agents/concierge/knowledge/entities/alice", headers=_viewer())
         assert resp.status_code == 200
         assert resp.json()["slug"] == "alice"
-        # Entity-level confidence is the frontmatter default (0.5) — write_fact
-        # sets the *fact*'s confidence, not the entity's (see arcmemory's own
-        # test_operator.py::test_list_entities_returns_typed_records).
-        assert resp.json()["importance"] == 5
+        # Importance projects the entity's confidence, which is now DERIVED from how
+        # well its facts are evidenced. It used to be the model default on every card
+        # ever written — a number shown to the operator that was never computed.
+        assert resp.json()["importance"] == 8
 
     def test_get_entity_missing_is_404(self, app_with_memories: Any) -> None:
         with TestClient(app_with_memories) as client:

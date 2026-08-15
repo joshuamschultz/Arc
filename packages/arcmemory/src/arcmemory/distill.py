@@ -24,7 +24,6 @@ keeps this module free of any provider dependency.
 
 from __future__ import annotations
 
-import math
 from typing import Annotated, Protocol
 
 from pydantic import BaseModel, BeforeValidator, Field
@@ -39,7 +38,17 @@ from arcmemory.stores.events import EventStore
 from arcmemory.stores.insight import InsightStore
 from arcmemory.stores.procedural import ProceduralStore, procedure_link_targets
 from arcmemory.stores.semantic import SemanticStore
-from arcmemory.types import Confidence, Event, Fact, Insight, LifeEvent, Procedure, Scope
+from arcmemory.types import (
+    Confidence,
+    Event,
+    Fact,
+    Insight,
+    LifeEvent,
+    Procedure,
+    Scope,
+    confidence_from_hits,
+    hits_from_confidence,
+)
 
 
 def _coerce_str_items(value: object) -> object:
@@ -312,17 +321,6 @@ async def _fuzzy_entity_match(
         return best_slug, []
     near = [slug for slug, score in scored if score >= config.entity_disambiguate_min]
     return None, near + cross_type_exact
-
-
-def confidence_from_hits(hits: float, gamma: float) -> float:
-    """Memory confidence ``1 - e^(-gamma*hits)`` — rises, saturating, with corroboration."""
-    return 1.0 - math.exp(-gamma * max(0.0, hits))
-
-
-def hits_from_confidence(confidence: float, gamma: float) -> float:
-    """Invert ``confidence_from_hits`` to recover accumulated hits (for additive growth)."""
-    clamped = min(max(confidence, 0.0), 0.999999)
-    return -math.log(1.0 - clamped) / gamma
 
 
 def chunk_events(events: list[Event], max_tokens: int | None) -> list[list[Event]]:

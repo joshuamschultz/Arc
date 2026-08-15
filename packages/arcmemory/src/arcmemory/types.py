@@ -30,6 +30,17 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 _STEP_GAMMA = 0.536
 
 
+def confidence_from_hits(hits: float, gamma: float) -> float:
+    """Memory confidence ``1 - e^(-gamma*hits)`` — rises, saturating, with corroboration."""
+    return 1.0 - math.exp(-gamma * max(0.0, hits))
+
+
+def hits_from_confidence(confidence: float, gamma: float) -> float:
+    """Invert :func:`confidence_from_hits` to recover accumulated hits (additive growth)."""
+    clamped = min(max(confidence, 0.0), 0.999999)
+    return -math.log(1.0 - clamped) / gamma
+
+
 def _utc_now_iso() -> str:
     """Current time as an ISO-8601 UTC string (the canonical ts format)."""
     return datetime.now(UTC).isoformat()
@@ -179,7 +190,7 @@ class Step(BaseModel):
     @property
     def confidence(self) -> float:
         """Corroboration as a 0-1 scalar (gamma 0.536: 1 hit .41, 3 hits .80)."""
-        return 1.0 - math.exp(-_STEP_GAMMA * max(0, self.hits))
+        return confidence_from_hits(self.hits, _STEP_GAMMA)
 
     def __str__(self) -> str:
         """The step's text — every surface that prints a step prints the words."""

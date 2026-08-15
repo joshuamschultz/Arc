@@ -144,7 +144,12 @@ class Consolidator:
         self._store_raw_bodies = store_raw_bodies
 
         self._graph = WeightedGraph(db, self._cfg)
-        self._semantic = SemanticStore(workspace, self._graph, scope=scope.key)
+        self._semantic = SemanticStore(
+            workspace,
+            self._graph,
+            scope=scope.key,
+            fact_half_life_days=self._cfg.fact_half_life_days,
+        )
         self._insights = InsightStore(workspace)
         self._procedures = ProceduralStore(workspace)
         self._events = EventStore(workspace)

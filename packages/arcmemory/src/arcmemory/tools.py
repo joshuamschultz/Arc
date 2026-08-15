@@ -106,7 +106,12 @@ class _MemoryToolFactory:
         self._distiller = distiller
 
         self._graph = WeightedGraph(db, config)
-        self._semantic = SemanticStore(workspace, self._graph, scope=self._scope.key)
+        self._semantic = SemanticStore(
+            workspace,
+            self._graph,
+            scope=self._scope.key,
+            fact_half_life_days=self._cfg.fact_half_life_days,
+        )
         self._insights = InsightStore(workspace)
         self._procedures = ProceduralStore(workspace)
         self._events = EventStore(workspace)
