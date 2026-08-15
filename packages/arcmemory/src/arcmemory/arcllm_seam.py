@@ -186,6 +186,32 @@ class ArcLLMDistiller:
             return None
         return chosen if chosen in candidates else None
 
+    async def consolidate_steps(self, steps: list[str]) -> list[tuple[str, list[int]]]:
+        """Rewrite a merged procedure's repeated steps into one ordered sequence.
+
+        Merging cards is a union, so eleven differently-worded versions of one method
+        produce a 54-step card — faithfully preserved and far too long to follow.
+        This collapses the repetition.
+
+        Each returned step carries the 1-based input numbers it covers, which is what
+        makes the rewrite checkable: the caller verifies every input step is accounted
+        for and keeps the union if any is missing. Without that, "consolidate" and
+        "silently drop the operator's instructions" are the same call.
+        """
+        if len(steps) < 2:
+            return []
+        numbered = "\n".join(f"{i}. {text}" for i, text in enumerate(steps, start=1))
+        data = await self._complete(load_stock("arcmemory", "consolidate_steps"), numbered)
+        out: list[tuple[str, list[int]]] = []
+        for item in data.get("steps", []):
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("text", "")).strip()
+            covers = [n for n in item.get("covers", []) if isinstance(n, int)]
+            if text and covers:
+                out.append((text, covers))
+        return out
+
     async def find_contradictions(self, group: list[EntityRef]) -> list[str]:
         """Which of these same-name same-type cards a fact positively rules out.
 

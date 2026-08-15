@@ -117,6 +117,43 @@ def procedure_link_targets(procedure: Procedure) -> list[str]:
     return sorted(set(extract_wiki_links(text)))
 
 
+def apply_consolidated_steps(
+    steps: list[Step], rewrite: Sequence[tuple[str, list[int]]]
+) -> list[Step] | None:
+    """Accept an LLM step-rewrite only when it accounts for every original step.
+
+    Merging duplicate cards is a union, so one method recorded eleven ways becomes a
+    faithful 54-step card that nobody can follow. Collapsing that repetition needs a
+    model — and "consolidate" and "silently drop the operator's instructions" are the
+    same call unless the result is checked.
+
+    So each rewritten step declares the 1-based input steps it covers, and the
+    rewrite is accepted only when those cover every input EXACTLY once. A missing
+    number means an instruction vanished; a repeated or out-of-range one means the
+    model lost track, which makes the rest of its answer untrustworthy too. Returns
+    ``None`` in every such case, and the caller keeps the union: a long procedure is
+    a nuisance, a quietly shortened one no longer does what its author wrote.
+
+    A rewrite that collapses nothing is also refused, so a consolidation pass cannot
+    reword a method for no benefit every time it runs. Evidence follows the steps a
+    rewrite absorbed, or tidying a well-corroborated method would reset it to a
+    first sighting.
+    """
+    if not rewrite or len(rewrite) >= len(steps):
+        return None
+    seen: set[int] = set()
+    for _text, covers in rewrite:
+        for number in covers:
+            if number in seen or not 1 <= number <= len(steps):
+                return None
+            seen.add(number)
+    if len(seen) != len(steps):
+        return None
+    return [
+        Step(text=text, hits=sum(steps[n - 1].hits for n in covers)) for text, covers in rewrite
+    ]
+
+
 def merge_procedures(
     store: ProceduralStore, *, survivor: str, folded: Sequence[str]
 ) -> Procedure | None:

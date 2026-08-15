@@ -56,7 +56,11 @@ from arcmemory.stores.daily import DailyNotesStore
 from arcmemory.stores.episodic import EpisodicStore
 from arcmemory.stores.events import EventStore
 from arcmemory.stores.insight import InsightStore
-from arcmemory.stores.procedural import ProceduralStore, merge_procedures
+from arcmemory.stores.procedural import (
+    ProceduralStore,
+    apply_consolidated_steps,
+    merge_procedures,
+)
 from arcmemory.stores.semantic import SemanticStore
 from arcmemory.tools import build_memory_tools
 from arcmemory.types import (
@@ -81,6 +85,9 @@ _HYGIENE_LAST_NAME = ".hygiene-last-run"
 _CUE_MERGE_THRESHOLD = 0.92
 # Key facts summarized onto an EntityRef for the LLM merge-confirmer (bounded input).
 _ENTITY_REF_MAX_FACTS = 5
+# Steps at or below this need no rewrite — a short card is already followable, and
+# rewriting it would churn the operator's own wording for no gain.
+_STEP_CONSOLIDATION_FLOOR = 10
 
 
 def _is_exact_cluster(cluster: list[tuple[str, Entity]]) -> bool:
@@ -683,8 +690,10 @@ class Consolidator:
             # to the fuller method rather than rebuilding it from the thinner one.
             keep.sort(key=lambda c: (-len(c.steps), c.slug))
             survivor, folded = keep[0].slug, [c.slug for c in keep[1:]]
-            if merge_procedures(self._procedures, survivor=survivor, folded=folded) is None:
+            card = merge_procedures(self._procedures, survivor=survivor, folded=folded)
+            if card is None:
                 continue
+            await self._consolidate_steps(card)
             for slug in folded:
                 self._graph.rename_node(self._scope.key, slug, survivor)
                 self._emit("memory.procedure_merged", f"{slug}->{survivor}")
@@ -695,6 +704,46 @@ class Consolidator:
             extra={"procedures": len(by_slug), "clusters": len(clusters), "merged": len(merged)},
         )
         return merged
+
+    async def _consolidate_steps(self, card: Procedure) -> None:
+        """Collapse a merged card's repeated steps into one followable sequence.
+
+        The fold is a union, so one method recorded eleven ways survives as a
+        faithful 54-step card while the median card holds 6 — preserved, and far too
+        long to follow. Only cards the union actually bloated are rewritten; a short
+        card is already readable and rewriting it would churn the operator's wording
+        for nothing.
+
+        Fail-closed at every step. The rewrite is accepted only if it accounts for
+        every original step exactly once (:func:`apply_consolidated_steps`), and any
+        provider error keeps the union — a long procedure is a nuisance, a quietly
+        shortened one no longer does what its author wrote.
+        """
+        if len(card.steps) <= _STEP_CONSOLIDATION_FLOOR:
+            return
+        consolidator = getattr(self._distiller, "consolidate_steps", None)
+        if consolidator is None:
+            return
+        try:
+            rewrite = await consolidator([step.text for step in card.steps])
+        except Exception as exc:  # reason: never trade the method for a tidier one
+            _log.warning("arcmemory: step consolidation failed, keeping the union: %s", exc)
+            return
+        steps = apply_consolidated_steps(card.steps, rewrite)
+        if steps is None:
+            self._emit(
+                "memory.steps_consolidation_refused",
+                card.slug,
+                extra={"steps": len(card.steps), "proposed": len(rewrite)},
+            )
+            return
+        card.steps = steps
+        self._procedures.write(card)
+        self._emit(
+            "memory.steps_consolidated",
+            card.slug,
+            extra={"before": len(rewrite), "after": len(steps)},
+        )
 
     def _procedure_clusters(
         self, cards: list[Procedure], vectors: dict[str, list[float]]
