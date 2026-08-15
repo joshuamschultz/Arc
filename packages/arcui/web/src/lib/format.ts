@@ -72,13 +72,29 @@ export function relativeTime(ts: string | number | null | undefined): string {
   return `${day}d ago`
 }
 
-/** Absolute local time for tooltips/detail. */
+/**
+ * Absolute local time, written the way a person reads it.
+ *
+ * `toLocaleString()` produces "8/15/2026, 12:26:18 PM" — long enough to wrap
+ * across three lines in a trace row, and `8/15` means one date in the US and
+ * another almost everywhere else. A month name is unambiguous, and the year is
+ * only worth its width when it is not the current one. Seconds stay: a trace
+ * lists events within the same minute, and dropping them would make consecutive
+ * rows look simultaneous.
+ */
 export function fmtTime(ts: string | number | null | undefined): string {
   if (ts == null) return '—'
-  const ms =
-    typeof ts === 'number' ? (ts < 1e12 ? ts * 1000 : ts) : Date.parse(ts)
+  const ms = typeof ts === 'number' ? (ts < 1e12 ? ts * 1000 : ts) : Date.parse(ts)
   if (Number.isNaN(ms)) return String(ts)
-  return new Date(ms).toLocaleString()
+  const at = new Date(ms)
+  return at.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: at.getFullYear() === new Date().getFullYear() ? undefined : 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+  })
 }
 
 /** Two-letter initials for an agent avatar. */

@@ -22,7 +22,7 @@ import { useRoster, useTeamChannels, useChannelMessages } from '@/lib/queries'
 import { apiPost, ApiError } from '@/lib/api'
 import { initials } from '@/lib/format'
 import { cn } from '@/lib/utils'
-import type { Channel, Dict } from '@/lib/types'
+import type { Agent, Channel, Dict } from '@/lib/types'
 
 type Selection =
   | { kind: 'agent'; id: string; label: string }
@@ -157,23 +157,52 @@ interface ChannelRow {
   gate?: { task_id: string; node_id?: string }
 }
 
-function handleOf(ref: string): string {
-  // Defensive: the server already renders handles, but a raw ref that slips
-  // through (backfill payloads) is collapsed to its trailing segment so a DID
-  // never renders in the UI.
-  if (ref.startsWith('did:')) return ref.split('/').pop()?.split(':').pop() ?? ref
-  if (ref.includes('://')) return ref.split('://')[1] ?? ref
-  return ref.replace(/^@/, '')
+/** Map every known identifier for an agent to the name a person would use. */
+export function buildNameIndex(agents: Agent[]): Map<string, string> {
+  const index = new Map<string, string>()
+  for (const agent of agents) {
+    const readable = agent.display_name || agent.name || agent.agent_id
+    if (!readable) continue
+    for (const key of [agent.did, agent.agent_id, agent.name]) {
+      if (key) index.set(key, readable)
+    }
+  }
+  return index
+}
+
+/**
+ * Render who is speaking, as a person would say it.
+ *
+ * A DID collapsed to its trailing segment is a hex suffix — `7e3e1a09` — which
+ * identifies an agent to the system and to nobody else. Every reference is
+ * resolved through the roster first, and the collapse is kept only as the
+ * last resort for a ref no roster entry claims.
+ */
+export function handleOf(ref: string, names?: Map<string, string>): string {
+  const known = names?.get(ref)
+  if (known) return known
+  if (ref.startsWith('did:')) {
+    const tail = ref.split('/').pop()?.split(':').pop() ?? ref
+    return names?.get(tail) ?? tail
+  }
+  if (ref.includes('://')) {
+    const target = ref.split('://')[1] ?? ref
+    return names?.get(target) ?? target
+  }
+  const bare = ref.replace(/^@/, '')
+  return names?.get(bare) ?? bare
 }
 
 function ChannelPanel({
   channel,
   onOpenMembers,
   mentionHandles,
+  names,
 }: {
   channel: Channel
   onOpenMembers: () => void
   mentionHandles: MentionHandle[]
+  names: Map<string, string>
 }) {
   const name = channel.name
   const history = useChannelMessages(name)
@@ -201,9 +230,11 @@ function ChannelPanel({
       bySeq.set(seq, {
         key: `h${seq}`,
         seq,
-        from: handleOf(String(d.sender ?? d.from ?? d.agent_id ?? 'agent')),
+        from: handleOf(String(d.sender ?? d.from ?? d.agent_id ?? 'agent'), names),
         body: String(d.body ?? d.text ?? d.content ?? ''),
-        mentions: Array.isArray(d.mentions) ? (d.mentions as string[]).map(handleOf) : [],
+        mentions: Array.isArray(d.mentions)
+          ? (d.mentions as string[]).map((m) => handleOf(m, names))
+          : [],
         ts: String(d.ts ?? d.timestamp ?? ''),
         gate: gate?.task_id ? { task_id: gate.task_id, node_id: gate.node_id } : undefined,
       })
@@ -212,15 +243,15 @@ function ChannelPanel({
       bySeq.set(f.seq, {
         key: f.id || `l${f.seq}`,
         seq: f.seq,
-        from: handleOf(f.from),
+        from: handleOf(f.from, names),
         body: f.body,
-        mentions: (f.mentions ?? []).map(handleOf),
+        mentions: (f.mentions ?? []).map((m) => handleOf(m, names)),
         ts: f.ts,
         gate: f.gate ? { task_id: f.gate.task_id, node_id: f.gate.node_id } : undefined,
       })
     }
     return [...bySeq.values()].sort((a, b) => a.seq - b.seq)
-  }, [history.data, frames])
+  }, [history.data, frames, names])
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -310,6 +341,10 @@ export function MessagesPage() {
   const [managingMembers, setManagingMembers] = useState(false)
 
   const agents = (roster.data?.agents ?? []).filter((a) => !a.hidden)
+  // Who is speaking, as a person would say it. Without this a sender renders as
+  // the trailing hex of its DID, which names the agent to the system and to
+  // nobody else.
+  const names = useMemo(() => buildNameIndex(agents), [agents])
   const channelList = channels.data?.channels ?? []
   const selectedChannel = sel?.kind === 'channel' ? channelList.find((c) => c.name === sel.id) ?? null : null
 
@@ -414,6 +449,7 @@ export function MessagesPage() {
               channel={selectedChannel}
               onOpenMembers={() => setManagingMembers(true)}
               mentionHandles={mentionHandles}
+              names={names}
             />
           ) : (
             <div className="flex h-full items-center justify-center">

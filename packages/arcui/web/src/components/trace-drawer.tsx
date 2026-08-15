@@ -53,13 +53,85 @@ function responseContent(response: unknown): unknown {
   return undefined
 }
 
+//: Above this, an unsectioned message is collapsed rather than shown whole —
+//: roughly a screenful, past which it hides the messages around it.
+const LONG_MESSAGE_CHARS = 1500
+
+/** One `<tag>…</tag>` block of an assembled prompt. */
+type PromptSection = { tag: string; body: string }
+
+/**
+ * Split an assembled system prompt into its sections.
+ *
+ * The prompt is built as XML-ish blocks — `<identity>`, `<capabilities>`,
+ * `<recall>`, `<procedures>`, `<context>` — so the parts a reader actually wants
+ * to compare between calls are already delimited. Text outside any block is
+ * returned under an empty tag so nothing is hidden by the split.
+ *
+ * Returns `null` when the content carries no sections, so an ordinary message
+ * renders exactly as before rather than through a needless wrapper.
+ */
+export function splitPromptSections(text: string): PromptSection[] | null {
+  const pattern = /<([a-z][a-z0-9_-]*)>\n([\s\S]*?)\n<\/\1>/gi
+  const sections: PromptSection[] = []
+  let cursor = 0
+  let match: RegExpExecArray | null
+  while ((match = pattern.exec(text)) !== null) {
+    const before = text.slice(cursor, match.index).trim()
+    if (before) sections.push({ tag: '', body: before })
+    sections.push({ tag: match[1], body: match[2] })
+    cursor = match.index + match[0].length
+  }
+  if (sections.length === 0) return null
+  const tail = text.slice(cursor).trim()
+  if (tail) sections.push({ tag: '', body: tail })
+  return sections
+}
+
+/** Rough token count, for showing what a section costs before opening it. */
+function approxTokens(text: string): number {
+  return Math.round(text.length / 4)
+}
+
+function SectionBlock({ section }: { section: PromptSection }) {
+  // Collapsed by default: an assembled prompt runs to tens of thousands of
+  // tokens, and the question a reader arrives with is almost always "which
+  // parts are here and how big", not "show me all of it at once".
+  return (
+    <details className="rounded-md border border-border/60 bg-background/40">
+      <summary className="cursor-pointer select-none px-2 py-1.5 text-xs text-muted-foreground hover:text-foreground">
+        <span className="font-mono text-foreground">{section.tag || 'prose'}</span>
+        <span className="ml-2 tabular-nums">~{fmtNumber(approxTokens(section.body))} tok</span>
+      </summary>
+      <div className="border-t border-border/60 px-2 py-2">
+        <LlmContent content={section.body} />
+      </div>
+    </details>
+  )
+}
+
 function MessageBubble({ message }: { message: Message }) {
+  const text = typeof message.content === 'string' ? message.content : null
+  const sections = text ? splitPromptSections(text) : null
   return (
     <div className="rounded-lg border border-l-2 border-border border-l-primary/40 bg-muted/20 p-3">
       <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-primary">
         {message.role || 'message'}
       </div>
-      <LlmContent content={message.content} />
+      {sections ? (
+        <div className="space-y-1.5">
+          {sections.map((section, i) => (
+            <SectionBlock key={`${section.tag}-${i}`} section={section} />
+          ))}
+        </div>
+      ) : text && text.length > LONG_MESSAGE_CHARS ? (
+        // Unsectioned but long — a pasted transcript, a tool result, a replayed
+        // turn. Collapsed for the same reason, so the shape of a call stays
+        // readable instead of one message burying every other.
+        <SectionBlock section={{ tag: '', body: text }} />
+      ) : (
+        <LlmContent content={message.content} />
+      )}
     </div>
   )
 }
