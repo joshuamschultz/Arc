@@ -56,7 +56,7 @@ from arcmemory.stores.daily import DailyNotesStore
 from arcmemory.stores.episodic import EpisodicStore
 from arcmemory.stores.events import EventStore
 from arcmemory.stores.insight import InsightStore
-from arcmemory.stores.procedural import ProceduralStore
+from arcmemory.stores.procedural import ProceduralStore, merge_procedures
 from arcmemory.stores.semantic import SemanticStore
 from arcmemory.tools import build_memory_tools
 from arcmemory.types import (
@@ -225,6 +225,7 @@ class Consolidator:
         decayed = self._decay(now)
         await self._merge_cues_audited()
         await self._merge_entities_audited()
+        await self.merge_duplicate_procedures()
         await self._surface.index_if_needed()
         self._commit_manifest()
         self._stamp_last_run(now)
@@ -624,6 +625,99 @@ class Consolidator:
             if len(keep) >= 2:
                 merged += self._merge_entity_group(keep)
         return merged
+
+    async def merge_duplicate_procedures(self) -> list[tuple[str, str]]:
+        """Fold procedure cards that describe the SAME method into one.
+
+        Procedures previously merged only when their filenames canonicalised to the
+        same slug, so one method recorded under two titles stayed split forever —
+        and a split procedure is worse than a split entity, because the agent
+        follows whichever half it retrieves and the other half's steps never happen.
+
+        Candidates are clustered on the TRIGGER (``when_to_use`` plus title): that is
+        what a procedure is found by, and two cards answering the same situation are
+        the same playbook however differently they are worded. The LLM confirms, as
+        with entities — merging two genuinely different methods would put a step from
+        one into the middle of the other.
+
+        Returns the ``(folded, survivor)`` pairs. Degrades loudly: no embedder or no
+        confirmer merges nothing and says so.
+        """
+        cards = [c for slug in self._procedures.slugs() if (c := self._procedures.read(slug))]
+        if len(cards) < 2:
+            return []
+        triggers = [f"{c.title}. {c.when_to_use}" for c in cards]
+        embedded = await embed_or_none(self._embedder, triggers)
+        if embedded is None:
+            self._emit_dedup_skipped("no-embedder-procedures")
+            return []
+        if self._confirmer is None:
+            self._emit_dedup_skipped("no-confirmer-procedures")
+            return []
+
+        vectors = dict(zip([c.slug for c in cards], embedded, strict=True))
+        by_slug = {c.slug: c for c in cards}
+        clusters = self._procedure_clusters(cards, vectors)
+        merged: list[tuple[str, str]] = []
+        for cluster in clusters:
+            refs = [
+                distill.EntityRef(
+                    slug=c.slug,
+                    name=c.title,
+                    entity_type="procedure",
+                    facts=[f"when_to_use: {c.when_to_use}"],
+                )
+                for c in cluster
+            ]
+            try:
+                contradicting = set(await self._confirmer.find_contradictions(refs))
+                contradicting |= set(await self._confirmer.find_contradictions(refs))
+            except Exception as exc:  # reason: never fuse two real methods on an error
+                _log.warning("arcmemory procedure de-dup: contradiction check failed: %s", exc)
+                self._emit_dedup_skipped("procedure-contradiction-check-failed")
+                continue
+            keep = [c for c in cluster if c.slug not in contradicting]
+            if len(keep) < 2:
+                continue
+            # Richest first: the card with the most steps survives, so the merge adds
+            # to the fuller method rather than rebuilding it from the thinner one.
+            keep.sort(key=lambda c: (-len(c.steps), c.slug))
+            survivor, folded = keep[0].slug, [c.slug for c in keep[1:]]
+            if merge_procedures(self._procedures, survivor=survivor, folded=folded) is None:
+                continue
+            for slug in folded:
+                self._graph.rename_node(self._scope.key, slug, survivor)
+                self._emit("memory.procedure_merged", f"{slug}->{survivor}")
+                merged.append((slug, survivor))
+        self._emit(
+            "memory.procedure_dedup_pass",
+            "memory",
+            extra={"procedures": len(by_slug), "clusters": len(clusters), "merged": len(merged)},
+        )
+        return merged
+
+    def _procedure_clusters(
+        self, cards: list[Procedure], vectors: dict[str, list[float]]
+    ) -> list[list[Procedure]]:
+        """Group procedures whose triggers embed close enough to be one method."""
+        threshold = self._cfg.entity_merge_candidate_threshold
+        by_slug = {c.slug: c for c in cards}
+        parent = {c.slug: c.slug for c in cards}
+
+        def find(node: str) -> str:
+            while parent[node] != node:
+                parent[node] = parent[parent[node]]
+                node = parent[node]
+            return node
+
+        for a, b in combinations(list(by_slug), 2):
+            if _cosine(vectors[a], vectors[b]) >= threshold:
+                parent[find(a)] = find(b)
+
+        grouped: dict[str, list[Procedure]] = defaultdict(list)
+        for card in cards:
+            grouped[find(card.slug)].append(card)
+        return [members for members in grouped.values() if len(members) >= 2]
 
     def _candidate_clusters(
         self, entities: list[tuple[str, Entity]], vectors: dict[str, list[float]]

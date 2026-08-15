@@ -936,3 +936,105 @@ async def test_a_failed_contradiction_check_merges_nothing(workspace, db, scope)
 
     assert await consolidator.merge_entities() == []
     assert set(store.slugs()) == {"ben-a", "ben-b"}
+
+
+# ---------------------------------------------------------------------------
+# Procedure de-dup: one method recorded twice must become one card
+# ---------------------------------------------------------------------------
+
+
+async def test_two_cards_for_one_method_are_folded(workspace, db, scope) -> None:
+    """The live case: same trigger, different titles, so the slugs never collided.
+
+    Procedures merged only when their FILENAMES canonicalised together, so an
+    operator's own method sat split across two cards each holding half the steps —
+    and the agent follows whichever half it retrieves.
+    """
+    from arcmemory.stores.procedural import ProceduralStore
+
+    store = ProceduralStore(workspace)
+    store.upsert(
+        "log-a-thesis",
+        "Logging a new Josh thesis",
+        when_to_use="Whenever Josh dictates a new thesis",
+        steps=["check the index first", "verify the write"],
+    )
+    store.upsert(
+        "add-thesis-entry",
+        "Adding an entry to Josh's thesis library",
+        when_to_use="Whenever Josh pastes a new thesis",
+        steps=["check the index first", "flag author bias"],
+    )
+
+    consolidator = Consolidator(
+        db,
+        workspace,
+        scope,
+        distiller=_distiller(),
+        config=MemoryConfig(),
+        embedder=SubstringEmbedder(),
+        confirmer=ContradictionFinder(),
+    )
+
+    merged = await consolidator.merge_duplicate_procedures()
+
+    assert len(merged) == 1, f"the duplicate method was not folded: {merged}"
+    survivors = store.list_summaries()
+    assert len(survivors) == 1
+    steps = store.read(survivors[0].slug).step_texts
+    assert "verify the write" in steps and "flag author bias" in steps
+
+
+async def test_genuinely_different_methods_are_left_apart(workspace, db, scope) -> None:
+    """Merging two real methods would splice one's steps into the other.
+
+    The paired negative: without it, "fold everything that embeds close" would
+    satisfy the test above and quietly destroy the operator's playbooks.
+    """
+    from arcmemory.stores.procedural import ProceduralStore
+
+    store = ProceduralStore(workspace)
+    store.upsert("quote", "Quote Acme", when_to_use="Acme asks for pricing", steps=["a"])
+    store.upsert("deploy", "Deploy in Berlin", when_to_use="Shipping to Berlin", steps=["b"])
+
+    consolidator = Consolidator(
+        db,
+        workspace,
+        scope,
+        distiller=_distiller(),
+        config=MemoryConfig(),
+        embedder=SubstringEmbedder(),
+        confirmer=ContradictionFinder(),
+    )
+
+    assert await consolidator.merge_duplicate_procedures() == []
+    assert len(store.list_summaries()) == 2
+
+
+async def test_a_dedup_pass_over_procedures_is_always_recorded(workspace, db, scope) -> None:
+    """Silence must not be a possible outcome here either."""
+    from arcmemory.stores.procedural import ProceduralStore
+
+    store = ProceduralStore(workspace)
+    store.upsert("quote", "Quote Acme", when_to_use="Acme asks for pricing", steps=["a"])
+    store.upsert("deploy", "Deploy in Berlin", when_to_use="Shipping to Berlin", steps=["b"])
+
+    sink = RecordingSink()
+    consolidator = Consolidator(
+        db,
+        workspace,
+        scope,
+        distiller=_distiller(),
+        config=MemoryConfig(),
+        embedder=SubstringEmbedder(),
+        confirmer=ContradictionFinder(),
+        audit_sink=sink,
+    )
+
+    await consolidator.merge_duplicate_procedures()
+
+    passes = [
+        e for e in sink.events if getattr(e, "action", None) == "memory.procedure_dedup_pass"
+    ]
+    assert len(passes) == 1
+    assert passes[0].extra["procedures"] == 2

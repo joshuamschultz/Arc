@@ -117,6 +117,63 @@ def procedure_link_targets(procedure: Procedure) -> list[str]:
     return sorted(set(extract_wiki_links(text)))
 
 
+def merge_procedures(
+    store: ProceduralStore, *, survivor: str, folded: Sequence[str]
+) -> Procedure | None:
+    """Fold ``folded`` cards into ``survivor``; return the merged card.
+
+    Two cards can describe one method under different titles — "Adding a new entry
+    to the AI theses library" and "Logging a new AI thesis" — and nothing merged
+    them, because procedures collapse only when their FILENAMES canonicalise to the
+    same slug. A split procedure is worse than a split entity: the agent follows
+    whichever half it retrieves, and the steps in the other half simply never happen.
+
+    Non-lossy by construction. Steps fold through :func:`merge_steps`, the same
+    merge the evolution path uses, so a step only one card carried survives and a
+    step both carried gains corroboration. Uses and revisions sum, because two
+    cards' uses are uses of one method. The longer ``when_to_use`` wins: it is how a
+    procedure is FOUND, so the fuller trigger is the more useful one.
+
+    Returns ``None`` when the survivor does not exist — a merge must never mint a
+    card, and the folded ones are left untouched rather than destroyed into nothing.
+    """
+    target = store.read(survivor)
+    if target is None:
+        return None
+    steps = list(target.steps)
+    use_count, revisions = target.use_count, target.revisions
+    when_to_use = target.when_to_use
+    for slug in folded:
+        other = store.read(slug)
+        if other is None or other.slug == target.slug:
+            continue
+        hits = {step.text.casefold(): step.hits for step in steps}
+        steps = merge_steps(steps, [step.text for step in other.steps], ())
+        steps = [
+            Step(text=step.text, hits=step.hits + hits.get(step.text.casefold(), 0) - 1)
+            if step.text.casefold() in hits
+            else step
+            for step in steps
+        ]
+        use_count += other.use_count
+        revisions += other.revisions
+        if len(other.when_to_use) > len(when_to_use):
+            when_to_use = other.when_to_use
+        store.path_for(slug).unlink(missing_ok=True)
+
+    merged = Procedure(
+        slug=target.slug,
+        title=target.title,
+        when_to_use=when_to_use,
+        steps=steps,
+        use_count=use_count,
+        revisions=revisions,
+        classification=target.classification,
+    )
+    store.write(merged)
+    return merged
+
+
 class ProceduralStore:
     """Read/write how-to cards for one scope."""
 
