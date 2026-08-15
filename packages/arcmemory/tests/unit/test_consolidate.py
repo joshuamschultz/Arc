@@ -734,3 +734,99 @@ async def test_confirmed_merge_is_non_lossy(workspace, db, scope) -> None:
     assert "Austin, TX" in survivor.aliases or "austin-tx" in survivor.aliases  # alias trail
     assert "austin-tx" not in store.slugs()
     assert "austin-texas" in {n for n, _ in graph.neighbors(scope.key, "acme")}  # edge repointed
+
+
+# ---------------------------------------------------------------------------
+# Dedup observability — silence must never be the outcome
+# ---------------------------------------------------------------------------
+
+
+def _pass_events(sink: RecordingSink) -> list:
+    return [e for e in sink.events if getattr(e, "action", None) == "memory.dedup_pass"]
+
+
+async def test_a_dedup_pass_that_merges_nothing_still_says_so(workspace, db, scope) -> None:
+    """No clusters is an OUTCOME, not an absence — it must be on the record.
+
+    A live fleet ran twelve consolidations with two identically-named cards sitting
+    in the store and emitted nothing at all about de-dup: no merge, no skip. Three
+    separate paths return quietly (too few cards, no candidate cluster, a confirmer
+    that declines every group), so the logs could not distinguish "ran and found
+    nothing" from "never ran" — and the second was indistinguishable from a wiring
+    bug. Every pass now reports what it saw.
+    """
+    store = SemanticStore(workspace, WeightedGraph(db), scope=scope.key)
+    _place(store, "berlin", "Berlin", "country", "DE")
+    _place(store, "tokyo", "Tokyo", "country", "JP")
+
+    sink = RecordingSink()
+    consolidator = Consolidator(
+        db,
+        workspace,
+        scope,
+        distiller=_distiller(),
+        config=MemoryConfig(),
+        embedder=SubstringEmbedder(),
+        confirmer=RecordingConfirmer(),
+        audit_sink=sink,
+    )
+
+    assert await consolidator.merge_entities() == []
+
+    events = _pass_events(sink)
+    assert len(events) == 1, "a pass that merged nothing reported nothing"
+    assert events[0].extra["entities"] == 2
+    assert events[0].extra["clusters"] == 0
+    assert events[0].extra["merged"] == 0
+
+
+async def test_a_pass_records_candidates_the_confirmer_declined(workspace, db, scope) -> None:
+    """Clustered-but-declined is the path that looks exactly like never-ran.
+
+    ``RecordingConfirmer`` returns no confirmed groups, so nothing folds. Without
+    the candidate count on the record this is byte-identical to a pass that never
+    clustered anything, and the two have completely different causes.
+    """
+    store = SemanticStore(workspace, WeightedGraph(db), scope=scope.key)
+    _place(store, "austin-texas", "Austin, Texas", "state", "TX")
+    _place(store, "austin-tx", "Austin, TX", "population", "1M")
+
+    sink = RecordingSink()
+    consolidator = Consolidator(
+        db,
+        workspace,
+        scope,
+        distiller=_distiller(),
+        config=MemoryConfig(),
+        embedder=SubstringEmbedder(),
+        confirmer=RejectingConfirmer(),
+        audit_sink=sink,
+    )
+
+    assert await consolidator.merge_entities() == []
+
+    events = _pass_events(sink)
+    assert len(events) == 1
+    assert events[0].extra["clusters"] == 1, "the candidate cluster was not recorded"
+    assert events[0].extra["merged"] == 0
+
+
+async def test_a_single_card_store_still_reports_its_pass(workspace, db, scope) -> None:
+    """The earliest bail-out is silent too, and it is the one a new agent hits."""
+    store = SemanticStore(workspace, WeightedGraph(db), scope=scope.key)
+    _place(store, "berlin", "Berlin", "country", "DE")
+
+    sink = RecordingSink()
+    consolidator = Consolidator(
+        db,
+        workspace,
+        scope,
+        distiller=_distiller(),
+        config=MemoryConfig(),
+        embedder=SubstringEmbedder(),
+        confirmer=RecordingConfirmer(),
+        audit_sink=sink,
+    )
+
+    assert await consolidator.merge_entities() == []
+    assert len(_pass_events(sink)) == 1

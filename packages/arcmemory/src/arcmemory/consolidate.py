@@ -541,6 +541,7 @@ class Consolidator:
         """
         entities = [(s, e) for s in self._semantic.slugs() if (e := self._semantic.read(s))]
         if len(entities) < 2:
+            self._emit_dedup_pass(len(entities), 0, 0)
             return []
         embedded = await embed_or_none(self._embedder, [e.name for _, e in entities])
         if embedded is None:
@@ -550,6 +551,7 @@ class Consolidator:
 
         clusters = self._candidate_clusters(entities, vectors)
         if not clusters:
+            self._emit_dedup_pass(len(entities), 0, 0)
             return []
         if self._confirmer is None:
             self._emit_dedup_skipped("no-confirmer")
@@ -557,7 +559,9 @@ class Consolidator:
 
         candidate_groups = [[self._entity_ref(s, e) for s, e in cluster] for cluster in clusters]
         confirmed = await self._confirmer.confirm_entity_merges(candidate_groups)
-        return self._apply_confirmed_merges(confirmed, dict(entities))
+        merged = self._apply_confirmed_merges(confirmed, dict(entities))
+        self._emit_dedup_pass(len(entities), len(clusters), len(merged))
+        return merged
 
     def _candidate_clusters(
         self, entities: list[tuple[str, Entity]], vectors: dict[str, list[float]]
@@ -634,6 +638,23 @@ class Consolidator:
         """LOUD degrade for entity de-dup: WARNING log + a ``memory.dedup_skipped`` audit."""
         _log.warning("arcmemory entity de-dup skipped: %s", reason)
         self._emit("memory.dedup_skipped", "memory", extra={"reason": reason})
+
+    def _emit_dedup_pass(self, entities: int, clusters: int, merged: int) -> None:
+        """Record what one de-dup pass saw, whether or not it folded anything.
+
+        Merging nothing is an OUTCOME and has to reach the record. Three paths here
+        return quietly — too few cards, no candidate cluster, and a confirmer that
+        declines every group — so a deployment that ran twelve consolidations over a
+        store holding two identically-named cards emitted nothing about de-dup at
+        all, and the logs could not separate "ran, found nothing" from "never ran".
+        The second is a wiring bug and the first is not; without the counts they are
+        the same silence.
+        """
+        self._emit(
+            "memory.dedup_pass",
+            "memory",
+            extra={"entities": entities, "clusters": clusters, "merged": merged},
+        )
 
     async def _merge_entities_audited(self) -> None:
         """Run entity merge and audit each fold (part of the nightly hygiene)."""
