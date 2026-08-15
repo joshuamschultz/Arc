@@ -18,6 +18,7 @@ the entities/tools they involve.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -25,18 +26,18 @@ from pathlib import Path
 from arcmemory.mdfile import atomic_write_text, parse_document, render_document
 from arcmemory.slug import canonical_slug
 from arcmemory.stores.semantic import extract_wiki_links
-from arcmemory.types import Procedure, ProcedureSummary
+from arcmemory.types import Procedure, ProcedureSummary, Step
 
 
-def _norm(step: str) -> str:
+def _norm(step: str | Step) -> str:
     """Whitespace/case-insensitive key for matching a step against a stored one."""
-    return " ".join(step.split()).casefold()
+    return " ".join(str(step).split()).casefold()
 
 
-def _unique(steps: list[str]) -> list[str]:
+def _unique(steps: list[Step]) -> list[Step]:
     """Drop repeated steps, keeping the first wording seen (stable)."""
     seen: set[str] = set()
-    out: list[str] = []
+    out: list[Step] = []
     for step in steps:
         key = _norm(step)
         if key not in seen:
@@ -45,7 +46,7 @@ def _unique(steps: list[str]) -> list[str]:
     return out
 
 
-def merge_steps(existing: list[str], incoming: list[str], dropped: Sequence[str]) -> list[str]:
+def merge_steps(existing: list[Step], incoming: list[str], dropped: Sequence[str]) -> list[Step]:
     """Fold an incoming step list into the stored one — omission never deletes.
 
     The incoming list is authoritative for what it names: rewording, reordering, and
@@ -54,11 +55,18 @@ def merge_steps(existing: list[str], incoming: list[str], dropped: Sequence[str]
     keeps its place in the method instead of being dumped at the end; unmentioned steps
     that trail the last anchor close out the card. A step disappears only when it
     appears in ``dropped``, the explicit signal that the conversation abandoned it.
+
+    A step the session restates carries its corroboration forward and gains one hit —
+    matched on the same normalized key the merge uses, so a rewording keeps the
+    evidence it has accumulated instead of resetting to a first sighting. A step left
+    unmentioned keeps its standing: silence is not disagreement, and decaying it would
+    erode every part of a procedure a session did not happen to touch.
     """
     dropped_keys = {_norm(step) for step in dropped}
     incoming_keys = {_norm(step) for step in incoming}
-    before_anchor: dict[str, list[str]] = {}
-    pending: list[str] = []
+    stored_hits = {_norm(step): step.hits for step in existing}
+    before_anchor: dict[str, list[Step]] = {}
+    pending: list[Step] = []
     for step in (s for s in existing if _norm(s) not in dropped_keys):
         key = _norm(step)
         if key not in incoming_keys:
@@ -67,12 +75,35 @@ def merge_steps(existing: list[str], incoming: list[str], dropped: Sequence[str]
             before_anchor.setdefault(key, []).extend(pending)
             pending = []
 
-    merged: list[str] = []
-    for step in incoming:
-        merged.extend(before_anchor.pop(_norm(step), []))
-        merged.append(step)
+    merged: list[Step] = []
+    for text in incoming:
+        key = _norm(text)
+        merged.extend(before_anchor.pop(key, []))
+        merged.append(Step(text=text, hits=stored_hits.get(key, 0) + 1))
     merged.extend(pending)  # stored steps after the last anchor
     return _unique(merged)
+
+
+#: Trailing corroboration marker on a rendered step: ``run the tests  x3``.
+_HITS_RE = re.compile(r"\s+x(\d+)$")
+
+
+def format_hits(hits: int) -> str:
+    """Render a step's corroboration compactly and legibly (``x3``)."""
+    return f"x{max(1, hits)}"
+
+
+def parse_step(rendered: str) -> Step:
+    """Read one rendered step back, with or without its counter.
+
+    Cards written before steps carried corroboration are plain numbered lines, and
+    one hit is the honest reading of a step recorded at least once — a parser that
+    demanded the marker would drop every step of every card already on disk.
+    """
+    match = _HITS_RE.search(rendered)
+    if match is None:
+        return Step(text=rendered, hits=1)
+    return Step(text=rendered[: match.start()].strip(), hits=int(match.group(1)))
 
 
 def procedure_link_targets(procedure: Procedure) -> list[str]:
@@ -82,7 +113,7 @@ def procedure_link_targets(procedure: Procedure) -> list[str]:
     wiring its slug to the entities/tools its steps name is what makes the method
     reachable by spreading activation when a like situation recurs.
     """
-    text = "\n".join([procedure.title, procedure.when_to_use, *procedure.steps])
+    text = "\n".join([procedure.title, procedure.when_to_use, *(s.text for s in procedure.steps)])
     return sorted(set(extract_wiki_links(text)))
 
 
@@ -109,7 +140,10 @@ class ProceduralStore:
             # timestamp the live write used (mirrors the entity card).
             "last_updated": datetime.now(UTC).strftime("%Y-%m-%d"),
         }
-        steps = "\n".join(f"{i}. {s}" for i, s in enumerate(procedure.steps, start=1))
+        steps = "\n".join(
+            f"{i}. {step.text} {format_hits(step.hits)}"
+            for i, step in enumerate(procedure.steps, start=1)
+        )
         when = f"## When to use\n{procedure.when_to_use}\n\n" if procedure.when_to_use else ""
         body = f"# {procedure.title}\n\n{when}## Steps\n{steps}"
         path = self.path_for(procedure.slug)
@@ -156,7 +190,7 @@ class ProceduralStore:
             return None
         fm, body = parse_document(path.read_text(encoding="utf-8"))
         steps = [
-            line.split(". ", 1)[1].strip()
+            parse_step(line.split(". ", 1)[1].strip())
             for line in body.splitlines()
             if line.strip() and line.strip()[0].isdigit() and ". " in line
         ]

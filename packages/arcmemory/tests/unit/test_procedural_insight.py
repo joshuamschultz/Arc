@@ -16,7 +16,7 @@ def test_procedure_round_trip_with_use_count(workspace: Path) -> None:
 
     loaded = store.read("deploy")
     assert loaded is not None
-    assert loaded.steps == ["build", "ship"]
+    assert loaded.step_texts == ["build", "ship"]
     assert loaded.use_count == 2
 
 

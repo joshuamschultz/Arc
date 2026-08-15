@@ -78,7 +78,7 @@ def test_using_a_procedure_does_not_disturb_its_steps(store: ProceduralStore) ->
     store.increment_use("deploy")
 
     card = store.read("deploy")
-    assert card.steps == ["a", "b"]
+    assert card.step_texts == ["a", "b"]
     assert card.when_to_use == "Shipping"
     assert card.title == "Deploy the fleet"
 
@@ -106,7 +106,7 @@ def test_an_existing_card_without_the_counter_still_loads(tmp_path: Path) -> Non
     card = ProceduralStore(tmp_path).read("legacy")
 
     assert card is not None
-    assert card.steps == ["first", "second"]
+    assert card.step_texts == ["first", "second"]
     assert card.use_count == 4
     assert card.revisions == 0
 

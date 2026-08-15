@@ -518,7 +518,10 @@ class TestProcedures:
         items = resp.json()["items"]
         assert len(items) == 1
         assert items[0]["slug"] == "deploy"
-        assert items[0]["steps"] == ["build", "ship"]
+        # Steps carry their corroboration now: a card cannot tell its reader which
+        # steps are settled practice if every step renders as bare text.
+        assert [step["text"] for step in items[0]["steps"]] == ["build", "ship"]
+        assert all(step["hits"] >= 1 for step in items[0]["steps"])
         assert items[0]["use_count"] == 3
 
     def test_list_procedures_empty_is_200(self, app_no_memories: Any) -> None:

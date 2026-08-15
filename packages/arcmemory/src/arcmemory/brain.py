@@ -247,7 +247,13 @@ class ArcMemoryBrain:
         if procedure is None:
             return f"(no procedure {slug!r})"
         store.increment_use(procedure.slug)
-        steps = "\n".join(f"{i}. {step}" for i, step in enumerate(procedure.steps, start=1))
+        # Corroboration is shown per step so the reader can tell the operator's firm
+        # practice from something said once — an unmarked list claims every step is
+        # equally settled, which is exactly what it cannot know.
+        steps = "\n".join(
+            f"{i}. {step.text}  [{step.hits}x corroborated]"
+            for i, step in enumerate(procedure.steps, start=1)
+        )
         return (
             f"{procedure.title}\nwhen_to_use: {procedure.when_to_use}\n"
             f"(used {procedure.use_count + 1}x, revised {procedure.revisions}x)\n{steps}"
