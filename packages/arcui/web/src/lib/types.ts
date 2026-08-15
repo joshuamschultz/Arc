@@ -535,12 +535,19 @@ export interface InsightCard {
   classification: string
 }
 
+/** One step of a procedure, with how many sessions have corroborated it. */
+export interface ProcedureStep {
+  text: string
+  hits: number
+}
+
 export interface ProcedureCard {
   slug: string
   title: string
   when_to_use: string
-  steps: string[]
+  steps: ProcedureStep[]
   use_count: number
+  revisions: number
   classification: string
 }
 

@@ -70,6 +70,37 @@ class _Chunk(BaseModel):
     content_hash: str
 
 
+#: Chunk-id prefix of a raw episodic event; curated cards are ``file:``.
+_RAW_PREFIX = "event:"
+
+
+def _ensure_curated_present(fused: list[tuple[str, float]], top_k: int) -> list[tuple[str, float]]:
+    """Give the best curated chunk a place when raw events would take every slot.
+
+    Curated cards and every raw episodic event share one pool ranked on text
+    similarity, and the raw stream wins that comparison: a verbatim conversation line
+    matches the query's own wording more closely than the card distilled from it, and
+    on a live store they outnumber curated chunks 1202 to 326. Measured there, "how do
+    we quote a customer" returned a single raw event that spent 579 of the 1024-token
+    budget and surfaced no procedure at all — consolidation's whole product losing to
+    its own source material at the last step.
+
+    The smallest intervention that fixes it: act ONLY when the slice would carry no
+    curated chunk at all, and then promote exactly one, into the LAST slot. Rationing
+    raw events by share instead suppressed genuinely best-matching lines — sometimes
+    the verbatim line is the answer — and cost the retrieval channels their evidence
+    of being load-bearing.
+    """
+    head = fused[:top_k]
+    if not head or any(not cid.startswith(_RAW_PREFIX) for cid, _ in head):
+        return fused
+    promoted = next((pair for pair in fused if not pair[0].startswith(_RAW_PREFIX)), None)
+    if promoted is None:
+        return fused
+    rest = [pair for pair in fused if pair is not promoted]
+    return [*rest[: top_k - 1], promoted, *rest[top_k - 1 :]]
+
+
 class SurfaceIndex:
     """Incremental surface index + fused search for one agent scope."""
 
@@ -179,7 +210,7 @@ class SurfaceIndex:
         if vec_ranked is not None:
             ranked_lists.append(vec_ranked)
 
-        fused = rrf_fuse(ranked_lists)
+        fused = _ensure_curated_present(rrf_fuse(ranked_lists), top_k)
         hydrated = (self._to_recall(cid, score) for cid, score in fused[:top_k])
         recalls = [r for r in hydrated if r is not None]
         if degraded:

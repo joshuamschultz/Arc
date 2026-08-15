@@ -28,13 +28,14 @@ from pathlib import Path
 from arcmemory.mdfile import atomic_write_text, parse_document, render_document
 from arcmemory.security import dominating_classification
 from arcmemory.slug import canonical_slug
+from arcmemory.stores.procedural import format_hits, parse_step
 from arcmemory.stores.semantic import (
     SemanticStore,
     extract_wiki_links,
     format_fact,
     parse_facts,
 )
-from arcmemory.types import Confidence, Fact, Insight, Procedure
+from arcmemory.types import Confidence, Fact, Insight, Procedure, Step
 
 _STORES = ("entities", "procedures", "insights")
 
@@ -138,7 +139,7 @@ def _read_procedure_raw(path: Path) -> Procedure:
     """Parse a procedure card from its actual file (not via the canonicalizing store)."""
     fm, body = parse_document(path.read_text(encoding="utf-8"))
     steps = [
-        line.split(". ", 1)[1].strip()
+        parse_step(line.split(". ", 1)[1].strip())
         for line in body.splitlines()
         if line.strip() and line.strip()[0].isdigit() and ". " in line
     ]
@@ -148,20 +149,35 @@ def _read_procedure_raw(path: Path) -> Procedure:
         when_to_use=str(fm.get("when_to_use", "")),
         steps=steps,
         use_count=int(fm.get("use_count", 0)),
+        revisions=int(fm.get("revisions", 0)),
         classification=str(fm.get("classification", "unclassified")),
     )
 
 
 def _build_procedure_doc(canonical: str, paths: list[Path]) -> str:
-    """Merge procedure cards: sum use_count, keep the richest step list."""
+    """Merge procedure cards: sum the counters, keep the richest step list.
+
+    Corroboration sums per step across the folded cards. Two cards of the same
+    procedure are two records of the same practice, so a step both of them carry is
+    better evidenced than one only a single card mentions — taking the richest card's
+    hits alone would throw away exactly that signal.
+    """
     cards = [_read_procedure_raw(p) for p in paths]
     richest = max(cards, key=lambda c: len(c.steps))
+    hits: dict[str, int] = {}
+    for other in cards:
+        for step in other.steps:
+            hits[step.text.casefold()] = hits.get(step.text.casefold(), 0) + step.hits
     card = Procedure(
         slug=canonical,
         title=richest.title,
         when_to_use=richest.when_to_use,
-        steps=richest.steps,
+        steps=[
+            Step(text=step.text, hits=hits.get(step.text.casefold(), step.hits))
+            for step in richest.steps
+        ],
         use_count=sum(c.use_count for c in cards),
+        revisions=sum(c.revisions for c in cards),
         classification=dominating_classification([c.classification for c in cards]),
     )
     frontmatter = {
@@ -169,9 +185,12 @@ def _build_procedure_doc(canonical: str, paths: list[Path]) -> str:
         "title": card.title,
         "when_to_use": card.when_to_use,
         "use_count": card.use_count,
+        "revisions": card.revisions,
         "classification": card.classification,
     }
-    steps = "\n".join(f"{i}. {s}" for i, s in enumerate(card.steps, start=1))
+    steps = "\n".join(
+        f"{i}. {step.text} {format_hits(step.hits)}" for i, step in enumerate(card.steps, start=1)
+    )
     when = f"## When to use\n{card.when_to_use}\n\n" if card.when_to_use else ""
     return render_document(frontmatter, f"# {card.title}\n\n{when}## Steps\n{steps}")
 

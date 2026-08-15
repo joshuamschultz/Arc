@@ -17,12 +17,19 @@ lesson).
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.mdfile import atomic_write_text, parse_document, render_document
 from arcmemory.slug import canonical_slug
-from arcmemory.types import Entity, Fact, utc_today
+from arcmemory.types import (
+    Entity,
+    Fact,
+    confidence_from_hits,
+    hits_from_confidence,
+    utc_today,
+)
 
 _FACT_RE = re.compile(
     r"^-\s+(.+?):\s+(.+?)\s+(\.\d+|1)\s+(\d{4}-\d{2}-\d{2})"
@@ -48,19 +55,93 @@ def format_fact(fact: Fact) -> str:
     return line
 
 
-def _fold_fact(existing: Fact | None, incoming: Fact) -> Fact:
-    """Merge two facts for one predicate, keeping the higher-confidence value current.
+def corroborate(existing: float | None, incoming: float, *, gamma: float) -> float:
+    """Fold a new sighting into a stored confidence — evidence ADDS, it does not replace.
 
-    No prior value -> take the incoming fact verbatim. Same value -> keep the more
-    corroborated one. Differing values -> the higher-confidence value wins as current
-    and the loser folds into a ``| was:`` trail (additive, never destructive — the
-    entity-merge analogue of ``write_fact``'s contradiction handling).
+    Confidence is ``1 - e^(-gamma*hits)``, so corroborating means recovering the hits
+    each side stands for, summing them, and re-deriving. The agentic write path took
+    whatever confidence the model supplied instead (defaulting to 0.5), which is why a
+    live store held entity facts frozen at exactly 0.5 however often they were restated.
+    """
+    prior = hits_from_confidence(existing, gamma) if existing else 0.0
+    return confidence_from_hits(prior + max(hits_from_confidence(incoming, gamma), 1.0), gamma)
+
+
+def _age_days(fact: Fact, now: datetime) -> float:
+    """Days since the fact was last stated (0 when the date will not parse)."""
+    try:
+        stated = datetime.strptime(fact.date, "%Y-%m-%d").replace(tzinfo=UTC)
+    except ValueError:
+        return 0.0
+    return max(0.0, (now - stated).total_seconds() / 86400.0)
+
+
+def current_confidence(fact: Fact, *, now: datetime, half_life_days: float) -> float:
+    """How far this fact should be trusted as CURRENT — evidence discounted by age.
+
+    Never written back. Stored confidence is the record of what was believed and how
+    well, and it stays whole: an old fact is still what was true then. This is only the
+    scalar that decides which of two competing values leads today.
+    """
+    if half_life_days <= 0:
+        return fact.confidence
+    return float(fact.confidence * 0.5 ** (_age_days(fact, now) / half_life_days))
+
+
+#: Confidence growth rate. Matches ``MemoryConfig.gamma`` so "three sightings and it
+#: is known" means the same thing here as everywhere else in memory.
+_DEFAULT_GAMMA = 0.536
+
+
+def _entity_confidence(facts: list[Fact]) -> float:
+    """How well this entity is known: the mean corroboration of what is known about it.
+
+    The field existed, was rendered into every card's frontmatter, and was never once
+    computed — every entity on a live box read exactly 0.5, the model default. A number
+    shown to the operator has to mean something, and the honest reading is how well
+    evidenced the card's contents are on average.
+    """
+    if not facts:
+        return 0.5
+    return round(sum(fact.confidence for fact in facts) / len(facts), 4)
+
+
+def merge_facts(
+    existing: Fact | None,
+    incoming: Fact,
+    *,
+    now: datetime,
+    half_life_days: float,
+    gamma: float = 0.536,
+) -> Fact:
+    """Merge two facts for one predicate, keeping the better-supported value current.
+
+    No prior value -> take the incoming fact verbatim. Same value -> CORROBORATE:
+    agreement is evidence, so the confidence rises rather than the two tying. Differing
+    values -> the higher CURRENCY (confidence discounted by age) leads and the loser
+    folds into a ``| was:`` trail, additive and never destructive.
+
+    Currency rather than raw confidence is what makes a correction possible. Comparing
+    stored confidence alone meant a permanent 0.5 on both sides, ties going to the
+    incumbent, and today's employer losing to the one it replaced — forever. Ageing
+    tilts that scale without owning it: a well-evidenced fact is not unseated by a
+    single offhand mention.
     """
     if existing is None:
         return incoming
     if existing.value == incoming.value:
-        return existing if existing.confidence >= incoming.confidence else incoming
-    incoming_wins = incoming.confidence > existing.confidence
+        fresher = existing if existing.date >= incoming.date else incoming
+        return Fact(
+            predicate=fresher.predicate,
+            value=fresher.value,
+            confidence=corroborate(existing.confidence, incoming.confidence, gamma=gamma),
+            date=fresher.date,
+            was_value=fresher.was_value,
+            was_confidence=fresher.was_confidence,
+        )
+    incoming_wins = current_confidence(
+        incoming, now=now, half_life_days=half_life_days
+    ) > current_confidence(existing, now=now, half_life_days=half_life_days)
     winner, loser = (incoming, existing) if incoming_wins else (existing, incoming)
     return Fact(
         predicate=winner.predicate,
@@ -100,10 +181,21 @@ def extract_wiki_links(text: str) -> list[str]:
 class SemanticStore:
     """Read/write entity markdown + maintain the wiki-link graph for one scope."""
 
-    def __init__(self, workspace: Path, graph: WeightedGraph, scope: str) -> None:
+    def __init__(
+        self,
+        workspace: Path,
+        graph: WeightedGraph,
+        scope: str,
+        *,
+        fact_half_life_days: float = 180.0,
+    ) -> None:
         self._dir = Path(workspace) / "memory" / "entities"
         self._graph = graph
         self._scope = scope
+        #: Days for a fact's CURRENCY to halve. Stored confidence never decays — an
+        #: old fact is still what was true then — so this only weights which of two
+        #: competing values leads today.
+        self._fact_half_life_days = fact_half_life_days
 
     def path_for(self, slug: str) -> Path:
         """Absolute path to an entity's markdown file (slug canonicalized)."""
@@ -166,20 +258,30 @@ class SemanticStore:
             if entity_type != "unknown":
                 entity.entity_type = entity_type
 
+        # A write is an assertion about NOW, so a different value always leads and the
+        # one it replaces becomes the ``was:`` trail — that is how a fact changes. What
+        # was missing is the other half: restating the SAME value is corroboration, and
+        # assigning the caller's confidence verbatim threw it away. The agentic tool
+        # defaults to 0.5, so every re-statement reset the evidence and a live store
+        # held its entity facts pinned at exactly 0.5 however often they were confirmed.
+        # (Arbitrating between two STORED facts is a different question — see
+        # :func:`merge_facts`, which weighs currency because neither side is "now".)
         by_predicate = {f.predicate: f for f in entity.facts}
         prior = by_predicate.get(predicate)
         was_value = was_conf = None
         if prior is not None and prior.value != value:
             was_value, was_conf = prior.value, prior.confidence
+        agreed = prior.confidence if prior is not None and prior.value == value else None
         by_predicate[predicate] = Fact(
             predicate=predicate,
             value=value,
-            confidence=confidence,
+            confidence=corroborate(agreed, confidence, gamma=_DEFAULT_GAMMA),
             date=utc_today(),
             was_value=was_value,
             was_confidence=was_conf,
         )
         entity.facts = [by_predicate[p] for p in sorted(by_predicate)]
+        entity.confidence = _entity_confidence(entity.facts)
 
         # A [[wiki-link]] in the value becomes a graph edge (traversable enrichment)
         # and a frontmatter link — recorded in-memory so the single persist keeps both.
@@ -215,7 +317,12 @@ class SemanticStore:
         by_predicate = {f.predicate: f for f in dst.facts}
         for fact in src.facts:
             existing = by_predicate.get(fact.predicate)
-            by_predicate[fact.predicate] = _fold_fact(existing, fact)
+            by_predicate[fact.predicate] = merge_facts(
+                existing,
+                fact,
+                now=datetime.now(UTC),
+                half_life_days=self._fact_half_life_days,
+            )
         dst.facts = [by_predicate[p] for p in sorted(by_predicate)]
 
         for link in src.links_to:

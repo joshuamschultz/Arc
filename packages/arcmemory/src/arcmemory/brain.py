@@ -38,8 +38,9 @@ from arcmemory.distill import Distiller
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder, IndexRebuilder
 from arcmemory.react_adapter import ReactLoop, run_react_loop
-from arcmemory.retrieve import Retriever
-from arcmemory.types import ConsolidationResult, RecallCard, Scope, Situation
+from arcmemory.retrieve import Retriever, attributed_cards
+from arcmemory.stores.procedural import ProceduralStore
+from arcmemory.types import ConsolidationResult, Recall, RecallCard, Scope, Situation
 
 
 class _ScopeBundle:
@@ -151,6 +152,7 @@ class ArcMemoryBrain:
         result = await bundle.retriever.retrieve(
             situation, clearance=clr, top_k=top_k, budget=budget
         )
+        self._emit_recall_attribution(result.recalls)
         return result.text
 
     async def recall(
@@ -215,6 +217,75 @@ class ArcMemoryBrain:
             embedder=self._embedder,
             seed_vocabulary=self._seed_vocab,
         ).rebuild()
+
+    def _emit_recall_attribution(self, recalls: list[Recall]) -> None:
+        """Record WHICH cards a recall surfaced, not merely that one happened.
+
+        Memory audited that a recall occurred and whether it returned anything — never
+        what it returned — so nothing downstream could ask whether surfacing a given
+        card actually helped. That question is the entire basis for improving retrieval
+        over time, and it cannot be asked retroactively: the attribution has to be
+        written at the moment the bundle is built.
+
+        Cards only, and deduplicated. Per-chunk credit starves on a real store (1,528
+        indexed chunks against a handful of turns an hour), which is why the unit is
+        the card an operator edits and consolidation merges.
+        """
+        cards = attributed_cards(recalls)
+        if not cards:
+            return
+        emit(
+            AuditEvent(
+                actor_did=self._scope(None).agent_did,
+                action="memory.recall_attributed",
+                target="memory",
+                outcome="allow",
+                extra={"cards": cards},
+            ),
+            self._audit,
+        )
+
+    async def list_procedures(self, *, session_id: str | None = None) -> str:
+        """Every playbook's slug + trigger + counters, WITHOUT its steps.
+
+        The index an agent scans to ask "is there already a way we do this?" — cheap
+        enough to afford on any turn, which is the whole point: the full step lists of
+        a mature store do not fit, so the alternative to this listing is not reading
+        them all, it is never consulting them.
+        """
+        store = ProceduralStore(self._workspace)
+        summaries = store.list_summaries()
+        if not summaries:
+            return "(no procedures recorded)"
+        return "\n".join(
+            f"- {s.slug} | {s.title} | when_to_use: {s.when_to_use} "
+            f"(used {s.use_count}x, revised {s.revisions}x)"
+            for s in summaries
+        )
+
+    async def get_procedure(self, slug: str, *, session_id: str | None = None) -> str:
+        """One playbook in full, and record the use.
+
+        Reading IS the use — it is the only point at which the system can learn which
+        playbooks earn their keep. ``use_count`` previously moved only on writes, so a
+        live store held 36 procedures and no evidence that any had been reached for.
+        """
+        store = ProceduralStore(self._workspace)
+        procedure = store.read(slug)
+        if procedure is None:
+            return f"(no procedure {slug!r})"
+        store.increment_use(procedure.slug)
+        # Corroboration is shown per step so the reader can tell the operator's firm
+        # practice from something said once — an unmarked list claims every step is
+        # equally settled, which is exactly what it cannot know.
+        steps = "\n".join(
+            f"{i}. {step.text}  [{step.hits}x corroborated]"
+            for i, step in enumerate(procedure.steps, start=1)
+        )
+        return (
+            f"{procedure.title}\nwhen_to_use: {procedure.when_to_use}\n"
+            f"(used {procedure.use_count + 1}x, revised {procedure.revisions}x)\n{steps}"
+        )
 
     async def authorize(self, operation: str, *, caller_did: str = "") -> bool:
         """Provider-side ACL gate the host's generic memory adapter consults per op.

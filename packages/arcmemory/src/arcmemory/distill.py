@@ -24,7 +24,6 @@ keeps this module free of any provider dependency.
 
 from __future__ import annotations
 
-import math
 from typing import Annotated, Protocol
 
 from pydantic import BaseModel, BeforeValidator, Field
@@ -39,7 +38,17 @@ from arcmemory.stores.events import EventStore
 from arcmemory.stores.insight import InsightStore
 from arcmemory.stores.procedural import ProceduralStore, procedure_link_targets
 from arcmemory.stores.semantic import SemanticStore
-from arcmemory.types import Confidence, Event, Fact, Insight, LifeEvent, Procedure, Scope
+from arcmemory.types import (
+    Confidence,
+    Event,
+    Fact,
+    Insight,
+    LifeEvent,
+    Procedure,
+    Scope,
+    confidence_from_hits,
+    hits_from_confidence,
+)
 
 
 def _coerce_str_items(value: object) -> object:
@@ -199,19 +208,29 @@ class Distiller(Protocol):
 
     async def confirm_entity_merges(self, groups: list[list[EntityRef]]) -> list[list[str]]: ...
 
+    async def find_contradictions(self, group: list[EntityRef]) -> list[str]: ...
+
 
 class EntityMergeConfirmer(Protocol):
-    """The single-method seam that gates slow-path entity de-duplication.
+    """The seam that gates slow-path entity de-duplication, with two questions.
 
-    Given CANDIDATE clusters (same-type cards whose names merely embed close), it
-    returns the slug sub-groups that are UNAMBIGUOUSLY the same real-world entity —
-    each returned sub-group has >= 2 slugs, and different-but-similar entities (a
-    'Josh Schultz' vs a 'Joshua Shubbie') are kept apart. Any :class:`Distiller`
-    satisfies it structurally, so production passes the same arcllm-backed distiller;
-    tests inject a stub with only this method. Merge is never done on embedding alone.
+    ``confirm_entity_merges`` is the open one, for clusters held together only by name
+    SIMILARITY: which sub-groups are unambiguously the same real-world entity, keeping
+    a 'Josh Schultz' apart from a 'Joshua Shubbie'.
+
+    ``find_contradictions`` is the narrow one, for cards sharing an identical name AND
+    type. There, whether they are the same entity is already settled by the store's own
+    structure, so the only question left is whether a fact rules a card out. Asked the
+    open question instead, the model declined real duplicates repeatedly and answered
+    inconsistently on an unchanged prompt; asked this one it is stable.
+
+    Any :class:`Distiller` satisfies both structurally, so production passes the same
+    arcllm-backed distiller. Merge is never done on embedding alone.
     """
 
     async def confirm_entity_merges(self, groups: list[list[EntityRef]]) -> list[list[str]]: ...
+
+    async def find_contradictions(self, group: list[EntityRef]) -> list[str]: ...
 
 
 class EntityDisambiguator(Protocol):
@@ -312,17 +331,6 @@ async def _fuzzy_entity_match(
         return best_slug, []
     near = [slug for slug, score in scored if score >= config.entity_disambiguate_min]
     return None, near + cross_type_exact
-
-
-def confidence_from_hits(hits: float, gamma: float) -> float:
-    """Memory confidence ``1 - e^(-gamma*hits)`` — rises, saturating, with corroboration."""
-    return 1.0 - math.exp(-gamma * max(0.0, hits))
-
-
-def hits_from_confidence(confidence: float, gamma: float) -> float:
-    """Invert ``confidence_from_hits`` to recover accumulated hits (for additive growth)."""
-    clamped = min(max(confidence, 0.0), 0.999999)
-    return -math.log(1.0 - clamped) / gamma
 
 
 def chunk_events(events: list[Event], max_tokens: int | None) -> list[list[Event]]:

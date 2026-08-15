@@ -83,6 +83,18 @@ _CUE_MERGE_THRESHOLD = 0.92
 _ENTITY_REF_MAX_FACTS = 5
 
 
+def _is_exact_cluster(cluster: list[tuple[str, Entity]]) -> bool:
+    """True when every card in the cluster shares one name AND one type.
+
+    That combination is what makes a merge decidable in code — see
+    :meth:`Consolidator._merge_exact_clusters`. A cluster held together by mere
+    name similarity is a genuine judgement call and keeps the conservative gate.
+    """
+    names = {entity.name.strip().casefold() for _, entity in cluster}
+    types = {entity.entity_type for _, entity in cluster}
+    return len(names) == 1 and len(types) == 1
+
+
 def _wikilink_bullets(bullets: list[str], name_to_slug: dict[str, str]) -> list[str]:
     """Wrap the first (longest) known entity NAME in each bullet as ``[[slug]]``.
 
@@ -144,7 +156,12 @@ class Consolidator:
         self._store_raw_bodies = store_raw_bodies
 
         self._graph = WeightedGraph(db, self._cfg)
-        self._semantic = SemanticStore(workspace, self._graph, scope=scope.key)
+        self._semantic = SemanticStore(
+            workspace,
+            self._graph,
+            scope=scope.key,
+            fact_half_life_days=self._cfg.fact_half_life_days,
+        )
         self._insights = InsightStore(workspace)
         self._procedures = ProceduralStore(workspace)
         self._events = EventStore(workspace)
@@ -541,6 +558,7 @@ class Consolidator:
         """
         entities = [(s, e) for s in self._semantic.slugs() if (e := self._semantic.read(s))]
         if len(entities) < 2:
+            self._emit_dedup_pass(len(entities), 0, 0)
             return []
         embedded = await embed_or_none(self._embedder, [e.name for _, e in entities])
         if embedded is None:
@@ -550,14 +568,62 @@ class Consolidator:
 
         clusters = self._candidate_clusters(entities, vectors)
         if not clusters:
+            self._emit_dedup_pass(len(entities), 0, 0)
             return []
         if self._confirmer is None:
             self._emit_dedup_skipped("no-confirmer")
             return []
 
-        candidate_groups = [[self._entity_ref(s, e) for s, e in cluster] for cluster in clusters]
-        confirmed = await self._confirmer.confirm_entity_merges(candidate_groups)
-        return self._apply_confirmed_merges(confirmed, dict(entities))
+        by_slug = dict(entities)
+        exact = [cluster for cluster in clusters if _is_exact_cluster(cluster)]
+        similar = [cluster for cluster in clusters if not _is_exact_cluster(cluster)]
+
+        merged = await self._merge_exact_clusters(exact, by_slug)
+        if similar:
+            groups = [[self._entity_ref(s, e) for s, e in cluster] for cluster in similar]
+            confirmed = await self._confirmer.confirm_entity_merges(groups)
+            merged += self._apply_confirmed_merges(confirmed, by_slug)
+        self._emit_dedup_pass(len(entities), len(clusters), len(merged))
+        return merged
+
+    async def _merge_exact_clusters(
+        self, clusters: list[list[tuple[str, Entity]]], by_slug: dict[str, Entity]
+    ) -> list[tuple[str, str]]:
+        """Fold same-name same-type cards unless a fact actually contradicts.
+
+        The mechanical half is settled here: identical name AND identical type is a
+        fact about the store, not a judgement call. Asked the open question — "are
+        these the same entity?" — the model declined a live duplicate run after run
+        even with its prompt recalibrated, and gave different verdicts on an unchanged
+        prompt. So it is left the narrow question it answers well: does any fact here
+        contradict? Silence means merge, which is the right default ONLY because
+        identical name and type is already strong evidence.
+
+        Fail closed on error: no answer is not the same as "no contradiction".
+        """
+        confirmer = self._confirmer
+        if confirmer is None:  # unreachable: the caller returns early without one
+            return []
+        merged: list[tuple[str, str]] = []
+        for cluster in clusters:
+            refs = [self._entity_ref(slug, entity) for slug, entity in cluster]
+            try:
+                # Asked twice, and ANY flag counts. Measured over repeated runs the
+                # narrow question is right about a true homograph four times in five,
+                # and the fifth answer fuses two real people — a far worse outcome than
+                # the duplicate it was repairing. Two independent samples cut that tail
+                # roughly to its square, and exact-name clusters are rare enough
+                # (one in 85 cards on a live store) that the second call is free.
+                contradicting = set(await confirmer.find_contradictions(refs))
+                contradicting |= set(await confirmer.find_contradictions(refs))
+            except Exception as exc:  # reason: a dead provider must not fuse two people
+                _log.warning("arcmemory de-dup: contradiction check failed: %s", exc)
+                self._emit_dedup_skipped("contradiction-check-failed")
+                continue
+            keep = [(slug, entity) for slug, entity in cluster if slug not in contradicting]
+            if len(keep) >= 2:
+                merged += self._merge_entity_group(keep)
+        return merged
 
     def _candidate_clusters(
         self, entities: list[tuple[str, Entity]], vectors: dict[str, list[float]]
@@ -634,6 +700,23 @@ class Consolidator:
         """LOUD degrade for entity de-dup: WARNING log + a ``memory.dedup_skipped`` audit."""
         _log.warning("arcmemory entity de-dup skipped: %s", reason)
         self._emit("memory.dedup_skipped", "memory", extra={"reason": reason})
+
+    def _emit_dedup_pass(self, entities: int, clusters: int, merged: int) -> None:
+        """Record what one de-dup pass saw, whether or not it folded anything.
+
+        Merging nothing is an OUTCOME and has to reach the record. Three paths here
+        return quietly — too few cards, no candidate cluster, and a confirmer that
+        declines every group — so a deployment that ran twelve consolidations over a
+        store holding two identically-named cards emitted nothing about de-dup at
+        all, and the logs could not separate "ran, found nothing" from "never ran".
+        The second is a wiring bug and the first is not; without the counts they are
+        the same silence.
+        """
+        self._emit(
+            "memory.dedup_pass",
+            "memory",
+            extra={"entities": entities, "clusters": clusters, "merged": merged},
+        )
 
     async def _merge_entities_audited(self) -> None:
         """Run entity merge and audit each fold (part of the nightly hygiene)."""

@@ -41,7 +41,6 @@ from arcmemory.distill import (
     FactExtraction,
     InsightCandidate,
     InsightMint,
-    confidence_from_hits,
     extract_events,
     extract_facts,
     mint_insights,
@@ -103,6 +102,7 @@ from arcmemory.types import (
     Scope,
     Situation,
     TimeWindow,
+    confidence_from_hits,
 )
 
 __version__ = "0.6.0"

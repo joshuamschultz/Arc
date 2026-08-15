@@ -48,6 +48,12 @@ class MemoryConfig(BaseModel):
     # Confidence (1 - e^(-gamma*hits))
     gamma: float = Field(default=0.536, description="confidence growth; 3 hits -> ~0.8")
     known_threshold: float = Field(default=0.8, description="confidence at/above which -> known")
+    # Ageing is a VIEW, never a rewrite: stored confidence is the evidence and keeps
+    # its value forever, because an old fact is still what was true then. Currency is
+    # that evidence discounted by age, and only currency decides which value leads.
+    fact_half_life_days: float = Field(
+        default=180.0, description="days for a fact's CURRENCY to halve (stored evidence is kept)"
+    )
 
     # Spreading activation (ACT-R fan effect)
     fan_strength: float = Field(default=1.6, description="S in S_ji = S - ln(fan)")

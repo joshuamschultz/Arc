@@ -39,7 +39,19 @@ export function ProcedureBrowser({ agentId }: { agentId: string }) {
               {proc.steps.length > 0 && (
                 <ol className="list-decimal space-y-1 pl-4 text-sm text-foreground">
                   {proc.steps.map((step, i) => (
-                    <li key={i}>{step}</li>
+                    <li key={i}>
+                      {step.text}
+                      {/* Only marked once corroborated: tagging every step "1x" is
+                          noise, and the signal worth seeing is which steps recur. */}
+                      {step.hits > 1 && (
+                        <span
+                          className="ml-1.5 rounded-sm border border-border bg-muted/40 px-1 py-0.5 font-mono text-[10px] tabular-nums text-muted-foreground"
+                          title={`restated in ${step.hits} sessions`}
+                        >
+                          ×{step.hits}
+                        </span>
+                      )}
+                    </li>
                   ))}
                 </ol>
               )}

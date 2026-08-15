@@ -18,10 +18,27 @@ Two vocabularies worth stating once:
 
 from __future__ import annotations
 
+import math
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import NamedTuple
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+#: Confidence growth rate, shared with insight corroboration so the "known" bar
+#: (0.8, reached at 3 hits) means one thing across every kind of memory.
+_STEP_GAMMA = 0.536
+
+
+def confidence_from_hits(hits: float, gamma: float) -> float:
+    """Memory confidence ``1 - e^(-gamma*hits)`` — rises, saturating, with corroboration."""
+    return 1.0 - math.exp(-gamma * max(0.0, hits))
+
+
+def hits_from_confidence(confidence: float, gamma: float) -> float:
+    """Invert :func:`confidence_from_hits` to recover accumulated hits (additive growth)."""
+    clamped = min(max(confidence, 0.0), 0.999999)
+    return -math.log(1.0 - clamped) / gamma
 
 
 def _utc_now_iso() -> str:
@@ -154,6 +171,48 @@ class DaySummary(BaseModel):
         )
 
 
+class Step(BaseModel):
+    """One step of a procedure, with how often it has been corroborated.
+
+    A procedure is not uniformly trustworthy: some steps are the operator's firm
+    practice, restated whenever the topic comes up, and others were said once and
+    may have been a one-off. As bare strings the two are indistinguishable, so a
+    card cannot tell its reader which parts are the method.
+
+    ``hits`` counts the sessions that stated this step; ``confidence`` is the same
+    ``1 - e^(-gamma*hits)`` curve insights use, so "three mentions and it is known"
+    means the same thing everywhere in memory.
+    """
+
+    text: str
+    hits: int = 1
+
+    @property
+    def confidence(self) -> float:
+        """Corroboration as a 0-1 scalar (gamma 0.536: 1 hit .41, 3 hits .80)."""
+        return confidence_from_hits(self.hits, _STEP_GAMMA)
+
+    def __str__(self) -> str:
+        """The step's text — every surface that prints a step prints the words."""
+        return self.text
+
+
+class ProcedureSummary(NamedTuple):
+    """One line of the procedure index: enough to choose a card, without its steps.
+
+    A fleet accumulates dozens of procedures and their full step lists will not fit
+    in a turn. The trigger (``when_to_use``) is what decides relevance, so it is the
+    one body field worth carrying — and keeping steps off this type means a caller
+    cannot accidentally spend the context it exists to save.
+    """
+
+    slug: str
+    title: str
+    when_to_use: str
+    use_count: int
+    revisions: int
+
+
 class Procedure(BaseModel):
     """A how-to card — a repeatable process, findable by its trigger.
 
@@ -165,9 +224,34 @@ class Procedure(BaseModel):
     slug: str
     title: str
     when_to_use: str = ""
-    steps: list[str] = Field(default_factory=list)
+    steps: list[Step] = Field(default_factory=list)
+    #: Times this playbook was actually REACHED FOR — bumped by ``ProceduralStore.use``.
+    #: Distinct from ``revisions`` because the two answer different questions, and
+    #: conflating them made a much-refined procedure indistinguishable from a
+    #: much-used one: a live store of 36 read 28 at 1 and 8 at 2, none of which was
+    #: evidence of use, because only writes were ever counted.
     use_count: int = 0
+    #: Times the card was written or evolved — how settled the playbook is.
+    revisions: int = 0
     classification: str = "unclassified"
+
+    @property
+    def step_texts(self) -> list[str]:
+        """Just the wording, for callers that do not care how settled each step is."""
+        return [step.text for step in self.steps]
+
+    @field_validator("steps", mode="before")
+    @classmethod
+    def _accept_plain_steps(cls, value: object) -> object:
+        """Accept bare strings as steps — a string means "stated once".
+
+        Callers that only have step text (the distiller, hygiene, any caller who
+        does not care about corroboration) stay simple, and there is exactly one
+        reading of a step with no counter attached.
+        """
+        if isinstance(value, list):
+            return [Step(text=item, hits=1) if isinstance(item, str) else item for item in value]
+        return value
 
 
 class LifeEvent(BaseModel):

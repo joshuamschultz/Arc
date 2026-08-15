@@ -107,10 +107,11 @@ async def test_list_entities_returns_typed_records(workspace: Path) -> None:
     assert set(entities) == {"alice", "bob"}
     alice = entities["alice"]
     assert isinstance(alice, EntityRecord)
-    # Entity-level confidence is the frontmatter default (write_fact sets the *fact*
-    # confidence, not the entity's); the facade reports the real stored value.
-    assert alice.confidence == 0.5
-    assert alice.importance == 5  # 1..10 projection of confidence 0.5
+    # Entity-level confidence is now DERIVED from how well its facts are evidenced.
+    # It used to be the model default on every card ever written — a number shown to
+    # the operator that had never once been computed.
+    assert alice.confidence == 0.8
+    assert alice.importance == 8  # 1..10 projection of confidence 0.8
     assert alice.source.endswith("alice.md")
     assert any("lead engineer .9" in fact for fact in alice.facts)
 

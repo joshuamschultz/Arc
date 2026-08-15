@@ -186,6 +186,29 @@ class ArcLLMDistiller:
             return None
         return chosen if chosen in candidates else None
 
+    async def find_contradictions(self, group: list[EntityRef]) -> list[str]:
+        """Which of these same-name same-type cards a fact positively rules out.
+
+        The narrow half of de-dup. Whether the cards are the same entity is already
+        settled by identical name and type; asked that open question instead, the model
+        declined real duplicates run after run and answered inconsistently on an
+        unchanged prompt. "Does any fact contradict?" is checkable, and an empty answer
+        is the ordinary one.
+
+        Only slugs from the input are honoured, so a hallucinated name cannot block a
+        merge, and only >= 2 cards are worth asking about.
+        """
+        if len(group) < 2:
+            return []
+        slugs = {ref.slug for ref in group}
+        data = await self._complete(
+            load_stock("arcmemory", "distill_find_contradictions"), self._render_cards(group)
+        )
+        named = data.get("contradicting", [])
+        if not isinstance(named, list):
+            return []
+        return [s for s in dict.fromkeys(named) if isinstance(s, str) and s in slugs]
+
     async def confirm_entity_merges(self, groups: list[list[EntityRef]]) -> list[list[str]]:
         """One bounded, conservative call per candidate cluster -> confirmed same-entity subgroups.
 

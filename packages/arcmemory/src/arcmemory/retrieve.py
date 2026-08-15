@@ -168,6 +168,37 @@ def _rrf_fuse(channels: list[list[Recall]]) -> list[Recall]:
     return [objects[source].model_copy(update={"score": score}) for source, score in fused]
 
 
+#: Prefix of a curated-file chunk id, and the store subdirectory that follows it.
+_FILE_PREFIX = "file:"
+_MEM_ROOT = "memory/"
+
+
+def attributed_cards(recalls: list[Recall]) -> list[str]:
+    """The distinct CARDS a bundle surfaced, as ``<kind>/<slug>`` ids.
+
+    The unit of credit for retrieval feedback. Memory records that a recall happened
+    and whether it returned anything, but not WHAT it returned — so nothing can ask
+    whether surfacing a given card actually helped, which is the only question that
+    improves retrieval over time.
+
+    Cards, not chunks, and not raw events. Per-item utility starves on a real store:
+    a live agent holds 1,528 indexed chunks and answers a handful of turns an hour,
+    so almost every chunk would never receive a signal at all. A card is the unit an
+    operator edits and consolidation merges, and there are far fewer of them. Raw
+    stream events earn nothing — a verbatim line cannot be improved, merged, or
+    archived, and they outnumber curated chunks 1202 to 326.
+    """
+    seen: dict[str, None] = {}
+    for recall in recalls:
+        if not recall.source.startswith(_FILE_PREFIX):
+            continue
+        path = recall.source[len(_FILE_PREFIX) :]
+        if not path.startswith(_MEM_ROOT) or not path.endswith(".md"):
+            continue
+        seen.setdefault(path[len(_MEM_ROOT) : -len(".md")], None)
+    return list(seen)
+
+
 def _confidence_gate(recalls: list[Recall]) -> list[Recall]:
     """Flag ``guessed`` recalls "verify first"; ``known`` stay actionable (REQ-053)."""
     return [
@@ -176,4 +207,4 @@ def _confidence_gate(recalls: list[Recall]) -> list[Recall]:
     ]
 
 
-__all__ = ["Retriever"]
+__all__ = ["Retriever", "attributed_cards"]

@@ -255,6 +255,93 @@ async def memory_search(query: str, top_k: int = 5) -> str:
     return text or "No memory results found."
 
 
+#: Told once per session, not per turn — the guidance is identical on every turn,
+#: so it belongs in the cached prefix rather than being re-billed each time.
+_PROCEDURE_GUIDANCE = (
+    "Procedures are the operator's own recorded ways of doing things, and they take "
+    "precedence over your default approach.\n"
+    "- Before carrying out a task that could recur, call `procedure_list` to see "
+    "whether one already covers it, then `procedure_get` to follow its steps.\n"
+    "- Before recording a new procedure, call `procedure_list` first and update the "
+    "existing card instead of creating a duplicate — a split playbook means neither "
+    "half is the method.\n"
+    "- After doing the work, `procedure_get` is also how you check every step was "
+    "actually done.\n"
+    "The listing carries only each procedure's trigger, never its steps, so it is "
+    "cheap to consult."
+)
+
+
+@hook(event="agent:assemble_prompt", priority=_RECALL_PRIORITY)
+async def inject_procedure_guidance(ctx: Any) -> None:
+    """Point the agent at its procedures — having the tools is not the same as using them.
+
+    A model with a hundred tools does not call one it was never pointed at: an agent
+    holding 36 recorded procedures answered from a skill and never opened the matching
+    playbook. Injected whenever memory is live, including when the store is still
+    empty, because the "list before you record" half is what prevents the duplicates
+    in the first place.
+    """
+    st = _runtime.state()
+    if not st.active:
+        return
+    sections = ctx.data.get("sections")
+    if isinstance(sections, dict):
+        sections["procedures"] = _PROCEDURE_GUIDANCE
+
+
+# -- procedure tools ------------------------------------------------------
+
+
+@tool(
+    name="procedure_list",
+    description=(
+        "List the operator's recorded procedures — slug, title and the situation each "
+        "answers to. Steps are NOT included; read the one that matches."
+    ),
+    classification="read_only",
+    when_to_use=(
+        "BEFORE doing any recurring task the operator may already have a way of doing, "
+        "and before recording a new procedure (so an existing one is updated, not "
+        "duplicated). Cheap: triggers only, never the steps."
+    ),
+)
+async def procedure_list() -> str:
+    """The procedure index — cheap enough to consult whenever a task might have one."""
+    st = _runtime.state()
+    if not st.active:
+        return "Memory is not enabled for this agent."
+    if not await _acl_allows("memory.search", st.agent_did):
+        return "(no procedures recorded)"
+    text = await st.brain.list_procedures()
+    await _audit("memory.procedure_listed", {"tool": True})
+    return text
+
+
+@tool(
+    name="procedure_get",
+    description=(
+        "Read one recorded procedure in full: its trigger and its numbered steps. "
+        "Reading it records that it was used."
+    ),
+    classification="read_only",
+    when_to_use=(
+        "After procedure_list shows a procedure covering the task at hand — to follow "
+        "it, to check every step was done, or to see its current steps before updating it."
+    ),
+)
+async def procedure_get(slug: str) -> str:
+    """One playbook in full. Reading is the use, which is how usage gets measured."""
+    st = _runtime.state()
+    if not st.active:
+        return "Memory is not enabled for this agent."
+    if not await _acl_allows("memory.search", st.agent_did):
+        return f"(no procedure {slug!r})"
+    text = await st.brain.get_procedure(slug)
+    await _audit("memory.procedure_used", {"slug": slug, "tool": True})
+    return text
+
+
 # -- Consolidation scheduler ---------------------------------------------
 
 

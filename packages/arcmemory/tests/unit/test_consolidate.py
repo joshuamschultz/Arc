@@ -734,3 +734,205 @@ async def test_confirmed_merge_is_non_lossy(workspace, db, scope) -> None:
     assert "Austin, TX" in survivor.aliases or "austin-tx" in survivor.aliases  # alias trail
     assert "austin-tx" not in store.slugs()
     assert "austin-texas" in {n for n, _ in graph.neighbors(scope.key, "acme")}  # edge repointed
+
+
+# ---------------------------------------------------------------------------
+# Dedup observability — silence must never be the outcome
+# ---------------------------------------------------------------------------
+
+
+def _pass_events(sink: RecordingSink) -> list:
+    return [e for e in sink.events if getattr(e, "action", None) == "memory.dedup_pass"]
+
+
+async def test_a_dedup_pass_that_merges_nothing_still_says_so(workspace, db, scope) -> None:
+    """No clusters is an OUTCOME, not an absence — it must be on the record.
+
+    A live fleet ran twelve consolidations with two identically-named cards sitting
+    in the store and emitted nothing at all about de-dup: no merge, no skip. Three
+    separate paths return quietly (too few cards, no candidate cluster, a confirmer
+    that declines every group), so the logs could not distinguish "ran and found
+    nothing" from "never ran" — and the second was indistinguishable from a wiring
+    bug. Every pass now reports what it saw.
+    """
+    store = SemanticStore(workspace, WeightedGraph(db), scope=scope.key)
+    _place(store, "berlin", "Berlin", "country", "DE")
+    _place(store, "tokyo", "Tokyo", "country", "JP")
+
+    sink = RecordingSink()
+    consolidator = Consolidator(
+        db,
+        workspace,
+        scope,
+        distiller=_distiller(),
+        config=MemoryConfig(),
+        embedder=SubstringEmbedder(),
+        confirmer=RecordingConfirmer(),
+        audit_sink=sink,
+    )
+
+    assert await consolidator.merge_entities() == []
+
+    events = _pass_events(sink)
+    assert len(events) == 1, "a pass that merged nothing reported nothing"
+    assert events[0].extra["entities"] == 2
+    assert events[0].extra["clusters"] == 0
+    assert events[0].extra["merged"] == 0
+
+
+async def test_a_pass_records_candidates_the_confirmer_declined(workspace, db, scope) -> None:
+    """Clustered-but-declined is the path that looks exactly like never-ran.
+
+    ``RecordingConfirmer`` returns no confirmed groups, so nothing folds. Without
+    the candidate count on the record this is byte-identical to a pass that never
+    clustered anything, and the two have completely different causes.
+    """
+    store = SemanticStore(workspace, WeightedGraph(db), scope=scope.key)
+    _place(store, "austin-texas", "Austin, Texas", "state", "TX")
+    _place(store, "austin-tx", "Austin, TX", "population", "1M")
+
+    sink = RecordingSink()
+    consolidator = Consolidator(
+        db,
+        workspace,
+        scope,
+        distiller=_distiller(),
+        config=MemoryConfig(),
+        embedder=SubstringEmbedder(),
+        confirmer=RejectingConfirmer(),
+        audit_sink=sink,
+    )
+
+    assert await consolidator.merge_entities() == []
+
+    events = _pass_events(sink)
+    assert len(events) == 1
+    assert events[0].extra["clusters"] == 1, "the candidate cluster was not recorded"
+    assert events[0].extra["merged"] == 0
+
+
+async def test_a_single_card_store_still_reports_its_pass(workspace, db, scope) -> None:
+    """The earliest bail-out is silent too, and it is the one a new agent hits."""
+    store = SemanticStore(workspace, WeightedGraph(db), scope=scope.key)
+    _place(store, "berlin", "Berlin", "country", "DE")
+
+    sink = RecordingSink()
+    consolidator = Consolidator(
+        db,
+        workspace,
+        scope,
+        distiller=_distiller(),
+        config=MemoryConfig(),
+        embedder=SubstringEmbedder(),
+        confirmer=RecordingConfirmer(),
+        audit_sink=sink,
+    )
+
+    assert await consolidator.merge_entities() == []
+    assert len(_pass_events(sink)) == 1
+
+
+# ---------------------------------------------------------------------------
+# Exact-name de-dup: decide the mechanical part in code
+# ---------------------------------------------------------------------------
+
+
+class ContradictionFinder:
+    """Names the cards a narrow model call says CANNOT be the same entity."""
+
+    def __init__(self, contradicting: list[str] | None = None) -> None:
+        self.contradicting = contradicting or []
+        self.asked: list[list[str]] = []
+
+    async def confirm_entity_merges(self, groups: list) -> list[list[str]]:  # pragma: no cover
+        raise AssertionError("an exact-name cluster must not go through the open question")
+
+    async def find_contradictions(self, group: list) -> list[str]:
+        self.asked.append([ref.slug for ref in group])
+        return list(self.contradicting)
+
+
+def _person(store: SemanticStore, slug: str, name: str, pred: str, value: str) -> None:
+    store.write_fact(slug, pred, value, name=name, entity_type="person")
+
+
+async def test_identical_name_and_type_merges_without_asking_the_open_question(
+    workspace, db, scope
+) -> None:
+    """The live failure: two cards, same name, same type, nothing contradicting.
+
+    Asked "are these the same entity?", the model declined this case run after run
+    even with the prompt recalibrated — and its verdicts varied on an unchanged
+    prompt. Identical name and type is not a judgement call, it is a fact about the
+    store, so it is settled in code; the model is left the question it can actually
+    answer, which is whether a fact contradicts.
+    """
+    store = SemanticStore(workspace, WeightedGraph(db), scope=scope.key)
+    _person(store, "ben-nnl", "Ben (NNL/TMAC)", "is", "NNL-side contact, role unconfirmed")
+    _person(store, "ben-nnl-contact", "Ben (NNL/TMAC)", "is", "Client contact on the NNL side")
+
+    finder = ContradictionFinder()
+    consolidator = Consolidator(
+        db,
+        workspace,
+        scope,
+        distiller=_distiller(),
+        config=MemoryConfig(),
+        embedder=SubstringEmbedder(),
+        confirmer=finder,
+    )
+
+    merged = await consolidator.merge_entities()
+
+    assert len(merged) == 1, f"the duplicate was not folded: {merged}"
+    assert finder.asked, "the narrow contradiction question was never asked"
+
+
+async def test_a_contradicting_card_is_kept_apart(workspace, db, scope) -> None:
+    """Two real people can share a name — the model's job is to spot that.
+
+    Without this the change would be "merge anything with the same name", which
+    trades a duplicate for the far worse failure of fusing two people.
+    """
+    store = SemanticStore(workspace, WeightedGraph(db), scope=scope.key)
+    _person(store, "chris-acme", "Chris Taylor", "employer", "Acme")
+    _person(store, "chris-globex", "Chris Taylor", "employer", "Globex")
+
+    finder = ContradictionFinder(contradicting=["chris-globex"])
+    consolidator = Consolidator(
+        db,
+        workspace,
+        scope,
+        distiller=_distiller(),
+        config=MemoryConfig(),
+        embedder=SubstringEmbedder(),
+        confirmer=finder,
+    )
+
+    assert await consolidator.merge_entities() == []
+    assert set(store.slugs()) == {"chris-acme", "chris-globex"}
+
+
+async def test_a_failed_contradiction_check_merges_nothing(workspace, db, scope) -> None:
+    """Fail closed: no answer is not the same as "no contradiction"."""
+
+    class Broken(ContradictionFinder):
+        async def find_contradictions(self, group: list) -> list[str]:
+            raise RuntimeError("provider down")
+
+    store = SemanticStore(workspace, WeightedGraph(db), scope=scope.key)
+    _person(store, "ben-a", "Ben (NNL/TMAC)", "is", "contact")
+    _person(store, "ben-b", "Ben (NNL/TMAC)", "is", "contact")
+
+    consolidator = Consolidator(
+        db,
+        workspace,
+        scope,
+        distiller=_distiller(),
+        config=MemoryConfig(),
+        embedder=SubstringEmbedder(),
+        confirmer=Broken(),
+    )
+
+    assert await consolidator.merge_entities() == []
+    assert set(store.slugs()) == {"ben-a", "ben-b"}

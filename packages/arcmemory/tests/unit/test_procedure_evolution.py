@@ -69,8 +69,11 @@ def test_upsert_keeps_steps_the_distiller_did_not_mention(workspace: Path) -> No
     loaded = store.read("seo-research")
     assert loaded is not None
     # Unmentioned steps survive IN THEIR ORIGINAL POSITION — the card stays runnable.
-    assert loaded.steps == _SEO_STEPS
-    assert loaded.use_count == 2
+    assert loaded.step_texts == _SEO_STEPS
+    # Two writes are two REVISIONS. They are not two uses: counting them as such is
+    # what left a live store of 36 procedures with no usage signal at all.
+    assert loaded.revisions == 2
+    assert loaded.use_count == 0
 
 
 def test_upsert_removes_only_explicitly_dropped_steps(workspace: Path) -> None:
@@ -87,7 +90,7 @@ def test_upsert_removes_only_explicitly_dropped_steps(workspace: Path) -> None:
     loaded = store.read("seo-research")
     assert loaded is not None
     assert _SEO_STEPS[6] not in loaded.steps
-    assert loaded.steps == [s for s in _SEO_STEPS if s != _SEO_STEPS[6]]
+    assert loaded.step_texts == [s for s in _SEO_STEPS if s != _SEO_STEPS[6]]
 
 
 def test_upsert_honors_reordering_rewording_and_insertion(workspace: Path) -> None:
@@ -98,7 +101,7 @@ def test_upsert_honors_reordering_rewording_and_insertion(workspace: Path) -> No
 
     loaded = store.read("brief")
     assert loaded is not None
-    assert loaded.steps == ["c", "b-plus", "a"]
+    assert loaded.step_texts == ["c", "b-plus", "a"]
 
 
 def test_upsert_keeps_the_existing_trigger_when_the_incoming_one_is_blank(
@@ -136,7 +139,9 @@ async def test_extract_procedures_hands_the_existing_card_to_the_distiller(
 
     handed = distiller.seen_existing[0]
     assert [p.slug for p in handed] == ["seo-research"]
-    assert handed[0].steps == _SEO_STEPS  # title, trigger and CURRENT steps, not just the slug
+    assert (
+        handed[0].step_texts == _SEO_STEPS
+    )  # title, trigger and CURRENT steps, not just the slug
     assert handed[0].when_to_use == "seo work"
 
 
@@ -169,7 +174,7 @@ async def test_eight_step_method_survives_a_two_step_session(
 
     loaded = store.read("seo-research")
     assert loaded is not None
-    assert loaded.steps == _SEO_STEPS
+    assert loaded.step_texts == _SEO_STEPS
     assert len(loaded.steps) == 8
 
 
@@ -276,7 +281,7 @@ async def test_agentic_engine_can_read_then_deliberately_reorder_and_reword(
 
     loaded = ProceduralStore(workspace).read("brief")
     assert loaded is not None
-    assert loaded.steps == ["draft outline", "send", "review with [[acme]]"]
+    assert loaded.step_texts == ["draft outline", "send", "review with [[acme]]"]
 
 
 async def test_record_procedure_tool_merges_and_links(workspace: Path, db: MemoryDB) -> None:
@@ -290,6 +295,6 @@ async def test_record_procedure_tool_merges_and_links(workspace: Path, db: Memor
 
     loaded = ProceduralStore(workspace).read("seo-research")
     assert loaded is not None
-    assert loaded.steps == _SEO_STEPS
+    assert loaded.step_texts == _SEO_STEPS
     scope = Scope(agent_did=_CALLER)
     assert "ahrefs" in dict(WeightedGraph(db).neighbors(scope.key, "seo-research"))
