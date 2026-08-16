@@ -43,7 +43,7 @@ something afterwards.
 ```bash
 arc up                              # the whole thing: preflight → modules → verify → start
 arc up --check                      # validate only; start nothing; exit non-zero on a problem
-arc up --team-root ~/.arc/team       # a team directory somewhere other than ./team
+arc up --team-root ~/arc/team       # a team directory somewhere other than ./team
 arc up --port 8420 --host 0.0.0.0   # passed straight through to `arc ui start`
 arc up --no-install                 # inspect first; never writes a module
 arc up --no-browser                 # headless box
@@ -188,7 +188,7 @@ an upgrade, a provisioning script, a systemd `ExecStartPre` — that verb is
 
 ```bash
 arc install                          # every agent under ./team
-arc install --team-root ~/.arc/team   # a team directory somewhere else
+arc install --team-root ~/arc/team   # a team directory somewhere else
 ```
 
 Four stages: preflight → **bundles** → modules → verify. It re-reads every

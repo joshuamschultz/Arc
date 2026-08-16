@@ -20,7 +20,7 @@
 # and deleting it costs nothing. That is what makes an update an atomic symlink
 # flip (`arc runtime activate <new>`) and a rollback the same verb with the
 # previous version — and what keeps a `git pull` in the checkout away from the
-# fleet, which now lives at ~/.arc/team beside the other lifecycle roots.
+# fleet, which lives at ~/arc/team beside it and is never executed from.
 #
 # Fails closed: aborts before touching systemd if a required secret is
 # missing, naming exactly which one, rather than starting a service that
@@ -106,21 +106,46 @@ BUILD_STAMP="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || date -u
 RUNTIME_VERSION="${ARC_RUNTIME_VERSION:-$PROJECT_VERSION-$BUILD_STAMP}"
 RUNTIME_DIR="$ARC_CONFIG_DIR/runtime/$RUNTIME_VERSION"
 
+# The fleet directory name is the layout's, not this script's. Everything below
+# that has to name it derives it here, so renaming the fleet can never leave a
+# guard watching a directory that no longer exists.
+FLEET_DIR="$(basename "${ARC_TEAM_ROOT:-$HOME/arc}/team")"
+
+# GUARD 1 (before rsync, the only one that PREVENTS rather than reports).
+# `rsync --delete` is about to run inside $RUNTIME_DIR, so nothing durable may
+# sit under it. ARC_TEAM_ROOT is the only way a fleet could, and a fleet deleted
+# here is agent memory, identity keys and workspaces gone with no copy anywhere.
+case "${ARC_TEAM_ROOT:-}/" in
+  "$ARC_CONFIG_DIR/runtime"/*)
+    fail "ARC_TEAM_ROOT points inside $ARC_CONFIG_DIR/runtime — an install would delete the fleet" ;;
+esac
+
 log "Installing runtime $RUNTIME_VERSION into $RUNTIME_DIR..."
 mkdir -p "$RUNTIME_DIR"
 # --delete so a redeploy of the same version cannot leave a file the new code no
 # longer ships. rsync does not delete an EXCLUDED destination path, which is what
 # each exclude below is for: .venv is rebuilt in place (a copied venv has absolute
 # paths baked into its shebangs), /modules holds bundles `arc install` already
-# materialized into this runtime, team/ is the fleet and belongs to ~/.arc, and
-# .env holds secrets that live in ~/.arc/config/arc.env instead. /modules is
-# anchored so package-internal modules/ directories still ship.
+# materialized into this runtime, and .env holds secrets that live in
+# ~/.arc/config/arc.env instead. /modules is anchored so package-internal
+# modules/ directories still ship.
+#
+# $FLEET_DIR is the load-bearing one: ~/arc is BOTH the rsync source and the
+# fleet's parent, so without it every deploy rakes each agent's memory, identity
+# keys, tools, skills and workspace into a runtime the next deploy deletes.
 rsync -a --delete \
   --exclude '.git/' --exclude '.venv/' --exclude '/modules/' \
   --exclude 'team/' --exclude '.env' \
   --exclude '__pycache__/' --exclude '.pytest_cache/' --exclude '.ruff_cache/' \
   --exclude '.mypy_cache/' --exclude '.arc-logs/' --exclude 'dist/' \
   "$REPO_ROOT/" "$RUNTIME_DIR/"
+
+# GUARD 2 (after rsync, before anything is activated). The exclusion above is one
+# word in a long command. Check the OUTCOME instead of trusting the spelling: a
+# dropped flag, a renamed flag and a mis-anchored pattern all land here, and the
+# deploy stops with `current` still pointing at the runtime that was working.
+[ ! -e "$RUNTIME_DIR/$FLEET_DIR" ] || fail \
+  "the runtime install captured $RUNTIME_DIR/$FLEET_DIR — the rsync no longer excludes the fleet. Nothing was activated; delete that copy and restore the exclude."
 
 log "uv sync (building $RUNTIME_DIR/.venv)..."
 "$UV" sync --project "$RUNTIME_DIR"
@@ -137,13 +162,13 @@ RUNTIME_ROOT="$ARC_CONFIG_DIR/runtime/current"
 [ -x "$ARC_BIN" ] || fail "$ARC_BIN is not executable after activation"
 ok "runtime $RUNTIME_VERSION active"
 
-# --- 2b. migrate an existing box BEFORE anything reads a path -------------
-# An older deployment keeps its fleet at ~/arc/team, inside the checkout. Every
-# stage below resolves the team root, and `arc agent create` CREATES what it does
-# not find — which would mint a second identity beside the real agent and leave
-# two fleets the migration can then only refuse to merge. So the move happens
-# first, once, by moving rather than copying, rolling back on any failure.
-log "Migrating layout (idempotent)..."
+# --- 2b. split a flat home BEFORE any stage reads a config path -----------
+# A deployment older than the lifecycle split has its TOML flat at ~/.arc. Every
+# stage below resolves a config path under ~/.arc/config, and `arc init` CREATES
+# what it does not find — so running it first would write a fresh config beside
+# the real one, and the migration could then only refuse, because both are real.
+# The fleet is never in scope here: it lives at ~/arc/team, outside this home.
+log "Splitting the Arc home if it is still flat (idempotent)..."
 "$ARC_BIN" install --migrate-only || fail "layout migration refused — see above; nothing was moved"
 
 # The fleet root comes from the resolver, never from a literal here: a script
@@ -151,6 +176,8 @@ log "Migrating layout (idempotent)..."
 # disagree about which directory holds the agents, and starting from the wrong
 # empty root loads ZERO agents while reporting healthy.
 TEAM_ROOT="$("$VENV_PY" -c 'from arctrust.paths import arc_team; print(arc_team())')"
+[ "$(basename "$TEAM_ROOT")" = "$FLEET_DIR" ] || fail \
+  "the rsync guard watched '$FLEET_DIR' but the resolver says the fleet is '$(basename "$TEAM_ROOT")'"
 ok "fleet root: $TEAM_ROOT"
 
 # --- 3. nats-server (not a Python dep — arcteam auto-spawns it, needs PATH) --

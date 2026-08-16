@@ -28,7 +28,7 @@ src/arctrust/
   witness.py        # Witness / attestation
   trust_store.py    # Trust store loaders
   validators.py     # Shared validators
-  paths.py          # THE Arc-home resolver (runtime/config/state/team) — one accessor per concern
+  paths.py          # THE resolver: ~/.arc (runtime/config/state) + the fleet outside it
   home_migration.py # One-time move of a flat ~/.arc into the split layout
 ```
 

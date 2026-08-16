@@ -672,31 +672,59 @@ def test_runtime_is_registered_as_a_top_level_command() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_migrate_only_moves_the_fleet_and_stops(
+def test_migrate_only_splits_the_home_and_stops(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A deploy must migrate BEFORE it creates agents, and cannot install yet.
+    """A deploy must split the home BEFORE any stage reads a config path.
 
-    Creating an agent first mints a second identity at the new root while the
-    real fleet is still at the old one — and then the migration refuses, because
-    both destinations are occupied by real data. So the move needs a surface that
-    runs on its own, ahead of any stage that reads the team root.
+    ``arc init`` creates what it does not find, so running it first writes a
+    fresh config beside the real one — and the migration can then only refuse,
+    because both are real. So the move needs a surface that runs on its own,
+    ahead of every stage that resolves a path under the home.
     """
     home = tmp_path / "arc-home"
     monkeypatch.setenv(ARC_CONFIG_DIR_ENV, str(home))
-    monkeypatch.delenv("ARC_TEAM_ROOT", raising=False)
     home.mkdir()
-    legacy = tmp_path / "arc" / "team" / "josh_agent"
-    legacy.mkdir(parents=True)
-    (legacy / "arcagent.toml").write_text('[identity]\ndid = "did:arc:josh"\n', encoding="utf-8")
+    (home / "gateway.toml").write_text("[gateway]\ntier = 'personal'\n", encoding="utf-8")
+
+    install_cmd.install_handler(["--migrate-only"])
+
+    from arctrust.paths import config_file
+
+    assert (
+        config_file("gateway.toml").read_text(encoding="utf-8") == "[gateway]\ntier = 'personal'\n"
+    )
+    assert not (home / "gateway.toml").exists()
+    assert "Preflight" not in capsys.readouterr().out
+
+
+def test_migrate_only_never_touches_the_fleet(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The fleet lives outside the home, so no migration can reach it.
+
+    This is what makes the procedure cheap to run on a live box: an agent's
+    memory, identity, tools, skills and workspace are never in the blast radius,
+    whatever the home's shape turns out to be.
+    """
+    home = tmp_path / "arc-home"
+    monkeypatch.setenv(ARC_CONFIG_DIR_ENV, str(home))
+    monkeypatch.setenv("ARC_TEAM_ROOT", str(tmp_path / "arc"))
+    home.mkdir()
+    (home / "gateway.toml").write_text("[gateway]\n", encoding="utf-8")
+    agent = tmp_path / "arc" / "team" / "josh_agent"
+    (agent / "workspace").mkdir(parents=True)
+    (agent / "arcagent.toml").write_text('[identity]\ndid = "did:arc:josh"\n', encoding="utf-8")
 
     install_cmd.install_handler(["--migrate-only"])
 
     from arctrust.paths import arc_team
 
-    assert (arc_team() / "josh_agent" / "arcagent.toml").exists()
-    assert not legacy.parent.exists()
-    assert "Preflight" not in capsys.readouterr().out
+    assert arc_team() == tmp_path / "arc" / "team"
+    assert (agent / "arcagent.toml").read_text(encoding="utf-8") == (
+        '[identity]\ndid = "did:arc:josh"\n'
+    )
+    assert (agent / "workspace").is_dir()
 
 
 def test_migrate_only_is_re_runnable_on_a_box_that_needs_nothing(

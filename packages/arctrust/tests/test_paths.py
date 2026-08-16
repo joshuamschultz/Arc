@@ -38,25 +38,29 @@ def test_roots_resolve_under_arc_config_dir(arc_root: Path) -> None:
     assert paths.arc_runtime() == arc_root / "runtime" / "current"
 
 
-def test_the_fleet_is_the_fourth_root_of_the_arc_home(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The fleet is a lifecycle root of ``~/.arc``, beside runtime/config/state.
+def test_the_fleet_lives_outside_the_hidden_home(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``~/.arc`` is Arc's; ``~/arc`` is the operator's. The fleet is the operator's.
 
     This is the DEFAULT-root claim, so the env is cleared: it is what a real box
-    resolves with nothing exported. Two properties have each already cost a live
-    box, and only this location has both:
+    resolves with nothing exported.
 
-    * **Outside any code checkout.** ``~/.arc`` is not a checkout and never
-      becomes one. ``~/arc`` — the previous default — is exactly where operators
-      rsync and ``git pull``, so the fleet sat inside the disposable code tree
-      and a pull collided with running agents' memory.
-    * **Out of reach of an update.** An update replaces ``runtime/<version>/``
-      and flips a symlink; it never touches a sibling root.
+    The split is what makes "drop a fresh tree in and everything keeps working"
+    literally true. ``~/.arc`` holds the install, and an install is replaceable by
+    definition; an operator who ever reaches for ``rm -rf ~/.arc`` must not be
+    able to take four agents' memory, identities, tools, skills and workspaces
+    with it. Keeping the fleet a directory further out means the destructive
+    move an operator is most likely to reach for cannot touch it.
+
+    ``~/arc`` is also where the source tarball is rsynced, but nothing is run
+    from there any more: the runtime installs into ``~/.arc/runtime/<version>/``
+    and executes from the ``current`` symlink. So the checkout is a sibling of
+    the fleet, not its parent, and a pull cannot collide with a live agent.
     """
     monkeypatch.delenv("ARC_CONFIG_DIR", raising=False)
     monkeypatch.delenv("ARC_TEAM_ROOT", raising=False)
 
-    assert paths.arc_team() == Path.home() / ".arc" / "team"
-    assert paths.arc_team().parent == paths.arc_home()
+    assert paths.arc_team() == Path.home() / "arc" / "team"
+    assert paths.arc_home() not in paths.arc_team().parents
     assert paths.arc_runtime_root() not in paths.arc_team().parents
 
 
@@ -76,7 +80,9 @@ def test_arc_config_dir_carries_the_fleet_into_isolation(arc_root: Path) -> None
     ``ARC_CONFIG_DIR`` is what every test and every self-contained deployment
     sets. When ``arc_team`` ignored it, an isolated run still resolved the real
     ``~/arc/team``: a test that created an agent created it in the developer's
-    own live fleet, beside agents that were running.
+    own live fleet, beside agents that were running. The default is a sibling of
+    the home; a redirected home is self-contained, which is the whole point of
+    redirecting it.
     """
     assert paths.arc_team() == arc_root / "team"
 

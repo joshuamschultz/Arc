@@ -49,11 +49,16 @@ All of these are
 
 ### 3. One resolver per Arc-home path
 
+`~/.arc` is the **install** and `~/arc` is the **operator's** — the fleet, plus
+the source tarball beside it. Nothing is ever executed from `~/arc`.
+
 `~/.arc` is split by lifecycle: `runtime/` is **replaced wholesale** on update,
-`config/` is **preserved**, `state/` (operator key, identity, trust store,
-arcstore, NATS, bundles) and `team/` are **never touched**. Runtimes install side
-by side under `runtime/<version>/` behind a `current` symlink, so an update is an
-atomic flip and a rollback is flipping it back.
+`config/` is **preserved**, and `state/` (operator key, identity, trust store,
+arcstore, NATS, bundles) is **never touched**. Runtimes install side by side
+under `runtime/<version>/` behind a real `current` symlink, so an update is an
+atomic flip and a rollback is flipping it back. The fleet (`arc_team()`) is
+outside all of it, so dropping a fresh `~/.arc` in — or deleting it — costs a
+reinstall and nothing else.
 
 Every path under it comes from a named accessor in `arctrust.paths` —
 `arc_config()`, `arc_state()`, `trust_dir()`, `config_file("arcagent.toml")`,
@@ -65,7 +70,8 @@ Every path under it comes from a named accessor in `arctrust.paths` —
 - Resolve **per call**, never at import — `ARC_CONFIG_DIR` is routinely exported
   after a module loads.
 - Enforced by `tests/architecture/test_arc_home_single_resolver.py`.
-- Agent runtime data never lives in the code checkout; `team/` is gitignored.
+- Nothing durable lives under `~/.arc`'s runtime, and nothing executable lives
+  under `~/arc`. `team/` is gitignored because the fleet sits beside the source.
 
 ### 4. Agent state stays in the workspace — never via LLM file tools (ADR-029)
 

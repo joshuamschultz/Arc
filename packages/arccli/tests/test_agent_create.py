@@ -21,7 +21,7 @@ def isolated_home(tmp_path_factory, monkeypatch):
     """Isolate ~/.arc from these tests.
 
     `arc agent create` auto-registers with arcteam (FIX-1), which writes to
-    `~/.arc/team/messages/registry/`. Without isolation every test run would
+    `~/arc/team/messages/registry/`. Without isolation every test run would
     pollute the user's real arcteam registry. This fixture redirects HOME to
     a per-test tmp dir; subprocesses inherit it.
     """

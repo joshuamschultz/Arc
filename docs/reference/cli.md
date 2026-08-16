@@ -265,7 +265,7 @@ preflight, module install, verify, then `arc ui start`. See
 | `arc up` | Preflight → install missing modules → verify → start | `arc up` |
 | `arc up --check` | Validate only; start nothing; non-zero on any problem | `arc up --check` |
 | `arc up --no-install` | Report module state without installing anything | `arc up --no-install` |
-| `arc up --team-root <dir>` | Agent-discovery root; defaults to `./team` if it exists | `arc up --team-root ~/.arc/team` |
+| `arc up --team-root <dir>` | Agent-discovery root; defaults to `./team` if it exists | `arc up --team-root ~/arc/team` |
 | `arc up --port <n>` / `--host <h>` | Dashboard bind; passed through to `arc ui start` | `arc up --port 9000` |
 | `arc up --gateway-config <path>` | Path to `gateway.toml`; passed through | `arc up --gateway-config ./gateway.toml` |
 | `arc up --no-browser` | Do not auto-open a browser tab on loopback start | `arc up --no-browser` |

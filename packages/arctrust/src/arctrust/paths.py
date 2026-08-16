@@ -1,8 +1,17 @@
 """Arc-home path resolution — the single source of truth for ``~/.arc``.
 
-The Arc home is split by **lifecycle**, because updating Arc is meant to be
-"download the new one and overwrite it" and three of the four things living
-there must survive that:
+Two directories, and which is which is the whole design:
+
+============  ===============================================  ===================
+Directory     Holds                                            Belongs to
+============  ===============================================  ===================
+``~/.arc``    the install — runtime, config, state             **Arc**
+``~/arc``     the fleet, and the source tarball beside it      **the operator**
+============  ===============================================  ===================
+
+The home is then split by **lifecycle**, because updating Arc is meant to be
+"install the new one and flip the symlink" and two of its three roots must
+survive that:
 
 ===================  ==============================================  ==================
 Root                 Holds                                           On update
@@ -11,7 +20,6 @@ Root                 Holds                                           On update
 ``config/``          ``arcagent.toml`` … ``gateway.toml``, ``arc.env``  preserved
 ``state/``           operator key, identity, trust store, arcstore,   never touched
                      NATS JetStream, bundles
-``team/``            per-agent traces, sessions, memory, workspace    never touched
 ===================  ==============================================  ==================
 
 Runtimes install side by side under ``runtime/<version>/`` — the whole framework,
@@ -22,11 +30,14 @@ is flipping it back.
 That split only holds if the install is genuinely the disposable thing. A
 deployment whose code and venv sit in a git checkout has no disposable install —
 the directory an update replaces and the directory an operator pulls into are the
-same one — and a fleet inside that checkout is durable data in a disposable tree,
-which is how a production ``git pull`` came to collide with running agents'
-memory. Everything a service unit executes resolves through
-:func:`runtime_bin`; everything durable is a sibling root the runtime cannot
-reach.
+same one. Everything a service unit executes resolves through :func:`runtime_bin`,
+so the running code is whatever ``current`` points at and nothing else.
+
+The fleet (:func:`arc_team`) is deliberately outside all of it. Dropping a fresh
+tree into ``~/.arc`` — or deleting the directory outright, which is the blunt
+version an operator will eventually reach for — must cost nothing but a
+reinstall, and that is only true while no agent's memory, identity, tools,
+skills or workspace lives underneath it.
 
 **One resolver per concern.** Every path below is a named function. Callers must
 never compose their own — ``arc_home() / "operator"`` reads the *pre-split*
@@ -143,31 +154,36 @@ def arc_runtime_version(version: str, base: Base = None) -> Path:
 
 
 def arc_team(name: str = "team", base: Base = None) -> Path:
-    """Return a fleet root: ``${ARC_TEAM_ROOT:-<arc_home>}/<name>`` (default ``team``).
+    """Return a fleet root: ``${ARC_TEAM_ROOT:-~/arc}/<name>`` (default ``team``).
 
-    Per-agent traces, sessions, memory, and workspace — the operator's own work,
-    and the one root here that cannot be regenerated from anything.
+    Per-agent traces, sessions, memory, identity, tools, skills, and workspace —
+    the operator's own work, and the one thing here that cannot be regenerated
+    from anything.
 
-    It is a **sibling** of ``runtime/``, never a child, and it is outside any code
-    checkout. Both matter and both have cost a live box: a fleet under the runtime
-    is destroyed by an update, and a fleet under the checkout (the old ``~/arc``
-    default) put 1,700 files of agent memory where every ``git pull`` collides
-    with them. ``~/.arc`` is neither — nothing pulls into it, and an update only
-    ever replaces ``runtime/<version>/``.
+    Deliberately OUTSIDE the hidden home. ``~/.arc`` holds Arc's own business,
+    and the documented update story is "install the new runtime and flip the
+    symlink" — with "replace the whole home" as the blunt version an operator
+    will eventually reach for. The fleet must survive both, so it sits a
+    directory further out where neither can reach it. ``~/arc`` is where the
+    source tarball is rsynced, but nothing is *run* from there any more: the
+    runtime installs into ``<arc_home>/runtime/<version>/`` and executes from
+    the ``current`` symlink, so the checkout is the fleet's sibling rather than
+    its parent and a pull cannot collide with a live agent.
 
     ``ARC_TEAM_ROOT`` relocates the fleet alone, for an operator who wants agent
     data on its own disk. ``base`` (i.e. ``--arc-dir``) still wins when given, so
     a self-contained deployment can put everything under one root.
 
     Precedence, most specific first: explicit ``base`` → ``ARC_TEAM_ROOT`` →
-    :func:`arc_home`. Following the home is what keeps an isolated run isolated:
-    resolving a fixed path while the rest of the home was redirected is how a
-    test run creates agents in the developer's own live fleet.
+    ``ARC_CONFIG_DIR`` → ``~/arc``. ``ARC_CONFIG_DIR`` is what every test and
+    every isolated deployment relocates, so a fleet MUST follow it: reading
+    ``~/arc/team`` while the rest of the home was redirected is how a test run
+    creates agents in the developer's own live fleet.
     """
     if base is not None:
         return _base(base) / name
-    override = os.environ.get(ARC_TEAM_ROOT_ENV)
-    root = Path(override).expanduser() if override else arc_home()
+    override = os.environ.get(ARC_TEAM_ROOT_ENV) or os.environ.get(ARC_CONFIG_DIR_ENV)
+    root = Path(override).expanduser() if override else Path.home() / "arc"
     return root / name
 
 

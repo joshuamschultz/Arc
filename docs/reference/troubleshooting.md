@@ -319,8 +319,8 @@ arc team init fails
 
 # Solution
 # Check directory permissions
-mkdir -p ~/.arc/team
-chmod 700 ~/.arc/team
+mkdir -p ~/arc/team
+chmod 700 ~/arc/team
 
 # Or specify custom root
 arc team init --root ./team-data
