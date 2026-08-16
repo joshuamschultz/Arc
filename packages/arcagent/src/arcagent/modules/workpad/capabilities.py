@@ -139,7 +139,7 @@ def _accumulate(st: _runtime._State, messages: list[Any]) -> None:
     for msg in messages:
         role = msg.get("role", "") if isinstance(msg, dict) else getattr(msg, "role", "")
         raw = msg.get("content", "") if isinstance(msg, dict) else getattr(msg, "content", "")
-        content = raw.strip() if isinstance(raw, str) else ""
+        content = arcrun.content_text(raw).strip()
         if content:
             st.transcript.append(f"[{role}] {content}")
     _trim_transcript(st)

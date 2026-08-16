@@ -21,6 +21,7 @@ import json
 import logging
 from typing import Literal, Protocol
 
+import arcrun
 from pydantic import BaseModel
 
 _logger = logging.getLogger("arcagent.modules.skills.outcome")
@@ -78,7 +79,7 @@ def _abstain() -> OutcomeLabel:
 
 
 def _user_contents(messages: list[dict[str, str]]) -> list[str]:
-    return [m.get("content", "") for m in messages if m.get("role") == "user"]
+    return [arcrun.content_text(m.get("content")) for m in messages if m.get("role") == "user"]
 
 
 def has_feedback_signal(messages: list[dict[str, str]]) -> bool:

@@ -11,7 +11,14 @@ from typing import Any
 
 from arcprompt import load_stock
 
-from arcrun._messages import TextBlock, ToolUseBlock, assistant_message, tool_result, user_message
+from arcrun._messages import (
+    TextBlock,
+    ToolUseBlock,
+    assistant_message,
+    content_text,
+    tool_result,
+    user_message,
+)
 from arcrun.builtins.task_complete import (
     BudgetBreachReason,
     make_budget_breach_args,
@@ -248,7 +255,7 @@ async def react_loop(
     bus.emit(
         "loop.start",
         {
-            "task": state.messages[-1].content if state.messages else "",
+            "task": content_text(state.messages[-1].content) if state.messages else "",
             "tool_names": state.registry.names(),
             "strategy": "react",
         },

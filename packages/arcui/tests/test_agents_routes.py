@@ -376,8 +376,7 @@ class TestFilesReadRoute:
         client = TestClient(app)
 
         resp = client.get(
-            "/api/agents/alpha/files/read?root=workspace"
-            "&path=inbox/2026-08-16/141522-photo.jpg",
+            "/api/agents/alpha/files/read?root=workspace&path=inbox/2026-08-16/141522-photo.jpg",
             headers=_viewer(auth),
         )
 

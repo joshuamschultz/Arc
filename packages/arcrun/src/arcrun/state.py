@@ -10,6 +10,7 @@ from typing import Any
 
 import arcllm
 
+from arcrun._messages import content_text
 from arcrun.checkpoint import LoopCheckpoint
 from arcrun.events import EventBus
 from arcrun.registry import ToolRegistry
@@ -36,9 +37,7 @@ class Injection:
         A block message has no single string, and the audit line must still say
         what arrived rather than a repr of the list.
         """
-        if isinstance(self.message, str):
-            return self.message
-        return "\n".join(getattr(block, "text", "") or "" for block in self.message)
+        return content_text(self.message)
 
     @classmethod
     def new(cls, caller_did: str, message: str | list[arcllm.ContentBlock]) -> Injection:

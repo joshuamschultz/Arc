@@ -77,14 +77,14 @@ async def select_strategy(
         return allowed[0]
 
     # Model-based selection via tool calling
-    from arcrun._messages import system_message, user_message
+    from arcrun._messages import content_text, system_message, user_message
 
     bus = state.event_bus
     bus.emit(
         "strategy.selection.start",
         {
             "allowed_strategies": allowed,
-            "task": state.messages[-1].content if state.messages else "",
+            "task": content_text(state.messages[-1].content) if state.messages else "",
         },
     )
 
@@ -115,7 +115,7 @@ async def select_strategy(
             f"Available tools: {', '.join(tool_names)}\n\n"
             f"Call select_strategy with your choice."
         ),
-        user_message(state.messages[-1].content if state.messages else ""),
+        user_message(content_text(state.messages[-1].content) if state.messages else ""),
     ]
 
     try:

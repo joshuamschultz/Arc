@@ -82,9 +82,7 @@ async def _health(request: Request) -> JSONResponse:
     cache header can fix either — the page is already in memory and never asks for
     HTML again. Comparing this against its own script name is how it finds out.
     """
-    return JSONResponse(
-        {"status": "ok", "bundle": getattr(request.app.state, "bundle_name", "")}
-    )
+    return JSONResponse({"status": "ok", "bundle": getattr(request.app.state, "bundle_name", "")})
 
 
 async def _agent_info(request: Request) -> JSONResponse:

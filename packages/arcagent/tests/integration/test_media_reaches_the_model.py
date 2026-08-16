@@ -25,6 +25,7 @@ line naming the file) passed the second while the model never saw the photo.
 from __future__ import annotations
 
 import base64
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -287,9 +288,7 @@ async def test_a_photo_arriving_mid_turn_reaches_the_model_too(
     assert base64.b64decode(images[0].source) == _IMAGE_BYTES
 
 
-async def test_a_text_only_message_still_travels_as_text(
-    tmp_path: Path, workspace: Path
-) -> None:
+async def test_a_text_only_message_still_travels_as_text(tmp_path: Path, workspace: Path) -> None:
     """The many surfaces that only ever have words take the path they always did."""
     agent = await _started_agent(tmp_path, workspace)
     calls: list[dict[str, Any]] = []
@@ -303,9 +302,7 @@ async def test_a_text_only_message_still_travels_as_text(
         return _gen()
 
     try:
-        with patch(
-            "arcagent.core.agent_dispatch.arcrun.run_stream", side_effect=_fake_run_stream
-        ):
+        with patch("arcagent.core.agent_dispatch.arcrun.run_stream", side_effect=_fake_run_stream):
             session = await agent.session("text-only")
             async for _ in agent.run("just words", session=session):
                 pass
@@ -313,3 +310,121 @@ async def test_a_text_only_message_still_travels_as_text(
         await agent.shutdown()
 
     assert calls[-1]["messages"][-1].content == "just words"
+
+
+# ---------------------------------------------------------------------------
+# The real loop
+# ---------------------------------------------------------------------------
+#
+# Everything above fakes ``arcrun.run_async``, which proves the agent hands the
+# right messages down but never executes a turn. That gap shipped a run-killing
+# regression: the real loop emits ``loop.start`` carrying the last message's
+# content, the audit chain hashes it with ``json.dumps``, and a list of blocks
+# is not JSON serialisable — so every photo produced "the run failed, see
+# server logs" while all six tests above were green.
+#
+# So this section fakes the **model wire only** (``invoke``) and runs the real
+# arcrun loop, the real event bus, and the real audit chain.
+
+
+@dataclass(frozen=True)
+class _Usage:
+    input_tokens: int = 10
+    output_tokens: int = 5
+    total_tokens: int = 15
+
+
+@dataclass(frozen=True)
+class _Reply:
+    """What a provider returns. Shaped by hand so arcagent's tests stay off arcllm."""
+
+    content: str = "I see a photo."
+    tool_calls: tuple[Any, ...] = ()
+    stop_reason: str = "end_turn"
+    usage: _Usage = field(default_factory=_Usage)
+    cost_usd: float = 0.0
+
+
+class _RecordingModel:
+    """The provider wire, and nothing above it. Records what it was invoked with."""
+
+    def __init__(self) -> None:
+        self.invocations: list[list[Any]] = []
+
+    async def invoke(self, messages: list[Any], **kwargs: Any) -> Any:
+        self.invocations.append(list(messages))
+        return _Reply()
+
+    async def close(self) -> None:
+        return None
+
+
+async def _run_real_loop(agent: ArcAgent, parts: list[dict[str, Any]]) -> _RecordingModel:
+    """Deliver a message and let the real loop run it to completion."""
+    model = _RecordingModel()
+    with patch("arcagent.core.model_manager.load_eval_model", return_value=model):
+        await agent.startup()
+        handles: list[Any] = []
+        await agent.deliver_message(
+            caller_did=_SENDER_DID,
+            message="what do you make of this?",
+            session_key=_SESSION_KEY,
+            parts=parts,
+            on_handle=handles.append,
+        )
+        assert handles, "no turn was opened"
+        result = await handles[0].result()
+    # A failed run reports its error here rather than raising, so assert on it:
+    # this is exactly where "the run failed, see server logs" came from.
+    assert result.content == "I see a photo.", f"the run did not complete: {result!r}"
+    return model
+
+
+async def test_the_real_loop_runs_a_photo_turn_to_completion(
+    tmp_path: Path, workspace: Path
+) -> None:
+    """The turn completes. The audit chain must not be able to kill the run it records."""
+    agent = ArcAgent(config=_config(tmp_path, workspace))
+    try:
+        model = await _run_real_loop(agent, _photo_parts())
+    finally:
+        await agent.shutdown()
+
+    assert model.invocations, "the model was never invoked"
+    images = _image_blocks(model.invocations[-1])
+    assert len(images) == 1
+    assert base64.b64decode(images[0].source) == _IMAGE_BYTES
+
+
+async def test_the_audit_chain_records_the_photo_turn_and_stays_verifiable(
+    tmp_path: Path, workspace: Path
+) -> None:
+    """Every event still hashes, and the chain still verifies, for a block turn."""
+    agent = ArcAgent(config=_config(tmp_path, workspace))
+    events: list[Any] = []
+    try:
+        model = _RecordingModel()
+        with patch("arcagent.core.model_manager.load_eval_model", return_value=model):
+            await agent.startup()
+            handles: list[Any] = []
+            await agent.deliver_message(
+                caller_did=_SENDER_DID,
+                message="what do you make of this?",
+                session_key=_SESSION_KEY,
+                parts=_photo_parts(),
+                on_handle=handles.append,
+            )
+            await handles[0].result()
+            events.extend(handles[0].state.event_bus.events)
+    finally:
+        await agent.shutdown()
+
+    starts = [e for e in events if e.type == "loop.start"]
+    assert starts, "the loop never started"
+    task = starts[0].data["task"]
+    assert "what do you make of this?" in task
+    assert "[image]" in task, (
+        "the audit line for a photo turn reads as if only the caption arrived"
+    )
+    assert "ContentBlock" not in task and "object at 0x" not in task
+    arcrun.verify_chain(events)

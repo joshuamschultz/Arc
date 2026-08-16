@@ -6,7 +6,7 @@ from typing import Any
 
 from arcprompt import load_stock
 
-from arcrun._messages import system_message
+from arcrun._messages import content_text, system_message
 from arcrun.sandbox import Sandbox
 from arcrun.state import RunState
 from arcrun.strategies import Strategy
@@ -39,7 +39,7 @@ class CodeExecStrategy(Strategy):
         sandbox: Sandbox,
         max_turns: int,
     ) -> LoopResult:
-        original = state.messages[0].content
+        original = content_text(state.messages[0].content)
         prefix = load_stock("arcrun", "code_exec_prefix")
         state.messages[0] = system_message(prefix + "\n" + original)
 
@@ -47,7 +47,7 @@ class CodeExecStrategy(Strategy):
             "code.prompt.augmented",
             {
                 "original_length": len(original),
-                "augmented_length": len(state.messages[0].content),
+                "augmented_length": len(content_text(state.messages[0].content)),
             },
         )
 

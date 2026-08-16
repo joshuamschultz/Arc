@@ -43,7 +43,16 @@ def _canonical_bytes(
     data: Mapping[str, Any],
     sequence: int,
 ) -> bytes:
-    """Deterministic serialization for hash computation."""
+    """Deterministic serialization for hash computation.
+
+    ``default`` rather than a bare ``json.dumps``: this runs inside ``emit``,
+    on the loop's hot path, so an unserialisable value in ``data`` does not
+    spoil an audit record — it raises out of the agent's turn and kills the
+    run. Observing an action must never be able to stop it (AU-2 is a
+    guarantee about recording, not a veto). A value json cannot express is
+    recorded as its string form, which keeps the chain deterministic and the
+    event readable, and the producer is fixed at its own emit site.
+    """
     return json.dumps(
         {
             "type": event_type,
@@ -54,6 +63,7 @@ def _canonical_bytes(
         },
         sort_keys=True,
         separators=(",", ":"),
+        default=str,
     ).encode("utf-8")
 
 

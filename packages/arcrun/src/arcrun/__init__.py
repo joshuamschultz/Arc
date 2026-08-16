@@ -2,7 +2,7 @@
 
 __version__ = "0.9.0"
 
-from arcrun._messages import SystemPrompt, system_messages
+from arcrun._messages import SystemPrompt, content_text, system_messages
 from arcrun.builtins import (
     ExecutionIsolationError,
     SandboxError,
@@ -130,6 +130,7 @@ __all__ = [
     "apply_checkpoint",
     "available_strategies",
     "collect",
+    "content_text",
     "create_model_trace_store",
     "detached_context",
     "dispatch_ready",

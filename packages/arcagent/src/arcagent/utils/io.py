@@ -12,6 +12,8 @@ import os
 import re
 from pathlib import Path
 
+import arcrun
+
 # Approximate characters per token for budget estimation.
 CHARS_PER_TOKEN = 4
 
@@ -50,21 +52,8 @@ def format_messages(
         filtered = [m for m in filtered if m.get("type") == type_filter]
     recent = filtered[-limit:] if limit > 0 else filtered
     return "\n".join(
-        f"{m.get('role', 'unknown')}: {_content_text(m.get('content'))}" for m in recent
+        f"{m.get('role', 'unknown')}: {arcrun.content_text(m.get('content'))}" for m in recent
     )
-
-
-def _content_text(content: object) -> str:
-    """A message's words, whether it was stored as text or as blocks.
-
-    A turn that carried an artefact is a list of blocks; rendering it with
-    ``str()`` would put a Python repr into a summarization prompt.
-    """
-    if isinstance(content, list):
-        return "\n".join(
-            str(block.get("text", "")) for block in content if isinstance(block, dict)
-        )
-    return str(content or "")
 
 
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*\n(.*?)\n```", re.DOTALL)

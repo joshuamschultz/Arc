@@ -31,13 +31,13 @@ Performance (SPEC-018 Wave B1):
 from __future__ import annotations
 
 import asyncio
-import json as _json
 import logging
 import sqlite3
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import arcrun
 from pydantic import BaseModel
 
 from arcagent.modules.session.store import read_messages_from_offset
@@ -352,9 +352,10 @@ def _entry_to_row(
     if not content:
         return None
     if not isinstance(content, str):
-        try:
-            content = _json.dumps(content)
-        except Exception:  # reason: fail-open — continue
+        # A media turn is blocks; index its words so a search for the file
+        # name finds the turn it arrived on, not the JSON of the envelope.
+        content = arcrun.content_text(content)
+        if not content:
             return None
 
     ts_raw = entry.get("timestamp", "")

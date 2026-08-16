@@ -24,6 +24,8 @@ import logging
 import time
 from typing import Any
 
+import arcrun
+
 from arcagent.core import turn_context
 from arcagent.modules.memory import _runtime
 from arcagent.tools._decorator import background_task, hook, tool
@@ -224,7 +226,9 @@ async def capture_respond(ctx: Any) -> None:
     if not st.active:
         return
     messages = ctx.data.get("messages", [])
-    text = "\n".join(str(m.get("content", "")) for m in messages if isinstance(m, dict)).strip()
+    text = "\n".join(
+        arcrun.content_text(m.get("content")) for m in messages if isinstance(m, dict)
+    ).strip()
     await _capture(st, text, kind="respond")
 
 

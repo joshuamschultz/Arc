@@ -25,6 +25,7 @@ __all__ = [
     "ToolResultBlock",
     "ToolUseBlock",
     "assistant_message",
+    "content_text",
     "system_message",
     "system_messages",
     "tool_result",
@@ -42,6 +43,47 @@ SystemPrompt = str | Sequence[str]
 def user_message(text: str | list[arcllm.ContentBlock]) -> Message:
     """A user turn: plain words, or blocks when it carries more than words."""
     return Message(role="user", content=text)
+
+
+def content_text(content: Any) -> str:
+    """The words in a message's content, whether it is text or blocks.
+
+    Every consumer that wants a message as a *string* — an audit line, an
+    event preview, a summarization prompt, a search index — goes through this.
+    Reading ``.content`` directly yields a *list* for a message that carried
+    an image, and that list then flows into places that expect words: it
+    stringifies as a repr, or it raises where a str was assumed. One of those
+    raised inside the audit chain and killed the turn it was recording.
+
+    Blocks arrive as objects on the wire and as plain dicts from a session
+    log, so both are read here; a block with no words contributes none.
+    """
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return str(content)
+    return "\n".join(part for part in (_block_words(block) for block in content) if part)
+
+
+def _block_words(block: Any) -> str:
+    """One block as words, naming its kind when it has none.
+
+    A wordless block — an image, a tool call — must not read as *nothing*: a
+    projection of a photo-only turn that comes back empty tells an audit line,
+    a log and a summarizer alike that an empty message arrived.
+    """
+    read = (
+        block.get
+        if isinstance(block, dict)
+        else lambda key, default=None: getattr(block, key, default)
+    )
+    text = read("text", "")
+    if text:
+        return str(text)
+    kind = read("type", "")
+    return f"[{kind}]" if kind else ""
 
 
 def system_message(text: str) -> Message:

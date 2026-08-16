@@ -243,7 +243,9 @@ def test_preflight_refuses_two_agents_sharing_one_identity(
         _agent_toml(first).replace("[identity]\n", shared), encoding="utf-8"
     )
     (second / "arcagent.toml").write_text(
-        _agent_toml(second).replace("[identity]\n", shared).replace("name = 'josh'", "name = 'twin'"),
+        _agent_toml(second)
+        .replace("[identity]\n", shared)
+        .replace("name = 'josh'", "name = 'twin'"),
         encoding="utf-8",
     )
 
