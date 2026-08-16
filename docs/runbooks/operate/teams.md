@@ -87,7 +87,7 @@ manually first (`arc team register <name> --name <name> --type agent
 --roles executor --workspace team/<name>/workspace`).
 
 ```bash
-.venv/bin/arc team --root ~/arc/team create josh-team \
+.venv/bin/arc team --root ~/.arc/team create josh-team \
   --name "Josh's Team" \
   --channel work \
   --members agent://josh_agent,agent://coder_agent,agent://marketer_agent,agent://trader_agent
@@ -108,13 +108,13 @@ update-entity` (fixed 2026-07-10 — wraps `EntityRegistry.update()`,
 DID/handle never change, omitted fields are left untouched):
 
 ```bash
-.venv/bin/arc team --root ~/arc/team update-entity josh_agent \
+.venv/bin/arc team --root ~/.arc/team update-entity josh_agent \
   --name "Josh Executive Assistant" --roles executive-assistant,executor
-.venv/bin/arc team --root ~/arc/team update-entity coder_agent \
+.venv/bin/arc team --root ~/.arc/team update-entity coder_agent \
   --name "Coder Agent" --roles coder,executor
-.venv/bin/arc team --root ~/arc/team update-entity marketer_agent \
+.venv/bin/arc team --root ~/.arc/team update-entity marketer_agent \
   --name "Marketer Agent" --roles marketing,executor
-.venv/bin/arc team --root ~/arc/team update-entity trader_agent \
+.venv/bin/arc team --root ~/.arc/team update-entity trader_agent \
   --name "Trader Agent" --roles trader,executor
 ```
 
@@ -130,9 +130,9 @@ rest with `arc team create-channel` (fixed 2026-07-10 — wraps
 `MessagingService.create_channel`):
 
 ```bash
-.venv/bin/arc team --root ~/arc/team create-channel personal \
+.venv/bin/arc team --root ~/.arc/team create-channel personal \
   --members agent://josh_agent,agent://coder_agent,agent://marketer_agent,agent://trader_agent
-.venv/bin/arc team --root ~/arc/team create-channel brand \
+.venv/bin/arc team --root ~/.arc/team create-channel brand \
   --team josh-team
 ```
 
@@ -163,9 +163,9 @@ the multi-instance considerations in [arcgateway.md](../../building/packages/arc
 ## 7. Verify
 
 ```bash
-.venv/bin/arc team --root ~/arc/team status      # Entities: N, Channels: M, Teams: 1
-.venv/bin/arc team --root ~/arc/team entities     # every agent, name, roles
-.venv/bin/arc team --root ~/arc/team channels     # every channel + its members
+.venv/bin/arc team --root ~/.arc/team status      # Entities: N, Channels: M, Teams: 1
+.venv/bin/arc team --root ~/.arc/team entities     # every agent, name, roles
+.venv/bin/arc team --root ~/.arc/team channels     # every channel + its members
 
 curl -s -H "Authorization: Bearer $VIEWER_TOKEN" \
   http://127.0.0.1:8420/api/team/roster            # UI-facing roster: model, provider, online status per agent

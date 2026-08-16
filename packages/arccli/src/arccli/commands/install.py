@@ -104,13 +104,15 @@ def stage_bundles(states: list[up.AgentState]) -> list[list[str]]:
 
 
 def migrate_layout_or_exit() -> None:
-    """Split a flat Arc home into runtime / config / state, once, before anything reads it.
+    """Move a pre-split home and a fleet in the code checkout into the lifecycle layout.
 
     This runs FIRST because every stage below it resolves a path: preflight loads
-    the operator key, the bundle stage reads the staged-bundle store, and the
-    module stage writes under the runtime. Migrating after any of them would have
-    them answer from the pre-split layout and then quietly disagree with the
-    post-split one.
+    the operator key and the team root, the bundle stage reads the staged-bundle
+    store, and the module stage writes under the runtime. Migrating after any of
+    them would have them answer from the old layout and then quietly disagree
+    with the new one — and a stage that *creates* what it did not find would mint
+    a second agent identity beside the real one, at which point the migration can
+    only refuse, because both roots hold real data.
 
     A failure here stops the install rather than continuing on a home whose
     signing key may be half-moved — the migration itself has already rolled back
@@ -136,6 +138,8 @@ def migrate_layout_or_exit() -> None:
 def _install(args: argparse.Namespace) -> None:
     """Install what every agent's config enables, then verify it really landed."""
     migrate_layout_or_exit()
+    if args.migrate_only:
+        return
     _out("Preflight")
     team_root, checks = _preflight_or_exit(up.resolve_team_root(args.team_root))
 
@@ -181,6 +185,15 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="team_root",
         default=None,
         help="Directory of agents. Default: ./team when it exists.",
+    )
+    parser.add_argument(
+        "--migrate-only",
+        dest="migrate_only",
+        action="store_true",
+        help=(
+            "Run only the layout migration and stop. For a deploy that must move an "
+            "existing home and fleet BEFORE any stage creates what it cannot find."
+        ),
     )
     return parser
 

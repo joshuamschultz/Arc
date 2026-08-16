@@ -653,8 +653,10 @@ data root (spool, WORM mirror, SQLite mirrors) and lives under `state/`.
 ```text
 ~/.arc/                                  # arc_home()
 ├── runtime/                             # arc_runtime_root() — disposable
-│   ├── current -> 0.9.0/                # atomic symlink; an update flips it
-│   └── 0.9.0/
+│   ├── current -> 0.9.0/                # atomic symlink; `arc runtime activate` flips it
+│   └── 0.9.0/                           # the whole framework, installed side by side
+│       ├── .venv/                       # runtime_venv() — runtime_bin("arc") runs from here
+│       ├── packages/ scripts/ deploy/   # the code this version ships
 │       └── modules/                     # module_root() — re-materialized by `arc install`
 ├── config/                              # arc_config() — preserved across an update
 │   ├── arcllm.toml                      # provider/model defaults (shared layer)

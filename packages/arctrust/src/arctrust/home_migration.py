@@ -1,13 +1,20 @@
-"""One-time move of a flat ``~/.arc`` into ``runtime/`` + ``config/`` + ``state/``.
+"""One-time move of a live deployment into the lifecycle layout.
 
-Deployments that predate the lifecycle split have everything at the root::
+Two shapes predate it, and a box can be in either or both.
+
+Deployments older than the split have everything flat at the home's root::
 
     ~/.arc/  operator/ identity/ trust/ store/ nats/ bundles/ modules/
              arcagent.toml arcllm.toml gateway.toml connections.toml arc.env
 
+Deployments older than the disposable-install fix keep the fleet beside the code
+checkout the framework was run from — ``~/arc/team`` — so agent memory, sessions
+and identities sit inside the directory operators rsync and ``git pull`` into.
+A pull collided with 1,700 files of live agent data on exactly one such box.
+
 This module moves each entry to the root that matches its lifecycle, once, so
-that a later "download the new one and overwrite ``runtime/``" cannot destroy
-the operator signing key, the trust store, or the arcstore database.
+that a later "install the new runtime and flip the symlink" cannot destroy the
+operator signing key, the trust store, the arcstore database, or the fleet.
 
 It is a **filesystem** migration for live deployments, not a compatibility shim:
 nothing here teaches Arc to read two layouts. After it runs, every surface reads
@@ -43,7 +50,7 @@ class MigrationError(RuntimeError):
 
 
 #: Flat entry name -> the accessor naming its new home. Anything not listed
-#: here — ``team/``, operator notes, a future root — is left exactly alone.
+#: here — operator notes, a future root — is left exactly alone.
 _LAYOUT: dict[str, str] = {
     # config/ — preserved across an update
     "arcagent.toml": "config_file",
@@ -95,21 +102,71 @@ def _destination(name: str) -> Path:
     return resolver()
 
 
+def _legacy_fleet_root() -> Path:
+    """Return where the fleet used to live: ``<arc_home>.parent/arc/team``.
+
+    Derived from the CONFIGURED home rather than from ``Path.home()`` on purpose.
+    On a box the two are the same thing — ``~/.arc`` and ``~/arc`` — but a test
+    or an isolated deployment redirects the home to a scratch directory, and a
+    legacy root anchored to the real home would let such a run move a developer's
+    own live fleet out from under running agents. It resolves inside whatever
+    tree the home is in, so isolation stays isolation.
+    """
+    return paths.arc_home().parent / "arc" / "team"
+
+
+def _fleet_move() -> tuple[Path, Path] | None:
+    """Return the fleet's ``(source, destination)`` move, or ``None`` if there is none.
+
+    ``None`` covers every box that needs nothing: one deployed after the fix, one
+    whose operator pointed ``ARC_TEAM_ROOT`` at the legacy root deliberately, and
+    one already migrated.
+    """
+    source = _legacy_fleet_root()
+    destination = paths.arc_team()
+    if not source.is_dir() or source == destination:
+        return None
+    return (source, destination)
+
+
 def plan_migration() -> list[tuple[Path, Path]]:
-    """Return the ``(source, destination)`` moves this Arc home still needs.
+    """Return the ``(source, destination)`` moves this deployment still needs.
 
     Empty means the home is absent, already split, or holds nothing recognised —
     all of which are a successful no-op.
     """
-    home = paths.arc_home()
-    if not home.is_dir():
-        return []
     moves: list[tuple[Path, Path]] = []
-    for name in _LAYOUT:
-        source = home / name
-        if source.exists() or source.is_symlink():
-            moves.append((source, _destination(name)))
+    home = paths.arc_home()
+    if home.is_dir():
+        for name in _LAYOUT:
+            source = home / name
+            if source.exists() or source.is_symlink():
+                moves.append((source, _destination(name)))
+    fleet = _fleet_move()
+    if fleet is not None:
+        moves.append(fleet)
     return moves
+
+
+def _is_occupied(source: Path, destination: Path) -> bool:
+    """True when *destination* holds something a move would destroy.
+
+    An **empty directory** does not. Every box this migration exists for has at
+    least one — a bare ``mkdir -p`` an earlier deploy script left at the new
+    fleet root — and refusing on a directory that holds nothing would abort the
+    migration on precisely the deployments it was written for. ``rename``
+    replaces an empty directory with a directory atomically, so the move is as
+    safe there as anywhere else, and nothing is deleted to make room.
+
+    It only counts as free when **both** sides are directories: ``rename``
+    refuses a file onto a directory, and discovering that as an ``EISDIR``
+    part-way through is worse than naming it before the first move.
+    """
+    if not (destination.exists() or destination.is_symlink()):
+        return False
+    if destination.is_symlink() or not destination.is_dir() or not source.is_dir():
+        return True
+    return any(destination.iterdir())
 
 
 def migrate_arc_home() -> MigrationResult:
@@ -126,7 +183,7 @@ def migrate_arc_home() -> MigrationResult:
     if not moves:
         return MigrationResult(already_migrated=True)
 
-    occupied = [str(dst) for _, dst in moves if dst.exists() or dst.is_symlink()]
+    occupied = [str(dst) for src, dst in moves if _is_occupied(src, dst)]
     if occupied:
         raise MigrationError(
             "Arc home migration aborted — destination already exists: "

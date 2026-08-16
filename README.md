@@ -395,8 +395,8 @@ there instead, so a node whose modules vanished under a pull heals itself and
 only fails the unit when it genuinely cannot.
 
 ```bash
-arc install --team-root ~/arc/team       # a team dir somewhere other than ./team
-arc up --check --team-root ~/arc/team    # verify that same dir, start nothing
+arc install --team-root ~/.arc/team      # a team dir somewhere other than ./team
+arc up --check --team-root ~/.arc/team   # verify that same dir, start nothing
 arc up --port 8420 --host 0.0.0.0        # passed straight through to the dashboard
 arc up --no-install                      # look before anything is written
 arc module list                          # what is bundled / installed / enabled

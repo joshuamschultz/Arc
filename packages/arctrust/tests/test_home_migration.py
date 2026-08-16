@@ -124,6 +124,120 @@ def test_state_never_lands_inside_the_replaceable_runtime(flat_home: Path) -> No
         assert runtime_root not in getattr(paths, accessor)().parents
 
 
+# --------------------------------------------------------------------------
+# The fleet — out of the code checkout, into its own lifecycle root
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def legacy_fleet(flat_home: Path) -> Path:
+    """A fleet where the old default put it: ``<home>/arc/team``, in the checkout.
+
+    ``flat_home`` points ``ARC_CONFIG_DIR`` at ``<tmp>/arc-home``, so the legacy
+    root this migration looks for is ``<tmp>/arc/team`` — the same relationship
+    ``~/.arc`` and ``~/arc`` have on a real box, resolved inside the tmp tree so
+    a test run can never reach a developer's own fleet.
+    """
+    fleet = flat_home.parent / "arc" / "team" / "josh_agent"
+    (fleet / "memory").mkdir(parents=True)
+    (fleet / "arcagent.toml").write_text('[identity]\ndid = "did:arc:josh"\n', encoding="utf-8")
+    (fleet / "memory" / "episodes.jsonl").write_text('{"text":"remember me"}\n', encoding="utf-8")
+    return fleet.parent
+
+
+def test_the_fleet_moves_out_of_the_code_checkout(legacy_fleet: Path) -> None:
+    """Agent memory under the checkout is what made a ``git pull`` collide with it.
+
+    The move is the fix; ``.gitignore`` only stops it being committed. Every
+    agent must arrive whole, because a half-moved fleet is an agent whose
+    identity and memory disagree about where they live.
+    """
+    migrate_arc_home()
+
+    moved = paths.arc_team() / "josh_agent"
+    assert moved.is_dir(), "the fleet did not arrive at its lifecycle root"
+    assert (moved / "memory" / "episodes.jsonl").read_text(
+        encoding="utf-8"
+    ) == '{"text":"remember me"}\n'
+    assert "did:arc:josh" in (moved / "arcagent.toml").read_text(encoding="utf-8")
+    assert not legacy_fleet.exists(), "the legacy fleet root was left behind as a decoy"
+
+
+def test_the_moved_fleet_is_outside_every_disposable_root(legacy_fleet: Path) -> None:
+    """Nothing an update replaces may be an ancestor of the fleet."""
+    migrate_arc_home()
+    assert paths.arc_runtime_root() not in paths.arc_team().parents
+    assert paths.arc_team().parent == paths.arc_home()
+
+
+def test_moving_the_fleet_twice_is_a_no_op(legacy_fleet: Path) -> None:
+    """The same procedure runs on two live boxes and gets re-run after a failure."""
+    first = migrate_arc_home()
+    assert any(dst == paths.arc_team() for _, dst in first.moved)
+
+    second = migrate_arc_home()
+    assert second.moved == []
+    assert (paths.arc_team() / "josh_agent" / "arcagent.toml").exists()
+
+
+def test_a_fleet_already_at_its_root_is_never_touched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A box deployed after the fix has no legacy root, and must stay untouched."""
+    root = tmp_path / "arc-home"
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(root))
+    (root / "team" / "josh_agent").mkdir(parents=True)
+    (root / "team" / "josh_agent" / "arcagent.toml").write_text("live", encoding="utf-8")
+
+    assert migrate_arc_home().moved == []
+    assert (root / "team" / "josh_agent" / "arcagent.toml").read_text(encoding="utf-8") == "live"
+
+
+def test_two_fleets_abort_the_migration_rather_than_merge_them(legacy_fleet: Path) -> None:
+    """Both directories are real agent data. Only the operator knows which is live."""
+    (paths.arc_team() / "josh_agent").mkdir(parents=True)
+    (paths.arc_team() / "josh_agent" / "arcagent.toml").write_text("newer", encoding="utf-8")
+
+    with pytest.raises(MigrationError, match="already exists"):
+        migrate_arc_home()
+
+    assert (legacy_fleet / "josh_agent" / "arcagent.toml").exists()
+    assert (paths.arc_team() / "josh_agent" / "arcagent.toml").read_text(
+        encoding="utf-8"
+    ) == "newer"
+
+
+def test_an_operator_who_placed_the_fleet_by_hand_keeps_it_there(
+    legacy_fleet: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``ARC_TEAM_ROOT`` is a decision already made — the migration does not revisit it."""
+    chosen = tmp_path / "big-disk"
+    monkeypatch.setenv("ARC_TEAM_ROOT", str(chosen))
+
+    migrate_arc_home()
+
+    assert (chosen / "team" / "josh_agent" / "arcagent.toml").exists()
+    assert not legacy_fleet.exists()
+
+
+def test_the_migration_never_reaches_outside_the_configured_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An isolated run must not be able to find a real box's fleet.
+
+    The legacy root is derived from the CONFIGURED home's parent, not from
+    ``Path.home()``. Deriving it from the real home is how a test run would move
+    a developer's own live fleet into a tmp directory.
+    """
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "nested" / "arc-home"))
+    decoy = Path.home() / "arc" / "team"
+
+    plan = migrate_arc_home()
+
+    assert plan.moved == []
+    assert all(decoy != src for src, _ in plan.moved)
+
+
 def test_unknown_entries_are_left_alone(flat_home: Path) -> None:
     """Migration moves what it knows. It never guesses, and never deletes."""
     (flat_home / "team").mkdir()
@@ -240,3 +354,36 @@ def test_migration_never_deletes_a_source_it_did_not_move(flat_home: Path) -> No
     text = source.read_text(encoding="utf-8")
     for forbidden in ("shutil.rmtree", "os.unlink", "Path.unlink", ".unlink(", "os.remove"):
         assert forbidden not in text, f"migration must not delete: found {forbidden}"
+
+
+def test_an_empty_directory_at_the_destination_is_not_a_collision(legacy_fleet: Path) -> None:
+    """Both live boxes have one: a bare ``mkdir -p`` the old deploy script left.
+
+    An empty directory holds nothing an operator could lose, so refusing on it
+    would abort the migration on exactly the deployments it exists for — and the
+    move itself is fine, because ``rename`` replaces an empty directory
+    atomically. Occupied means "has contents", not "the path resolves".
+    """
+    paths.arc_team().mkdir(parents=True)
+
+    migrate_arc_home()
+
+    assert (paths.arc_team() / "josh_agent" / "arcagent.toml").exists()
+    assert not legacy_fleet.exists()
+
+
+def test_an_empty_destination_is_only_free_when_both_sides_are_directories(
+    flat_home: Path,
+) -> None:
+    """``rename`` refuses a file onto a directory, so that case must stay a collision.
+
+    Reporting it up front is the difference between a named refusal and an
+    ``EISDIR`` part-way through, with half the home already moved.
+    """
+    paths.env_file().mkdir(parents=True)
+
+    with pytest.raises(MigrationError, match="already exists"):
+        migrate_arc_home()
+
+    assert (flat_home / "arc.env").exists()
+    assert (flat_home / "operator").is_dir(), "an aborted migration moved something"

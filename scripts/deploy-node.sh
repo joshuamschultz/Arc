@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # scripts/deploy-node.sh — single-command bootstrap for a fresh Arc node.
 #
-# Automates docs/deploy/single-node.md: uv sync, nats-server + platform
-# adapter install, arc init, config overlays, agent create, and a
+# Automates docs/runbooks/deploy/local.md: install the runtime, nats-server +
+# platform adapter, arc init, config overlays, agent create, and a
 # systemd --user unit running the embedded-gateway `arc ui start` pattern
 # (SPEC-023) — one process, no standalone arcgateway daemon, no per-agent
 # `arc agent serve`. See that doc for the architecture note on why this is
@@ -12,6 +12,15 @@
 # `rsync ... host:~/arc/`, ssh in and run `~/arc/scripts/deploy-node.sh`).
 # Idempotent — safe to re-run; every step checks before acting and never
 # overwrites a value you set by hand unless you re-pass the matching flag.
+#
+# THE CHECKOUT IS NOT THE INSTALL. This script copies the checkout into
+# ~/.arc/runtime/<version>/ and builds that copy's venv there, then flips the
+# `current` symlink onto it. The checkout you ran this from is only a source
+# tarball afterwards: nothing executes from it, nothing durable lives in it,
+# and deleting it costs nothing. That is what makes an update an atomic symlink
+# flip (`arc runtime activate <new>`) and a rollback the same verb with the
+# previous version — and what keeps a `git pull` in the checkout away from the
+# fleet, which now lives at ~/.arc/team beside the other lifecycle roots.
 #
 # Fails closed: aborts before touching systemd if a required secret is
 # missing, naming exactly which one, rather than starting a service that
@@ -34,6 +43,10 @@
 #   ARC_TELEGRAM_ALLOWED_USER_IDS space-separated Telegram user ids (empty = deny all)
 #   ARC_ENV_FILE                  source of ANTHROPIC_API_KEY / ARCAGENT_TELEGRAM_BOT_TOKEN
 #                                  default: $REPO_ROOT/.env
+#   ARC_RUNTIME_VERSION           name of the runtime/<version> dir to install into
+#                                  default: <pyproject version>-<git short sha|UTC stamp>
+#   ARC_TEAM_ROOT                 relocates the FLEET only (parent of team/)
+#                                  default: $ARC_CONFIG_DIR — never the checkout
 #
 # KNOWN LIMITATION (not fixable from this script): `arc ui start` only
 # accepts --viewer-token/--operator-token as CLI flags, no env var
@@ -63,11 +76,7 @@ ENABLE_TELEGRAM="${ARC_ENABLE_TELEGRAM:-0}"
 TELEGRAM_ALLOWED_USER_IDS="${ARC_TELEGRAM_ALLOWED_USER_IDS:-}"
 ENV_FILE="${ARC_ENV_FILE:-$REPO_ROOT/.env}"
 ARC_CONFIG_DIR="${ARC_CONFIG_DIR:-$HOME/.arc}"
-# The fleet lives OUTSIDE the code checkout. Putting it inside is what dropped
-# 1,700 files of agent traces, sessions, memory and workspace into a live
-# deployment's repo, so every `git pull` afterwards collided with a running
-# agent. `team/` is also in .gitignore, but the layout is the real fix.
-ARC_TEAM_ROOT="${ARC_TEAM_ROOT:-$ARC_CONFIG_DIR/team}"
+export ARC_CONFIG_DIR
 
 log()  { echo "→ $*"; }
 ok()   { echo "  ✓ $*"; }
@@ -86,18 +95,69 @@ fi
 ok "uv: $("$UV" --version)"
 export PATH="$HOME/.local/bin:$PATH"
 
-# --- 2. uv sync ----------------------------------------------------------
-log "uv sync..."
-"$UV" sync
-VENV_PY="$REPO_ROOT/.venv/bin/python"
-ARC_BIN="$REPO_ROOT/.venv/bin/arc"
-ok "venv synced"
+# --- 2. install the runtime beside its siblings, then flip `current` ------
+# The version names a directory under ~/.arc/runtime/. It carries the commit so
+# two deploys of different code are two installs you can flip between; a redeploy
+# of the SAME commit lands in the same directory, which is what keeps re-running
+# this script idempotent instead of accumulating identical trees.
+PROJECT_VERSION="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$REPO_ROOT/pyproject.toml" | head -1)"
+[ -n "$PROJECT_VERSION" ] || fail "could not read version from $REPO_ROOT/pyproject.toml"
+BUILD_STAMP="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || date -u +%Y%m%dT%H%M%SZ)"
+RUNTIME_VERSION="${ARC_RUNTIME_VERSION:-$PROJECT_VERSION-$BUILD_STAMP}"
+RUNTIME_DIR="$ARC_CONFIG_DIR/runtime/$RUNTIME_VERSION"
+
+log "Installing runtime $RUNTIME_VERSION into $RUNTIME_DIR..."
+mkdir -p "$RUNTIME_DIR"
+# --delete so a redeploy of the same version cannot leave a file the new code no
+# longer ships. rsync does not delete an EXCLUDED destination path, which is what
+# each exclude below is for: .venv is rebuilt in place (a copied venv has absolute
+# paths baked into its shebangs), /modules holds bundles `arc install` already
+# materialized into this runtime, team/ is the fleet and belongs to ~/.arc, and
+# .env holds secrets that live in ~/.arc/config/arc.env instead. /modules is
+# anchored so package-internal modules/ directories still ship.
+rsync -a --delete \
+  --exclude '.git/' --exclude '.venv/' --exclude '/modules/' \
+  --exclude 'team/' --exclude '.env' \
+  --exclude '__pycache__/' --exclude '.pytest_cache/' --exclude '.ruff_cache/' \
+  --exclude '.mypy_cache/' --exclude '.arc-logs/' --exclude 'dist/' \
+  "$REPO_ROOT/" "$RUNTIME_DIR/"
+
+log "uv sync (building $RUNTIME_DIR/.venv)..."
+"$UV" sync --project "$RUNTIME_DIR"
+
+# The flip is atomic: a reader sees the old runtime or the new one, never a gap.
+# A pre-symlink install leaves a real `current/` directory here; activate_runtime
+# moves it aside rather than deleting it, so its modules are recoverable.
+"$RUNTIME_DIR/.venv/bin/arc" runtime activate "$RUNTIME_VERSION" \
+  || fail "could not point $ARC_CONFIG_DIR/runtime/current at $RUNTIME_VERSION"
+
+ARC_BIN="$ARC_CONFIG_DIR/runtime/current/.venv/bin/arc"
+VENV_PY="$ARC_CONFIG_DIR/runtime/current/.venv/bin/python"
+RUNTIME_ROOT="$ARC_CONFIG_DIR/runtime/current"
+[ -x "$ARC_BIN" ] || fail "$ARC_BIN is not executable after activation"
+ok "runtime $RUNTIME_VERSION active"
+
+# --- 2b. migrate an existing box BEFORE anything reads a path -------------
+# An older deployment keeps its fleet at ~/arc/team, inside the checkout. Every
+# stage below resolves the team root, and `arc agent create` CREATES what it does
+# not find — which would mint a second identity beside the real agent and leave
+# two fleets the migration can then only refuse to merge. So the move happens
+# first, once, by moving rather than copying, rolling back on any failure.
+log "Migrating layout (idempotent)..."
+"$ARC_BIN" install --migrate-only || fail "layout migration refused — see above; nothing was moved"
+
+# The fleet root comes from the resolver, never from a literal here: a script
+# that carries its own answer is how the deploy and the service unit came to
+# disagree about which directory holds the agents, and starting from the wrong
+# empty root loads ZERO agents while reporting healthy.
+TEAM_ROOT="$("$VENV_PY" -c 'from arctrust.paths import arc_team; print(arc_team())')"
+ok "fleet root: $TEAM_ROOT"
 
 # --- 3. nats-server (not a Python dep — arcteam auto-spawns it, needs PATH) --
 # Delegated to scripts/install-nats.sh, which install.sh also calls. The
 # checksum verification lives in exactly one place on purpose: a second copy
 # of a verification routine is the copy that quietly stops verifying.
-"$REPO_ROOT/scripts/install-nats.sh"
+"$RUNTIME_ROOT/scripts/install-nats.sh"
 
 # --- 4. platform adapter plugin (telegram) -------------------------------
 # arcgateway-telegram is a uv workspace member but, as of this writing, NOT
@@ -107,13 +167,13 @@ ok "venv synced"
 # Detect whether the root dependency has landed; if so `uv sync` alone
 # already handled it and this whole step is a no-op.
 if [ "$ENABLE_TELEGRAM" = "1" ]; then
-  if grep -q '"arcgateway-telegram"' pyproject.toml; then
+  if grep -q '"arcgateway-telegram"' "$RUNTIME_ROOT/pyproject.toml"; then
     ok "arcgateway-telegram is a declared root dependency — uv sync already installed it"
   elif "$VENV_PY" -c "import arcgateway_telegram" >/dev/null 2>&1; then
     ok "arcgateway-telegram already importable"
   else
     log "Installing arcgateway-telegram (workspace member, not yet a root dependency — see comment above)..."
-    "$VENV_PY" -m pip install -e packages/arcgateway-telegram --no-deps
+    "$VENV_PY" -m pip install -e "$RUNTIME_ROOT/packages/arcgateway-telegram" --no-deps
     ok "arcgateway-telegram installed"
   fi
 fi
@@ -162,8 +222,9 @@ else
 fi
 
 # --- 7. config overlays (idempotent — safe to re-run every time) -----------
+OVERLAYS="$RUNTIME_ROOT/scripts/deploy_node_overlays.py"
 log "Applying user-wide config overlays..."
-"$VENV_PY" scripts/deploy_node_overlays.py agent-config \
+"$VENV_PY" "$OVERLAYS" agent-config \
   "$ARC_CONFIG_DIR/config/arcagent.toml" --provider "$PROVIDER" --model "${AGENT_MODEL#*/}"
 
 GATEWAY_ARGS=(gateway-config "$ARC_CONFIG_DIR/config/gateway.toml")
@@ -175,20 +236,20 @@ if [ "$ENABLE_TELEGRAM" = "1" ]; then
     GATEWAY_ARGS+=(--allowed-user-ids "${IDS[@]}")
   fi
 fi
-"$VENV_PY" scripts/deploy_node_overlays.py "${GATEWAY_ARGS[@]}"
+"$VENV_PY" "$OVERLAYS" "${GATEWAY_ARGS[@]}"
 
 # --- 8. agent create — one or more, first one wins gateway routing --------
-mkdir -p "$ARC_TEAM_ROOT"
+mkdir -p "$TEAM_ROOT"
 for AGENT_NAME in "${AGENT_NAMES[@]}"; do
-  if [ -d "$ARC_TEAM_ROOT/$AGENT_NAME" ]; then
-    ok "$ARC_TEAM_ROOT/$AGENT_NAME already exists"
+  if [ -d "$TEAM_ROOT/$AGENT_NAME" ]; then
+    ok "$TEAM_ROOT/$AGENT_NAME already exists"
   else
     log "Creating agent $AGENT_NAME ($AGENT_MODEL)..."
-    "$ARC_BIN" agent create "$AGENT_NAME" --dir "$ARC_TEAM_ROOT" --model "$AGENT_MODEL"
+    "$ARC_BIN" agent create "$AGENT_NAME" --dir "$TEAM_ROOT" --model "$AGENT_MODEL"
   fi
-  "$VENV_PY" scripts/deploy_node_overlays.py agent-config \
-    "$ARC_TEAM_ROOT/$AGENT_NAME/arcagent.toml" --provider "$PROVIDER" --model "${AGENT_MODEL#*/}"
-  "$ARC_BIN" agent build "$ARC_TEAM_ROOT/$AGENT_NAME" --check
+  "$VENV_PY" "$OVERLAYS" agent-config \
+    "$TEAM_ROOT/$AGENT_NAME/arcagent.toml" --provider "$PROVIDER" --model "${AGENT_MODEL#*/}"
+  "$ARC_BIN" agent build "$TEAM_ROOT/$AGENT_NAME" --check
 done
 
 # gateway.toml routes remote-platform DMs (Telegram etc.) to ONE agent_did.
@@ -200,9 +261,9 @@ AGENT_DID="$("$VENV_PY" -c '
 import sys, tomllib
 with open(sys.argv[1], "rb") as f:
     print(tomllib.load(f).get("identity", {}).get("did", ""))
-' "$ARC_TEAM_ROOT/$PRIMARY_AGENT/arcagent.toml")"
-[ -n "$AGENT_DID" ] || fail "could not read minted DID from $ARC_TEAM_ROOT/$PRIMARY_AGENT/arcagent.toml"
-"$VENV_PY" scripts/deploy_node_overlays.py gateway-config \
+' "$TEAM_ROOT/$PRIMARY_AGENT/arcagent.toml")"
+[ -n "$AGENT_DID" ] || fail "could not read minted DID from $TEAM_ROOT/$PRIMARY_AGENT/arcagent.toml"
+"$VENV_PY" "$OVERLAYS" gateway-config \
   "$ARC_CONFIG_DIR/config/gateway.toml" --agent-did "$AGENT_DID"
 ok "agent_did wired into gateway.toml: $AGENT_DID ($PRIMARY_AGENT)"
 
@@ -214,22 +275,27 @@ ok "agent_did wired into gateway.toml: $AGENT_DID ($PRIMARY_AGENT)"
 # nothing is noticed. Idempotent, and non-zero when a config asks for a
 # capability this box cannot deliver, so a hollow node never reaches systemd.
 log "Installing modules for every agent..."
-"$ARC_BIN" install --team-root "$ARC_TEAM_ROOT" \
+"$ARC_BIN" install --team-root "$TEAM_ROOT" \
   || fail "arc install could not deliver every module the configs enable (see above)"
 
 # --- 9. systemd user unit -------------------------------------------------
 UNIT_DIR="$HOME/.config/systemd/user"
 mkdir -p "$UNIT_DIR"
 if [ "$UI_PORT" != "8420" ]; then
-  sed "s/--port 8420/--port $UI_PORT/" "$REPO_ROOT/deploy/systemd/arc.service" \
+  sed "s/--port 8420/--port $UI_PORT/" "$RUNTIME_ROOT/deploy/systemd/arc.service" \
     > "$UNIT_DIR/arc.service"
 else
-  cp "$REPO_ROOT/deploy/systemd/arc.service" "$UNIT_DIR/arc.service"
+  cp "$RUNTIME_ROOT/deploy/systemd/arc.service" "$UNIT_DIR/arc.service"
 fi
 ok "wrote $UNIT_DIR/arc.service"
 
 systemctl --user daemon-reload
-systemctl --user enable --now arc.service
+systemctl --user enable arc.service
+# `enable --now` STARTS a stopped unit but leaves a running one on its old
+# runtime, so a redeploy would report success while the box still served the
+# previous version. `restart` starts a stopped unit too, so it is correct for
+# both a first deploy and an update.
+systemctl --user restart arc.service
 loginctl enable-linger "$USER" 2>/dev/null || echo "  ! enable-linger failed (may need sudo — service still runs while logged in)"
 
 # --- 10. wait for health, print URL ---------------------------------------

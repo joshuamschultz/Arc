@@ -38,23 +38,26 @@ def test_roots_resolve_under_arc_config_dir(arc_root: Path) -> None:
     assert paths.arc_runtime() == arc_root / "runtime" / "current"
 
 
-def test_the_fleet_lives_outside_the_hidden_home(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A fleet is the OPERATOR's work, not Arc's own business.
-
-    The home holds framework, config and keys, and an update is allowed to
-    replace parts of it. Agent traces, sessions and memory must sit somewhere
-    visible the operator can back up and inspect, that nothing an update touches
-    can reach — and outside any code checkout, since agent data committed into
-    the repo is what made a production ``git pull`` collide with live memory.
+def test_the_fleet_is_the_fourth_root_of_the_arc_home(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fleet is a lifecycle root of ``~/.arc``, beside runtime/config/state.
 
     This is the DEFAULT-root claim, so the env is cleared: it is what a real box
-    resolves, and the fleet on the box must not sit inside ``~/.arc``.
+    resolves with nothing exported. Two properties have each already cost a live
+    box, and only this location has both:
+
+    * **Outside any code checkout.** ``~/.arc`` is not a checkout and never
+      becomes one. ``~/arc`` — the previous default — is exactly where operators
+      rsync and ``git pull``, so the fleet sat inside the disposable code tree
+      and a pull collided with running agents' memory.
+    * **Out of reach of an update.** An update replaces ``runtime/<version>/``
+      and flips a symlink; it never touches a sibling root.
     """
     monkeypatch.delenv("ARC_CONFIG_DIR", raising=False)
     monkeypatch.delenv("ARC_TEAM_ROOT", raising=False)
 
-    assert paths.arc_team() == Path.home() / "arc" / "team"
-    assert paths.arc_home() not in paths.arc_team().parents
+    assert paths.arc_team() == Path.home() / ".arc" / "team"
+    assert paths.arc_team().parent == paths.arc_home()
+    assert paths.arc_runtime_root() not in paths.arc_team().parents
 
 
 def test_arc_team_root_env_relocates_only_the_fleet(
@@ -88,6 +91,19 @@ def test_arc_runtime_version_is_a_sibling_of_current(arc_root: Path) -> None:
     assert paths.arc_runtime_version("0.9.1") == arc_root / "runtime" / "0.9.1"
 
 
+def test_the_runtime_holds_the_interpreter_that_runs_arc(arc_root: Path) -> None:
+    """Code AND venv live in the runtime — that is what makes the install disposable.
+
+    A deployment whose venv sits in a git checkout has no disposable install: the
+    thing an update replaces and the thing an operator pulls into are the same
+    directory. Resolving the executable here is what lets the service unit, the
+    deploy script, and a rollback all name one interpreter.
+    """
+    current = arc_root / "runtime" / "current"
+    assert paths.runtime_venv() == current / ".venv"
+    assert paths.runtime_bin("arc") == current / ".venv" / "bin" / "arc"
+
+
 # --------------------------------------------------------------------------
 # Per-call resolution — the whole point
 # --------------------------------------------------------------------------
@@ -118,6 +134,8 @@ def test_arc_runtime_version_is_a_sibling_of_current(arc_root: Path) -> None:
         "users_file",
         "env_file",
         "module_root",
+        "runtime_venv",
+        "arc_team",
     ],
 )
 def test_every_accessor_honors_env_set_after_import(
@@ -133,6 +151,7 @@ def test_every_accessor_honors_env_set_after_import(
     second = tmp_path / "second"
     fn = getattr(paths, accessor)
 
+    monkeypatch.delenv("ARC_TEAM_ROOT", raising=False)
     monkeypatch.setenv("ARC_CONFIG_DIR", str(first))
     before = fn()
     monkeypatch.setenv("ARC_CONFIG_DIR", str(second))
@@ -146,11 +165,11 @@ def test_every_accessor_honors_env_set_after_import(
 def test_arc_team_resolves_its_own_env_per_call(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Same per-call guarantee as above, for the one accessor with its own root.
+    """Same per-call guarantee as above, for the accessor with a second env var.
 
-    ``arc_team`` is excluded from the ``ARC_CONFIG_DIR`` sweep on purpose — on a
-    real box the fleet does NOT live under the Arc home — but it must still read
-    its env on every call rather than freezing an import-time value.
+    ``ARC_TEAM_ROOT`` relocates the fleet without moving the home, for an
+    operator who wants agent data on a different disk. It must be read on every
+    call rather than frozen at import, exactly like ``ARC_CONFIG_DIR``.
     """
     first, second = tmp_path / "first", tmp_path / "second"
 

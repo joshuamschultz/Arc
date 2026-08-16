@@ -39,7 +39,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import arcagent
 import pytest
-from arctrust.paths import bundles_dir, module_root, operator_dir
+from arctrust.paths import ARC_CONFIG_DIR_ENV, bundles_dir, module_root, operator_dir
 
 from arccli.commands import install as install_cmd
 from arccli.commands import up as up_cmd
@@ -654,3 +654,56 @@ def test_install_is_registered_as_a_top_level_command() -> None:
     assert module_command is not None
     assert module_command.name == "module"
     assert module_args == ["install", "memory"]
+
+
+def test_runtime_is_registered_as_a_top_level_command() -> None:
+    """Rollback has to be findable in ``arc --help`` or it is not a rollback plan."""
+    from arccli.commands.registry import resolve_command_and_args
+
+    command, args = resolve_command_and_args(["runtime", "activate", "0.2.0"])
+
+    assert command is not None
+    assert command.name == "runtime"
+    assert args == ["activate", "0.2.0"]
+
+
+# ---------------------------------------------------------------------------
+# --migrate-only — the layout move, without the rest of the install
+# ---------------------------------------------------------------------------
+
+
+def test_migrate_only_moves_the_fleet_and_stops(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A deploy must migrate BEFORE it creates agents, and cannot install yet.
+
+    Creating an agent first mints a second identity at the new root while the
+    real fleet is still at the old one — and then the migration refuses, because
+    both destinations are occupied by real data. So the move needs a surface that
+    runs on its own, ahead of any stage that reads the team root.
+    """
+    home = tmp_path / "arc-home"
+    monkeypatch.setenv(ARC_CONFIG_DIR_ENV, str(home))
+    monkeypatch.delenv("ARC_TEAM_ROOT", raising=False)
+    home.mkdir()
+    legacy = tmp_path / "arc" / "team" / "josh_agent"
+    legacy.mkdir(parents=True)
+    (legacy / "arcagent.toml").write_text('[identity]\ndid = "did:arc:josh"\n', encoding="utf-8")
+
+    install_cmd.install_handler(["--migrate-only"])
+
+    from arctrust.paths import arc_team
+
+    assert (arc_team() / "josh_agent" / "arcagent.toml").exists()
+    assert not legacy.parent.exists()
+    assert "Preflight" not in capsys.readouterr().out
+
+
+def test_migrate_only_is_re_runnable_on_a_box_that_needs_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same procedure runs on two live boxes and is re-run after any failure."""
+    monkeypatch.setenv(ARC_CONFIG_DIR_ENV, str(tmp_path / "arc-home"))
+
+    install_cmd.install_handler(["--migrate-only"])
+    install_cmd.install_handler(["--migrate-only"])
