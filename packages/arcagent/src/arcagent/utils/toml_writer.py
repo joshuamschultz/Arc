@@ -5,9 +5,10 @@ config dict as TOML that ``tomllib`` round-trips to the same dict: materialized
 ``arcagent.toml`` files (``arccli.blueprints``), ``gateway.toml`` platform blocks
 (``arcgateway.connect``), and connector extension config.
 
-Shape: scalars before sub-tables, ``[a.b]`` headers for nesting. Output is
-deterministic — key order follows the dict's insertion order, so the same input
-always produces the same bytes.
+Shape: scalars before sub-tables, ``[a.b]`` headers for nesting, ``[[a.b]]``
+headers for a list of tables (the shape ``arc trust approve`` persists under
+``[[security.validators.approved]]``). Output is deterministic — key order follows
+the dict's insertion order, so the same input always produces the same bytes.
 
 Lives in ``arcagent.utils`` because both ``arcgateway`` and ``arccli`` already
 depend on ``arc-agent``; the dependency arrow keeps pointing down.
@@ -28,26 +29,62 @@ _BARE_KEY = re.compile(r"[A-Za-z0-9_-]+")
 def dumps_toml(data: dict[str, Any]) -> str:
     """Serialize a nested config dict to TOML that ``tomllib`` round-trips.
 
-    Supports ``bool``, ``int``, ``float``, ``str``, ``list``, and nested ``dict``.
-    Raises ``ValueError`` for any other value type rather than emitting TOML that
-    would not parse back.
+    Supports ``bool``, ``int``, ``float``, ``str``, ``list``, and nested ``dict``
+    in any combination. Raises ``ValueError`` for any other value type rather than
+    emitting TOML that would not parse back.
     """
     lines: list[str] = []
     _emit_table(data, [], lines)
     return "\n".join(lines).rstrip("\n") + "\n"
 
 
+def _is_table_array(val: Any) -> bool:
+    """True for a non-empty list of dicts — the only list TOML writes as ``[[a.b]]``.
+
+    An empty list stays an empty inline array: ``approved = []`` and a zero-element
+    array of tables are the same parsed value, and the inline form is the one that
+    round-trips.
+    """
+    return isinstance(val, list) and bool(val) and all(isinstance(item, dict) for item in val)
+
+
 def _emit_table(table: dict[str, Any], path: list[str], lines: list[str]) -> None:
-    scalars = [(k, v) for k, v in table.items() if not isinstance(v, dict)]
-    subtables = [(k, v) for k, v in table.items() if isinstance(v, dict)]
     if path:
-        lines.append(f"[{'.'.join(_key(part) for part in path)}]")
-    for key, val in scalars:
-        lines.append(f"{_key(key)} = {_scalar(val)}")
+        lines.append(f"[{_header(path)}]")
+    _emit_body(table, path, lines)
+
+
+def _emit_body(table: dict[str, Any], path: list[str], lines: list[str]) -> None:
+    """Scalars first, then every child that owns its own header.
+
+    Order is load-bearing: a bare key written after a ``[a.b]`` header would be
+    parsed into that sub-table instead of this one.
+    """
+    nested: list[tuple[str, Any]] = []
+    for key, val in table.items():
+        if isinstance(val, dict) or _is_table_array(val):
+            nested.append((key, val))
+        else:
+            lines.append(f"{_key(key)} = {_scalar(val)}")
     if path:
         lines.append("")
-    for key, val in subtables:
-        _emit_table(val, [*path, key], lines)
+    for key, val in nested:
+        if isinstance(val, dict):
+            _emit_table(val, [*path, key], lines)
+        else:
+            _emit_table_array(val, [*path, key], lines)
+
+
+def _emit_table_array(rows: list[dict[str, Any]], path: list[str], lines: list[str]) -> None:
+    """One ``[[a.b]]`` header per row; a row's own sub-tables bind to that row."""
+    for row in rows:
+        lines.append(f"[[{_header(path)}]]")
+        _emit_body(row, path, lines)
+
+
+def _header(path: list[str]) -> str:
+    """A dotted table path, each part quoted when TOML requires it."""
+    return ".".join(_key(part) for part in path)
 
 
 def _key(key: str) -> str:
@@ -72,6 +109,8 @@ def _scalar(val: Any) -> str:
         return str(val)
     if isinstance(val, list):
         return "[" + ", ".join(_scalar(v) for v in val) + "]"
+    if isinstance(val, dict):
+        return "{" + ", ".join(f"{_key(k)} = {_scalar(v)}" for k, v in val.items()) + "}"
     raise ValueError(f"unsupported TOML value type: {type(val).__name__}")
 
 

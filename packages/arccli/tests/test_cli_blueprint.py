@@ -12,9 +12,11 @@ from __future__ import annotations
 
 import tomllib
 from pathlib import Path
+from typing import Any
 
 import pytest
 from arcagent.capabilities import artifact_signing
+from arctrust import validators
 from arctrust.identity import AgentIdentity
 
 from arccli.commands import blueprint as bp_cmd
@@ -74,9 +76,55 @@ def test_apply_to_disk_merges_under_existing_preserving_identity(tmp_path: Path)
     assert merged["security"]["tier"] == "personal"
 
 
+def _packaged_blueprint_names() -> list[str]:
+    """Every blueprint under the repo-root ``blueprints/`` — the shipped presets."""
+    from arccli.blueprints import builtin_blueprints_dir
+
+    return sorted(p.parent.name for p in builtin_blueprints_dir().glob("*/blueprint.toml"))
+
+
+@pytest.mark.parametrize("name", _packaged_blueprint_names())
+def test_every_packaged_blueprint_applies_over_a_tofu_approved_agent(
+    tmp_path: Path, name: str
+) -> None:
+    """A live agent carries ``[[security.validators.approved]]`` from ``arc trust approve``.
+
+    That array of tables is part of the base the apply re-serializes, so an emitter
+    without array-of-tables support fails EVERY blueprint on any agent that ever
+    approved a capability — and it must survive the round trip, not just not crash:
+    a dropped pin silently re-gates the agent's own tools.
+    """
+    target = _write_agent(tmp_path)
+    approvals = [
+        {
+            "name": "calculator",
+            "hash": "sha256:d287bb7f",
+            "approver": "operator",
+            "timestamp": "2026-01-01T00:00:00Z",
+        }
+    ]
+    validators.persist_validators(
+        target,
+        validators.ValidatorsConfig.model_validate(
+            {"auto_run_agent_code": False, "approved": approvals}
+        ),
+    )
+
+    _, merged = bp_cmd.apply_to_disk(
+        name,
+        target=target,
+        deployment_tier="personal",
+        arc_dir=tmp_path,
+        audit=lambda *_: None,
+    )
+    written = tomllib.loads(target.read_text(encoding="utf-8"))
+    assert written == merged
+    assert written["security"]["validators"]["approved"] == approvals
+
+
 def test_apply_to_disk_emits_blueprint_applied(tmp_path: Path) -> None:
     target = _write_agent(tmp_path)
-    events: list[tuple[str, dict]] = []
+    events: list[tuple[str, dict[str, Any]]] = []
     bp_cmd.apply_to_disk(
         "personal-assistant",
         target=target,
@@ -117,7 +165,7 @@ def test_apply_relaxation_audit_fires_at_enterprise(tmp_path: Path) -> None:
     _operator_sign(tmp_path, path)
     target = _write_agent(tmp_path, tier="enterprise")
 
-    events: list[tuple[str, dict]] = []
+    events: list[tuple[str, dict[str, Any]]] = []
     bp_cmd.apply_to_disk(
         "loose-ops",
         target=target,
@@ -253,7 +301,7 @@ def test_dry_run_does_not_write(tmp_path: Path) -> None:
 def test_dry_run_emits_no_audit_record(tmp_path: Path) -> None:
     """MED-2: --dry-run writes NO file AND emits NO audit record; a real apply emits one."""
     target = _write_agent(tmp_path)
-    events: list[tuple[str, dict]] = []
+    events: list[tuple[str, dict[str, Any]]] = []
 
     bp_cmd.apply_to_disk(
         "personal-assistant",

@@ -64,6 +64,88 @@ def test_deeply_nested_tables_round_trip_through_tomllib() -> None:
     assert tomllib.loads(dumps_toml(data)) == data
 
 
+def test_list_of_tables_emits_array_of_tables_headers() -> None:
+    """The shape ``arc trust approve`` persists: ``[[security.validators.approved]]``."""
+    data: dict[str, Any] = {
+        "security": {
+            "validators": {
+                "auto_run_agent_code": False,
+                "approved": [
+                    {"name": "calculator", "hash": "sha256:aa"},
+                    {"name": "crm", "hash": "sha256:bb"},
+                ],
+            }
+        }
+    }
+
+    assert dumps_toml(data) == (
+        "[security]\n"
+        "\n"
+        "[security.validators]\n"
+        "auto_run_agent_code = false\n"
+        "\n"
+        "[[security.validators.approved]]\n"
+        'name = "calculator"\n'
+        'hash = "sha256:aa"\n'
+        "\n"
+        "[[security.validators.approved]]\n"
+        'name = "crm"\n'
+        'hash = "sha256:bb"\n'
+    )
+
+
+def test_array_of_tables_round_trips_through_tomllib() -> None:
+    """A config carrying TOFU approvals must survive a blueprint apply unchanged."""
+    data: dict[str, Any] = {
+        "agent": {"name": "aria"},
+        "security": {
+            "tier": "personal",
+            "validators": {
+                "auto_run_agent_code": False,
+                "trusted_keys": [],
+                "approved": [
+                    {
+                        "name": "calculator",
+                        "hash": "sha256:d287bb7f",
+                        "approver": "operator",
+                        "timestamp": "2026-01-01T00:00:00Z",
+                    }
+                ],
+            },
+        },
+    }
+
+    assert tomllib.loads(dumps_toml(data)) == data
+
+
+def test_tables_nested_inside_a_table_array_round_trip() -> None:
+    """A row's own sub-table binds to the LAST array element, so nesting must round-trip."""
+    data: dict[str, Any] = {
+        "schedules": [
+            {"type": "cron", "expression": "0 7 * * *", "limits": {"timeout_seconds": 600}},
+            {"type": "cron", "expression": "0 18 * * 0", "limits": {"timeout_seconds": 900}},
+        ],
+        "trailing": {"kept": True},
+    }
+
+    assert tomllib.loads(dumps_toml(data)) == data
+
+
+def test_a_dict_inside_a_mixed_array_emits_an_inline_table() -> None:
+    """Only an all-table array becomes ``[[…]]``; anything else stays an inline array."""
+    data: dict[str, Any] = {"items": [1, {"a": 2, "b": ["x"]}]}
+
+    assert dumps_toml(data) == 'items = [1, {a = 2, b = ["x"]}]\n'
+    assert tomllib.loads(dumps_toml(data)) == data
+
+
+def test_an_empty_list_stays_an_empty_array_not_a_table_array() -> None:
+    data: dict[str, Any] = {"approved": []}
+
+    assert dumps_toml(data) == "approved = []\n"
+    assert tomllib.loads(dumps_toml(data)) == data
+
+
 def test_empty_table_emits_a_single_newline() -> None:
     assert dumps_toml({}) == "\n"
 
@@ -117,6 +199,14 @@ def test_a_key_needing_quotes_round_trips_as_a_table_header(key: str) -> None:
     document: dict[str, Any] = {
         "extensions": {key: {"extension": "google_workspace", "approval": "outbound"}}
     }
+
+    assert tomllib.loads(dumps_toml(document)) == document
+
+
+@pytest.mark.parametrize("key", _AWKWARD_KEYS)
+def test_a_key_needing_quotes_round_trips_as_a_table_array_header(key: str) -> None:
+    """The ``[[…]]`` header needs the same quoting rule the ``[…]`` header gets."""
+    document: dict[str, Any] = {key: [{"name": "one"}, {"name": "two"}]}
 
     assert tomllib.loads(dumps_toml(document)) == document
 
