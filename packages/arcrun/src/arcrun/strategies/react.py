@@ -109,7 +109,7 @@ def _inject(state: RunState, injection: Injection, event_type: str) -> None:
         {
             "caller_did": injection.caller_did,
             "message_id": injection.message_id,
-            "preview": injection.message[:_PREVIEW_LEN],
+            "preview": injection.preview_text[:_PREVIEW_LEN],
         },
     )
 

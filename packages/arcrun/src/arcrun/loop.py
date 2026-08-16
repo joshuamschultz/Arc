@@ -9,7 +9,7 @@ from typing import Any
 
 from arcstore.spool import request_context
 
-from arcrun._messages import SystemPrompt, system_messages, user_message
+from arcrun._messages import ContentBlock, SystemPrompt, system_messages, user_message
 from arcrun.capabilities import CapabilityProvider, provider_tools
 from arcrun.checkpoint import LoopCheckpoint, apply_checkpoint
 from arcrun.events import EventBus
@@ -265,19 +265,21 @@ class RunHandle:
         self._state = state
         self._task = task
 
-    async def steer(self, caller_did: str, message: str) -> None:
+    async def steer(self, caller_did: str, message: str | list[ContentBlock]) -> None:
         """Interrupt: inject after current tool, skip remaining.
 
         ``caller_did`` must be a non-empty verified identity; arcrun records it
         but does not authorize it (the policy decision is the caller's job).
+        ``message`` is blocks when the sender injected more than words.
         """
         self._state.steer_queue.put_nowait(Injection.new(caller_did, message))
 
-    async def follow_up(self, caller_did: str, message: str) -> None:
+    async def follow_up(self, caller_did: str, message: str | list[ContentBlock]) -> None:
         """Queue: inject at end_turn before returning.
 
         ``caller_did`` must be a non-empty verified identity; arcrun records it
         but does not authorize it (the policy decision is the caller's job).
+        ``message`` is blocks when the sender injected more than words.
         """
         self._state.followup_queue.put_nowait(Injection.new(caller_did, message))
 

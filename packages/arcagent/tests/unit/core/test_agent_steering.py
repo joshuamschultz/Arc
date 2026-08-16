@@ -165,6 +165,7 @@ class TestDeliverStartsRunWhenIdle:
             reply_target: str | None = None,
             reply_label: str | None = None,
             overheard: bool = False,
+            content: list[dict[str, Any]] | None = None,
         ) -> _FakeHandle:
             started["input"] = inp
             started["session_key"] = session_key

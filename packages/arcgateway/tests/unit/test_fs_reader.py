@@ -184,6 +184,33 @@ class TestReadFile:
         decoded = base64.b64decode(c.content)
         assert decoded.startswith(b"\x89PNG")
 
+    def test_a_binary_read_names_its_media_type(self, agent_root: Path) -> None:
+        """Base64 alone is unreadable: a viewer needs to know what it received.
+
+        Without a media type the only thing a caller can do with the bytes of
+        a photo is print them, which is what the workspace view did.
+        """
+        c = read_file(
+            scope="agent",
+            agent_id="alice",
+            agent_root=agent_root,
+            rel_path="logo.png",
+            caller_did="did:test:user",
+        )
+        assert c.mime == "image/png"
+
+    def test_an_unknown_suffix_still_names_a_media_type(self, agent_root: Path) -> None:
+        blob = agent_root / "mystery.zzz"
+        blob.write_bytes(b"\x00\x01\x02")
+        c = read_file(
+            scope="agent",
+            agent_id="alice",
+            agent_root=agent_root,
+            rel_path="mystery.zzz",
+            caller_did="did:test:user",
+        )
+        assert c.mime == "application/octet-stream"
+
     def test_size_cap_enforced(self, agent_root: Path) -> None:
         large = agent_root / "big.md"
         large.write_bytes(b"x" * (MAX_READ_BYTES + 1))

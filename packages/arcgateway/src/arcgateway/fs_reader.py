@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import mimetypes
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -91,7 +92,9 @@ class FileEntry:
 class FileContent:
     """A read file's content + metadata.
 
-    For ``content_type == "binary"``, ``content`` is base64-encoded.
+    For ``content_type == "binary"``, ``content`` is base64-encoded and
+    ``mime`` is what those bytes are — without it a caller holding the base64
+    of a photo can do nothing with it but print it.
     """
 
     path: str
@@ -99,6 +102,17 @@ class FileContent:
     mtime: float
     content: str
     content_type: Literal["text", "binary", "json"]
+    mime: str
+
+
+def _mime_of(path: Path) -> str:
+    """The media type of a file, never empty.
+
+    ``application/octet-stream`` for anything unrecognised: a viewer must be
+    able to branch on the answer without also handling ``None``.
+    """
+    guessed, _ = mimetypes.guess_type(path.name)
+    return guessed or "application/octet-stream"
 
 
 def read_file(
@@ -161,6 +175,7 @@ def read_file(
             mtime=stat.st_mtime,
             content=target.read_text(encoding="utf-8", errors="replace"),
             content_type="text",
+            mime=_mime_of(target),
         )
     if suffix in _JSON_SUFFIXES:
         return FileContent(
@@ -169,6 +184,7 @@ def read_file(
             mtime=stat.st_mtime,
             content=target.read_text(encoding="utf-8"),
             content_type="json",
+            mime=_mime_of(target),
         )
     return FileContent(
         path=rel_path,
@@ -176,6 +192,7 @@ def read_file(
         mtime=stat.st_mtime,
         content=base64.b64encode(target.read_bytes()).decode("ascii"),
         content_type="binary",
+        mime=_mime_of(target),
     )
 
 

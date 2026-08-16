@@ -11,12 +11,14 @@ from typing import Any
 
 import arcllm
 
+ContentBlock = arcllm.ContentBlock
 Message = arcllm.Message
 TextBlock = arcllm.TextBlock
 ToolResultBlock = arcllm.ToolResultBlock
 ToolUseBlock = arcllm.ToolUseBlock
 
 __all__ = [
+    "ContentBlock",
     "Message",
     "SystemPrompt",
     "TextBlock",
@@ -37,7 +39,8 @@ __all__ = [
 SystemPrompt = str | Sequence[str]
 
 
-def user_message(text: str) -> Message:
+def user_message(text: str | list[arcllm.ContentBlock]) -> Message:
+    """A user turn: plain words, or blocks when it carries more than words."""
     return Message(role="user", content=text)
 
 

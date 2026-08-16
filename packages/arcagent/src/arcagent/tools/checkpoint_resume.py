@@ -51,7 +51,7 @@ async def resume_stream(agent: ArcAgent, *, session_key: str) -> AsyncIterator[a
         verify_record(record, public_key=signer.public_key, algorithm=signer.algorithm)
 
     _telemetry, bus, model, provider, prompt, bridge = await build_run_context(agent, "")
-    transcript = wire_messages(session.get_messages())
+    transcript = wire_messages(session.get_messages(), workspace=agent._workspace)
     # apply_checkpoint (in arcrun) replaces the loop's message list with this one,
     # so the freshly-assembled system prompt must lead it — the transcript on disk
     # never carries the system message (it is rebuilt every run). Built by arcrun's

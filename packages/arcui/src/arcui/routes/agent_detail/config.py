@@ -198,5 +198,6 @@ async def get_file_read(request: Request) -> JSONResponse:
             mtime=content.mtime,
             content=content.content,
             content_type=content.content_type,
+            mime=content.mime,
         ).model_dump(mode="json")
     )

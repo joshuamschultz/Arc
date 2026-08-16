@@ -219,6 +219,7 @@ export interface FileReadResponse {
   mtime: number
   content: string
   content_type: string
+  mime: string
 }
 
 export interface FileWriteResponse {

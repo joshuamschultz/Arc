@@ -134,6 +134,27 @@ function TreeNode({
   )
 }
 
+/** A binary file, shown as what it is. An image is the thing itself; anything
+ *  else says what it is and how big, because the alternative — the base64 of
+ *  the bytes as a wall of text — tells the operator nothing at all. */
+function BinaryFile({ data, mime, size }: { data: string; mime: string; size: number }) {
+  if (mime.startsWith('image/')) {
+    return (
+      <img
+        src={`data:${mime};base64,${data}`}
+        alt=""
+        className="max-h-full max-w-full rounded-lg border border-border object-contain"
+      />
+    )
+  }
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-1 text-sm text-muted-foreground">
+      <span className="font-mono text-xs">{mime}</span>
+      <span>{fmtBytes(size)} of binary content</span>
+    </div>
+  )
+}
+
 /** Read + (operator-only) edit for one workspace file. Markdown renders in
  *  view mode; Edit mode is a raw textarea saved via `PUT .../files/read`
  *  (COMP-012). Errors (400 path-escape/secret-content, 403 viewer) and a
@@ -158,6 +179,8 @@ function FileViewer({ agentId, root, path }: { agentId: string; root: string; pa
   if (!q.data) return null
 
   const isMarkdown = path.endsWith('.md') || path.endsWith('.mdx')
+  // Editing base64 in a textarea would save the base64, not the file.
+  const isBinary = q.data.content_type === 'binary'
 
   const startEdit = () => {
     setDraft(q.data!.content)
@@ -190,7 +213,7 @@ function FileViewer({ agentId, root, path }: { agentId: string; root: string; pa
         <span className="truncate font-mono">{path}</span>
         <div className="flex shrink-0 items-center gap-2">
           <span>{fmtBytes(q.data.size)}</span>
-          {operatorMode && !editing && (
+          {operatorMode && !editing && !isBinary && (
             <Button variant="ghost" size="sm" onClick={startEdit}>
               <Pencil className="size-3.5" /> Edit
             </Button>
@@ -230,6 +253,8 @@ function FileViewer({ agentId, root, path }: { agentId: string; root: string; pa
             spellCheck={false}
             className="h-full min-h-[240px] w-full resize-none rounded-lg border border-border bg-muted/30 p-3 font-mono text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
           />
+        ) : isBinary ? (
+          <BinaryFile data={q.data.content} mime={q.data.mime} size={q.data.size} />
         ) : isMarkdown ? (
           <MarkdownFile content={q.data.content} />
         ) : (

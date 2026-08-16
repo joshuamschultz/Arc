@@ -54,7 +54,8 @@ _CASES: list[tuple[type[schemas.BaseModel], dict]] = [
             "size": 42,
             "mtime": 100.0,
             "content": "hello",
-            "content_type": "text/markdown",
+            "content_type": "text",
+            "mime": "text/markdown",
         },
     ),
     (

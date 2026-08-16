@@ -7,6 +7,7 @@ from a synthetic ``team/`` directory through ``arcgateway.fs_reader``.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 from pathlib import Path
 
@@ -359,6 +360,32 @@ class TestFilesReadRoute:
         body = resp.json()
         assert body["content_type"] == "text"
         assert "P01" in body["content"]
+
+    def test_an_inbox_photo_is_returned_as_a_renderable_image(self, tmp_path):
+        """A photo a person sent the agent must be viewable, not printed as base64.
+
+        The workspace view can only draw the image if the response says what
+        the bytes are; without a media type the only honest thing it can do
+        with them is show the encoding, which is what it did.
+        """
+        team = _build_team_dir(tmp_path)
+        photo = team / "alpha_agent" / "workspace" / "inbox" / "2026-08-16"
+        photo.mkdir(parents=True, exist_ok=True)
+        (photo / "141522-photo.jpg").write_bytes(b"\xff\xd8\xff\xe0ARCPHOTO")
+        app, auth, _ = _make_detail_app(team_root=team)
+        client = TestClient(app)
+
+        resp = client.get(
+            "/api/agents/alpha/files/read?root=workspace"
+            "&path=inbox/2026-08-16/141522-photo.jpg",
+            headers=_viewer(auth),
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["content_type"] == "binary"
+        assert body["mime"] == "image/jpeg"
+        assert base64.b64decode(body["content"]) == b"\xff\xd8\xff\xe0ARCPHOTO"
 
     def test_traversal_blocked(self, tmp_path):
         team = _build_team_dir(tmp_path)

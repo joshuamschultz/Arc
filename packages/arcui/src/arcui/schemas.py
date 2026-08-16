@@ -84,6 +84,7 @@ class FileReadResponse(BaseModel):
     mtime: float
     content: str
     content_type: str
+    mime: str
 
 
 class FileWriteResponse(BaseModel):

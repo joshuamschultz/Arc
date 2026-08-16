@@ -702,6 +702,7 @@ class ArcAgent:
         reply_target: str | None = None,
         reply_label: str | None = None,
         overheard: bool = False,
+        content: list[dict[str, Any]] | None = None,
     ) -> arcrun.RunHandle:
         """Start an async, steerable run and track its handle under ``session_key``.
 
@@ -710,6 +711,10 @@ class ArcAgent:
         runs and removed by a finalizer that commits the assistant turn and
         compacts, matching the streaming path. ``reply_target`` / ``reply_label``
         name the channel the turn arrived on (see :meth:`run`).
+
+        ``content`` is the turn as blocks, for a message that was more than
+        words; ``input_text`` stays its text projection. When omitted the turn
+        is stored and sent as ``input_text`` exactly as it always was.
         """
         from arcagent.core.agent_dispatch import start_tracked_run
 
@@ -721,6 +726,7 @@ class ArcAgent:
             reply_target=reply_target,
             reply_label=reply_label,
             overheard=overheard,
+            content=content,
         )
 
     async def quick_classify(self, *, system: str, user: str, max_tokens: int = 8) -> str:
@@ -805,8 +811,9 @@ class ArcAgent:
 
         Returns the action taken: ``"steered"`` | ``"followed_up"`` | ``"started"``.
         """
-        if parts:
-            message = self._compose_from_parts(parts)
+        content = self._compose_from_parts(parts) if parts else None
+        if content is not None:
+            message = _flatten_blocks(content)
         self._ensure_started()
         async with self._run_coordinator.delivery(session_key):
             handle = self._run_coordinator.injection_target(session_key)
@@ -817,29 +824,45 @@ class ArcAgent:
                     reply_target=reply_target,
                     reply_label=reply_label,
                     overheard=overheard,
+                    content=content,
                 )
                 if on_handle is not None:
                     on_handle(started)
                 return "started"
+            injected: str | list[arcrun.ContentBlock] = message
+            if content is not None:
+                injected = self._materialise(content)
             if interrupt and await self._authorize_steer(caller_did):
-                await handle.steer(caller_did, message)
+                await handle.steer(caller_did, injected)
                 return "steered"
-            await handle.follow_up(caller_did, message)
+            await handle.follow_up(caller_did, injected)
             return "followed_up"
 
-    def _compose_from_parts(self, parts: Sequence[Mapping[str, Any]]) -> str:
-        """Render a multi-part message as the text this turn opens on.
+    def _compose_from_parts(self, parts: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+        """Render a multi-part message as the blocks this turn is stored as.
 
         :class:`~arcagent.parts.PartTranslator` produces one block per part;
-        for an artefact that block is a readable line naming the file, its type
-        and where it is in the workspace — never its bytes. The agent can then
-        open the file with its own tools if it needs the contents, and the
-        session log keeps a reference that stays kilobytes forever (REQ-316).
+        for an artefact that block holds a *reference* to the file in the
+        workspace, never its bytes, so the session log stays kilobytes forever
+        (REQ-316) and the file re-opens on a later turn.
         """
         from arcagent.parts import PartTranslator
 
-        blocks = PartTranslator(workspace=self._workspace).to_history_content(parts)
-        return "\n".join(str(block.get("text", "")) for block in blocks).strip()
+        return PartTranslator(workspace=self._workspace).to_history_content(parts)
+
+    def _materialise(self, content: list[dict[str, Any]]) -> list[arcrun.ContentBlock]:
+        """Stored blocks as model blocks, for a message joining a run in flight.
+
+        The turn-opening path materialises at ``wire_messages``, where the
+        whole history passes. A message injected mid-run never goes through
+        history — arcrun appends it to the live message list directly — so its
+        references are resolved here instead. Without this a photo sent while
+        the agent was still answering would reach the model as a filename,
+        which on a chat platform is the common case, not the edge one.
+        """
+        from arcagent.parts import PartTranslator
+
+        return PartTranslator(workspace=self._workspace).to_model_content(content)
 
     async def _authorize_steer(self, caller_did: str) -> bool:
         """Whether the policy pipeline permits a mid-turn steer for ``caller_did``.
@@ -1057,3 +1080,14 @@ class ArcAgent:
                 self._sessions.clear()
                 self._lifecycle_state = _LifecycleState.STOPPED
                 _logger.info("Agent %s shut down", self._config.agent.name)
+
+
+def _flatten_blocks(content: list[dict[str, Any]]) -> str:
+    """The words of a multi-part message, for everything that only reads words.
+
+    The prompt query, the audit line and the post-respond record are all text.
+    An artefact contributes the readable line naming it rather than nothing,
+    because a photo-only turn whose text projection is ``""`` reads to every
+    one of them as an empty message.
+    """
+    return "\n".join(str(block.get("text", "")) for block in content).strip()

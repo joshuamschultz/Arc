@@ -258,7 +258,7 @@ class TestWireMessages:
         prompt = await mgr.assemble_system_prompt(workspace, query="hello")
         record = prompt.session_record("hello")
 
-        wire = wire_messages([record])[0]
+        wire = wire_messages([record], workspace=workspace)[0]
         assert isinstance(wire.content, str)
         assert wire.content.startswith("hello")
         assert "<agent-context>" in wire.content
@@ -267,13 +267,14 @@ class TestWireMessages:
     async def test_records_without_context_pass_through_unchanged(
         self, mgr: ContextManager, workspace: Path
     ) -> None:
-        wire = wire_messages([{"role": "assistant", "content": "done"}])
+        wire = wire_messages([{"role": "assistant", "content": "done"}], workspace=workspace)
         assert wire[0].content == "done"
 
-    async def test_session_bookkeeping_fields_are_ignored(self) -> None:
+    async def test_session_bookkeeping_fields_are_ignored(self, workspace: Path) -> None:
         """Records carry ``type``/``timestamp`` from the JSONL — not wire fields."""
         wire = wire_messages(
-            [{"type": "message", "timestamp": "t", "role": "user", "content": "hi"}]
+            [{"type": "message", "timestamp": "t", "role": "user", "content": "hi"}],
+            workspace=workspace,
         )
         assert wire[0].role == "user"
         assert wire[0].content == "hi"
@@ -364,9 +365,11 @@ class TestTokenAccountingCountsWhatIsSent:
 
         assert mgr.message_fill_ratio(with_recall) > mgr.message_fill_ratio(bare)
 
-    def test_the_ratio_matches_what_the_wire_actually_carries(self, mgr: ContextManager) -> None:
+    def test_the_ratio_matches_what_the_wire_actually_carries(
+        self, mgr: ContextManager, workspace: Path
+    ) -> None:
         records = [{"role": "user", "content": "hi", "turn_context": "y" * 4000}]
-        wire = wire_messages(records)
+        wire = wire_messages(records, workspace=workspace)
 
         assert mgr.message_fill_ratio(records) == pytest.approx(
             mgr.message_fill_ratio([{"role": m.role, "content": m.content} for m in wire])

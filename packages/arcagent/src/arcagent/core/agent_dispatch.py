@@ -328,7 +328,7 @@ async def _dispatch_stream_locked(
     bind_inbound_channel(agent, reply_target, reply_label, overheard=overheard)
     telemetry, bus, model, provider, prompt, bridge = await build_run_context(agent, input_text)
     await session.append_message(prompt.session_record(input_text))
-    history = wire_messages(session.get_messages())
+    history = wire_messages(session.get_messages(), workspace=agent._workspace)
     transform = agent._context.transform_context if agent._context else None
     # SPEC-038 F1 — resolve the tier-resolved per-run budget so the arcrun
     # circuit-breaker (LLM10) is reachable through the real streaming path.
@@ -403,6 +403,7 @@ async def start_tracked_run(
     reply_target: str | None = None,
     reply_label: str | None = None,
     overheard: bool = False,
+    content: list[dict[str, Any]] | None = None,
 ) -> arcrun.RunHandle:
     """Start an async, steerable run for ``session_key`` and track its handle.
 
@@ -417,6 +418,11 @@ async def start_tracked_run(
     injection target: the next message for this session joins it rather than
     starting a second one (REQ-302). ``reply_target`` / ``reply_label`` carry the
     channel the message arrived on, same as the streaming path.
+
+    ``content`` is the turn as blocks when the message carried an artefact
+    (SPEC-065): it is what gets stored, and ``wire_messages`` materialises its
+    references for the loop call. ``input_text`` remains the text projection —
+    the prompt query, the audit line and the post-respond record.
     """
     session = await agent.session(session_key)
     coordination_key = session.session_id
@@ -428,8 +434,8 @@ async def start_tracked_run(
         _telemetry, _bus, model, provider, prompt, bridge = await build_run_context(
             agent, input_text
         )
-        await session.append_message(prompt.session_record(input_text))
-        history = wire_messages(session.get_messages())
+        await session.append_message(prompt.session_record(content or input_text))
+        history = wire_messages(session.get_messages(), workspace=agent._workspace)
         transform = agent._context.transform_context if agent._context else None
         max_tokens, max_cost_usd = resolve_run_budget(agent._config)
 

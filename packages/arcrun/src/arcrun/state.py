@@ -8,6 +8,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+import arcllm
+
 from arcrun.checkpoint import LoopCheckpoint
 from arcrun.events import EventBus
 from arcrun.registry import ToolRegistry
@@ -24,11 +26,22 @@ class Injection:
     """
 
     caller_did: str
-    message: str
+    message: str | list[arcllm.ContentBlock]
     message_id: str
 
+    @property
+    def preview_text(self) -> str:
+        """The injection's words, for the audit event's preview field.
+
+        A block message has no single string, and the audit line must still say
+        what arrived rather than a repr of the list.
+        """
+        if isinstance(self.message, str):
+            return self.message
+        return "\n".join(getattr(block, "text", "") or "" for block in self.message)
+
     @classmethod
-    def new(cls, caller_did: str, message: str) -> Injection:
+    def new(cls, caller_did: str, message: str | list[arcllm.ContentBlock]) -> Injection:
         """Build an injection, requiring a non-empty ``caller_did``.
 
         The ``message_id`` is minted here so the enqueue and the later drain-time

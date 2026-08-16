@@ -185,15 +185,19 @@ class AssembledPrompt:
         """
         return [s for s in (self.session, self.run) if s]
 
-    def session_record(self, user_text: str) -> dict[str, str]:
+    def session_record(self, user_text: str | list[dict[str, Any]]) -> dict[str, Any]:
         """The user turn as it is stored: what the person said, plus a sibling
         field holding this turn's retrieved material.
 
         Stored, not discarded, because the bytes sent on this turn must be
         reproducible on the next one or the cached prefix stops matching. Kept
         out of ``content`` so the session stays the conversation.
+
+        ``user_text`` is a list of blocks when the person sent more than words
+        (SPEC-065): an artefact is stored as a reference, so a media turn costs
+        the log kilobytes and re-opens on a later turn.
         """
-        record = {"role": "user", "content": user_text}
+        record: dict[str, Any] = {"role": "user", "content": user_text}
         if self.turn:
             record[TURN_CONTEXT_KEY] = self.turn
         return record
@@ -203,17 +207,33 @@ class AssembledPrompt:
         return "\n\n".join(self.segments)
 
 
-def wire_messages(records: Sequence[dict[str, Any]]) -> list[arcrun.Message]:
+def wire_messages(records: Sequence[dict[str, Any]], *, workspace: Path) -> list[arcrun.Message]:
     """Session records as the messages the model actually receives.
 
     Each record's stored turn context is re-attached verbatim, so a replayed
     turn is byte-identical to the turn as first sent. This is the counterpart
     of :meth:`AssembledPrompt.session_record`; the two must stay paired.
+
+    This is also the one place a stored media reference becomes bytes
+    (SPEC-065 COMP-009): block content goes through
+    :class:`~arcagent.parts.PartTranslator`, which reads each referenced
+    artefact from ``workspace`` for this call alone. ``workspace`` is required
+    rather than optional because a caller that forgot it would ship the model a
+    filename where a picture was meant to be, and every layer would still pass.
     """
+    from arcagent.parts import PartTranslator
+
+    translator = PartTranslator(workspace=workspace)
     out: list[arcrun.Message] = []
     for record in records:
         turn = record.get(TURN_CONTEXT_KEY) or ""
         content = record.get("content")
+        if isinstance(content, list):
+            blocks = translator.to_model_content(content)
+            if turn:
+                blocks.append(arcrun.TextBlock(text=with_turn_context("", turn).lstrip()))
+            out.append(arcrun.Message(role=record["role"], content=blocks))
+            continue
         if turn and isinstance(content, str):
             record = {**record, "content": with_turn_context(content, turn)}
         out.append(arcrun.Message(**record))
@@ -257,6 +277,11 @@ def _msg_attr(msg: Any, key: str, default: Any = "") -> Any:
     return getattr(msg, key, default)
 
 
+def _block_text(block: Any) -> str:
+    """The words in one content block, or empty for a block that has none."""
+    return str(_msg_attr(block, "text", "") or "")
+
+
 def _msg_content_str(msg: Any) -> str:
     """The text this message actually puts on the wire, or empty string.
 
@@ -267,7 +292,16 @@ def _msg_content_str(msg: Any) -> str:
     truncation valve both trigger off this estimate, so both would fire late.
     """
     content = _msg_attr(msg, "content", "")
-    text = content if isinstance(content, str) else ""
+    if isinstance(content, str):
+        text = content
+    elif isinstance(content, list):
+        # A media turn is blocks, and its text blocks are what cost tokens —
+        # the artefact itself is a reference here and is materialised only for
+        # the provider call. Reading the whole list as "" would under-report
+        # every such turn to zero and fire compaction late.
+        text = "\n".join(_block_text(block) for block in content)
+    else:
+        text = ""
     turn = _msg_attr(msg, TURN_CONTEXT_KEY, "")
     return with_turn_context(text, turn) if isinstance(turn, str) and turn else text
 
