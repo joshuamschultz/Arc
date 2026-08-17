@@ -209,8 +209,8 @@ class PolicyEngine:
             current_policy=current_policy or "(empty)",
             messages=chunk_text,
         )
-        response = await model.invoke([arcrun.Message(role="user", content=prompt)])
-        return self._parse_delta(response.content)
+        result = await arcrun.run_oneshot(model, user=prompt, max_tokens=None)
+        return self._parse_delta(result.content)
 
     def _parse_delta(self, raw: str | None) -> PolicyDelta | None:
         """Parse one eval response into a PolicyDelta (None if unparseable/empty)."""

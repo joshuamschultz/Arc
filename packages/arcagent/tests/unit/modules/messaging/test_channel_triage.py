@@ -5,7 +5,7 @@ one run a single cheap yes/no classification before paying for a full turn.
 @mentions and critical always bypass it.
 
 **This file previously pinned the gate as fail-OPEN**, in
-``test_triage_error_fails_open_and_runs`` and ``test_no_classify_fn_runs``. That
+``test_triage_error_fails_open_and_runs`` and ``test_no_oneshot_fn_runs``. That
 was reversed deliberately (SPEC-068 D1a): a cost control whose failure mode is
 to spend the maximum is the wrong shape, and fail-open meant a broken or slow
 model bought a full agentic turn in *every* member of the channel on *every*
@@ -121,11 +121,11 @@ class TestChannelTriageGate:
         ident = _identity()
         st = await _configure(tmp_path, ident)
         st.deliver_fn = AsyncMock()
-        st.classify_fn = AsyncMock(return_value="NO")
+        st.oneshot_fn = AsyncMock(return_value="NO")
 
         await _handle_incoming(_msg(to=["channel://personal"], mentions=[]))
 
-        st.classify_fn.assert_awaited_once()
+        st.oneshot_fn.assert_awaited_once()
         st.deliver_fn.assert_not_called()
 
     @pytest.mark.asyncio
@@ -133,11 +133,11 @@ class TestChannelTriageGate:
         ident = _identity()
         st = await _configure(tmp_path, ident)
         st.deliver_fn = AsyncMock(return_value="followed_up")
-        st.classify_fn = AsyncMock(return_value="YES")
+        st.oneshot_fn = AsyncMock(return_value="YES")
 
         await _handle_incoming(_msg(to=["channel://personal"], mentions=[]))
 
-        st.classify_fn.assert_awaited_once()
+        st.oneshot_fn.assert_awaited_once()
         st.deliver_fn.assert_called_once()
 
     @pytest.mark.asyncio
@@ -146,19 +146,19 @@ class TestChannelTriageGate:
         ident = _identity()
         st = await _configure(tmp_path, ident)
         st.deliver_fn = AsyncMock(return_value="followed_up")
-        st.classify_fn = AsyncMock(side_effect=RuntimeError("model down"))
+        st.oneshot_fn = AsyncMock(side_effect=RuntimeError("model down"))
 
         await _handle_incoming(_msg(to=["channel://personal"], mentions=[]))
 
         st.deliver_fn.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_no_classify_fn_stays_silent(self, tmp_path: Path) -> None:
+    async def test_no_oneshot_fn_stays_silent(self, tmp_path: Path) -> None:
         """Inverted from fail-open. An unwired gate must not authorise the spend."""
         ident = _identity()
         st = await _configure(tmp_path, ident)
         st.deliver_fn = AsyncMock(return_value="followed_up")
-        st.classify_fn = None
+        st.oneshot_fn = None
 
         await _handle_incoming(_msg(to=["channel://personal"], mentions=[]))
 
@@ -169,11 +169,11 @@ class TestChannelTriageGate:
         ident = _identity()
         st = await _configure(tmp_path, ident, triage=False)
         st.deliver_fn = AsyncMock(return_value="followed_up")
-        st.classify_fn = AsyncMock(return_value="NO")
+        st.oneshot_fn = AsyncMock(return_value="NO")
 
         await _handle_incoming(_msg(to=["channel://personal"], mentions=[]))
 
-        st.classify_fn.assert_not_called()
+        st.oneshot_fn.assert_not_called()
         st.deliver_fn.assert_called_once()
 
     @pytest.mark.asyncio
@@ -181,11 +181,11 @@ class TestChannelTriageGate:
         ident = _identity()
         st = await _configure(tmp_path, ident)
         st.deliver_fn = AsyncMock(return_value="followed_up")
-        st.classify_fn = AsyncMock(return_value="NO")
+        st.oneshot_fn = AsyncMock(return_value="NO")
 
         await _handle_incoming(_msg(to=["channel://personal"], mentions=[ident.did]))
 
-        st.classify_fn.assert_not_called()
+        st.oneshot_fn.assert_not_called()
         st.deliver_fn.assert_called_once()
 
     @pytest.mark.asyncio
@@ -194,9 +194,9 @@ class TestChannelTriageGate:
         ident = _identity()
         st = await _configure(tmp_path, ident)
         st.deliver_fn = AsyncMock(return_value="followed_up")
-        st.classify_fn = AsyncMock(return_value="YES")
+        st.oneshot_fn = AsyncMock(return_value="YES")
 
         await _handle_incoming(_msg(sender_did="did:arc:local:agent/peer", mentions=[]))
 
-        st.classify_fn.assert_not_called()
+        st.oneshot_fn.assert_not_called()
         st.deliver_fn.assert_not_called()

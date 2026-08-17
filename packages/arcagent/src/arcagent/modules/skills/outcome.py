@@ -67,6 +67,25 @@ class LLMInvoker(Protocol):
     async def invoke(self, prompt: str) -> str: ...
 
 
+class OneShotInvoker:
+    """Serves the prompt-in/text-out seam from an Arc model handle.
+
+    The seam takes a prompt and returns text; a model handle takes messages and
+    returns a response object. Nothing bridged the two, so a handle passed in
+    here raised on every call and the classifier abstained forever — a labeler
+    that is silently always-off is indistinguishable from one that is working.
+    The bridge is a single bounded ArcRun call, which is also the only layer
+    allowed to make one (ADR-032).
+    """
+
+    def __init__(self, model: object) -> None:
+        self._model = model
+
+    async def invoke(self, prompt: str) -> str:
+        result = await arcrun.run_oneshot(self._model, user=prompt, max_tokens=None)
+        return result.content or ""
+
+
 class OutcomeLabel(BaseModel):
     """A turn's outcome verdict; ``""`` means abstain (no trace-store write)."""
 
@@ -119,7 +138,7 @@ class OutcomeClassifier:
     """
 
     def __init__(self, *, llm: LLMInvoker | None) -> None:
-        self._llm = llm
+        self._invoker = llm
 
     async def classify(
         self,
@@ -135,10 +154,10 @@ class OutcomeClassifier:
         attribution, 'partial' is credited to the unique skill with the strictly
         highest error count; a tie or all-zero abstains.
         """
-        if self._llm is None or not has_feedback_signal(transcript_window):
+        if self._invoker is None or not has_feedback_signal(transcript_window):
             return _abstain()
         try:
-            response = await self._llm.invoke(self._prompt(transcript_window, active_skills))
+            response = await self._invoker.invoke(self._prompt(transcript_window, active_skills))
             parsed = json.loads(response)
         except Exception:  # reason: fail-open — a background labeler must never raise
             _logger.debug("outcome classification failed; abstaining", exc_info=True)
@@ -185,6 +204,7 @@ def _credit_by_error_count(active_skills: list[str], error_counts: dict[str, int
 
 __all__ = [
     "LLMInvoker",
+    "OneShotInvoker",
     "OutcomeClassifier",
     "OutcomeLabel",
     "has_feedback_signal",

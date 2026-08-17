@@ -152,7 +152,7 @@ class _MsgState:
         self.processing_lock = asyncio.Lock()
         self.deliver_fn: Any = None
         self.agent_run_fn: Any = None
-        self.classify_fn = None
+        self.oneshot_fn = None
         self.telemetry = None
         self.config = SimpleNamespace(
             channel_triage=False,

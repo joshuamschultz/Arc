@@ -179,16 +179,13 @@ async def perform_maintenance(st: _runtime._State, model: Any, transcript_text: 
     context_path = st.workspace / "context.md"
     current = context_path.read_text(encoding="utf-8") if context_path.exists() else ""
 
-    response = await model.invoke(
-        [
-            arcrun.Message(
-                role="system",
-                content=load_stock("arcagent", "context_maintainer_system"),
-            ),
-            arcrun.Message(role="user", content=_render_input(current, transcript_text)),
-        ]
+    result = await arcrun.run_oneshot(
+        model,
+        system=load_stock("arcagent", "context_maintainer_system"),
+        user=_render_input(current, transcript_text),
+        max_tokens=None,
     )
-    new_md = (response.content or "").strip()
+    new_md = (result.content or "").strip()
     if not new_md:
         return False
 

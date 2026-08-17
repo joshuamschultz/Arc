@@ -68,9 +68,9 @@ class _State:
     last_unread: dict[str, int] = field(default_factory=dict)
     # agent.run_collected() callback — bound via agent:ready event.
     agent_run_fn: Any = None
-    # Bounded single-shot LLM classifier (agent.quick_classify) — bound at
-    # agent:ready. Powers the cheap channel-broadcast relevance gate (SPEC-055).
-    classify_fn: Any = None
+    # One bounded model call through ArcRun (agent.run_oneshot) — bound at
+    # agent:ready. Breaks a tie the deterministic prefilter could not (ADR-032).
+    oneshot_fn: Any = None
     # Channel delivery ("platform:chat_id", text) -> None from the embedded
     # gateway — bound at agent:ready. Powers ``notify_user`` (agent -> human).
     channel_deliver_fn: Any = None

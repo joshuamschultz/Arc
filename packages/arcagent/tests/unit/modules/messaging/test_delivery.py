@@ -192,7 +192,7 @@ class TestHandleIncoming:
         async def _relevant(**_kw: Any) -> str:
             return "YES"
 
-        st.classify_fn = _relevant
+        st.oneshot_fn = _relevant
 
         await _handle_incoming(_msg(to=["channel://ops"], mentions=[]))
 

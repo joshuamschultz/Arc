@@ -79,7 +79,7 @@ class _State:
     identity: Any
     registry: Any
     svc: Any
-    classify_fn: Any = None
+    oneshot_fn: Any = None
     agent_name: str = "me"
     telemetry: Any = None
     channel_last_woken: dict[str, float] = field(default_factory=dict)
@@ -99,7 +99,7 @@ def _state(*, classify: Any = None, entities: list[_Entity] | None = None, **cfg
         identity=_Identity(),
         registry=_Registry(entities if entities is not None else default),
         svc=_Svc(),
-        classify_fn=classify,
+        oneshot_fn=classify,
     )
 
 

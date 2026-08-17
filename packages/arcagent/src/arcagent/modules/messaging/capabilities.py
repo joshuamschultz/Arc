@@ -316,7 +316,7 @@ async def messaging_bind_run_fn(ctx: Any) -> None:
     deliver_fn = data.get("deliver_fn")
     if deliver_fn is not None:
         st.deliver_fn = deliver_fn
-    st.classify_fn = data.get("classify_fn")
+    st.oneshot_fn = data.get("oneshot_fn")
     st.channel_deliver_fn = data.get("channel_deliver_fn")
     _logger.info("Bound agent run/deliver callbacks for message processing")
 

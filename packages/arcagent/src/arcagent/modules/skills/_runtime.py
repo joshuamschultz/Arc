@@ -31,7 +31,7 @@ from typing import Any
 
 from arcagent.capabilities import artifact_signing
 from arcagent.core.config import EvalConfig
-from arcagent.modules.skills.outcome import OutcomeClassifier
+from arcagent.modules.skills.outcome import OneShotInvoker, OutcomeClassifier
 from arcagent.skilladapt import NullSkillAdapter, SkillAdapter, select_skill_adapter
 from arcagent.utils.model_helpers import get_eval_model
 
@@ -153,7 +153,11 @@ def configure(
         sweep_poll_seconds=cfg.sweep_poll_seconds,
         # Built even when the eval LLM is unavailable — classify() abstains without one,
         # keeping the flag's behavior fail-open instead of silently off.
-        outcome_classifier=OutcomeClassifier(llm=llm) if cfg.classify_outcomes else None,
+        outcome_classifier=(
+            OutcomeClassifier(llm=OneShotInvoker(llm) if llm is not None else None)
+            if cfg.classify_outcomes
+            else None
+        ),
     )
     _state_var.set(new_state)
     _logger.info("skills module configured (adapter=%s, active=%s)", cfg.adapter, new_state.active)

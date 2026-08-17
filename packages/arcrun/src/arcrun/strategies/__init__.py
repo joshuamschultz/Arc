@@ -34,6 +34,17 @@ class Strategy(ABC):
         """
         ...
 
+    @property
+    def auto_selectable(self) -> bool:
+        """Whether the selector may offer this strategy when none was named.
+
+        Defaults to True, so a third-party strategy behaves as it always did.
+        A strategy that only makes sense when a caller asks for it by name
+        overrides this — being installed is not the same as being a candidate
+        for an arbitrary task.
+        """
+        return True
+
     @abstractmethod
     async def __call__(
         self, model: Any, state: RunState, sandbox: Sandbox, max_turns: int
@@ -53,9 +64,10 @@ def available_strategies() -> MappingProxyType[str, Strategy]:
 def _load_strategies() -> None:
     from arcrun.strategies.code import CodeExecStrategy
     from arcrun.strategies.dynamic import DynamicStrategy
+    from arcrun.strategies.oneshot import OneShotStrategy
     from arcrun.strategies.react import ReactStrategy
 
-    for s in (ReactStrategy(), CodeExecStrategy(), DynamicStrategy()):
+    for s in (ReactStrategy(), CodeExecStrategy(), DynamicStrategy(), OneShotStrategy()):
         STRATEGIES[s.name] = s
 
 
@@ -66,7 +78,7 @@ async def select_strategy(
 ) -> str:
     """Pick a strategy: one allowed means take it, otherwise the model chooses.
 
-    ``allowed=None`` means **every** registered strategy is on the table. Each
+    ``allowed=None`` means every **auto-selectable** strategy is on the table. Each
     run is its own opportunity to pick the shape that fits the task, so the
     default is open and an operator narrows it deliberately rather than having
     to opt in to capability they already installed.
@@ -79,7 +91,7 @@ async def select_strategy(
         _load_strategies()
 
     if allowed is None:
-        allowed = list(STRATEGIES)
+        allowed = [name for name, s in STRATEGIES.items() if s.auto_selectable]
     if not allowed:
         raise ValueError("allowed_strategies is empty; a run must permit at least one strategy")
     unknown = [s for s in allowed if s not in STRATEGIES]

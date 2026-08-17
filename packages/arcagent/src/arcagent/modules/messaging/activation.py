@@ -192,11 +192,11 @@ async def _relevance(msg: Any, st: Any, channel: str, breaker: Any) -> Decision:
     """
     if not st.config.channel_triage:
         return Decision(True, "gate_disabled")
-    if st.classify_fn is None:
+    if st.oneshot_fn is None:
         return Decision(False, "gate_unavailable")
     try:
         verdict: str = await asyncio.wait_for(
-            st.classify_fn(
+            st.oneshot_fn(
                 system=_gate_prompt(st, channel),
                 user=sanitize_text(str(msg.body), max_length=2000),
             ),

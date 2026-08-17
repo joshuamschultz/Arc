@@ -455,11 +455,14 @@ class SessionManager:
         summary_template = load_stock("arcagent", "summary_template")
 
         try:
-            response = await asyncio.wait_for(
-                model.invoke([arcrun.Message(role="user", content=summary_template + msg_text)]),
+            result = await arcrun.run_oneshot(
+                model,
+                system=summary_template,
+                user=msg_text,
+                max_tokens=None,
                 timeout=self._config.compaction_timeout_seconds,
             )
-            summary: str = response.content or ""
+            summary: str = result.content or ""
             return summary[: self._config.compaction_summary_max_chars]
         except TimeoutError:
             # Distinct from a provider error: the caller skips compaction entirely
