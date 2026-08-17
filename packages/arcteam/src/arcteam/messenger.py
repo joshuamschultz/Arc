@@ -368,7 +368,7 @@ class MessagingService:
 
         # Route to each target
         streams_written: list[str] = []
-        channel_targeted = False
+        channel_names: list[str] = []
         last_seq = 0
         for target in message.to:
             # `@handle` is sugar for addressing an entity's inbox. Resolve it
@@ -396,7 +396,7 @@ class MessagingService:
 
             # FR-7: Enforce channel membership
             if scheme == "channel":
-                channel_targeted = True
+                channel_names.append(name)
                 is_member = await self._check_channel_membership(message.sender, name, entities)
                 if not is_member:
                     await self._to_dlq(message, "not_channel_member")
@@ -430,9 +430,9 @@ class MessagingService:
         # A channel @mention must reliably WAKE the mentioned entity even if it is
         # not a channel member (or subscribed to the channel stream yet), so fan
         # the same envelope into each mentioned entity's inbox.
-        if channel_targeted and message.mentions:
+        if channel_names and message.mentions:
             await self._fanout_mentions_to_inboxes(
-                message, entities, base_dict, streams_written, sender_did
+                message, entities, base_dict, streams_written, sender_did, channel_names
             )
 
         message.seq = last_seq
@@ -446,6 +446,7 @@ class MessagingService:
         base_dict: dict[str, Any],
         streams_written: list[str],
         sender_did: str,
+        channel_names: list[str],
     ) -> None:
         """Deliver a channel @mention to each mentioned entity's inbox (REQ-004).
 
@@ -456,36 +457,58 @@ class MessagingService:
         ``subscribe`` dedups by message id (shared ``seen_ids``), so it is never
         run twice. The sender is never self-notified, and an under-cleared mention
         is skipped (no-write-down, AC-4) rather than refusing the whole send.
+
+        The same @mention also pulls the agent INTO each channel it was named in
+        and is cleared for. The wake path already reaches a mentioned non-member;
+        without membership its reply is later refused as ``not_channel_member`` and
+        the answer is lost. Joining keeps wake and reply symmetric — bounded by the
+        channel's own clearance, so a mention never lifts an agent into a room it
+        may not read.
         """
         msg_level = parse_classification(
             message.classification, strict=self._strict_classification
         )
+        channel_levels = await self._channel_levels(channel_names)
         for did in message.mentions:
             if did == sender_did:
                 continue
             entity = next((e for e in entities if e.did == did), None)
             if entity is None:
                 continue
-            stream = f"arc.agent.{entity.handle}"
-            if stream in streams_written:
-                continue  # already delivered (member or direct target) — dedup
             recipient_level = parse_classification(
                 entity.clearance, strict=self._strict_classification
             )
-            if not dominates(recipient_level, msg_level):
-                continue  # under-cleared: the mention does not fan out (no-write-down)
-            seq, _offset = await self._backend.append_auto_seq(
-                STREAMS_COLLECTION, stream, {**base_dict}
+            stream = f"arc.agent.{entity.handle}"
+            # Inbox fan-out: one copy unless already delivered on a stream, never
+            # below the message's own classification (no-write-down).
+            if stream not in streams_written and dominates(recipient_level, msg_level):
+                seq, _offset = await self._backend.append_auto_seq(
+                    STREAMS_COLLECTION, stream, {**base_dict}
+                )
+                self._known_streams.add(stream)
+                await self._audit.log(
+                    event_type="message.mention_fanout",
+                    subject=stream,
+                    actor_id=message.sender,
+                    detail=f"@mention fanned to {entity.handle} inbox (msg {message.id})",
+                    stream=stream,
+                    msg_seq=seq,
+                )
+            # Join-on-mention: findable to reply, only where cleared to read.
+            for channel_name in channel_names:
+                if dominates(recipient_level, channel_levels[channel_name]):
+                    await self.join_channel(channel_name, did)
+
+    async def _channel_levels(self, channel_names: list[str]) -> dict[str, Any]:
+        """The parsed clearance of each targeted channel, for membership gating."""
+        levels: dict[str, Any] = {}
+        for name in channel_names:
+            data = await self._backend.read(CHANNELS_COLLECTION, name)
+            channel = Channel.model_validate(data) if data else Channel(name=name)
+            levels[name] = parse_classification(
+                channel.clearance, strict=self._strict_classification
             )
-            self._known_streams.add(stream)
-            await self._audit.log(
-                event_type="message.mention_fanout",
-                subject=stream,
-                actor_id=message.sender,
-                detail=f"@mention fanned to {entity.handle} inbox (msg {message.id})",
-                stream=stream,
-                msg_seq=seq,
-            )
+        return levels
 
     # --- Poll ---
 

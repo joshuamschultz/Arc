@@ -540,6 +540,79 @@ class TestChannelMembership:
         assert sent.seq >= 1
 
 
+class TestMentionJoinsChannel:
+    """A channel @mention pulls the mentioned agent into the channel.
+
+    The messenger already WAKES a mentioned non-member (mention fanout), but the
+    send path refuses a non-member's reply — so a mention-woken agent could
+    compose an answer that was then silently refused. Mention must therefore
+    grant membership, keeping wake and reply symmetric.
+    """
+
+    async def test_mentioned_nonmember_becomes_member_and_can_reply(
+        self, svc: MessagingService
+    ) -> None:
+        # a2 is NOT a member of this channel.
+        await svc.create_channel(Channel(name="work", members=["agent://a1", "user://josh"]))
+
+        # The operator posts to the channel and @mentions a2 (a non-member).
+        await svc.send(
+            Message(
+                sender="user://josh",
+                to=["channel://work"],
+                body="@a2 you may have been tracking this",
+            )
+        )
+
+        # The mention pulled a2 into #work: membership now resolves to a2.
+        work = next(c for c in await svc.list_channels() if c.name == "work")
+        assert any(
+            ref in ("agent://a2", "did:arc:test:agent/a2", "a2") for ref in work.members
+        ), work.members
+
+        # And so a2's reply is no longer refused as a non-member.
+        sent = await svc.send(
+            Message(sender="agent://a2", to=["channel://work"], body="here is the answer")
+        )
+        assert sent.seq >= 1
+
+    async def test_mention_join_does_not_bypass_no_write_down(
+        self, svc: MessagingService
+    ) -> None:
+        """An under-cleared mentioned agent is not joined into a higher channel."""
+        await registry_add_secret_agent(svc)
+        await svc.create_channel(
+            Channel(name="secret", members=["agent://a1"], clearance="SECRET")
+        )
+        await svc.send(
+            Message(
+                sender="agent://a1",
+                to=["channel://secret"],
+                body="@lowclear look at this",
+                classification="SECRET",
+            )
+        )
+        secret = next(c for c in await svc.list_channels() if c.name == "secret")
+        assert not any(
+            ref in ("agent://lowclear", "did:arc:test:agent/lowclear", "lowclear")
+            for ref in secret.members
+        ), secret.members
+
+
+async def registry_add_secret_agent(svc: MessagingService) -> None:
+    """Register an UNCLASSIFIED-clearance agent used by no-write-down tests."""
+    await svc._registry.register(
+        Entity(
+            did="did:arc:test:agent/lowclear",
+            handle="lowclear",
+            id="agent://lowclear",
+            name="Low Clearance",
+            type=EntityType.AGENT,
+            clearance="UNCLASSIFIED",
+        )
+    )
+
+
 class TestDeepThreading:
     """Deep threading: all replies in a thread share the same thread_id."""
 
