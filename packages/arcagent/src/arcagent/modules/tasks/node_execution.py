@@ -73,6 +73,10 @@ class WorkflowNode(BaseModel):
     # trustworthy read out of the bundle whose manifest was verified.
     prompt_ref: str | None = None
     skill: str | None = None
+    # A ``script`` node's bundle-relative script file. The runner stamps it, and
+    # the executor runs it as a subprocess — the node is deterministic code, not
+    # a model turn, so this is the whole instruction (there is no prompt).
+    script: str | None = None
     strategy: list[str] = Field(default_factory=list)
     # Either the resolved schema object or the bundle-relative path to it. The
     # runner currently stamps the path; accepting both means the gate fires
@@ -171,6 +175,7 @@ def node_from_task(task: Any) -> WorkflowNode | None:
             kind=str(metadata.get("node_kind", "agent")),
             prompt_ref=metadata.get("prompt"),
             skill=metadata.get("skill"),
+            script=metadata.get("script"),
             strategy=list(metadata.get("strategy") or ()),
             output_schema=metadata.get("output_schema"),
             artifacts=list(metadata.get("artifacts") or ()),

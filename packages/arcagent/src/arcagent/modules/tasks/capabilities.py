@@ -36,7 +36,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import sqlite3
+import sys
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -585,6 +587,124 @@ async def _fail_node_attempt(st: _runtime._State, task: Task, reason: str) -> st
 
 
 # ---------------------------------------------------------------------------
+# Script nodes (SPEC-061) — deterministic subprocess execution, no model turn
+# ---------------------------------------------------------------------------
+
+# stdout beyond this is truncated before it becomes a node output: an uncapped
+# script stdout is a token blowout and an injection surface downstream, exactly
+# as an uncapped upstream value is (node_execution.MAX_OUTPUT_CHARS).
+_SCRIPT_STDOUT_CAP = 262_144
+
+
+def _script_command(target: Path) -> list[str] | None:
+    """The argv to run a bundle script by kind — never a shell string.
+
+    The script path stays a single argv element, so a crafted filename can never
+    become a second command. ``.py`` runs on the runtime interpreter so a script
+    sees the environment the fleet does; ``.sh``/``.bash`` run on ``bash``;
+    anything else must carry its own execute bit and shebang.
+    """
+    suffix = target.suffix.lower()
+    if suffix == ".py":
+        return [sys.executable, str(target)]
+    if suffix in (".sh", ".bash"):
+        return ["bash", str(target)]
+    if os.access(target, os.X_OK):
+        return [str(target)]
+    return None
+
+
+def _parse_script_output(raw: str) -> dict[str, Any] | None:
+    """A script's stdout as the node's structured output.
+
+    A JSON object IS the output, so a script node can declare an output_schema
+    and satisfy it; a JSON scalar/array is wrapped under ``result``; anything
+    else is carried verbatim under ``stdout``. Empty stdout is no output — a node
+    with an output_schema then fails the schema gate, which is correct.
+    """
+    text = raw.strip()
+    if not text:
+        return None
+    try:
+        value = json.loads(text)
+    except ValueError:
+        return {"stdout": text[:_SCRIPT_STDOUT_CAP]}
+    if isinstance(value, dict):
+        return value
+    return {"result": value}
+
+
+async def _run_script_node(
+    st: _runtime._State, task: Task, node: WorkflowNode, self_did: str
+) -> None:
+    """Execute a ``script`` node deterministically and transition its task.
+
+    The bundle's signed script runs as a subprocess in the run's shared
+    workspace — no model, no tools. Its stdout becomes the node output, held to
+    the SAME schema and artifact gates an agent node's output is
+    (``_node_completion_refusal``): a script node is a first-class, verified step
+    and not a trapdoor around the contract. A non-zero exit or a failed gate is a
+    retryable attempt, exactly like an agent node's refusal.
+    """
+    bundle = _bundle_root(st, node)
+    if bundle is None:
+        await _fail_node_attempt(st, task, f"script node '{node.node_id}' has no reachable bundle")
+        return
+    target = _confined(bundle, node.script or "")
+    if target is None or not target.is_file():
+        await _fail_node_attempt(
+            st, task, f"script {node.script!r} is missing or escapes the workflow bundle"
+        )
+        return
+    command = _script_command(target)
+    if command is None:
+        await _fail_node_attempt(
+            st, task, f"script {node.script!r} is not runnable (.py, .sh, or an executable file)"
+        )
+        return
+    workdir = run_workspace(_team_root(st), st.workspace, node.run_id)
+    workdir.mkdir(parents=True, exist_ok=True)
+    env = {
+        **os.environ,
+        "ARC_RUN_ID": node.run_id,
+        "ARC_NODE_ID": node.node_id,
+        "ARC_BUNDLE_ROOT": str(bundle),
+        "ARC_WORKDIR": str(workdir),
+        # Upstream outputs, typed as the runner validated them — handed to the
+        # script as data in the environment, never spliced into the command.
+        "ARC_UPSTREAM": json.dumps(node.upstream, default=str)[:_SCRIPT_STDOUT_CAP],
+    }
+    proc = await asyncio.create_subprocess_exec(
+        *command,
+        cwd=str(workdir),
+        env=env,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = await proc.communicate()
+    finally:
+        # A cancel (operator stop or the reliability timeout) must not orphan the
+        # child: kill it before the coroutine unwinds.
+        if proc.returncode is None:
+            proc.kill()
+    if proc.returncode != 0:
+        detail = stderr.decode(errors="replace").strip()[:500] or f"exit code {proc.returncode}"
+        await _fail_node_attempt(st, task, f"script exited non-zero: {detail}")
+        return
+    output = _parse_script_output(stdout.decode(errors="replace"))
+    refusal = _node_completion_refusal(st, task, output)
+    if refusal is not None:
+        await _fail_node_attempt(st, task, refusal)
+        return
+    await _seal_run_legs(st, task)
+    await st.store.finish(
+        task.id, status="done", resolution="script executed", output=output, actor_did=self_did
+    )
+    await _notify_operator(st, f"done: {task.title}", task.classification)
+
+
+# ---------------------------------------------------------------------------
 # Dispatch loop (SPEC-056 Phase D) — assigned tasks actually run
 # ---------------------------------------------------------------------------
 
@@ -673,14 +793,20 @@ async def _run_task(st: _runtime._State, task: Task, run_id: str, self_did: str)
     # the run's legs into this dispatch closes that: the ledger unions them into
     # every policy evaluation inside, and records back what this node lit.
     with _node_dispatch(st, node) as carrier:
-        run = asyncio.ensure_future(
-            st.agent_run_fn(
-                _format_task_prompt(task),
-                session_key=_session_key(task.id),
-                run_id=run_id,
-                **run_kwargs,
+        if node is not None and node.kind == "script" and node.script:
+            # A script node is deterministic code, not a model turn: run its
+            # bundle script directly instead of the loop (SPEC-061). It still
+            # rides the same reliability wrapper, cancel path, and leg carrier.
+            run = asyncio.ensure_future(_run_script_node(st, task, node, self_did))
+        else:
+            run = asyncio.ensure_future(
+                st.agent_run_fn(
+                    _format_task_prompt(task),
+                    session_key=_session_key(task.id),
+                    run_id=run_id,
+                    **run_kwargs,
+                )
             )
-        )
         st.running[task.id] = run
         try:
             await _await_run(st, task, run, timeout, self_did)

@@ -762,3 +762,106 @@ class TestOutputArrivesHoweverTheModelSendsIt:
 
         assert result["retryable"] is True
         assert "output" in result["error"]
+
+
+def _script_bundle(root: Path, body: str, name: str = "scripts/stamp.sh") -> Path:
+    """Write a script into a bundle directory and return the bundle root."""
+    target = root / name
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(body, encoding="utf-8")
+    return root
+
+
+@pytest.mark.asyncio
+class TestScriptNodeExecution:
+    """SPEC-061 — a ``script`` node runs its bundle script deterministically.
+
+    The claim under test is exactly what a prior build got wrong: a ``script``
+    node must EXECUTE its script (not silently no-op), and its stdout must be
+    held to the same schema gate an agent node's output is.
+    """
+
+    async def test_script_runs_and_completes_with_parsed_output(
+        self, node_state: Any, tmp_path: Path
+    ) -> None:
+        from arcagent.modules.tasks.capabilities import _run_script_node, _state
+        from arcagent.modules.tasks.node_execution import node_from_task
+
+        bundle = _script_bundle(
+            tmp_path / "bundle",
+            '#!/usr/bin/env bash\necho "ran" > "$ARC_WORKDIR/ran.txt"\necho \'{"ok": true}\'\n',
+        )
+        schema = {"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]}
+        task = await _make_node_task(
+            node_state,
+            node_id="runscript",
+            node_kind="script",
+            script="scripts/stamp.sh",
+            bundle_root=str(bundle),
+            output_schema=schema,
+        )
+        st = await _state()
+        node = node_from_task(task)
+        assert node is not None
+        await _run_script_node(st, task, node, st.identity.did)
+
+        stored = await st.store.get("task_node_1")
+        assert stored is not None
+        assert stored.status == "done"
+        assert stored.output == {"ok": True}
+        # The script ACTUALLY executed, in the run's shared workspace.
+        assert (tmp_path / "runs" / "run_1" / "ran.txt").read_text().strip() == "ran"
+
+    async def test_nonzero_exit_is_a_retryable_attempt(
+        self, node_state: Any, tmp_path: Path
+    ) -> None:
+        from arcagent.modules.tasks.capabilities import _run_script_node, _state
+        from arcagent.modules.tasks.node_execution import node_from_task
+
+        bundle = _script_bundle(tmp_path / "bundle", '#!/usr/bin/env bash\necho boom >&2\nexit 3\n')
+        task = await _make_node_task(
+            node_state,
+            node_id="runscript",
+            node_kind="script",
+            script="scripts/stamp.sh",
+            bundle_root=str(bundle),
+            output_schema=None,
+        )
+        st = await _state()
+        node = node_from_task(task)
+        assert node is not None
+        await _run_script_node(st, task, node, st.identity.did)
+
+        stored = await st.store.get("task_node_1")
+        assert stored is not None
+        assert stored.status == "todo"  # requeued below the ceiling, not dead-lettered
+        assert stored.last_error is not None
+        assert "non-zero" in stored.last_error
+
+    async def test_stdout_must_satisfy_declared_schema(
+        self, node_state: Any, tmp_path: Path
+    ) -> None:
+        from arcagent.modules.tasks.capabilities import _run_script_node, _state
+        from arcagent.modules.tasks.node_execution import node_from_task
+
+        bundle = _script_bundle(
+            tmp_path / "bundle", '#!/usr/bin/env bash\necho \'{"ok": "not-a-bool"}\'\n'
+        )
+        schema = {"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]}
+        task = await _make_node_task(
+            node_state,
+            node_id="runscript",
+            node_kind="script",
+            script="scripts/stamp.sh",
+            bundle_root=str(bundle),
+            output_schema=schema,
+        )
+        st = await _state()
+        node = node_from_task(task)
+        assert node is not None
+        await _run_script_node(st, task, node, st.identity.did)
+
+        stored = await st.store.get("task_node_1")
+        assert stored is not None
+        assert stored.status != "done"
+        assert stored.output is None
