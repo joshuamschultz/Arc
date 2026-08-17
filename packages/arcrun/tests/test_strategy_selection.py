@@ -213,3 +213,33 @@ class TestStrategySelection:
 
         selection_events = [e for e in bus.events if "selection" in e.type]
         assert len(selection_events) == 0
+
+
+async def test_choosing_a_strategy_is_charged_to_the_run() -> None:
+    """Selection spends real tokens, so the run's counters must include them.
+
+    Uncounted spend is invisible twice over: the reported cost understates what
+    the run actually cost, and the budget breaker reads these same counters, so
+    a ceiling would be enforced against a number it knows is wrong (LLM10).
+    """
+    from packages.arcrun.tests.conftest import Usage
+
+    class SelectingModel:
+        async def invoke(self, messages, tools=None):
+            return LLMResponse(
+                tool_calls=[
+                    ToolCall(id="s1", name="select_strategy", arguments={"strategy": "code"})
+                ],
+                usage=Usage(input_tokens=40, output_tokens=8, total_tokens=48),
+                cost_usd=0.002,
+            )
+
+    state = _make_state(EventBus(run_id="selection-cost"))
+    before = state.tokens_used["total"]
+
+    chosen = await select_strategy(["react", "code"], SelectingModel(), state)
+
+    assert chosen == "code"
+    assert state.tokens_used["total"] == before + 48
+    assert state.tokens_used["input"] == 40
+    assert state.cost_usd == pytest.approx(0.002)

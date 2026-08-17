@@ -266,10 +266,29 @@ async def run_async(
     # ``create_task`` snapshots the current context, so binding the correlation
     # id here propagates it to the loop task (and any spawn it creates) even
     # though this scope exits before the task completes.
+    # Strategy selection happens INSIDE the task, not before it. Choosing a
+    # strategy can cost a model call, and until the task exists there is no
+    # RunHandle — so an operator cancel or a teammate's interrupt arriving
+    # during that call would have nothing to reach (ASI09/ASI10). Creating the
+    # task first makes the run steerable from the moment it is started.
     with request_context(state.run_id):
-        strategy_fn = await _select_and_emit(allowed_strategies, model, state)
-        loop_task = asyncio.create_task(strategy_fn(model, state, sandbox_obj, max_turns))
+        loop_task = asyncio.create_task(
+            _select_then_run(allowed_strategies, model, state, sandbox_obj, max_turns)
+        )
     return RunHandle(state=state, task=loop_task)
+
+
+async def _select_then_run(
+    allowed_strategies: list[str] | None,
+    model: Any,
+    state: RunState,
+    sandbox_obj: Sandbox,
+    max_turns: int,
+) -> LoopResult:
+    """Pick the strategy, then run it, both within the already-live task."""
+    strategy_fn = await _select_and_emit(allowed_strategies, model, state)
+    result: LoopResult = await strategy_fn(model, state, sandbox_obj, max_turns)
+    return result
 
 
 class RunHandle:

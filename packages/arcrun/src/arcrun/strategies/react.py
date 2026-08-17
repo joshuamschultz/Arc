@@ -298,7 +298,7 @@ async def react_loop(
         response = await model.invoke(messages, tools=tools, **invoke_kwargs)
         latency_ms = (time.time() - call_start) * 1000
 
-        _accumulate_usage(state, response)
+        accumulate_usage(state, response)
 
         bus.emit(
             "llm.call",
@@ -439,7 +439,7 @@ def _extract_completion_payload(
     return None
 
 
-def _accumulate_usage(state: RunState, response: Any) -> None:
+def accumulate_usage(state: RunState, response: Any) -> None:
     """Update token counts and cost from model response."""
     usage = getattr(response, "usage", None)
     if usage:

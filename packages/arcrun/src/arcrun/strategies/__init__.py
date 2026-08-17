@@ -130,8 +130,16 @@ async def select_strategy(
         user_message(content_text(state.messages[-1].content) if state.messages else ""),
     ]
 
+    # Imported here rather than at module scope: ``react`` imports ``Strategy``
+    # from this module, so a top-level import would be circular.
+    from arcrun.strategies.react import accumulate_usage
+
     try:
         response = await model.invoke(selection_messages, tools=[select_tool])
+        # Choosing a strategy costs real tokens and real money. Leaving that
+        # uncounted would understate every run's usage and hide the spend from
+        # the budget breaker, which reads these same counters (LLM10).
+        accumulate_usage(state, response)
         if response.tool_calls:
             chosen = response.tool_calls[0].arguments.get("strategy")
             reasoning = response.tool_calls[0].arguments.get("reasoning", "")

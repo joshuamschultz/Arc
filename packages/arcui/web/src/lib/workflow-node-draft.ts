@@ -9,7 +9,7 @@ export const NODE_KINDS: WorkflowNodeKind[] = ['agent', 'tool', 'script', 'route
 
 /** arcrun's registered strategies (arcrun.strategies.STRATEGIES). A node may
  * pin one or hand the loop a shortlist to choose from. */
-export const STRATEGIES = ['react', 'code', 'plan_execute'] as const
+export const STRATEGIES = ['react', 'code'] as const
 
 export const KIND_HELP: Record<WorkflowNodeKind, string> = {
   agent: 'A bounded agent run. Give it a prompt file, optionally a skill.',

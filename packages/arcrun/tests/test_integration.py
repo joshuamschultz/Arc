@@ -157,5 +157,8 @@ class TestIntegration:
         )
 
         result = await run(model, StaticProvider(_tools()), "prompt", "task")
-        assert result.cost_usd == pytest.approx(0.003, abs=1e-9)
-        assert result.tokens_used["total"] == 30  # 15 per call x 2 calls
+        # Three model calls, not two: choosing a strategy is a real call that
+        # spends real tokens, and the totals a caller reads must include it or
+        # they understate what the run cost.
+        assert result.cost_usd == pytest.approx(0.004, abs=1e-9)
+        assert result.tokens_used["total"] == 45  # 15 per call x 3 calls

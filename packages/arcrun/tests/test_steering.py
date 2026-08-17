@@ -186,3 +186,62 @@ class TestCancel:
         await handle.cancel("did:arc:operator")
         result = await handle.result()
         assert result.turns < 10
+
+
+class TestSteerableDuringSelection:
+    """A run must be steerable from the moment it is started.
+
+    Choosing a strategy can cost a model call. While that call is in flight the
+    run is already the operator's to cancel, so the ``RunHandle`` has to exist
+    before selection begins — not after it returns.
+    """
+
+    async def test_a_run_is_cancellable_while_it_is_still_choosing_a_strategy(
+        self,
+    ) -> None:
+        import asyncio
+
+        from arcrun import StaticProvider
+        from arcrun.loop import run_async
+        from arcrun.types import Tool, ToolContext
+
+        reached_selection = asyncio.Event()
+        release = asyncio.Event()
+
+        class ParkedModel:
+            """Parks on the selection call, exactly as a slow provider would."""
+
+            async def invoke(self, messages, tools=None, **_):
+                if tools and any(getattr(t, "name", "") == "select_strategy" for t in tools):
+                    reached_selection.set()
+                    await release.wait()
+                return LLMResponse(content="done", stop_reason="end_turn")
+
+        async def _echo(params, ctx: ToolContext) -> str:
+            return "ok"
+
+        provider = StaticProvider(
+            [
+                Tool(
+                    name="echo",
+                    description="Echo",
+                    input_schema={"type": "object", "properties": {}},
+                    execute=_echo,
+                )
+            ]
+        )
+
+        # Bounded on purpose: if selection ever moves back outside the task,
+        # ``run_async`` never returns and the failure is a hang. A timeout turns
+        # that into a clean, readable failure instead of a stuck CI job.
+        handle = await asyncio.wait_for(
+            run_async(ParkedModel(), provider, "Be helpful.", "Do it"), timeout=2
+        )
+
+        # The handle exists while selection is still parked — that is the point.
+        await asyncio.wait_for(reached_selection.wait(), timeout=2)
+        await handle.cancel("did:arc:test:operator", reason="changed my mind")
+        release.set()
+
+        result = await handle.result()
+        assert result is not None
