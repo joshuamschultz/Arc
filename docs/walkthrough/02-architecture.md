@@ -450,13 +450,21 @@ Interact side now, not one.
 
 ## Architecture Decision Records
 
-ADRs live in `.claude/architecture/decisions/` — they are project-history
-records rather than published guides, so they sit with the repository's other
-system files. Nineteen exist: `ADR-001`–`ADR-007` and `ADR-018`–`ADR-029`.
+ADRs live with the repository's other system files rather than in this published
+set — they are project history, not guides. Most are one file per decision under
+`.claude/architecture/decisions/`; some are recorded inline in the spec that
+produced them, and a few sit in `.claude/adrs/`.
+
+**For the full inventory — every ADR, where it lives, its status, and the next
+free number — see
+[`.claude/architecture/decisions/README.md`](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/README.md).**
+That index is the authority. The table below is a **selection**, not a census:
+the decisions that shape the architecture described in this chapter, with a note
+on why each one bites.
 
 | ADR | Status | One line |
 |---|---|---|
-| [ADR-018](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-018-no-mcp-no-migration-no-acp.md) — No MCP client, migration tooling, or ACP adapter | Accepted |  explicitly scoped these three out; see `project_arc_mcp_gap` territory — MCP is still a known gap today |
+| [ADR-018](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-018-no-mcp-no-migration-no-acp.md) — No MCP client, migration tooling, or ACP adapter | **Partly superseded** | Scoped all three out of SPEC-018. The migration-tooling and ACP exclusions still stand; **the MCP-client exclusion was reversed by ADR-030** — read the two together or you will conclude Arc cannot speak MCP |
 | [ADR-019](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-019-four-pillars-universal.md) — Four Pillars are universal defaults | Accepted | Identity, Sign, Authorize, Audit apply at every tier, not just federal — load-bearing for the whole security model |
 | [ADR-020](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-020-arcgateway-as-data-plane.md) — arcgateway owns the data plane, arcui is a pure consumer | Accepted | Every `team/<agent>/…` read goes through `arcgateway.fs_reader`, never direct filesystem access from `arcui` — see caveat above on `fs_watcher`'s current status |
 | [ADR-021](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-021-agent-self-description-via-toml-ui-section.md) — Agent self-description via `[ui]` in `arcagent.toml` | Accepted | UI display hints (name, color, role) live in the same TOML the agent already owns, not a sidecar file |
@@ -467,6 +475,10 @@ system files. Nineteen exist: `ADR-001`–`ADR-007` and `ADR-018`–`ADR-029`.
 | [ADR-026](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-026-transform-context-append-only-with-emergency-valve.md) — `transform_context` is append-only; compaction is a between-run boundary event | Accepted | Supersedes the old per-turn graduated-prune model in `ContextManager` |
 | [ADR-027](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-027-per-run-tool-set-freeze-security-invariant.md) — Per-run tool-set freeze as a structural security invariant | Accepted | The tool set is frozen for the lifetime of one run — no mid-run tool substitution |
 | [ADR-028](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-028-append-only-prefix-contract-debug-gated.md) — Append-only prefix contract enforced only under a debug flag | Accepted | The strict version of the append-only contract is opt-in via a debug flag, not always-on |
+| [ADR-029](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-029-workspace-vs-working-dir-and-state-persistence.md) — Agent home (workspace) vs working directory | Accepted | Agent state — memory, sessions, `context.md`, identity, the audit chain — is written with direct filesystem I/O to the workspace, **never** through the LLM-facing `write`/`edit`/`bash` tools. Moving the tools into a project must not drag the agent's brain in with them |
+| [ADR-030](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-030-mcp-capability-and-extension-placement.md) — Agents get MCP capability; extensions plug in from outside | Accepted | Reverses ADR-018's MCP-client exclusion. Also sets the placement rule: machine-level installs are the host's business, agent-facing skills and tools go in the capability folder, implementation stays inside the extension. The governing test is that the eleventh connector must be addable without touching core |
+| [ADR-031](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-031-dynamic-script-not-declared-graph.md) — Ad-hoc model-authored orchestration is a restricted script, not a declared graph | Accepted | Constrains what the model may author at runtime; a script runs under existing sandbox and policy, a declared graph would be a second execution model to secure |
+| [ADR-032](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-032-channel-responder-selection-routes-on-published-indexes.md) — A channel responder is chosen by routing over published indexes | Accepted | Who answers an un-addressed channel post is decided by routing over published digests, not by polling each agent about its own fitness |
 
 `ADR-019` (Four Pillars) and `ADR-020`/`ADR-023` (data plane + capability
 resolution) are the three most load-bearing for day-to-day contribution — they

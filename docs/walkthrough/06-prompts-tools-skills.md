@@ -238,13 +238,30 @@ members (`packages/arcagent/src/arcagent/tools/_transport.py:27`).
 | Transport | Enum value | Status |
 |---|---|---|
 | Native (in-process, `@tool`-decorated) | `NATIVE` | **Wired.** Every real registration path (`builtins`, capability-loaded tools) constructs `RegisteredTool(transport=ToolTransport.NATIVE, ...)`. |
-| MCP | `MCP` | **Enum + config only.** `MCPServerEntry` exists in `ToolsConfig` (`core/config.py:152-194`); nothing reads `mcp_servers` to spawn a connection or dispatch a call. `ADR-018-no-mcp-no-migration-no-acp.md` explicitly excludes an MCP client from scope. |
+| MCP | `MCP` | **Enum + config only — but MCP itself is not missing.** `MCPServerEntry` exists in `ToolsConfig` (`core/config.py:152-194`), and nothing reads `mcp_servers` to spawn a connection or dispatch a call through *this* enum. Arc reaches MCP servers by a different route — see the note below. |
 | HTTP | `HTTP` | **Enum + config only.** `HTTPToolEntry` is declared (`core/config.py:161`); no dispatch path constructs `transport=ToolTransport.HTTP`. |
 | Process | `PROCESS` | **Enum + config only.** Same pattern — `ProcessToolEntry` is declared, never wired. |
 
 > ⚠️ This is the "producers unwired" pattern named in `CLAUDE.md`: the shape
-> exists for a future transport, but today only `NATIVE` tools run. Building
-> an HTTP- or process-backed tool means writing the wiring, not configuring it.
+> exists for a future transport, but today only `NATIVE` tools run through this
+> registry. Building an HTTP- or process-backed tool means writing the wiring,
+> not configuring it.
+
+> **MCP is a live capability, reached through extensions — not through the
+> `ToolTransport.MCP` enum.** ADR-018 originally excluded an MCP client from
+> scope, and older documentation still reads that way, but
+> [ADR-030](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-030-mcp-capability-and-extension-placement.md)
+> reversed exactly that exclusion (leaving the migration-tooling and ACP
+> exclusions standing). An MCP client ships today as an *extension attachment*:
+> `McpAttachment` in `packages/arcagent/src/arcagent/extension/mcp_attachment.py`,
+> speaking the stateless 2026-07-28 revision over httpx with no vendor SDK, with
+> tool trust metadata coming from the manifest via `McpToolPolicy` rather than
+> from server-supplied annotations. It reaches the agent through the same
+> `ExtensionAttachment` methods a local binary uses, so an MCP tool call rides the
+> ordinary envelope — signed `ToolCall`, `caller_did`, `PolicyPipeline`,
+> `HumanGate`, audit. Nothing in `arcagent` outside that module knows the protocol
+> exists. So "the `MCP` enum is unwired" and "Arc has no MCP" are two different
+> statements, and only the first is true.
 
 **Builtins split across two packages, by ownership (`CLAUDE.md`'s "don't mix
 concerns" rule):**
@@ -364,8 +381,10 @@ load-time verify doesn't fail closed on a self-inflicted mismatch.
 | `packages/arcagent/src/arcagent/capabilities/capability_registry.py` | Where discovered tools/skills/hooks land |
 | `packages/arcagent/src/arcagent/capabilities/inventory.py` | Read-only enumeration seam for arcui |
 | `packages/arcagent/src/arcagent/capabilities/provider.py` | `AgentCapabilityProvider` — arcrun's `CapabilityProvider` contract |
-| `docs/architecture/decisions/ADR-018-no-mcp-no-migration-no-acp.md` | Why MCP client support is explicitly out of scope |
-| `docs/architecture/decisions/ADR-023-capability-resolution-and-arcrun-provider.md` | Lazy-load contract, precedence, trust axis |
+| `.claude/architecture/decisions/ADR-018-no-mcp-no-migration-no-acp.md` | The original scope cut — read with ADR-030, which reverses its MCP-client half |
+| `.claude/architecture/decisions/ADR-030-mcp-capability-and-extension-placement.md` | Why agents do get MCP, and where an extension's pieces belong |
+| `packages/arcagent/src/arcagent/extension/mcp_attachment.py` | The MCP client itself, as an extension attachment |
+| `.claude/architecture/decisions/ADR-023-capability-resolution-and-arcrun-provider.md` | Lazy-load contract, precedence, trust axis |
 | `walkthroughs/arcagent/02-tool-integration.ipynb` | Runnable walkthrough of registering and calling a tool |
 
 If you're adding a tool, start in `builtins/capabilities/` (identity-aware)

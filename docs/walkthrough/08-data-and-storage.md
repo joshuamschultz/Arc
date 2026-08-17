@@ -220,7 +220,7 @@ earlier two-sink split — an unchained `JsonlSink` and an in-memory-only
 `SignedChainSink` — and there is **no live push sink** (`UIBridgeSink`) in
 the current code: `arcui`'s own comments describe it only as historical
 context, and ADR-022 records the decision to delete it (see
-`docs/architecture/decisions/ADR-022-storage-split-arctrust-worm-arcstore-operational.md`).
+`.claude/architecture/decisions/ADR-022-storage-split-arctrust-worm-arcstore-operational.md`).
 The dashboard reads the durable SQLite mirror instead of receiving a push.
 
 Each `write()` appends one JSON line:
@@ -597,7 +597,7 @@ spool/mirror — those stay append-only and unredacted.
 | `packages/arcagent/src/arcagent/core/vault/` | `VaultBackend` Protocol + file/env/Azure backends |
 | `packages/arcagent/src/arcagent/modules/workpad/` | Sole writer of `context.md` |
 | `packages/arcagent/src/arcagent/modules/user_profile/tombstone.py` | GDPR erasure for profile data (not the WORM chain) |
-| `docs/architecture/decisions/ADR-022-storage-split-arctrust-worm-arcstore-operational.md` | The decision record for this whole split |
+| `.claude/architecture/decisions/ADR-022-storage-split-arctrust-worm-arcstore-operational.md` | The decision record for this whole split |
 
 If you're adding a new kind of durable fact: decide compliance-evidence vs.
 telemetry vs. directory-state vs. agent-knowledge first, using the table

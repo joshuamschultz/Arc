@@ -278,11 +278,20 @@ Write an Architecture Decision Record when a choice is non-obvious enough
 that a future contributor would otherwise re-litigate it — a scope cut, a
 layering rule, a storage split, a security invariant.
 
-ADRs live at `.claude/architecture/decisions/ADR-NNN-<slug>.md` (this
-directory is tracked in git, not ignored). The highest number currently
-in use is ADR-030; the next free number is ADR-031. A handful of earlier
-ADRs (ADR-017A through 017D) live at `.claude/adrs/` instead — check both
-locations before assuming a number is free.
+New ADRs go at `.claude/architecture/decisions/ADR-NNN-<slug>.md` (this
+directory is tracked in git, not ignored).
+
+Do not work out the next free number by looking at that directory. ADRs sit
+in three places: one file per decision there, a handful at `.claude/adrs/`
+(ADR-017A through 017D), and others recorded inline inside the spec that
+produced them under `### ADR-NNN` headings in `.claude/specs/*/SDD.md`. A
+number with no file is usually still taken.
+
+`.claude/architecture/decisions/README.md` is the index and the authority:
+it lists every ADR, says which of the three places it lives in, and states
+the next free number. Take the number from there, then add your ADR's row
+and bump that number in the same PR. Never renumber an existing ADR to close
+a gap — the references run through docs, specs, and source.
 
 ## Docs
 
