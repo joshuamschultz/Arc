@@ -201,3 +201,36 @@ __all__ = [
     "model_provider_keys",
     "validate_model_modules",
 ]
+
+
+EmbeddingProvider: TypeAlias = "arcllm.EmbeddingProvider"
+"""Provider-neutral embedder protocol accepted by ArcRun consumers."""
+
+EmbeddingUnavailable = arcllm.ArcLLMEmbeddingUnavailableError
+"""Raised when no embedder is installed or configured for this deployment."""
+
+
+async def embed_texts(
+    texts: list[str],
+    *,
+    model: str = "",
+    backend: str = "local",
+    base_url: str = "",
+) -> list[list[float]]:
+    """Embed ``texts`` and return one unit vector each, in input order.
+
+    Retrieval that must find a rare proper noun needs both a lexical and a dense
+    signal, and the dense half is a model call — so it belongs on this side of
+    the boundary with every other model call (ADR-032). Consumers above ArcRun
+    get vectors and nothing else: no provider, no endpoint, no key.
+
+    Vectors are normalized, so a dot product is the cosine similarity. Raises
+    :data:`EmbeddingUnavailable` when this deployment has no embedder, which a
+    hybrid ranker treats as "run the lexical half alone" rather than as failure.
+    """
+    if not texts:
+        return []
+    resolved = model or arcllm.DEFAULT_EMBED_MODEL
+    provider = arcllm.resolve_embedder(resolved, backend=backend, base_url=base_url or None)
+    response = await arcllm.embed(texts, model=resolved, provider=provider)
+    return [list(vector) for vector in response.vectors]
