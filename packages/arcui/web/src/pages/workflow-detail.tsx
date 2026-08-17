@@ -85,14 +85,18 @@ function describeError(e: unknown): { message: string; fieldErrors: WorkflowFiel
  * unit, so changing an instruction drops the signature exactly as changing the
  * graph does.
  */
-function PromptEditor({
+function FileBodyEditor({
   workflowId,
   version,
   path,
+  label = 'prompt',
+  placeholder = 'What this step should do, in plain language.',
 }: {
   workflowId: string
   version: number
   path: string
+  label?: string
+  placeholder?: string
 }) {
   const file = useWorkflowFile(workflowId, path)
   const write = useWriteWorkflowFile(workflowId)
@@ -125,12 +129,12 @@ function PromptEditor({
       <Textarea
         rows={10}
         value={content}
-        placeholder="What this step should do, in plain language."
+        placeholder={placeholder}
         onChange={(e) => setDraft(e.target.value)}
         className="text-xs"
       />
       <Button size="sm" variant="outline" disabled={write.isPending} onClick={save}>
-        {write.isPending ? 'Saving…' : 'Save prompt'}
+        {write.isPending ? 'Saving…' : `Save ${label}`}
       </Button>
     </div>
   )
@@ -237,10 +241,27 @@ function NodeInspector({
                   <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                     Prompt
                   </span>
-                  <PromptEditor
+                  <FileBodyEditor
                     workflowId={workflowId}
                     version={version}
                     path={draft.prompt.trim()}
+                  />
+                </div>
+              )}
+              {draft.kind === 'script' && draft.script.trim() && (
+                <div className="space-y-1">
+                  <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                    Script
+                  </span>
+                  <FileBodyEditor
+                    workflowId={workflowId}
+                    version={version}
+                    path={draft.script.trim()}
+                    label="script"
+                    placeholder={
+                      '#!/usr/bin/env bash\n# The exact commands this step runs. ' +
+                      'Print JSON on stdout to satisfy an output schema.'
+                    }
                   />
                 </div>
               )}

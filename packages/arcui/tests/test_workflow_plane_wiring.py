@@ -122,3 +122,75 @@ async def test_unknown_workflow_reads_as_not_found(plane: Any) -> None:
 def test_slugify_never_produces_a_path() -> None:
     assert slugify("../../etc/passwd") == "etc-passwd"
     assert slugify("  ") == "workflow"
+
+
+_MULTIFILE_DEFINITION = """
+[workflow]
+id = "multi"
+version = 1
+description = "A workflow whose nodes reference more than one companion file"
+owner = "@coder_agent"
+
+[[node]]
+id = "make"
+kind = "agent"
+agent = "@coder_agent"
+prompt = "prompts/make.md"
+
+[[node]]
+id = "run"
+kind = "script"
+agent = "@coder_agent"
+needs = ["make"]
+script = "scripts/run.sh"
+output_schema = "schemas/out.json"
+"""
+
+
+@pytest.fixture
+async def multifile_plane(tmp_path: Path) -> Any:
+    """A dashboard plane over a workflow whose bundle already holds two files.
+
+    This is the shape the edit-path bug needed: editing ONE companion file must
+    not report the OTHER existing files as missing (bundle_root resolved one
+    level too high made every reference read as absent).
+    """
+    OperatorKey.generate().save(tmp_path / "operator" / "operator.key")
+    bundle = tmp_path / "workflows" / "multi"
+    (bundle / "prompts").mkdir(parents=True)
+    (bundle / "scripts").mkdir(parents=True)
+    (bundle / "schemas").mkdir(parents=True)
+    (bundle / "workflow.toml").write_text(_MULTIFILE_DEFINITION, encoding="utf-8")
+    (bundle / "prompts" / "make.md").write_text("make the thing", encoding="utf-8")
+    (bundle / "scripts" / "run.sh").write_text("#!/usr/bin/env bash\necho '{}'\n", encoding="utf-8")
+    (bundle / "schemas" / "out.json").write_text('{"type": "object"}', encoding="utf-8")
+
+    backend = SqliteBackend(tmp_path / "store.db")
+    await backend.start()
+    runner = build_workflow_runner(
+        tier="personal",
+        task_store_backend=backend,
+        runner_key_path=tmp_path / "operator" / "operator.key",
+        workspace_root=tmp_path,
+    )
+    yield build_dashboard_plane(runner=runner)
+    await backend.stop()
+
+
+@pytest.mark.asyncio
+async def test_editing_one_file_does_not_report_the_others_missing(multifile_plane: Any) -> None:
+    """Regression: bundle_root must be the workflow's OWN dir, not the root.
+
+    Resolving one level too high made the prompt and schema sitting on disk read
+    as missing, so an operator rewriting the script in the dashboard was refused
+    for files that were right there.
+    """
+    actor = OperatorActor(did="did:arc:operator:test", session_id="test-session")
+    result = await multifile_plane.write_file(
+        "multi",
+        "scripts/run.sh",
+        "#!/usr/bin/env bash\necho '{\"ok\": true}'\n",
+        expected_version=1,
+        actor=actor,
+    )
+    assert not result.errors, f"edit wrongly rejected: {result.errors}"

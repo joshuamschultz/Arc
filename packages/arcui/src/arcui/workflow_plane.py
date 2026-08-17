@@ -467,7 +467,14 @@ def build_dashboard_plane(
     root = workflows_root or definitions.root
 
     def _validate(definition: Any, *, pending_files: frozenset[str] = frozenset()) -> Any:
-        return validate_definition(definition, bundle_root=root, pending_files=pending_files)
+        # THE definition's own bundle, not the directory that holds every bundle.
+        # Resolving one level too high makes every existing prompt/schema/script
+        # read as missing, so an edit that adds no new files — rewrite a script,
+        # change an agent — is wrongly rejected unless the call happens to carry
+        # those files as pending. (Mirrors the arcagent workflows closure.)
+        return validate_definition(
+            definition, bundle_root=root / definition.id, pending_files=pending_files
+        )
 
     plane = WorkflowControlPlane(
         definitions=definitions,
