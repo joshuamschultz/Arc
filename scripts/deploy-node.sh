@@ -78,6 +78,13 @@ ENV_FILE="${ARC_ENV_FILE:-$REPO_ROOT/.env}"
 ARC_CONFIG_DIR="${ARC_CONFIG_DIR:-$HOME/.arc}"
 export ARC_CONFIG_DIR
 
+# arc_team() falls back to ARC_CONFIG_DIR before ~/arc, so exporting the line
+# above is itself enough to move the fleet into the hidden home — every `arc`
+# call below would answer ~/.arc/team while the unit serves ~/arc/team. Pin the
+# fleet explicitly so the resolver and the unit cannot disagree.
+ARC_TEAM_ROOT="${ARC_TEAM_ROOT:-$HOME/arc}"
+export ARC_TEAM_ROOT
+
 log()  { echo "→ $*"; }
 ok()   { echo "  ✓ $*"; }
 fail() { echo "  ✗ $*" >&2; exit 1; }
@@ -176,8 +183,13 @@ log "Splitting the Arc home if it is still flat (idempotent)..."
 # disagree about which directory holds the agents, and starting from the wrong
 # empty root loads ZERO agents while reporting healthy.
 TEAM_ROOT="$("$VENV_PY" -c 'from arctrust.paths import arc_team; print(arc_team())')"
-[ "$(basename "$TEAM_ROOT")" = "$FLEET_DIR" ] || fail \
-  "the rsync guard watched '$FLEET_DIR' but the resolver says the fleet is '$(basename "$TEAM_ROOT")'"
+# Compare the FULL path, not the basename. Both sides spell the last component
+# "team", so a basename check passes while the parent is wrong — which is exactly
+# the failure this guard exists to catch, and it could not see it.
+EXPECTED_TEAM_ROOT="${ARC_TEAM_ROOT:-$HOME/arc}/$FLEET_DIR"
+[ "$TEAM_ROOT" = "$EXPECTED_TEAM_ROOT" ] || fail \
+  "the resolver says the fleet is '$TEAM_ROOT' but this deploy targets '$EXPECTED_TEAM_ROOT' — \
+the unit would serve one and agents would be created in the other"
 ok "fleet root: $TEAM_ROOT"
 
 # --- 3. nats-server (not a Python dep — arcteam auto-spawns it, needs PATH) --

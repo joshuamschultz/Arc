@@ -182,6 +182,53 @@ def test_the_deploy_script_asks_the_resolver_where_the_fleet_is() -> None:
     )
 
 
+def test_exporting_the_config_dir_cannot_move_the_fleet(monkeypatch, tmp_path) -> None:
+    """``arc_team()`` falls back to ARC_CONFIG_DIR, so exporting it relocates the fleet.
+
+    ``deploy-node.sh`` exports ARC_CONFIG_DIR for the runtime install. That alone
+    made every ``arc`` call in the script answer ``~/.arc/team`` while the unit
+    served ``~/arc/team`` — so ``arc agent create`` minted a second set of agents,
+    with new DIDs and no personas, in a directory nothing serves. The box then
+    started, loaded the real fleet, logged the full agent count and passed every
+    health check, while message routing pointed at a DID absent from the served
+    fleet. Caught on a live deploy, one command before it ran.
+
+    The basename guard could not see it: both sides spell the last component
+    "team". Only the full path shows the parent is wrong.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / ".arc"))
+    monkeypatch.delenv("ARC_TEAM_ROOT", raising=False)
+    assert paths.arc_team() == tmp_path / ".arc" / "team", (
+        "precedence changed; this test guards the reason the script must pin ARC_TEAM_ROOT"
+    )
+
+    assert "export ARC_TEAM_ROOT" in _script(), (
+        "deploy-node.sh exports ARC_CONFIG_DIR, which moves the fleet into the hidden "
+        "home unless ARC_TEAM_ROOT is pinned alongside it"
+    )
+
+    monkeypatch.setenv("ARC_TEAM_ROOT", str(tmp_path / "arc"))
+    assert paths.arc_team() == tmp_path / "arc" / "team"
+
+
+def test_the_fleet_guard_compares_full_paths_not_basenames() -> None:
+    """A guard that compares ``basename`` passes while the parent is wrong.
+
+    ``~/.arc/team`` and ``~/arc/team`` share a basename, so the check meant to
+    catch a relocated fleet matched both. The comparison must be the whole path.
+    """
+    script = _script()
+    assert 'basename "$TEAM_ROOT"' not in script, (
+        "the fleet-root guard compares basenames; ~/.arc/team and ~/arc/team both "
+        "end in 'team', so it cannot see a fleet that moved"
+    )
+    assert '[ "$TEAM_ROOT" = "$EXPECTED_TEAM_ROOT" ]' in script, (
+        "nothing in deploy-node.sh compares the resolved fleet root against the "
+        "one this deploy targets"
+    )
+
+
 def test_the_deploy_script_installs_the_runtime_beside_its_siblings() -> None:
     """A versioned install directory is what makes the flip and the rollback exist."""
     assert "$RUNTIME_VERSION" in _assignment("RUNTIME_DIR")
