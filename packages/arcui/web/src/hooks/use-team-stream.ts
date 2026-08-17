@@ -38,7 +38,7 @@ const POST_ERRORS: Record<string, string> = {
 }
 
 interface PendingPost {
-  resolve: () => void
+  resolve: (warning: string | null) => void
   reject: (err: Error) => void
   timer: ReturnType<typeof setTimeout>
 }
@@ -63,13 +63,13 @@ export function useTeamStream(channel: string | null) {
 
   // Settle whatever post is in flight. Every exit path routes through here so a
   // pending promise can never outlive its socket.
-  const settle = useCallback((err: Error | null) => {
+  const settle = useCallback((err: Error | null, warning: string | null = null) => {
     const pending = pendingRef.current
     if (!pending) return
     pendingRef.current = null
     clearTimeout(pending.timer)
     if (err) pending.reject(err)
-    else pending.resolve()
+    else pending.resolve(warning)
   }, [])
 
   useEffect(() => {
@@ -89,7 +89,12 @@ export function useTeamStream(channel: string | null) {
     })
 
     ws.addEventListener('message', (ev) => {
-      let frame: TeamFrame & { code?: string; message?: string; error?: string }
+      let frame: TeamFrame & {
+        code?: string
+        message?: string
+        error?: string
+        warning?: string
+      }
       try {
         frame = JSON.parse(ev.data as string)
       } catch {
@@ -100,7 +105,8 @@ export function useTeamStream(channel: string | null) {
         return
       }
       if (frame.type === 'posted') {
-        settle(null)
+        // Delivered, but the server may still be telling us nobody can answer.
+        settle(null, frame.warning ?? null)
         return
       }
       if (frame.type === 'error') {
@@ -145,7 +151,7 @@ export function useTeamStream(channel: string | null) {
    * box until this resolves.
    */
   const post = useCallback(
-    (text: string): Promise<void> => {
+    (text: string): Promise<string | null> => {
       const ws = wsRef.current
       if (!channel) return Promise.reject(new Error('No channel selected.'))
       if (!text.trim()) return Promise.reject(new Error('Message was empty.'))
@@ -155,7 +161,7 @@ export function useTeamStream(channel: string | null) {
       if (pendingRef.current) {
         return Promise.reject(new Error('Still sending the previous message.'))
       }
-      return new Promise<void>((resolve, reject) => {
+      return new Promise<string | null>((resolve, reject) => {
         const timer = setTimeout(
           () => settle(new Error('The server did not acknowledge the message.')),
           POST_ACK_TIMEOUT_MS,

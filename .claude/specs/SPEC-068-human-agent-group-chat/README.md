@@ -510,12 +510,18 @@ stage: `ruff check`, `mypy --strict`, and the **full** suite — not a subset.
 
 1. ~~**D1 — un-addressed posts.**~~ **Decided 2026-08-17: relevance triage,
    fail-closed. Designated responder rejected.**
-2. **Auto-create on first post.** F1's current behaviour creates a one-member
-   room. This spec stops auto-creating a room the operator is alone in; the
-   remaining choice is whether a dashboard post to a non-existent channel is an
-   error, or creates a channel seeded with the full roster. Implemented as an
-   error plus a UI affordance to add members — a silently empty room is the one
-   outcome that must not survive.
+2. ~~**Auto-create on first post.**~~ **Settled during stage 2, and I changed my
+   own recommendation.** I had proposed refusing a post to a channel that does
+   not exist. Reading the code that decides it, that is wrong: auto-create is a
+   deliberate, documented convenience for a trusted operator (REQ-061), and
+   `test_post_to_new_channel_creates_it` pins it — a test pinning a behaviour is
+   a message to whoever removes it. The defect was never the creation, it is
+   that the resulting room has no agent in it and says nothing about that.
+   So auto-create stays and the post is **delivered with a warning** naming the
+   empty channel. Membership management already exists in the dashboard
+   (`components/channel-management.tsx`), so the warning points at a control the
+   operator already has. Refusing would have deleted a justified feature to fix
+   a reporting bug.
 3. **Should a channel default to every registered agent?** Convenient, and it
    matches "the team channel"; also the largest fan-out surface. Left to the
    operator per channel rather than defaulted.

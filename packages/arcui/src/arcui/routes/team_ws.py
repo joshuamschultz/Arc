@@ -25,6 +25,7 @@ from arcgateway.identity import derive_viewer_did
 from starlette.routing import WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
+from arcui.messaging import TeamPostRefusedError
 from arcui.ws_helpers import CLOSE_AUTH_INVALID, authenticate_ws, run_ws_tasks
 
 logger = logging.getLogger(__name__)
@@ -68,14 +69,21 @@ async def _receive_from_browser(ws: WebSocket, sender: str, forwarder: Any) -> N
             )
             continue
         try:
-            await forwarder(sender=sender, channel=channel, text=text)
+            warning = await forwarder(sender=sender, channel=channel, text=text)
+        except TeamPostRefusedError as exc:
+            # The sender typed something fixable; its text names what was wrong.
+            await ws.send_json({"type": "error", "code": "post_refused", "message": str(exc)})
+            continue
         except Exception:  # reason: forwarding owner failed — inform, don't crash the view
             logger.exception("team_ws: forward to arcteam failed")
             await ws.send_json(
                 {"type": "error", "code": "forward_failed", "message": "could not forward post"}
             )
             continue
-        await ws.send_json({"type": "posted", "channel": channel})
+        posted: dict[str, Any] = {"type": "posted", "channel": channel}
+        if warning:
+            posted["warning"] = warning
+        await ws.send_json(posted)
 
 
 async def team_ws_endpoint(ws: WebSocket) -> None:

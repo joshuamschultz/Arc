@@ -211,6 +211,7 @@ function ChannelPanel({
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
+  const [sendWarning, setSendWarning] = useState<string | null>(null)
 
   // Sender colors reuse the same roster colors shown in the agent rail, so a
   // channel message row's avatar matches the sender's identity elsewhere in
@@ -266,8 +267,9 @@ function ChannelPanel({
     if (!text.trim() || sending) return
     setSending(true)
     setSendError(null)
+    setSendWarning(null)
     try {
-      await post(text)
+      setSendWarning(await post(text))
       setText('')
     } catch (err) {
       setSendError(err instanceof Error ? err.message : 'Could not send message.')
@@ -335,6 +337,11 @@ function ChannelPanel({
         {sendError ? (
           <p role="alert" className="text-[11px] text-destructive">
             {sendError}
+          </p>
+        ) : null}
+        {sendWarning ? (
+          <p role="status" className="text-[11px] text-muted-foreground">
+            {sendWarning}
           </p>
         ) : null}
         <div className="flex items-center gap-2">

@@ -208,12 +208,24 @@ async def build_messaging_service(
     return service, registry, backend
 
 
+class TeamPostRefusedError(Exception):
+    """A channel post was refused for a reason the person who typed it can fix.
+
+    Distinct from an unexpected forwarding failure: the message names what was
+    wrong (an ``@handle`` that matches no entity) and is safe to show verbatim,
+    because it is built from the operator's own input and the registry's handles
+    rather than from an exception's internals.
+    """
+
+
 def build_team_post_forwarder(*, service: Any, registry: Any) -> Any | None:
     """Build the ``/ws/team`` forwarder that posts an operator message to a channel.
 
-    Returns an async callable ``(*, sender, channel, text) -> None`` that a
+    Returns an async callable ``(*, sender, channel, text) -> str | None`` that a
     trusted operator's group post flows through (REQ-061), or ``None`` when the
     deployment has no operator key (the route then reports ``forward_unavailable``).
+    The returned string is a warning to show the sender — a delivered post that
+    nonetheless nobody can answer — and ``None`` means an ordinary success.
 
     The operator is a first-class signing entity: on first post it self-registers
     in the EntityRegistry under its key-derived DID and auto-joins the target
@@ -227,8 +239,18 @@ def build_team_post_forwarder(*, service: Any, registry: Any) -> Any | None:
     if op is None:
         return None
 
-    async def forward(*, sender: str, channel: str, text: str) -> None:
+    async def forward(*, sender: str, channel: str, text: str) -> str | None:
+        from arcteam.mentions import unresolved_mentions
         from arcteam.types import Channel, Entity, EntityType, Message
+
+        # Refuse before anything is written. An unresolvable @handle is dropped
+        # by apply_mentions, which turns an addressed post into an un-addressed
+        # broadcast: no inbox fanout, no action_required, no priority bump, and
+        # nothing anywhere saying the name was wrong.
+        unknown = unresolved_mentions(await registry.list_entities(), text)
+        if unknown:
+            named = ", ".join(f"@{handle}" for handle in unknown)
+            raise TeamPostRefusedError(f"No such teammate: {named}. Check the handle and resend.")
 
         if await registry.get(op.did) is None:
             await registry.register(
@@ -257,8 +279,44 @@ def build_team_post_forwarder(*, service: Any, registry: Any) -> Any | None:
                 meta={"operator_token_did": sender},
             )
         )
+        return await _no_audience_warning(service, registry, channel, op.did)
 
     return forward
 
 
-__all__ = ["build_messaging_service", "build_team_post_forwarder"]
+async def _no_audience_warning(
+    service: Any, registry: Any, channel: str, operator_did: str
+) -> str | None:
+    """Warn when a delivered post has no agent in the room to read it.
+
+    Posting auto-creates a channel whose only member is the operator, which is a
+    legitimate way to open a room but leaves one where no agent is subscribed.
+    Silence from an empty channel is indistinguishable from every agent choosing
+    not to answer, and that ambiguity is the whole defect. Fail-open: if the
+    audience cannot be determined the post is not second-guessed.
+    """
+    from arcteam.registry import UnknownHandle, resolve_ref
+    from arcteam.types import EntityType
+
+    try:
+        current = next((c for c in await service.list_channels() if c.name == channel), None)
+        if current is None:
+            return None
+        entities = await registry.list_entities()
+        for member in current.members:
+            try:
+                member_did = resolve_ref(entities, member)
+            except UnknownHandle:
+                continue
+            if member_did == operator_did:
+                continue
+            entity = next((e for e in entities if e.did == member_did), None)
+            if entity is not None and entity.type == EntityType.AGENT:
+                return None
+    except Exception:  # reason: advisory only — never fail a delivered post
+        logger.warning("could not determine channel audience for #%s", channel, exc_info=True)
+        return None
+    return f"Nobody is in #{channel} yet — add members so they can reply."
+
+
+__all__ = ["TeamPostRefusedError", "build_messaging_service", "build_team_post_forwarder"]

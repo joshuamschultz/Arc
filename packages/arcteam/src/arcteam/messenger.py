@@ -39,6 +39,10 @@ DLQ_KEY = "dlq"
 # (the NATS consumer also blocks up to its own fetch timeout).
 _FETCH_BATCH = 20
 _IDLE_SLEEP = 0.05
+# How often a live subscription re-resolves its channel membership. Short enough
+# that adding an agent to a channel from the dashboard feels immediate; long
+# enough that it is one registry read per entity per interval, not per message.
+_RESUBSCRIBE_INTERVAL = 15.0
 
 MessageHandler = Callable[["Message"], Awaitable[None]]
 
@@ -86,10 +90,30 @@ def _cursor_key(stream: str, entity_id: str) -> str:
 
 
 class Subscription:
-    """Handle for a running push subscription; ``stop`` cancels its loops."""
+    """Handle for a running push subscription; ``stop`` cancels its loops.
 
-    def __init__(self, tasks: list[asyncio.Task[None]]) -> None:
-        self._tasks = tasks
+    The task set grows: a channel this entity joins after subscribing gets its
+    own consume loop from the re-resolve supervisor, so ``stop`` must cancel
+    what is present when it runs, not what was present at construction.
+    """
+
+    def __init__(self, base: str, handler: MessageHandler) -> None:
+        self.base = base
+        self.handler = handler
+        # Shared across every consume loop here, so a message fanned to two of
+        # this entity's streams is delivered once, not replayed.
+        self.seen_ids: set[str] = set()
+        self.streams: set[str] = set()
+        self._tasks: list[asyncio.Task[None]] = []
+
+    @property
+    def tasks(self) -> list[asyncio.Task[None]]:
+        """The consume loops currently running under this subscription."""
+        return list(self._tasks)
+
+    def track(self, task: asyncio.Task[None]) -> None:
+        """Adopt a loop opened after the subscription started."""
+        self._tasks.append(task)
 
     async def wait(self) -> None:
         """Block until every consume loop ends (they run until cancelled)."""
@@ -97,9 +121,10 @@ class Subscription:
 
     async def stop(self) -> None:
         """Cancel every consume loop and wait for them to unwind."""
-        for task in self._tasks:
+        tasks = self.tasks
+        for task in tasks:
             task.cancel()
-        await asyncio.gather(*self._tasks, return_exceptions=True)
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 class MessagingService:
@@ -604,34 +629,83 @@ class MessagingService:
         before being acked. Returns a :class:`Subscription` whose ``stop``
         cancels the loops.
         """
+        subscription = Subscription(durable_name or entity_id, handler)
+        await self.refresh_subscription(entity_id, subscription)
+        subscription.track(
+            asyncio.create_task(
+                self._resubscribe_loop(entity_id, subscription),
+                name=f"arcteam-resubscribe:{subscription.base}",
+            )
+        )
+        return subscription
+
+    async def _subscription_streams(self, entity_id: str) -> list[str]:
+        """Every stream ``entity_id`` should consume right now.
+
+        Its inbox, one per role, and one per channel it is currently a member
+        of. Resolved on demand rather than cached: channel membership changes
+        while an agent runs (an operator adds it from the dashboard), and a
+        boot-time snapshot is how a member of a channel receives nothing from it
+        until the process restarts.
+        """
         entity = await self._registry.get(entity_id)
         roles = entity.roles if entity is not None else []
         streams = self.resolve_subscriptions(entity_id, roles)
+        if entity is None:
+            return streams
         channels = await self.list_channels()
-        if entity is not None and channels:
-            entities = await self._registry.list_entities()
-            for channel in channels:
-                if entity.did in self._member_dids(channel, entities):
-                    stream = f"arc.channel.{channel.name}"
-                    if stream not in streams:
-                        streams.append(stream)
+        if not channels:
+            return streams
+        entities = await self._registry.list_entities()
+        for channel in channels:
+            if entity.did in self._member_dids(channel, entities):
+                stream = f"arc.channel.{channel.name}"
+                if stream not in streams:
+                    streams.append(stream)
+        return streams
 
-        base = durable_name or entity_id
-        # Shared across this subscription's consume loops: message ids already
-        # delivered, so a fan-out duplicate is dropped once rather than replayed.
-        seen_ids: set[str] = set()
-        tasks: list[asyncio.Task[None]] = []
-        for stream in streams:
-            durable = _durable_name(base, stream)
-            consumer = await self._backend.open_consumer(STREAMS_COLLECTION, stream, durable)
-            self._known_streams.add(stream)
-            tasks.append(
-                asyncio.create_task(
-                    self._consume_stream(consumer, handler, seen_ids),
-                    name=f"arcteam-subscribe:{durable}",
-                )
+    async def _open_stream(self, stream: str, subscription: Subscription) -> None:
+        """Open one durable consumer and attach its consume loop, once."""
+        if stream in subscription.streams:
+            return
+        durable = _durable_name(subscription.base, stream)
+        consumer = await self._backend.open_consumer(STREAMS_COLLECTION, stream, durable)
+        self._known_streams.add(stream)
+        subscription.streams.add(stream)
+        subscription.track(
+            asyncio.create_task(
+                self._consume_stream(consumer, subscription.handler, subscription.seen_ids),
+                name=f"arcteam-subscribe:{durable}",
             )
-        return Subscription(tasks)
+        )
+
+    async def refresh_subscription(self, entity_id: str, subscription: Subscription) -> None:
+        """Open consumers for streams ``entity_id`` joined since it subscribed.
+
+        Idempotent: a stream already being consumed is skipped, so calling this
+        repeatedly never opens a second consumer or double-delivers. Public
+        because the supervisor's interval is too coarse for a test to wait on,
+        and because a surface that just changed membership can apply it now.
+        """
+        for stream in await self._subscription_streams(entity_id):
+            await self._open_stream(stream, subscription)
+
+    async def _resubscribe_loop(self, entity_id: str, subscription: Subscription) -> None:
+        """Re-resolve membership on a timer for the life of the subscription.
+
+        Fail-open and never fatal: a registry or broker hiccup logs and retries
+        on the next tick rather than killing the supervisor, because losing it
+        silently would restore exactly the boot-snapshot behaviour this exists
+        to remove.
+        """
+        while True:
+            await asyncio.sleep(_RESUBSCRIBE_INTERVAL)
+            try:
+                await self.refresh_subscription(entity_id, subscription)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # reason: fail-open — retry on the next tick
+                logger.exception("resubscribe: membership refresh failed; retrying")
 
     async def _consume_stream(
         self, consumer: Consumer, handler: MessageHandler, seen_ids: set[str]
