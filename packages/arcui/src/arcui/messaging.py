@@ -247,7 +247,8 @@ def build_team_post_forwarder(*, service: Any, registry: Any) -> Any | None:
         # by apply_mentions, which turns an addressed post into an un-addressed
         # broadcast: no inbox fanout, no action_required, no priority bump, and
         # nothing anywhere saying the name was wrong.
-        unknown = unresolved_mentions(await registry.list_entities(), text)
+        entities = await registry.list_entities()
+        unknown = unresolved_mentions(entities, text)
         if unknown:
             named = ", ".join(f"@{handle}" for handle in unknown)
             raise TeamPostRefusedError(f"No such teammate: {named}. Check the handle and resend.")
@@ -266,7 +267,13 @@ def build_team_post_forwarder(*, service: Any, registry: Any) -> Any | None:
         channels = await service.list_channels()
         existing = next((c for c in channels if c.name == channel), None)
         if existing is None:
-            await service.create_channel(Channel(name=channel, members=[op.did]))
+            # Seed the room with the whole registered fleet, not just the operator.
+            # The router only ranks channel MEMBERS and only a member may reply, so
+            # an operator-only channel silences every un-@mentioned question by
+            # construction. Inclusive by default (an operator can prune later); a
+            # dashboard channel that nobody can answer is the defect this repairs.
+            agents = [e.did for e in entities if e.type == EntityType.AGENT]
+            await service.create_channel(Channel(name=channel, members=[op.did, *agents]))
         elif op.did not in existing.members:
             await service.join_channel(channel, op.did)
         # The viewer-token DID (``sender``) is opaque, unsigned attribution kept

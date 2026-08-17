@@ -155,10 +155,13 @@ async def test_channel_with_no_agents_warns_the_operator(
     assert [m.body for m in msgs] == ["anyone about?"]
 
 
-async def test_auto_created_channel_warns_because_it_has_no_agents(
+async def test_auto_created_channel_seeds_the_fleet_and_does_not_warn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The F1 case exactly: first post to a fresh channel makes a one-member room."""
+    """The F1 case, repaired at the root: a first post to a fresh channel now
+    seeds it with the registered fleet, so there is an audience to answer and no
+    warning fires. (The warning still guards the genuinely empty-fleet case —
+    see :func:`test_channel_with_no_agents_warns_the_operator`.)"""
     backend = await _backend(with_agent_member=True)
     _install(monkeypatch, backend)
 
@@ -170,4 +173,8 @@ async def test_auto_created_channel_warns_because_it_has_no_agents(
         frame = ws.receive_json()
 
     assert frame["type"] == "posted"
-    assert "adhoc" in frame["warning"]
+    assert not frame.get("warning")
+    channel = next(
+        c for c in await app.state.messaging_service.list_channels() if c.name == "adhoc"
+    )
+    assert DID_SALES in channel.members
