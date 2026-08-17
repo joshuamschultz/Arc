@@ -42,16 +42,6 @@ def _run_validation(agent_dir: Path) -> None:
     """Validation-only path for `arc agent build --check`."""
     import arcrun
 
-    provider_env_vars = {
-        "anthropic": "ANTHROPIC_API_KEY",
-        "openai": "OPENAI_API_KEY",
-        "azure_openai": "AZURE_OPENAI_API_KEY",
-        "ollama": "",
-        "groq": "GROQ_API_KEY",
-        "cohere": "COHERE_API_KEY",
-        "mistral": "MISTRAL_API_KEY",
-    }
-
     checks: list[tuple[str, str]] = []
     all_ok = True
 
@@ -85,9 +75,26 @@ def _run_validation(agent_dir: Path) -> None:
     if model_id:
         provider = model_id.split("/")[0] if "/" in model_id else model_id
         checks.append(("OK", f"model: {model_id}"))
-        env_var = provider_env_vars.get(provider, f"{provider.upper()}_API_KEY")
-        if provider == "ollama":
-            checks.append(("OK", "ollama (no key needed)"))
+        # Ask the provider config which variable it needs. Deriving the name from
+        # the provider ("deepseek" -> DEEPSEEK_API_KEY) fails any deployment that
+        # points a provider at its own endpoint: a DGX box serves deepseek through
+        # a local LiteLLM proxy and sets api_key_env = "LITELLM_API_KEY", so the
+        # derived guess reported a missing key that was never needed and aborted a
+        # live deploy. load_provider_config() deep-merges the user's arcllm.toml
+        # over the packaged file, so that override is visible here.
+        try:
+            from arcllm.config import load_provider_config
+
+            settings = load_provider_config(provider).provider
+            env_var, required = settings.api_key_env, settings.api_key_required
+        except Exception:
+            # An unknown or unreadable provider is a real finding, but not this
+            # check's to diagnose — say so plainly rather than inventing a name.
+            checks.append(("WARN", f"provider {provider!r}: no config, key not checked"))
+            env_var, required = "", False
+
+        if not required or not env_var:
+            checks.append(("OK", f"{provider} (no key needed)"))
         elif os.environ.get(env_var):
             checks.append(("OK", f"{env_var} is set"))
         else:
