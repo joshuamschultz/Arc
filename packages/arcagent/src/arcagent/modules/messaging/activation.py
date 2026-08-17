@@ -88,17 +88,36 @@ def _is_own(msg: Any, identity: Any) -> bool:
 
 
 async def _sender_is_human(msg: Any, st: Any) -> bool:
-    """Whether a registered ``user`` entity signed this message.
+    """Whether a human signed this message.
 
-    Fail-closed: an unresolvable sender is not treated as a human, so a message
-    of unknown provenance cannot trigger the fan-out. The operator's dashboard
-    posts register as ``EntityType.USER``, which is what makes this separable.
+    Two ways to qualify, and the first is why this works at all.
+
+    An ``operator`` DID is human **by construction**: it is minted from the
+    deployment operator key, and an agent identity cannot spell itself
+    ``operator``. Requiring registry membership instead is what broke this on the
+    first live box — nothing registers the operator as an entity, so every
+    dashboard post was unresolvable, and fail-closed dropped all of them in
+    silence. A structural fact does not depend on a registration step that no
+    code performs.
+
+    A registered ``EntityType.USER`` also qualifies, which is the path for real
+    humans other than the deployment operator.
+
+    Fail-closed otherwise: an unresolvable sender cannot trigger the fan-out.
     """
+    did = msg.signer_did or msg.sender
+    try:
+        from arctrust.identity import parse_did
+
+        if parse_did(did)["agent_type"] == "operator":
+            return True
+    except Exception:  # reason: a malformed DID is not a human — fall through
+        _logger.debug("sender DID %r did not parse; trying the registry", did, exc_info=True)
+
     try:
         from arcteam.types import EntityType
 
         entities = await st.registry.list_entities()
-        did = msg.signer_did or msg.sender
         entity = next((e for e in entities if e.did == did), None)
         return entity is not None and entity.type == EntityType.USER
     except Exception:  # reason: fail-closed — unknown provenance does not fan out
