@@ -137,3 +137,34 @@ class TestNotifyUser:
 
         assert out["target"] == "channel://ops"
         st.channel_deliver_fn.assert_not_called()
+
+
+class TestFailedDeliveryIsTraced:
+    """A swallowed delivery failure must still show in the run trace."""
+
+    @pytest.mark.asyncio
+    async def test_a_failed_delivery_records_an_error_tool_event(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import arcstore.spool as spool
+
+        spool_file = tmp_path / "spool.jsonl"
+        monkeypatch.setattr(spool, "spool_path", lambda **_: spool_file)
+
+        st = _configure(tmp_path)
+        st.channel_deliver_fn = AsyncMock(side_effect=RuntimeError("no route"))
+        turn_context.set_inbound_channel("telegram:5")
+
+        with spool.request_context("run-x"):
+            out = json.loads(await notify_user(message="hi"))
+
+        assert "error" in out  # the model still sees the failure
+        rows = [json.loads(line) for line in spool_file.read_text().splitlines()]
+        errs = [
+            r
+            for r in rows
+            if r.get("tool_name") == "notify_user" and r.get("outcome") == "error"
+        ]
+        assert errs, "a failed send left nothing in the trace"
+        assert errs[0]["extra"]["delivery"] == "failed"
+        assert errs[0]["request_id"] == "run-x"

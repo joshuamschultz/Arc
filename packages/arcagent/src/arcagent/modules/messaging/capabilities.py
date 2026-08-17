@@ -39,6 +39,26 @@ from arcagent.modules.messaging import _runtime, activation, sweep
 from arcagent.modules.messaging.tools import _stream_end_byte_pos
 from arcagent.tools._decorator import background_task, hook, tool
 from arcagent.utils.sanitizer import sanitize_text
+from arcagent.utils.trace import spool_auto_tool
+
+
+def _trace_send_failure(st: Any, tool_name: str, target: str, exc: object) -> None:
+    """Record a swallowed delivery failure so the run trace shows it went nowhere.
+
+    The send tools return the error to the model rather than raising, so the loop
+    stamps the tool_event ``ok`` and a failed send looks delivered. A matching
+    implicit ``error`` event under the same run makes the truth visible: the agent
+    tried, and it did not land.
+    """
+    actor = st.identity.did if st.identity is not None else st.config.entity_id
+    spool_auto_tool(
+        tool_name,
+        actor_did=actor,
+        outcome="error",
+        args=str(target),
+        result=str(exc),
+        extra={"delivery": "failed"},
+    )
 
 _logger = logging.getLogger("arcagent.modules.messaging.capabilities")
 
@@ -473,6 +493,7 @@ async def notify_user(message: str = "") -> str:
             return json.dumps({"error": "no delivery channel is wired (standalone agent)"})
     except Exception as exc:  # reason: surface a tool error, don't crash the turn
         _logger.warning("notify_user delivery to %s failed: %s", target, exc)
+        _trace_send_failure(st, "notify_user", target, exc)
         return json.dumps({"error": f"delivery failed: {exc}"})
     _logger.info("Agent notified user on %s (%d chars)", target, len(message))
     return json.dumps({"status": "sent", "target": target})
@@ -546,6 +567,7 @@ async def messaging_send(
             }
         )
     except (ValueError, TypeError) as exc:
+        _trace_send_failure(st, "messaging_send", to, exc)
         return json.dumps({"error": str(exc)})
 
 
