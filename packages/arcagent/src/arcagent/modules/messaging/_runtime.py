@@ -71,6 +71,10 @@ class _State:
     # One bounded model call through ArcRun (agent.run_oneshot) — bound at
     # agent:ready. Breaks a tie the deterministic prefilter could not (ADR-032).
     oneshot_fn: Any = None
+    # arcteam DigestStore — every agent's published index of what it holds. The
+    # only artifact that crosses the memory privacy boundary, and what responder
+    # selection routes over (ADR-032).
+    digests: Any = None
     # Channel delivery ("platform:chat_id", text) -> None from the embedded
     # gateway — bound at agent:ready. Powers ``notify_user`` (agent -> human).
     channel_deliver_fn: Any = None
@@ -122,6 +126,7 @@ def configure(
         )
 
     from arcteam.audit import AuditLogger
+    from arcteam.digest import DigestStore
     from arcteam.messenger import MessagingService
     from arcteam.registry import EntityRegistry
     from arcteam.storage import MemoryBackend
@@ -165,6 +170,7 @@ def configure(
             operator_signer=operator_signer,
             svc=svc,
             registry=registry,
+            digests=DigestStore(backend),
         )
     )
 
@@ -183,6 +189,7 @@ async def ensure_live_backend() -> None:
         return
 
     from arcteam.audit import AuditLogger
+    from arcteam.digest import DigestStore
     from arcteam.messenger import MessagingService
     from arcteam.registry import EntityRegistry
     from arcteam.storage import MemoryBackend
@@ -204,6 +211,7 @@ async def ensure_live_backend() -> None:
         audit,
         signer=arcteam_bootstrap.message_signer(st.identity),
     )
+    st.digests = DigestStore(backend)
     st.live_backend_ready = True
     _logger.info("Messaging upgraded to live NATS backend at %s", st.config.nats_url)
 

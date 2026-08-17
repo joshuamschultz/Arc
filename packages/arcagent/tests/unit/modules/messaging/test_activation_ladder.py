@@ -1,34 +1,52 @@
 """The activation ladder — who answers a channel post, and what it costs.
 
-SPEC-068 D1/D4. Two properties are load-bearing and each is asserted directly
-rather than inferred from a bool the caller might ignore:
+ADR-032. The reported failure is the acceptance test and it leads this file: six
+agents and one operator in a channel, one agent holds the NNL technical
+requirements, the message names nobody, and **that agent must be the one that
+wakes**. The design it replaces asked each agent "is this relevant to you?" with
+no tools, no memory and no retrieval, and all six said no — including the one
+holding the document.
 
-* **The gate fails CLOSED.** A missing classifier, a timeout, an exception or an
-  unparseable verdict all mean silence. The old gate failed open, so a broken
-  model bought a full agentic turn in every member of the channel on every
-  message. A cost control whose failure mode is to spend the maximum is the
-  wrong shape.
+Four further properties are load-bearing, each asserted directly rather than
+inferred from a bool the caller might ignore:
+
+* **Silence is never the fallback.** When nothing ranks, a named responder still
+  answers. An unanswered question is indistinguishable from a broken system.
+* **An explicit address resolves before any scoring or model call.** It is the
+  cheapest correct decision in the system.
 * **Only a human's un-addressed post fans out.** An agent's reply is itself an
-  un-addressed channel post, so without this A -> B -> A is reachable. With it
-  the loop is impossible by construction, not merely bounded.
+  un-addressed channel post, so without this A -> B -> A is reachable.
+* **The router is O(1) in the size of the channel**, and runs only when the
+  deterministic ranking was too close to decide on its own.
 """
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
+from arcteam.digest import AgentDigest, DigestEntry
+from arcteam.types import Channel
 
 from arcagent.modules.messaging import activation
 from arcagent.modules.messaging.config import MessagingConfig
 
-pytestmark = pytest.mark.asyncio
-
-DID_ME = "did:arc:local:agent/me"
-DID_OTHER = "did:arc:local:agent/other"
 DID_HUMAN = "did:arc:local:user/operator"
+
+# Six agents and one operator, as reported. Exactly one filed the NNL document.
+FLEET: dict[str, list[str]] = {
+    "brand": ["Q3 brand voice guidelines", "logo usage rules"],
+    "sales": ["pipeline review notes", "pricing sheet for Acme"],
+    "ops": ["NNL technical requirements", "deployment runbook"],
+    "finance": ["monthly P&L summary", "vendor invoices"],
+    "hr": ["onboarding checklist", "leave policy"],
+    "legal": ["master services agreement", "NDA template"],
+}
+
+
+def did(handle: str) -> str:
+    return f"did:arc:local:agent/{handle}"
 
 
 @dataclass
@@ -39,7 +57,7 @@ class _Entity:
 
 @dataclass
 class _Identity:
-    did: str = DID_ME
+    did: str
 
 
 @dataclass
@@ -66,11 +84,23 @@ class _Registry:
 
 
 class _Svc:
-    def __init__(self, later: list[Any] | None = None) -> None:
+    def __init__(self, channel: Channel, later: list[Any] | None = None) -> None:
+        self._channel = channel
         self.later = later or []
+
+    async def list_channels(self) -> list[Channel]:
+        return [self._channel]
 
     async def list_channel_messages(self, **_kw: Any) -> list[Any]:
         return self.later
+
+
+class _Digests:
+    def __init__(self, digests: list[AgentDigest]) -> None:
+        self._digests = digests
+
+    async def list_digests(self) -> list[AgentDigest]:
+        return list(self._digests)
 
 
 @dataclass
@@ -79,6 +109,7 @@ class _State:
     identity: Any
     registry: Any
     svc: Any
+    digests: Any
     oneshot_fn: Any = None
     agent_name: str = "me"
     telemetry: Any = None
@@ -86,233 +117,385 @@ class _State:
     channel_breakers: dict[str, Any] = field(default_factory=dict)
 
 
-def _state(*, classify: Any = None, entities: list[_Entity] | None = None, **cfg: Any) -> _State:
-    from arcteam.types import EntityType
-
-    default = [
-        _Entity(DID_HUMAN, EntityType.USER),
-        _Entity(DID_OTHER, EntityType.AGENT),
-        _Entity(DID_ME, EntityType.AGENT),
-    ]
-    return _State(
-        config=MessagingConfig(entity_id="me", entity_name="Me", entity_role="sales", **cfg),
-        identity=_Identity(),
-        registry=_Registry(entities if entities is not None else default),
-        svc=_Svc(),
-        oneshot_fn=classify,
+def _digest(handle: str, titles: list[str]) -> AgentDigest:
+    return AgentDigest(
+        agent_did=did(handle),
+        handle=handle,
+        entries=[
+            DigestEntry(
+                artifact_id=f"{handle}-{i}",
+                title=title,
+                entities=[word for word in title.split() if word.isupper()],
+            )
+            for i, title in enumerate(titles)
+        ],
     )
 
 
-async def _classify_yes(**_kw: Any) -> str:
-    return "YES"
+def _state(
+    *,
+    me: str = "ops",
+    fleet: dict[str, list[str]] | None = None,
+    responder: str = "",
+    members: list[str] | None = None,
+    router: Any = None,
+    later: list[Any] | None = None,
+    **cfg: Any,
+) -> _State:
+    from arcteam.types import EntityType
 
-
-async def _classify_no(**_kw: Any) -> str:
-    return "NO"
-
-
-# --------------------------------------------------------------------------
-# D1a — the gate fails closed
-# --------------------------------------------------------------------------
-
-
-async def test_explicit_yes_wakes() -> None:
-    decision = await activation.decide(_Msg(), _state(classify=_classify_yes))
-    assert decision.wake and decision.reason == "relevant"
-
-
-async def test_explicit_no_stays_silent() -> None:
-    decision = await activation.decide(_Msg(), _state(classify=_classify_no))
-    assert not decision.wake and decision.reason == "not_relevant"
-
-
-@pytest.mark.parametrize("verdict", ["", "   ", "maybe", "I think so", "42"])
-async def test_unparseable_verdict_stays_silent(verdict: str) -> None:
-    """Anything not recognisably YES is not a decision to spend a turn."""
-
-    async def garbled(**_kw: Any) -> str:
-        return verdict
-
-    decision = await activation.decide(_Msg(), _state(classify=garbled))
-    assert not decision.wake and decision.reason == "not_relevant"
-
-
-async def test_gate_exception_stays_silent() -> None:
-    async def boom(**_kw: Any) -> str:
-        raise RuntimeError("provider down")
-
-    decision = await activation.decide(_Msg(), _state(classify=boom))
-    assert not decision.wake and decision.reason == "gate_failed"
-
-
-async def test_gate_timeout_stays_silent() -> None:
-    async def hang(**_kw: Any) -> str:
-        await asyncio.sleep(10)
-        return "YES"
-
-    st = _state(classify=hang, triage_timeout_seconds=0.05)
-    decision = await activation.decide(_Msg(), st)
-    assert not decision.wake and decision.reason == "gate_failed"
-
-
-async def test_missing_classifier_stays_silent() -> None:
-    decision = await activation.decide(_Msg(), _state(classify=None))
-    assert not decision.wake and decision.reason == "gate_unavailable"
-
-
-async def test_repeated_gate_failure_opens_the_breaker() -> None:
-    """A gate that keeps failing stops being called at all (D4d)."""
-    calls = 0
-
-    async def boom(**_kw: Any) -> str:
-        nonlocal calls
-        calls += 1
-        raise RuntimeError("provider down")
-
-    st = _state(classify=boom, triage_failure_threshold=2, channel_cooldown_seconds=0)
-    for _ in range(2):
-        assert not (await activation.decide(_Msg(), st)).wake
-    assert calls == 2
-
-    decision = await activation.decide(_Msg(), st)
-    assert not decision.wake and decision.reason == "breaker_open"
-    assert calls == 2, "breaker must stop the call, not merely discard its result"
+    roster = FLEET if fleet is None else fleet
+    channel = Channel(
+        name="work",
+        members=members if members is not None else [DID_HUMAN, *(did(h) for h in roster)],
+        responder=responder,
+    )
+    return _State(
+        config=MessagingConfig(entity_id=me, entity_name=me, **cfg),
+        identity=_Identity(did(me)),
+        registry=_Registry(
+            [
+                _Entity(DID_HUMAN, EntityType.USER),
+                *[_Entity(did(handle), EntityType.AGENT) for handle in roster],
+            ]
+        ),
+        svc=_Svc(channel, later),
+        digests=_Digests([_digest(handle, titles) for handle, titles in roster.items()]),
+        oneshot_fn=router,
+        agent_name=me,
+    )
 
 
 # --------------------------------------------------------------------------
-# D4 — loop prevention
+# The reported failure
 # --------------------------------------------------------------------------
 
 
-async def test_own_message_never_wakes() -> None:
-    msg = _Msg(sender=DID_ME, signer_did=DID_ME)
-    decision = await activation.decide(msg, _state(classify=_classify_yes))
-    assert not decision.wake and decision.reason == "self"
+class TestTheReportedFailure:
+    async def test_the_agent_holding_the_document_wakes(self) -> None:
+        """Six agents, nobody named, and the one with the answer is the one that runs."""
+        decision = await activation.decide(
+            _Msg(body="who has the technical requirements for NNL?"), _state(me="ops")
+        )
 
+        assert decision.wake
+        assert decision.reason == "routed"
 
-async def test_agent_broadcast_never_fans_out() -> None:
-    """An agent's un-addressed channel post wakes nobody — the loop guard."""
-    msg = _Msg(sender=DID_OTHER, signer_did=DID_OTHER)
-    decision = await activation.decide(msg, _state(classify=_classify_yes))
-    assert not decision.wake and decision.reason == "agent_broadcast"
+    @pytest.mark.parametrize("bystander", ["brand", "sales", "finance", "hr", "legal"])
+    async def test_the_five_who_do_not_hold_it_stay_silent(self, bystander: str) -> None:
+        """The other half of a right answer: exactly one agent replies, not six."""
+        decision = await activation.decide(
+            _Msg(body="who has the technical requirements for NNL?"), _state(me=bystander)
+        )
 
+        assert not decision.wake
 
-async def test_unknown_sender_does_not_fan_out() -> None:
-    """Fail-closed on provenance: an unresolvable sender is not a human."""
-    msg = _Msg(sender="did:arc:local:agent/ghost", signer_did="did:arc:local:agent/ghost")
-    decision = await activation.decide(msg, _state(classify=_classify_yes))
-    assert not decision.wake and decision.reason == "agent_broadcast"
+    async def test_it_costs_no_model_call(self) -> None:
+        """A clear ranking decides on its own — the router is for ties, not routine."""
+        calls: list[dict[str, Any]] = []
 
+        async def router(**kwargs: Any) -> str:
+            calls.append(kwargs)
+            return "ops"
 
-async def test_hop_budget_terminates_a_mention_chain() -> None:
-    msg = _Msg(hop=activation.MAX_HOP, mentions=[DID_ME])
-    decision = await activation.decide(msg, _state(classify=_classify_yes))
-    assert not decision.wake and decision.reason == "hop_exhausted"
+        await activation.decide(
+            _Msg(body="who has the technical requirements for NNL?"),
+            _state(me="ops", router=router),
+        )
 
+        assert calls == []
 
-async def test_mention_below_the_hop_budget_still_wakes() -> None:
-    msg = _Msg(hop=activation.MAX_HOP - 1, mentions=[DID_ME])
-    decision = await activation.decide(msg, _state())
-    assert decision.wake and decision.reason == "mentioned"
+    async def test_a_different_question_wakes_a_different_agent(self) -> None:
+        """Proof the win was retrieval and not a fixed ordering."""
+        chosen = await activation.decide(_Msg(body="what is our leave policy?"), _state(me="hr"))
+        not_chosen = await activation.decide(
+            _Msg(body="what is our leave policy?"), _state(me="ops")
+        )
 
-
-# --------------------------------------------------------------------------
-# Mention scope and bypasses (SPEC-055, preserved)
-# --------------------------------------------------------------------------
-
-
-async def test_mention_bypasses_the_gate_entirely() -> None:
-    """The deterministic override that makes fail-closed safe to choose."""
-    msg = _Msg(mentions=[DID_ME], sender=DID_OTHER, signer_did=DID_OTHER)
-    decision = await activation.decide(msg, _state(classify=None))
-    assert decision.wake and decision.reason == "mentioned"
-
-
-async def test_message_naming_other_agents_does_not_wake_me() -> None:
-    msg = _Msg(mentions=[DID_OTHER])
-    decision = await activation.decide(msg, _state(classify=_classify_yes))
-    assert not decision.wake and decision.reason == "addressed_to_others"
-
-
-async def test_critical_always_wakes() -> None:
-    msg = _Msg(priority="critical", mentions=[DID_OTHER], sender=DID_OTHER, signer_did=DID_OTHER)
-    decision = await activation.decide(msg, _state(classify=None))
-    assert decision.wake and decision.reason == "critical"
-
-
-async def test_direct_message_wakes_without_a_gate() -> None:
-    msg = _Msg(to=["agent://me"], sender=DID_OTHER, signer_did=DID_OTHER)
-    decision = await activation.decide(msg, _state(classify=None))
-    assert decision.wake and decision.reason == "direct"
+        assert chosen.wake
+        assert not not_chosen.wake
 
 
 # --------------------------------------------------------------------------
-# D1c — blast radius
+# Silence is never the fallback
 # --------------------------------------------------------------------------
 
 
-async def test_cooldown_silences_a_rapid_second_message() -> None:
-    st = _state(classify=_classify_yes)
-    assert (await activation.decide(_Msg(), st)).wake
-    activation.record_activation(st, "work")
-    decision = await activation.decide(_Msg(id="msg_2"), st)
-    assert not decision.wake and decision.reason == "cooldown"
+class TestNothingScores:
+    async def test_the_named_responder_answers(self) -> None:
+        decision = await activation.decide(
+            _Msg(body="zzzz qqqq"), _state(me="sales", responder=did("sales"))
+        )
 
+        assert decision.wake
+        assert decision.reason == "default_responder"
 
-async def test_cooldown_does_not_silence_a_mention() -> None:
-    st = _state(classify=_classify_yes)
-    activation.record_activation(st, "work")
-    decision = await activation.decide(_Msg(mentions=[DID_ME]), st)
-    assert decision.wake and decision.reason == "mentioned"
+    async def test_nobody_else_does(self) -> None:
+        decision = await activation.decide(
+            _Msg(body="zzzz qqqq"), _state(me="ops", responder=did("sales"))
+        )
 
+        assert not decision.wake
+        assert decision.reason == "routed_away"
 
-async def test_answer_cap_silences_the_third_agent() -> None:
-    st = _state(classify=_classify_yes)
-    st.svc.later = [
-        _Msg(sender="did:arc:local:agent/a", seq=2),
-        _Msg(sender="did:arc:local:agent/b", seq=3),
-    ]
-    decision = await activation.decide(_Msg(), st)
-    assert not decision.wake and decision.reason == "answer_cap"
+    async def test_an_unconfigured_channel_still_answers(self) -> None:
+        """Exactly one agent, deterministically, with no responder configured."""
+        woken = [
+            handle
+            for handle in FLEET
+            if (await activation.decide(_Msg(body="zzzz qqqq"), _state(me=handle))).wake
+        ]
 
+        assert len(woken) == 1
 
-async def test_answer_cap_ignores_repeats_from_one_responder() -> None:
-    """Two messages from the same agent are one answer, not two."""
-    st = _state(classify=_classify_yes)
-    st.svc.later = [
-        _Msg(sender="did:arc:local:agent/a", seq=2),
-        _Msg(sender="did:arc:local:agent/a", seq=3),
-    ]
-    decision = await activation.decide(_Msg(), st)
-    assert decision.wake and decision.reason == "relevant"
+    async def test_the_responder_is_not_silenced_by_its_own_cooldown(self) -> None:
+        """Cooldown stops one agent dominating a room; it is not a reason for silence."""
+        state = _state(me="sales", responder=did("sales"))
+        activation.record_activation(state, "work")
 
+        decision = await activation.decide(_Msg(body="zzzz qqqq"), state)
 
-async def test_answer_cap_does_not_silence_a_mention() -> None:
-    st = _state(classify=_classify_yes)
-    st.svc.later = [
-        _Msg(sender="did:arc:local:agent/a", seq=2),
-        _Msg(sender="did:arc:local:agent/b", seq=3),
-    ]
-    decision = await activation.decide(_Msg(mentions=[DID_ME]), st)
-    assert decision.wake and decision.reason == "mentioned"
+        assert decision.wake
+
+    async def test_a_room_with_no_agent_members_names_nobody(self) -> None:
+        decision = await activation.decide(
+            _Msg(body="zzzz qqqq"), _state(me="ops", members=[DID_HUMAN])
+        )
+
+        assert not decision.wake
+        assert decision.reason == "no_responder"
 
 
 # --------------------------------------------------------------------------
-# The overheard rule (7812264f) survives the rewrite
+# Explicit address, before anything else
 # --------------------------------------------------------------------------
 
 
-async def test_unaddressed_channel_post_is_overheard() -> None:
-    assert activation.is_overheard(_Msg()) is True
+class TestExplicitAddress:
+    async def test_a_mention_wakes_its_target_without_scoring_it(self) -> None:
+        """A mention beats the router: it is not ranked, it is obeyed."""
+        state = _state(me="hr")
+        decision = await activation.decide(
+            _Msg(body="who has the technical requirements for NNL?", mentions=[did("hr")]), state
+        )
+
+        assert decision.wake
+        assert decision.reason == "mentioned"
+
+    async def test_a_mention_reaches_no_digest_and_no_model(self) -> None:
+        """The cheapest correct decision in the system must not sit behind a gate."""
+
+        class _Exploding:
+            async def list_digests(self) -> list[AgentDigest]:
+                raise AssertionError("routing ran before an explicit address was honoured")
+
+        async def router(**_kw: Any) -> str:
+            raise AssertionError("a model was called to confirm an explicit address")
+
+        state = _state(me="hr", router=router)
+        state.digests = _Exploding()
+
+        assert (await activation.decide(_Msg(mentions=[did("hr")]), state)).wake
+
+    async def test_naming_someone_else_silences_the_agent_that_would_have_ranked(self) -> None:
+        decision = await activation.decide(
+            _Msg(body="who has the technical requirements for NNL?", mentions=[did("hr")]),
+            _state(me="ops"),
+        )
+
+        assert not decision.wake
+        assert decision.reason == "addressed_to_others"
+
+    async def test_a_mention_survives_a_cooldown(self) -> None:
+        state = _state(me="hr")
+        activation.record_activation(state, "work")
+
+        assert (await activation.decide(_Msg(mentions=[did("hr")]), state)).wake
 
 
-async def test_a_mention_is_not_overheard() -> None:
-    assert activation.is_overheard(_Msg(mentions=[DID_ME])) is False
+# --------------------------------------------------------------------------
+# The single-call tiebreak
+# --------------------------------------------------------------------------
 
 
-async def test_a_direct_message_is_not_overheard() -> None:
-    assert activation.is_overheard(_Msg(to=["agent://me"])) is False
+TIED = {"ops": ["NNL technical requirements"], "sales": ["NNL technical requirements"]}
 
 
-async def test_critical_is_not_overheard() -> None:
-    assert activation.is_overheard(_Msg(priority="critical")) is False
+class TestRouterTiebreak:
+    async def test_one_prompt_carries_every_candidate(self) -> None:
+        """What the per-agent gate structurally could not do: compare candidates."""
+        seen: list[str] = []
+
+        async def router(*, system: str, **_kw: Any) -> str:
+            seen.append(system)
+            return "ops"
+
+        await activation.decide(
+            _Msg(body="NNL technical requirements"),
+            _state(me="ops", fleet=TIED, router=router),
+        )
+
+        assert len(seen) == 1
+        assert "ops" in seen[0]
+        assert "sales" in seen[0]
+
+    async def test_the_agent_the_router_names_wakes(self) -> None:
+        async def router(**_kw: Any) -> str:
+            return "sales"
+
+        decision = await activation.decide(
+            _Msg(body="NNL technical requirements"),
+            _state(me="sales", fleet=TIED, router=router),
+        )
+
+        assert decision.wake
+        assert decision.reason == "router_selected"
+
+    async def test_the_agent_it_does_not_name_stays_silent(self) -> None:
+        async def router(**_kw: Any) -> str:
+            return "sales"
+
+        decision = await activation.decide(
+            _Msg(body="NNL technical requirements"),
+            _state(me="ops", fleet=TIED, router=router),
+        )
+
+        assert not decision.wake
+        assert decision.reason == "router_selected_other"
+
+    async def test_a_broken_router_leaves_the_ranking_standing_rather_than_silence(self) -> None:
+        """A router that cannot decide must not turn a ranked message into an unanswered one."""
+
+        async def router(**_kw: Any) -> str:
+            raise RuntimeError("model down")
+
+        woken = [
+            handle
+            for handle in TIED
+            if (
+                await activation.decide(
+                    _Msg(body="NNL technical requirements"),
+                    _state(me=handle, fleet=TIED, router=router),
+                )
+            ).wake
+        ]
+
+        assert len(woken) == 1
+
+    async def test_repeated_router_failure_opens_the_breaker(self) -> None:
+        async def router(**_kw: Any) -> str:
+            raise RuntimeError("model down")
+
+        state = _state(me="ops", fleet=TIED, router=router, route_failure_threshold=2)
+        for _ in range(3):
+            await activation.decide(_Msg(body="NNL technical requirements"), state)
+
+        assert (await activation.decide(_Msg(body="NNL requirements"), state)).reason == (
+            "breaker_open"
+        )
+
+    async def test_no_router_bound_still_leaves_the_ranking_standing(self) -> None:
+        decision = await activation.decide(
+            _Msg(body="NNL technical requirements"), _state(me="ops", fleet=TIED)
+        )
+
+        assert decision.reason == "routed_tie_unbroken"
+
+
+# --------------------------------------------------------------------------
+# Loop guards
+# --------------------------------------------------------------------------
+
+
+class TestLoopGuards:
+    async def test_an_agents_reply_does_not_wake_another_agent(self) -> None:
+        """The strong guard: A -> B -> A is impossible, not merely bounded."""
+        reply = _Msg(body="NNL technical requirements are with me", sender=did("sales"))
+        reply.signer_did = did("sales")
+
+        decision = await activation.decide(reply, _state(me="ops"))
+
+        assert not decision.wake
+        assert decision.reason == "agent_broadcast"
+
+    async def test_an_agent_does_not_wake_on_its_own_post(self) -> None:
+        own = _Msg(sender=did("ops"), signer_did=did("ops"))
+
+        assert (await activation.decide(own, _state(me="ops"))).reason == "self"
+
+    async def test_an_unregistered_sender_does_not_fan_out(self) -> None:
+        stranger = _Msg(sender="did:arc:unknown", signer_did="did:arc:unknown")
+
+        assert not (await activation.decide(stranger, _state(me="ops"))).wake
+
+    async def test_the_hop_budget_ends_an_addressed_chain(self) -> None:
+        exhausted = _Msg(mentions=[did("ops")], hop=activation.MAX_HOP)
+
+        assert (await activation.decide(exhausted, _state(me="ops"))).reason == "hop_exhausted"
+
+    async def test_critical_priority_reaches_every_member(self) -> None:
+        urgent = _Msg(body="zzzz", priority="critical")
+
+        assert (await activation.decide(urgent, _state(me="hr"))).wake
+
+    async def test_a_direct_message_needs_no_routing(self) -> None:
+        dm = _Msg(to=[did("ops")])
+
+        assert (await activation.decide(dm, _state(me="ops"))).reason == "direct"
+
+
+# --------------------------------------------------------------------------
+# Bounds on a routed wake
+# --------------------------------------------------------------------------
+
+
+class TestBounds:
+    async def test_a_routed_agent_in_cooldown_stays_silent(self) -> None:
+        state = _state(me="ops")
+        activation.record_activation(state, "work")
+
+        decision = await activation.decide(_Msg(body="NNL technical requirements"), state)
+
+        assert not decision.wake
+        assert decision.reason == "cooldown"
+
+    async def test_a_routed_agent_stays_silent_once_the_room_has_answered(self) -> None:
+        answers = [_Msg(sender=did("a")), _Msg(sender=did("b"))]
+
+        decision = await activation.decide(
+            _Msg(body="NNL technical requirements"), _state(me="ops", later=answers)
+        )
+
+        assert decision.reason == "answer_cap"
+
+    async def test_an_unreadable_index_does_not_fan_out(self) -> None:
+        class _Broken:
+            async def list_digests(self) -> list[AgentDigest]:
+                raise RuntimeError("store down")
+
+        state = _state(me="ops")
+        state.digests = _Broken()
+
+        decision = await activation.decide(_Msg(body="NNL requirements"), state)
+
+        assert not decision.wake
+        assert decision.reason == "routing_unavailable"
+
+    async def test_the_decision_names_the_candidates_it_ranked(self) -> None:
+        """A wrong route must leave evidence; self-assessment never did."""
+        decision = await activation.decide(
+            _Msg(body="who has the technical requirements for NNL?"), _state(me="ops")
+        )
+
+        assert "ops" in decision.candidates
+
+
+class TestOverheard:
+    def test_an_un_addressed_channel_post_is_answered_but_not_retained(self) -> None:
+        assert activation.is_overheard(_Msg())
+
+    def test_a_mention_is_addressed_and_therefore_retained(self) -> None:
+        assert not activation.is_overheard(_Msg(mentions=[did("ops")]))
+
+    def test_a_direct_message_is_retained(self) -> None:
+        assert not activation.is_overheard(_Msg(to=[did("ops")]))

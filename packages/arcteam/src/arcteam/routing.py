@@ -37,6 +37,10 @@ from arcteam.types import Channel
 # enough that rank 50 contributes almost nothing.
 RRF_K = 60
 
+# How far below the best match a candidate may score and still be a candidate.
+# The same ratio the team-memory search engine uses, for the same reason.
+MIN_SCORE_RATIO = 0.3
+
 _TOKEN = re.compile(r"[A-Za-z0-9_]+")
 
 
@@ -54,7 +58,75 @@ class Candidate:
     score: float
     lexical_rank: int | None = None
     dense_rank: int | None = None
+    # The raw retrieval evidence behind the rank. Fused RRF scores cannot answer
+    # "did the ranking actually separate these two?": adjacent ranks always land
+    # about 2% apart by construction, whether one candidate beat the other by a
+    # mile or by nothing. Only the underlying scores know.
+    lexical_score: float = 0.0
+    dense_score: float = 0.0
     matched: tuple[str, ...] = field(default_factory=tuple)
+
+
+def bm25_scores(query: str, documents: list[str]) -> dict[int, float]:
+    """BM25 score per matching document index. Non-matching documents are absent.
+
+    The variant is ``BM25Plus`` with ``delta=0``, and both halves of that matter
+    in a six-agent room:
+
+    * **Plus, not Okapi**, for its ``log((N+1)/df)`` inverse document frequency.
+      Okapi's can go *negative* for a term more than half the corpus carries, so
+      a common word would push its own holders below the agents that never
+      mentioned it — an inverted ranking, silently.
+    * **delta=0**, because BM25+'s free floor pays ``idf * delta`` for every
+      query term whether the document contains it or not. With it, an agent
+      matching only the preposition in "the requirements *for* NNL" scored two
+      thirds of what the agent holding the document scored, and answered.
+
+    Sharing a query term is then checked explicitly rather than inferred from a
+    positive score, so the rule survives a later change of variant.
+    """
+    corpus = [tokenize(document) for document in documents]
+    terms = tokenize(query)
+    if not any(corpus) or not terms:
+        return {}
+    wanted = set(terms)
+    eligible = [index for index, tokens in enumerate(corpus) if wanted & set(tokens)]
+    if not eligible:
+        return {}
+    scores = BM25Plus(corpus, delta=0).get_scores(terms)
+    return {index: float(scores[index]) for index in eligible if float(scores[index]) > 0.0}
+
+
+def cosine_scores(query_vector: list[float], vectors: list[list[float]]) -> dict[int, float]:
+    """Cosine similarity per document index, dropping the orthogonal ones.
+
+    Vectors from ``arcrun.embed_texts`` are already normalized, so this is a dot
+    product; it renormalizes anyway rather than trusting a caller's embedder to
+    have done it.
+    """
+    scored = {index: _cosine(query_vector, vector) for index, vector in enumerate(vectors)}
+    return {index: score for index, score in scored.items() if score > 0.0}
+
+
+def _by_score(scores: dict[int, float]) -> list[int]:
+    """Indices best-first, ties broken by index so the order is reproducible."""
+    return sorted(scores, key=lambda index: (-scores[index], index))
+
+
+def above_floor(scores: dict[int, float], ratio: float) -> dict[int, float]:
+    """Drop scores below *ratio* of the best one in the same ranking.
+
+    Matching a query term is a low bar and a room of six agents will always
+    clear it by accident: "who has the technical requirements for NNL?" contains
+    the word "for", so an agent whose only tie to the question is a preposition
+    would otherwise rank second and answer. A relative floor keeps the ranking's
+    tail out of the answer set, and mirrors the ratio the team-memory search
+    engine already applies for the same reason.
+    """
+    if not scores or ratio <= 0.0:
+        return dict(scores)
+    best = max(scores.values())
+    return {index: score for index, score in scores.items() if score >= best * ratio}
 
 
 def bm25_ranking(query: str, documents: list[str]) -> list[int]:
@@ -71,17 +143,7 @@ def bm25_ranking(query: str, documents: list[str]) -> list[int]:
     it is the right one here: digests are short and a lower-bounded term
     frequency stops a long digest being penalised for holding many pointers.
     """
-    corpus = [tokenize(document) for document in documents]
-    terms = tokenize(query)
-    if not any(corpus) or not terms:
-        return []
-    wanted = set(terms)
-    eligible = [index for index, tokens in enumerate(corpus) if wanted & set(tokens)]
-    if not eligible:
-        return []
-    scores = BM25Plus(corpus).get_scores(terms)
-    eligible.sort(key=lambda index: (-float(scores[index]), index))
-    return eligible
+    return _by_score(bm25_scores(query, documents))
 
 
 def cosine_ranking(query_vector: list[float], vectors: list[list[float]]) -> list[int]:
@@ -91,13 +153,7 @@ def cosine_ranking(query_vector: list[float], vectors: list[list[float]]) -> lis
     product; it renormalizes anyway rather than trusting a caller's embedder to
     have done it.
     """
-    scored: list[tuple[int, float]] = []
-    for index, vector in enumerate(vectors):
-        similarity = _cosine(query_vector, vector)
-        if similarity > 0.0:
-            scored.append((index, similarity))
-    scored.sort(key=lambda pair: (-pair[1], pair[0]))
-    return [index for index, _ in scored]
+    return _by_score(cosine_scores(query_vector, vectors))
 
 
 def _cosine(left: list[float], right: list[float]) -> float:
@@ -130,6 +186,7 @@ def prefilter(
     digest_vectors: list[list[float]] | None = None,
     top_k: int = 2,
     k: int = RRF_K,
+    min_score_ratio: float = MIN_SCORE_RATIO,
 ) -> list[Candidate]:
     """Rank agents by what they published, best-first, at most *top_k*.
 
@@ -144,13 +201,14 @@ def prefilter(
     if not digests:
         return []
     documents = [digest.as_document() for digest in digests]
-    rankings = [bm25_ranking(query, documents)]
-    dense: list[int] = []
+    lexical_scores = above_floor(bm25_scores(query, documents), min_score_ratio)
+    dense_scores: dict[int, float] = {}
     if query_vector and digest_vectors and len(digest_vectors) == len(digests):
-        dense = cosine_ranking(query_vector, digest_vectors)
-        rankings.append(dense)
+        dense_scores = above_floor(cosine_scores(query_vector, digest_vectors), min_score_ratio)
 
-    lexical = rankings[0]
+    lexical = _by_score(lexical_scores)
+    dense = _by_score(dense_scores)
+    rankings = [lexical, dense] if dense_scores else [lexical]
     fused = reciprocal_rank_fusion(rankings, k=k)
     query_terms = set(tokenize(query))
     ordered = sorted(fused.items(), key=lambda pair: (-pair[1], pair[0]))
@@ -162,6 +220,8 @@ def prefilter(
             score=score,
             lexical_rank=_position(lexical, index),
             dense_rank=_position(dense, index),
+            lexical_score=lexical_scores.get(index, 0.0),
+            dense_score=dense_scores.get(index, 0.0),
             matched=tuple(sorted(query_terms & set(tokenize(documents[index])))),
         )
         for index, score in ordered[:top_k]
@@ -175,15 +235,30 @@ def _position(ranking: list[int], index: int) -> int | None:
 def is_ambiguous(candidates: list[Candidate], *, margin: float = 0.25) -> bool:
     """Whether the top two are close enough that the ranking did not decide.
 
-    ``margin`` is a relative gap: the runner-up must trail the leader by more
-    than this fraction of the leader's score for the ranking to stand on its
-    own. Anything closer is handed to the router, which can compare candidates
-    the way a scorer cannot.
+    Judged on the retrieval evidence, never on the fused score. RRF reads
+    positions, so rank 1 and rank 2 always land about ``1/k`` apart whether one
+    candidate beat the other decisively or by a rounding error — a margin test
+    on the fused value would call almost every ranking ambiguous and hand almost
+    every message to the model, which is the cost profile this design exists to
+    leave.
+
+    ``margin`` is a relative gap on each half that ran. Both halves must fail to
+    separate the two before the router is asked: one clear signal is a decision.
     """
     if len(candidates) < 2:
         return False
-    best, runner_up = candidates[0].score, candidates[1].score
-    return best <= 0.0 or (best - runner_up) / best <= margin
+    best, runner_up = candidates[0], candidates[1]
+    close = _too_close(best.lexical_score, runner_up.lexical_score, margin)
+    if best.dense_rank is not None or runner_up.dense_rank is not None:
+        close = close and _too_close(best.dense_score, runner_up.dense_score, margin)
+    return close
+
+
+def _too_close(best: float, runner_up: float, margin: float) -> bool:
+    """Whether *runner_up* trails *best* by no more than a *margin* fraction."""
+    if best <= 0.0:
+        return True
+    return (best - runner_up) / best <= margin
 
 
 def default_responder(channel: Channel, agent_dids: list[str]) -> str:
@@ -203,10 +278,14 @@ def default_responder(channel: Channel, agent_dids: list[str]) -> str:
 
 
 __all__ = [
+    "MIN_SCORE_RATIO",
     "RRF_K",
     "Candidate",
+    "above_floor",
     "bm25_ranking",
+    "bm25_scores",
     "cosine_ranking",
+    "cosine_scores",
     "default_responder",
     "is_ambiguous",
     "prefilter",

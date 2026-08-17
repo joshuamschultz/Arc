@@ -23,6 +23,7 @@ tools read the resolved ``team_root`` from that state.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -319,6 +320,57 @@ async def messaging_bind_run_fn(ctx: Any) -> None:
     st.oneshot_fn = data.get("oneshot_fn")
     st.channel_deliver_fn = data.get("channel_deliver_fn")
     _logger.info("Bound agent run/deliver callbacks for message processing")
+
+
+# Only these capture kinds describe something the agent was *given*. Tool output
+# and the agent's own replies are working noise, and a digest that indexes them
+# ranks its owner for having been busy rather than for holding anything.
+_PUBLISHABLE_KINDS = frozenset({"user", "document", "observation"})
+
+# Below this a capture is a remark, not an artifact worth a pointer.
+_MIN_PUBLISHABLE_CHARS = 40
+
+
+@hook(event="memory:captured", priority=100)
+async def publish_ingest_to_digest(ctx: Any) -> None:
+    """Publish a pointer to what private memory just filed — a title, never contents.
+
+    Written here, at ingest, rather than when somebody asks: the router must be
+    able to rank the room without waking anyone, and it can only do that over an
+    index that already exists (ADR-032).
+
+    The digest is this agent's own published view of itself. It carries titles,
+    proper nouns and tags — no bodies — so what crosses the memory privacy
+    boundary is a pointer that helps a teammate address the right agent, and
+    nothing a teammate could read instead of asking.
+    """
+    data = ctx.data if hasattr(ctx, "data") else {}
+    text = str(data.get("text") or "")
+    kind = str(data.get("kind") or "")
+    if kind not in _PUBLISHABLE_KINDS or len(text.strip()) < _MIN_PUBLISHABLE_CHARS:
+        return
+    await _publish_digest_entry(text, kind=kind)
+
+
+async def _publish_digest_entry(text: str, *, kind: str, artifact_id: str = "") -> None:
+    """Fold one pointer into this agent's published digest. Never raises."""
+    from arcteam.digest import summarize_artifact
+
+    st = _runtime.state()
+    if st.digests is None or st.identity is None:
+        return
+    entry = summarize_artifact(text, artifact_id=artifact_id or _artifact_id(text), kind=kind)
+    if not entry.title:
+        return
+    try:
+        await st.digests.add_entry(st.identity.did, st.config.entity_name or st.agent_name, entry)
+    except Exception:  # reason: a routing index must never break the work it indexes
+        _logger.warning("could not publish digest entry", exc_info=True)
+
+
+def _artifact_id(text: str) -> str:
+    """A stable id for an artifact, so re-filing updates its pointer in place."""
+    return hashlib.sha256(text.strip().encode("utf-8")).hexdigest()[:16]
 
 
 @hook(event="agent:shutdown", priority=100)
@@ -667,6 +719,11 @@ async def store_team_file(file_path: str) -> str:
         result = await store.store(
             source_path=Path(file_path),
             agent_name=entity_name,
+        )
+        # Filing a document is ingest, so the pointer is published now — the
+        # moment the agent becomes the one who holds it.
+        await _publish_digest_entry(
+            Path(file_path).name, kind="file", artifact_id=str(result.get("path", file_path))
         )
         return json.dumps({"status": "stored", **result})
     except (FileNotFoundError, ValueError) as exc:

@@ -12,7 +12,9 @@ import pytest
 from arcteam.digest import AgentDigest, DigestEntry
 from arcteam.routing import (
     RRF_K,
+    above_floor,
     bm25_ranking,
+    bm25_scores,
     cosine_ranking,
     default_responder,
     is_ambiguous,
@@ -83,6 +85,38 @@ class TestBM25Half:
 
     def test_an_empty_corpus_ranks_nothing(self) -> None:
         assert bm25_ranking("anything", ["", ""]) == []
+
+    def test_matching_only_a_preposition_scores_far_below_holding_the_document(self) -> None:
+        """The BM25+ free floor made these two comparable; delta=0 is why they are not.
+
+        Left as it ships, ``idf x delta`` is paid for every query term whether the
+        document contains it or not, so the agent whose only tie to "the
+        requirements *for* NNL" is the word "for" scored two thirds of what the
+        agent holding the document scored — and answered.
+        """
+        documents = [digest.as_document() for digest in _fleet()]
+        scores = bm25_scores("who has the technical requirements for NNL?", documents)
+        ops, sales = scores[2], scores[1]
+
+        assert sales < ops * 0.3
+        assert set(above_floor(scores, 0.3)) == {2}
+
+    def test_a_term_most_of_the_corpus_carries_never_inverts_the_ranking(self) -> None:
+        """Okapi's IDF goes negative past 50% document frequency. Plus's does not."""
+        scores = bm25_scores("report", ["report", "report", "report", "unrelated report"])
+
+        assert all(score > 0.0 for score in scores.values())
+
+
+class TestScoreFloor:
+    def test_the_tail_of_a_ranking_is_not_an_answer(self) -> None:
+        assert above_floor({0: 10.0, 1: 1.0}, 0.3) == {0: 10.0}
+
+    def test_a_close_second_survives(self) -> None:
+        assert set(above_floor({0: 10.0, 1: 9.0}, 0.3)) == {0, 1}
+
+    def test_no_floor_keeps_everything(self) -> None:
+        assert above_floor({0: 10.0, 1: 0.1}, 0.0) == {0: 10.0, 1: 0.1}
 
 
 class TestDenseHalf:
