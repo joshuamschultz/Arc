@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | **DRAFT — design only.** No implementation. Blocked on operator sign-off for **D1**. |
+| **Status** | **APPROVED — D1 decided by the owner (2026-08-17), implementing in three stages.** |
 | **Branch** | worktree off `develop` |
 | **Type** | integration |
 | **Package(s)** | `arcteam` (channels, routing), `arcagent` (activation), `arcui` (compose surface) |
@@ -142,58 +142,146 @@ Given the above, this spec is **not** "build a write path". It is:
 
 ## Decisions
 
-### D1 — Who answers *(OPERATOR SIGN-OFF REQUIRED — do not implement past this line)*
+### D1 — Who answers *(DECIDED by the owner, 2026-08-17)*
 
-Today's ladder, already shipped by SPEC-055 and live:
+> *"we can't do designated responder. sometimes I don't know who has the answer,
+> and they need to assess if the message is for them, or they have something
+> valuable to add or not."*
+
+**Relevance triage is a product requirement, not a cost compromise.** A
+designated responder is rejected: it assumes the human knows who owns the answer,
+and the whole reason to post in a channel rather than a DM is that he does not.
+
+Two distinct judgements, per agent, and the second is not a weaker form of the
+first:
+
+1. **Is this addressed to me, or in my domain?**
+2. **Do I have something valuable to add?**
+
+An agent holding genuinely useful context should speak up even when the message
+was not aimed at it. That is the behaviour being bought.
+
+**My earlier objection was aimed at the wrong target.** The problem was never
+that agents judge. It is that the judgement **failed open** — and a cost control
+whose failure mode is "spend the maximum" is the wrong shape regardless of who is
+judging. So the judgement stays and the failure direction inverts.
+
+#### D1a — The gate fails CLOSED
+
+`_passes_channel_triage` currently returns `True` on a missing classifier, any
+exception, and any non-`N` verdict including empty and garbled
+(`capabilities.py:166-184`). Every one of those becomes silence.
+
+| Gate outcome | Today | After |
+|---|---|---|
+| explicit YES | wake | wake |
+| explicit NO | skip | skip |
+| empty / garbled | **wake** | **skip** |
+| exception / timeout | **wake** | **skip** |
+| no classifier bound | **wake** | **skip** |
+
+The trade, stated plainly: fail-closed can drop a message an agent should have
+answered. That failure is **visible** (the human sees no reply and can `@` the
+agent, which bypasses the gate entirely and is guaranteed to wake it) and it is
+**cheap**. Fail-open's failure is N full runs on every message, silently, forever
+— invisible until the bill. A mention is always available as the deterministic
+override, which is what makes fail-closed safe to choose here.
+
+#### D1b — The gate must be a rounding error
+
+The gate decides *whether to pay for a reply*. If the gate costs a meaningful
+fraction of the reply, it has no reason to exist.
+
+- **One `quick_classify` call** — one `arcllm` invoke, no tools, not the agentic
+  loop (`agent.py:732-749`). Already the right primitive.
+- **`max_tokens = 8`.** The answer is one word.
+- **Hard timeout, 5 s**, via `asyncio.wait_for`. There is no timeout today, so a
+  hung provider currently blocks the inbox consumer indefinitely. On timeout:
+  silence (D1a).
+- **A small fast model**, configurable as `triage_model`, defaulting to the
+  agent's model so a deployment that sets nothing still works. This is the single
+  biggest cost lever and it is one config line.
+- **Body truncated to 2000 chars** (already the case) and sanitised (LLM01).
+
+Prompt shape — it must ask **both** of Josh's judgements, and must make silence
+the default rather than a fallback:
+
+```text
+system: You are {name}, one member of a team, in the shared channel #{channel}.
+        Your role: {role}.
+        A message was posted to the channel. It was not addressed to anyone
+        specific.
+        Answer YES only if either is true:
+          1. The message is about your role or domain.
+          2. You hold specific information that would genuinely help, that
+             another member is unlikely to have.
+        Adding agreement, encouragement, or a restatement is not value.
+        If you are unsure, answer NO.
+        Reply with exactly one word: YES or NO.
+user:   {sender_handle}: {body}
+```
+
+Two deliberate properties: naming the role makes judgement 1 answerable, and
+"unsure ⇒ NO" plus the explicit non-value clause is what stops six agents
+answering "thanks".
+
+#### D1c — Blast radius: at most 2 answers, 60 s cooldown
+
+**Answer cap = 2 per message.** Justification: a cap of 1 is a designated
+responder chosen by a race, which is the thing the owner rejected. At 3+, a
+six-agent channel reads as a pile-on in a chat window and marginal value falls
+away faster than cost does. Two is exactly the shape the owner described — the
+agent who owns it answers, and one other agent with genuinely different context
+adds to it.
+
+Mechanism: before waking, an agent reads the message's thread via the existing
+`MessagingService.get_thread(stream, thread_id)` and stays silent if two replies
+already exist. **This is a soft cap** — agents decide independently with no
+coordinator, so C agents deciding concurrently can overshoot to C. Stated
+honestly rather than papered over: the hard bounds are the token budget and the
+breaker below. Mentions and `critical` bypass the cap, because an explicitly
+addressed agent must never be silenced by someone else having spoken first.
+
+**Cooldown = 60 s per (agent, channel).** Justification: it matches
+conversational turn granularity. It stops one agent answering every message in a
+rapid exchange while leaving a normal back-and-forth intact, and it damps the
+reply-to-reply case that D4 bounds structurally. Mentions and `critical` bypass
+it, for the same reason.
+
+#### D1d — Check order is cheapest-first
+
+Each check is skipped only if a cheaper one already decided. The LLM call is last.
+
+| # | Check | Cost | Bypassed by |
+|---|---|---|---|
+| 1 | self-suppression (`signer_did == my did`) | free | nothing |
+| 2 | hop budget (`hop >= 2`) | free | nothing |
+| 3 | mention scope (SPEC-055) | free | — *decides* |
+| 4 | sender is human (`EntityType.USER`) | cached roster | mention, critical |
+| 5 | cooldown | free, local | mention, critical |
+| 6 | answer cap | one stream read | mention, critical |
+| 7 | circuit breaker | free, local | nothing |
+| 8 | **relevance gate (LLM)** | ~8 output tokens | mention, critical |
+| 9 | full run | the real cost | — |
+
+The resulting ladder:
 
 | Message shape | Who wakes | Cost |
 |---|---|---|
 | `priority == critical` | every member | N full runs |
 | `@mentions` present | only the named agents (+ guaranteed inbox fanout) | M full runs, M = names |
-| no mentions (broadcast) | every member runs `quick_classify`; those answering YES run | N × 8-token calls + K full runs |
+| no mentions, **human**-authored | members passing the fail-closed gate, capped at 2 | N × 8-token calls + ≤2 full runs |
+| no mentions, **agent**-authored | nobody (D4a) | 0 |
 | DM | the addressee | 1 full run |
 
-The ladder is sound. The mention tier is right and I am **not** proposing to
-change it — the brief asks whether "hints, not routing" was a deliberate decision
-being overridden. It was a decision, it was already reversed by SPEC-055 on
-recorded live evidence (one `@josh_agent` post to `#brand` caused four agents to
-burn a full Sonnet turn each), and that reversal was correct. The stale docstring
-should be deleted, not honoured.
+The mention tier is unchanged and I am **not** proposing to change it. The brief
+asked whether "hints, not routing" was a deliberate decision being overridden. It
+was a decision, it was already reversed by SPEC-055 on recorded live evidence
+(one `@josh_agent` post to `#brand` burned a full Sonnet turn in four agents),
+and that reversal was correct. The stale docstring goes; the behaviour stays.
 
-**The open question is only the un-addressed tier.** Three options:
-
-| Option | Un-addressed post costs | Failure mode | Determinism |
-|---|---|---|---|
-| **A — triage (today)** | N cheap classify + K full runs | fail-open ⇒ **everyone answers** | model judgement |
-| **B — channel responder** | 1 full run | wrong agent answers; cheap and visible | operator config |
-| **C — silence unless addressed** | 0 | human must always `@` someone | absolute |
-
-**Recommendation: B as the per-channel default, A available as an opt-in, C never.**
-
-Reasoning, in the order that decided it:
-
-1. **Triage's failure mode is the thing triage exists to prevent.** It is
-   fail-open by design and correctly so — `_passes_channel_triage` wakes the run
-   on a missing classifier, an exception, or a garbled verdict
-   (`capabilities.py:166-184`). A broken or slow model therefore degrades to *N
-   full runs on every channel message*, which is the exact ~15× fan-out
-   anti-pattern. A cost control whose failure is "spend the maximum" is the wrong
-   shape for a cost control.
-2. **A designated responder's failure is cheap and legible.** One agent answers
-   something outside its lane. The operator sees it and re-points the field. No
-   token cliff, no six-way pile-on.
-3. **It matches the Slack mental model the owner asked for.** Channels have
-   owners. `#work` having a responder is not an Arc concept, it is how the room
-   already works socially.
-4. **It moves a cost-bearing product decision from a model to the operator**,
-   per channel, which is where the brief says it belongs.
-
-Shape: `Channel.responder: str = ""` (a DID) on `arcteam.types.Channel`. Empty
-means fall back to the channel's `triage` setting. Set via the existing
-operator-only channel-management routes — no new surface. `arcagent` reads it
-from the channel record it can already fetch via `list_channels()`.
-
-**This is the decision to bring to the owner.** Everything below is settled.
+A mention is also what makes D1a's fail-closed gate safe: it is the deterministic
+override a human always has when the gate guesses wrong.
 
 ### D2 — How an agent sees the channel
 
@@ -300,22 +388,21 @@ inferred from a bill.
 
 ### D5 — Cost
 
-**The ceiling, stated plainly for an N-member channel:**
+**The ceiling for an N-member channel, after this spec:**
 
-| Case | Classify calls | Full runs |
+| Case | Gate calls | Full runs |
 |---|---|---|
 | Human `@mentions` M agents | 0 | M |
-| Human un-addressed, **option B** | 0 | 1 |
-| Human un-addressed, **option A** | N (8 output tokens each) | K ≤ N |
-| Human un-addressed, **option A, classifier broken** | N (failed) | **N** |
-| Agent reply, with D4(a) | 0 | 0 |
-| Agent reply, **without D4(a)** | N | unbounded |
+| Human un-addressed | N × 8 output tokens | **≤ 2** (soft cap, D1c) |
+| Human un-addressed, gate broken | N failed calls, then breaker OPEN | **0** |
+| Agent reply (D4a) | 0 | 0 |
+| *Today, un-addressed, gate broken* | *N failed* | ***N*** |
 
-`quick_classify` is genuinely cheap and correctly built for this — one `arcllm`
-call, no tools, `max_tokens=8`, explicitly *not* the agentic loop
-(`agent.py:732-749`). The expensive row is the fourth, which is D1's argument.
+The last row is what this spec deletes. The gate's own cost is bounded by
+`max_tokens=8` and a 5 s timeout, so it is a rounding error against a full
+agentic turn — which is the only thing that justifies running it N times.
 
-Controls to engage, all existing:
+Controls engaged, all existing primitives:
 
 - **`RootTokenBudget`** (`arcagent/orchestration/token_budget.py`) — a channel
   post opens one budget shared by every activation it causes. `try_debit` is
@@ -323,12 +410,15 @@ Controls to engage, all existing:
   further activation** instead of truncating a turn mid-thought. This is the
   primitive that already exists to fix the "children silently spend multiples of
   the caller's allocation" bug; a channel fan-out is that bug's shape.
-- **`CircuitBreaker`** — per D4(d).
-- **Triage stays fail-open, but a triage failure is now audited and counts toward
-  the breaker.** Correctness wins the individual message; the breaker stops a
-  broken classifier from buying N full runs on every message forever. Today a
-  failing classifier degrades silently and permanently.
+- **`CircuitBreaker`** (`arcagent/modules/proactive/circuit_breaker.py`) —
+  per `(agent, channel)`, `failure_threshold=5`, `base_wait=30 s`,
+  `max_wait=1800 s`. A gate that keeps failing stops being called at all, with
+  exponential backoff, and every trip is audited. Chosen over a bespoke limiter
+  because it is already the repo's resilience primitive and already tested.
+- **Cooldown and answer cap** — D1c.
 
+No parallel limiter is introduced. Every control above is a primitive that
+already exists in the tree and is already covered by tests.
 ---
 
 ## Seams — nothing new, no arrow reversed
@@ -405,17 +495,30 @@ to the receiving agent. One rule, one place.
 
 ---
 
+## Implementation stages
+
+Ordered so that each stage makes the next one debuggable. Full gates every
+stage: `ruff check`, `mypy --strict`, and the **full** suite — not a subset.
+
+| Stage | Ships | Why this order |
+|---|---|---|
+| **1** | F3 — client surfaces `posted` / every error frame; compose box only clears on ack | ~10 lines, and it converts every remaining failure from silent to visible |
+| **2** | F1 + F2 + F4 — channel membership usable from the UI, live re-resolve of subscriptions, loud unresolvable-`@handle`; delete the stale `team_chat.py` docstring | membership must be real before "who answers" can be observed at all |
+| **3** | D1 (fail-closed gate, timeout, cap, cooldown) + D4 (human-only fan-out, signed `hop`, self-suppression) + D5 (budget, breaker) | the expensive, judgement-bearing layer, on top of a stack that now reports its own failures |
+
 ## Open questions for the owner
 
-1. **D1 — un-addressed posts.** Recommendation is B (per-channel responder,
-   triage opt-in). This is the one with real cost consequences and it is not
-   settled.
-2. **Auto-create on first post.** F1 says the current behaviour creates a
-   one-member room. Options: stop auto-creating and require the channel to exist;
-   or auto-create seeded with the full roster. Auto-creating an empty room is the
-   one thing that must not survive.
-3. **Should `#work` membership default to every registered agent?** Convenient
-   and matches "the team channel"; also the largest fan-out surface.
+1. ~~**D1 — un-addressed posts.**~~ **Decided 2026-08-17: relevance triage,
+   fail-closed. Designated responder rejected.**
+2. **Auto-create on first post.** F1's current behaviour creates a one-member
+   room. This spec stops auto-creating a room the operator is alone in; the
+   remaining choice is whether a dashboard post to a non-existent channel is an
+   error, or creates a channel seeded with the full roster. Implemented as an
+   error plus a UI affordance to add members — a silently empty room is the one
+   outcome that must not survive.
+3. **Should a channel default to every registered agent?** Convenient, and it
+   matches "the team channel"; also the largest fan-out surface. Left to the
+   operator per channel rather than defaulted.
 
 ---
 
@@ -424,7 +527,11 @@ to the receiving agent. One rule, one place.
 - **`classification` is not in `crypto._SIGNED_FIELDS`** (`crypto.py:24-38`).
   It is enforced on send (`_enforce_no_write_down`) but not covered by the
   signature, so it is not tamper-evident in transit the way `body` and `mentions`
-  are. Not this spec's problem; worth its own look given SPEC-038.
+  are. **Raised as its own spec at the owner's direction — deliberately not
+  folded in here**, because it is a SPEC-038 classification-integrity question
+  and not a group-chat question, and bundling it would hide it inside a UI
+  change. This spec adds `hop` to `_SIGNED_FIELDS` and touches nothing else in
+  that tuple.
 - **`team_chat.py`'s module docstring** describes the file as read-only while the
   same file exposes three operator-only mutation routes. It sent this
   investigation down the wrong path and should be rewritten regardless of what
