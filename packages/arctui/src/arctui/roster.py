@@ -28,13 +28,13 @@ class AgentRef:
 
 
 def default_team_root() -> Path:
-    """The global team root (``~/.arc/team``) — arc's fleet discovery location."""
+    """The global team root (``~/arc/team``) — arc's fleet discovery location."""
 
     return arc_team()
 
 
 def list_agents(team_root: Path | None = None) -> list[AgentRef]:
-    """Enumerate agents under ``team_root`` (default ``~/.arc/team``), sorted by id.
+    """Enumerate agents under ``team_root`` (default ``~/arc/team``), sorted by id.
 
     Returns an empty list when the root does not exist — the caller offers
     ``arc agent create`` rather than entering no-agent mode silently (REQ-143).

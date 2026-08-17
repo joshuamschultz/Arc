@@ -6,8 +6,14 @@ Deployments that predate the lifecycle split have everything at the root::
              arcagent.toml arcllm.toml gateway.toml connections.toml arc.env
 
 This module moves each entry to the root that matches its lifecycle, once, so
-that a later "download the new one and overwrite ``runtime/``" cannot destroy
-the operator signing key, the trust store, or the arcstore database.
+that a later "install the new runtime and flip the symlink" cannot destroy the
+operator signing key, the trust store, or the arcstore database.
+
+**The fleet is never in scope.** It lives at ``~/arc/team``, outside this home
+entirely, and this module has no path that can reach it. That is what makes the
+migration cheap to run on a live box: of the two irreplaceable things a
+deployment holds, one is never renamed and the other moves by ``rename`` within
+a single directory.
 
 It is a **filesystem** migration for live deployments, not a compatibility shim:
 nothing here teaches Arc to read two layouts. After it runs, every surface reads
@@ -112,6 +118,27 @@ def plan_migration() -> list[tuple[Path, Path]]:
     return moves
 
 
+def _is_occupied(source: Path, destination: Path) -> bool:
+    """True when *destination* holds something a move would destroy.
+
+    An **empty directory** does not. Every box this migration exists for has at
+    least one — a bare ``mkdir -p`` an earlier deploy script left at the new
+    fleet root — and refusing on a directory that holds nothing would abort the
+    migration on precisely the deployments it was written for. ``rename``
+    replaces an empty directory with a directory atomically, so the move is as
+    safe there as anywhere else, and nothing is deleted to make room.
+
+    It only counts as free when **both** sides are directories: ``rename``
+    refuses a file onto a directory, and discovering that as an ``EISDIR``
+    part-way through is worse than naming it before the first move.
+    """
+    if not (destination.exists() or destination.is_symlink()):
+        return False
+    if destination.is_symlink() or not destination.is_dir() or not source.is_dir():
+        return True
+    return any(destination.iterdir())
+
+
 def migrate_arc_home() -> MigrationResult:
     """Move a flat Arc home into the split layout. Idempotent.
 
@@ -126,7 +153,7 @@ def migrate_arc_home() -> MigrationResult:
     if not moves:
         return MigrationResult(already_migrated=True)
 
-    occupied = [str(dst) for _, dst in moves if dst.exists() or dst.is_symlink()]
+    occupied = [str(dst) for src, dst in moves if _is_occupied(src, dst)]
     if occupied:
         raise MigrationError(
             "Arc home migration aborted — destination already exists: "

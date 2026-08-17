@@ -71,16 +71,18 @@ TOFU (source approval — gates capability LOAD, not tool invocation):
     persist_validators  — Atomic tomlkit rewrite of the validators block
 
 Paths (``arctrust.paths`` — the ONE resolver; never compose your own):
-    arc_home            — ``${ARC_CONFIG_DIR:-~/.arc}``, parent of the four roots
+    arc_home            — ``${ARC_CONFIG_DIR:-~/.arc}``, the INSTALL; disposable
     arc_runtime         — ``<arc_home>/runtime/current``, replaced on update
     arc_config          — ``<arc_home>/config``, preserved on update
     arc_state           — ``<arc_home>/state``, never touched by an update
-    arc_team            — ``<arc_home>/team``, never touched by an update
+    arc_team            — ``${ARC_TEAM_ROOT:-~/arc}/team``, OUTSIDE the home, so
+                          replacing or deleting the home cannot reach the fleet
     config_file / env_file                — one config file under ``arc_config``
     operator_dir / default_operator_key_path / identity_dir / trust_dir /
     store_dir / nats_dir / bundles_dir / capabilities_dir / blueprints_dir /
     skills_dir / gateway_* / audit_dir / users_file — one path under ``arc_state``
     module_root         — ``<arc_runtime>/modules``
+    runtime_venv / runtime_bin            — the active runtime's venv + its executables
     activate_runtime    — atomic ``current`` symlink flip (update / rollback)
 """
 
@@ -149,6 +151,8 @@ from arctrust.paths import (
     module_root,
     nats_dir,
     operator_dir,
+    runtime_bin,
+    runtime_venv,
     skills_dir,
     store_dir,
     trust_dir,
@@ -339,6 +343,8 @@ __all__ = [
     "read_verified_anchor",
     "redact_text",
     "register_operator",
+    "runtime_bin",
+    "runtime_venv",
     "sign",
     "sign_artifact",
     "sign_artifact_with_signer",

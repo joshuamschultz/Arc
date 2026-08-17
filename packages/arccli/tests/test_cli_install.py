@@ -39,7 +39,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import arcagent
 import pytest
-from arctrust.paths import bundles_dir, module_root, operator_dir
+from arctrust.paths import ARC_CONFIG_DIR_ENV, bundles_dir, module_root, operator_dir
 
 from arccli.commands import install as install_cmd
 from arccli.commands import up as up_cmd
@@ -654,3 +654,84 @@ def test_install_is_registered_as_a_top_level_command() -> None:
     assert module_command is not None
     assert module_command.name == "module"
     assert module_args == ["install", "memory"]
+
+
+def test_runtime_is_registered_as_a_top_level_command() -> None:
+    """Rollback has to be findable in ``arc --help`` or it is not a rollback plan."""
+    from arccli.commands.registry import resolve_command_and_args
+
+    command, args = resolve_command_and_args(["runtime", "activate", "0.2.0"])
+
+    assert command is not None
+    assert command.name == "runtime"
+    assert args == ["activate", "0.2.0"]
+
+
+# ---------------------------------------------------------------------------
+# --migrate-only — the layout move, without the rest of the install
+# ---------------------------------------------------------------------------
+
+
+def test_migrate_only_splits_the_home_and_stops(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A deploy must split the home BEFORE any stage reads a config path.
+
+    ``arc init`` creates what it does not find, so running it first writes a
+    fresh config beside the real one — and the migration can then only refuse,
+    because both are real. So the move needs a surface that runs on its own,
+    ahead of every stage that resolves a path under the home.
+    """
+    home = tmp_path / "arc-home"
+    monkeypatch.setenv(ARC_CONFIG_DIR_ENV, str(home))
+    home.mkdir()
+    (home / "gateway.toml").write_text("[gateway]\ntier = 'personal'\n", encoding="utf-8")
+
+    install_cmd.install_handler(["--migrate-only"])
+
+    from arctrust.paths import config_file
+
+    assert (
+        config_file("gateway.toml").read_text(encoding="utf-8") == "[gateway]\ntier = 'personal'\n"
+    )
+    assert not (home / "gateway.toml").exists()
+    assert "Preflight" not in capsys.readouterr().out
+
+
+def test_migrate_only_never_touches_the_fleet(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The fleet lives outside the home, so no migration can reach it.
+
+    This is what makes the procedure cheap to run on a live box: an agent's
+    memory, identity, tools, skills and workspace are never in the blast radius,
+    whatever the home's shape turns out to be.
+    """
+    home = tmp_path / "arc-home"
+    monkeypatch.setenv(ARC_CONFIG_DIR_ENV, str(home))
+    monkeypatch.setenv("ARC_TEAM_ROOT", str(tmp_path / "arc"))
+    home.mkdir()
+    (home / "gateway.toml").write_text("[gateway]\n", encoding="utf-8")
+    agent = tmp_path / "arc" / "team" / "josh_agent"
+    (agent / "workspace").mkdir(parents=True)
+    (agent / "arcagent.toml").write_text('[identity]\ndid = "did:arc:josh"\n', encoding="utf-8")
+
+    install_cmd.install_handler(["--migrate-only"])
+
+    from arctrust.paths import arc_team
+
+    assert arc_team() == tmp_path / "arc" / "team"
+    assert (agent / "arcagent.toml").read_text(encoding="utf-8") == (
+        '[identity]\ndid = "did:arc:josh"\n'
+    )
+    assert (agent / "workspace").is_dir()
+
+
+def test_migrate_only_is_re_runnable_on_a_box_that_needs_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same procedure runs on two live boxes and is re-run after any failure."""
+    monkeypatch.setenv(ARC_CONFIG_DIR_ENV, str(tmp_path / "arc-home"))
+
+    install_cmd.install_handler(["--migrate-only"])
+    install_cmd.install_handler(["--migrate-only"])

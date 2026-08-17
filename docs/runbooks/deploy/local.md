@@ -29,42 +29,85 @@ from `--team-root` on demand.
 by hand or debugging a failed run.
 
 
-## The Arc home layout
+## The layout: two directories
 
-`~/.arc` is split by **lifecycle**, so updating Arc is "replace the runtime
-and restart" without risking anything irreplaceable:
+**`~/.arc` is Arc's. `~/arc` is yours.**
+
+| Path | Holds | Whose |
+|---|---|---|
+| `~/.arc/` | the install: runtime, config, state | **Arc's** — disposable |
+| `~/arc/team/<agent>/` | per-agent traces, sessions, memory, identity, tools, skills, workspace | **yours** — irreplaceable |
+| `~/arc/` (everything else) | the source tarball you rsync | yours, and disposable too |
+
+That is the whole point. You can drop a fresh tree into `~/.arc`, or delete it
+outright, and every agent keeps its memory, its keys, its tools and its
+workspace — because none of that was ever underneath it. Nothing is executed
+from `~/arc`: the runtime installs into `~/.arc/runtime/<version>/` and the
+service runs the `current` symlink, so a `git pull` in the source tree cannot
+reach a running agent either.
+
+`~/.arc` is then split by **lifecycle**, so an ordinary update is "install the
+new runtime and flip the symlink":
 
 | Path | Holds | On update |
 |---|---|---|
 | `~/.arc/runtime/<version>/` (+ a `current` symlink) | the framework — code, venv, modules | **replaced wholesale** |
 | `~/.arc/config/` | `arcagent.toml`, `arcllm.toml`, `arcrun.toml`, `gateway.toml`, `connections.toml`, `arc.env` | preserved |
 | `~/.arc/state/` | operator key, identity, trust store, arcstore DB, NATS JetStream, staged bundles | **never touched** |
-| `~/.arc/team/<agent>/` | per-agent traces, sessions, memory, workspace | **never touched** |
 
 Because runtimes install side by side, an update is an atomic `current`
-symlink flip and a rollback is flipping it back.
+symlink flip and a rollback is flipping it back:
 
-Two rules follow, and both have already cost a live box:
+```bash
+arc runtime list                      # every installed version, active one marked
+arc runtime activate 0.2.0-a1b2c3d    # flip forward, or back — same verb
+systemctl --user restart arc.service  # pick up whichever is now current
+```
 
-* **Never put the fleet inside the code checkout.** Agent runtime data under
-  the checkout means every `git pull` collides with a running agent — 1,700
-  files, on the DGX. `team/` is in `.gitignore` so it cannot be committed
-  again, but the layout is what actually prevents it: keep the fleet under
-  `~/.arc/team`, never under the directory you pull into.
-* **Never overwrite `~/.arc` wholesale.** That directory holds the operator
-  signing key. Every WORM audit chain is signed with it; destroy it and the
-  chains it signed can no longer be verified. Replace `runtime/`, nothing else.
+Three rules follow, and each has already cost a live box:
+
+* **The checkout is not the install.** `deploy-node.sh` copies the source into
+  `~/.arc/runtime/<version>/` and builds *that copy's* venv there. A service
+  that runs `~/arc/.venv/bin/arc` has no disposable install at all: the tree an
+  update replaces and the tree a `git pull` rewrites are the same one, so there
+  is neither an atomic update nor a rollback.
+* **The fleet is never inside the install.** `~/arc/team` sits a directory
+  further out than anything an update touches, resolved by
+  `arctrust.paths.arc_team()`. The unit and the deploy script both read it from
+  there rather than spelling it out — a deploy that starts from the wrong empty
+  root does not fail, it reports healthy and serves no agents.
+* **Never overwrite `~/.arc/state` wholesale.** It holds the operator signing
+  key. Every WORM audit chain is signed with it; destroy it and the chains it
+  signed can no longer be verified. Replace `runtime/`, nothing else.
+
+Because the fleet lives in `~/arc` and the source is rsynced there too, the
+runtime install **excludes `team/`** from that copy. `deploy-node.sh` checks
+the result of that exclusion and aborts before activating anything if a fleet
+was captured; don't hand-roll an rsync that skips the check.
 
 ### Migrating an existing box
 
-Deployments made before the split have everything flat at `~/.arc`.
-`arc install` moves each entry into the root that matches its lifecycle —
-once, idempotently, and by moving rather than copying, so a failure part-way
-rolls back and leaves the box exactly as it was. Run it before `arc up`:
+One shape predates the current layout: everything flat at `~/.arc`, with no
+`config/` or `state/` split. `arc install --migrate-only` moves each entry into
+the root that matches its lifecycle — once, idempotently, and by **moving**
+rather than copying, so a failure part-way rolls back and leaves the box exactly
+as it was. It deletes nothing, ever.
+
+**The fleet is never in scope.** It is already at `~/arc/team`, outside this
+home, and the migration has no path that can reach it. Of the two irreplaceable
+things a box holds, one is never renamed and the other moves within a single
+directory.
+
+`scripts/deploy-node.sh` runs it for you, before any stage reads a config path.
+Doing it by hand on a box you are not redeploying:
 
 ```bash
-ssh host 'cd ~/arc && .venv/bin/arc install'
+ssh host '~/.arc/runtime/current/.venv/bin/arc install --migrate-only'
 ```
+
+Run it **before** anything that writes config. `arc init` creates what it does
+not find, so a fresh config written beside the real one leaves two, and the
+migration can then only refuse — both are real data.
 
 A second run prints nothing and exits 0. If it refuses because a destination
 is already occupied, both copies are real data — resolve that by hand rather
@@ -129,9 +172,26 @@ rsync -az --exclude .venv --exclude __pycache__ --exclude .pytest_cache \
   /local/path/to/arc/ host:~/arc/
 ```
 
+Then install that source as a runtime version and make it active. This is what
+`deploy-node.sh` step 2 does; by hand it is a copy, a sync, and a flip:
+
 ```bash
-ssh host 'cd ~/arc && ~/.local/bin/uv sync'
+ssh host 'bash -s' <<'REMOTE'
+set -euo pipefail
+VERSION="0.2.0-$(git -C ~/arc rev-parse --short HEAD)"
+DIR=~/.arc/runtime/$VERSION
+mkdir -p "$DIR"
+rsync -a --delete --exclude .git/ --exclude .venv/ --exclude team/ --exclude .env \
+  --exclude __pycache__/ --exclude .pytest_cache/ --exclude .ruff_cache/ \
+  --exclude .mypy_cache/ --exclude .arc-logs/ --exclude dist/ ~/arc/ "$DIR/"
+~/.local/bin/uv sync --project "$DIR"
+"$DIR/.venv/bin/arc" runtime activate "$VERSION"
+REMOTE
 ```
+
+The venv is built **in** `$DIR`, never copied into it — a virtualenv bakes
+absolute paths into its shebangs, so a moved one runs the interpreter it was
+created beside.
 
 `uv sync` installs the root project's dependency closure — **not** every
 workspace member. `arcgateway-telegram` **is** declared in root
@@ -142,7 +202,7 @@ needed. `-slack`/`-mattermost` aren't pinned yet; install those the same
 way if you need them:
 
 ```bash
-ssh host 'cd ~/arc && .venv/bin/python -m pip install -e packages/arcgateway-slack --no-deps'
+ssh host 'ARC=~/.arc/runtime/current; $ARC/.venv/bin/python -m pip install -e $ARC/packages/arcgateway-slack --no-deps'
 ```
 
 Verify Telegram: `.venv/bin/python -c "import arcgateway_telegram"` should
@@ -193,7 +253,7 @@ exists for the same reason.
 ### `arc init` and the three config files
 
 ```bash
-ssh host 'cd ~/arc && .venv/bin/arc init --tier personal --provider anthropic'
+ssh host '~/.arc/runtime/current/.venv/bin/arc init --tier personal --provider anthropic'
 ```
 
 Writes `~/.arc/config/{arcllm.toml,arcagent.toml,gateway.toml}`. `deploy-node.sh`
@@ -260,9 +320,9 @@ adapter's audit log for the rejected `user_id` (or `@userinfobot`).
 ## Agent create
 
 ```bash
-ssh host 'cd ~/arc && export PATH="$HOME/.local/bin:$PATH" && \
+ssh host 'export PATH="$HOME/.local/bin:$PATH" && \
   set -a && source ~/.arc/config/arc.env && set +a && \
-  .venv/bin/arc agent create josh_agent --dir team --model anthropic/claude-sonnet-5'
+  ~/.arc/runtime/current/.venv/bin/arc agent create josh_agent --dir ~/arc/team --model anthropic/claude-sonnet-5'
 ```
 
 Auto-registers with arcteam if the NATS broker is reachable — it will be,
@@ -273,14 +333,14 @@ embedded gateway knows which identity to route platform DMs to
 (`deploy_node_overlays.py gateway-config --agent-did <DID>`).
 
 Apply the same `[eval]`/`[modules.skills]` deltas to
-`team/<agent>/arcagent.toml` too, even though the user-wide
+`~/arc/team/<agent>/arcagent.toml` too, even though the user-wide
 `~/.arc/config/arcagent.toml` already sets them — belt-and-suspenders against the
 per-instance merge missing them.
 
 Validate before wiring into systemd:
 
 ```bash
-.venv/bin/arc agent build team/josh_agent --check
+~/.arc/runtime/current/.venv/bin/arc agent build ~/arc/team/josh_agent --check
 ```
 
 Expect: `model: anthropic/claude-sonnet-5`, `ANTHROPIC_API_KEY is set`,
@@ -301,10 +361,11 @@ Description=Arc — UI + embedded gateway (web chat, Telegram)
 After=network-online.target
 
 [Service]
-WorkingDirectory=%h/arc
+WorkingDirectory=%h/.arc/runtime/current
 Environment=PATH=%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-EnvironmentFile=%h/.arc/arc.env
-ExecStart=%h/arc/.venv/bin/arc ui start --host 0.0.0.0 --port 8420 --team-root %h/.arc/team --gateway-config %h/.arc/gateway.toml --no-browser --viewer-token ${VIEWER_TOKEN} --operator-token ${OPERATOR_TOKEN}
+EnvironmentFile=%h/.arc/config/arc.env
+ExecStartPre=%h/.arc/runtime/current/.venv/bin/arc install --team-root %h/arc/team
+ExecStart=%h/.arc/runtime/current/.venv/bin/arc ui start --host 0.0.0.0 --port 8420 --team-root %h/arc/team --gateway-config %h/.arc/config/gateway.toml --no-browser --viewer-token ${VIEWER_TOKEN} --operator-token ${OPERATOR_TOKEN}
 Restart=on-failure
 RestartSec=5
 
@@ -319,7 +380,7 @@ WantedBy=default.target
  `shutil.which("nats-server")` finds the broker binary at startup, so
  `arc ui start` can auto-spawn its own managed NATS child bound to a
  persistent store dir (`~/.arc/state/nats/jetstream`, survives restarts).
-- `EnvironmentFile=%h/.arc/arc.env` supplies `ANTHROPIC_API_KEY`,
+- `EnvironmentFile=%h/.arc/config/arc.env` supplies `ANTHROPIC_API_KEY`,
  `TELEGRAM_BOT_TOKEN`, `VIEWER_TOKEN`, `OPERATOR_TOKEN` at process start.
 
 **Known limitation — token exposure in `ps`**: `${VIEWER_TOKEN}`/
@@ -351,13 +412,13 @@ curl -s -H "Authorization: Bearer $VIEWER_TOKEN" \
 ```
 
 ```bash
-.venv/bin/arc ext inspect --agent team/josh_agent               # confirms brain=arcmemory, skills=arcskill both "builtin"/"yes"
+~/.arc/runtime/current/.venv/bin/arc ext inspect --agent ~/arc/team/josh_agent               # confirms brain=arcmemory, skills=arcskill both "builtin"/"yes"
 ```
 
 Smoke test an actual agent turn:
 
 ```bash
-.venv/bin/arc agent run team/josh_agent "Reply with the single word: ready"
+~/.arc/runtime/current/.venv/bin/arc agent run ~/arc/team/josh_agent "Reply with the single word: ready"
 ```
 
 To confirm a remote-platform adapter (e.g. Telegram) is actually connected
@@ -433,7 +494,7 @@ fixed-path config). Use the embedded path instead — it's the only one
 that works today, at every tier:
 
 ```bash
-arc ui start --team-root ~/.arc/team --gateway-config ~/.arc/config/gateway.toml
+arc ui start --team-root ~/arc/team --gateway-config ~/.arc/config/gateway.toml
 ```
 
 `arcgateway stop`/`status` still work normally for managing a daemon

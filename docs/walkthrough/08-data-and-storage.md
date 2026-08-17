@@ -67,7 +67,7 @@ the same path.
         ├── arcui.db                     # arcui's own SQLite mirror (WAL)
         └── arcstore.db                  # the agent process's own SQLite mirror (WAL)
 
-<agent-root>/                            # e.g. ~/.arc/team/<agent>/ or <team-root>/<agent>/
+<agent-root>/                            # e.g. ~/arc/team/<agent>/ or <team-root>/<agent>/
 ├── arcagent.toml                        # per-agent config (merges over the shared layer)
 ├── .audit/
 │   └── skills.worm                      # skill-improver's own WORM chain
@@ -97,7 +97,7 @@ under `team/<agent>/`.
 under `/data` instead of `~/`, so `arc_home()` → `/data/.arc`,
 `resolve_data_dir()` → `/data/.arc/store`, and the agent-root default →
 `/data/team/<agent>` (single-node/Docker commonly pass an explicit
-`--team-root`, e.g. `/data/team`, rather than relying on `~/.arc/team`). The
+`--team-root`, e.g. `/data/team`, rather than relying on `~/arc/team`). The
 whole tree lives on one named volume (`arc-data`) — `docker compose down`
 keeps it, `docker compose down -v` destroys the agent's identity and memory
 permanently (`docker-compose.yml:8-9`).

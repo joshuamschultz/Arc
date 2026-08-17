@@ -89,6 +89,7 @@ def test_migration_runs_before_preflight(flat_home: Path, monkeypatch: pytest.Mo
 
 class _Args:
     team_root = None
+    migrate_only = False
 
 
 def test_arc_up_also_migrates_before_it_reads_anything(

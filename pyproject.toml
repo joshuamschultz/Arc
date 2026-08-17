@@ -164,6 +164,10 @@ module = [
     "sentence_transformers.*",
     "slack_bolt",
     "slack_bolt.*",
+    "slack_sdk",
+    "slack_sdk.*",
+    "aiohttp",
+    "aiohttp.*",
     "browser_use",
     "browser_use.*",
 ]

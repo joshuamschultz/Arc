@@ -88,10 +88,12 @@ Thumbs.db
 /arcllm.toml
 /arcrun.toml
 
-# Agent runtime data. A fleet under the code checkout means every `git pull`
-# collides with a running agent — that is not hypothetical, it put 1,700 files
-# of traces, sessions, memory and workspace into a live deployment's repo. The
-# fleet belongs under ~/.arc/team; this makes committing one here impossible.
+# Agent runtime data. The fleet is `~/arc/team` and the source tarball is
+# rsynced to `~/arc`, so on a real box the fleet sits beside a checkout of this
+# repo — and 1,700 files of traces, sessions, memory and workspace once landed
+# in a live deployment's git status because of it. Nothing is RUN from `~/arc`
+# any more (the runtime installs to `~/.arc/runtime/<version>/`), but this line
+# is what keeps a fleet from ever being committed.
 team/
 
 # Poolside

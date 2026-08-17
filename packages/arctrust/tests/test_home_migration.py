@@ -124,6 +124,77 @@ def test_state_never_lands_inside_the_replaceable_runtime(flat_home: Path) -> No
         assert runtime_root not in getattr(paths, accessor)().parents
 
 
+# --------------------------------------------------------------------------
+# The fleet — never moved, by either box, ever
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def live_fleet(flat_home: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A fleet where it belongs and already is: outside the home, at ``<tmp>/arc/team``.
+
+    ``ARC_TEAM_ROOT`` reproduces inside the tmp tree the relationship ``~/.arc``
+    and ``~/arc`` have on a real box. It has to be set explicitly because
+    ``ARC_CONFIG_DIR`` — which ``flat_home`` sets — deliberately carries the
+    fleet into isolation with it, and a test that let the default resolve to the
+    developer's real ``~/arc/team`` would be reading a live fleet.
+    """
+    monkeypatch.setenv("ARC_TEAM_ROOT", str(flat_home.parent / "arc"))
+    fleet = flat_home.parent / "arc" / "team" / "josh_agent"
+    (fleet / "memory").mkdir(parents=True)
+    (fleet / "arcagent.toml").write_text('[identity]\ndid = "did:arc:josh"\n', encoding="utf-8")
+    (fleet / "memory" / "episodes.jsonl").write_text('{"text":"remember me"}\n', encoding="utf-8")
+    return fleet.parent
+
+
+def test_the_migration_never_moves_the_fleet(live_fleet: Path) -> None:
+    """Both live boxes already have their fleet where it belongs. Leave it alone.
+
+    This is the safest property the migration has: the only irreplaceable things
+    on a box are ``state/`` and the fleet, and neither is renamed. Splitting the
+    home is a matter of moving Arc's OWN files; an agent's memory, identity,
+    tools, skills and workspace are never in the blast radius at all.
+    """
+    before = sorted(p.relative_to(live_fleet) for p in live_fleet.rglob("*"))
+
+    result = migrate_arc_home()
+
+    assert all(dst != paths.arc_team() for _, dst in result.moved)
+    assert sorted(p.relative_to(live_fleet) for p in live_fleet.rglob("*")) == before
+    assert (live_fleet / "josh_agent" / "memory" / "episodes.jsonl").read_text(
+        encoding="utf-8"
+    ) == '{"text":"remember me"}\n'
+
+
+def test_the_fleet_is_still_where_the_resolver_says_afterwards(live_fleet: Path) -> None:
+    """Nothing the migration does may change the answer ``arc_team()`` gives."""
+    resolved_before = paths.arc_team()
+
+    migrate_arc_home()
+
+    assert paths.arc_team() == resolved_before == live_fleet
+    assert (paths.arc_team() / "josh_agent" / "arcagent.toml").exists()
+
+
+def test_splitting_the_home_leaves_no_agent_data_under_a_disposable_root(
+    live_fleet: Path,
+) -> None:
+    """After the split, nothing an update replaces is an ancestor of the fleet."""
+    migrate_arc_home()
+
+    assert paths.arc_runtime_root() not in paths.arc_team().parents
+    assert paths.arc_home() not in paths.arc_team().parents
+
+
+def test_migrating_twice_still_leaves_the_fleet_untouched(live_fleet: Path) -> None:
+    """The same procedure runs on two live boxes and gets re-run after a failure."""
+    migrate_arc_home()
+    second = migrate_arc_home()
+
+    assert second.already_migrated is True
+    assert (live_fleet / "josh_agent" / "arcagent.toml").exists()
+
+
 def test_unknown_entries_are_left_alone(flat_home: Path) -> None:
     """Migration moves what it knows. It never guesses, and never deletes."""
     (flat_home / "team").mkdir()
@@ -240,3 +311,38 @@ def test_migration_never_deletes_a_source_it_did_not_move(flat_home: Path) -> No
     text = source.read_text(encoding="utf-8")
     for forbidden in ("shutil.rmtree", "os.unlink", "Path.unlink", ".unlink(", "os.remove"):
         assert forbidden not in text, f"migration must not delete: found {forbidden}"
+
+
+def test_an_empty_directory_at_the_destination_is_not_a_collision(flat_home: Path) -> None:
+    """Live boxes have these: bare ``mkdir -p`` calls an earlier deploy script left.
+
+    An empty directory holds nothing an operator could lose, so refusing on it
+    would abort the migration on exactly the deployments it exists for — and the
+    move itself is fine, because ``rename`` replaces an empty directory
+    atomically. Occupied means "has contents", not "the path resolves".
+    """
+    pubkey, _ = _seed_operator_chain(flat_home)
+    paths.operator_dir().mkdir(parents=True)
+    paths.store_dir().mkdir(parents=True)
+
+    migrate_arc_home()
+
+    assert paths.default_operator_key_path().exists()
+    assert verify_chain(paths.store_dir() / "audit.jsonl", pubkey) is True
+
+
+def test_an_empty_destination_is_only_free_when_both_sides_are_directories(
+    flat_home: Path,
+) -> None:
+    """``rename`` refuses a file onto a directory, so that case must stay a collision.
+
+    Reporting it up front is the difference between a named refusal and an
+    ``EISDIR`` part-way through, with half the home already moved.
+    """
+    paths.env_file().mkdir(parents=True)
+
+    with pytest.raises(MigrationError, match="already exists"):
+        migrate_arc_home()
+
+    assert (flat_home / "arc.env").exists()
+    assert (flat_home / "operator").is_dir(), "an aborted migration moved something"

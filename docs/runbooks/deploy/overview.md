@@ -423,20 +423,13 @@ flowchart LR
 #### Deployment
 
 ```bash
-# Copy repository to DGX
-rsync -az --exclude .venv --exclude __pycache__ /local/arc/ dgx:/home/user/arc/
+# Copy the SOURCE to the DGX. This is a tarball, not the install: the runtime is
+# built from it under ~/.arc/runtime/<version>/ and nothing ever runs from here.
+rsync -az --exclude .venv --exclude __pycache__ --exclude team /local/arc/ dgx:/home/user/arc/
 
-# Install
-ssh dgx 'cd ~/arc && uv sync --all-packages --all-groups'
-
-# Configure
-ssh dgx 'cd ~/arc && .venv/bin/arc init --tier personal --provider anthropic'
-
-# Create agents
-ssh dgx 'cd ~/arc && .venv/bin/arc agent create researcher --model anthropic/claude-sonnet-5'
-
-# Start with systemd
-ssh dgx 'cd ~/arc && sudo cp deploy/arc.service /etc/systemd/system/ && sudo systemctl enable --now arc'
+# Install the runtime, create agents, and wire the systemd unit — every step of
+# it, idempotently. See docs/runbooks/deploy/local.md for what it does and why.
+ssh dgx '~/arc/scripts/deploy-node.sh researcher'
 ```
 
 ---

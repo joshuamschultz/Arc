@@ -640,12 +640,20 @@ anything irreplaceable. Every path below is resolved by exactly one named
 accessor in `arctrust.paths` — no surface composes its own (enforced by
 `tests/architecture/test_arc_home_single_resolver.py`).
 
+Two directories, and which is which is the design: `~/.arc` is the **install**
+and is disposable by construction; `~/arc` is the **operator's**, holding the
+fleet and the source tarball beside it. Nothing is ever executed from `~/arc`.
+
 | Root | Accessor | On update |
 |---|---|---|
 | `~/.arc/runtime/<version>/` (+ `current` symlink) | `arc_runtime()` | **replaced wholesale** |
 | `~/.arc/config/` | `arc_config()` | preserved |
 | `~/.arc/state/` | `arc_state()` | **never touched** |
-| `~/.arc/team/` | `arc_team()` | **never touched** |
+| `~/arc/team/` — outside the home entirely | `arc_team()` | **out of reach** |
+
+The fleet's placement is what makes "drop a fresh tree into `~/.arc`" — or
+`rm -rf ~/.arc`, the blunt version — cost nothing but a reinstall. No agent's
+memory, identity, tools, skills, or workspace is anywhere underneath it.
 
 `resolve_data_dir()` — `${ARCSTORE_DATA_DIR}` or `store_dir()` — is arcstore's
 data root (spool, WORM mirror, SQLite mirrors) and lives under `state/`.
@@ -653,8 +661,10 @@ data root (spool, WORM mirror, SQLite mirrors) and lives under `state/`.
 ```text
 ~/.arc/                                  # arc_home()
 ├── runtime/                             # arc_runtime_root() — disposable
-│   ├── current -> 0.9.0/                # atomic symlink; an update flips it
-│   └── 0.9.0/
+│   ├── current -> 0.9.0/                # atomic symlink; `arc runtime activate` flips it
+│   └── 0.9.0/                           # the whole framework, installed side by side
+│       ├── .venv/                       # runtime_venv() — runtime_bin("arc") runs from here
+│       ├── packages/ scripts/ deploy/   # the code this version ships
 │       └── modules/                     # module_root() — re-materialized by `arc install`
 ├── config/                              # arc_config() — preserved across an update
 │   ├── arcllm.toml                      # provider/model defaults (shared layer)
@@ -687,7 +697,7 @@ data root (spool, WORM mirror, SQLite mirrors) and lives under `state/`.
 └── team/                                # arc_team() — NEVER touched by an update
     └── <agent>/                         # one dir per agent — see agent-root tree below
 
-<agent-root>/                            # e.g. ~/.arc/team/<agent>/
+<agent-root>/                            # e.g. ~/arc/team/<agent>/
 ├── arcagent.toml                        # per-agent config
 ├── .audit/
 │   └── skills.worm                      # skill-improver's own WORM chain

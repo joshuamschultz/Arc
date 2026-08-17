@@ -164,6 +164,13 @@ def _install_handler(args: list[str]) -> None:
     install_handler(args)
 
 
+def _runtime_handler(args: list[str]) -> None:
+    """Dispatch wrapper."""
+    from arccli.commands.runtime import runtime_handler
+
+    runtime_handler(args)
+
+
 def _up_handler(args: list[str]) -> None:
     """Dispatch wrapper."""
     from arccli.commands.up import up_handler
@@ -649,6 +656,14 @@ COMMAND_REGISTRY: list[CommandDef] = [
         args_hint="[--team-root <dir>]",
         cli_only=True,
         handler=_install_handler,
+    ),
+    CommandDef(
+        name="runtime",
+        description="Installed framework versions — list, and flip 'current' (update or rollback)",
+        category="Configuration",
+        args_hint="<list | activate <version>>",
+        cli_only=True,
+        handler=_runtime_handler,
     ),
     CommandDef(
         name="up",

@@ -1,8 +1,17 @@
 """Arc-home path resolution — the single source of truth for ``~/.arc``.
 
-The Arc home is split by **lifecycle**, because updating Arc is meant to be
-"download the new one and overwrite it" and three of the four things living
-there must survive that:
+Two directories, and which is which is the whole design:
+
+============  ===============================================  ===================
+Directory     Holds                                            Belongs to
+============  ===============================================  ===================
+``~/.arc``    the install — runtime, config, state             **Arc**
+``~/arc``     the fleet, and the source tarball beside it      **the operator**
+============  ===============================================  ===================
+
+The home is then split by **lifecycle**, because updating Arc is meant to be
+"install the new one and flip the symlink" and two of its three roots must
+survive that:
 
 ===================  ==============================================  ==================
 Root                 Holds                                           On update
@@ -11,12 +20,24 @@ Root                 Holds                                           On update
 ``config/``          ``arcagent.toml`` … ``gateway.toml``, ``arc.env``  preserved
 ``state/``           operator key, identity, trust store, arcstore,   never touched
                      NATS JetStream, bundles
-``team/``            per-agent traces, sessions, memory, workspace    never touched
 ===================  ==============================================  ==================
 
-Runtimes install side by side under ``runtime/<version>/`` with a ``current``
-symlink, so an update is an atomic symlink flip (:func:`activate_runtime`) and a
-rollback is flipping it back.
+Runtimes install side by side under ``runtime/<version>/`` — the whole framework,
+including its own virtualenv (:func:`runtime_venv`) — with a ``current`` symlink,
+so an update is an atomic symlink flip (:func:`activate_runtime`) and a rollback
+is flipping it back.
+
+That split only holds if the install is genuinely the disposable thing. A
+deployment whose code and venv sit in a git checkout has no disposable install —
+the directory an update replaces and the directory an operator pulls into are the
+same one. Everything a service unit executes resolves through :func:`runtime_bin`,
+so the running code is whatever ``current`` points at and nothing else.
+
+The fleet (:func:`arc_team`) is deliberately outside all of it. Dropping a fresh
+tree into ``~/.arc`` — or deleting the directory outright, which is the blunt
+version an operator will eventually reach for — must cost nothing but a
+reinstall, and that is only true while no agent's memory, identity, tools,
+skills or workspace lives underneath it.
 
 **One resolver per concern.** Every path below is a named function. Callers must
 never compose their own — ``arc_home() / "operator"`` reads the *pre-split*
@@ -45,6 +66,15 @@ ARC_TEAM_ROOT_ENV = "ARC_TEAM_ROOT"
 
 _CURRENT = "current"
 """Name of the symlink pointing at the active runtime version."""
+
+PRE_SYMLINK_PREFIX = f"{_CURRENT}.pre-symlink."
+"""Prefix :func:`activate_runtime` gives the real ``current/`` directory it rescues.
+
+A deployment made before the symlink existed has a real directory there. It is
+kept, never deleted — its modules may be the only record of what the box had —
+but it is a rescued artifact, not an installed runtime, so anything listing
+versions must exclude it rather than offer a venv-less tree for activation.
+"""
 
 OPERATOR_KEY_FILENAME = "operator.key"
 """The operator key's filename, for the one caller that supplies its own directory.
@@ -126,17 +156,23 @@ def arc_runtime_version(version: str, base: Base = None) -> Path:
 def arc_team(name: str = "team", base: Base = None) -> Path:
     """Return a fleet root: ``${ARC_TEAM_ROOT:-~/arc}/<name>`` (default ``team``).
 
-    Per-agent traces, sessions, memory, and workspace. Deliberately NOT under the
-    hidden Arc home: the home is Arc's own business — framework, config, keys —
-    and an update is allowed to replace parts of it. A fleet is the operator's
-    work, so it lives somewhere visible they can back up, inspect, and move,
-    and nothing an update touches can reach it.
+    Per-agent traces, sessions, memory, identity, tools, skills, and workspace —
+    the operator's own work, and the one thing here that cannot be regenerated
+    from anything.
 
-    It is also outside any code checkout. Agent data committed into the repo is
-    what made a production ``git pull`` collide with running agents' memory.
+    Deliberately OUTSIDE the hidden home. ``~/.arc`` holds Arc's own business,
+    and the documented update story is "install the new runtime and flip the
+    symlink" — with "replace the whole home" as the blunt version an operator
+    will eventually reach for. The fleet must survive both, so it sits a
+    directory further out where neither can reach it. ``~/arc`` is where the
+    source tarball is rsynced, but nothing is *run* from there any more: the
+    runtime installs into ``<arc_home>/runtime/<version>/`` and executes from
+    the ``current`` symlink, so the checkout is the fleet's sibling rather than
+    its parent and a pull cannot collide with a live agent.
 
-    ``base`` (i.e. ``--arc-dir``) still wins when given, so a fully self-contained
-    deployment can put everything under one root.
+    ``ARC_TEAM_ROOT`` relocates the fleet alone, for an operator who wants agent
+    data on its own disk. ``base`` (i.e. ``--arc-dir``) still wins when given, so
+    a self-contained deployment can put everything under one root.
 
     Precedence, most specific first: explicit ``base`` → ``ARC_TEAM_ROOT`` →
     ``ARC_CONFIG_DIR`` → ``~/arc``. ``ARC_CONFIG_DIR`` is what every test and
@@ -338,6 +374,27 @@ def module_root(base: Base = None) -> Path:
     return arc_runtime(base) / "modules"
 
 
+def runtime_venv(base: Base = None) -> Path:
+    """Return the active runtime's virtualenv: ``<arc_runtime>/.venv``.
+
+    The venv belongs to the runtime version that owns it, so installing a new
+    version installs a new environment beside the old one and the flip swaps
+    both together. A venv shared across versions — or living in a checkout —
+    turns "replace the runtime" back into an in-place upgrade with no rollback.
+    """
+    return arc_runtime(base) / ".venv"
+
+
+def runtime_bin(name: str, base: Base = None) -> Path:
+    """Return an executable in the active runtime: ``<runtime_venv>/bin/<name>``.
+
+    ``arc``, ``python``, ``arc-agent-worker``. This is what a service unit and a
+    deploy script must name — resolving it here is what stops one of them
+    executing a checkout's copy while the other updates the runtime's.
+    """
+    return runtime_venv(base) / "bin" / name
+
+
 def _validated_version(version: str) -> str:
     """Reject anything that is not a single directory name.
 
@@ -381,7 +438,7 @@ def activate_runtime(version: str, base: Base = None) -> Path:
     # already exist, so a second activation never clobbers the first one's copy —
     # so the flip still lands.
     if link.is_dir() and not link.is_symlink():
-        link.rename(link.with_name(f"{_CURRENT}.pre-symlink.{unique}"))
+        link.rename(link.with_name(f"{PRE_SYMLINK_PREFIX}{unique}"))
     os.replace(staging, link)
     return link
 
@@ -390,6 +447,7 @@ __all__ = [
     "ARC_CONFIG_DIR_ENV",
     "ARC_TEAM_ROOT_ENV",
     "OPERATOR_KEY_FILENAME",
+    "PRE_SYMLINK_PREFIX",
     "Base",
     "activate_runtime",
     "arc_config",
@@ -415,6 +473,8 @@ __all__ = [
     "module_root",
     "nats_dir",
     "operator_dir",
+    "runtime_bin",
+    "runtime_venv",
     "skills_dir",
     "store_dir",
     "trust_dir",

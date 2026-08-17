@@ -176,7 +176,7 @@ register_agents() {
   #
   # The Agent Fleet page in arcui reads from $TEAM_ROOT/shared/messages/registry/.
   # `arc team register` writes there ONLY when --root points at $TEAM_ROOT/shared.
-  # The default root resolves to ~/.arc/team/, which arcui never reads — so a
+  # The default root resolves to ~/arc/team/, which arcui never reads — so a
   # default-root register silently succeeds but the agent never appears in the
   # fleet. That's exactly the bug that left every prior deploy with an empty
   # dashboard.

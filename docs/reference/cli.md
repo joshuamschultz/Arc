@@ -283,6 +283,40 @@ preflight, module install, verify, then `arc ui start`. See
 
 ---
 
+### `arc runtime` — Installed framework versions
+
+Runtimes install side by side under `~/.arc/runtime/<version>/` — code, venv and
+modules together — behind a `current` symlink. An update points the symlink at
+the new version; a rollback points it at the old one. Both are one atomic
+`os.replace` of the link, so a process starting mid-flip sees a whole runtime.
+
+| Command | Purpose | Example |
+|---|---|---|
+| `arc runtime list` | Every installed version, with the active one marked | `arc runtime list` |
+| `arc runtime activate <version>` | Point `current` at a version — update or rollback | `arc runtime activate 0.2.0-a1b2c3d` |
+
+**Notes:**
+- Restart the service afterwards (`systemctl --user restart arc.service`) — the
+  flip changes what starts next, not what is already running.
+- `ln -sfn` is not equivalent: it unlinks before it relinks, so a process
+  starting in that window finds no runtime at all.
+- A version is a bare directory name. A value containing a separator or `..` is
+  refused, because it could point `current` at `state/`.
+
+---
+
+### `arc install --migrate-only` — Layout migration only
+
+Moves a pre-split `~/.arc` and a fleet still at `~/arc/team` into the lifecycle
+layout, then stops. By **moving**, never copying; it deletes nothing and rolls
+back on any failure. Idempotent — a second run prints nothing and exits 0.
+
+Run it **before** any stage that creates agents: `arc agent create` creates what
+it does not find, so a fresh identity minted at the new root while the real fleet
+is still at the old one leaves two fleets the migration can only refuse to merge.
+
+---
+
 ### `arc ui` — Multi-agent dashboard
 
 Start and observe the ArcUI real-time dashboard.
