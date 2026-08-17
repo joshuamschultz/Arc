@@ -65,8 +65,38 @@ weakest on exactly that — rare acronyms and identifiers get smeared into a sem
 while BM25 anchors on the exact token. For the question that exposed this defect, the lexical half
 of the prefilter is the half that finds the answer, and it costs no model call at all.
 
-**3. A single router call breaks ties when the prefilter is ambiguous.** One prompt, all candidate
-cards, one decision — the shape every framework converged on.
+Because the lexical half is load-bearing, **which BM25 and how it is tuned is an architectural
+choice, not an implementation detail.** Okapi's inverse document frequency goes *negative* for a
+term more than half the corpus carries, which in a six-member room can rank the agents that never
+mentioned a word above the ones that did. BM25+ fixes that with a `log((N+1)/df)` IDF and then
+introduces its own problem: its `delta` floor pays `idf * delta` for every query term whether the
+document contains it or not. Ship it as-is and the agent whose only tie to *"the requirements **for**
+NNL"* is the preposition scores two thirds of the agent holding the document, and answers. The
+configuration that works is **BM25+ with `delta = 0`**, an explicit term-overlap entry condition,
+and a relative score floor that drops the tail of the ranking — the same 0.3 ratio the team-memory
+search engine already applies.
+
+**The dense half is opt-in and the lexical half always runs.** An embedder that downloads a model
+the first time somebody speaks is not an unbreakable default, so a deployment with no embedder
+ranks lexically and loses recall on a paraphrased question — never on an identifier, which is the
+case this exists to fix.
+
+**3. One router call breaks ties when the prefilter is ambiguous.** One prompt, all candidate cards,
+one decision — the shape every framework converged on, and the thing the per-agent gate structurally
+could not do, since each of its calls saw exactly one candidate.
+
+**It runs inside the candidates, not in a central router, because no central router exists.**
+arcteam owns channels but has no LLM access by design, arcui-as-router was considered and rejected
+in SPEC-068 (activation belongs to the receiving agent), and there is no third process in the
+middle. So the tiebreak runs in each *candidate* — at most `top_k` of them, which is O(1) in the
+size of the channel and preserves the economics this decision rests on. What makes that safe is
+that the prefilter is deterministic: every member ranks the same published inputs and reaches the
+same candidate set, so they agree on who is tied without talking to each other.
+
+**Ambiguity is measured on the retrieval evidence, never on the fused score.** RRF reads positions,
+so rank 1 and rank 2 always land about `1/k` apart whether the leader won decisively or by a
+rounding error. A margin test on the fused value would call almost every ranking ambiguous and hand
+almost every message to the model — exactly the cost profile this decision exists to leave.
 
 **4. A named default responder catches everything else. Silence is never the fallback.** When
 nothing scores above threshold, one designated agent answers — including to say that nobody here
@@ -127,6 +157,21 @@ architecture test did not catch it because it inspects import statements, and th
 through an object handle. Cheap inference is a legitimate need and gets a first-class home rather
 than a side door — and the boundary test must be extended to catch a provider reached by handle,
 not merely one reached by import.
+
+**That extension found five bypasses, not one.** `quick_classify` was the one this investigation
+started from; session compaction, workpad maintenance, policy reflection, and the skills outcome
+classifier were all doing the same thing unobserved. The last of those was also silently broken —
+it was handed a provider where a prompt-in/text-out seam was expected, so it raised on every call
+and had been abstaining on every turn since it shipped. The lesson generalises past this ADR: an
+architecture guard that reads imports measures a proxy, and the thing it is a proxy for is *who
+makes the model call*. Guards should assert the invariant, not its usual syntax.
+
+One provider-handle call site survives, pinned rather than hidden: the browser-use adapter, which
+implements a third-party library's chat interface on top of an Arc model and would need
+`LoopResult` widened to carry provider response internals (cache-token counts, stop reason, raw
+tool calls) to route through the strategy. Widening the result type so one optional adapter can
+read provider internals back out would weaken the boundary being defended, so the guard pins it as
+an **exact set**: the debt can shrink without editing the test, and cannot grow.
 
 ## References
 
