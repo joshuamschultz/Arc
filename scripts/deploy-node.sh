@@ -120,9 +120,17 @@ PROJECT_VERSION="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$REPO_ROOT/pyproject.to
 # Hashing the source removes the question. Identical code lands in the same
 # directory (still idempotent); different code gets a different one (rollback
 # works again), with no dependence on a .git that is not shipped.
+# scripts/ and deploy/ are in scope because they are consumed FROM the installed
+# runtime, not from the checkout: the unit is copied out of
+# runtime/current/deploy/systemd/arc.service and install-nats.sh runs from
+# runtime/current/scripts/. Fingerprinting only packages/ left a change confined
+# to either of them computing the same name, so the deploy would rsync --delete
+# into the ACTIVE runtime in place — the same hazard through a narrower door.
 BUILD_STAMP="$(
-  find "$REPO_ROOT/packages" "$REPO_ROOT/pyproject.toml" \
-    -type f \( -name '*.py' -o -name '*.toml' \) 2>/dev/null |
+  find "$REPO_ROOT/packages" "$REPO_ROOT/scripts" "$REPO_ROOT/deploy" \
+       "$REPO_ROOT/pyproject.toml" \
+    -type f \( -name '*.py' -o -name '*.toml' -o -name '*.sh' -o -name '*.service' \) \
+    2>/dev/null |
     LC_ALL=C sort | xargs shasum 2>/dev/null | shasum | cut -c1-8
 )"
 [ -n "$BUILD_STAMP" ] || fail "could not fingerprint the source tree at $REPO_ROOT"

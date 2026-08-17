@@ -237,6 +237,19 @@ def test_the_runtime_stamp_does_not_come_from_the_target_s_git() -> None:
         "directory and different code gets its own"
     )
 
+    # scripts/ and deploy/ are consumed FROM the installed runtime — the unit is
+    # copied out of runtime/current/deploy/systemd/, and install-nats.sh runs from
+    # runtime/current/scripts/. Leaving them out of the fingerprint let a change
+    # confined to either compute the same name and overwrite the ACTIVE runtime
+    # in place. Caught on a live box after the first fix looked complete.
+    for root in ("packages", "scripts", "deploy"):
+        assert f'"$REPO_ROOT/{root}"' in block, (
+            f"{root}/ is not fingerprinted, so a change confined to it reuses the "
+            "running runtime's directory name"
+        )
+    for suffix in ("*.py", "*.toml", "*.sh", "*.service"):
+        assert f"-name '{suffix}'" in block, f"{suffix} files are not fingerprinted"
+
 
 def test_the_fleet_guard_compares_full_paths_not_basenames() -> None:
     """A guard that compares ``basename`` passes while the parent is wrong.
