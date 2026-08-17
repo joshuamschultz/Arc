@@ -131,7 +131,7 @@ stateDiagram-v2
 
 A `Strategy` (`strategies/__init__.py`) is an ABC with `name`, `description`,
 `prompt_guidance` (model-facing text explaining when to use it), and
-`__call__(model, state, sandbox, max_turns) -> LoopResult`. Three ship today,
+`__call__(model, state, sandbox, max_turns) -> LoopResult`. Four ship today,
 registered lazily in `STRATEGIES`:
 
 | Strategy | What it is | Loop shape | Selected via `run()`? |
@@ -139,6 +139,14 @@ registered lazily in `STRATEGIES`:
 | `react` | Reason → Act → Observe → Repeat, one tool batch per turn | `react_loop` directly | Yes — the default |
 | `code` | Same loop, with the system prompt augmented to bias the model toward writing and running code instead of many small tool calls | Delegates straight to `react_loop` after prompt injection | Yes |
 | `dynamic` | One model call authors a short orchestration script; the engine interprets it deterministically instead of the model reasoning turn by turn | Author → dry-run → interpret, or fall back to `react_loop` | Yes |
+| `oneshot` | One bounded model call, no tools, no loop — for cheap gating decisions like "which agent should answer this?" | A single `invoke`, with an output ceiling and an optional deadline | **No** — `auto_selectable = False` |
+
+`oneshot` is deliberately unavailable to model-driven selection: a strategy that
+answers once and holds no tools must never be auto-picked for an agentic task.
+It exists so that cheap inference has a first-class home reached through
+`arcrun.run_oneshot`, rather than callers above `arcrun` reaching a provider
+handle directly — which is what [ADR-032](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-032-channel-responder-selection-routes-on-published-indexes.md)
+removed from five places at once.
 
 ### react
 
