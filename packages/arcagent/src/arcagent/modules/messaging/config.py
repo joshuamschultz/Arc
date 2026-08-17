@@ -75,6 +75,15 @@ class MessagingConfig(ModuleConfig):
     route_embed_model: str = ""
     route_embed_base_url: str = ""
 
+    # The backstop. A question the fast path missed — because the winner was in
+    # cooldown, the cap was hit, the breaker was open, or the agent was down —
+    # is picked up later by the channel's responder rather than left unanswered.
+    sweep_enabled: bool = True
+    # How long a message waits before it counts as missed. Long enough that a
+    # normal reply lands first; short enough that a human has not given up.
+    sweep_after_seconds: float = 180.0
+    sweep_max_per_tick: int = 3
+
     # SPEC-068 D1c — blast radius for ONE un-addressed post. The cap is soft
     # (members decide independently, with no coordinator) and both are bypassed
     # by an @mention, which must never be silenced by someone answering first.

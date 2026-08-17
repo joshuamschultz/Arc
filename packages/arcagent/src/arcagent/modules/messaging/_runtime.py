@@ -75,6 +75,10 @@ class _State:
     # only artifact that crosses the memory privacy boundary, and what responder
     # selection routes over (ADR-032).
     digests: Any = None
+    # Message ids the deferred sweep has already picked up. In-process, so a
+    # restart may re-sweep a still-unanswered message once — which is the right
+    # way round for a backstop whose failure to act is invisible.
+    swept: set[str] = field(default_factory=set)
     # Channel delivery ("platform:chat_id", text) -> None from the embedded
     # gateway — bound at agent:ready. Powers ``notify_user`` (agent -> human).
     channel_deliver_fn: Any = None

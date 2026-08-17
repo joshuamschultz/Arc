@@ -100,6 +100,46 @@ def is_overheard(msg: Any) -> bool:
     return channel_of(msg) is not None
 
 
+def hidden_from_context(msg: Any, identity: Any, other_agents: set[str]) -> bool:
+    """Whether this message must be kept out of this agent's context (ADR-032).
+
+    Another agent's post that does not name this one is filtered out of
+    everything this agent reads. **An agent that cannot see another's reply
+    cannot reply to it**, which ends pile-on and acknowledgement loops by
+    construction rather than by budget — the same thing Claude Tag does by
+    filtering other bots out of its thread context.
+
+    Three things stay visible, and each for a reason: a human's message, because
+    that is the work; this agent's own messages, because a conversation without
+    its own turns is not a conversation; and a teammate's message that mentions
+    this agent, because an explicit address is a request, not chatter.
+    """
+    sender = str(getattr(msg, "signer_did", "") or msg.sender)
+    if sender not in other_agents:
+        return False
+    mine = identity.did if identity is not None else ""
+    return mine not in list(msg.mentions or [])
+
+
+async def other_agent_dids(st: Any) -> set[str]:
+    """Every registered agent's DID except this one's.
+
+    Fail-open: an unreadable registry hides nothing rather than hiding
+    everything. Losing the anti-pile-on filter costs noise; applying it to an
+    unknown roster would blank a human's message out of the agent's context and
+    make the work invisible.
+    """
+    from arcteam.types import EntityType
+
+    mine = st.identity.did if st.identity is not None else ""
+    try:
+        entities = await st.registry.list_entities()
+    except Exception:  # reason: fail-open — never hide the work over a read error
+        _logger.warning("could not resolve the agent roster; not filtering", exc_info=True)
+        return set()
+    return {e.did for e in entities if e.type == EntityType.AGENT and e.did != mine}
+
+
 def _is_own(msg: Any, identity: Any) -> bool:
     """Whether this agent is the author, reached via its own channel stream."""
     if identity is None:
@@ -375,4 +415,13 @@ async def decide(msg: Any, st: Any) -> Decision:
     return decision
 
 
-__all__ = ["MAX_HOP", "Decision", "channel_of", "decide", "is_overheard", "record_activation"]
+__all__ = [
+    "MAX_HOP",
+    "Decision",
+    "channel_of",
+    "decide",
+    "hidden_from_context",
+    "is_overheard",
+    "other_agent_dids",
+    "record_activation",
+]

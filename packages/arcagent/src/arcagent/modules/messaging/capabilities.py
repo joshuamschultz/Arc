@@ -35,7 +35,7 @@ from xml.sax.saxutils import escape as xml_escape
 from arctrust.session_identity import build_session_key
 
 from arcagent.core import known_channels, turn_context
-from arcagent.modules.messaging import _runtime, activation
+from arcagent.modules.messaging import _runtime, activation, sweep
 from arcagent.modules.messaging.tools import _stream_end_byte_pos
 from arcagent.tools._decorator import background_task, hook, tool
 from arcagent.utils.sanitizer import sanitize_text
@@ -46,6 +46,12 @@ _logger = logging.getLogger("arcagent.modules.messaging.capabilities")
 # spawned once and blocks on the durable-consumer subscription, so this value is
 # a scheduler formality rather than a poll cadence (delivery is push-driven).
 _POLL_TICK = 1.0
+
+# Cadence of the deferred sweep. Minutes, not seconds: it is the backstop behind
+# an immediate route, and each pass re-reads every channel this agent is in.
+# ``sweep_after_seconds`` is the knob that decides *when* a message counts as
+# missed; this only decides how often we look.
+_SWEEP_TICK = 300.0
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -196,13 +202,23 @@ async def _handle_incoming(message: Any) -> None:
         # Ack-and-ignore: the channel stream stays the record, and there is
         # nothing to retry or steer, so no follow_up is queued.
         return
+    await _wake_on(message)
+
+
+async def _wake_on(message: Any) -> None:
+    """Open this agent's turn on *message*, once something has decided it should.
+
+    The one place a message becomes a run, so the immediate route and the
+    deferred sweep cannot drift into waking the agent two different ways.
+    """
+    st = _runtime.state()
     channel = activation.channel_of(message)
     if channel is not None:
         activation.record_activation(st, channel)
     # An un-addressed channel post reaches every member. Each may answer it; none
     # may KEEP it — otherwise one operator message to one agent lands permanently in
-    # every other member's memory. The gate decides whether to reply, never whether
-    # to remember.
+    # every other member's memory. Selection decides whether to reply, never
+    # whether to remember.
     overheard = activation.is_overheard(message)
     async with st.processing_lock:
         caller_did = message.signer_did or message.sender
@@ -562,11 +578,17 @@ async def messaging_check_inbox() -> str:
         if not inbox:
             return json.dumps({"unread": 0, "streams": {}})
 
+        # An agent that cannot see another agent's reply cannot reply to it, so
+        # the pile-on is prevented here rather than budgeted for (ADR-032).
+        peers = await activation.other_agent_dids(st)
         result: dict[str, Any] = {"unread": 0, "streams": {}}
         for stream, msgs in inbox.items():
-            result["unread"] += len(msgs)
+            visible = [
+                m for m in msgs if not activation.hidden_from_context(m, st.identity, peers)
+            ]
+            result["unread"] += len(visible)
             stream_msgs: list[dict[str, Any]] = []
-            for m in msgs:
+            for m in visible:
                 msg_data: dict[str, Any] = {
                     "seq": m.seq,
                     "id": m.id,
@@ -589,6 +611,7 @@ async def messaging_check_inbox() -> str:
                         }
                         for t in thread
                         if t.seq < m.seq
+                        and not activation.hidden_from_context(t, st.identity, peers)
                     ]
                     if prior:
                         msg_data["thread_context"] = prior
@@ -623,6 +646,7 @@ async def messaging_read_thread(stream: str, thread_id: str) -> str:
     st = _runtime.state()
     try:
         msgs = await st.svc.get_thread(stream, thread_id)
+        peers = await activation.other_agent_dids(st)
         return json.dumps(
             [
                 {
@@ -635,6 +659,7 @@ async def messaging_read_thread(stream: str, thread_id: str) -> str:
                     "thread_id": m.thread_id,
                 }
                 for m in msgs
+                if not activation.hidden_from_context(m, st.identity, peers)
             ]
         )
     except (ValueError, TypeError) as exc:
@@ -787,6 +812,31 @@ async def messaging_inbox_loop(_ctx: Any) -> None:
         raise
 
 
+@background_task(
+    name="messaging_sweep_loop",
+    interval=_SWEEP_TICK,
+)
+async def messaging_sweep_loop(_ctx: Any) -> None:
+    """Pick up questions the immediate route missed (ADR-032).
+
+    The fast path is where a message should be answered, and this is what
+    catches the ones it did not: a winner in cooldown, a room already at its
+    answer cap, an open breaker, or an agent that was simply down. Every one of
+    those is a bounded, deliberate silence — and every one still leaves a human
+    looking at an unanswered question, which is indistinguishable from a broken
+    system.
+
+    Only the channel's named responder acts, so exactly one agent picks a
+    message up with no coordination between them.
+    """
+    st = _runtime.state()
+    if not st.config.sweep_enabled:
+        return
+    picked = await sweep.run_once(st, lambda message, _channel: _wake_on(message))
+    if picked:
+        _logger.info("deferred sweep picked up %d unanswered message(s)", picked)
+
+
 __all__ = [
     "inject_messaging_sections",
     "list_team_files",
@@ -798,6 +848,7 @@ __all__ = [
     "messaging_read_thread",
     "messaging_send",
     "messaging_shutdown",
+    "messaging_sweep_loop",
     "notify_user",
     "store_team_file",
 ]
