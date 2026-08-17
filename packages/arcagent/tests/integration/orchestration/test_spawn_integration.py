@@ -4,7 +4,14 @@ import pytest
 from arcrun.loop import run
 from arcrun.types import Tool
 
-from ._mock_llm import LLMResponse, MockModel, ToolCall, _is_strategy_selection, setup_spawn_tools
+from ._mock_llm import (
+    LLMResponse,
+    MockModel,
+    ToolCall,
+    Usage,
+    _is_strategy_selection,
+    setup_spawn_tools,
+)
 
 
 async def _echo_execute(params: dict, ctx: object) -> str:
@@ -267,7 +274,9 @@ class TestChildFailure:
                 if _is_strategy_selection(tools):
                     # Every run (parent's and the child's) now opens with a
                     # selection call. Answer it without advancing the counter
-                    # so the scripted per-turn sequence below stays meaningful.
+                    # or charging spend, so the scripted per-turn sequence
+                    # below stays meaningful and the run's counters stay the
+                    # run's.
                     return LLMResponse(
                         tool_calls=[
                             ToolCall(
@@ -277,6 +286,8 @@ class TestChildFailure:
                             )
                         ],
                         stop_reason="tool_use",
+                        usage=Usage(input_tokens=0, output_tokens=0, total_tokens=0),
+                        cost_usd=0.0,
                     )
                 self._call_count += 1
                 if self._call_count == 1:
@@ -319,8 +330,9 @@ class TestToolSubsetting:
             async def invoke(self, messages, tools=None):
                 if _is_strategy_selection(tools):
                     # Every run (parent's and the child's) now opens with a
-                    # selection call. Answer it without advancing the counter
-                    # or recording it as one of the turns under inspection.
+                    # selection call. Answer it without advancing the counter,
+                    # charging spend, or recording it as one of the turns under
+                    # inspection.
                     return LLMResponse(
                         tool_calls=[
                             ToolCall(
@@ -330,6 +342,8 @@ class TestToolSubsetting:
                             )
                         ],
                         stop_reason="tool_use",
+                        usage=Usage(input_tokens=0, output_tokens=0, total_tokens=0),
+                        cost_usd=0.0,
                     )
                 self._call_count += 1
                 if tools:
@@ -394,8 +408,9 @@ class TestSystemPromptOverride:
                 if _is_strategy_selection(tools):
                     # Every run (parent's and the child's) now opens with a
                     # selection call, carrying its own synthetic system
-                    # message. Answer it without advancing the counter or
-                    # recording that message as one of the turns under test.
+                    # message. Answer it without advancing the counter,
+                    # charging spend, or recording that message as one of the
+                    # turns under test.
                     return LLMResponse(
                         tool_calls=[
                             ToolCall(
@@ -405,6 +420,8 @@ class TestSystemPromptOverride:
                             )
                         ],
                         stop_reason="tool_use",
+                        usage=Usage(input_tokens=0, output_tokens=0, total_tokens=0),
+                        cost_usd=0.0,
                     )
                 self._call_count += 1
                 # Extract system prompt from messages

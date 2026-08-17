@@ -80,7 +80,9 @@ class MockModel:
         if _is_strategy_selection(tools) and not self._scripts_selection():
             # Every run now opens by asking which strategy fits. Answering it
             # here rather than consuming a scripted response keeps each test
-            # about the behaviour it was written for.
+            # about the behaviour it was written for — and for the same reason
+            # the answer carries no usage: spend this fixture invented would
+            # land in the very counters the budget tests are asserting on.
             self.selection_calls += 1
             return LLMResponse(
                 tool_calls=[
@@ -89,7 +91,9 @@ class MockModel:
                         name="select_strategy",
                         arguments={"strategy": self._strategy},
                     )
-                ]
+                ],
+                usage=Usage(input_tokens=0, output_tokens=0, total_tokens=0),
+                cost_usd=0.0,
             )
         if self._call_count >= len(self._responses):
             raise RuntimeError("MockModel exhausted responses")

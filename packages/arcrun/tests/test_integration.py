@@ -157,8 +157,11 @@ class TestIntegration:
         )
 
         result = await run(model, StaticProvider(_tools()), "prompt", "task")
-        # Three model calls, not two: choosing a strategy is a real call that
-        # spends real tokens, and the totals a caller reads must include it or
-        # they understate what the run cost.
-        assert result.cost_usd == pytest.approx(0.004, abs=1e-9)
-        assert result.tokens_used["total"] == 45  # 15 per call x 3 calls
+        # The totals are the sum of the calls this test scripted. The opening
+        # strategy-selection call is answered by the fixture, not by the script,
+        # and carries no usage — a phantom price there would be measured as the
+        # run's own by every budget assertion in the suite. That selection spend
+        # IS charged to a run is production behaviour, covered directly by
+        # test_strategy_selection.test_choosing_a_strategy_is_charged_to_the_run.
+        assert result.cost_usd == pytest.approx(0.003, abs=1e-9)
+        assert result.tokens_used["total"] == 30  # 15 per scripted call x 2
