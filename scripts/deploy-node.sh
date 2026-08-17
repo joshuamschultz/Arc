@@ -316,19 +316,42 @@ for AGENT_NAME in "${AGENT_NAMES[@]}"; do
 done
 
 # gateway.toml routes remote-platform DMs (Telegram etc.) to ONE agent_did.
-# The first agent named on the command line wins; add more agents with
-# docs/runbooks/operate/teams.md if you need a multi-agent roster with
-# per-agent channels.
-PRIMARY_AGENT="${AGENT_NAMES[0]}"
-AGENT_DID="$("$VENV_PY" -c '
+#
+# An EXISTING value is left alone. Deriving it from ${AGENT_NAMES[0]} made the
+# roster's argument order load-bearing configuration: re-running a live box with
+# an alphabetical roster silently repointed the Telegram bot from josh_agent to
+# coder_agent, and every other check stayed green — fleet count, health, and the
+# per-platform block that carries its own override. Caught on the DGX only
+# because the value was recorded beforehand and diffed after.
+#
+# Set ARC_GATEWAY_AGENT=<name> to change it deliberately. Order never decides.
+EXISTING_DID="$("$VENV_PY" -c '
+import sys, tomllib
+from pathlib import Path
+p = Path(sys.argv[1])
+if not p.exists():
+    print("")
+else:
+    with p.open("rb") as f:
+        print(tomllib.load(f).get("gateway", {}).get("agent_did", ""))
+' "$ARC_CONFIG_DIR/config/gateway.toml")"
+
+if [ -n "$EXISTING_DID" ] && [ -z "${ARC_GATEWAY_AGENT:-}" ]; then
+  ok "agent_did left as-is: $EXISTING_DID (set ARC_GATEWAY_AGENT to change it)"
+else
+  PRIMARY_AGENT="${ARC_GATEWAY_AGENT:-${AGENT_NAMES[0]}}"
+  [ -d "$TEAM_ROOT/$PRIMARY_AGENT" ] || fail \
+    "ARC_GATEWAY_AGENT='$PRIMARY_AGENT' is not an agent in $TEAM_ROOT"
+  AGENT_DID="$("$VENV_PY" -c '
 import sys, tomllib
 with open(sys.argv[1], "rb") as f:
     print(tomllib.load(f).get("identity", {}).get("did", ""))
 ' "$TEAM_ROOT/$PRIMARY_AGENT/arcagent.toml")"
-[ -n "$AGENT_DID" ] || fail "could not read minted DID from $TEAM_ROOT/$PRIMARY_AGENT/arcagent.toml"
-"$VENV_PY" "$OVERLAYS" gateway-config \
-  "$ARC_CONFIG_DIR/config/gateway.toml" --agent-did "$AGENT_DID"
-ok "agent_did wired into gateway.toml: $AGENT_DID ($PRIMARY_AGENT)"
+  [ -n "$AGENT_DID" ] || fail "could not read minted DID from $TEAM_ROOT/$PRIMARY_AGENT/arcagent.toml"
+  "$VENV_PY" "$OVERLAYS" gateway-config \
+    "$ARC_CONFIG_DIR/config/gateway.toml" --agent-did "$AGENT_DID"
+  ok "agent_did wired into gateway.toml: $AGENT_DID ($PRIMARY_AGENT)"
+fi
 
 # --- 8b. modules ----------------------------------------------------------
 # Modules do NOT ship in the wheel. Each is a separately signed bundle that
