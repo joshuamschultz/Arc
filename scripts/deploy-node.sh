@@ -109,7 +109,23 @@ export PATH="$HOME/.local/bin:$PATH"
 # this script idempotent instead of accumulating identical trees.
 PROJECT_VERSION="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$REPO_ROOT/pyproject.toml" | head -1)"
 [ -n "$PROJECT_VERSION" ] || fail "could not read version from $REPO_ROOT/pyproject.toml"
-BUILD_STAMP="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || date -u +%Y%m%dT%H%M%SZ)"
+
+# The stamp must describe the SOURCE, not the checkout it arrived from. Asking
+# git here reads the deploy target's own .git — which the documented rsync
+# excludes, so it answers with whatever commit that box was last cloned at. A
+# DGX deploy installed 536ff25e's code into a directory named for 1658fe71: the
+# name silently collides on every later deploy, so `current` flips between two
+# names that are the same directory and rollback quietly does nothing.
+#
+# Hashing the source removes the question. Identical code lands in the same
+# directory (still idempotent); different code gets a different one (rollback
+# works again), with no dependence on a .git that is not shipped.
+BUILD_STAMP="$(
+  find "$REPO_ROOT/packages" "$REPO_ROOT/pyproject.toml" \
+    -type f \( -name '*.py' -o -name '*.toml' \) 2>/dev/null |
+    LC_ALL=C sort | xargs shasum 2>/dev/null | shasum | cut -c1-8
+)"
+[ -n "$BUILD_STAMP" ] || fail "could not fingerprint the source tree at $REPO_ROOT"
 RUNTIME_VERSION="${ARC_RUNTIME_VERSION:-$PROJECT_VERSION-$BUILD_STAMP}"
 RUNTIME_DIR="$ARC_CONFIG_DIR/runtime/$RUNTIME_VERSION"
 

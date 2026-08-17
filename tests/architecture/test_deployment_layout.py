@@ -212,6 +212,26 @@ def test_exporting_the_config_dir_cannot_move_the_fleet(monkeypatch, tmp_path) -
     assert paths.arc_team() == tmp_path / "arc" / "team"
 
 
+def test_the_runtime_stamp_does_not_come_from_the_target_s_git() -> None:
+    """Naming the runtime from git reads the deploy target's stale ``.git``.
+
+    The documented rsync excludes ``.git``, so ``git rev-parse`` on the box
+    answers with whatever commit it was last cloned at. A DGX deploy installed
+    536ff25e's code into ``runtime/0.2.0-1658fe71``. The name then collides on
+    every later deploy, so ``current`` flips between two names that are one
+    directory — and rollback silently does nothing.
+
+    The stamp must describe the source, not the checkout it arrived from.
+    """
+    assert "rev-parse" not in _assignment("BUILD_STAMP"), (
+        "BUILD_STAMP reads git on the deploy target, whose .git the rsync does not ship"
+    )
+    assert "shasum" in _assignment("BUILD_STAMP"), (
+        "BUILD_STAMP must fingerprint the source tree so identical code reuses a "
+        "directory and different code gets its own"
+    )
+
+
 def test_the_fleet_guard_compares_full_paths_not_basenames() -> None:
     """A guard that compares ``basename`` passes while the parent is wrong.
 
