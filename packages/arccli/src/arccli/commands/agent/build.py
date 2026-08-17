@@ -83,9 +83,9 @@ def _run_validation(agent_dir: Path) -> None:
         # live deploy. load_provider_config() deep-merges the user's arcllm.toml
         # over the packaged file, so that override is visible here.
         try:
-            from arcllm.config import load_provider_config
+            import arcllm
 
-            settings = load_provider_config(provider).provider
+            settings = arcllm.load_provider_config(provider).provider
             env_var, required = settings.api_key_env, settings.api_key_required
         except Exception:
             # An unknown or unreadable provider is a real finding, but not this
