@@ -223,10 +223,16 @@ def test_the_runtime_stamp_does_not_come_from_the_target_s_git() -> None:
 
     The stamp must describe the source, not the checkout it arrived from.
     """
-    assert "rev-parse" not in _assignment("BUILD_STAMP"), (
+    # BUILD_STAMP is a multi-line command substitution, so read the whole block
+    # rather than the single line _assignment() returns.
+    script = _script()
+    start = script.index("BUILD_STAMP=")
+    block = script[start : script.index('\nRUNTIME_VERSION=', start)]
+
+    assert "rev-parse" not in block, (
         "BUILD_STAMP reads git on the deploy target, whose .git the rsync does not ship"
     )
-    assert "shasum" in _assignment("BUILD_STAMP"), (
+    assert "shasum" in block, (
         "BUILD_STAMP must fingerprint the source tree so identical code reuses a "
         "directory and different code gets its own"
     )
