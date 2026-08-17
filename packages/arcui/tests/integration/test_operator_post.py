@@ -127,6 +127,44 @@ class TestOperatorPost:
             )
             assert op.did in channel.members
 
+    async def test_new_channel_seeds_the_registered_fleet_as_members(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A dashboard-created channel must include the agents, or a non-mention
+        question has no member to route to and no member is allowed to reply."""
+        from arcteam.types import Entity, EntityType
+
+        backend = await _staged_backend()
+        audit = AuditLogger(backend, InProcessSigner(_AUDIT_SEED))
+        await audit.initialize()
+        registry = EntityRegistry(backend, audit)
+        for handle in ("olivia", "sales"):
+            await registry.register(
+                Entity(
+                    did=f"did:arc:local:agent/{handle}",
+                    handle=handle,
+                    id=f"agent://{handle}",
+                    name=handle,
+                    type=EntityType.AGENT,
+                )
+            )
+        _install(monkeypatch, backend)
+
+        app = _app(tmp_path)
+        with TestClient(app) as client, client.websocket_connect("/ws/team") as ws:
+            ws.send_json({"token": OPERATOR_TOKEN})
+            assert ws.receive_json()["type"] == "ready"
+            ws.send_json({"type": "post", "channel": "newroom", "text": "who owns NNL?"})
+            assert ws.receive_json()["type"] == "posted"
+
+            channel = next(
+                c for c in await app.state.messaging_service.list_channels() if c.name == "newroom"
+            )
+            members = set(channel.members)
+            assert "did:arc:local:agent/olivia" in members
+            assert "did:arc:local:agent/sales" in members
+            assert _operator_identity().did in members
+
     async def test_post_to_new_channel_creates_it(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

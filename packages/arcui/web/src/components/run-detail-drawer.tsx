@@ -28,6 +28,10 @@ interface ToolItem {
   output: unknown
   status: string
   latency_ms?: number | null
+  // An implicit op the agent ran outside model-issued tool dispatch (a memory
+  // recall done while the prompt was assembled, a delivery it attempted). Marked
+  // so the row reads as "auto" rather than as a call the model chose to make.
+  implicit?: boolean
   // U13 — when this tool declared a required skill, the loader records which
   // skill it pulled (and whether the load succeeded) on the end event's extra.
   activatedSkill?: string | null
@@ -74,6 +78,7 @@ function mergeTimeline(entries: TimelineEntry[], runIsLive: boolean): Item[] {
           input: e.extra?.args ?? null,
           output: null,
           status: 'running',
+          implicit: e.extra?.implicit === true,
         }
         items.push(item)
         const q = pending.get(name) ?? []
@@ -104,6 +109,7 @@ function mergeTimeline(entries: TimelineEntry[], runIsLive: boolean): Item[] {
             output: out,
             status,
             latency_ms: e.latency_ms,
+            implicit: e.extra?.implicit === true,
             activatedSkill,
             skillActivated,
           })
@@ -159,6 +165,14 @@ function ToolRow({ item }: { item: ToolItem }) {
         <span className="w-12 shrink-0 tabular-nums text-muted-foreground">{fmtTime(item.ts)}</span>
         <Icon className="size-3.5 shrink-0 text-primary" />
         <span className="font-mono text-foreground">{item.name}</span>
+        {item.implicit && (
+          <span
+            className="rounded border border-border/60 px-1 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground"
+            title="ran automatically, not a model-issued tool call"
+          >
+            auto
+          </span>
+        )}
         <StatusText value={item.status} />
         {item.activatedSkill && (
           <span
