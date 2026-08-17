@@ -488,7 +488,8 @@ For the full TOML schema, see `arcagent.core.config.ArcAgentConfig`.
 ## See also
 
 - [ADR-019](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-019-four-pillars-universal.md) — Four Pillars Universal (Identity, Sign, Authorize, Audit)
-- [ADR-018](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-018-no-mcp-no-migration-no-acp.md) — No MCP, No Migration, No ACP
+- [ADR-018](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-018-no-mcp-no-migration-no-acp.md) — No MCP, No Migration, No ACP (the MCP half is superseded by [ADR-030](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-030-mcp-capability-and-extension-placement.md); migration tooling and ACP stay excluded)
+- [All ADRs](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/README.md) — the index of every decision record and where it lives
 - — DID Identity Unification
 - — Multi-Agent UI
 - — Arc Core Hardening (argparse migration, policy pipeline)

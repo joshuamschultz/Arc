@@ -33,7 +33,7 @@ This is a deliberate design decision, not an accident:
 > "arcrun is the execution loop and the single runtime path to arcllm.
 > Routing is already unified — chat from any channel goes `adapter →
 > SessionRouter → executor → agent → arcrun`, and the CLI goes `agent.run →
-> arcrun`." — [`docs/architecture/decisions/ADR-024-unified-streaming-run-entry.md`](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-024-unified-streaming-run-entry.md)
+> arcrun`." — [`.claude/architecture/decisions/ADR-024-unified-streaming-run-entry.md`](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-024-unified-streaming-run-entry.md)
 
 **`arc` CLI.** `arc agent chat` is the interactive entry a human actually
 types a message into. It loads the agent's config, opens a session, and

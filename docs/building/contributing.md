@@ -353,30 +353,28 @@ stateDiagram-v2
 
 Write an Architecture Decision Record when a choice is non-obvious enough
 that a future contributor will otherwise re-litigate it — a scope cut, a
-layering rule, a storage split, a security invariant. They live in
-`docs/architecture/decisions/ADR-NNN-<slug>.md`. Existing numbers, so you
-know the next free one:
+layering rule, a storage split, a security invariant. New ones go in
+`.claude/architecture/decisions/` as `ADR-NNN-<slug>.md`, following the existing
+template: `Status`, `Date`, `Spec` (if applicable), `Context`, `Decision`,
+`Rationale`.
 
-| ADR | Topic |
-|---|---|
-| ADR-018 | No MCP client, no migration tooling, no ACP adapter in  |
-| ADR-019 | The Four Pillars (identity/sign/authorize/audit) are universal, not federal-only |
-| ADR-020 | arcgateway as the data plane |
-| ADR-021 | Agent self-description via TOML `[ui]` section |
-| ADR-022 | Storage split: arctrust WORM vs arcstore operational |
-| ADR-023 | Capability resolution and the arcrun provider |
-| ADR-024 | Unified streaming run entry |
-| ADR-025 | `cache_control` confined to the Anthropic adapter |
-| ADR-026 | `transform_context` append-only with an emergency valve |
-| ADR-027 | Per-run tool-set freeze security invariant |
-| ADR-028 | Append-only prefix contract, debug-gated |
-| ADR-029 | Agent workspace vs working directory; state persists via direct workspace I/O |
-| ADR-030 | Agents get MCP capability; extensions plug in from outside |
-| ADR-031 | Ad-hoc model-authored orchestration is a restricted script, not a declared graph |
-| ADR-032 | A channel responder is chosen by routing over published indexes, not self-assessment |
+**Before you pick a number, read
+[`.claude/architecture/decisions/README.md`](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/README.md).**
+It is the single index — every ADR, where it lives, and which number is free
+next. Do not infer the free number from the filenames in that directory: some
+ADRs are recorded inline in the spec that produced them and some live in
+`.claude/adrs/`, so numbers that look unused are already taken. Never renumber
+an existing ADR to close an apparent gap; the references are spread across
+docs, specs, and source.
 
-**Next free number: ADR-033.** Follow the existing template: `Status`,
-`Date`, `Spec` (if applicable), `Context`, `Decision`, `Rationale`.
+Once your ADR is written, add its row to the index and bump the next-free number
+there. That index is the only list to update — the pages in this documentation
+set link to it rather than copying it, which is how they used to drift.
+
+If your decision supersedes part of an earlier ADR rather than all of it, say so
+in **both** records. ADR-018 and ADR-030 are the worked example: ADR-030 took
+back only ADR-018's MCP-client exclusion and left the rest standing, which is why
+ADR-018's status is a sentence rather than a single word.
 
 ### Documentation duties
 
@@ -456,7 +454,7 @@ graph doesn't cover what you need.
 | `scripts/check_loc_budgets.py` | LOC budget definitions and enforcement | A package is bumping against its LOC ceiling |
 | `scripts/coverage_report.py` | Per-package coverage thresholds | Coverage gate is failing or a new package needs a threshold |
 | `tests/architecture/` | Repo-wide layering invariants | Any change to which package imports which |
-| `docs/architecture/decisions/` | ADRs | Recording a non-obvious architectural choice |
+| `.claude/architecture/decisions/` | ADRs | Recording a non-obvious architectural choice |
 | `docs/deploy/` | Deployment runbooks | Deploying, or changing how Arc is deployed |
 | `Dockerfile`, `deploy/entrypoint.sh`, `docker-compose.yml` | The single install path | Changing what ships in the image or first-boot behavior |
 | `sbom/security-suppressions.txt` | Documented, accepted vulnerability exceptions | A `pip-audit` finding needs a compensating-control writeup instead of a fix |

@@ -152,5 +152,9 @@ the way they are.
 4. **Clean code, lean code.** No migration helpers, no compatibility shims. The
    code reflects current reality; commit messages hold the history.
 
-Architecture Decision Records live in `.claude/architecture/decisions/` — they
-are project history rather than published guides, and they stay tracked in git.
+Architecture Decision Records are project history rather than published guides,
+so they stay with the repository's system files instead of appearing in this set.
+Most are one file per decision under `.claude/architecture/decisions/`; some are
+recorded inline in the spec that produced them, and a few sit in `.claude/adrs/`.
+[`.claude/architecture/decisions/README.md`](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/README.md)
+indexes all of them and is the authority on which number is free next.

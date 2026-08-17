@@ -153,21 +153,13 @@ flowchart LR
 
 ## Architecture Decision Records
 
-ADRs live in `docs/architecture/decisions/`. Eleven exist (`ADR-018` through `ADR-028`):
+Repo-level ADRs live in `.claude/architecture/decisions/`, one file per decision. Others are
+recorded inline in the spec that produced them, and a few sit in `.claude/adrs/`.
 
-| ADR | Status | Description |
-|---|---|---|
-| [ADR-018](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-018-no-mcp-no-migration-no-acp.md) | Accepted | No MCP client, migration tooling, or ACP adapter |
-| [ADR-019](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-019-four-pillars-universal.md) | Accepted | Four Pillars are universal defaults at every tier |
-| [ADR-020](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-020-arcgateway-as-data-plane.md) | Accepted | arcgateway owns the data plane, arcui is pure consumer |
-| [ADR-021](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-021-agent-self-description-via-toml-ui-section.md) | Accepted | UI display hints in `arcagent.toml` |
-| [ADR-022](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-022-storage-split-arctrust-worm-arcstore-operational.md) | Proposed | Storage split: arctrust owns WORM, arcstore owns operational |
-| [ADR-023](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-023-capability-resolution-and-arcrun-provider.md) | Accepted | Unified `CapabilityProvider`, layered roots, signed-to-load trust |
-| [ADR-024](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-024-unified-streaming-run-entry.md) | Accepted | One streaming, session-bound `agent.run` through arcrun |
-| [ADR-025](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-025-cache-control-confined-to-anthropic-adapter.md) | Accepted | Provider cache directives confined to Anthropic adapter |
-| [ADR-026](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-026-transform-context-append-only-with-emergency-valve.md) | Accepted | `transform_context` is append-only; compaction between runs |
-| [ADR-027](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-027-per-run-tool-set-freeze-security-invariant.md) | Accepted | Per-run tool-set freeze as structural security invariant |
-| [ADR-028](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-028-append-only-prefix-contract-debug-gated.md) | Accepted | Append-only prefix contract enforced only under debug flag |
+**The full inventory — every ADR, its status, and which number is free next — is the index at
+[`.claude/architecture/decisions/README.md`](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/README.md).**
+This page deliberately does not repeat it; a second copy is a second thing to forget to update,
+which is exactly how this page came to claim eleven ADRs existed when there were far more.
 
 ---
 

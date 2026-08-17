@@ -151,7 +151,7 @@ This is the single most common misreading of Arc, so it's worth being blunt:
 agent, verifies every loaded artifact, authorizes every tool call through a
 policy pipeline, and audits every action. There is no tier where any of that
 is skipped. This is a deliberate, documented decision
-([`docs/architecture/decisions/ADR-019-four-pillars-universal.md`](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-019-four-pillars-universal.md))
+([`.claude/architecture/decisions/ADR-019-four-pillars-universal.md`](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-019-four-pillars-universal.md))
 made after an earlier version of Arc *did* gate real security behavior behind
 `tier == "federal"` checks — accepting unsigned skill bundles, skipping
 sandboxing, allowing empty tool allowlists to mean "allow everything," at
@@ -333,7 +333,7 @@ evaluating Arc for a security review, skip ahead to
 | `packages/arcui/` | The dashboard — reads the durable record, plus live chat |
 | `packages/arccli/` | The `arc` command — `arc init`, `arc agent create`, `arc ui start`, etc. |
 | `Dockerfile`, `docker-compose.yml`, `deploy/entrypoint.sh` | The single-image install path |
-| `docs/architecture/decisions/ADR-019-four-pillars-universal.md` | Why tiers are stringency, not a gate |
+| `.claude/architecture/decisions/ADR-019-four-pillars-universal.md` | Why tiers are stringency, not a gate |
 
 **If you're changing what "agent" means** — start in `packages/arcagent/src/arcagent/core/`.
 **If you're changing the loop** — start in `packages/arcrun/`.

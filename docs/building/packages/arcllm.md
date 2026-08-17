@@ -423,7 +423,7 @@ flowchart TD
 | `GlobalConfig` | Loaded global config.toml — defaults + module toggles. |
 | `GoogleAdapter` | Translates ArcLLM types to/from the Google Gemini OpenAI-compatible API. |
 | `GroqAdapter` | Thin alias for Groq's OpenAI-compatible API. |
-| `GuardrailsModule` | Validates the resolved response's STRUCTURE only (ADR-429). |
+| `GuardrailsModule` | Validates the resolved response's STRUCTURE only — schema, regex, length, stop-list. Semantic guardrails stay in `arcagent`/`arcrun` (`ADR-429` in `.claude/specs/015-content-guardrails/SDD.md`, a spec-local record — not a repo-level ADR). |
 | `HuggingfaceAdapter` | Thin alias for HuggingFace's OpenAI-compatible Inference API. |
 | `Huggingface_TgiAdapter` | Thin alias for HuggingFace Text Generation Inference (TGI). |
 | `ImageBlock` | Models |
