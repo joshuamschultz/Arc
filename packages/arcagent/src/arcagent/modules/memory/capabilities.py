@@ -30,6 +30,7 @@ from arcagent.core import turn_context
 from arcagent.modules.memory import _runtime
 from arcagent.tools._decorator import background_task, hook, tool
 from arcagent.utils.audit import safe_audit
+from arcagent.utils.trace import spool_auto_tool
 
 _logger = logging.getLogger("arcagent.modules.memory.capabilities")
 
@@ -100,6 +101,7 @@ async def inject_recall(ctx: Any) -> None:
         # empty unless a prior handler supplied one — a Brain that ignores it degrades
         # to lexical-only, never errors.
         summary = str(ctx.data.get("summary") or "")
+        started = time.monotonic()
         text = await st.brain.retrieve(
             query,
             clearance="unclassified",
@@ -109,6 +111,17 @@ async def inject_recall(ctx: Any) -> None:
         )
         _cache_recall(st, key, text)
         await _audit("memory.recall", {"query_len": len(query), "hit": bool(text)})
+        # This recall is a real step that never passed through tool dispatch, so
+        # record it as one — the operator sees WHY memory was consulted, not just
+        # the reads that followed. Correlates to the turn via the ambient run id.
+        spool_auto_tool(
+            "memory_search",
+            actor_did=st.agent_did,
+            latency_ms=(time.monotonic() - started) * 1000.0,
+            args=query,
+            result=text,
+            extra={"hit": bool(text)},
+        )
 
     if text:
         sections["recall"] = text

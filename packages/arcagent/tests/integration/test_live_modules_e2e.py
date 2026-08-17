@@ -603,6 +603,40 @@ async def test_existing_memory_backfills_the_routing_digest_over_the_real_bus(
     )
 
 
+async def test_a_memory_recall_is_recorded_as_a_tool_event_in_the_run_trace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The memory lookup the operator could never see now shows in the run trace.
+
+    A recall runs while the prompt is assembled, before the loop's tool dispatch,
+    so it never spooled a tool_event and was invisible. The dispatcher now binds
+    one run id across assembly and loop, and the recall records itself as an
+    implicit tool_event under it — the same record shape a real tool writes, so it
+    renders inline with the reads. Drive a real turn and read it back from the
+    spool, correlated to a run.
+    """
+    import arcstore.spool as spool
+
+    spool_file = tmp_path / "trace-spool.jsonl"
+    monkeypatch.setattr(spool, "spool_path", lambda **_: spool_file)
+
+    deployment = _deployment(tmp_path, monkeypatch)
+    _install(deployment, ("memory",), tmp_path)
+    config = _config(deployment, ("memory",))
+
+    async with _booted(deployment, config) as agent:
+        assert _runtime_of("memory").state().active, "memory off — no recall would run"
+        await _run_a_turn(agent)
+
+    rows = [json.loads(line) for line in spool_file.read_text().splitlines()]
+    recalls = [
+        r for r in rows if r.get("tool_name") == "memory_search" and r.get("extra", {}).get("implicit")
+    ]
+    assert recalls, "a memory recall was not recorded as a tool_event in the run trace"
+    assert all(r.get("request_id") for r in recalls), "recall tool_event not correlated to a run"
+    assert {"start", "end"} <= {r.get("phase") for r in recalls}
+
+
 # --------------------------------------------------------------------------
 # 3. Tasks — the dispatch loop picks work up, and keeps picking it up
 # --------------------------------------------------------------------------

@@ -15,10 +15,12 @@ solely to keep ``agent.py`` slim.
 from __future__ import annotations
 
 import logging
+import uuid
 from collections.abc import AsyncIterator, Callable
 from typing import TYPE_CHECKING, Any
 
 import arcrun
+from arcstore.spool import request_context
 
 from arcagent.capabilities.capability_registry import CapabilityRegistry
 from arcagent.capabilities.provider import WORKSPACE_ROOT, AgentCapabilityProvider, _Skill
@@ -332,73 +334,80 @@ async def _dispatch_stream_locked(
     agent._ensure_started()
     activate_runtime_bindings(agent)
     bind_inbound_channel(agent, reply_target, reply_label, overheard=overheard)
-    telemetry, bus, model, provider, prompt, bridge = await build_run_context(agent, input_text)
-    await session.append_message(prompt.session_record(input_text))
-    history = wire_messages(session.get_messages(), workspace=agent._workspace)
-    transform = agent._context.transform_context if agent._context else None
-    # SPEC-038 F1 — resolve the tier-resolved per-run budget so the arcrun
-    # circuit-breaker (LLM10) is reachable through the real streaming path.
-    # SPEC-040 F2 — a caller-pinned per-run budget (a planner step's slice of
-    # the plan aggregate) tightens it; the lower ceiling always wins.
-    cfg_tokens, cfg_cost = resolve_run_budget(agent._config)
-    run_max_tokens = _tighter(cfg_tokens, max_tokens)
-    run_max_tokens = int(run_max_tokens) if run_max_tokens is not None else None
-    run_max_cost_usd = _tighter(cfg_cost, max_cost_usd)
+    # One run id spans prompt assembly AND the loop, bound here so a step that runs
+    # while the prompt is built — a memory recall, most of all — lands in the same
+    # run's trace as the reads that follow it. arcrun reuses this id when handed in,
+    # so the two halves share one timeline instead of assembly falling outside it.
+    run_id = run_id or str(uuid.uuid4())
+    with request_context(run_id):
+        run_ctx = await build_run_context(agent, input_text)
+        telemetry, bus, model, provider, prompt, bridge = run_ctx
+        await session.append_message(prompt.session_record(input_text))
+        history = wire_messages(session.get_messages(), workspace=agent._workspace)
+        transform = agent._context.transform_context if agent._context else None
+        # SPEC-038 F1 — resolve the tier-resolved per-run budget so the arcrun
+        # circuit-breaker (LLM10) is reachable through the real streaming path.
+        # SPEC-040 F2 — a caller-pinned per-run budget (a planner step's slice of
+        # the plan aggregate) tightens it; the lower ceiling always wins.
+        cfg_tokens, cfg_cost = resolve_run_budget(agent._config)
+        run_max_tokens = _tighter(cfg_tokens, max_tokens)
+        run_max_tokens = int(run_max_tokens) if run_max_tokens is not None else None
+        run_max_cost_usd = _tighter(cfg_cost, max_cost_usd)
 
-    final_text = ""
-    # Expose the streaming run's handle so the operator kill-switch can cancel it.
-    on_handle, untrack_run = track_active_run(agent, session.session_id)
-    # Bind the session id for this dispatch so the capability ledger (and the
-    # per-agent egress proxy) key trifecta legs to THIS session (SPEC-035).
-    session_token = bind_session_id(session.session_id)
-    try:
-        async with telemetry.session_span(input_text):
-            _logger.info("Running agent loop for task: %s", input_text[:80])
-            raw_stream = await arcrun.run_stream(
-                model=model,
-                capabilities=provider,
-                system_prompt=prompt.segments,
-                task=input_text,
-                messages=history,
-                on_event=bridge,
-                transform_context=transform,
-                tool_choice=tool_choice,
-                actor_did=agent._identity.did if agent._identity else None,
-                store_raw_bodies=agent._config.telemetry.capture_tool_io,
-                max_tokens=run_max_tokens,
-                max_cost_usd=run_max_cost_usd,
-                run_id=run_id,
-                on_handle=on_handle,
-                **narrowed_loop_controls(agent, session, allowed_strategies),
+        final_text = ""
+        # Expose the streaming run's handle so the operator kill-switch can cancel it.
+        on_handle, untrack_run = track_active_run(agent, session.session_id)
+        # Bind the session id for this dispatch so the capability ledger (and the
+        # per-agent egress proxy) key trifecta legs to THIS session (SPEC-035).
+        session_token = bind_session_id(session.session_id)
+        try:
+            async with telemetry.session_span(input_text):
+                _logger.info("Running agent loop for task: %s", input_text[:80])
+                raw_stream = await arcrun.run_stream(
+                    model=model,
+                    capabilities=provider,
+                    system_prompt=prompt.segments,
+                    task=input_text,
+                    messages=history,
+                    on_event=bridge,
+                    transform_context=transform,
+                    tool_choice=tool_choice,
+                    actor_did=agent._identity.did if agent._identity else None,
+                    store_raw_bodies=agent._config.telemetry.capture_tool_io,
+                    max_tokens=run_max_tokens,
+                    max_cost_usd=run_max_cost_usd,
+                    run_id=run_id,
+                    on_handle=on_handle,
+                    **narrowed_loop_controls(agent, session, allowed_strategies),
+                )
+                async for event in raw_stream:
+                    if isinstance(event, arcrun.TurnEndEvent):
+                        final_text = event.final_text
+                    yield event
+        except Exception as exc:  # reason: re-raise after log
+            await bus.emit(
+                "agent:error",
+                {"task": input_text, "error": str(exc), "error_type": type(exc).__name__},
             )
-            async for event in raw_stream:
-                if isinstance(event, arcrun.TurnEndEvent):
-                    final_text = event.final_text
-                yield event
-    except Exception as exc:  # reason: re-raise after log
-        await bus.emit(
-            "agent:error",
-            {"task": input_text, "error": str(exc), "error_type": type(exc).__name__},
-        )
-        raise
-    finally:
-        reset_session_id(session_token)
-        untrack_run()
+            raise
+        finally:
+            reset_session_id(session_token)
+            untrack_run()
 
-    await session.append_message({"role": "assistant", "content": final_text})
-    await maybe_compact(agent, session)
-    await bus.emit(
-        "agent:post_respond",
-        {
-            "result": None,
-            "messages": [
-                {"role": "user", "content": input_text},
-                {"role": "assistant", "content": final_text},
-            ],
-            "session_id": session.session_id,
-            "automated": False,
-        },
-    )
+        await session.append_message({"role": "assistant", "content": final_text})
+        await maybe_compact(agent, session)
+        await bus.emit(
+            "agent:post_respond",
+            {
+                "result": None,
+                "messages": [
+                    {"role": "user", "content": input_text},
+                    {"role": "assistant", "content": final_text},
+                ],
+                "session_id": session.session_id,
+                "automated": False,
+            },
+        )
 
 
 async def start_tracked_run(

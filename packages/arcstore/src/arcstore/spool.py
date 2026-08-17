@@ -48,6 +48,16 @@ _request_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 )
 
 
+def current_request_id() -> str | None:
+    """The run correlation id bound on this task, or ``None`` outside any run.
+
+    Lets a producer decide whether an operation even belongs to a run before
+    spooling it: an implicit tool_event with no run to attach to is an orphan no
+    timeline would ever show, so it is cheaper — and cleaner — not to write it.
+    """
+    return _request_id_var.get()
+
+
 @contextlib.contextmanager
 def request_context(request_id: str) -> Iterator[None]:
     """Bind the active run correlation id for spool records on this task.
