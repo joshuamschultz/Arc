@@ -1,16 +1,22 @@
-"""SPEC-055 — mention-scoped inbox activation (relevance triage).
+"""SPEC-055 — ``_handle_incoming`` must consult the gate before touching the run.
 
-Every channel member currently spins a full LLM run on every pushed message,
-even one that @mentions someone else — Anthropic's ~15x multi-agent token
-anti-pattern. ``_should_activate(msg, identity)`` decides whether *this*
-agent's run should wake at all, before ``_handle_incoming`` reaches
-``deliver_fn``/``agent_run_fn``:
+Every channel member would otherwise spin a full LLM run on every pushed
+message, even one that @mentions someone else — the ~15x multi-agent token
+anti-pattern.
 
-  * ``priority == critical``            -> always activates (kill-switch traffic).
-  * ``not msg.mentions`` (DM/broadcast) -> always activates (only recipient, or
-    nobody was singled out).
-  * ``identity.did in msg.mentions``    -> activates (I was addressed).
-  * otherwise                           -> ack-and-ignore, no run, no follow_up.
+This file keeps the **wiring** assertion: the gate is actually consulted on the
+real inbox path. The gate's own truth table moved to
+``test_activation_ladder.py`` when the predicate became the full ladder
+(SPEC-068), and every case that used to live here is asserted there:
+
+  * mentioned            -> ``test_mention_bypasses_the_gate_entirely``
+  * names another agent  -> ``test_message_naming_other_agents_does_not_wake_me``
+  * DM / no mentions     -> ``test_direct_message_wakes_without_a_gate``
+  * critical             -> ``test_critical_always_wakes``
+
+Keeping a copy here would be a second truth table to drift against the first.
+The wiring test is the one that cannot be inferred from the predicate, and is
+the shape of bug this repo keeps finding: a correct predicate nothing calls.
 """
 
 from __future__ import annotations
@@ -60,40 +66,6 @@ def _msg(
     m.body = "hello"
     m.msg_type = "info"
     return m
-
-
-class TestShouldActivate:
-    """Truth table for the activation predicate (R1-R4)."""
-
-    def test_mentioned_agent_activates(self) -> None:
-        from arcagent.modules.messaging.capabilities import _should_activate
-
-        ident = _identity()
-        msg = _msg(mentions=[ident.did])
-        assert _should_activate(msg, ident) is True
-
-    def test_non_mentioned_agent_does_not_activate(self) -> None:
-        from arcagent.modules.messaging.capabilities import _should_activate
-
-        ident = _identity()
-        other = _identity()
-        msg = _msg(mentions=[other.did])
-        assert _should_activate(msg, ident) is False
-
-    def test_empty_mentions_activates_broadcast_or_dm(self) -> None:
-        from arcagent.modules.messaging.capabilities import _should_activate
-
-        ident = _identity()
-        msg = _msg(mentions=[])
-        assert _should_activate(msg, ident) is True
-
-    def test_critical_overrides_non_mention(self) -> None:
-        from arcagent.modules.messaging.capabilities import _should_activate
-
-        ident = _identity()
-        other = _identity()
-        msg = _msg(priority="critical", mentions=[other.did])
-        assert _should_activate(msg, ident) is True
 
 
 class TestHandleIncomingGating:

@@ -198,9 +198,16 @@ fraction of the reply, it has no reason to exist.
 - **Hard timeout, 5 s**, via `asyncio.wait_for`. There is no timeout today, so a
   hung provider currently blocks the inbox consumer indefinitely. On timeout:
   silence (D1a).
-- **A small fast model**, configurable as `triage_model`, defaulting to the
-  agent's model so a deployment that sets nothing still works. This is the single
-  biggest cost lever and it is one config line.
+- **A small fast model** — *not shipped, and deliberately not faked.* This is the
+  single biggest cost lever, but it is not one config line: `quick_classify`
+  calls `self._ensure_model()`, a single per-agent cached provider instance
+  bound to one resolved model name, and `invoke()` has no per-call model
+  override (`arcllm/types.py:193`). Honouring `triage_model` means resolving a
+  second provider instance through `arcrun`, which is a new seam in a lower
+  layer. **Proposed rather than half-wired**, because a config field that reads
+  as a cost control and silently does nothing is worse than its absence. Until
+  it exists the gate runs on the agent's own model, bounded to 8 output tokens
+  and 5 seconds.
 - **Body truncated to 2000 chars** (already the case) and sanitised (LLM01).
 
 Prompt shape — it must ask **both** of Josh's judgements, and must make silence
@@ -404,21 +411,32 @@ agentic turn — which is the only thing that justifies running it N times.
 
 Controls engaged, all existing primitives:
 
-- **`RootTokenBudget`** (`arcagent/orchestration/token_budget.py`) — a channel
-  post opens one budget shared by every activation it causes. `try_debit` is
-  atomic and returns `False` rather than overspending, so exhaustion **refuses
-  further activation** instead of truncating a turn mid-thought. This is the
-  primitive that already exists to fix the "children silently spend multiples of
-  the caller's allocation" bug; a channel fan-out is that bug's shape.
 - **`CircuitBreaker`** (`arcagent/modules/proactive/circuit_breaker.py`) —
   per `(agent, channel)`, `failure_threshold=5`, `base_wait=30 s`,
   `max_wait=1800 s`. A gate that keeps failing stops being called at all, with
-  exponential backoff, and every trip is audited. Chosen over a bespoke limiter
-  because it is already the repo's resilience primitive and already tested.
+  exponential backoff. Chosen over a bespoke limiter because it is already the
+  repo's resilience primitive and already tested.
 - **Cooldown and answer cap** — D1c.
+- Every activation decision is audited as `messaging.activation` with its
+  reason, so "nobody answered" is a queryable fact rather than an inference.
 
-No parallel limiter is introduced. Every control above is a primitive that
-already exists in the tree and is already covered by tests.
+> **Correction found while implementing: `RootTokenBudget` cannot be the
+> cross-agent bound, and claiming it would have been false.** It is an
+> in-process `asyncio.Lock` over one integer
+> (`arcagent/orchestration/token_budget.py`), built for a root run and the
+> children it spawns *inside the same process*. Agents in a fleet are separate
+> processes and share nothing but the bus, so there is no in-process budget for
+> a channel post to open across six of them. Wiring it here would have produced
+> a per-agent counter that looks like a fleet-wide ceiling and is not — the
+> exact class of defect this spec exists to remove.
+>
+> So the honest split is: the **cross-agent** bound is the answer cap, which
+> coordinates through the one thing agents genuinely share (the channel
+> stream), and is soft for that reason. The **per-agent** bounds are the
+> cooldown and the breaker, which are hard. A real fleet-wide token ceiling
+> needs a distributed counter on the bus and is a separate piece of work.
+
+No parallel limiter is introduced.
 ---
 
 ## Seams — nothing new, no arrow reversed
@@ -527,6 +545,18 @@ stage: `ruff check`, `mypy --strict`, and the **full** suite — not a subset.
    operator per channel rather than defaulted.
 
 ---
+
+## Follow-ups this implementation created
+
+- **`entity_role` has no default source.** The gate's first judgement is "is this
+  about your role?", which needs a role. It is a new config line and an unset one
+  renders as "not stated", which weakens judgement 1 without breaking it. The
+  obvious source is the agent's registered `Entity.roles`; wiring that means
+  threading the entity snapshot the ladder already fetches for the human check
+  into the prompt builder. Worth doing, not worth blocking on.
+- **`triage_model`** — see D1b. Needs an `arcrun`/`arcllm` seam for a second
+  resolved provider instance.
+- **A fleet-wide token ceiling** — see D5. Needs a distributed counter on the bus.
 
 ## Also found (out of scope, flagged not fixed)
 

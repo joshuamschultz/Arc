@@ -118,6 +118,25 @@ class _Msg:
         self.msg_type = "chat"
         self.action_required = False
         self.id = "m1"
+        self.seq = 1
+        self.hop = 0
+
+
+class _HumanRegistry:
+    """Resolves one DID to a ``user`` entity — the sender of these fixtures.
+
+    An un-addressed channel post only fans out when a registered human wrote it
+    (SPEC-068 D4a), so the sender has to exist as one for these to reach the
+    delivery call at all.
+    """
+
+    def __init__(self, did: str) -> None:
+        self._did = did
+
+    async def list_entities(self) -> list[Any]:
+        from arcteam.types import EntityType
+
+        return [SimpleNamespace(did=self._did, type=EntityType.USER)]
 
 
 class _MsgState:
@@ -134,8 +153,22 @@ class _MsgState:
         self.deliver_fn: Any = None
         self.agent_run_fn: Any = None
         self.classify_fn = None
-        self.config = SimpleNamespace(channel_triage=False, entity_name="listener")
+        self.telemetry = None
+        self.config = SimpleNamespace(
+            channel_triage=False,
+            entity_name="listener",
+            entity_role="listener",
+            channel_cooldown_seconds=0.0,
+            channel_answer_cap=0,
+            triage_timeout_seconds=5.0,
+            triage_failure_threshold=5,
+            triage_base_wait_seconds=30.0,
+        )
         self.agent_name = "listener"
+        self.channel_last_woken: dict[str, float] = {}
+        self.channel_breakers: dict[str, Any] = {}
+        self.registry = _HumanRegistry("did:arc:test:operator")
+        self.svc = None
 
 
 async def _deliver_through_inbox(monkeypatch: Any, message: Any) -> list[dict[str, Any]]:

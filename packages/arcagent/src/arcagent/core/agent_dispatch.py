@@ -240,6 +240,7 @@ def bind_inbound_channel(
     reply_label: str | None,
     *,
     overheard: bool = False,
+    hop: int = 0,
 ) -> None:
     """Bind the turn's inbound channel and remember it as a delivery target.
 
@@ -252,6 +253,7 @@ def bind_inbound_channel(
     # Bound here, beside the channel, for the same reason: a contextvar set across
     # the executor->agent task boundary does not reliably reach the loop's hooks.
     turn_context.set_overheard(overheard)
+    turn_context.set_inbound_hop(hop)
     if reply_target:
         # Remember this channel so arcui can offer it as a delivery-target
         # dropdown (a raw chat_id exists only here on the inbound path).
@@ -407,6 +409,7 @@ async def start_tracked_run(
     reply_target: str | None = None,
     reply_label: str | None = None,
     overheard: bool = False,
+    hop: int = 0,
     content: list[dict[str, Any]] | None = None,
 ) -> arcrun.RunHandle:
     """Start an async, steerable run for ``session_key`` and track its handle.
@@ -434,7 +437,7 @@ async def start_tracked_run(
     try:
         agent._ensure_started()
         activate_runtime_bindings(agent)
-        bind_inbound_channel(agent, reply_target, reply_label, overheard=overheard)
+        bind_inbound_channel(agent, reply_target, reply_label, overheard=overheard, hop=hop)
         _telemetry, _bus, model, provider, prompt, bridge = await build_run_context(
             agent, input_text
         )

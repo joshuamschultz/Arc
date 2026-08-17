@@ -38,6 +38,21 @@ def _identity() -> AgentIdentity:
     return AgentIdentity.generate(org="local", agent_type="agent")
 
 
+async def _register_human(st: Any, did: str) -> None:
+    """Register ``did`` as a ``user`` entity so its channel posts fan out."""
+    from arcteam.types import Entity, EntityType
+
+    await st.registry.register(
+        Entity(
+            did=did,
+            handle="operator",
+            id="user://operator",
+            name="Operator",
+            type=EntityType.USER,
+        )
+    )
+
+
 def _msg(
     *,
     priority: str = "normal",
@@ -169,6 +184,15 @@ class TestHandleIncoming:
             return "started"
 
         st.deliver_fn = deliver
+        # An un-addressed channel post only fans out when a human wrote it
+        # (SPEC-068 D4a), so the sender has to be a registered one — and the
+        # relevance gate fails closed, so it needs a verdict to get past it.
+        await _register_human(st, "did:arc:local:peer/aaaa")
+
+        async def _relevant(**_kw: Any) -> str:
+            return "YES"
+
+        st.classify_fn = _relevant
 
         await _handle_incoming(_msg(to=["channel://ops"], mentions=[]))
 
@@ -279,22 +303,32 @@ class TestInboxLoopPush:
         )
         delivered = asyncio.Event()
         bodies: list[str] = []
+        pushed: list[Any] = []
 
         async def deliver(**kwargs: Any) -> str:
             bodies.append(kwargs["message"])
-            delivered.set()
             return "followed_up"
 
         st.deliver_fn = deliver
 
-        subscription = await st.svc.subscribe(st.config.entity_id, _handle_incoming)
+        async def handler(message: Any) -> None:
+            pushed.append(message)
+            delivered.set()
+            await _handle_incoming(message)
+
+        subscription = await st.svc.subscribe(st.config.entity_id, handler)
         try:
             await st.svc.send(Message(sender="agent://me", to=["agent://me"], body="hi"))
             await asyncio.wait_for(delivered.wait(), timeout=3)
         finally:
             await subscription.stop()
 
-        assert any("hi" in b for b in bodies)
+        assert [m.body for m in pushed] == ["hi"], "subscribe did not push to the handler"
+        # The only sender that can be signed here is this agent itself, and an
+        # agent never activates on its own message (SPEC-068 D4c) — otherwise a
+        # post that @mentions itself re-wakes the run that wrote it. So the push
+        # is asserted at the handler, and the suppression at deliver_fn.
+        assert bodies == []
 
     @pytest.mark.asyncio
     async def test_queuefull_raises_retryable_not_dropped(self, tmp_path: Path) -> None:

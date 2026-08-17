@@ -702,6 +702,7 @@ class ArcAgent:
         reply_target: str | None = None,
         reply_label: str | None = None,
         overheard: bool = False,
+        hop: int = 0,
         content: list[dict[str, Any]] | None = None,
     ) -> arcrun.RunHandle:
         """Start an async, steerable run and track its handle under ``session_key``.
@@ -726,6 +727,7 @@ class ArcAgent:
             reply_target=reply_target,
             reply_label=reply_label,
             overheard=overheard,
+            hop=hop,
             content=content,
         )
 
@@ -772,6 +774,7 @@ class ArcAgent:
         parts: Sequence[Mapping[str, Any]] | None = None,
         on_handle: Callable[[arcrun.RunHandle], None] | None = None,
         overheard: bool = False,
+        hop: int = 0,
     ) -> str:
         """Deliver one inbound message — from a human surface or a teammate.
 
@@ -824,6 +827,7 @@ class ArcAgent:
                     reply_target=reply_target,
                     reply_label=reply_label,
                     overheard=overheard,
+                    hop=hop,
                     content=content,
                 )
                 if on_handle is not None:

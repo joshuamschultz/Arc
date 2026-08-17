@@ -29,6 +29,7 @@ _SIGNED_FIELDS = (
     "sender",
     "to",
     "thread_id",
+    "hop",
     "msg_type",
     "priority",
     "action_required",
