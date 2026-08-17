@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/banner-signed-arc.png" width="100%" alt="Arc — the security-first agent stack. One turn rising through four gates: identity, sign, authorize, audit.">
+<img src="docs/assets/banner-arc.jpg" width="100%" alt="Arc — the security-first agent stack. One turn rising through four gates: identity, sign, authorize, audit.">
 
 
 ### **The Security-First Autonomous Agent Stack**
