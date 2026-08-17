@@ -69,7 +69,10 @@ class MockModel:
         if _is_strategy_selection(tools):
             # Every run now opens with a strategy-selection call. Answer it
             # here rather than consuming a scripted turn response, so these
-            # tests stay about resume/tamper behavior, not selection.
+            # tests stay about resume/tamper behavior, not selection. It carries
+            # no usage for the same reason: these tests assert on the persisted
+            # token counters, so spend this mock invented would be measured as
+            # the run's own.
             return LLMResponse(
                 tool_calls=[
                     ToolCall(
@@ -79,6 +82,7 @@ class MockModel:
                     )
                 ],
                 stop_reason="tool_use",
+                usage=Usage(input_tokens=0, output_tokens=0, total_tokens=0),
             )
         if self._i >= len(self._responses):
             raise RuntimeError("MockModel exhausted responses")

@@ -86,11 +86,14 @@ class MockModel:
     """Mock arcllm model that returns predetermined responses.
 
     Strategy selection is answered separately and does **not** consume a scripted
-    response. Every run now opens with a selection call, and making it eat the
-    first scripted turn would mean every test in the suite had to script a reply
-    it does not care about — which would say nothing about the behaviour under
-    test. Tests that are *about* selection drive it explicitly instead
-    (``test_strategy_selection.py``).
+    response, a scripted call count, or scripted spend. Every run now opens with a
+    selection call, and letting it eat the first scripted turn would mean every
+    test in the suite had to script a reply it does not care about — which would
+    say nothing about the behaviour under test. The same holds for its usage: an
+    answer this fixture invented must not add tokens or cost the test never wrote,
+    or every budget assertion silently measures the fixture instead of the run.
+    Tests that are *about* selection drive it explicitly instead, and their
+    scripted response carries its own real usage (``test_strategy_selection.py``).
     """
 
     def __init__(self, responses: list[LLMResponse], *, strategy: str = "react") -> None:
@@ -118,7 +121,9 @@ class MockModel:
                         name="select_strategy",
                         arguments={"strategy": self._strategy},
                     )
-                ]
+                ],
+                usage=Usage(input_tokens=0, output_tokens=0, total_tokens=0),
+                cost_usd=0.0,
             )
         if self._call_count >= len(self._responses):
             raise RuntimeError("MockModel exhausted responses")
