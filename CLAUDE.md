@@ -32,7 +32,10 @@ arcgateway   arcui
 - `arcagent` knows about neither, and must run headless without them.
 - Modules and extensions plug into `arcagent` through explicit typed contracts, never by reversing these arrows.
 
-The durable execution record for this boundary is [`ARCAGENT_REFACTOR_PLAN.md`](ARCAGENT_REFACTOR_PLAN.md).
+The boundary is enforced, not merely documented:
+`packages/arcagent/tests/architecture/test_dependency_boundaries.py` fails the
+build on a deep import across it, and the arcui seam guard in
+`packages/arcgateway/tests/architecture/test_imports.py` covers the surfaces.
 
 ### 2. Components
 

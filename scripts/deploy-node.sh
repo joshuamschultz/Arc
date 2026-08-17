@@ -375,6 +375,21 @@ else
 fi
 ok "wrote $UNIT_DIR/arc.service"
 
+# The CONNECT-proxy bridge is a second unit, and only refreshed when the box
+# already runs it — installing it unasked would start a bridge with no target.
+# It is refreshed rather than left alone because it ALSO executes out of the
+# runtime: a DGX unit still naming %h/arc/deploy/connect-forward.py survived the
+# migration pointing into the source tree, which the layout now says is
+# deletable. Every agent on a proxied model dies the moment someone believes it.
+if [ -f "$UNIT_DIR/arc-connect-forward.service" ]; then
+  cp "$RUNTIME_ROOT/deploy/systemd/arc-connect-forward.service" \
+     "$UNIT_DIR/arc-connect-forward.service"
+  ok "refreshed $UNIT_DIR/arc-connect-forward.service"
+  RESTART_FORWARD=1
+else
+  RESTART_FORWARD=0
+fi
+
 systemctl --user daemon-reload
 systemctl --user enable arc.service
 # `enable --now` STARTS a stopped unit but leaves a running one on its old
@@ -382,6 +397,10 @@ systemctl --user enable arc.service
 # previous version. `restart` starts a stopped unit too, so it is correct for
 # both a first deploy and an update.
 systemctl --user restart arc.service
+if [ "$RESTART_FORWARD" = "1" ]; then
+  systemctl --user restart arc-connect-forward.service
+  ok "restarted arc-connect-forward.service onto the new runtime"
+fi
 loginctl enable-linger "$USER" 2>/dev/null || echo "  ! enable-linger failed (may need sudo — service still runs while logged in)"
 
 # --- 10. wait for health, print URL ---------------------------------------
