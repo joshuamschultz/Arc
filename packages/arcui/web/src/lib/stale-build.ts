@@ -43,7 +43,7 @@ export async function reloadIfStale(): Promise<void> {
   if (sessionStorage.getItem(CHECK_KEY)) return
   const mine = ownBundle()
   if (!mine) return
-  let deployed = ''
+  let deployed: string
   try {
     deployed = await deployedBundle()
   } catch {

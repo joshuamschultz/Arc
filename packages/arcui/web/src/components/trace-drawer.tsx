@@ -71,7 +71,7 @@ type PromptSection = { tag: string; body: string }
  * Returns `null` when the content carries no sections, so an ordinary message
  * renders exactly as before rather than through a needless wrapper.
  */
-export function splitPromptSections(text: string): PromptSection[] | null {
+function splitPromptSections(text: string): PromptSection[] | null {
   const pattern = /<([a-z][a-z0-9_-]*)>\n([\s\S]*?)\n<\/\1>/gi
   const sections: PromptSection[] = []
   let cursor = 0
