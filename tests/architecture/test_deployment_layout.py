@@ -227,7 +227,7 @@ def test_the_runtime_stamp_does_not_come_from_the_target_s_git() -> None:
     # rather than the single line _assignment() returns.
     script = _script()
     start = script.index("BUILD_STAMP=")
-    block = script[start : script.index('\nRUNTIME_VERSION=', start)]
+    block = script[start : script.index("\nRUNTIME_VERSION=", start)]
 
     assert "rev-parse" not in block, (
         "BUILD_STAMP reads git on the deploy target, whose .git the rsync does not ship"

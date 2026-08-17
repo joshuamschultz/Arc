@@ -158,7 +158,7 @@ interface ChannelRow {
 }
 
 /** Map every known identifier for an agent to the name a person would use. */
-export function buildNameIndex(agents: Agent[]): Map<string, string> {
+function buildNameIndex(agents: Agent[]): Map<string, string> {
   const index = new Map<string, string>()
   for (const agent of agents) {
     const readable = agent.display_name || agent.name || agent.agent_id
@@ -178,7 +178,7 @@ export function buildNameIndex(agents: Agent[]): Map<string, string> {
  * resolved through the roster first, and the collapse is kept only as the
  * last resort for a ref no roster entry claims.
  */
-export function handleOf(ref: string, names?: Map<string, string>): string {
+function handleOf(ref: string, names?: Map<string, string>): string {
   const known = names?.get(ref)
   if (known) return known
   if (ref.startsWith('did:')) {
@@ -209,6 +209,9 @@ function ChannelPanel({
   const { frames, status, post } = useTeamStream(name)
   const endRef = useRef<HTMLDivElement>(null)
   const [text, setText] = useState('')
+  const [sending, setSending] = useState(false)
+  const [sendError, setSendError] = useState<string | null>(null)
+  const [sendWarning, setSendWarning] = useState<string | null>(null)
 
   // Sender colors reuse the same roster colors shown in the agent rail, so a
   // channel message row's avatar matches the sender's identity elsewhere in
@@ -257,10 +260,22 @@ function ChannelPanel({
     endRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [rows.length])
 
-  const send = () => {
-    if (!text.trim()) return
-    post(text)
-    setText('')
+  // The compose box clears only once the server acknowledges the post. Clearing
+  // optimistically is how a message that never reached arcteam looked sent
+  // (SPEC-068 F3); the text stays put so it can be retried.
+  const send = async () => {
+    if (!text.trim() || sending) return
+    setSending(true)
+    setSendError(null)
+    setSendWarning(null)
+    try {
+      setSendWarning(await post(text))
+      setText('')
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : 'Could not send message.')
+    } finally {
+      setSending(false)
+    }
   }
 
   return (
@@ -318,15 +333,27 @@ function ChannelPanel({
         )}
         <div ref={endRef} />
       </div>
-      <div className="flex items-center gap-2 border-t border-border bg-card/30 p-3">
-        <MentionComposer
-          value={text}
-          onChange={setText}
-          onSubmit={send}
-          handles={mentionHandles}
-          placeholder={status === 'ready' ? `Message #${name}… (@ to mention)` : 'Connecting…'}
-          disabled={status !== 'ready'}
-        />
+      <div className="flex flex-col gap-2 border-t border-border bg-card/30 p-3">
+        {sendError ? (
+          <p role="alert" className="text-[11px] text-destructive">
+            {sendError}
+          </p>
+        ) : null}
+        {sendWarning ? (
+          <p role="status" className="text-[11px] text-muted-foreground">
+            {sendWarning}
+          </p>
+        ) : null}
+        <div className="flex items-center gap-2">
+          <MentionComposer
+            value={text}
+            onChange={setText}
+            onSubmit={send}
+            handles={mentionHandles}
+            placeholder={status === 'ready' ? `Message #${name}… (@ to mention)` : 'Connecting…'}
+            disabled={status !== 'ready' || sending}
+          />
+        </div>
       </div>
     </div>
   )

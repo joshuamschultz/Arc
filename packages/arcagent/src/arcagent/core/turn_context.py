@@ -54,6 +54,27 @@ def overheard() -> bool:
     return _overheard.get()
 
 
+_inbound_hop: contextvars.ContextVar[int] = contextvars.ContextVar(
+    "arcagent_inbound_hop", default=0
+)
+
+
+def set_inbound_hop(value: int) -> None:
+    """Record how many agent turns the message driving this turn descends from.
+
+    Bound at dispatch beside the inbound channel, and for the same reason. A
+    message this agent sends from inside the turn carries this value plus one,
+    so a mention chain between two agents runs out of depth instead of running
+    forever. A human's post starts at zero.
+    """
+    _inbound_hop.set(value)
+
+
+def inbound_hop() -> int:
+    """The hop count of the message driving this turn; 0 outside a delivered one."""
+    return _inbound_hop.get()
+
+
 def inbound_channel() -> str | None:
     """The current turn's inbound channel target, or None if not a channel turn."""
     return _inbound_channel.get()
@@ -74,8 +95,10 @@ def is_team_target(target: str) -> bool:
 
 __all__ = [
     "inbound_channel",
+    "inbound_hop",
     "is_team_target",
     "overheard",
     "set_inbound_channel",
+    "set_inbound_hop",
     "set_overheard",
 ]

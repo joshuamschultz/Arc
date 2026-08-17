@@ -92,6 +92,12 @@ class Message(BaseModel):
     sender: str
     to: list[str]
     thread_id: str | None = None
+    # How many agent turns this message descends from. A human's post is 0; a
+    # message an agent sends from inside a woken turn is its parent's hop + 1.
+    # Receivers stop activating at a bounded depth, so a mention chain between
+    # two agents terminates. Covered by the signature (``crypto._SIGNED_FIELDS``)
+    # because a loop guard an adversary can clear is not a guard.
+    hop: int = 0
     msg_type: MsgType = MsgType.INFO
     priority: Priority = Priority.NORMAL
     action_required: bool = False

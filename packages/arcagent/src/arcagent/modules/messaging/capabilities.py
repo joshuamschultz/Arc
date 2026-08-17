@@ -34,7 +34,7 @@ from xml.sax.saxutils import escape as xml_escape
 from arctrust.session_identity import build_session_key
 
 from arcagent.core import known_channels, turn_context
-from arcagent.modules.messaging import _runtime
+from arcagent.modules.messaging import _runtime, activation
 from arcagent.modules.messaging.tools import _stream_end_byte_pos
 from arcagent.tools._decorator import background_task, hook, tool
 from arcagent.utils.sanitizer import sanitize_text
@@ -126,64 +126,6 @@ def _inbox_session(sender_did: str, identity: Any) -> str:
     return build_session_key(identity.did if identity is not None else "", sender_did)
 
 
-def _should_activate(msg: Any, identity: Any) -> bool:
-    """Whether *this* agent's run should wake for ``msg`` at all (SPEC-055).
-
-    Every channel member currently spins a full LLM run on every pushed
-    message, even one that @mentions someone else -- Anthropic's ~15x
-    multi-agent token fan-out anti-pattern. Critical traffic and messages
-    with no mentions (DM/broadcast, where this agent is the only or an
-    unaddressed recipient) always wake the run; a channel message that
-    names other agents wakes only the ones it names.
-    """
-    if str(msg.priority) == "critical":
-        return True
-    if not msg.mentions:
-        return True
-    return identity is not None and identity.did in list(msg.mentions)
-
-
-def _is_channel_broadcast(msg: Any) -> bool:
-    """Whether ``msg`` is an un-addressed post to a shared channel (SPEC-055).
-
-    A channel target with no @mentions and non-critical priority: the case where
-    every member currently wakes a full run. @mentions and critical bypass the
-    relevance gate (they are explicitly for this agent / are kill-switch traffic).
-    """
-    if str(msg.priority) == "critical" or msg.mentions:
-        return False
-    return any(str(t).startswith("channel://") for t in (msg.to or []))
-
-
-async def _passes_channel_triage(msg: Any, st: Any) -> bool:
-    """Cheap per-agent relevance decision for a channel broadcast.
-
-    One bounded yes/no LLM call via the bound ``classify_fn``: should THIS agent,
-    given its role, answer this channel message? Returns True to wake the full
-    run. Fail-open — a missing classifier or any error wakes the run, so a
-    relevant message is never silently dropped (only the token-saving is lost).
-    """
-    if not st.config.channel_triage or st.classify_fn is None:
-        return True
-    entity_name = sanitize_text(st.config.entity_name or st.agent_name, max_length=200)
-    system = (
-        f"You are {entity_name}, one member of a team. A message was posted to a "
-        "shared team channel (not addressed to anyone specific). Decide whether "
-        "answering it falls within YOUR role and responsibilities. Reply with "
-        "exactly one word: YES or NO."
-    )
-    user = sanitize_text(str(msg.body), max_length=2000)
-    try:
-        verdict: str = await st.classify_fn(system=system, user=user)
-    except Exception:  # reason: fail-open — a triage failure must not drop a message
-        _logger.warning("channel triage failed; waking run (fail-open)", exc_info=True)
-        return True
-    cleaned = verdict.strip().upper()
-    # Skip only on an explicit NO; an empty/garbled verdict is not a decision, so
-    # fail-open and wake (a relevant message is never dropped over a bad reply).
-    return not cleaned.startswith("N")
-
-
 def _interrupt_for(msg: Any, identity: Any) -> bool:
     """Whether ``msg`` asks for mid-turn steering (REQ-041).
 
@@ -243,22 +185,24 @@ async def _handle_incoming(message: Any) -> None:
     is dropped in the startup window.
     """
     st = _runtime.state()
-    if not _should_activate(message, st.identity):
-        # Ack-and-ignore (SPEC-055): a channel message that names OTHER agents
-        # skips the run entirely -- avoids the ~15x-token fan-out of waking every
-        # member. The channel stream itself remains the record; nothing to retry
-        # or steer, so no follow_up.
+    decision = await activation.decide(message, st)
+    if st.telemetry is not None:
+        st.telemetry.audit_event(
+            "messaging.activation",
+            {"message_id": message.id, "wake": decision.wake, "reason": decision.reason},
+        )
+    if not decision.wake:
+        # Ack-and-ignore: the channel stream stays the record, and there is
+        # nothing to retry or steer, so no follow_up is queued.
         return
+    channel = activation.channel_of(message)
+    if channel is not None:
+        activation.record_activation(st, channel)
     # An un-addressed channel post reaches every member. Each may answer it; none
     # may KEEP it — otherwise one operator message to one agent lands permanently in
-    # every other member's memory. Triage decides whether to reply, never whether to
-    # remember, and is fail-open besides.
-    is_broadcast = _is_channel_broadcast(message)
-    if is_broadcast and not await _passes_channel_triage(message, st):
-        # An un-addressed channel post this agent's role does not concern: the
-        # cheap triage said no, so skip the full run (the expensive fan-out this
-        # gate exists to prevent). Still ack-and-ignore -- nothing to steer.
-        return
+    # every other member's memory. The gate decides whether to reply, never whether
+    # to remember.
+    overheard = activation.is_overheard(message)
     async with st.processing_lock:
         caller_did = message.signer_did or message.sender
         session_key = _inbox_session(caller_did, st.identity)
@@ -272,7 +216,8 @@ async def _handle_incoming(message: Any) -> None:
                     interrupt=_interrupt_for(message, st.identity),
                     reply_target=reply_target,
                     reply_label=reply_label,
-                    overheard=is_broadcast,
+                    overheard=overheard,
+                    hop=int(getattr(message, "hop", 0) or 0),
                 )
             except asyncio.QueueFull as exc:
                 from arcteam.messenger import RetryableDeliveryError
@@ -419,6 +364,7 @@ async def _send_to_team(st: Any, target: str, message: str) -> None:
             to=[target],
             body=message,
             classification=sender_floor,
+            hop=turn_context.inbound_hop() + 1,
         )
     )
 
@@ -516,6 +462,10 @@ async def messaging_send(
             thread_id=thread_id,
             action_required=action_required,
             classification=sender_floor,
+            # One step further from the human who started this. A reply sent
+            # from inside a woken turn inherits its depth so a mention chain
+            # between two agents terminates (SPEC-068 D4b).
+            hop=turn_context.inbound_hop() + 1,
         )
         sent = await st.svc.send(msg)
         _logger.info("Sent message %s to %s", sent.id, to)

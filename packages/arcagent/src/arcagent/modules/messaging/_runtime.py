@@ -79,6 +79,11 @@ class _State:
     # TTL-cached team roster string; invalidated after roster_ttl_seconds.
     roster_cache: str | None = None
     roster_cache_time: float = 0.0
+    # SPEC-068 D1c — monotonic time this agent last woke for each channel, so
+    # one agent cannot answer every message in a rapid exchange.
+    channel_last_woken: dict[str, float] = field(default_factory=dict)
+    # SPEC-068 D4d — per-channel breaker around the relevance gate.
+    channel_breakers: dict[str, Any] = field(default_factory=dict)
 
 
 _state_var: contextvars.ContextVar[_State | None] = contextvars.ContextVar(

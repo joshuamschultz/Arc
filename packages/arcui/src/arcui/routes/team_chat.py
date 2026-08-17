@@ -1,14 +1,18 @@
-"""Team Chat routes — observe inter-agent messaging via arcteam.
+"""Team Chat routes — read and manage arcteam channels.
 
 Endpoint surface:
 
 * ``GET /api/team/channels`` — list channels (id, members, created).
 * ``GET /api/team/channels/{channel_name}/messages`` — chronological
   message stream (oldest → newest), paginated by sequence.
+* ``POST /api/team/channels`` — create a channel (operator only).
+* ``POST|DELETE /api/team/channels/{channel_name}/members`` — membership
+  (operator only).
 
-Both routes are read-only; sending messages remains the responsibility
-of agents themselves (via the ``messaging_send`` tool registered by
-``arcagent.modules.messaging``). The handlers read through
+Humans post into a channel over the ``/ws/team`` socket, which hands the frame
+to ``arcui.messaging.build_team_post_forwarder``; agents post through the
+``messaging_send`` tool. Neither path runs through this module, and no route
+here writes a message. The handlers read through
 ``request.app.state.messaging_service`` so tests can inject a fake
 service without standing up a live NATS backend.
 
