@@ -81,6 +81,10 @@ class _State:
     # Once-per-turn recall cache: query-hash -> injectable text (bounds the
     # spawn double-assembly to a single retrieve).
     recall_cache: dict[int, str] = field(default_factory=dict)
+    # Whether this process already seeded the routing digest from existing
+    # holdings (backfill runs once per start; the digest self-dedups, but a flag
+    # spares a few hundred needless bus emits on every agent:ready).
+    digest_backfilled: bool = False
     # Consolidation trigger bookkeeping.
     events_since_consolidate: int = 0
     last_activity: float = field(default_factory=time.monotonic)

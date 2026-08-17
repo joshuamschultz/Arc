@@ -68,6 +68,16 @@ class Brain(Protocol):
         """Slow "sleep" consolidation; returns mutation counts + ``episode_summary``."""
         ...
 
+    async def holdings(self, *, limit: int = 200, session_id: str | None = None) -> list[str]:
+        """Publishable pointers to durable knowledge held — proper nouns, never bodies.
+
+        The seam that lets a teammate find the agent holding a topic *without waking
+        it*: a channel router ranks published pointers, and that index has to be
+        seedable from what memory already holds, not only from what is filed after
+        the index was invented. Returns only what the agent may expose (unclassified).
+        """
+        ...
+
     async def rebuild_index(self, *, session_id: str | None = None) -> None:
         """Re-derive the disposable indices from the source-of-truth files."""
         ...
@@ -125,6 +135,9 @@ class NullBrain:
 
     async def consolidate(self, *, session_id: str | None = None) -> Mapping[str, object]:
         return {}
+
+    async def holdings(self, *, limit: int = 200, session_id: str | None = None) -> list[str]:
+        return []
 
     async def rebuild_index(self, *, session_id: str | None = None) -> None:
         return None

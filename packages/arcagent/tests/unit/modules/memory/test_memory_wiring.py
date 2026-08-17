@@ -19,6 +19,7 @@ import pytest
 from arcagent.brain import NullBrain
 from arcagent.modules.memory import _runtime
 from arcagent.modules.memory.capabilities import (
+    backfill_digest_from_holdings,
     capture_respond,
     capture_tool,
     capture_user,
@@ -414,3 +415,81 @@ async def test_consolidate_noop_when_no_events() -> None:
     _configure_with(spy, {"consolidate_event_threshold": 1})
     assert await consolidate_poll_once() is False
     assert spy.consolidations == 0
+
+
+# -- Digest backfill: seed the routing index from existing memory ---------
+
+
+class _RecordingBus:
+    """Records every bus emission so the backfill's replay can be observed."""
+
+    def __init__(self) -> None:
+        self.emitted: list[tuple[str, dict[str, Any]]] = []
+
+    async def emit(self, event: str, data: dict[str, Any]) -> None:
+        self.emitted.append((event, data))
+
+
+class _HoldingsBrain(_SpyBrain):
+    """A spy brain that reports durable holdings for the router backfill."""
+
+    def __init__(self, items: list[str]) -> None:
+        super().__init__()
+        self._items = items
+
+    async def holdings(self, **_: Any) -> list[str]:
+        return list(self._items)
+
+
+def _captured(bus: _RecordingBus) -> list[dict[str, Any]]:
+    return [data for event, data in bus.emitted if event == "memory:captured"]
+
+
+async def test_backfill_replays_holdings_onto_the_capture_seam() -> None:
+    """Existing holdings are announced once at startup so the messaging module can
+    publish a routing pointer for each — the agent that filed knowledge before the
+    digest existed becomes findable without re-filing it."""
+    bus = _RecordingBus()
+    _configure_with(_HoldingsBrain(["NNL — requirements: Rust toolchain and a signed SBOM"]))
+    _runtime.state().bus = bus
+
+    await backfill_digest_from_holdings(_ctx({}))
+
+    captured = _captured(bus)
+    assert len(captured) == 1
+    assert "NNL" in captured[0]["text"]
+    assert captured[0]["kind"] == "observation"
+
+
+async def test_backfill_runs_once_per_process() -> None:
+    """A second agent:ready must not re-announce the same holdings."""
+    bus = _RecordingBus()
+    _configure_with(_HoldingsBrain(["Kestrel — status: deployed"]))
+    _runtime.state().bus = bus
+
+    await backfill_digest_from_holdings(_ctx({}))
+    await backfill_digest_from_holdings(_ctx({}))
+
+    assert len(_captured(bus)) == 1
+
+
+async def test_backfill_silent_when_memory_off() -> None:
+    """A NullBrain agent holds nothing and announces nothing."""
+    bus = _RecordingBus()
+    _configure_with(NullBrain())
+    _runtime.state().bus = bus
+
+    await backfill_digest_from_holdings(_ctx({}))
+
+    assert _captured(bus) == []
+
+
+async def test_backfill_survives_a_brain_without_holdings() -> None:
+    """A minimal Brain that never learned holdings() must not break startup."""
+    bus = _RecordingBus()
+    _configure_with(_SpyBrain())  # _SpyBrain has no holdings()
+    _runtime.state().bus = bus
+
+    await backfill_digest_from_holdings(_ctx({}))  # no raise
+
+    assert _captured(bus) == []

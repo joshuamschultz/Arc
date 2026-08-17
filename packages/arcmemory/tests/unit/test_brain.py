@@ -162,6 +162,38 @@ async def test_consolidate_escalates_to_nightly_hygiene_on_first_call(workspace:
     assert acme is not None and "[[alice]]" in acme.links_to  # reciprocal backlink repaired
 
 
+async def test_holdings_publishes_unclassified_entity_pointers(workspace: Path) -> None:
+    """holdings() surfaces what durable memory holds so a router can find this agent.
+
+    Enumerates the semantic entity cards (each keyed by the proper noun that names
+    it), skips classified cards, and returns a pointer line — never a full body.
+    """
+    from arcmemory.index.graph import WeightedGraph
+    from arcmemory.stores.semantic import SemanticStore
+
+    brain = ArcMemoryBrain(workspace, _DID)
+    store = SemanticStore(workspace, WeightedGraph(brain._db), scope=_DID)
+    store.write_fact(
+        "nnl", "requirements", "Rust toolchain and a signed SBOM", name="NNL"
+    )
+    store.write_fact(
+        "black-op", "detail", "need to know", name="Black Op", classification="secret"
+    )
+
+    holdings = await brain.holdings()
+
+    joined = " || ".join(holdings)
+    assert "NNL" in joined  # the proper noun that names the holding
+    assert "Rust toolchain" in joined  # a fact snippet, enough for a lexical ranker
+    assert "Black Op" not in joined  # a classified card never crosses into a digest
+
+
+async def test_holdings_empty_without_memory(workspace: Path) -> None:
+    """A fresh brain holds nothing to publish — no entities, no pointers."""
+    brain = ArcMemoryBrain(workspace, _DID)
+    assert await brain.holdings() == []
+
+
 async def test_requires_identity() -> None:
     with pytest.raises(ValueError, match="agent_did"):
         ArcMemoryBrain(Path("."), "")

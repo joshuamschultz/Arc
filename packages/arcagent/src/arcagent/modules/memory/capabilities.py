@@ -264,6 +264,36 @@ async def _announce_ingest(st: _runtime._State, text: str, kind: str) -> None:
         _logger.debug("memory:captured listener raised; capture stands", exc_info=True)
 
 
+# -- Digest backfill -----------------------------------------------------
+
+
+@hook(event="agent:ready", priority=90)
+async def backfill_digest_from_holdings(_ctx: Any) -> None:
+    """Seed the channel-routing digest from what memory already holds (once).
+
+    The digest is written at ingest, so an agent that filed knowledge *before*
+    the digest existed is invisible to the router until it re-files it — which is
+    how an agent holding the answer never even tried. Replaying its durable
+    holdings through the same ``memory:captured`` seam the live capture path uses
+    lets the messaging module publish a pointer for each, with no new coupling
+    between the two modules. Best-effort: a backfill must never break startup.
+    """
+    st = _runtime.state()
+    if not st.active or st.digest_backfilled or st.bus is None:
+        return
+    st.digest_backfilled = True
+    enumerate_holdings = getattr(st.brain, "holdings", None)
+    if enumerate_holdings is None:
+        return
+    try:
+        items = await enumerate_holdings()
+    except Exception:  # reason: a routing backfill must never break agent startup
+        _logger.warning("could not enumerate holdings for digest backfill", exc_info=True)
+        return
+    for text in items:
+        await _announce_ingest(st, text, "observation")
+
+
 # -- memory_search tool --------------------------------------------------
 
 
@@ -424,6 +454,7 @@ async def consolidate_poll_once(*, now: float | None = None) -> bool:
 
 
 __all__ = [
+    "backfill_digest_from_holdings",
     "capture_respond",
     "capture_tool",
     "capture_user",

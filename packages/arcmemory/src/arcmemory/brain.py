@@ -181,6 +181,34 @@ class ArcMemoryBrain:
             situation, clearance=clr, top_k=top_k, budget=budget
         )
 
+    async def holdings(self, *, limit: int = 200, session_id: str | None = None) -> list[str]:
+        """Publishable pointers to durable knowledge this memory holds (no bodies).
+
+        Each semantic entity card is keyed by the proper noun that names it —
+        exactly the signal a channel router needs to find the agent that holds a
+        topic, without waking anyone. Only **unclassified** cards surface: a digest
+        crosses to teammates as pointers, so a classified holding must never appear.
+        Returns one short ``name — predicate: value`` line per card; the caller
+        reduces it to a title plus proper nouns, and no body beyond that line ever
+        leaves memory.
+        """
+        from arcmemory.stores.semantic import SemanticStore
+
+        store = SemanticStore(self._workspace, self._graph, self._scope(session_id).key)
+        lines: list[str] = []
+        for slug in store.slugs()[:limit]:
+            entity = store.read(slug)
+            if entity is None or entity.classification != "unclassified":
+                continue
+            fact = entity.facts[0] if entity.facts else None
+            line = " ".join(p for p in (entity.name, *entity.aliases, *entity.tags) if p).strip()
+            if fact is not None:
+                detail = f"{fact.predicate}: {fact.value}".strip()
+                line = f"{line} — {detail}" if line else detail
+            if line:
+                lines.append(line)
+        return lines
+
     async def consolidate(self, *, session_id: str | None = None) -> Mapping[str, object]:
         """Slow "sleep" consolidation over the raw stream (REQ-030..034).
 

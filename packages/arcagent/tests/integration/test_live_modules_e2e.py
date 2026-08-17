@@ -559,6 +559,50 @@ async def test_memory_captures_and_recalls_for_the_agents_own_did(
     assert "Kestrel" in recalled, f"memory did not recall what it captured: {recalled!r}"
 
 
+async def test_existing_memory_backfills_the_routing_digest_over_the_real_bus(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Knowledge filed before the digest existed still makes the agent findable.
+
+    A holding already in memory but never announced leaves the agent invisible to
+    channel routing — the reason one holding the answer never even tried. Seed a
+    semantic holding, re-fire ``agent:ready`` on the real module bus, and the
+    messaging digest gains a pointer naming it: the memory-side backfill and the
+    cross-module publish are actually wired, not merely each correct in isolation.
+    """
+    from arcmemory.index.graph import WeightedGraph
+    from arcmemory.stores.semantic import SemanticStore
+
+    deployment = _deployment(tmp_path, monkeypatch)
+    _install(deployment, ("memory", "messaging"), tmp_path)
+    config = _config(deployment, ("memory", "messaging"))
+
+    async with _booted(deployment, config) as agent:
+        mem = _runtime_of("memory").state()
+        msg = _runtime_of("messaging").state()
+        assert mem.active, "memory selected a NullBrain — nothing would backfill"
+        did = msg.identity.did
+
+        # A fresh agent has no NNL pointer: startup backfill found nothing to publish.
+        before = await msg.digests.get(did)
+        assert before is None or all("NNL" not in e.as_document() for e in before.entries)
+
+        # Seed durable knowledge the way a prior day's work would have left it,
+        # then re-fire the real startup event over the real module bus.
+        store = SemanticStore(mem.brain._workspace, WeightedGraph(mem.brain._db), scope=did)
+        store.write_fact("nnl", "requirements", "Rust toolchain and a signed SBOM", name="NNL")
+        mem.digest_backfilled = False
+        assert agent._bus is not None
+        await agent._bus.emit("agent:ready", {})
+
+        published = await msg.digests.get(did)
+
+    assert published is not None, "backfill published no digest at all"
+    assert any("NNL" in e.as_document() for e in published.entries), (
+        "existing memory did not backfill a routing pointer"
+    )
+
+
 # --------------------------------------------------------------------------
 # 3. Tasks — the dispatch loop picks work up, and keeps picking it up
 # --------------------------------------------------------------------------
