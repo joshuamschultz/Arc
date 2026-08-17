@@ -242,6 +242,26 @@ async def _capture(st: _runtime._State, text: str, *, kind: str) -> None:
     st.events_since_consolidate += 1
     st.last_activity = time.monotonic()
     await _audit("memory.capture", {"kind": kind})
+    await _announce_ingest(st, text, kind)
+
+
+async def _announce_ingest(st: _runtime._State, text: str, kind: str) -> None:
+    """Tell the bus something was filed, so a listener can publish a pointer.
+
+    This module owns private memory and must not know that a team, a channel or
+    a published digest exists — so it says *what happened* and nothing about who
+    should care (ADR-032, Non-Negotiable 2). The messaging module listens and
+    decides what, if anything, to publish about it.
+
+    Announcing is best-effort: a listener's failure is not a reason to lose the
+    memory that was already captured.
+    """
+    if st.bus is None:
+        return
+    try:
+        await st.bus.emit("memory:captured", {"text": text, "kind": kind})
+    except Exception:  # reason: a downstream listener must not break capture
+        _logger.debug("memory:captured listener raised; capture stands", exc_info=True)
 
 
 # -- memory_search tool --------------------------------------------------

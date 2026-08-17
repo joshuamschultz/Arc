@@ -23,6 +23,7 @@ tools read the resolved ``team_root`` from that state.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -34,7 +35,7 @@ from xml.sax.saxutils import escape as xml_escape
 from arctrust.session_identity import build_session_key
 
 from arcagent.core import known_channels, turn_context
-from arcagent.modules.messaging import _runtime, activation
+from arcagent.modules.messaging import _runtime, activation, sweep
 from arcagent.modules.messaging.tools import _stream_end_byte_pos
 from arcagent.tools._decorator import background_task, hook, tool
 from arcagent.utils.sanitizer import sanitize_text
@@ -45,6 +46,12 @@ _logger = logging.getLogger("arcagent.modules.messaging.capabilities")
 # spawned once and blocks on the durable-consumer subscription, so this value is
 # a scheduler formality rather than a poll cadence (delivery is push-driven).
 _POLL_TICK = 1.0
+
+# Cadence of the deferred sweep. Minutes, not seconds: it is the backstop behind
+# an immediate route, and each pass re-reads every channel this agent is in.
+# ``sweep_after_seconds`` is the knob that decides *when* a message counts as
+# missed; this only decides how often we look.
+_SWEEP_TICK = 300.0
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -195,13 +202,23 @@ async def _handle_incoming(message: Any) -> None:
         # Ack-and-ignore: the channel stream stays the record, and there is
         # nothing to retry or steer, so no follow_up is queued.
         return
+    await _wake_on(message)
+
+
+async def _wake_on(message: Any) -> None:
+    """Open this agent's turn on *message*, once something has decided it should.
+
+    The one place a message becomes a run, so the immediate route and the
+    deferred sweep cannot drift into waking the agent two different ways.
+    """
+    st = _runtime.state()
     channel = activation.channel_of(message)
     if channel is not None:
         activation.record_activation(st, channel)
     # An un-addressed channel post reaches every member. Each may answer it; none
     # may KEEP it — otherwise one operator message to one agent lands permanently in
-    # every other member's memory. The gate decides whether to reply, never whether
-    # to remember.
+    # every other member's memory. Selection decides whether to reply, never
+    # whether to remember.
     overheard = activation.is_overheard(message)
     async with st.processing_lock:
         caller_did = message.signer_did or message.sender
@@ -316,9 +333,60 @@ async def messaging_bind_run_fn(ctx: Any) -> None:
     deliver_fn = data.get("deliver_fn")
     if deliver_fn is not None:
         st.deliver_fn = deliver_fn
-    st.classify_fn = data.get("classify_fn")
+    st.oneshot_fn = data.get("oneshot_fn")
     st.channel_deliver_fn = data.get("channel_deliver_fn")
     _logger.info("Bound agent run/deliver callbacks for message processing")
+
+
+# Only these capture kinds describe something the agent was *given*. Tool output
+# and the agent's own replies are working noise, and a digest that indexes them
+# ranks its owner for having been busy rather than for holding anything.
+_PUBLISHABLE_KINDS = frozenset({"user", "document", "observation"})
+
+# Below this a capture is a remark, not an artifact worth a pointer.
+_MIN_PUBLISHABLE_CHARS = 40
+
+
+@hook(event="memory:captured", priority=100)
+async def publish_ingest_to_digest(ctx: Any) -> None:
+    """Publish a pointer to what private memory just filed — a title, never contents.
+
+    Written here, at ingest, rather than when somebody asks: the router must be
+    able to rank the room without waking anyone, and it can only do that over an
+    index that already exists (ADR-032).
+
+    The digest is this agent's own published view of itself. It carries titles,
+    proper nouns and tags — no bodies — so what crosses the memory privacy
+    boundary is a pointer that helps a teammate address the right agent, and
+    nothing a teammate could read instead of asking.
+    """
+    data = ctx.data if hasattr(ctx, "data") else {}
+    text = str(data.get("text") or "")
+    kind = str(data.get("kind") or "")
+    if kind not in _PUBLISHABLE_KINDS or len(text.strip()) < _MIN_PUBLISHABLE_CHARS:
+        return
+    await _publish_digest_entry(text, kind=kind)
+
+
+async def _publish_digest_entry(text: str, *, kind: str, artifact_id: str = "") -> None:
+    """Fold one pointer into this agent's published digest. Never raises."""
+    from arcteam.digest import summarize_artifact
+
+    st = _runtime.state()
+    if st.digests is None or st.identity is None:
+        return
+    entry = summarize_artifact(text, artifact_id=artifact_id or _artifact_id(text), kind=kind)
+    if not entry.title:
+        return
+    try:
+        await st.digests.add_entry(st.identity.did, st.config.entity_name or st.agent_name, entry)
+    except Exception:  # reason: a routing index must never break the work it indexes
+        _logger.warning("could not publish digest entry", exc_info=True)
+
+
+def _artifact_id(text: str) -> str:
+    """A stable id for an artifact, so re-filing updates its pointer in place."""
+    return hashlib.sha256(text.strip().encode("utf-8")).hexdigest()[:16]
 
 
 @hook(event="agent:shutdown", priority=100)
@@ -510,11 +578,17 @@ async def messaging_check_inbox() -> str:
         if not inbox:
             return json.dumps({"unread": 0, "streams": {}})
 
+        # An agent that cannot see another agent's reply cannot reply to it, so
+        # the pile-on is prevented here rather than budgeted for (ADR-032).
+        peers = await activation.other_agent_dids(st)
         result: dict[str, Any] = {"unread": 0, "streams": {}}
         for stream, msgs in inbox.items():
-            result["unread"] += len(msgs)
+            visible = [
+                m for m in msgs if not activation.hidden_from_context(m, st.identity, peers)
+            ]
+            result["unread"] += len(visible)
             stream_msgs: list[dict[str, Any]] = []
-            for m in msgs:
+            for m in visible:
                 msg_data: dict[str, Any] = {
                     "seq": m.seq,
                     "id": m.id,
@@ -537,6 +611,7 @@ async def messaging_check_inbox() -> str:
                         }
                         for t in thread
                         if t.seq < m.seq
+                        and not activation.hidden_from_context(t, st.identity, peers)
                     ]
                     if prior:
                         msg_data["thread_context"] = prior
@@ -571,6 +646,7 @@ async def messaging_read_thread(stream: str, thread_id: str) -> str:
     st = _runtime.state()
     try:
         msgs = await st.svc.get_thread(stream, thread_id)
+        peers = await activation.other_agent_dids(st)
         return json.dumps(
             [
                 {
@@ -583,6 +659,7 @@ async def messaging_read_thread(stream: str, thread_id: str) -> str:
                     "thread_id": m.thread_id,
                 }
                 for m in msgs
+                if not activation.hidden_from_context(m, st.identity, peers)
             ]
         )
     except (ValueError, TypeError) as exc:
@@ -668,6 +745,11 @@ async def store_team_file(file_path: str) -> str:
             source_path=Path(file_path),
             agent_name=entity_name,
         )
+        # Filing a document is ingest, so the pointer is published now — the
+        # moment the agent becomes the one who holds it.
+        await _publish_digest_entry(
+            Path(file_path).name, kind="file", artifact_id=str(result.get("path", file_path))
+        )
         return json.dumps({"status": "stored", **result})
     except (FileNotFoundError, ValueError) as exc:
         return json.dumps({"error": str(exc)})
@@ -730,6 +812,31 @@ async def messaging_inbox_loop(_ctx: Any) -> None:
         raise
 
 
+@background_task(
+    name="messaging_sweep_loop",
+    interval=_SWEEP_TICK,
+)
+async def messaging_sweep_loop(_ctx: Any) -> None:
+    """Pick up questions the immediate route missed (ADR-032).
+
+    The fast path is where a message should be answered, and this is what
+    catches the ones it did not: a winner in cooldown, a room already at its
+    answer cap, an open breaker, or an agent that was simply down. Every one of
+    those is a bounded, deliberate silence — and every one still leaves a human
+    looking at an unanswered question, which is indistinguishable from a broken
+    system.
+
+    Only the channel's named responder acts, so exactly one agent picks a
+    message up with no coordination between them.
+    """
+    st = _runtime.state()
+    if not st.config.sweep_enabled:
+        return
+    picked = await sweep.run_once(st, lambda message, _channel: _wake_on(message))
+    if picked:
+        _logger.info("deferred sweep picked up %d unanswered message(s)", picked)
+
+
 __all__ = [
     "inject_messaging_sections",
     "list_team_files",
@@ -741,6 +848,7 @@ __all__ = [
     "messaging_read_thread",
     "messaging_send",
     "messaging_shutdown",
+    "messaging_sweep_loop",
     "notify_user",
     "store_team_file",
 ]

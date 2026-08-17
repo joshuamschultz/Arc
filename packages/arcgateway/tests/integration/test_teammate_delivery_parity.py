@@ -300,7 +300,7 @@ async def harness(tmp_path: Path) -> AsyncIterator[_Harness]:
             {
                 "run_fn": agent.run_collected,
                 "deliver_fn": agent.deliver_message,
-                "classify_fn": agent.quick_classify,
+                "oneshot_fn": agent.run_oneshot,
                 "channel_deliver_fn": None,
             }
         )

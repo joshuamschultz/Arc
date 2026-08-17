@@ -490,7 +490,7 @@ class ArcAgent:
                 "run_fn": self.run_collected,
                 "deliver_fn": self.deliver_message,
                 "channel_deliver_fn": self._channel_deliver_fn,
-                "classify_fn": self.quick_classify,
+                "oneshot_fn": self.run_oneshot,
                 "skill_registry": self._capability_registry,
                 "capability_ledger": self._capability_ledger,
             },
@@ -731,24 +731,31 @@ class ArcAgent:
             content=content,
         )
 
-    async def quick_classify(self, *, system: str, user: str, max_tokens: int = 8) -> str:
-        """Bounded single-shot classification for cheap gating decisions.
+    async def run_oneshot(
+        self,
+        *,
+        system: str,
+        user: str,
+        max_tokens: int | None = 8,
+        timeout: float | None = None,
+    ) -> str:
+        """One bounded model call for a decision that is not worth a run.
 
-        One ``arcllm`` call, no tools, tiny token budget — NOT the agentic loop.
-        A lightweight helper for module gates (e.g. the messaging channel-
-        relevance triage) that must decide yes/no without paying a full run.
-        Returns the model's stripped text. The caller interprets it.
+        Module-level routers and gates need a model without needing the agentic
+        loop. The agent supplies the model it is configured with and the run
+        happens in ArcRun, which owns every model call in the stack — the agent
+        holds the handle and passes it on, and never invokes it (ADR-032).
         """
         self._ensure_started()
-        model = self._ensure_model()
-        response = await model.invoke(
-            [
-                arcrun.Message(role="system", content=system),
-                arcrun.Message(role="user", content=user),
-            ],
+        result = await arcrun.run_oneshot(
+            self._ensure_model(),
+            system=system,
+            user=user,
             max_tokens=max_tokens,
+            timeout=timeout,
+            actor_did=self._identity.did if self._identity is not None else None,
         )
-        return (response.content or "").strip()
+        return (result.content or "").strip()
 
     def set_channel_deliver_fn(
         self,

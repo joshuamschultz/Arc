@@ -38,26 +38,51 @@ class MessagingConfig(ModuleConfig):
     # Team roster cache TTL in seconds.
     roster_ttl_seconds: float = 60.0
 
-    # Entity identity, continued: the agent's role in one line. The relevance
-    # gate asks "is this about your role?", which is unanswerable without it.
+    # Entity identity, continued: the agent's role in one line, published on the
+    # roster so a teammate can address the right agent by name.
     entity_role: str = ""
 
-    # SPEC-055/068: gate a channel broadcast (no @mentions) behind a cheap
-    # per-agent relevance check before the full run, so only agents the message
-    # concerns pay a full turn. @mentions and critical priority bypass the gate.
-    channel_triage: bool = True
+    # ADR-032: route an un-addressed channel post by ranking every agent's
+    # published digest, so only the agents that hold something relevant pay a
+    # full turn. @mentions and critical priority never reach the router.
+    channel_route: bool = True
 
-    # SPEC-068 D1a — the gate FAILS CLOSED, so it needs a deadline of its own:
-    # without one a hung provider blocks this agent's inbox consumer outright.
-    # Small because the gate answers one word and must stay a rounding error
-    # against the turn it is deciding about.
-    triage_timeout_seconds: float = 5.0
+    # How many agents a single un-addressed post may wake. Two is the shape the
+    # owner described: the agent who owns it answers, and one other with
+    # genuinely different context adds to it.
+    route_top_k: int = 2
 
-    # SPEC-068 D4d — per-(agent, channel) breaker around the gate. A gate that
-    # keeps failing stops being called at all, with exponential backoff, instead
-    # of being retried on every message forever.
-    triage_failure_threshold: int = 5
-    triage_base_wait_seconds: float = 30.0
+    # How close the top two must be before the ranking is handed to the router.
+    # A relative gap, so it is scale-free across question lengths.
+    route_ambiguity_margin: float = 0.25
+
+    # The tiebreak needs a deadline of its own: without one a hung provider
+    # blocks this agent's inbox consumer outright.
+    route_timeout_seconds: float = 5.0
+
+    # Per-(agent, channel) breaker around the routing pass. A router that keeps
+    # failing stops being called at all, with exponential backoff, instead of
+    # being retried on every message forever.
+    route_failure_threshold: int = 5
+    route_base_wait_seconds: float = 30.0
+
+    # The dense half of the hybrid ranker. Empty means lexical-only, which is
+    # deliberate as the default: BM25 is the half that finds a rare identifier
+    # like "NNL", and an embedder that downloads a model the first time somebody
+    # speaks is not an unbreakable default. Set to "local" or "provider" to add
+    # recall on questions that paraphrase rather than name.
+    route_embed_backend: str = ""
+    route_embed_model: str = ""
+    route_embed_base_url: str = ""
+
+    # The backstop. A question the fast path missed — because the winner was in
+    # cooldown, the cap was hit, the breaker was open, or the agent was down —
+    # is picked up later by the channel's responder rather than left unanswered.
+    sweep_enabled: bool = True
+    # How long a message waits before it counts as missed. Long enough that a
+    # normal reply lands first; short enough that a human has not given up.
+    sweep_after_seconds: float = 180.0
+    sweep_max_per_tick: int = 3
 
     # SPEC-068 D1c — blast radius for ONE un-addressed post. The cap is soft
     # (members decide independently, with no coordinator) and both are bypassed

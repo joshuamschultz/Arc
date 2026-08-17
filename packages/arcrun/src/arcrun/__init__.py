@@ -24,10 +24,12 @@ from arcrun.capabilities import (
 from arcrun.checkpoint import LoopCheckpoint, apply_checkpoint, to_checkpoint
 from arcrun.dynamic.seal import RunSeal, SealBroken, SealSigner
 from arcrun.events import GENESIS_PREV_HASH, ChainVerificationResult, Event, EventBus, verify_chain
-from arcrun.loop import RunHandle, run, run_async
+from arcrun.loop import RunHandle, run, run_async, run_oneshot
 from arcrun.model import (
     ContentBlock,
     Delta,
+    EmbeddingProvider,
+    EmbeddingUnavailable,
     ImageBlock,
     LLMProvider,
     LLMResponse,
@@ -49,6 +51,7 @@ from arcrun.model import (
     TraceStore,
     Usage,
     create_model_trace_store,
+    embed_texts,
     iter_model_modules,
     load_model,
     model_api_error,
@@ -82,6 +85,8 @@ __all__ = [
     "ChainVerificationResult",
     "ContentBlock",
     "Delta",
+    "EmbeddingProvider",
+    "EmbeddingUnavailable",
     "Event",
     "EventBus",
     "ExecutionIsolationError",
@@ -138,6 +143,7 @@ __all__ = [
     "create_model_trace_store",
     "detached_context",
     "dispatch_ready",
+    "embed_texts",
     "get_strategy_prompts",
     "iter_model_modules",
     "load_model",
@@ -149,6 +155,7 @@ __all__ = [
     "provider_tools",
     "run",
     "run_async",
+    "run_oneshot",
     "run_shell",
     "run_stream",
     "stream_llm_response",

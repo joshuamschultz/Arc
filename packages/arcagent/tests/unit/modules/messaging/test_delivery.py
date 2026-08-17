@@ -185,14 +185,10 @@ class TestHandleIncoming:
 
         st.deliver_fn = deliver
         # An un-addressed channel post only fans out when a human wrote it
-        # (SPEC-068 D4a), so the sender has to be a registered one — and the
-        # relevance gate fails closed, so it needs a verdict to get past it.
+        # (SPEC-068 D4a), so the sender has to be a registered one. Routing is
+        # off because the subject here is the reply target, not who answers.
         await _register_human(st, "did:arc:local:peer/aaaa")
-
-        async def _relevant(**_kw: Any) -> str:
-            return "YES"
-
-        st.classify_fn = _relevant
+        st.config = st.config.model_copy(update={"channel_route": False})
 
         await _handle_incoming(_msg(to=["channel://ops"], mentions=[]))
 

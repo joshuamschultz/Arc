@@ -110,8 +110,10 @@ class MockModel:
         calls = self._responses[self._call_count].tool_calls
         return bool(calls) and calls[0].name == "select_strategy"
 
-    async def invoke(self, messages: list[Any], tools: list[Any] | None = None) -> LLMResponse:
-        self.invoke_calls.append({"messages": messages, "tools": tools})
+    async def invoke(
+        self, messages: list[Any], tools: list[Any] | None = None, **kwargs: Any
+    ) -> LLMResponse:
+        self.invoke_calls.append({"messages": messages, "tools": tools, "kwargs": kwargs})
         if _is_strategy_selection(tools) and not self._scripts_selection():
             self.selection_calls += 1
             return LLMResponse(

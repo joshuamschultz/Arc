@@ -18,7 +18,7 @@ from arcrun.events import EventBus
 from arcrun.registry import ToolRegistry
 from arcrun.sandbox import Sandbox
 from arcrun.state import Injection, RunState
-from arcrun.strategies import STRATEGIES, select_strategy
+from arcrun.strategies import STRATEGIES, available_strategies, select_strategy
 from arcrun.types import LoopResult, SandboxConfig
 
 _DEFAULT_CALLER_DID = "did:arc:unknown"
@@ -199,6 +199,49 @@ async def run(
     if on_handle is not None:
         on_handle(handle)
     return await handle.result()
+
+
+async def run_oneshot(
+    model: Any,
+    *,
+    user: str,
+    system: str = "",
+    max_tokens: int | None = 8,
+    timeout: float | None = None,
+    on_event: Callable[..., Any] | None = None,
+    actor_did: str | None = None,
+    run_id: str | None = None,
+) -> LoopResult:
+    """One bounded model call — the entry for a decision not worth a run.
+
+    Gates, labels, summaries and tiebreaks need a model without needing a loop.
+    This is where that need is served, so no layer above arcrun has a reason to
+    hold a provider handle of its own (ADR-032).
+
+    The cost is bounded before the call is made: one turn, no tools, an output
+    ceiling, and — when ``timeout`` is set — a deadline, so a hung provider
+    raises ``TimeoutError`` instead of blocking its caller indefinitely. A
+    caller whose answer is prose rather than a verdict passes ``max_tokens=None``
+    and says so; the ceiling is never removed silently. Usage and cost come back
+    on the result, because an unmetered call is spend nobody can see (LLM10).
+
+    ``system`` is optional: an empty one sends the user turn alone.
+    """
+    run_id = run_id or str(uuid.uuid4())
+    bus = EventBus(run_id=run_id, on_event=on_event, spool_actor_did=actor_did)
+    prelude = list(system_messages(system)) if system else []
+    state = RunState(
+        messages=[*prelude, user_message(user)],
+        registry=ToolRegistry(tools=[], event_bus=bus),
+        event_bus=bus,
+        run_id=run_id,
+        max_tokens=max_tokens,
+        strategy_name="oneshot",
+    )
+    call = available_strategies()["oneshot"](model, state, Sandbox(config=None, event_bus=bus), 1)
+    if timeout is None:
+        return await call
+    return await asyncio.wait_for(call, timeout=timeout)
 
 
 async def run_async(

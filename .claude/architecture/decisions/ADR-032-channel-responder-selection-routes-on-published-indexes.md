@@ -65,33 +65,38 @@ weakest on exactly that — rare acronyms and identifiers get smeared into a sem
 while BM25 anchors on the exact token. For the question that exposed this defect, the lexical half
 of the prefilter is the half that finds the answer, and it costs no model call at all.
 
-> **Amended after implementation — BM25 had to be configured, not merely chosen.** Okapi's IDF goes
-> negative once a term appears in more than half the documents, which can invert the ranking
-> outright in a six-agent room. BM25+ removes that, but charges `idf * delta` for every query term
-> whether the document contains it or not. Under BM25+ with a stock delta, the agent whose only
-> connection to *"the requirements **for** NNL"* was the preposition scored 0.66 of the agent
-> holding the document — and would have answered. `BM25Plus(delta=0)` with the existing relative
-> floor drops it to 0.27 and out. Pinned by
-> `test_matching_only_a_preposition_scores_far_below_holding_the_document`.
->
-> **The dense half defaults off** (`route_embed_backend=""`). An embedder that downloads a model
-> the first time somebody speaks is not an unbreakable default. Enable it for paraphrase recall;
-> the lexical half always runs, and it is the half that fixes the reported bug.
+Because the lexical half is load-bearing, **which BM25 and how it is tuned is an architectural
+choice, not an implementation detail.** Okapi's inverse document frequency goes *negative* for a
+term more than half the corpus carries, which in a six-member room can rank the agents that never
+mentioned a word above the ones that did. BM25+ fixes that with a `log((N+1)/df)` IDF and then
+introduces its own problem: its `delta` floor pays `idf * delta` for every query term whether the
+document contains it or not. Ship it as-is and the agent whose only tie to *"the requirements **for**
+NNL"* is the preposition scores two thirds of the agent holding the document, and answers. The
+configuration that works is **BM25+ with `delta = 0`**, an explicit term-overlap entry condition,
+and a relative score floor that drops the tail of the ranking — the same 0.3 ratio the team-memory
+search engine already applies.
 
-**3. A router call breaks ties when the prefilter is ambiguous.** One prompt, all candidate cards,
-one decision — the shape every framework converged on.
+**The dense half is opt-in and the lexical half always runs.** An embedder that downloads a model
+the first time somebody speaks is not an unbreakable default, so a deployment with no embedder
+ranks lexically and loses recall on a paraphrased question — never on an identifier, which is the
+case this exists to fix.
 
-> **Amended after implementation.** This originally said *a single* router call. There is nowhere
-> central to make it: `arcteam` has no LLM access by design, and arcui-as-router was rejected in
-> SPEC-068, so the call can only happen inside an agent. Each *candidate* runs it, bounded by
-> `top_k`, so it stays O(1) in channel size and the economics argument holds. What makes that safe
-> is that the prefilter is deterministic — every member computes the same ranking, so they agree on
-> the candidate set without coordinating.
->
-> **Ambiguity is not measured on the fused score.** Adjacent RRF ranks always land about `1/k`
-> apart whether the leader won by a mile or a hair, so a margin test on the fused value calls
-> nearly every ranking ambiguous and sends nearly every message to a model — the exact cost profile
-> this ADR exists to leave. Ambiguity is read from the raw retrieval evidence instead.
+**3. One router call breaks ties when the prefilter is ambiguous.** One prompt, all candidate cards,
+one decision — the shape every framework converged on, and the thing the per-agent gate structurally
+could not do, since each of its calls saw exactly one candidate.
+
+**It runs inside the candidates, not in a central router, because no central router exists.**
+arcteam owns channels but has no LLM access by design, arcui-as-router was considered and rejected
+in SPEC-068 (activation belongs to the receiving agent), and there is no third process in the
+middle. So the tiebreak runs in each *candidate* — at most `top_k` of them, which is O(1) in the
+size of the channel and preserves the economics this decision rests on. What makes that safe is
+that the prefilter is deterministic: every member ranks the same published inputs and reaches the
+same candidate set, so they agree on who is tied without talking to each other.
+
+**Ambiguity is measured on the retrieval evidence, never on the fused score.** RRF reads positions,
+so rank 1 and rank 2 always land about `1/k` apart whether the leader won decisively or by a
+rounding error. A margin test on the fused value would call almost every ranking ambiguous and hand
+almost every message to the model — exactly the cost profile this decision exists to leave.
 
 **4. A named default responder catches everything else. Silence is never the fallback.** When
 nothing scores above threshold, one designated agent answers — including to say that nobody here
@@ -153,18 +158,20 @@ through an object handle. Cheap inference is a legitimate need and gets a first-
 than a side door — and the boundary test must be extended to catch a provider reached by handle,
 not merely one reached by import.
 
-> **What the handle guard actually found: five bypasses, not one.** `quick_classify`, session
-> compaction, workpad maintenance, policy reflection, and the skills outcome classifier. The last
-> was also a latent bug — it was handed a provider where a prompt-in/text-out invoker was expected,
-> so it raised on every call and had been silently abstaining for its whole life. A component that
-> fails silently is indistinguishable from one that decided no, which is the same shape as the
-> defect this ADR exists to fix.
->
-> One handle call is deliberately retained: `modules/browser/_browser_use/adapter.py`, a shim
-> implementing a third-party library's chat interface. Routing it through the strategy would mean
-> widening `LoopResult` to carry provider response internals so an optional adapter could read them
-> back, weakening the boundary being defended. It is pinned as an **exact set**, so the debt can
-> shrink without editing the test but a second one fails the build.
+**That extension found five bypasses, not one.** `quick_classify` was the one this investigation
+started from; session compaction, workpad maintenance, policy reflection, and the skills outcome
+classifier were all doing the same thing unobserved. The last of those was also silently broken —
+it was handed a provider where a prompt-in/text-out seam was expected, so it raised on every call
+and had been abstaining on every turn since it shipped. The lesson generalises past this ADR: an
+architecture guard that reads imports measures a proxy, and the thing it is a proxy for is *who
+makes the model call*. Guards should assert the invariant, not its usual syntax.
+
+One provider-handle call site survives, pinned rather than hidden: the browser-use adapter, which
+implements a third-party library's chat interface on top of an Arc model and would need
+`LoopResult` widened to carry provider response internals (cache-token counts, stop reason, raw
+tool calls) to route through the strategy. Widening the result type so one optional adapter can
+read provider internals back out would weaken the boundary being defended, so the guard pins it as
+an **exact set**: the debt can shrink without editing the test, and cannot grow.
 
 ## References
 

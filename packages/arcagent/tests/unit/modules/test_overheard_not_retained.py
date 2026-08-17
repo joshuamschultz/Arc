@@ -152,23 +152,24 @@ class _MsgState:
         self.processing_lock = asyncio.Lock()
         self.deliver_fn: Any = None
         self.agent_run_fn: Any = None
-        self.classify_fn = None
+        self.oneshot_fn = None
         self.telemetry = None
         self.config = SimpleNamespace(
-            channel_triage=False,
+            channel_route=False,
             entity_name="listener",
             entity_role="listener",
             channel_cooldown_seconds=0.0,
             channel_answer_cap=0,
-            triage_timeout_seconds=5.0,
-            triage_failure_threshold=5,
-            triage_base_wait_seconds=30.0,
+            route_timeout_seconds=5.0,
+            route_failure_threshold=5,
+            route_base_wait_seconds=30.0,
         )
         self.agent_name = "listener"
         self.channel_last_woken: dict[str, float] = {}
         self.channel_breakers: dict[str, Any] = {}
         self.registry = _HumanRegistry("did:arc:test:operator")
         self.svc = None
+        self.digests = None
 
 
 async def _deliver_through_inbox(monkeypatch: Any, message: Any) -> list[dict[str, Any]]:

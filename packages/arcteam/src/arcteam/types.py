@@ -170,6 +170,11 @@ class Channel(BaseModel):
     members: list[str] = Field(default_factory=list)
     created: str = ""
     clearance: str = "UNCLASSIFIED"
+    # Who answers when nothing else does. An unanswered question in a channel is
+    # indistinguishable from a broken system, which is how a routing defect
+    # stayed invisible for four days — so silence is never the fallback, and a
+    # channel with no named responder still resolves one (ADR-032).
+    responder: str = ""
 
 
 class Cursor(BaseModel):
