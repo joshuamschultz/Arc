@@ -1,22 +1,7 @@
 <div align="center">
 
-```
-╭───────────────────────────────────────────────────────────╮
-│ arc                                                 ● ● ● │
-├───────────────────────────────────────────────────────────┤
-│                                                           │
-│                  █████╗ ██████╗  ██████╗                  │
-│                 ██╔══██╗██╔══██╗██╔════╝                  │
-│                 ███████║██████╔╝██║                       │
-│                 ██╔══██║██╔══██╗██║                       │
-│                 ██║  ██║██║  ██║╚██████╗                  │
-│                 ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝                  │
-│                                                           │
-│         the security-first autonomous agent stack         │
-│            identity · sign · authorize · audit            │
-│                                                           │
-╰───────────────────────────────────────────────────────────╯
-```
+<img src="docs/assets/banner-arc.jpg" width="100%" alt="Arc — the security-first agent stack. One turn rising through four gates: identity, sign, authorize, audit.">
+
 
 ### **The Security-First Autonomous Agent Stack**
 *For environments where trust is non-negotiable.*
