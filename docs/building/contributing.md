@@ -370,8 +370,12 @@ know the next free one:
 | ADR-026 | `transform_context` append-only with an emergency valve |
 | ADR-027 | Per-run tool-set freeze security invariant |
 | ADR-028 | Append-only prefix contract, debug-gated |
+| ADR-029 | Agent workspace vs working directory; state persists via direct workspace I/O |
+| ADR-030 | Agents get MCP capability; extensions plug in from outside |
+| ADR-031 | Ad-hoc model-authored orchestration is a restricted script, not a declared graph |
+| ADR-032 | A channel responder is chosen by routing over published indexes, not self-assessment |
 
-**Next free number: ADR-029.** Follow the existing template: `Status`,
+**Next free number: ADR-033.** Follow the existing template: `Status`,
 `Date`, `Spec` (if applicable), `Context`, `Decision`, `Rationale`.
 
 ### Documentation duties

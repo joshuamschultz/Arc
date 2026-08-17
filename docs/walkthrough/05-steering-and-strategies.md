@@ -587,6 +587,7 @@ Runnable reference: `walkthroughs/arcrun/06-task-completion-budgets.ipynb`.
 | `packages/arcrun/src/arcrun/strategies/react.py` | The ReAct loop, `check_breaker`, injection handling, completion extraction. Start here for turn-structure changes. |
 | `packages/arcrun/src/arcrun/strategies/code.py`, `__init__.py` | The other strategy and the `Strategy` ABC / selection logic. |
 | `packages/arcrun/src/arcrun/strategies/dynamic.py` | `DynamicStrategy` — author, dry-run, interpret, or fall back to `react_loop`. |
+| `packages/arcrun/src/arcrun/strategies/oneshot.py` | `OneShotStrategy` — one bounded model call, no tools, reached via `arcrun.run_oneshot`. Cheap gating decisions live here so they cannot be made by reaching a provider handle from above (ADR-032). `auto_selectable = False`: a strategy that answers once and holds no tools must never be auto-picked for an agentic task. |
 | `packages/arcrun/src/arcrun/dynamic/` | `host.py` (`ScriptHost` Protocol — the security boundary), `grammar.py` (the whitelisted parser), `interpreter.py` (bounded, typed, deterministic evaluator), `binding.py` (`RunHost` — the real, effectful host), `journal.py` (replay-based resume), `validate.py` (`StubHost`, `dry_run`). |
 | `packages/arcrun/src/arcrun/checkpoint.py` | `LoopCheckpoint`, `apply_checkpoint` — resumable state, fail-closed on tool-set drift. |
 | `packages/arcrun/src/arcrun/streams.py`, `events.py` | The streaming surface (`run_stream`, `collect`, ADR-024) and the `EventBus` hash chain / `verify_chain`. |
