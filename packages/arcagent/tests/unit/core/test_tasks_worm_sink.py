@@ -3,7 +3,7 @@
 ``configure_module_runtimes`` dispatches ``_runtime.configure(...)`` by
 signature: a module receives ``operator_signer`` iff its ``configure()``
 declares that parameter. Core names no module. The WORM audit-sink modules
-(skills, messaging, planning, tasks) each declare the parameter, so they still
+(skills, messaging, tasks) each declare the parameter, so they still
 receive the deployment operator authority; a generic module that does not
 declare it cannot harvest signing authority.
 """
@@ -15,7 +15,7 @@ import inspect
 
 import pytest
 
-_WORM_SINK_MODULES = ("skills", "messaging", "planning", "tasks")
+_WORM_SINK_MODULES = ("skills", "messaging", "tasks")
 _NON_SIGNER_MODULES = ("memory", "session", "proactive", "pulse")
 
 

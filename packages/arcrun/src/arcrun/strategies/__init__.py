@@ -52,10 +52,10 @@ def available_strategies() -> MappingProxyType[str, Strategy]:
 
 def _load_strategies() -> None:
     from arcrun.strategies.code import CodeExecStrategy
-    from arcrun.strategies.plan_execute import PlanExecuteStrategy
+    from arcrun.strategies.dynamic import DynamicStrategy
     from arcrun.strategies.react import ReactStrategy
 
-    for s in (ReactStrategy(), CodeExecStrategy(), PlanExecuteStrategy()):
+    for s in (ReactStrategy(), CodeExecStrategy(), DynamicStrategy()):
         STRATEGIES[s.name] = s
 
 
@@ -64,12 +64,24 @@ async def select_strategy(
     model: Any,
     state: RunState,
 ) -> str:
-    """Pick strategy. Single=direct. Multiple=model picks. None=react."""
+    """Pick a strategy: one allowed means take it, otherwise the model chooses.
+
+    ``allowed=None`` means **every** registered strategy is on the table. Each
+    run is its own opportunity to pick the shape that fits the task, so the
+    default is open and an operator narrows it deliberately rather than having
+    to opt in to capability they already installed.
+
+    The cost of an open default is one selection call per run. That is the
+    intended trade: a run that would benefit from fanning out should not be
+    forced through a single linear chain because nobody edited a config file.
+    """
     if not STRATEGIES:
         _load_strategies()
 
     if allowed is None:
-        return "react"
+        allowed = list(STRATEGIES)
+    if not allowed:
+        raise ValueError("allowed_strategies is empty; a run must permit at least one strategy")
     unknown = [s for s in allowed if s not in STRATEGIES]
     if unknown:
         raise ValueError(f"unknown strategies: {unknown}. available: {list(STRATEGIES)}")

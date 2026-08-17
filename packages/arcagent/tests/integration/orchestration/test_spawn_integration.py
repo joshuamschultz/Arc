@@ -4,7 +4,7 @@ import pytest
 from arcrun.loop import run
 from arcrun.types import Tool
 
-from ._mock_llm import LLMResponse, MockModel, ToolCall, setup_spawn_tools
+from ._mock_llm import LLMResponse, MockModel, ToolCall, _is_strategy_selection, setup_spawn_tools
 
 
 async def _echo_execute(params: dict, ctx: object) -> str:
@@ -141,7 +141,7 @@ class TestDepthLimit:
         assert result.content == "Saw max depth error."
 
         # spawn_task IS visible at every depth — agents control registration
-        invoke_call = model.invoke_calls[0]
+        invoke_call = model.task_calls[0]
         tool_names = [t.name for t in invoke_call["tools"]]
         assert "spawn_task" in tool_names
 
@@ -164,7 +164,7 @@ class TestDepthLimit:
         )
         assert result.content == "Below max."
 
-        invoke_call = model.invoke_calls[0]
+        invoke_call = model.task_calls[0]
         tool_names = [t.name for t in invoke_call["tools"]]
         assert "spawn_task" in tool_names
 
@@ -264,6 +264,20 @@ class TestChildFailure:
 
             async def invoke(self, messages, tools=None):
                 self.invoke_calls.append({"messages": messages, "tools": tools})
+                if _is_strategy_selection(tools):
+                    # Every run (parent's and the child's) now opens with a
+                    # selection call. Answer it without advancing the counter
+                    # so the scripted per-turn sequence below stays meaningful.
+                    return LLMResponse(
+                        tool_calls=[
+                            ToolCall(
+                                id="select-strategy",
+                                name="select_strategy",
+                                arguments={"strategy": "react"},
+                            )
+                        ],
+                        stop_reason="tool_use",
+                    )
                 self._call_count += 1
                 if self._call_count == 1:
                     # Parent: spawn child
@@ -303,6 +317,20 @@ class TestToolSubsetting:
                 self._call_count = 0
 
             async def invoke(self, messages, tools=None):
+                if _is_strategy_selection(tools):
+                    # Every run (parent's and the child's) now opens with a
+                    # selection call. Answer it without advancing the counter
+                    # or recording it as one of the turns under inspection.
+                    return LLMResponse(
+                        tool_calls=[
+                            ToolCall(
+                                id="select-strategy",
+                                name="select_strategy",
+                                arguments={"strategy": "react"},
+                            )
+                        ],
+                        stop_reason="tool_use",
+                    )
                 self._call_count += 1
                 if tools:
                     tool_names_seen.append([t.name for t in tools])
@@ -363,6 +391,21 @@ class TestSystemPromptOverride:
                 self._call_count = 0
 
             async def invoke(self, messages, tools=None):
+                if _is_strategy_selection(tools):
+                    # Every run (parent's and the child's) now opens with a
+                    # selection call, carrying its own synthetic system
+                    # message. Answer it without advancing the counter or
+                    # recording that message as one of the turns under test.
+                    return LLMResponse(
+                        tool_calls=[
+                            ToolCall(
+                                id="select-strategy",
+                                name="select_strategy",
+                                arguments={"strategy": "react"},
+                            )
+                        ],
+                        stop_reason="tool_use",
+                    )
                 self._call_count += 1
                 # Extract system prompt from messages
                 for msg in messages:

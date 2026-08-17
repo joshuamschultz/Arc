@@ -132,6 +132,7 @@ def create_arcrun_bridge(
     model_id: str = "",
     agent_label: str = "",
     task_supervisor: BackgroundTaskSupervisor | None = None,
+    reply_target: str | None = None,
 ) -> Callable[[arcrun.Event], None]:
     """Create on_event callback for arcrun.run().
 
@@ -140,9 +141,20 @@ def create_arcrun_bridge(
       tool.end    → agent:post_tool
       turn.start  → agent:pre_plan
       turn.end    → agent:post_plan
+      dynamic.*   → agent:run_progress
 
     llm.call is NOT mapped — the arcllm bridge emits llm:call_complete
     from TraceRecord with trace_id, bodies, and phase timings.
+
+    ``dynamic.*`` is the ``dynamic`` strategy announcing its own stages —
+    the plan it wrote, each phase, every child agent it starts and collects.
+    Those runs last minutes, so a consumer can narrate them while they happen.
+    Each one is forwarded with ``reply_target``, the channel THIS turn arrived
+    on, stamped onto it: the origin is threaded through the event rather than
+    looked up later, because a progress line that resolves its own destination
+    is a progress line that can answer a group post on someone's phone.
+    ``None`` (a scheduled, dispatched, or headless run) travels as None, and a
+    consumer is expected to stay silent on it.
 
     ArcRun's on_event is synchronous (Callable[[Event], None]),
     so we schedule the async bus.emit via the running event loop.
@@ -156,20 +168,30 @@ def create_arcrun_bridge(
     supervisor = task_supervisor or BackgroundTaskSupervisor(logger=_logger)
 
     def bridge(event: arcrun.Event) -> None:
+        # Always copy to a plain dict — Event.data is typed as
+        # MappingProxyType[Any, Any] (read-only) by arcrun; ModuleBus.emit
+        # requires dict[str, Any]. Shallow copy is intentional here.
         bus_event = _event_map.get(event.type)
+        data: dict[str, Any]
         if bus_event is not None:
-            # Always copy to a plain dict — Event.data is typed as
-            # MappingProxyType[Any, Any] (read-only) by arcrun; ModuleBus.emit
-            # requires dict[str, Any]. Shallow copy is intentional here.
-            data: dict[str, Any] = dict(event.data)
-            try:
-                asyncio.get_running_loop()
-                supervisor.create(bus.emit(bus_event, data), name=f"arcrun_bridge:{bus_event}")
-            except RuntimeError:
-                _logger.warning(
-                    "No running event loop for bridge event: %s",
-                    event.type,
-                )
+            data = dict(event.data)
+        elif event.type.startswith("dynamic."):
+            bus_event = "agent:run_progress"
+            data = {
+                "event": event.type,
+                "reply_target": reply_target,
+                "data": dict(event.data),
+            }
+        else:
+            return
+        try:
+            asyncio.get_running_loop()
+            supervisor.create(bus.emit(bus_event, data), name=f"arcrun_bridge:{bus_event}")
+        except RuntimeError:
+            _logger.warning(
+                "No running event loop for bridge event: %s",
+                event.type,
+            )
 
     return bridge
 

@@ -140,7 +140,7 @@ class TestRunWithMessages:
         )
         assert result.content == "Hi!"
         # Model received [system, user] (list is mutated after invoke, so check first two)
-        invoke_msgs = model.invoke_calls[0]["messages"]
+        invoke_msgs = model.task_calls[0]["messages"]
         assert invoke_msgs[0].role == "system"
         assert invoke_msgs[0].content == "Be helpful."
         assert invoke_msgs[1].role == "user"
@@ -168,7 +168,7 @@ class TestRunWithMessages:
         )
         assert result.content == "I'm good!"
         # Model received: system + history (3 msgs) — check structure
-        invoke_msgs = model.invoke_calls[0]["messages"]
+        invoke_msgs = model.task_calls[0]["messages"]
         assert invoke_msgs[0].role == "system"
         assert invoke_msgs[0].content == "Be helpful."
         # History messages follow system prompt
@@ -201,7 +201,7 @@ class TestRunWithMessages:
             messages=history,
         )
         # First message should be the fresh system prompt
-        invoke_msgs = model.invoke_calls[0]["messages"]
+        invoke_msgs = model.task_calls[0]["messages"]
         assert invoke_msgs[0].role == "system"
         assert invoke_msgs[0].content == "NEW system prompt"
 
@@ -218,7 +218,7 @@ class TestRunWithMessages:
             "task",
             messages=[],
         )
-        invoke_msgs = model.invoke_calls[0]["messages"]
+        invoke_msgs = model.task_calls[0]["messages"]
         assert invoke_msgs[0].role == "system"
         assert invoke_msgs[0].content == "System."
 

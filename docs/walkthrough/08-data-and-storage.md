@@ -485,7 +485,7 @@ consolidation and dedup passes write.) Entities add `name`, `entity_type`,
 
 | File | Writer | Reader |
 |---|---|---|
-| `identity.md` | operator, at agent creation | agent (read-only — `session_internal/context.py:33`, `modules/planning/_runtime.py:178`); the tool-write guard blocks the agent from touching it (`tools/_validation.py:23`) |
+| `identity.md` | operator, at agent creation | agent (read-only — `session_internal/context.py:33`); the tool-write guard blocks the agent from touching it (`tools/_validation.py:23`) |
 | `context.md` | **only** the workpad module's background eval-model call (`modules/workpad/__init__.py:3-5`) | injected into every system prompt |
 | `policy.md` | operator | policy pipeline, TOFU layer; agent-write blocked (`tools/_validation.py:23`) |
 | `capabilities/` | agent (self-authored tools, TOFU-gated) | tool loader |

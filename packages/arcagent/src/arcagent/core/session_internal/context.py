@@ -51,16 +51,16 @@ _CHARS_PER_TOKEN = 4
 # Sections whose content is derived from the current turn. They move out of the
 # system prompt entirely so the cached prefix survives the turn.
 #
-# All three are persisted with the turn (``turn_context``), so their clearance
+# Both are persisted with the turn (``turn_context``), so their clearance
 # story matters. ``recall`` is gated: the memory module retrieves at a hardcoded
 # ``clearance="unclassified"`` and arcmemory runs ``gate_no_read_up`` before the
 # text is ever handed back, so nothing above that clearance can reach the
-# session. ``planning`` and ``teams`` have no equivalent gate — deliberately, as
-# they are not cross-classification retrieval: planning renders this agent's own
-# plan store, and teams its own mailbox and roster. Both are already within the
-# agent's clearance by construction. Wiring a classified store into either would
-# invalidate that reasoning and require a gate here.
-_TURN_SECTIONS = frozenset({"planning", "recall", "teams"})
+# session. ``teams`` has no equivalent gate — deliberately, as it is not
+# cross-classification retrieval: it renders this agent's own mailbox and
+# roster, already within the agent's clearance by construction. Wiring a
+# classified store into it would invalidate that reasoning and require a gate
+# here.
+_TURN_SECTIONS = frozenset({"recall", "teams"})
 
 # Bus-injected sections known to hold still for the life of the process. A
 # section we cannot vouch for defaults to the run tier instead: an unknown

@@ -26,10 +26,12 @@ import logging
 import uuid
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from arcrun._messages import SystemPrompt
 from arcrun.capabilities import CapabilityProvider
+from arcrun.dynamic.seal import RunSeal
 from arcrun.events import Event
 from arcrun.types import LoopResult, SandboxConfig, Tool
 
@@ -193,6 +195,8 @@ async def run_stream(
     max_consecutive_errors: int | None = None,
     resume_from: Any | None = None,
     run_id: str | None = None,
+    work_dir: Path | None = None,
+    seal: RunSeal | None = None,
     on_handle: Callable[[RunHandle], None] | None = None,
 ) -> AsyncIterator[StreamEvent]:
     """Run the agent loop and stream events as they occur.
@@ -234,6 +238,9 @@ async def run_stream(
             starting a turn that would cross it.
         max_cost_usd: Optional per-run cost ceiling forwarded likewise
             (best-effort secondary — priced, non-streaming responses only).
+        work_dir: Optional durable home for run-scoped artifacts (the dynamic
+            strategy's replay journal and script scratch). arcrun never invents
+            this path; when None nothing is persisted.
         run_id: Optional caller-pinned run id. When set it is used for both the
             stream audit and the loop's EventBus/spool, so a caller can link the
             run to durable state before it starts; otherwise one is generated.
@@ -338,6 +345,8 @@ async def run_stream(
                 max_consecutive_errors=max_consecutive_errors,
                 resume_from=resume_from,
                 run_id=run_id,
+                work_dir=work_dir,
+                seal=seal,
                 on_handle=on_handle,
             )
             loop_future.set_result(result)

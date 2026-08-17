@@ -265,7 +265,7 @@ class TestRootTokenBudgetWiring:
         second = await tool.execute({"task": "do B"}, ctx)
         assert "Error" in second
         assert "budget exhausted" in second
-        assert len(child_model.invoke_calls) == 1
+        assert len(child_model.task_calls) == 1
 
     @pytest.mark.asyncio
     async def test_child_is_stopped_when_it_would_overrun_the_pool(self):
@@ -293,7 +293,7 @@ class TestRootTokenBudgetWiring:
         await tool.execute({"task": "loop"}, ctx)
         # The clamp (max_tokens == pool remaining) stops the child before its
         # second model call — without it the child would have invoked twice.
-        assert len(child_model.invoke_calls) == 1
+        assert len(child_model.task_calls) == 1
 
     @pytest.mark.asyncio
     async def test_no_budget_leaves_child_unclamped(self):
@@ -318,7 +318,7 @@ class TestRootTokenBudgetWiring:
 
         result = await tool.execute({"task": "loop"}, ctx)
         assert result == "second turn"
-        assert len(child_model.invoke_calls) == 2
+        assert len(child_model.task_calls) == 2
 
 
 class TestBubbleHandler:

@@ -46,7 +46,7 @@ def test_available_strategies_is_read_only() -> None:
     strategies = arcrun.available_strategies()
 
     assert isinstance(strategies, MappingProxyType)
-    assert set(strategies) == {"react", "code", "plan_execute"}
+    assert set(strategies) == {"react", "code", "dynamic"}
     with pytest.raises(TypeError):
         strategies["other"] = object()  # type: ignore[index,assignment]
 

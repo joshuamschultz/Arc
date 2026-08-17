@@ -171,7 +171,7 @@ def _generate_arcrun_toml(tier: str) -> str:
         _USER_CONFIG_HEADER.format(pkg="arcrun", tier=tier),
         "max_turns = 25",
         "# tool_timeout = 30.0             # per-tool wall-clock timeout (seconds)",
-        '# allowed_strategies = ["react"]  # restrict loop strategies; unset = all',
+        '# allowed_strategies = ["react"]  # unset = all strategies; the model picks',
         "approval_opt_in = []",
         "",
         "[sandbox]",
@@ -218,6 +218,9 @@ def _arcagent_base_config(tier: str) -> dict[str, Any]:
             # call rewrites it as a curated cockpit of open loops. Sole writer of
             # context.md (compaction no longer flushes to it).
             "workpad": {"enabled": True, "config": {"every_n_runs": 20}},
+            # Progress narrates a long fan-out run back to the channel that
+            # asked for it, so minutes of silent work stop looking like a hang.
+            "progress": {"enabled": True},
         },
     }
 

@@ -87,7 +87,7 @@ class TestToolInjection:
         await run(model, StaticProvider([tool]), "prompt", "task", sandbox=sandbox)
         # The tool call should be denied — "safe_tool\u200b" != "safe_tool"
         # Verify the model received an error message in the tool result
-        messages = model.invoke_calls[1]["messages"]
+        messages = model.task_calls[1]["messages"]
         tool_msgs = [m for m in messages if m.role == "tool"]
         assert len(tool_msgs) >= 1
         # Tool result content is [ToolResultBlock(content="Error: ...")]

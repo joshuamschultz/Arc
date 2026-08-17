@@ -34,7 +34,7 @@ CHAIN = Definition(
 
 
 # ---------------------------------------------------------------------------
-# The accounting itself (ported from planning/executor.py:212-238)
+# The accounting itself (ported from arcagent's since-removed planning module)
 # ---------------------------------------------------------------------------
 
 

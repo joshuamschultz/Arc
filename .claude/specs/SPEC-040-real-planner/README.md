@@ -2,7 +2,7 @@
 
 **Feature:** Upgrade `arcagent/modules/planning/` from a to-do-list CRUD (create/list/update/complete over a flat `tasks.json`) into a **real planner**: given a goal, decompose it into a structured, dependency-aware **plan** (a DAG of steps); execute steps through Arc's existing loop; **checkpoint** every step so the plan survives restart/compaction and can resume mid-flight; and **replan** the remaining steps when a step fails or reality diverges — without restarting from scratch.
 
-**Status:** PENDING
+**Status:** REMOVED — 2026-08-16. `arcagent/modules/planning/` was built and tested but never enabled (`PlanningConfig.enabled` defaulted `False`; no blueprint/team config turned it on) and has been deleted in favor of arcrun's `dynamic` strategy, which supersedes it with real control flow. Salvaged pieces (operator-signed integrity sidecar, WORM audit sink, identity-goal-hijack grounding refusal, reserve-then-settle budget accounting) are noted at `packages/arcrun/src/arcrun/dynamic/SALVAGE.md` for the `dynamic` strategy to port. This document is kept as historical record only.
 **Branch:** `feat/SPEC-040-real-planner` (planning only — no branch/commit created; `.claude/` is gitignored)
 **Type:** Generic (module upgrade — data model + orchestration + durable state + replan loop; zero core LOC)
 **Phase:** Phase 2 — SOTA + mission control

@@ -270,6 +270,20 @@ max_transcript_chars = 24000  # recent-activity transcript cap fed to the mainta
 max_context_chars = 8000      # hard cap on rewritten context.md
 flush_idle_seconds = 900      # idle-flush backstop seconds
 
+[modules.progress]
+enabled = true
+priority = 100
+
+[modules.progress.config]
+# Live step-by-step narration of a long fan-out run, sent back to the channel
+# the request came in on and nowhere else. A run with no channel (a schedule, a
+# dispatched task, a CLI run) is narrated to nobody. Defaults are deliberately
+# quiet: a chatty agent is worse than a silent one.
+coalesce_seconds = 1.5    # wait this long so a burst of agents is one message
+min_gap_seconds = 10      # floor between ordinary lines; results ignore it
+max_lines_per_run = 12    # hard ceiling on messages about one run
+max_step_chars = 90       # model-written stage names are cut to this
+
 [modules.user_profile]
 enabled = false
 priority = 100
@@ -309,17 +323,6 @@ classify_outcomes = false   # consult eval-LLM OutcomeClassifier at post_plan
 sweep_poll_seconds = 3600.0  # curator lifecycle-sweep poll cadence
 adapter_allowlist = []      # operator-vetted BYO adapter class-paths
 # [modules.skills.improver] block is forwarded verbatim to arcskill ImproverConfig.
-
-[modules.planning]
-enabled = false
-priority = 100
-
-[modules.planning.config]
-max_replans = 3       # replan ceiling
-# max_tokens =        # aggregate plan token budget (unset = unbounded)
-# max_cost_usd =      # plan cost budget (unset = unbounded)
-concurrent = false    # concurrent DAG-frontier dispatch
-max_parallel = 8      # max concurrent branches
 
 [modules.pulse]
 enabled = false
@@ -680,7 +683,11 @@ _DEFAULT_ARCRUN_CONFIG = """\
 
 max_turns = 40          # hard cap on agentic loop turns
 # tool_timeout = 30.0   # per-tool-call wall-clock timeout (seconds); unset = none
-# allowed_strategies = ["react"]  # restrict the loop to these strategies; unset = all
+# Unset = every strategy is available and the model picks the one that fits each
+# task. Narrow it only to take capability away. The federal tier ignores this and
+# permits "react" alone, because the other strategies let a model author its own
+# control flow.
+# allowed_strategies = ["react"]
 approval_opt_in = []    # tool names always requiring human approval at personal/enterprise
 
 [sandbox]

@@ -66,6 +66,9 @@ class ScriptedLLM:
     replies: list[str | ScriptedTurn] = field(default_factory=list)
     #: Every ``invoke`` call's messages, in order — what the agent actually sent.
     calls: list[list[Any]] = field(default_factory=list)
+    #: Which strategy the scripted model picks when the loop asks.
+    strategy: str = "react"
+    strategy_selections: int = 0
 
     @property
     def name(self) -> str:
@@ -93,6 +96,24 @@ class ScriptedLLM:
         from arcllm.types import LLMResponse, ToolCall, Usage
 
         self.calls.append(list(messages))
+        if _is_strategy_selection(tools):
+            # Every run now opens by asking which strategy fits the task. A
+            # journey is about what the user gets, so the selection is answered
+            # here rather than consuming a queued reply that the journey wrote
+            # for the turn it actually cares about.
+            self.strategy_selections += 1
+            return LLMResponse(
+                content=None,
+                tool_calls=[
+                    ToolCall(
+                        id=f"select-{self.strategy_selections}",
+                        name="select_strategy",
+                        arguments={"strategy": self.strategy},
+                    )
+                ],
+                stop_reason="tool_use",
+                usage=Usage(input_tokens=1, output_tokens=1, total_tokens=2),
+            )
         turn = self._next_turn()
         tool_calls = (
             [ToolCall(id=f"call-{len(self.calls)}", name=turn.tool, arguments=turn.args)]
@@ -295,3 +316,8 @@ async def agent(deployment: Deployment, scripted_llm: ScriptedLLM) -> AsyncItera
         yield arc_agent
     finally:
         await arc_agent.shutdown()
+
+
+def _is_strategy_selection(tools: list[Any] | None) -> bool:
+    """True when this call is the loop asking which strategy to run."""
+    return bool(tools) and any(getattr(t, "name", "") == "select_strategy" for t in tools or [])

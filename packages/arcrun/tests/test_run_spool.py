@@ -32,7 +32,7 @@ def test_eventbus_records_lifecycle_run_events() -> None:
         bus.emit("turn.start", {"turn": 1})
         bus.emit("tool.start", {"name": "echo"})  # SPEC-028: now a tool_event
         bus.emit("turn.end", {"turn": 1})
-        bus.emit("loop.complete", {})  # universal terminal (_build_result)
+        bus.emit("loop.complete", {})  # universal terminal (build_result)
     # Lifecycle markers spool as run_events; tool.* spools as tool_events (FR-1).
     run_names = [r.name for r in recorded if r.kind == "run_event"]
     assert run_names == ["turn.start", "turn.end", "loop.complete"]

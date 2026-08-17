@@ -35,7 +35,7 @@ src/arcteam/
 |---------|---------|-------------|
 | Team formation / roster / channels | Yes | Individual agent lifecycle |
 | Inter-agent messaging (wake + narration) | Yes | Carrying work in message bodies (handoffs = task rows) |
-| Workflow definition + deterministic runner | Yes | LLM sequencing / orchestrator agent |
+| Workflow definition + deterministic runner | Yes | LLM sequencing / orchestrator agent — ad-hoc, disposable orchestration lives in `arcrun`'s `dynamic` strategy, not here |
 | Task/run substrate | Uses `arcstore` | Reimplementing a third DAG engine |
 | Signing workflows | Definition store + operator pin | Agent self-signing as “verified” |
 

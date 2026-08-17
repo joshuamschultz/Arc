@@ -38,6 +38,8 @@ overspend.
 | 5 | **True streaming** | **CUT (was FAKE batch).** | `arcrun/streams.py` `run_stream` awaits the *blocking* `run()`, then splits final `content` on spaces into synthetic `TokenEvent`s (`:339-346`) — misleading fake streaming. Decision: **do not** build real streaming; **delete** the fake word-split (cleanup) and emit final content as one block. Real token streaming stays available in the out-of-loop `stream_llm_response` primitive, unchanged, for UX only. |
 | 6 | **Plan-Execute Strategy** | **ABSENT in arcrun; seam ready.** | `arcrun/strategies/__init__.py` registers only `react`+`code`. SPEC-040 built the `StepExecutor` Protocol + interim `ArcRunStepExecutor` (one bounded run per step, **sequential**) + `PlanOrchestrator` (one ready step at a time; parallel *explicitly* deferred: `orchestrator.py:63` "parallel dispatch is SPEC-043"). |
 
+> **Update (2026-08-16):** item 6 was subsequently built as `PlanExecuteStrategy` (`arcrun/strategies/plan_execute.py`) and used by SPEC-040's `arcagent/modules/planning/` — but that whole planning module was never enabled and has now been deleted (see SPEC-040's README). `PlanExecuteStrategy` had no other caller, silently no-op'd if selected directly, and has been removed too, superseded by arcrun's `dynamic` strategy. Salvage notes live at `packages/arcrun/src/arcrun/dynamic/SALVAGE.md`. Items 1-5 are unaffected by this change.
+
 **The race nobody has hit yet (because nothing dispatches concurrently through policy):** in `arcagent`
 `tool_registry.wrapped_execute` the sequence is `ledger.snapshot(session_id)` → `await pipeline.evaluate(...)`
 → `ledger.record(...)` (`tool_registry.py:385-430`). The `await` is a suspension point. The moment two

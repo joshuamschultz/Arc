@@ -49,8 +49,8 @@ def test_sales_blueprint_materializes_full_surface(tmp_path: Path) -> None:
     assert result.wrote_identity
     assert "chief of staff" in (agent / "workspace" / "identity.md").read_text().lower()
 
-    # seven signed revenue-lens prompt overlays
-    assert len(result.prompt_overlays) == 7
+    # six signed revenue-lens prompt overlays
+    assert len(result.prompt_overlays) == 6
     fact = agent / "context" / "arcmemory" / "distill_fact.md"
     assert fact.is_file() and Path(f"{fact}.arcsig").is_file()
     assert "deal" in fact.read_text().lower()

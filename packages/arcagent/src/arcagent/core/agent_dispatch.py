@@ -110,11 +110,15 @@ async def build_run_context(
     prompt = await context.assemble_system_prompt(
         agent._workspace, extra_sections=strategy_sections, query=task
     )
+    # The turn's origin channel is read HERE, in the dispatch task that bound it
+    # a few lines earlier, and travels stamped on every progress event the bridge
+    # forwards. A consumer therefore never has to work out where to answer.
     bridge = create_arcrun_bridge(
         bus,
         model_id=agent._config.llm.model,
         agent_label=agent._config.agent.name,
         task_supervisor=agent._background_tasks,
+        reply_target=turn_context.inbound_channel(),
     )
 
     provider = AgentCapabilityProvider(

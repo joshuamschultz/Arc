@@ -327,7 +327,7 @@ async def react_loop(
                 _end_turn(state, bus)
                 continue
             _end_turn(state, bus)
-            return _build_result(state, response.content)
+            return build_result(state, response.content)
 
         # Dispatch this turn's tool calls through the one gated dispatch path.
         result_messages, succeeded_ids = await _execute_tool_calls(
@@ -361,7 +361,7 @@ async def react_loop(
             state.completion_tool = tool_name
             bus.emit("loop.completed", dict(payload))
             _end_turn(state, bus)
-            return _build_result(state, payload.get("summary"))
+            return build_result(state, payload.get("summary"))
 
         _end_turn(state, bus)
 
@@ -386,7 +386,7 @@ def _halt_on_cancel(state: RunState) -> LoopResult:
         "loop.cancelled",
         {"caller_did": caller, "reason": reason, "turns": state.turn_count},
     )
-    return _build_result(state, state.completion_payload["summary"])
+    return build_result(state, state.completion_payload["summary"])
 
 
 def _halt_on_breach(state: RunState, reason: BudgetBreachReason) -> LoopResult:
@@ -408,7 +408,7 @@ def _halt_on_breach(state: RunState, reason: BudgetBreachReason) -> LoopResult:
     # Surface the breach summary as the loop's own final text so every content
     # consumer (CLI, gateway, tracked-run finalizer) has user-visible words. The
     # structured reason still rides completion_payload["error"] for detection.
-    return _build_result(state, state.completion_payload["summary"])
+    return build_result(state, state.completion_payload["summary"])
 
 
 def _extract_completion_payload(
@@ -466,7 +466,13 @@ def _end_turn(state: RunState, bus: Any) -> None:
             _logger.warning("checkpoint hook raised; continuing", exc_info=True)
 
 
-def _build_result(state: RunState, content: str | None) -> LoopResult:
+def build_result(state: RunState, content: str | None) -> LoopResult:
+    """Shape a finished run into its result and emit the universal terminal.
+
+    Every strategy ends here, so ``loop.complete`` is emitted exactly once per
+    run no matter which strategy ran it — that is what makes the event the
+    reliable end-of-run marker for the spool and the audit chain.
+    """
     state.event_bus.emit(
         "loop.complete",
         {

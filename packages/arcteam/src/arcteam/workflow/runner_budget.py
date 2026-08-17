@@ -1,12 +1,11 @@
 """Run-level budget accounting: reserve, then settle (SPEC-061 REQ-236).
 
-This is the planning executor's concurrent-branch accounting lifted to the Run
-(``arcagent/modules/planning/executor.py:212-238`` for reserve/settle/cap and
-``planning/models.py:220-236`` for ``available_budget``). ``arcteam`` sits below
-``arcagent`` and may not import it, so the accounting is **ported**, not
-re-invented: same admission rule, same lock discipline, same ``min(per-item
-cap, available)`` grant, so a workflow node and a plan step spend a budget the
-same way.
+This pattern was ported from arcagent's (since-removed) planning module,
+which pioneered reserve-then-settle accounting for concurrent budget branches.
+``arcteam`` sits below ``arcagent`` and may not import it, so the accounting
+is reimplemented here, not shared: same admission rule, same lock discipline,
+same ``min(per-item cap, available)`` grant, so a workflow node spends a
+budget the same way that module's plan steps did.
 
 Why reserve at all: without it, N nodes admitted in one tick each check the same
 headroom and collectively overshoot. A reservation is subtracted from what the

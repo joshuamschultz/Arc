@@ -115,7 +115,7 @@ class TestTierPlacement:
     ) -> None:
         async def inject(ctx: EventContext) -> None:
             ctx.data["sections"].update(
-                {"policy": "p", "teams": "t", "planning": "pl", "whatever": "w"}
+                {"policy": "p", "teams": "t", "recall": "r", "whatever": "w"}
             )
 
         bus.subscribe("agent:assemble_prompt", inject)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from arcstore.spool import request_context
@@ -12,6 +13,7 @@ from arcstore.spool import request_context
 from arcrun._messages import ContentBlock, SystemPrompt, system_messages, user_message
 from arcrun.capabilities import CapabilityProvider, provider_tools
 from arcrun.checkpoint import LoopCheckpoint, apply_checkpoint
+from arcrun.dynamic.seal import RunSeal
 from arcrun.events import EventBus
 from arcrun.registry import ToolRegistry
 from arcrun.sandbox import Sandbox
@@ -48,6 +50,8 @@ def _build_state(
     max_consecutive_errors: int | None = None,
     resume_from: LoopCheckpoint | None = None,
     run_id: str | None = None,
+    work_dir: Path | None = None,
+    seal: RunSeal | None = None,
 ) -> tuple[RunState, Sandbox]:
     """Shared setup for run() and run_async()."""
     # A caller (e.g. the task dispatcher) may pin the run id so it can link the
@@ -81,6 +85,8 @@ def _build_state(
         registry=registry,
         event_bus=bus,
         run_id=run_id,
+        work_dir=work_dir,
+        seal=seal,
         transform_context=transform_context,
         tool_timeout=tool_timeout,
         depth=depth,
@@ -148,6 +154,8 @@ async def run(
     max_consecutive_errors: int | None = None,
     resume_from: LoopCheckpoint | None = None,
     run_id: str | None = None,
+    work_dir: Path | None = None,
+    seal: RunSeal | None = None,
     on_handle: Callable[[RunHandle], None] | None = None,
 ) -> LoopResult:
     """Blocking entry point. Runs until task complete, a breaker trip, or resume.
@@ -185,6 +193,8 @@ async def run(
         max_consecutive_errors=max_consecutive_errors,
         resume_from=resume_from,
         run_id=run_id,
+        work_dir=work_dir,
+        seal=seal,
     )
     if on_handle is not None:
         on_handle(handle)
@@ -220,6 +230,8 @@ async def run_async(
     max_consecutive_errors: int | None = None,
     resume_from: LoopCheckpoint | None = None,
     run_id: str | None = None,
+    work_dir: Path | None = None,
+    seal: RunSeal | None = None,
 ) -> RunHandle:
     """Non-blocking entry point. Returns handle for steering."""
     state, sandbox_obj = _build_state(
@@ -247,6 +259,8 @@ async def run_async(
         max_consecutive_errors=max_consecutive_errors,
         resume_from=resume_from,
         run_id=run_id,
+        work_dir=work_dir,
+        seal=seal,
     )
 
     # ``create_task`` snapshots the current context, so binding the correlation

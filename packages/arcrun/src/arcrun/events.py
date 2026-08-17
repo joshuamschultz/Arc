@@ -24,7 +24,7 @@ GENESIS_PREV_HASH = "0" * 64
 
 # Loop-lifecycle event types mirrored to the arcstore operational spool
 # (SPEC-026 FR-4: run start / step / finish). ``loop.complete`` is the universal
-# terminal — ``_build_result`` emits it on every loop exit, so it is the marker
+# terminal — ``build_result`` emits it on every loop exit, so it is the marker
 # that tells observers a run finished (vs ``loop.completed``, which fires only on
 # the structured-completion / max_turns / max_cost paths).
 _RUN_EVENT_TYPES = frozenset(

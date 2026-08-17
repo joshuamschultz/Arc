@@ -138,7 +138,7 @@ registered lazily in `STRATEGIES`:
 |---|---|---|---|
 | `react` | Reason → Act → Observe → Repeat, one tool batch per turn | `react_loop` directly | Yes — the default |
 | `code` | Same loop, with the system prompt augmented to bias the model toward writing and running code instead of many small tool calls | Delegates straight to `react_loop` after prompt injection | Yes |
-| `plan_execute` | The parallel *Executor* half of an LLMCompiler-style split (arXiv 2312.04511) | No loop — a single concurrent fan-out/fan-in of independent items | **No** — see below |
+| `dynamic` | One model call authors a short orchestration script; the engine interprets it deterministically instead of the model reasoning turn by turn | Author → dry-run → interpret, or fall back to `react_loop` | Yes |
 
 ### react
 
@@ -159,26 +159,85 @@ the task is naturally "write a script that does X" rather than "call five
 tools in sequence" — it pairs with the `execute_python` /
 `contained_execute_python` builtin tools (see [Sandboxing](#code-execution-and-sandboxing)).
 
-### plan_execute
+### dynamic
 
-`PlanExecuteStrategy` is architecturally different, and its docstring is
-explicit about the boundary: it **never sees a `Plan`, `depends_on`, or a
-replan decision** — those live in arcagent's `PlanOrchestrator`. It receives
-a **flat list of already-independent, ready items** (opaque to arcrun) plus a
-caller-supplied `runner`, and dispatches them concurrently through the same
-`ParallelDispatcher` the react loop's tool batches use — one gather
-implementation in the whole engine.
+`DynamicStrategy.__call__` (`strategies/dynamic.py:81-121`) does not run a
+turn-by-turn loop at all. It authors, validates, then interprets a short
+script written by the model in a whitelisted subset of Python — the model
+plans once, in code, instead of reasoning tool-call by tool-call.
 
-> ⚠️ Selecting `plan_execute` through the generic `run()` entry does **not**
-> run a plan — `__call__` returns an immediate empty `LoopResult` (a no-op,
-> so a plan with no ready frontier doesn't crash). The strategy is actually
-> invoked by calling `PlanExecuteStrategy().run_ready(items, runner,
-> max_parallel=...)` directly, from arcagent's `PlanOrchestrator` — not
-> through `run(allowed_strategies=["plan_execute"])`.
+1. **Author.** One forced tool call (`emit_script`) against the
+   `dynamic_authoring` stock prompt (`context/dynamic_authoring.md`), which
+   teaches the model the script language: `if`/`for`/`while`, arithmetic,
+   comparisons, list/dict literals and comprehensions, f-strings, a small set
+   of pure builtins and container methods, and nine host functions —
+   `agent()`, `parallel()`, `phase()`, `log()`, `budget()`, `scratch_write()`,
+   `scratch_read()`, `complete()`, `pause()`. No `import`, `def`, `lambda`,
+   `class`, attribute access, or anything reading a clock, randomness, or the
+   environment.
+2. **Dry-run.** `dynamic.validate.dry_run` (`dynamic/validate.py`) parses the
+   script against the frozen grammar (`dynamic/grammar.py`) and executes it
+   for real against a `StubHost` that answers every host call plausibly and
+   performs no effect — zero tokens, zero child agents, no disk write. A
+   script that fails to parse or never reaches `complete()`/`pause()` is
+   rejected before anything real happens.
+3. **Correct once, then fall back.** A rejected script gets exactly one
+   corrected attempt (`_AUTHOR_ATTEMPTS = 2`); a second rejection abandons the
+   script entirely and the run falls through to the ordinary `react_loop`
+   (`dynamic.fallback` event). A script the model got wrong is a planning
+   miss, not a run-ending fault.
+4. **Interpret.** A validated script runs against `RunHost`
+   (`dynamic/binding.py`), the real, effectful implementation of the
+   `ScriptHost` Protocol (`dynamic/host.py`). `agent()` and `parallel()` calls
+   become bounded child runs — a fresh `RunState` one `depth` deeper, a tool
+   registry narrowed to the parent's (never widened), the parent's cancel
+   event and `EventBus` so an operator kill and the hash chain both reach the
+   child. `parallel()` fans a batch out through the same `dispatch_ready`
+   primitive the rest of arcrun uses for concurrency, up to `MAX_PARALLEL`
+   (64) jobs and an agent-call budget (`DEFAULT_AGENT_CALLS = 32`, capped at
+   `MAX_AGENT_CALLS = 256`) reserved before any child starts.
 
-Cost profile: `N` items dispatched with `max_parallel` concurrency; a failing
-item is its own outcome (never aborts a sibling); submission order is
-preserved regardless of completion order.
+**The grammar is the security boundary, not a style choice.** A dynamic
+script is model-authored, so it is untrusted input (LLM01) that then executes
+(ASI05). The interpreter never calls `getattr`: container methods dispatch
+through an explicit table keyed on the receiver's built-in type, so a script
+cannot reach a Python object graph even by accident, and every effect it can
+have is named on one Protocol (`ScriptHost`) rather than scattered across a
+language's worth of surface.
+
+**Journal and replay.** `dynamic/journal.py`'s `Journal` records every host
+call (`agent`, `parallel`, `scratch_write`, `scratch_read`, `budget`) as one
+flushed, hashed line, so a *resumed* run can re-execute the same
+deterministic script from the top and have already-performed calls replay
+their recorded result instead of happening again — resume is replay, not
+restoration. The strategy wires this to disk when it can: `_run_home(state)`
+(`strategies/dynamic.py:164-172`) keys a journal path off `state.work_dir`
+and the run's `run_id`, so a re-run pinned to the same `run_id` against the
+same `work_dir` picks its journal back up via `Journal.load`. arcagent supplies
+that path: `build_loop_controls` passes `agent._workspace / "runs"` into every
+run, so a journal lands at `<workspace>/runs/dynamic/<run_id>/journal.jsonl`.
+It is written with direct filesystem I/O to the agent's own workspace and never
+through the LLM-facing file tools, because a run record is agent state (ADR-029).
+`work_dir` stays optional at the arcrun layer — arcrun never invents a path — and
+a run without one simply keeps its journal in memory and cannot resume after a
+restart.
+
+A divergence is loud, never silent: if the recorded call at a position does not
+match the call the script just issued, the run fails with an error saying the
+script is nondeterministic or was edited. Replaying the wrong result and
+re-running a real effect are both unsafe, so the engine does neither.
+
+**`dynamic` is not ArcFlow.** They solve different problems and neither
+replaces the other:
+
+| | `dynamic` strategy | ArcFlow (`arcteam.workflow`) |
+|---|---|---|
+| Authored | By the model, per request | By an operator, ahead of time |
+| Lifetime | Disposable — thrown away after the run | Permanent, reusable, signed |
+| Trust | Sandboxed grammar + dry run, no signing | Operator-signed before it can run |
+| Fits | An ad-hoc task with independent parts that will not recur | A recurring, governed multi-agent process |
+
+See [9. The Workflows](09-workflows.md) for ArcFlow.
 
 ### Selecting a strategy
 
@@ -200,17 +259,6 @@ flowchart LR
         R1["Model call"]:::llm --> R2{"Tool calls?"}
         R2 -->|"yes"| R3["Dispatch batch"]:::runtime --> R1
         R2 -->|"no"| R4["Stop"]
-    end
-
-    subgraph PlanExecute["plan_execute — no loop"]
-        direction TB
-        P1["Flat list of ready items"]:::found --> P2["ParallelDispatcher fan-out"]:::runtime
-        P2 --> P3["Item 1"]:::llm
-        P2 --> P4["Item 2"]:::llm
-        P2 --> P5["Item N"]:::llm
-        P3 --> P6["Outcomes, submission order"]:::found
-        P4 --> P6
-        P5 --> P6
     end
 ```
 
@@ -356,8 +404,7 @@ in the returned result list, regardless of completion order**, and a
 runner's exception is captured as that call's own result rather than
 aborting the batch (`gather(..., return_exceptions=True)` semantics,
 implemented manually so a bare exception becomes a typed failure, not a
-crash). `plan_execute`'s `run_ready` uses the identical `ParallelDispatcher`
-class for its item fan-out — one concurrency primitive in the whole engine.
+crash).
 
 Runnable reference: `walkthroughs/arcrun/05-parallel-dispatch.ipynb`.
 
@@ -538,7 +585,9 @@ Runnable reference: `walkthroughs/arcrun/06-task-completion-budgets.ipynb`.
 |---|---|
 | `packages/arcrun/src/arcrun/loop.py`, `state.py` | Entry points, `RunHandle`, `RunState` — start here for anything touching how a run starts, stops, or is interrupted. |
 | `packages/arcrun/src/arcrun/strategies/react.py` | The ReAct loop, `check_breaker`, injection handling, completion extraction. Start here for turn-structure changes. |
-| `packages/arcrun/src/arcrun/strategies/code.py`, `plan_execute.py`, `__init__.py` | The other two strategies and the `Strategy` ABC / selection logic. |
+| `packages/arcrun/src/arcrun/strategies/code.py`, `__init__.py` | The other strategy and the `Strategy` ABC / selection logic. |
+| `packages/arcrun/src/arcrun/strategies/dynamic.py` | `DynamicStrategy` — author, dry-run, interpret, or fall back to `react_loop`. |
+| `packages/arcrun/src/arcrun/dynamic/` | `host.py` (`ScriptHost` Protocol — the security boundary), `grammar.py` (the whitelisted parser), `interpreter.py` (bounded, typed, deterministic evaluator), `binding.py` (`RunHost` — the real, effectful host), `journal.py` (replay-based resume), `validate.py` (`StubHost`, `dry_run`). |
 | `packages/arcrun/src/arcrun/checkpoint.py` | `LoopCheckpoint`, `apply_checkpoint` — resumable state, fail-closed on tool-set drift. |
 | `packages/arcrun/src/arcrun/streams.py`, `events.py` | The streaming surface (`run_stream`, `collect`, ADR-024) and the `EventBus` hash chain / `verify_chain`. |
 | `packages/arcrun/src/arcrun/parallel_dispatch.py` | `BatchClassifier`, `ParallelDispatcher`, `dispatch_batch` — the one concurrency path. |
@@ -548,4 +597,4 @@ Runnable reference: `walkthroughs/arcrun/06-task-completion-budgets.ipynb`.
 | `packages/arcrun/src/arcrun/backends/` | `base.py` (Protocol), `local.py`/`docker.py`/`vm.py` (implementations), `loader.py`/`policy.py`/`_verifier.py`/`_manifest.py`/`_audit.py` (signed discovery). |
 | `packages/arcrun/src/arcrun/builtins/execute.py`, `task_complete.py` | Tier-routed `execute_python`/`run_shell`, and the one terminator vocabulary (success, budget breach, cancel). |
 | `packages/arcagent/src/arcagent/modules/runcontrol/`, `packages/arcstore/src/arcstore/cancellations.py` | The operator kill-switch watcher and the `CancelRequest`/`CancelStore` it polls. |
-| `docs/architecture/decisions/ADR-023-*.md`, `ADR-024-*.md`, `ADR-026-*.md`, `ADR-027-*.md`, `ADR-028-*.md` | Design rationale for capability resolution, the unified streaming entry, the append-only context contract, and the tool-set freeze. |
+| `docs/architecture/decisions/ADR-023-*.md`, `ADR-024-*.md`, `ADR-026-*.md`, `ADR-027-*.md`, `ADR-028-*.md`, `ADR-031-*.md` | Design rationale for capability resolution, the unified streaming entry, the append-only context contract, the tool-set freeze, and why `dynamic` is a restricted script rather than a declared graph. |

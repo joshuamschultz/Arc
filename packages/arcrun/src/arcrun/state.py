@@ -6,12 +6,14 @@ import asyncio
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import arcllm
 
 from arcrun._messages import content_text
 from arcrun.checkpoint import LoopCheckpoint
+from arcrun.dynamic.seal import RunSeal
 from arcrun.events import EventBus
 from arcrun.registry import ToolRegistry
 
@@ -65,6 +67,16 @@ class RunState:
     cost_usd: float = 0.0
     tool_calls_made: int = 0
     run_id: str = ""
+    # Durable home for anything a run needs to outlive the process — today the
+    # dynamic strategy's replay journal and script scratch files. arcrun never
+    # invents this path: only the caller knows where an agent is allowed to
+    # write (ADR-029), so ``None`` simply means nothing is persisted and a
+    # paused script cannot be resumed after a restart.
+    work_dir: Path | None = None
+    # Operator custody over the files a run resumes from. The host injects it
+    # because arcrun holds no key material and resolves no Arc-home path;
+    # ``None`` signs and verifies nothing, so every tier runs one code path.
+    seal: RunSeal | None = None
     depth: int = 0
     max_depth: int = 3
     parent_run_id: str = ""

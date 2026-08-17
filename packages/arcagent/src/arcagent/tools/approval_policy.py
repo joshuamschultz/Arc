@@ -10,6 +10,10 @@ ADR-019):
 * **enterprise** — every plain tool requires approval (skill-backed excluded).
 * **federal** — every skill AND every tool (the full effecting-capability surface).
 
+The same split governs which execution strategies a run may use: personal and
+enterprise leave the set open so each run picks the shape that fits its task,
+while federal narrows to ``react`` alone and cannot be widened by config.
+
 The provider binds the pause to SPEC-035 ``HumanGate`` (operator-signed one-shot
 ``ApprovalGrant``). arcrun mints/verifies nothing (REQ-012).
 """
@@ -17,10 +21,12 @@ The provider binds the pause to SPEC-035 ``HumanGate`` (operator-signed one-shot
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable, Iterable
 from typing import TYPE_CHECKING, Any
 
 import arcrun
+from arctrust.signer import Signer, verify_signature
 
 from arcagent.tools._transport import RegisteredTool
 from arcagent.tools.checkpoint_signing import sign_record
@@ -29,6 +35,12 @@ from arcagent.tools.human_gate import HumanGate
 if TYPE_CHECKING:
     from arcagent.core.agent import ArcAgent
     from arcagent.core.session_internal import SessionManager
+
+
+_logger = logging.getLogger(__name__)
+
+_REACT = "react"
+"""The one strategy whose control flow is code an operator can read."""
 
 
 def resolve_approval_set(
@@ -49,6 +61,70 @@ def resolve_approval_set(
     if tier == "enterprise":
         return frozenset(t.name for t in tool_list if not t.skill_backed) | opt_in
     return frozenset(opt_in)
+
+
+def resolve_allowed_strategies(configured: list[str] | None, tier: str) -> list[str] | None:
+    """Resolve which execution strategies a run may use, by tier.
+
+    personal and enterprise leave the set open: ``None`` reaches arcrun meaning
+    every registered strategy, so each run picks the shape that fits its task.
+    federal narrows to ``react`` alone, because the other strategies let a model
+    author its own control flow, and at that tier the sequence of work must be
+    something an operator approved rather than something a model invented.
+
+    The federal floor is **not relaxable**. An operator who lists a wider set at
+    that tier still gets ``react``: a floor that config can widen is not a floor.
+    """
+    if tier == "federal":
+        if configured and set(configured) - {_REACT}:
+            _logger.warning(
+                "tier 'federal' permits only the %r strategy; ignoring the configured %s",
+                _REACT,
+                sorted(set(configured) - {_REACT}),
+            )
+        return [_REACT]
+    return configured
+
+
+class _OperatorSeal:
+    """Adapts the operator ``Signer`` to the sign/verify pair arcrun asks for.
+
+    ``arctrust.Signer`` only signs; verification is a separate call needing the
+    public key and algorithm. arcrun should not know either, so the pairing is
+    made here and handed over as one opaque object.
+    """
+
+    def __init__(self, signer: Signer) -> None:
+        self._signer = signer
+
+    def sign(self, message: bytes) -> bytes:
+        return self._signer.sign(message)
+
+    def verify(self, message: bytes, signature: bytes) -> bool:
+        return verify_signature(
+            self._signer.algorithm, message, signature, self._signer.public_key
+        )
+
+
+def build_run_seal(agent: ArcAgent) -> arcrun.RunSeal | None:
+    """Operator custody over the files a dynamic run resumes from.
+
+    Signatures land in ``<agent_root>/.audit/`` — a sibling of the workspace,
+    not a child of it, because the audited subject must not be its own audit
+    authority. The agent's own ``write``/``bash`` tools can rewrite the script
+    and journal in its workspace; they cannot reach the operator's signatures
+    over them, so a rewrite is detected instead of trusted.
+
+    No operator signer means no seal, which signs and verifies nothing. That is
+    the same code path, not a second one, so personal tier behaves identically.
+    """
+    signer = agent._operator_signer
+    if signer is None:
+        return None
+    return arcrun.RunSeal(
+        signer=_OperatorSeal(signer),
+        directory=agent._workspace.parent / ".audit" / "dynamic",
+    )
 
 
 def build_approval_provider(
@@ -126,11 +202,21 @@ def build_loop_controls(agent: ArcAgent, session: SessionManager) -> dict[str, A
         "on_checkpoint": _on_checkpoint,
         "approval_provider": provider,
         "approval_required_tools": approval_set,
+        # Durable home for run-scoped engine artifacts — today the dynamic
+        # strategy's replay journal and script scratch. It is the agent's own
+        # workspace, written with direct filesystem I/O and never through the
+        # LLM-facing file tools, because a run record is agent state and the
+        # brain stays home wherever the tools happen to be pointed (ADR-029).
+        # arcrun never invents this path; without it a paused script simply
+        # cannot resume after a restart.
+        "work_dir": agent._workspace / "runs",
+        # Operator signatures over those artifacts, kept outside the workspace.
+        "seal": build_run_seal(agent),
         # Loop mechanics (arcrun.toml). Behaviour-preserving defaults: max_turns=25,
         # tool_timeout=None, allowed_strategies=None, sandbox=None (full-allow).
         "max_turns": run_cfg.max_turns,
         "tool_timeout": run_cfg.tool_timeout,
-        "allowed_strategies": run_cfg.allowed_strategies,
+        "allowed_strategies": resolve_allowed_strategies(run_cfg.allowed_strategies, sec.tier),
         "sandbox": sandbox,
         # Security floors ([security]) — tier-resolved circuit breakers + parallelism cap.
         "max_parallel": sec.loop_max_parallel,

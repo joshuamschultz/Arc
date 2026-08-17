@@ -22,6 +22,7 @@ from arcrun.capabilities import (
     provider_tools,
 )
 from arcrun.checkpoint import LoopCheckpoint, apply_checkpoint, to_checkpoint
+from arcrun.dynamic.seal import RunSeal, SealBroken, SealSigner
 from arcrun.events import GENESIS_PREV_HASH, ChainVerificationResult, Event, EventBus, verify_chain
 from arcrun.loop import RunHandle, run, run_async
 from arcrun.model import (
@@ -101,12 +102,15 @@ __all__ = [
     "ResponseFormat",
     "RunHandle",
     "RunResult",
+    "RunSeal",
     "SandboxConfig",
     "SandboxError",
     "SandboxOOMError",
     "SandboxRuntimeError",
     "SandboxTimeoutError",
     "SandboxUnavailableError",
+    "SealBroken",
+    "SealSigner",
     "StaticProvider",
     "StopReason",
     "Strategy",

@@ -30,6 +30,8 @@ from arcagent.core.config import (
 from arcagent.core.tool_policy import PolicyDenied
 from arcagent.core.tool_registry import RegisteredTool, ToolTransport
 
+from .orchestration._mock_llm import _is_strategy_selection
+
 pytestmark = pytest.mark.asyncio
 
 
@@ -69,6 +71,23 @@ class _RunawayModel:
         self.calls = 0
 
     async def invoke(self, _messages: Any, tools: Any = None, **_: Any) -> Any:
+        if _is_strategy_selection(tools):
+            # Every run now opens with a strategy-selection call. Answer it
+            # here — not counted in `calls`, which tracks real task turns —
+            # so the breaker math below stays about the runaway loop, not
+            # the one-time selection overhead.
+            return _Resp(
+                content="",
+                stop_reason="tool_use",
+                tool_calls=[
+                    _ToolCall(
+                        id="select-strategy",
+                        name="select_strategy",
+                        arguments={"strategy": "react"},
+                    )
+                ],
+                usage=_Usage(),
+            )
         self.calls += 1
         return _Resp(
             content="working",

@@ -178,7 +178,8 @@ async def test_concurrent_children_not_cross_attributed() -> None:
     with patches[0], patches[1], patches[2]:
         await spawn_many(specs, max_concurrent=2)
     llm_calls = [r for r in records if r.kind == "llm_call"]
-    assert len(llm_calls) == 2  # both children actually ran (and interleaved)
+    # 2 calls per child: a strategy-selection call, then the real task turn.
+    assert len(llm_calls) == 4  # both children actually ran (and interleaved)
     # Each child's llm_call carries ITS OWN identity — label and did agree per row.
     for r in llm_calls:
         assert r.actor_did != _PARENT_DID

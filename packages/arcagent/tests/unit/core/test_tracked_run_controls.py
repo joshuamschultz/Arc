@@ -154,6 +154,12 @@ class TestTrackedPathAppliesLoopControls:
         assert captured["max_consecutive_errors"] == 5
         # Checkpoint hook is wired (crash recovery available on this path too).
         assert captured["on_checkpoint"] is not None
+        # A durable home reaches the loop, so a paused dynamic script can resume
+        # after a restart instead of the journal being written nowhere. It must
+        # sit inside the agent's OWN workspace: a run record is agent state, and
+        # the brain stays home wherever the tools are pointed (ADR-029).
+        assert captured["work_dir"] is not None
+        assert workspace in captured["work_dir"].parents or captured["work_dir"] == workspace
 
     @pytest.mark.asyncio
     async def test_matches_build_loop_controls_uniformity(

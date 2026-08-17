@@ -161,11 +161,18 @@ class TestStrategySelection:
 
     @pytest.mark.asyncio
     async def test_fallback_event_on_invalid(self):
-        model = MockModel([LLMResponse(content="I choose react", stop_reason="end_turn")])
+        # MockModel's own selection auto-answer would swallow this case, since it
+        # only lets a scripted response through when it *is* a select_strategy
+        # tool call. Testing "the model didn't call the tool at all" needs a bare
+        # model that returns exactly that, bypassing the auto-answer entirely.
+        class NoToolCallModel:
+            async def invoke(self, messages: object, tools: object = None) -> LLMResponse:
+                return LLMResponse(content="I choose react", stop_reason="end_turn")
+
         bus = EventBus(run_id="test")
         state = _make_state(bus)
 
-        await select_strategy(["react", "code"], model, state)
+        await select_strategy(["react", "code"], NoToolCallModel(), state)
 
         fallback_events = [e for e in bus.events if e.type == "strategy.selection.fallback"]
         assert len(fallback_events) == 1

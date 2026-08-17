@@ -25,7 +25,8 @@ src/arcrun/
   capabilities.py   # CapabilityProvider Protocol (implementations live in hosts)
   checkpoint.py
   prompts.py
-  strategies/       # Strategy selection (reactive, etc.)
+  strategies/       # Strategy selection (react, code, dynamic)
+  dynamic/          # Dynamic strategy internals: host boundary, grammar, interpreter, journal
   builtins/         # Loop-level builtins
   backends/         # docker, firecracker, spawn, …
   context/          # Stock system-prompt markdown
@@ -33,7 +34,7 @@ src/arcrun/
 
 ## Entry points
 
-`run` / `run_async` / `run_stream`, `RunHandle`, `ToolRegistry`, `Tool`/`ToolContext`, `EventBus`, `Strategy`, sandbox helpers, stream event types, `SystemPrompt`.
+`run` / `run_async` / `run_stream`, `RunHandle`, `ToolRegistry`, `Tool`/`ToolContext`, `EventBus`, `Strategy` (react / code / dynamic), sandbox helpers, stream event types, `SystemPrompt`, `dynamic.ScriptHost`.
 
 ## Package rules
 
@@ -50,3 +51,5 @@ src/arcrun/
 ## Working here
 
 Loop changes touch the hottest path in the stack — keep concerns pure. Prefer extending `Strategy` / registry / stream contracts over special-casing agent behavior.
+
+`dynamic/grammar.py`'s whitelist is a security boundary, not a style choice — it is the only thing standing between a model-authored script and arbitrary code (LLM01/ASI05). Every effect a script can have is named on `dynamic/host.py`'s `ScriptHost` Protocol; widening the grammar (a new builtin, a new method, attribute access) means auditing what that name newly reaches, the same care as reviewing a sandbox escape.

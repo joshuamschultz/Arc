@@ -43,7 +43,7 @@ class TestSteeringInjection:
 
         await run(model, StaticProvider([tool]), "Be helpful.", "Fetch data")
         # Verify tool result was added as tool role, not system
-        messages = model.invoke_calls[1]["messages"]
+        messages = model.task_calls[1]["messages"]
         tool_msgs = [m for m in messages if m.role == "tool"]
         system_msgs = [m for m in messages if m.role == "system"]
         assert len(tool_msgs) >= 1

@@ -69,11 +69,9 @@ _RUNTIME_SPECS: dict[str, RuntimeModuleSpec] = {
     "messaging": RuntimeModuleSpec(
         (*_COMMON, K.TEAM_ROOT, K.AGENT_NAME, K.IDENTITY, K.OPERATOR_SIGNER)
     ),
-    "planning": RuntimeModuleSpec(
-        (*_COMMON, K.LLM_CONFIG, K.EVAL_CONFIG, K.AGENT_NAME, K.AGENT_DID, K.OPERATOR_SIGNER)
-    ),
     "policy": RuntimeModuleSpec((*_COMMON, K.EVAL_CONFIG, K.LLM_CONFIG, K.AGENT_NAME)),
     "proactive": RuntimeModuleSpec((*_COMMON, K.AGENT_NAME, K.LLM_CONFIG)),
+    "progress": RuntimeModuleSpec(_COMMON),
     "pulse": RuntimeModuleSpec((*_COMMON, K.LLM_CONFIG, K.AGENT_NAME, K.BUS, K.AGENT_RUN_FN)),
     "runcontrol": RuntimeModuleSpec((*_COMMON, K.IDENTITY)),
     "scheduler": RuntimeModuleSpec((*_COMMON, K.BUS, K.AGENT_RUN_FN)),

@@ -39,6 +39,8 @@ from arcagent.core.config import (
 )
 from arcagent.tools.checkpoint_resume import resume_stream
 
+from ..orchestration._mock_llm import ToolCall, _is_strategy_selection
+
 
 @dataclass
 class Usage:
@@ -64,6 +66,20 @@ class MockModel:
         self._i = 0
 
     async def invoke(self, messages: list, tools: list | None = None) -> LLMResponse:
+        if _is_strategy_selection(tools):
+            # Every run now opens with a strategy-selection call. Answer it
+            # here rather than consuming a scripted turn response, so these
+            # tests stay about resume/tamper behavior, not selection.
+            return LLMResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="select-strategy",
+                        name="select_strategy",
+                        arguments={"strategy": "react"},
+                    )
+                ],
+                stop_reason="tool_use",
+            )
         if self._i >= len(self._responses):
             raise RuntimeError("MockModel exhausted responses")
         resp = self._responses[self._i]

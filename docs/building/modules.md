@@ -152,8 +152,9 @@ hand-write it.
 ### The 18 modules in the source catalog
 
 `browser` (CDP web automation) · `connectors` (vendor-CLI connections) · `memory` (thin Brain
-wiring — see below) · `messaging` (inter-agent comms via ArcTeam) · `planning` (Plan-Execute
-planner) · `policy` (ACE self-learning adaptation) · `proactive` (proactive execution) ·
+wiring — see below) · `messaging` (inter-agent comms via ArcTeam) · `policy` (ACE self-learning
+adaptation) · `proactive` (proactive execution) · `progress` (live narration of a long fan-out
+run, back to the channel that asked) ·
 `pulse` (periodic ambient awareness) · `runcontrol` (run steering) · `scheduler`
 (cron/interval/one-time self-scheduling) · `session` (JSONL store + FTS5 `session_search`) ·
 `skills` (SkillAdapter wiring) · `tasks` (mission-control task directory) · `user_profile`

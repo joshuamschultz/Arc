@@ -39,7 +39,7 @@ def test_every_module_config_uses_the_shared_base(module_name: str) -> None:
     assert _config_class(module_name) is not None
 
 
-@pytest.mark.parametrize("module_name", ["planning", "pulse", "proactive", "session"])
+@pytest.mark.parametrize("module_name", ["pulse", "proactive", "session"])
 def test_new_configs_reject_unknown_keys(module_name: str) -> None:
     cls = _config_class(module_name)
     assert cls is not None
@@ -58,16 +58,6 @@ def test_pulse_config_defaults_preserved() -> None:
     assert cfg.pulse_file == "pulse.md"
     assert cfg.state_file == "pulse-state.json"
     assert cfg.timeout_seconds == 300.0
-
-
-def test_planning_config_defaults_preserved() -> None:
-    from arcagent.modules.planning.config import PlanningConfig
-
-    cfg = PlanningConfig()
-    assert cfg.enabled is False
-    assert cfg.max_replans == 3
-    assert cfg.concurrent is False
-    assert cfg.max_parallel == 8
 
 
 def test_proactive_config_defaults_preserved() -> None:

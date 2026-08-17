@@ -134,7 +134,7 @@ is *composed* from the per-strategy `*_description` prompts.
 One outlier: **`arcrun:code_exec_prefix` is NOT a section.** The code strategy prepends it
 to the *first task message* inside its own loop (`strategies/code.py`), not to the system prompt.
 
-## 5. The other six execution contexts (NOT the turn stack)
+## 5. The other five execution contexts (NOT the turn stack)
 
 Most prompts are used in their own subsystems — standalone LLM calls or operations, each
 resolving through the same stock/overlay rails at its own call site:
@@ -143,7 +143,6 @@ resolving through the same stock/overlay rails at its own call site:
 |---|---|---|
 | **Memory consolidation** (sleep pass) | `arcmemory:consolidate_agent` (the consolidation agent's system prompt) + `distill_fact` / `distill_insight` / `distill_procedure` / `distill_event` / `distill_day` / `distill_disambiguate` / `distill_merge_confirm` (per-extraction system prompts) | `arcmemory/agent_consolidate.py`, `arcmemory/arcllm_seam.py` |
 | **Skill improver** | `arcskill:judge_prompt` + `judge_rubric` (structured YAML) · `reflection_prompt` · `code_repair_prompt` · `suitegen_prompt` · `nudge_template` | `arcskill/improver/{evaluator,mutate,suitegen}.py`, `.../nudge/nudge_emitter.py` |
-| **Planning / decomposition** | `arcagent:planner_system` (decompose + replan) | `arcagent/modules/planning/decomposer.py` |
 | **Policy reflection** | `arcagent:reflection_prompt` + `reflection_grounding_header` | `arcagent/modules/policy/{policy_engine,reflection}.py` |
 | **Workpad** (rewrites `context.md`) | `arcagent:context_maintainer_system` | `arcagent/modules/workpad/capabilities.py` |
 | **Compaction / summary** | `arcagent:summary_template` | `arcagent/core/session_internal/manager.py` |
@@ -161,8 +160,6 @@ resolving through the same stock/overlay rails at its own call site:
 | `strategy_react_description` | ✅ (selection) | one-line React description |
 | `strategy_code` | ✅ section (if code strategy) | code-exec loop guidance |
 | `strategy_code_description` | ✅ (selection) | one-line code description |
-| `strategy_plan_execute` | ✅ section (if enabled) | plan-execute guidance |
-| `strategy_plan_execute_description` | ✅ (selection) | one-line plan-execute description |
 | `code_exec_guidance` | ✅ (if `execute_python`) | when to prefer sandboxed code |
 | `contained_exec_guidance` | ✅ (if `contained_execute_python`) | when to prefer container-isolated code |
 | `code_exec_prefix` | prepended to 1st message | code-first framing in the code strategy |
@@ -175,7 +172,6 @@ resolving through the same stock/overlay rails at its own call site:
 | `tool_manifest_preamble` | ✅ (wraps capabilities manifest) | prose intro to the tool/skill manifest |
 | `context_maintainer_system` | ❌ workpad | rewrite `context.md` as an open-loops cockpit |
 | `summary_template` | ❌ compaction | session-summary format |
-| `planner_system` | ❌ planning | decomposition system prompt |
 | `reflection_prompt` | ❌ policy | policy self-reflection |
 | `reflection_grounding_header` | ❌ policy | grounding header for reflection |
 | `authoring_guidance` | ❌ tool authoring | guidance for dynamically authored tools |
