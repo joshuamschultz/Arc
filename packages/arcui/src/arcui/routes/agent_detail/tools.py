@@ -304,24 +304,18 @@ def _load_tool_policy(
     return allowlist, denylist, enabled_modules
 
 
-async def get_tools(request: Request) -> JSONResponse:
-    agent_id = request.path_params["id"]
-    agent_root = _agent_root(request, agent_id)
-    if agent_root is None:
-        return JSONResponse(
-            ErrorResponse(error="Agent not found").model_dump(mode="json"),
-            status_code=404,
-        )
-
-    # Live registration — only available when the agent is connected.
-    registry = request.app.state.agent_registry
-    entry = registry.get(agent_id)
-    live_tools: list[str] = list(entry.registration.tools) if entry is not None else []
-
+def agent_tool_rows(
+    agent_id: str, agent_root: Path, live_tools: list[str]
+) -> tuple[list[dict[str, Any]], list[str], list[str]]:
+    """Every tool an agent can call, deduplicated across all sources, plus its
+    allow/deny lists. Built from DURABLE sources (builtins, modules, disk,
+    policy) so it holds up in the read-on-demand deployment where no agent is
+    live-registered; any `live_tools` passed in are layered on top. Shared by the
+    per-agent Tools tab and the fleet tools matrix so both show the identical set.
+    """
     allowlist, denylist, enabled_modules = _load_tool_policy(agent_id, agent_root)
 
-    # Build a single deduplicated tool list spanning all sources. Order:
-    # 1) live registry → 2) builtins → 3) module-derived → 4) disk → 5) policy
+    # Order: 1) live registry → 2) builtins → 3) module-derived → 4) disk → 5) policy
     seen: dict[str, dict[str, Any]] = {}
 
     def _add(name: str, **fields: Any) -> None:
@@ -361,7 +355,24 @@ async def get_tools(request: Request) -> JSONResponse:
     for t in allowlist:
         _add(t, transport="config")
 
-    tools = list(seen.values())
+    return list(seen.values()), allowlist, denylist
+
+
+async def get_tools(request: Request) -> JSONResponse:
+    agent_id = request.path_params["id"]
+    agent_root = _agent_root(request, agent_id)
+    if agent_root is None:
+        return JSONResponse(
+            ErrorResponse(error="Agent not found").model_dump(mode="json"),
+            status_code=404,
+        )
+
+    # Live registration — only available when the agent is connected.
+    registry = request.app.state.agent_registry
+    entry = registry.get(agent_id)
+    live_tools: list[str] = list(entry.registration.tools) if entry is not None else []
+
+    tools, allowlist, denylist = agent_tool_rows(agent_id, agent_root, live_tools)
 
     return JSONResponse(
         ToolsResponse(

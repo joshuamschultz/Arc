@@ -322,6 +322,25 @@ class TestFleetToolsSkills:
         assert "fs.read" in names
         assert "search" in names
 
+    def test_tools_matrix_populated_without_live_registration(self, tmp_path):
+        """Read-on-demand: no agent is live-registered, yet the fleet tools
+        matrix is not empty — tools come from the durable enumeration
+        (builtins/modules/disk), the same set the per-agent Tools tab shows.
+        Regression for the '0 tools' fleet matrix while every agent had them."""
+        team = _build_team(tmp_path, [("alpha", "")])
+        app, auth, registry = _make_app(team_root=team)
+        assert registry.get("alpha") is None  # nothing live-registered
+        client = TestClient(app)
+        resp = client.get("/api/team/tools-skills", headers=_viewer(auth))
+        assert resp.status_code == 200
+        tools = resp.json()["tools"]
+        names = {t["name"] for t in tools}
+        assert names, "fleet tools matrix is empty without a live registration"
+        assert names & {"read", "write", "edit", "bash"}, (
+            f"expected builtin tools in the fleet matrix, got {sorted(names)[:10]}"
+        )
+        assert all("alpha" in t["agents"] for t in tools)
+
 
 # ---------------------------------------------------------------------------
 # /api/team/audit

@@ -29,7 +29,7 @@ from starlette.routing import Route
 
 from arcui.query_validators import safe_int
 from arcui.routes.agent_detail.capabilities import agent_skill_rows
-from arcui.routes.agent_detail.tools import _BUILTIN_CLASSIFICATION
+from arcui.routes.agent_detail.tools import _BUILTIN_CLASSIFICATION, agent_tool_rows
 from arcui.schemas import (
     AuditEventsResponse,
     PolicyBulletsResponse,
@@ -207,14 +207,25 @@ async def get_tools_skills(request: Request) -> JSONResponse:
         for s in await _read_agent_skills(entry):
             s["agent_id"] = entry.agent_id
             skills.append(s)
-        # Tools from live registration (agents not connected contribute none).
+        # Tools from the SAME durable enumeration the per-agent Tools tab uses
+        # (builtins + modules + disk + policy), not live registration — the fleet
+        # is read-on-demand, so no agent is live-registered and a live-only read
+        # showed zero tools while every agent plainly had them.
         live = registry.get(entry.agent_id)
-        if live is None:
-            continue
-        for tool in live.registration.tools:
+        live_tools = list(live.registration.tools) if live is not None else []
+        rows, _allow, _deny = agent_tool_rows(
+            entry.agent_id, Path(entry.workspace_path), live_tools
+        )
+        for row in rows:
+            tool = row["name"]
             existing = tools_by_name.setdefault(
                 tool,
-                {"name": tool, "agents": [], "classification": _BUILTIN_CLASS.get(tool, "")},
+                {
+                    "name": tool,
+                    "agents": [],
+                    "classification": row.get("classification")
+                    or _BUILTIN_CLASS.get(tool, ""),
+                },
             )
             if entry.agent_id not in existing["agents"]:
                 existing["agents"].append(entry.agent_id)
