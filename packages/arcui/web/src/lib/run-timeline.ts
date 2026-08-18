@@ -55,6 +55,14 @@ export function describeAction(item: Item): { title: string; description: string
     const key = item.name.toLowerCase()
     return { title: prettifyName(item.name), description: EVENT_DESCRIPTIONS[key] ?? 'Run event' }
   }
+  if (item.kind === 'spawn') {
+    const tail = (item.childDid.split('/').pop() ?? item.childDid).slice(0, 8)
+    const delegated = item.childDid.includes('delegate')
+    return {
+      title: `${delegated ? 'Delegated to' : 'Spawned'} sub-agent ${tail}`,
+      description: `A child agent this run started${item.outcome ? ` · ${item.outcome}` : ''}`,
+    }
+  }
   const key = item.name.toLowerCase()
   const base = TOOL_DESCRIPTIONS[key] ?? `Ran the ${item.name} tool`
   const via = item.activatedSkill ? ` · used skill "${item.activatedSkill}"` : ''
@@ -94,7 +102,14 @@ export interface RunItem {
   ts?: string | null
   name: string
 }
-export type Item = ToolItem | LlmItem | RunItem
+export interface SpawnItem {
+  kind: 'spawn'
+  ts?: string | null
+  childDid: string
+  role?: string | null
+  outcome?: string | null
+}
+export type Item = ToolItem | LlmItem | RunItem | SpawnItem
 
 /**
  * Fold raw timeline rows into display items, pairing tool start/end by name.
@@ -154,6 +169,14 @@ export function mergeTimeline(entries: TimelineEntry[], runIsLive: boolean): Ite
           })
         }
       }
+    } else if (e.kind === 'spawn_event') {
+      items.push({
+        kind: 'spawn',
+        ts: e.ts,
+        childDid: e.child_did ?? '—',
+        role: e.role,
+        outcome: e.outcome,
+      })
     } else if (e.kind === 'llm_call') {
       items.push({
         kind: 'llm',

@@ -460,6 +460,10 @@ export interface TimelineEntry {
   extra?: Record<string, unknown> | null
   // run_event
   name?: string | null
+  // spawn_event — a sub-agent this run spawned
+  child_did?: string | null
+  role?: string | null
+  depth?: number | null
   // llm_call
   model?: string | null
   agent_label?: string | null

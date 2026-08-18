@@ -149,7 +149,11 @@ function TimelineItem({ item, onOpenTrace }: { item: Item; onOpenTrace: (traceId
     <div className="flex items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground">
       <span className="w-12 shrink-0 tabular-nums">{fmtTime(item.ts)}</span>
       <Circle className="size-2.5 shrink-0" />
-      <span>{item.name}</span>
+      <span>
+        {item.kind === 'spawn'
+          ? `Spawned sub-agent ${(item.childDid.split('/').pop() ?? '').slice(0, 8)}`
+          : item.name}
+      </span>
     </div>
   )
 }

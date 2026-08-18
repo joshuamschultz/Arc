@@ -4,7 +4,6 @@ import { Search } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
 import { RunRiver } from '@/components/run-river'
 import { RunCoverflow } from '@/components/run-coverflow'
-import { SpawnLineage } from '@/components/run-observability'
 import { EmptyState, LoadingRows } from '@/components/states'
 import { StatusChip } from '@/components/ai'
 import { useRoster, useRuns } from '@/lib/queries'
@@ -156,12 +155,6 @@ export function ArcRunPage() {
 
         <main className="flex-1 overflow-auto">
           <RunRiver run={active} />
-          {active && (
-            <SpawnLineage
-              root={active.actor_did ?? null}
-              onFocusChild={(c) => setQ(c.label)}
-            />
-          )}
         </main>
       </div>
       )}

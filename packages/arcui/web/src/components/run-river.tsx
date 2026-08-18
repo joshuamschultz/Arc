@@ -4,6 +4,7 @@ import {
   Pencil,
   Terminal,
   GitPullRequest,
+  GitBranch,
   Wrench,
   Bot,
   MessageSquare,
@@ -40,6 +41,7 @@ function StepIcon({ item }: { item: Item }) {
   const c = 'size-3.5'
   if (item.kind === 'llm') return <Bot className={c} />
   if (item.kind === 'run') return <MessageSquare className={c} />
+  if (item.kind === 'spawn') return <GitBranch className={c} />
   const n = item.name.toLowerCase()
   if (n.includes('read') || n.includes('cat') || n.includes('grep') || n.includes('ls'))
     return <AlignLeft className={c} />
@@ -293,7 +295,7 @@ function RiverStep({ item, last }: { item: Item; last: boolean }) {
       : null
   const status = isTool ? item.status : undefined
   const held = isTool && (item.status === 'running' || item.status === 'stale')
-  const latency = item.kind !== 'run' ? item.latency_ms : undefined
+  const latency = isTool || isLlm ? item.latency_ms : undefined
   const clickable = isTool || isLlm
 
   return (
@@ -304,9 +306,11 @@ function RiverStep({ item, last }: { item: Item; last: boolean }) {
           'z-[1] grid size-7 shrink-0 place-items-center rounded-lg border',
           held
             ? 'border-status-warning/50 bg-status-warning/10 text-status-warning'
-            : item.kind === 'run'
-              ? 'border-transparent bg-primary/12 text-primary'
-              : 'border-border bg-card text-muted-foreground',
+            : item.kind === 'spawn'
+              ? 'border-primary/30 bg-primary/8 text-primary'
+              : item.kind === 'run'
+                ? 'border-transparent bg-primary/12 text-primary'
+                : 'border-border bg-card text-muted-foreground',
         )}
       >
         <StepIcon item={item} />

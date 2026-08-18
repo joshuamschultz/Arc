@@ -312,7 +312,10 @@ class Observe:
         """
         await self._ensure()
         merged: list[dict[str, Any]] = []
-        for kind in ("run_events", "tool_events", "llm_calls"):
+        # spawn_events join the same way (request_id is stamped from the spawning
+        # run's context), so a run's sub-agent spawns show inline in its own
+        # trace — this run's children, not the agent's lifetime history.
+        for kind in ("run_events", "tool_events", "llm_calls", "spawn_events"):
             rows = await self._backend.query(
                 kind, where={"request_id": run_id}, order_by="ts", limit=limit
             )
