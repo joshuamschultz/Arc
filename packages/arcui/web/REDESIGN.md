@@ -243,6 +243,12 @@ Status: ☑ done · ◐ in progress · ☐ todo
 - ☑ Palette re-skin (Console theme) — `966e2c2d`
 - ☑ Shell identity: slim grouped rail + Bricolage/Hanken type — `83fe5a8b`
 - ◐ Component polish (§5) + AI-native (§6) + Motion (§7) — in progress
+  - ☑ HITL set: ApprovalRequest, TrifectaGate, SignedSeal, ContextNote
+    (`components/hitl.tsx`) — used on Approvals, agent Trust tab, and **inline
+    in agent chat** when blocked on a gate.
+  - ☐ Message status indicators, streaming, Thinking trace, Tool chips in chat.
+  - ☐ Motion spatial views (Cover Flow runs / Time Machine checkpoints).
+  - ☐ Agent Knowledge + Runs tabs.
 
 ---
 
