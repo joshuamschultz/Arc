@@ -39,7 +39,7 @@
 #   ARC_PROVIDER                  default: anthropic
 #   ARC_TIER                      default: personal
 #   ARC_UI_PORT                   default: 8420
-#   ARC_ENABLE_TELEGRAM           default: 0 (set 1 to install + wire the adapter)
+#   ARC_ENABLE_TELEGRAM           default: 0 (set 1 to verify + wire the adapter)
 #   ARC_TELEGRAM_ALLOWED_USER_IDS space-separated Telegram user ids (empty = deny all)
 #   ARC_ENV_FILE                  source of ANTHROPIC_API_KEY / ARCAGENT_TELEGRAM_BOT_TOKEN
 #                                  default: $REPO_ROOT/.env
@@ -222,23 +222,15 @@ ok "fleet root: $TEAM_ROOT"
 # of a verification routine is the copy that quietly stops verifying.
 "$RUNTIME_ROOT/scripts/install-nats.sh"
 
-# --- 4. platform adapter plugin (telegram) -------------------------------
-# arcgateway-telegram is a uv workspace member but, as of this writing, NOT
-# declared in root pyproject.toml's [project.dependencies] — `uv sync`
-# neither installs it nor keeps a manually pip-installed copy (it actively
-# UNINSTALLS one on the next `uv sync`, confirmed against the DGX deploy).
-# Detect whether the root dependency has landed; if so `uv sync` alone
-# already handled it and this whole step is a no-op.
+# --- 4. platform adapter (telegram) --------------------------------------
+# The Telegram adapter lives INSIDE core arcgateway (arcgateway.adapters.telegram)
+# — `uv sync` installs it with every deploy, so there is no separate package to
+# add. Verify the import fail-closed rather than reach systemd with a config that
+# enables a platform the runtime cannot serve.
 if [ "$ENABLE_TELEGRAM" = "1" ]; then
-  if grep -q '"arcgateway-telegram"' "$RUNTIME_ROOT/pyproject.toml"; then
-    ok "arcgateway-telegram is a declared root dependency — uv sync already installed it"
-  elif "$VENV_PY" -c "import arcgateway_telegram" >/dev/null 2>&1; then
-    ok "arcgateway-telegram already importable"
-  else
-    log "Installing arcgateway-telegram (workspace member, not yet a root dependency — see comment above)..."
-    "$VENV_PY" -m pip install -e "$RUNTIME_ROOT/packages/arcgateway-telegram" --no-deps
-    ok "arcgateway-telegram installed"
-  fi
+  "$VENV_PY" -c "import arcgateway.adapters.telegram" >/dev/null 2>&1 \
+    || fail "ARC_ENABLE_TELEGRAM=1 but arcgateway.adapters.telegram is not importable in the new runtime"
+  ok "telegram adapter present (arcgateway.adapters.telegram)"
 fi
 
 # --- 5. secrets: fail-closed if anything required is missing -------------
