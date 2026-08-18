@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import type { ColumnDef } from '@tanstack/react-table'
 import { ScrollText } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
@@ -133,35 +133,27 @@ export function SecurityPage() {
         description="The tamper-evident signed ledger — every control action, signature, and policy denial, in order."
       />
       <div className="flex-1 space-y-5 overflow-auto p-6">
+        <LedgerSummary total={summary.total} verified={summary.verified} denials={summary.denials} />
+
+        <FilterPills value={filter} onChange={setFilter} options={FILTERS} />
+
         <QueryState query={query} isEmpty={() => events.length === 0} empty={
-          <div className="space-y-5">
-            <LedgerSummary total={0} verified={0} denials={0} />
-            <FilterPills value={filter} onChange={setFilter} options={FILTERS} />
-            <EmptyState
-              icon={<ScrollText className="size-5" />}
-              title="No audit events recorded"
-              description="Signed control actions and policy denials appear here, newest first, as they occur."
-            />
-          </div>
+          <EmptyState
+            icon={<ScrollText className="size-5" />}
+            title="No audit events recorded"
+            description="Signed control actions and policy denials appear here, newest first, as they occur."
+          />
         }>
           {() => (
-            <>
-              <LedgerSummary
-                total={summary.total}
-                verified={summary.verified}
-                denials={summary.denials}
-              />
-              <FilterPills value={filter} onChange={setFilter} options={FILTERS} />
-              <DataTable
-                columns={columns}
-                data={events}
-                searchable
-                searchPlaceholder="Search events, agents, hashes…"
-                onRowClick={setActive}
-                isRowActive={(r) => r === active}
-                emptyTitle="No matching events"
-              />
-            </>
+            <DataTable
+              columns={columns}
+              data={events}
+              searchable
+              searchPlaceholder="Search events, agents, hashes…"
+              onRowClick={setActive}
+              isRowActive={(r) => r === active}
+              emptyTitle="No matching events"
+            />
           )}
         </QueryState>
       </div>
@@ -229,7 +221,7 @@ function AuditDetail({ event }: { event: AuditEvent }) {
   )
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <>
       <dt className="text-muted-foreground">{label}</dt>
