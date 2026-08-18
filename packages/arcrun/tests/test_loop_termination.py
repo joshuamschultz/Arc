@@ -85,6 +85,34 @@ async def _run_loop(state: Any, model: _StubModel, *, max_turns: int = 10) -> An
 # --- Tests --------------------------------------------------------------
 
 
+class TestLoopAlwaysTerminates:
+    """Robustness invariant: a run ALWAYS emits the loop.complete terminal, even
+    when the strategy raises — otherwise the run dangles ('running' -> 'stale')
+    and never finishes. Regression for the dominant not-finishing failure mode."""
+
+    async def test_strategy_exception_still_emits_terminal(self) -> None:
+        from arcrun.loop import _select_then_run
+        from arcrun.sandbox import Sandbox
+        from arcrun.types import SandboxConfig
+
+        class _RaisingModel:
+            async def invoke(self, _messages: Any, tools: Any = None, **_: Any) -> Any:
+                raise RuntimeError("boom in the model call")
+
+        state = _make_state([])
+        sandbox = Sandbox(SandboxConfig(), state.event_bus)
+
+        # The error still propagates (security refusals must refuse; callers see
+        # the failure) — but the terminal fires FIRST so the run never dangles.
+        with pytest.raises(RuntimeError, match="boom"):
+            await _select_then_run(None, _RaisingModel(), state, sandbox, max_turns=5)
+
+        events = [e.type for e in state.event_bus.events]
+        assert "loop.complete" in events, "a raising strategy MUST still emit the terminal"
+        terminal = next(e for e in state.event_bus.events if e.type == "loop.complete")
+        assert terminal.data.get("error") == "RuntimeError"
+
+
 class TestTaskCompleteTerminates:
     async def test_success_status_terminates_loop(self) -> None:
         model = _StubModel(

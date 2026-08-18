@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -20,6 +21,8 @@ from arcrun.sandbox import Sandbox
 from arcrun.state import Injection, RunState
 from arcrun.strategies import STRATEGIES, available_strategies, select_strategy
 from arcrun.types import LoopResult, SandboxConfig
+
+_logger = logging.getLogger(__name__)
 
 _DEFAULT_CALLER_DID = "did:arc:unknown"
 
@@ -328,10 +331,44 @@ async def _select_then_run(
     sandbox_obj: Sandbox,
     max_turns: int,
 ) -> LoopResult:
-    """Pick the strategy, then run it, both within the already-live task."""
+    """Pick the strategy, then run it, both within the already-live task.
+
+    ROBUSTNESS INVARIANT: every run terminates. A strategy that raises — a model
+    call that errors after retries, a context-assembly failure, a tool-dispatch
+    bug — must still emit the universal ``loop.complete`` terminal. Without this
+    the run never gets an end-of-run marker and dangles forever ("running" then
+    "stale"): the single largest reason runs did not finish. The terminal here
+    carries an ``error`` field so the run reads as failed, not silently ok.
+    """
     strategy_fn = await _select_and_emit(allowed_strategies, model, state)
-    result: LoopResult = await strategy_fn(model, state, sandbox_obj, max_turns)
-    return result
+    try:
+        result: LoopResult = await strategy_fn(model, state, sandbox_obj, max_turns)
+        return result
+    except BaseException as exc:
+        # A strategy that unwinds early — a model error after retries, a security
+        # refusal (SealBroken), a cancel, a bug — otherwise leaves NO terminal and
+        # the run dangles forever ("running" -> "stale"), the dominant reason runs
+        # did not finish. Emit the universal terminal here IF the strategy did not,
+        # then RE-RAISE so the exception still reaches the caller and security
+        # refusals still refuse. The terminal fires exactly once either way.
+        if not any(e.type == "loop.complete" for e in state.event_bus.events):
+            _logger.warning(
+                "strategy unwound without a terminal (%s); emitting one so the run finishes",
+                type(exc).__name__,
+            )
+            state.event_bus.emit(
+                "loop.complete",
+                {
+                    "content": None,
+                    "turns": state.turn_count,
+                    "tool_calls": state.tool_calls_made,
+                    "tokens": dict(state.tokens_used),
+                    "cost": state.cost_usd,
+                    "error": type(exc).__name__,
+                    "error_message": str(exc)[:300],
+                },
+            )
+        raise
 
 
 class RunHandle:
