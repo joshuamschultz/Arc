@@ -5,8 +5,9 @@
 @custom-variant dark (&:is(.dark *));
 
 /* ------------------------------------------------------------------ *
- * Control Plane theme — cool graphite neutrals + technical emerald.
- * `:root` = light (near-white cool-gray layers); `.dark` = the primary
+ * Console theme — clean neutral surfaces + a sharp professional blue, with a
+ * restrained tan `--signed` accent reserved for signed/verified marks.
+ * `:root` = light (near-white neutral layers); `.dark` = the primary
  * experience. The app mounts with `.dark` on <html>.
  *
  * Elevation is expressed by background lightness, not drop shadows:
@@ -19,49 +20,53 @@
   --radius: 0.625rem;
   --tracking-normal: -0.01em;
 
-  --background: oklch(0.985 0.002 265);
-  --foreground: oklch(0.19 0.012 265);
+  --background: oklch(0.985 0.002 255);
+  --foreground: oklch(0.235 0.010 255);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.19 0.012 265);
+  --card-foreground: oklch(0.235 0.010 255);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.19 0.012 265);
-  --primary: oklch(0.62 0.14 160);
-  --primary-foreground: oklch(0.99 0 0);
-  --secondary: oklch(0.955 0.004 265);
-  --secondary-foreground: oklch(0.24 0.012 265);
-  --muted: oklch(0.955 0.004 265);
-  --muted-foreground: oklch(0.505 0.012 265);
-  --accent: oklch(0.955 0.004 265);
-  --accent-foreground: oklch(0.24 0.012 265);
-  --destructive: oklch(0.58 0.21 25);
+  --popover-foreground: oklch(0.235 0.010 255);
+  --primary: oklch(0.500 0.148 252);
+  --primary-foreground: oklch(0.99 0.005 252);
+  --secondary: oklch(0.965 0.004 255);
+  --secondary-foreground: oklch(0.30 0.010 255);
+  --muted: oklch(0.965 0.004 255);
+  --muted-foreground: oklch(0.500 0.010 255);
+  --accent: oklch(0.960 0.004 255);
+  --accent-foreground: oklch(0.30 0.010 255);
+  --destructive: oklch(0.55 0.19 25);
   --destructive-foreground: oklch(0.99 0 0);
-  --border: oklch(0.9 0.004 265);
-  --input: oklch(0.885 0.005 265);
-  --ring: oklch(0.62 0.14 160);
-  --chart-1: oklch(0.62 0.14 160);
-  --chart-2: oklch(0.6 0.11 195);
-  --chart-3: oklch(0.55 0.15 252);
-  --chart-4: oklch(0.55 0.18 292);
-  --chart-5: oklch(0.68 0.15 70);
-  --sidebar: oklch(0.965 0.004 265);
-  --sidebar-foreground: oklch(0.24 0.012 265);
-  --sidebar-primary: oklch(0.62 0.14 160);
-  --sidebar-primary-foreground: oklch(0.99 0 0);
-  --sidebar-accent: oklch(0.93 0.005 265);
-  --sidebar-accent-foreground: oklch(0.24 0.012 265);
-  --sidebar-border: oklch(0.9 0.004 265);
-  --sidebar-ring: oklch(0.62 0.14 160);
+  --border: oklch(0.905 0.004 255);
+  --input: oklch(0.888 0.005 255);
+  --ring: oklch(0.500 0.148 252);
+  --chart-1: oklch(0.55 0.14 252);
+  --chart-2: oklch(0.60 0.07 210);
+  --chart-3: oklch(0.62 0.07 66);
+  --chart-4: oklch(0.52 0.10 292);
+  --chart-5: oklch(0.60 0.10 158);
+  --sidebar: oklch(0.966 0.003 255);
+  --sidebar-foreground: oklch(0.30 0.010 255);
+  --sidebar-primary: oklch(0.500 0.148 252);
+  --sidebar-primary-foreground: oklch(0.99 0.005 252);
+  --sidebar-accent: oklch(0.935 0.005 255);
+  --sidebar-accent-foreground: oklch(0.30 0.010 255);
+  --sidebar-border: oklch(0.905 0.004 255);
+  --sidebar-ring: oklch(0.500 0.148 252);
 
   /* Live-status + severity colors (UI depends on these token names). */
-  --status-online: oklch(0.6 0.15 155);
-  --status-warning: oklch(0.68 0.15 70);
-  --status-error: oklch(0.58 0.21 25);
-  --status-info: oklch(0.58 0.15 252);
-  --status-idle: oklch(0.62 0.01 265);
-  --severity-critical: oklch(0.58 0.21 25);
-  --severity-high: oklch(0.63 0.19 40);
-  --severity-medium: oklch(0.68 0.15 70);
-  --severity-low: oklch(0.6 0.15 155);
+  --status-online: oklch(0.55 0.11 158);
+  --status-warning: oklch(0.62 0.10 66);
+  --status-error: oklch(0.55 0.19 25);
+  --status-info: oklch(0.52 0.12 250);
+  --status-idle: oklch(0.62 0.01 255);
+  --severity-critical: oklch(0.55 0.19 25);
+  --severity-high: oklch(0.60 0.15 40);
+  --severity-medium: oklch(0.62 0.10 66);
+  --severity-low: oklch(0.55 0.11 158);
+
+  /* Signed / verified accent — the tan seal mark (used sparingly). */
+  --signed: oklch(0.590 0.078 62);
+  --signed-foreground: oklch(0.99 0.005 70);
 
   --font-sans: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', monospace;
@@ -78,48 +83,51 @@
 }
 
 .dark {
-  --background: oklch(0.155 0.004 265);
-  --foreground: oklch(0.955 0.003 265);
-  --card: oklch(0.185 0.005 265);
-  --card-foreground: oklch(0.955 0.003 265);
-  --popover: oklch(0.205 0.006 265);
-  --popover-foreground: oklch(0.955 0.003 265);
-  --primary: oklch(0.78 0.14 160);
-  --primary-foreground: oklch(0.16 0.02 165);
-  --secondary: oklch(0.235 0.006 265);
-  --secondary-foreground: oklch(0.93 0.004 265);
-  --muted: oklch(0.235 0.006 265);
-  --muted-foreground: oklch(0.66 0.008 265);
-  --accent: oklch(0.255 0.007 265);
-  --accent-foreground: oklch(0.955 0.003 265);
-  --destructive: oklch(0.62 0.2 25);
-  --destructive-foreground: oklch(0.98 0.003 265);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(0.27 0.007 265);
-  --ring: oklch(0.78 0.14 160);
-  --chart-1: oklch(0.78 0.14 160);
-  --chart-2: oklch(0.72 0.11 195);
-  --chart-3: oklch(0.66 0.14 250);
-  --chart-4: oklch(0.64 0.17 292);
-  --chart-5: oklch(0.79 0.15 75);
-  --sidebar: oklch(0.13 0.004 265);
-  --sidebar-foreground: oklch(0.93 0.004 265);
-  --sidebar-primary: oklch(0.78 0.14 160);
-  --sidebar-primary-foreground: oklch(0.16 0.02 165);
-  --sidebar-accent: oklch(0.235 0.006 265);
-  --sidebar-accent-foreground: oklch(0.955 0.003 265);
-  --sidebar-border: oklch(1 0 0 / 8%);
-  --sidebar-ring: oklch(0.78 0.14 160);
+  --background: oklch(0.186 0.005 255);
+  --foreground: oklch(0.905 0.004 255);
+  --card: oklch(0.215 0.006 255);
+  --card-foreground: oklch(0.905 0.004 255);
+  --popover: oklch(0.248 0.007 255);
+  --popover-foreground: oklch(0.905 0.004 255);
+  --primary: oklch(0.662 0.130 252);
+  --primary-foreground: oklch(0.15 0.02 252);
+  --secondary: oklch(0.248 0.007 255);
+  --secondary-foreground: oklch(0.90 0.004 255);
+  --muted: oklch(0.248 0.007 255);
+  --muted-foreground: oklch(0.660 0.006 255);
+  --accent: oklch(0.288 0.008 255);
+  --accent-foreground: oklch(0.905 0.004 255);
+  --destructive: oklch(0.66 0.19 25);
+  --destructive-foreground: oklch(0.98 0.003 255);
+  --border: oklch(1 0 0 / 8%);
+  --input: oklch(0.30 0.008 255);
+  --ring: oklch(0.662 0.130 252);
+  --chart-1: oklch(0.66 0.13 252);
+  --chart-2: oklch(0.70 0.08 210);
+  --chart-3: oklch(0.74 0.07 66);
+  --chart-4: oklch(0.62 0.10 292);
+  --chart-5: oklch(0.72 0.10 158);
+  --sidebar: oklch(0.163 0.005 255);
+  --sidebar-foreground: oklch(0.90 0.004 255);
+  --sidebar-primary: oklch(0.662 0.130 252);
+  --sidebar-primary-foreground: oklch(0.15 0.02 252);
+  --sidebar-accent: oklch(0.248 0.007 255);
+  --sidebar-accent-foreground: oklch(0.905 0.004 255);
+  --sidebar-border: oklch(1 0 0 / 7%);
+  --sidebar-ring: oklch(0.662 0.130 252);
 
-  --status-online: oklch(0.76 0.16 158);
-  --status-warning: oklch(0.8 0.15 78);
-  --status-error: oklch(0.66 0.2 25);
-  --status-info: oklch(0.7 0.13 250);
-  --status-idle: oklch(0.56 0.01 265);
-  --severity-critical: oklch(0.66 0.2 25);
-  --severity-high: oklch(0.71 0.18 42);
-  --severity-medium: oklch(0.8 0.15 78);
-  --severity-low: oklch(0.76 0.16 158);
+  --status-online: oklch(0.72 0.085 158);
+  --status-warning: oklch(0.75 0.095 66);
+  --status-error: oklch(0.66 0.185 25);
+  --status-info: oklch(0.68 0.11 250);
+  --status-idle: oklch(0.55 0.008 255);
+  --severity-critical: oklch(0.66 0.185 25);
+  --severity-high: oklch(0.70 0.16 42);
+  --severity-medium: oklch(0.75 0.095 66);
+  --severity-low: oklch(0.72 0.085 158);
+
+  --signed: oklch(0.745 0.070 66);
+  --signed-foreground: oklch(0.18 0.03 66);
 
   /* Dark elevation = a hairline top-inset highlight + a soft ambient drop,
      never the heavy shadows of the old theme. */
@@ -176,6 +184,8 @@
   --color-severity-high: var(--severity-high);
   --color-severity-medium: var(--severity-medium);
   --color-severity-low: var(--severity-low);
+  --color-signed: var(--signed);
+  --color-signed-foreground: var(--signed-foreground);
 
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
