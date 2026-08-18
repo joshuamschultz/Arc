@@ -248,8 +248,24 @@ Status: ☑ done · ◐ in progress · ☐ todo
     in agent chat** when blocked on a gate.
   - ☑ Tool chips in chat; inline HITL approval in chat.
   - ☑ All 10 list/detail screens redesigned (parallel wave) + agent-detail.
-  - ☐ Motion spatial views (Cover Flow runs / Time Machine checkpoints).
-  - ☐ Streaming + Thinking-trace wiring in chat (needs reasoning in the data).
+  - ☑ Run River — two-pane Activity signed action trace (the signature view).
+  - ☑ Motion: Cover Flow over runs (`motion`), Activity Trace/Flip toggle.
+  - ☑ Fleet cards match the mockup (status / current action / signed-today).
+  - ☐ Optional follow-ups: Time Machine over sessions, prompt fan, streaming
+    + Thinking-trace wiring in chat (needs reasoning in the data).
+
+## 13. Deployment
+
+- `npm run build` (tsc + vite) and `npm run lint` both clean; the committed
+  static bundle under `../src/arcui/static/` is current. Air-gap safe — fonts
+  and `motion` are bundled, no CDN.
+- Deploy is the standard path: merge `feat/ui-redesign`, pull on the host,
+  `uv sync`, restart the arc service; it serves the rebuilt SPA. No backend/API
+  changes were made — this is a frontend re-skin + IA change, feature-parity
+  preserved.
+- **Dev-only:** `scratchpad/mock_arc.py` seeds demo data on :8420 so the UI can
+  be reviewed without a live fleet. It is NOT in the repo and must not be
+  deployed; stop it (`pkill -f mock_arc.py`) when done reviewing.
 
 ---
 
