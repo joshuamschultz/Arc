@@ -1,20 +1,16 @@
 import { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import type { ColumnDef } from '@tanstack/react-table'
-import { Workflow, Users } from 'lucide-react'
+import { Search } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
-import { InsightStat, StatusChip } from '@/components/ai'
-import { SignedSeal } from '@/components/hitl'
-import { DataTable } from '@/components/data-table'
-import { RunDetailDrawer } from '@/components/run-detail-drawer'
+import { RunRiver } from '@/components/run-river'
 import { SpawnLineage } from '@/components/run-observability'
-import { LoadingRows } from '@/components/states'
-import { RunSparkline } from '@/components/activity/run-sparkline'
+import { EmptyState, LoadingRows } from '@/components/states'
+import { StatusChip } from '@/components/ai'
 import { useRoster, useRuns } from '@/lib/queries'
-import { fmtLatency, fmtNumber, relativeTime, shortId } from '@/lib/format'
+import { initials, relativeTime, shortId } from '@/lib/format'
+import { cn } from '@/lib/utils'
 import type { RunSummary } from '@/lib/types'
 
-// The run spool carries the actor DID; the roster knows the human-facing name.
 function resolveAgent(r: RunSummary, nameByDid: Map<string, string>): string {
   return (r.actor_did && nameByDid.get(r.actor_did)) || nameByDid.get(r.agent) || r.agent
 }
@@ -23,8 +19,6 @@ export function ArcRunPage() {
   const { data, isLoading } = useRuns()
   const roster = useRoster()
 
-  // Resolve actor DID → friendly agent name (the run spool carries the DID;
-  // the roster knows the human-facing name).
   const nameByDid = useMemo(() => {
     const m = new Map<string, string>()
     for (const a of roster.data?.agents ?? []) {
@@ -33,136 +27,115 @@ export function ArcRunPage() {
     return m
   }, [roster.data])
 
-  const columns = useMemo<ColumnDef<RunSummary, unknown>[]>(
-    () => [
-      {
-        id: 'agent',
-        header: 'Agent',
-        accessorFn: (r) => resolveAgent(r, nameByDid),
-        cell: (c) => <span className="font-medium text-xs text-foreground">{c.getValue() as string}</span>,
-      },
-      {
-        accessorKey: 'run_id',
-        header: 'Run',
-        cell: (c) => (
-          <span className="inline-flex items-center rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-xs text-primary">
-            {shortId(c.getValue() as string, 14)}
-          </span>
-        ),
-      },
-      {
-        accessorKey: 'status',
-        header: 'Status',
-        cell: (c) => <StatusChip value={c.getValue() as string} />,
-      },
-      {
-        accessorKey: 'turns',
-        header: 'Turns',
-        cell: (c) => <span className="font-mono text-xs tabular-nums text-muted-foreground">{fmtNumber(c.getValue() as number)}</span>,
-      },
-      {
-        accessorKey: 'tool_calls',
-        header: 'Tools',
-        cell: (c) => <span className="font-mono text-xs tabular-nums text-muted-foreground">{fmtNumber(c.getValue() as number)}</span>,
-      },
-      {
-        accessorKey: 'duration_ms',
-        header: 'Duration',
-        cell: (c) => <span className="font-mono text-xs tabular-nums text-muted-foreground">{fmtLatency(c.getValue() as number | null)}</span>,
-      },
-      {
-        accessorKey: 'started_at',
-        header: 'Started',
-        cell: (c) => <span className="whitespace-nowrap text-xs text-muted-foreground">{relativeTime(c.getValue() as string)}</span>,
-      },
-    ],
-    [nameByDid],
-  )
+  const colorByName = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const a of roster.data?.agents ?? []) {
+      const name = a.display_name || a.name || a.agent_id || ''
+      if (name && typeof a.color === 'string') m.set(name, a.color)
+    }
+    return m
+  }, [roster.data])
 
-  const rows = useMemo<RunSummary[]>(() => data?.runs ?? [], [data])
+  const runs = useMemo<RunSummary[]>(() => data?.runs ?? [], [data])
   const [active, setActive] = useState<RunSummary | null>(null)
-  const agentsWithRuns = new Set(rows.map((r) => resolveAgent(r, nameByDid))).size
+  const [q, setQ] = useState('')
 
-  // Real telemetry for the Runs tile sparkline: run durations in chronological
-  // order (oldest → newest), capped to the most recent stretch so the trend
-  // reads. No fabricated series — plots only runs that recorded a duration.
-  const durationSeries = useMemo<number[]>(() => {
-    return rows
-      .filter((r) => r.duration_ms != null)
-      .slice()
-      .sort((a, b) => (a.started_at ?? '').localeCompare(b.started_at ?? ''))
-      .map((r) => r.duration_ms as number)
-      .slice(-24)
-  }, [rows])
-
-  // Deep-link support: `/arcrun?run=<id>` (e.g. a task's run link) auto-opens
-  // that run once the rows load. Applied during render — keyed on the param so
-  // it fires once and never fights a manual selection (mirrors the drawer's
-  // render-time state-sync pattern; no setState-in-effect).
   const [searchParams] = useSearchParams()
   const runParam = searchParams.get('run')
-  const [appliedRun, setAppliedRun] = useState<string | null>(null)
-  if (runParam && runParam !== appliedRun && rows.length > 0) {
-    setAppliedRun(runParam)
-    const match = rows.find((r) => r.run_id === runParam)
-    if (match) setActive(match)
+
+  // Initial selection: the deep-linked run, else the newest. Render-time set
+  // converges (active becomes non-null, the guard is then false).
+  if (!active && runs.length > 0) {
+    const initial = runParam ? runs.find((r) => r.run_id === runParam) : runs[0]
+    if (initial) setActive(initial)
   }
+
+  const filtered = runs.filter((r) => {
+    if (!q) return true
+    const name = resolveAgent(r, nameByDid).toLowerCase()
+    return name.includes(q.toLowerCase()) || r.run_id.toLowerCase().includes(q.toLowerCase())
+  })
 
   return (
     <div className="flex h-full flex-col">
-      <PageHeader title="Activity" description="Every agentic-loop run — one per user-question → final-response cycle. Click a run for its step-by-step timeline." />
-      <div className="flex-1 space-y-5 overflow-auto p-6">
-        <div className="grid grid-cols-2 gap-3">
-          <InsightStat
-            label="Runs"
-            value={fmtNumber(rows.length)}
-            icon={<Workflow className="size-4" />}
-            spark={<RunSparkline values={durationSeries} />}
-          />
-          <InsightStat
-            label="Agents with runs"
-            value={fmtNumber(agentsWithRuns)}
-            icon={<Users className="size-4" />}
-          />
-        </div>
-
-        <section className="space-y-2">
-          <div className="flex items-center justify-between gap-3">
-            <h3 className="text-sm font-semibold text-foreground">Runs</h3>
-            <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-              <SignedSeal className="size-4" />
-              Signed audit ledger
-            </span>
-          </div>
-          {isLoading ? (
-            <LoadingRows />
-          ) : (
-            <DataTable
-              columns={columns}
-              data={rows}
-              searchable
-              searchPlaceholder="Search runs…"
-              onRowClick={setActive}
-              isRowActive={(r) => r.run_id === active?.run_id}
-              emptyTitle="No runs recorded"
-              emptyDescription="Each user-question→final-response cycle appears here as agents execute."
-            />
-          )}
-        </section>
-
-        <section className="space-y-2">
-          <h3 className="text-sm font-semibold text-foreground">Spawn lineage</h3>
-          <div className="rounded-lg border border-border bg-card p-4 shadow-xs">
-            <SpawnLineage root={null} />
-          </div>
-        </section>
-      </div>
-
-      <RunDetailDrawer
-        run={active}
-        open={!!active}
-        onOpenChange={(o) => !o && setActive(null)}
+      <PageHeader
+        title="Activity"
+        description="Every run — pick one to see its signed action trace, step by step."
       />
+      <div className="flex flex-1 overflow-hidden">
+        <aside className="flex w-[300px] shrink-0 flex-col border-r border-border">
+          <div className="border-b border-border p-2.5">
+            <div className="flex items-center gap-2 rounded-md border border-border bg-card px-2.5 py-1.5 text-sm text-muted-foreground">
+              <Search className="size-3.5" />
+              <input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Search runs…"
+                className="w-full bg-transparent text-foreground outline-none placeholder:text-muted-foreground"
+              />
+            </div>
+          </div>
+          <div className="flex-1 overflow-auto">
+            {isLoading ? (
+              <div className="p-3">
+                <LoadingRows rows={6} />
+              </div>
+            ) : filtered.length === 0 ? (
+              <div className="p-6">
+                <EmptyState title="No runs recorded" description="Runs appear here as agents work." />
+              </div>
+            ) : (
+              filtered.map((r) => {
+                const name = resolveAgent(r, nameByDid)
+                return (
+                  <button
+                    key={r.run_id}
+                    type="button"
+                    onClick={() => setActive(r)}
+                    className={cn(
+                      'flex w-full flex-col gap-1.5 border-b border-border px-4 py-3 text-left transition-colors hover:bg-muted/40',
+                      active?.run_id === r.run_id && 'bg-primary/8',
+                    )}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="grid size-6 shrink-0 place-items-center rounded-md text-[10px] font-semibold text-white"
+                        style={{ background: colorByName.get(name) || 'var(--primary)' }}
+                      >
+                        {initials(name)}
+                      </span>
+                      <span className="truncate text-sm font-semibold text-foreground">{name}</span>
+                      <span className="ml-auto shrink-0 text-[11px] tabular-nums text-muted-foreground">
+                        {relativeTime(r.started_at)}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 pl-8">
+                      <StatusChip value={r.status} />
+                      <span className="font-mono text-[11px] text-muted-foreground">
+                        {shortId(r.run_id, 10)}
+                      </span>
+                    </div>
+                  </button>
+                )
+              })
+            )}
+          </div>
+        </aside>
+
+        <main className="flex-1 overflow-auto">
+          <RunRiver run={active} />
+          {active && (
+            <div className="border-t border-border p-6">
+              <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                Spawn lineage
+              </h3>
+              <div className="rounded-lg border border-border bg-card p-4">
+                <SpawnLineage root={null} />
+              </div>
+            </div>
+          )}
+        </main>
+      </div>
     </div>
   )
 }

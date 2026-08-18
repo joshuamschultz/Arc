@@ -51,7 +51,7 @@ interface RunItem {
   ts?: string | null
   name: string
 }
-type Item = ToolItem | LlmItem | RunItem
+export type Item = ToolItem | LlmItem | RunItem
 
 /** Fold raw timeline rows into display items, pairing tool start/end by name.
  *
@@ -62,7 +62,7 @@ type Item = ToolItem | LlmItem | RunItem
  * see observe_stats.compute_runs), any leftover open tool item is exactly as
  * dead as the run that never finished it, and must not read as in-progress
  * forever. */
-function mergeTimeline(entries: TimelineEntry[], runIsLive: boolean): Item[] {
+export function mergeTimeline(entries: TimelineEntry[], runIsLive: boolean): Item[] {
   const items: Item[] = []
   const pending = new Map<string, ToolItem[]>() // tool_name -> open starts (FIFO)
 
