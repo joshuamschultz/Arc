@@ -16,9 +16,16 @@ import {
 import { useChatSession, type ChatMessage } from '@/hooks/use-chat'
 import { useTeamStream, type TeamFrame } from '@/hooks/use-team-stream'
 import { GateCard } from '@/components/gate-card'
+import { ApprovalRequest } from '@/components/hitl'
 import { useOperatorMode } from '@/hooks/use-operator-mode'
 import { useComposerDraft } from '@/hooks/use-composer-draft'
-import { useRoster, useTeamChannels, useChannelMessages, useWorkflows } from '@/lib/queries'
+import {
+  useApprovals,
+  useRoster,
+  useTeamChannels,
+  useChannelMessages,
+  useWorkflows,
+} from '@/lib/queries'
 import { apiPost, ApiError } from '@/lib/api'
 import { initials } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -69,6 +76,14 @@ function ChatPanel({ agentId, commands }: { agentId: string; commands: CommandOp
   const [resetting, setResetting] = useState(false)
   const [resetError, setResetError] = useState<string | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
+
+  // Inline HITL: if this agent is blocked on a trifecta approval, surface it
+  // right in the conversation so the operator acts without leaving the chat.
+  const roster = useRoster()
+  const approvalsQ = useApprovals()
+  const [operatorMode] = useOperatorMode()
+  const did = (roster.data?.agents ?? []).find((a) => a.agent_id === agentId)?.did ?? ''
+  const pending = (approvalsQ.data?.approvals ?? []).filter((a) => a.agent_did === did)
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -121,6 +136,16 @@ function ChatPanel({ agentId, commands }: { agentId: string; commands: CommandOp
         )}
         <div ref={endRef} />
       </div>
+      {pending.length > 0 && (
+        <div className="space-y-2 border-t border-border bg-status-warning/5 px-3 py-3">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-status-warning">
+            Needs your approval to continue
+          </div>
+          {pending.map((a) => (
+            <ApprovalRequest key={a.id} a={a} operatorMode={operatorMode} />
+          ))}
+        </div>
+      )}
       <div className="flex items-end gap-2 border-t border-border bg-card/30 p-3">
         <MentionComposer
           value={text}
