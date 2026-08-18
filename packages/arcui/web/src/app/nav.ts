@@ -22,6 +22,16 @@ import {
 export const NAV_GROUPS = ['work', 'govern', 'watch', 'advanced', 'system'] as const
 export type NavGroup = (typeof NAV_GROUPS)[number]
 
+/** Section headers shown when the rail is expanded. Collapsed, the groups are
+ *  read as hairline-separated clusters instead. */
+export const GROUP_LABELS: Record<NavGroup, string> = {
+  work: 'Work',
+  govern: 'Govern',
+  watch: 'Observe',
+  advanced: 'Advanced',
+  system: 'System',
+}
+
 export interface NavItem {
   /** Path segment under `/` — also the route path. */
   path: string

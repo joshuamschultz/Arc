@@ -536,6 +536,20 @@ class TestReviewGateRoutes:
         resp = client.post("/api/tasks/nope/approve", headers=_operator(auth))
         assert resp.status_code == 404
 
+    def test_approve_task_whose_id_contains_slashes(self, tmp_path: Path) -> None:
+        """Workflow-gate tasks carry slash-bearing ids (e.g.
+        ``wf/run-bd64737f7416/approve/0``). uvicorn decodes ``%2F`` back to ``/``,
+        so a single-segment ``{id}`` route can never match them — the request
+        falls through to the GET-only SPA handler and POST returns 405. The route
+        must accept a path-typed id."""
+        tid = "wf/run-bd64737f7416/approve/0"
+        asyncio.run(_seed(tmp_path, [_task(tid, owner_did="did:arc:x/a", status="review")]))
+        app, auth = _make_app(tmp_path)
+        client = TestClient(app)
+        resp = client.post(f"/api/tasks/{tid}/approve", headers=_operator(auth))
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["status"] == "done"
+
 
 class TestHandoffReassign:
     def test_operator_reassigns_owner_via_patch(self, tmp_path: Path) -> None:

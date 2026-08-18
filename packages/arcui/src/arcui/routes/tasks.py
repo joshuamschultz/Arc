@@ -317,14 +317,20 @@ async def reject_task(request: Request) -> Response:
     return await _review_decision(request, approve=False)
 
 
+# `{id:path}`, not `{id}`: workflow-gate tasks carry slash-bearing ids (e.g.
+# `wf/run-bd64737f7416/approve/0`). uvicorn decodes `%2F` back to `/`, so a
+# single-segment `{id}` never matches them and the request falls through to the
+# GET-only SPA handler — POST there is a 405 the operator sees as "approval is
+# broken". The trailing literal (`/approve`, `/cancel`, …) still anchors the
+# match, so the greedy path converter binds the id and leaves the verb.
 routes = [
     Route("/api/team/tasks", create_task, methods=["POST"]),
-    Route("/api/tasks/{id}", patch_task, methods=["PATCH"]),
-    Route("/api/tasks/{id}", delete_task, methods=["DELETE"]),
-    Route("/api/tasks/{id}/cancel", cancel_task, methods=["POST"]),
-    Route("/api/tasks/{id}/move", move_task, methods=["POST"]),
-    Route("/api/tasks/{id}/approve", approve_task, methods=["POST"]),
-    Route("/api/tasks/{id}/reject", reject_task, methods=["POST"]),
+    Route("/api/tasks/{id:path}/cancel", cancel_task, methods=["POST"]),
+    Route("/api/tasks/{id:path}/move", move_task, methods=["POST"]),
+    Route("/api/tasks/{id:path}/approve", approve_task, methods=["POST"]),
+    Route("/api/tasks/{id:path}/reject", reject_task, methods=["POST"]),
+    Route("/api/tasks/{id:path}", patch_task, methods=["PATCH"]),
+    Route("/api/tasks/{id:path}", delete_task, methods=["DELETE"]),
 ]
 
 __all__ = [
