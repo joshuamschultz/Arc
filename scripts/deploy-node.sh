@@ -193,6 +193,25 @@ RUNTIME_ROOT="$ARC_CONFIG_DIR/runtime/current"
 [ -x "$ARC_BIN" ] || fail "$ARC_BIN is not executable after activation"
 ok "runtime $RUNTIME_VERSION active"
 
+# --- 2c. prune old runtimes so the disk cannot fill -----------------------
+# Each deploy installs a full runtime tree (~1.5 GB with the venv) side by side;
+# unpruned they accumulate until the disk fills mid-rsync (a box hit 13 runtimes
+# / 18 GB at 100%). Keep the ACTIVE runtime plus the few most recent for
+# rollback, delete the rest. Module bundles are materialized read-only, so make
+# them writable before removing. Never touches config/ or state/ (siblings).
+KEEP_RUNTIMES="${ARC_KEEP_RUNTIMES:-3}"
+_active="$(basename "$(readlink "$ARC_CONFIG_DIR/runtime/current" 2>/dev/null)")"
+# shellcheck disable=SC2010  # need mtime order (ls -t); runtime names are controlled `<ver>-<hex>`
+ls -1dt "$ARC_CONFIG_DIR"/runtime/[0-9]* 2>/dev/null |
+  grep -v "/${_active}\$" |
+  tail -n "+${KEEP_RUNTIMES}" |
+  while read -r _old; do
+    log "Pruning old runtime $(basename "$_old")..."
+    chmod -R u+w "$_old" 2>/dev/null || true
+    rm -rf "$_old"
+  done
+ok "runtimes pruned (kept active + $((KEEP_RUNTIMES - 1)) recent)"
+
 # --- 2b. split a flat home BEFORE any stage reads a config path -----------
 # A deployment older than the lifecycle split has its TOML flat at ~/.arc. Every
 # stage below resolves a config path under ~/.arc/config, and `arc init` CREATES
