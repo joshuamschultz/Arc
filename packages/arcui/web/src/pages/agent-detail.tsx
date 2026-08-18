@@ -1,7 +1,7 @@
-import { useRef, useState, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { motion } from 'motion/react'
-import { ArrowLeft, Plus, FileText, Pencil, ChevronLeft, ChevronRight, Mail } from 'lucide-react'
+import { ArrowLeft, Plus, FileText, Pencil, Mail } from 'lucide-react'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Input } from '@/components/ui/input'
 import { FilterPills } from '@/components/filter-pills'
@@ -1064,14 +1064,18 @@ function PromptsTab({ agentId }: { agentId: string }) {
     package: string
     name: string
   } | null>(null)
-  const [center, setCenter] = useState(0)
-  const down = useRef(false)
-  const startX = useRef(0)
-  const acc = useRef(0)
+  const [area, setArea] = useState('all')
 
-  // Clamp the focused index so a shrinking list never centers off the end.
-  const focus = Math.min(center, Math.max(0, items.length - 1))
-  const go = (n: number) => setCenter(Math.max(0, Math.min(items.length - 1, n)))
+  // Prompts grouped by area (package). The filter narrows to one area; "All"
+  // shows every area as its own row.
+  const areas = [...new Set(items.map((p) => p.package))].sort()
+  const shown = area === 'all' ? items : items.filter((p) => p.package === area)
+  const byArea = new Map<string, typeof items>()
+  for (const p of shown) {
+    const list = byArea.get(p.package) ?? []
+    list.push(p)
+    byArea.set(p.package, list)
+  }
 
   return (
     <>
@@ -1086,94 +1090,56 @@ function PromptsTab({ agentId }: { agentId: string }) {
         }
       >
         {() => (
-          <div className="flex flex-col gap-4">
-            <p className="text-xs text-muted-foreground">
-              {items.length} prompt{items.length === 1 ? '' : 's'} across installed packages · swipe,
-              scroll, or arrow to flip — click the centered card to edit.
-            </p>
+          <div className="flex flex-col gap-5">
+            {/* Filter by area (package). "All" shows every area as its own row. */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              {['all', ...areas].map((a) => {
+                const active = area === a
+                const count =
+                  a === 'all' ? items.length : items.filter((p) => p.package === a).length
+                return (
+                  <button
+                    key={a}
+                    type="button"
+                    onClick={() => setArea(a)}
+                    className={cn(
+                      'rounded-full border px-2.5 py-1 font-mono text-[11px] transition-colors',
+                      active
+                        ? 'border-primary/40 bg-primary/10 text-primary'
+                        : 'border-border bg-card text-muted-foreground hover:text-foreground',
+                    )}
+                  >
+                    {a === 'all' ? 'All' : a} <span className="opacity-60">{count}</span>
+                  </button>
+                )
+              })}
+            </div>
 
-            <div
-              className="relative h-[420px] cursor-grab overflow-hidden rounded-xl border border-border bg-gradient-to-b from-muted/30 to-transparent [perspective:1600px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 active:cursor-grabbing"
-              tabIndex={0}
-              aria-label="Prompt cover flow"
-              onKeyDown={(e) => {
-                if (e.key === 'ArrowLeft') {
-                  e.preventDefault()
-                  go(focus - 1)
-                }
-                if (e.key === 'ArrowRight') {
-                  e.preventDefault()
-                  go(focus + 1)
-                }
-                if (e.key === 'Enter' || e.key === ' ') {
-                  const p = items[focus]
-                  if (p) {
-                    e.preventDefault()
-                    setSelected({ package: p.package, name: p.name })
-                  }
-                }
-              }}
-              onPointerDown={(e) => {
-                down.current = true
-                startX.current = e.clientX
-                ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
-              }}
-              onPointerMove={(e) => {
-                if (!down.current) return
-                const dx = e.clientX - startX.current
-                if (Math.abs(dx) > 70) {
-                  go(focus + (dx < 0 ? 1 : -1))
-                  startX.current = e.clientX
-                }
-              }}
-              onPointerUp={() => {
-                down.current = false
-              }}
-              onWheel={(e) => {
-                acc.current += e.deltaY + e.deltaX
-                if (Math.abs(acc.current) > 60) {
-                  go(focus + (acc.current > 0 ? 1 : -1))
-                  acc.current = 0
-                }
-              }}
-            >
-              <div className="absolute inset-0 flex items-center justify-center">
-                {items.map((p, i) => {
-                  const o = i - focus
-                  const ax = Math.abs(o)
-                  const isFocus = o === 0
-                  return (
+            {[...byArea.entries()].map(([pkg, prompts]) => (
+              <section key={pkg} className="space-y-2">
+                <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                  {pkg} <span className="text-muted-foreground/50">· {prompts.length}</span>
+                </h3>
+                <div className="flex gap-3 overflow-x-auto pb-2">
+                  {prompts.map((p, i) => (
                     <motion.button
-                      key={`${p.package}/${p.name}`}
+                      key={p.name}
                       type="button"
-                      aria-label={`${p.name} (${p.package})${isFocus ? ' — click to edit' : ''}`}
-                      onClick={() =>
-                        isFocus ? setSelected({ package: p.package, name: p.name }) : go(i)
-                      }
-                      initial={false}
-                      animate={{
-                        x: o * 260,
-                        z: -ax * 180 + (isFocus ? 60 : 0),
-                        rotateY: -o * 38,
-                        scale: isFocus ? 1.06 : 0.9,
-                        opacity: ax > 3 ? 0 : 1,
+                      onClick={() => setSelected({ package: p.package, name: p.name })}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{
+                        delay: Math.min(i * 0.02, 0.2),
+                        type: 'spring',
+                        stiffness: 320,
+                        damping: 26,
                       }}
-                      transition={{ type: 'spring', stiffness: 260, damping: 30 }}
-                      style={{
-                        position: 'absolute',
-                        transformStyle: 'preserve-3d',
-                        zIndex: 100 - ax,
-                        pointerEvents: ax > 3 ? 'none' : 'auto',
-                      }}
-                      className={cn(
-                        'flex w-[300px] flex-col gap-3 rounded-2xl border bg-card p-5 text-left shadow-lg',
-                        isFocus ? 'border-primary/40' : 'border-border',
-                      )}
+                      whileHover={{ y: -4 }}
+                      whileTap={{ scale: 0.98 }}
+                      className="group flex w-[240px] shrink-0 flex-col gap-2 rounded-xl border border-border bg-card p-4 text-left shadow-sm transition-colors hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <span className="truncate rounded-full border border-border bg-muted/50 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
-                          {p.package}
-                        </span>
+                        <FileText className="size-4 text-muted-foreground" />
                         <span
                           className={cn(
                             'shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide',
@@ -1185,53 +1151,20 @@ function PromptsTab({ agentId }: { agentId: string }) {
                           {p.status}
                         </span>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <FileText className="size-4 shrink-0 text-muted-foreground" />
-                        <span className="truncate font-mono text-sm font-semibold text-foreground">
-                          {p.name}
-                        </span>
+                      <div className="truncate font-mono text-xs font-semibold text-foreground">
+                        {p.name}
                       </div>
-                      <p className="line-clamp-4 text-[11px] leading-relaxed text-muted-foreground">
+                      <p className="line-clamp-3 text-[11px] leading-relaxed text-muted-foreground">
                         {p.description}
                       </p>
-                      <div className="mt-auto flex items-center gap-1 border-t border-border pt-3 text-[11px] font-semibold">
-                        {isFocus ? (
-                          <span className="flex items-center gap-1 text-primary">
-                            <Pencil className="size-3" /> Click to edit
-                          </span>
-                        ) : (
-                          <span className="text-muted-foreground/70">Bring to front</span>
-                        )}
+                      <div className="mt-auto flex items-center gap-1 pt-1 text-[10px] font-medium text-primary opacity-0 transition-opacity group-hover:opacity-100">
+                        <Pencil className="size-3" /> Click to edit
                       </div>
                     </motion.button>
-                  )
-                })}
-              </div>
-            </div>
-
-            <div className="flex items-center justify-center gap-4">
-              <button
-                type="button"
-                onClick={() => go(focus - 1)}
-                disabled={focus <= 0}
-                className="grid size-9 place-items-center rounded-lg border border-border text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
-                aria-label="Previous prompt"
-              >
-                <ChevronLeft className="size-4" />
-              </button>
-              <span className="min-w-16 text-center font-mono text-xs tabular-nums text-muted-foreground">
-                {focus + 1} / {items.length}
-              </span>
-              <button
-                type="button"
-                onClick={() => go(focus + 1)}
-                disabled={focus >= items.length - 1}
-                className="grid size-9 place-items-center rounded-lg border border-border text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
-                aria-label="Next prompt"
-              >
-                <ChevronRight className="size-4" />
-              </button>
-            </div>
+                  ))}
+                </div>
+              </section>
+            ))}
           </div>
         )}
       </QueryState>
