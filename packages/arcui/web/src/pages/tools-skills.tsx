@@ -74,10 +74,7 @@ export function ToolsSkillsPage() {
         </div>
 
         <section className="space-y-2">
-          <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
-            <span aria-hidden className="h-3.5 w-[2px] rounded-full bg-primary/70" />
-            Tools
-          </h2>
+          <h2 className="text-sm font-semibold text-foreground">Tools</h2>
           <QueryState query={query} isEmpty={() => tools.length === 0}
             empty={<EmptyState icon={<Wrench className="size-7" />} title="No tools registered" />}>
             {() => <DataTable columns={toolColumns} data={tools} searchable searchPlaceholder="Search tools…" />}
@@ -85,10 +82,7 @@ export function ToolsSkillsPage() {
         </section>
 
         <section className="space-y-2">
-          <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
-            <span aria-hidden className="h-3.5 w-[2px] rounded-full bg-primary/70" />
-            Skills
-          </h2>
+          <h2 className="text-sm font-semibold text-foreground">Skills</h2>
           <QueryState query={query} isEmpty={() => skills.length === 0}
             empty={<EmptyState icon={<Sparkles className="size-7" />} title="No skills registered" />}>
             {() => (

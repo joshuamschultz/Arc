@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/select'
 import { QueryState, EmptyState } from '@/components/states'
 import { PolicyBulletCard } from '@/components/policy-bullet'
-import { ScoreDistribution, PerAgentBreakdown } from '@/components/policy-views'
+import { ScoreDistribution, TopPerformers, PerAgentBreakdown } from '@/components/policy-views'
 import { filterBullets, sortBullets, type BulletSort } from '@/lib/policy'
 import { useTeamPolicyBullets, useTeamPolicyStats } from '@/lib/queries'
 import type { Dict } from '@/lib/types'
@@ -45,6 +45,7 @@ export function PolicyPage() {
         {allBullets.length > 0 && (
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
             <ScoreDistribution bullets={allBullets} />
+            <TopPerformers bullets={allBullets} />
             <PerAgentBreakdown rows={perAgent} />
           </div>
         )}

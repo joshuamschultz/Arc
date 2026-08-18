@@ -27,7 +27,7 @@ function Sparkline({ values }: { values: number[] }) {
         values.map((v, i) => (
           <div
             key={i}
-            className="w-full min-w-0.5 flex-1 rounded-[1px] bg-gradient-to-t from-primary/25 to-primary"
+            className="w-full min-w-0.5 flex-1 rounded-[1px] bg-primary"
             style={{
               height: `${Math.max(6, Math.round((v / max) * 100))}%`,
               opacity: 0.45 + 0.55 * (values.length > 1 ? i / (values.length - 1) : 1),
