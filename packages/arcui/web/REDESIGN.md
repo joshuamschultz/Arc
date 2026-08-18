@@ -14,6 +14,13 @@ state already exist; we restyle their presentation. This is how parity is
 guaranteed by construction. If a change would remove or bypass a feature, it is
 out of scope for the redesign.
 
+**Additive completeness.** Beyond preserving parity, close feature gaps
+*between related views*. If a button, action, or data point exists on a
+full-app screen but is missing from the matching detail view — e.g. the task
+actions on the full **Tasks** board vs. an agent's **Tasks** tab — add it there
+too, scoped to that context. Every place a thing is shown should offer the same
+buttons and data as its canonical screen. Running gap list: §11.
+
 Verify after every phase: `npm run build` (tsc + vite) must pass, and the
 committed static bundle under `../src/arcui/static/` is rebuilt.
 
@@ -236,3 +243,72 @@ Status: ☑ done · ◐ in progress · ☐ todo
 - ☑ Palette re-skin (Console theme) — `966e2c2d`
 - ☑ Shell identity: slim grouped rail + Bricolage/Hanken type — `83fe5a8b`
 - ◐ Component polish (§5) + AI-native (§6) + Motion (§7) — in progress
+
+---
+
+## 11. Feature parity & cross-view completeness (audit)
+
+Two jobs: (A) confirm the redesign dropped nothing, and (B) surface features
+that exist on a canonical screen but are missing from a related detail view.
+
+**Known target (Josh's example):** the full **Tasks** board (`pages/tasks.tsx`)
+exposes actions/data that the agent-detail **Tasks** tab does not — add them to
+the agent view, scoped to that agent.
+
+**Sibling pairs to reconcile** (full screen ⇄ agent-detail tab):
+tasks, schedules, tools, skills, sessions/runs (traces), knowledge, policy,
+prompts, connections/capabilities. Also chat actions, approvals, and per-row
+row-actions in every table.
+
+Gap list (filled by the audit, checked off as closed):
+
+_pending audit — populated from the full feature inventory._
+
+---
+
+## 12. Information architecture & UX rethink
+
+Re-skinning isn't enough. For a business operator we rethink *where info lives,
+what leads, and how it's shown* — while keeping every feature/data point (§11).
+
+### 12.1 A "Home / Today" landing (new)
+Today the app opens on the raw **Agents** roster. Replace the landing with a
+**Home** that answers "what do I need to know right now?":
+- **Needs you** — pending approvals, failed runs, review gates (act inline).
+- **Fleet at a glance** — agents, who's working / idle / blocked, live now.
+- **Recent activity** — last runs with honest status; **Upcoming** — schedules.
+Every tile deep-links to its full screen. This is the operator's daily driver;
+the detailed screens are the drill-down.
+
+### 12.2 Altitude & progressive disclosure
+Each screen leads with a **plain-language summary + the 3–5 numbers that matter**
+(clean stat tiles), then filters, then the table/board, then a **drawer that
+holds the full detail and *every* row action**. Business users see the answer
+first and open detail only when they want it. The drawer is also where
+cross-view parity is satisfied — a task/agent/run drawer offers the same actions
+as its canonical screen.
+
+### 12.3 Navigation for business users (not developers)
+Regroup the rail by what an operator does, and push developer telemetry down:
+- **Primary:** Home, Fleet, Chat, Tasks, Approvals, Activity.
+- **Governance:** Approvals, Gated, Policy, Audit.
+- **Advanced / developer:** ArcLLM internals, raw traces, Tools & Skills wiring,
+  Connections — present, but lower and clearly labeled as advanced.
+Rename to plain terms; keep the technical id in hover/detail only:
+`ArcLLM → Model usage`, `Gated → Pending capabilities`, `Policy → Rules`,
+`Security → Audit`, `ArcRun → Activity`. Routes stay; labels change.
+
+### 12.4 How we show things
+- **Status in plain words + one glance of color.** "Waiting on you", "Failed at
+  step 7", "Signed" — not raw enum values.
+- **Signed/verified is felt, not read** — the quiet tan seal on trace/audit.
+- **Charts and sparklines** get the same care as type (area fill, faint grid,
+  emphasized endpoint).
+- **Motion** guides attention (§7); the spatial history views live under
+  Activity as an operator-friendly way to flip through runs/checkpoints.
+
+**Decision gates (confirm before restructuring nav):** (a) add the Home landing;
+(b) regroup + rename the rail per 12.3. Both change navigation, so land them as
+one deliberate change once confirmed; everything else (per-screen altitude,
+drawers, gap-fills, polish, motion) proceeds regardless.
+
