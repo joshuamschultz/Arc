@@ -135,6 +135,46 @@ async def test_embed_emits_telemetry_event() -> None:
     assert record.prompt_tokens == 2
 
 
+async def test_embed_telemetry_carries_request_and_response_bodies() -> None:
+    """The trace UI reads request/response from ``extra`` — for embeddings they
+    must carry the input text and the vector shape, never ``null`` or vectors."""
+    from arcstore.records import SpoolRecord
+
+    fake = _FakeEmbedder(dims=4)
+    captured: list[SpoolRecord] = []
+    await embed(
+        ["remember the budget line"],
+        model="fake-embed",
+        provider=fake,
+        on_event=captured.append,
+    )
+    extra = captured[0].extra
+    assert extra["request_body"]["input"] == ["remember the budget line"]
+    assert extra["request_body"]["count"] == 1
+    # Vector shape only — the raw float array is never stored.
+    assert extra["response_body"] == {"embedding_dims": 4, "count": 1}
+
+
+async def test_embed_omits_input_text_when_raw_capture_disabled() -> None:
+    """With ``store_raw_bodies`` off (federal/CUI default), the input text is
+    withheld but the shape descriptor still surfaces — never a giant vector."""
+    from arcstore.records import SpoolRecord
+
+    fake = _FakeEmbedder(dims=4)
+    captured: list[SpoolRecord] = []
+    await embed(
+        ["classified content"],
+        model="fake-embed",
+        provider=fake,
+        telemetry={"store_raw_bodies": False},
+        on_event=captured.append,
+    )
+    request_body = captured[0].extra["request_body"]
+    assert "input" not in request_body
+    assert request_body["count"] == 1
+    assert captured[0].extra["response_body"] == {"embedding_dims": 4, "count": 1}
+
+
 # ---------------------------------------------------------------------------
 # T-012 — backends: none sentinel (unconditional) + local (skip if absent)
 # ---------------------------------------------------------------------------

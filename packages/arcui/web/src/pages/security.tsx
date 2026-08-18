@@ -1,12 +1,10 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import type { ColumnDef } from '@tanstack/react-table'
-import { ScrollText } from 'lucide-react'
+import { Ban, Check, Circle, ScrollText } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
 import { DataTable } from '@/components/data-table'
 import { FilterPills } from '@/components/filter-pills'
 import { EventDrawer } from '@/components/event-drawer'
-import { StatusChip } from '@/components/ai'
-import { SignedSeal } from '@/components/hitl'
 import { SeverityBadge } from '@/components/status-badge'
 import { QueryState, EmptyState } from '@/components/states'
 import {
@@ -16,8 +14,9 @@ import {
   SignedMark,
 } from '@/components/audit/ledger'
 import { auditField, actorRole, isSigned, isVerified } from '@/components/audit/ledger-utils'
-import { useTeamAudit } from '@/lib/queries'
+import { useTeamAudit, useRoster } from '@/lib/queries'
 import { relativeTime, fmtTime, shortId } from '@/lib/format'
+import { cn } from '@/lib/utils'
 import type { AuditEvent } from '@/lib/types'
 
 // Values drive the (server) query; labels read in operator language.
@@ -168,25 +167,143 @@ export function SecurityPage() {
   )
 }
 
-/** The drawer's signed-chain detail — verdict, the acting agent, and the hash links. */
+// Machine `action` -> plain-language sentence. Anything unmatched degrades to a
+// readable Title-Case of the dotted name (module.bundle.verified -> "Module
+// Bundle Verified"), so an unknown action is never shown raw.
+const ACTION_LABELS: Record<string, string> = {
+  'module.bundle.verified': 'Verified a module bundle',
+  'module.bundle.loaded': 'Loaded a module bundle',
+  'tool.call': 'Called a tool',
+  'tool.result': 'Returned a tool result',
+  'task.approve': 'Approved a task',
+  'task.create': 'Created a task',
+  'task.complete': 'Completed a task',
+  'policy.allow': 'Policy allowed an action',
+  'policy.deny': 'Policy denied an action',
+  'policy.evaluate': 'Evaluated a policy',
+  'skill.verified': 'Verified a skill',
+  'session.start': 'Started a session',
+  'run.start': 'Started a run',
+  'run.complete': 'Completed a run',
+  'memory.write': 'Wrote to memory',
+}
+
+function titleCase(action: string): string {
+  return action
+    .split(/[._-]+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ')
+}
+
+/** Decode the machine `action` into a plain-language description of what happened. */
+function describeAction(action: string | undefined): string {
+  if (!action) return 'Recorded an event'
+  return ACTION_LABELS[action] ?? titleCase(action)
+}
+
+// Turn the acting DID into a name a person recognizes: operator DIDs read as
+// "Operator", agent/spawn DIDs resolve through the roster, else the plain role.
+function resolveActor(did: string | undefined, nameByDid: Map<string, string>): string {
+  if (!did) return 'Unknown'
+  if (did.includes(':operator') || did.includes(':ui')) return 'Operator'
+  const exact = nameByDid.get(did)
+  if (exact) return exact
+  // Spawn DIDs extend a base agent DID with a suffix — match on the prefix.
+  for (const [base, name] of nameByDid) {
+    if (did.startsWith(base)) return name
+  }
+  return actorRole(did)
+}
+
+/** A one-word target ("workpad") reads better title-cased; a path or id stays as-is. */
+function plainTarget(target: string): string {
+  return /^[a-z][a-z0-9_-]*$/.test(target) ? titleCase(target) : target
+}
+
+/** One plain sentence explaining the entry's signed/verified state. */
+function signStateSentence(signed: boolean, verified: boolean): string {
+  if (!signed) return 'This entry carries no signature, so its integrity cannot be checked.'
+  if (verified) return 'This entry is cryptographically signed and verified against a trusted key.'
+  return 'This entry is cryptographically signed but has not been verified against a trusted key yet.'
+}
+
+const POSITIVE_DECISIONS = new Set(['allow', 'allowed', 'applied', 'ok', 'success', 'pass', 'passed'])
+const NEGATIVE_DECISIONS = new Set(['deny', 'denied', 'blocked', 'error', 'fail', 'failed'])
+
+// The decision as a colored chip — green for allow, red for deny — so the verdict
+// reads at a glance. (The shared StatusChip leaves `allow` uncolored, hence this.)
+function DecisionChip({ value }: { value: string | undefined }) {
+  if (!value) return null
+  const v = value.toLowerCase()
+  const positive = POSITIVE_DECISIONS.has(v)
+  const negative = NEGATIVE_DECISIONS.has(v)
+  const tone = positive
+    ? 'bg-status-online/12 text-status-online'
+    : negative
+      ? 'bg-status-error/12 text-status-error'
+      : 'bg-muted text-muted-foreground'
+  const Icon = positive ? Check : negative ? Ban : Circle
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[11px] font-semibold capitalize',
+        tone,
+      )}
+    >
+      <Icon className="size-3" strokeWidth={2.6} />
+      {value.replace(/_/g, ' ')}
+    </span>
+  )
+}
+
+/** The verdict as a graded severity badge, or a plain allow/deny decision chip. */
+function VerdictMark({ value }: { value: string | undefined }) {
+  if (!value) return null
+  if (['critical', 'high', 'medium', 'low'].includes(value.toLowerCase())) {
+    return <SeverityBadge value={value} />
+  }
+  return <DecisionChip value={value} />
+}
+
+/**
+ * The drawer's detail — a plain-language summary (what happened, who did it, the
+ * target, the decision) above the technical fields, hash chain, and raw JSON.
+ */
 function AuditDetail({ event }: { event: AuditEvent }) {
+  const roster = useRoster()
+  const nameByDid = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const a of roster.data?.agents ?? []) {
+      if (a.did) m.set(a.did, a.display_name || a.name || a.agent_id || a.did)
+    }
+    return m
+  }, [roster.data])
+
   const signed = isSigned(event)
   const verified = isVerified(event)
   const verdict = verdictOf(event)
   const agent = agentOf(event)
+  const target = auditField(event, 'target')
+
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        {signed && <SignedSeal />}
-        <span className="text-sm font-semibold text-foreground">
-          {signed ? (verified ? 'Signed & verified' : 'Signed — not verified') : 'Unsigned event'}
-        </span>
-        {verdict &&
-          (['critical', 'high', 'medium', 'low'].includes(verdict.toLowerCase()) ? (
-            <SeverityBadge value={verdict} />
-          ) : (
-            <StatusChip value={verdict} />
-          ))}
+      {/* Plain-language summary — what this entry means, before the raw record. */}
+      <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-3.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <SignedMark event={event} />
+          <span className="text-sm font-semibold text-foreground">
+            {describeAction(actionOf(event))}
+          </span>
+          <VerdictMark value={verdict} />
+        </div>
+        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
+          <Field label="Who">{resolveActor(agent, nameByDid)}</Field>
+          {target && <Field label="Target">{plainTarget(target)}</Field>}
+        </dl>
+        <p className="text-[11px] leading-relaxed text-muted-foreground">
+          {signStateSentence(signed, verified)}
+        </p>
       </div>
 
       <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-xs">
@@ -196,9 +313,9 @@ function AuditDetail({ event }: { event: AuditEvent }) {
             <span className="break-all font-mono text-foreground">{agent}</span>
           </Field>
         )}
-        {auditField(event, 'target') && (
+        {target && (
           <Field label="Target">
-            <span className="break-all font-mono text-foreground">{auditField(event, 'target')}</span>
+            <span className="break-all font-mono text-foreground">{target}</span>
           </Field>
         )}
         {event.seq != null && <Field label="Sequence">#{String(event.seq)}</Field>}

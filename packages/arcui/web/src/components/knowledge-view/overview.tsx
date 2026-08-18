@@ -8,13 +8,10 @@ import {
   ListChecks,
   NotebookPen,
   Share2,
-  SlidersHorizontal,
   Sparkles,
 } from 'lucide-react'
-import { InsightStat } from '@/components/ai'
 import { FileTree } from '@/components/file-tree'
 import { JsonBlock } from '@/components/json-block'
-import { EmptyState } from '@/components/states'
 import { fmtNumber } from '@/lib/format'
 import type { KnowledgeResponse } from '@/lib/queries'
 
@@ -91,10 +88,38 @@ function StatTileLink({
   )
 }
 
+/** A tight one-line stat tile: icon + big number + micro-label, minimal chrome.
+ *  Sized so a full row of six fits without wrapping. */
+function CompactStat({
+  label,
+  value,
+  icon,
+}: {
+  label: string
+  value: ReactNode
+  icon: ReactNode
+}) {
+  return (
+    <div className="flex items-center gap-2.5 rounded-lg border border-border bg-card px-3 py-2 transition-colors hover:border-foreground/15">
+      <span className="shrink-0 text-muted-foreground/70 transition-colors group-hover:text-primary">
+        {icon}
+      </span>
+      <div className="min-w-0">
+        <div className="font-display text-lg font-bold leading-none tabular-nums tracking-tight text-foreground">
+          {value}
+        </div>
+        <div className="truncate text-[9px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+          {label}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 /**
  * The Knowledge overview: a summary-first hero of memory counts that deep-link
- * into each browser, the graph size, the configured context budget, and the
- * agent's workspace tree. Presentation only — the sub-tab browsers own detail.
+ * into each browser, the graph size, and the agent's workspace tree. Presentation
+ * only — the sub-tab browsers own detail.
  */
 export function KnowledgeOverview({
   data,
@@ -110,9 +135,6 @@ export function KnowledgeOverview({
   const context = data.context ?? {}
 
   const totalMemories = MEMORY_TILES.reduce((sum, t) => sum + asCount(memory[t.key]), 0)
-  const contextScalars = Object.entries(context).filter(
-    ([, v]) => typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean',
-  )
 
   return (
     <div className="space-y-8">
@@ -120,16 +142,10 @@ export function KnowledgeOverview({
         <SectionLabel hint={`${fmtNumber(totalMemories)} memories in all`}>
           Knowledge base
         </SectionLabel>
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+        <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
           {MEMORY_TILES.map((t) => (
             <StatTileLink key={t.key} label={t.label} onClick={() => onNavigate(t.tab)}>
-              <InsightStat
-                label={t.label}
-                value={fmtNumber(asCount(memory[t.key]))}
-                icon={
-                  <span className="transition-colors group-hover:text-primary">{t.icon}</span>
-                }
-              />
+              <CompactStat label={t.label} value={fmtNumber(asCount(memory[t.key]))} icon={t.icon} />
             </StatTileLink>
           ))}
         </div>
@@ -137,44 +153,22 @@ export function KnowledgeOverview({
 
       <section className="space-y-3">
         <SectionLabel hint="Entities and their links">Knowledge graph</SectionLabel>
-        <div className="grid grid-cols-2 gap-3 sm:max-w-md">
+        <div className="grid grid-cols-2 gap-2 sm:max-w-xs">
           <StatTileLink label="graph entities" onClick={() => onNavigate('entities')}>
-            <InsightStat
+            <CompactStat
               label="Nodes"
               value={fmtNumber(asCount(graph.nodes))}
-              icon={<Share2 className="size-4 transition-colors group-hover:text-primary" />}
+              icon={<Share2 className="size-4" />}
             />
           </StatTileLink>
           <StatTileLink label="graph links" onClick={() => onNavigate('entities')}>
-            <InsightStat
+            <CompactStat
               label="Links"
               value={fmtNumber(asCount(graph.edges))}
-              icon={<GitBranch className="size-4 transition-colors group-hover:text-primary" />}
+              icon={<GitBranch className="size-4" />}
             />
           </StatTileLink>
         </div>
-      </section>
-
-      <section className="space-y-3">
-        <SectionLabel hint="From this agent's config">Context budget</SectionLabel>
-        {contextScalars.length > 0 ? (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-            {contextScalars.map(([k, v]) => (
-              <InsightStat
-                key={k}
-                label={k.replace(/_/g, ' ')}
-                value={typeof v === 'number' ? fmtNumber(v) : String(v)}
-                icon={<SlidersHorizontal className="size-4" />}
-              />
-            ))}
-          </div>
-        ) : (
-          <EmptyState
-            icon={<SlidersHorizontal className="size-5" />}
-            title="No context budget set"
-            description="This agent has no [context] block in its config, so it runs on the default window."
-          />
-        )}
       </section>
 
       <section className="space-y-3">

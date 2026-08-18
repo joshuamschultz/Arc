@@ -60,13 +60,35 @@ _CASES: list[tuple[type[schemas.BaseModel], dict]] = [
     ),
     (
         schemas.SessionEntry,
-        {"sid": "abc", "path": "sessions/abc.jsonl", "size": 200, "mtime": 1.0},
+        {
+            "sid": "abc",
+            "path": "sessions/abc.jsonl",
+            "size": 200,
+            "mtime": 1.0,
+            "kind": "chat",
+            "counterpart": None,
+            "message_count": None,
+            "last_role": None,
+            "last_text": None,
+            "last_ts": None,
+        },
     ),
     (
         schemas.SessionsListResponse,
         {
             "sessions": [
-                {"sid": "x", "path": "sessions/x.jsonl", "size": 1, "mtime": 0.0},
+                {
+                    "sid": "x",
+                    "path": "sessions/x.jsonl",
+                    "size": 1,
+                    "mtime": 0.0,
+                    "kind": "chat",
+                    "counterpart": None,
+                    "message_count": None,
+                    "last_role": None,
+                    "last_text": None,
+                    "last_ts": None,
+                },
             ],
         },
     ),

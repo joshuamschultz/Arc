@@ -1,7 +1,7 @@
-import { useState, type ReactNode } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { motion } from 'motion/react'
-import { ArrowLeft, Plus, FileText, Pencil } from 'lucide-react'
+import { ArrowLeft, Plus, FileText, Pencil, ChevronLeft, ChevronRight, Mail } from 'lucide-react'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Input } from '@/components/ui/input'
 import { FilterPills } from '@/components/filter-pills'
@@ -1050,6 +1050,13 @@ function PolicyTab({ agentId }: { agentId: string }) {
   )
 }
 
+/**
+ * Prompts as a cover-flow carousel — every stock prompt across every package
+ * flows into ONE deck. The centered card is enlarged and in focus; click it to
+ * open the editor (prose drawer or rubric form). Side cards peek at reduced
+ * scale/opacity; click one, drag, scroll, or arrow-key to bring it to center.
+ * Mirrors the runs Cover Flow interaction (run-coverflow.tsx).
+ */
 function PromptsTab({ agentId }: { agentId: string }) {
   const q = useAgentPrompts(agentId)
   const items = q.data?.items ?? []
@@ -1057,13 +1064,14 @@ function PromptsTab({ agentId }: { agentId: string }) {
     package: string
     name: string
   } | null>(null)
+  const [center, setCenter] = useState(0)
+  const down = useRef(false)
+  const startX = useRef(0)
+  const acc = useRef(0)
 
-  const byPackage = new Map<string, typeof items>()
-  for (const item of items) {
-    const list = byPackage.get(item.package) ?? []
-    list.push(item)
-    byPackage.set(item.package, list)
-  }
+  // Clamp the focused index so a shrinking list never centers off the end.
+  const focus = Math.min(center, Math.max(0, items.length - 1))
+  const go = (n: number) => setCenter(Math.max(0, Math.min(items.length - 1, n)))
 
   return (
     <>
@@ -1078,27 +1086,94 @@ function PromptsTab({ agentId }: { agentId: string }) {
         }
       >
         {() => (
-          <div className="space-y-6">
-            {[...byPackage.entries()].map(([pkg, prompts]) => (
-              <Section key={pkg} title={pkg}>
-                {/* Side-by-side prompt cards — glance across the set, click one
-                    to open it for editing. Motion gives the row a light spring
-                    on enter and a lift on hover so it reads as a gallery. */}
-                <div className="flex snap-x gap-3 overflow-x-auto pb-2">
-                  {prompts.map((p, i) => (
+          <div className="flex flex-col gap-4">
+            <p className="text-xs text-muted-foreground">
+              {items.length} prompt{items.length === 1 ? '' : 's'} across installed packages · swipe,
+              scroll, or arrow to flip — click the centered card to edit.
+            </p>
+
+            <div
+              className="relative h-[420px] cursor-grab overflow-hidden rounded-xl border border-border bg-gradient-to-b from-muted/30 to-transparent [perspective:1600px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 active:cursor-grabbing"
+              tabIndex={0}
+              aria-label="Prompt cover flow"
+              onKeyDown={(e) => {
+                if (e.key === 'ArrowLeft') {
+                  e.preventDefault()
+                  go(focus - 1)
+                }
+                if (e.key === 'ArrowRight') {
+                  e.preventDefault()
+                  go(focus + 1)
+                }
+                if (e.key === 'Enter' || e.key === ' ') {
+                  const p = items[focus]
+                  if (p) {
+                    e.preventDefault()
+                    setSelected({ package: p.package, name: p.name })
+                  }
+                }
+              }}
+              onPointerDown={(e) => {
+                down.current = true
+                startX.current = e.clientX
+                ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+              }}
+              onPointerMove={(e) => {
+                if (!down.current) return
+                const dx = e.clientX - startX.current
+                if (Math.abs(dx) > 70) {
+                  go(focus + (dx < 0 ? 1 : -1))
+                  startX.current = e.clientX
+                }
+              }}
+              onPointerUp={() => {
+                down.current = false
+              }}
+              onWheel={(e) => {
+                acc.current += e.deltaY + e.deltaX
+                if (Math.abs(acc.current) > 60) {
+                  go(focus + (acc.current > 0 ? 1 : -1))
+                  acc.current = 0
+                }
+              }}
+            >
+              <div className="absolute inset-0 flex items-center justify-center">
+                {items.map((p, i) => {
+                  const o = i - focus
+                  const ax = Math.abs(o)
+                  const isFocus = o === 0
+                  return (
                     <motion.button
-                      key={p.name}
+                      key={`${p.package}/${p.name}`}
                       type="button"
-                      onClick={() => setSelected({ package: p.package, name: p.name })}
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: Math.min(i * 0.03, 0.3), type: 'spring', stiffness: 320, damping: 26 }}
-                      whileHover={{ y: -4 }}
-                      whileTap={{ scale: 0.98 }}
-                      className="group flex w-[240px] shrink-0 snap-start flex-col gap-2 rounded-xl border border-border bg-card p-4 text-left shadow-sm transition-colors hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+                      aria-label={`${p.name} (${p.package})${isFocus ? ' — click to edit' : ''}`}
+                      onClick={() =>
+                        isFocus ? setSelected({ package: p.package, name: p.name }) : go(i)
+                      }
+                      initial={false}
+                      animate={{
+                        x: o * 260,
+                        z: -ax * 180 + (isFocus ? 60 : 0),
+                        rotateY: -o * 38,
+                        scale: isFocus ? 1.06 : 0.9,
+                        opacity: ax > 3 ? 0 : 1,
+                      }}
+                      transition={{ type: 'spring', stiffness: 260, damping: 30 }}
+                      style={{
+                        position: 'absolute',
+                        transformStyle: 'preserve-3d',
+                        zIndex: 100 - ax,
+                        pointerEvents: ax > 3 ? 'none' : 'auto',
+                      }}
+                      className={cn(
+                        'flex w-[300px] flex-col gap-3 rounded-2xl border bg-card p-5 text-left shadow-lg',
+                        isFocus ? 'border-primary/40' : 'border-border',
+                      )}
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <FileText className="size-4 text-muted-foreground" />
+                        <span className="truncate rounded-full border border-border bg-muted/50 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+                          {p.package}
+                        </span>
                         <span
                           className={cn(
                             'shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide',
@@ -1110,18 +1185,53 @@ function PromptsTab({ agentId }: { agentId: string }) {
                           {p.status}
                         </span>
                       </div>
-                      <div className="truncate font-mono text-xs font-semibold text-foreground">{p.name}</div>
-                      <div className="line-clamp-3 text-[11px] leading-relaxed text-muted-foreground">
-                        {p.description}
+                      <div className="flex items-center gap-2">
+                        <FileText className="size-4 shrink-0 text-muted-foreground" />
+                        <span className="truncate font-mono text-sm font-semibold text-foreground">
+                          {p.name}
+                        </span>
                       </div>
-                      <div className="mt-auto flex items-center gap-1 pt-1 text-[10px] font-medium text-primary opacity-0 transition-opacity group-hover:opacity-100">
-                        <Pencil className="size-3" /> Click to edit
+                      <p className="line-clamp-4 text-[11px] leading-relaxed text-muted-foreground">
+                        {p.description}
+                      </p>
+                      <div className="mt-auto flex items-center gap-1 border-t border-border pt-3 text-[11px] font-semibold">
+                        {isFocus ? (
+                          <span className="flex items-center gap-1 text-primary">
+                            <Pencil className="size-3" /> Click to edit
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground/70">Bring to front</span>
+                        )}
                       </div>
                     </motion.button>
-                  ))}
-                </div>
-              </Section>
-            ))}
+                  )
+                })}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-center gap-4">
+              <button
+                type="button"
+                onClick={() => go(focus - 1)}
+                disabled={focus <= 0}
+                className="grid size-9 place-items-center rounded-lg border border-border text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
+                aria-label="Previous prompt"
+              >
+                <ChevronLeft className="size-4" />
+              </button>
+              <span className="min-w-16 text-center font-mono text-xs tabular-nums text-muted-foreground">
+                {focus + 1} / {items.length}
+              </span>
+              <button
+                type="button"
+                onClick={() => go(focus + 1)}
+                disabled={focus >= items.length - 1}
+                className="grid size-9 place-items-center rounded-lg border border-border text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
+                aria-label="Next prompt"
+              >
+                <ChevronRight className="size-4" />
+              </button>
+            </div>
           </div>
         )}
       </QueryState>
@@ -1452,6 +1562,103 @@ function RunsTab({ agentId }: { agentId: string }) {
   )
 }
 
+/**
+ * One inbox thread, rendered like a mail row: an unread dot, a sender/subject
+ * label, an optional one-line preview, a right-aligned relative time, and
+ * read / responded badges.
+ *
+ * DATA REALITY: the sessions endpoint (`SessionEntry`, extra="forbid") exposes
+ * only `sid` / `path` / `size` / `mtime` — no per-thread sender, body preview,
+ * read flag, or responded flag. So the label falls back to the thread id,
+ * "unread" is a recency proxy (touched in the last 24h), the preview falls back
+ * to the short thread id, and the responded badge only appears when an optional
+ * `last_role` / `responded` field is actually present on the object. See the
+ * task summary for the backend fields that would make these exact.
+ */
+function InboxRow({ s, onOpen }: { s: Dict; onOpen: () => void }) {
+  const sid = String(s.sid ?? '')
+  const label =
+    String(s.from ?? s.sender ?? s.title ?? s.subject ?? '').trim() || `Thread ${shortId(sid, 10)}`
+  const preview = String(s.preview ?? s.snippet ?? s.last_text ?? '').trim()
+  const when = (s.updated_at ?? s.mtime) as string | number | undefined
+  const rawTs = Number(s.updated_at ?? s.mtime ?? 0)
+  const ms = rawTs < 1e12 ? rawTs * 1000 : rawTs
+  // Stable "now" captured once so the unread check stays pure across re-renders.
+  const [now] = useState(() => Date.now())
+  const unread = ms > 0 && now - ms < 24 * 60 * 60 * 1000
+  // Only claim "responded" when the summary actually carries the signal.
+  const lastRole = s.last_role != null ? String(s.last_role) : null
+  const responded =
+    s.responded != null ? Boolean(s.responded) : lastRole ? lastRole === 'assistant' : null
+
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={onOpen}
+        className="flex w-full items-start gap-3 bg-card px-3 py-2.5 text-left transition-colors hover:bg-muted/40"
+      >
+        <span
+          className={cn(
+            'mt-1.5 size-2 shrink-0 rounded-full',
+            unread ? 'bg-status-online' : 'border border-border bg-transparent',
+          )}
+          aria-hidden
+        />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span
+              className={cn(
+                'min-w-0 flex-1 truncate text-sm text-foreground',
+                unread && 'font-semibold',
+              )}
+            >
+              {label}
+            </span>
+            <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+              {relativeTime(when)}
+            </span>
+          </div>
+          <div className="mt-0.5 flex items-center gap-2">
+            <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+              {preview || (
+                <span className="font-mono text-[11px] text-muted-foreground/70">
+                  {shortId(sid, 20)}
+                </span>
+              )}
+            </span>
+            <span
+              className={cn(
+                'shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide',
+                unread ? 'bg-status-online/15 text-status-online' : 'bg-muted text-muted-foreground',
+              )}
+            >
+              {unread ? 'unread' : 'read'}
+            </span>
+            {responded != null && (
+              <span
+                className={cn(
+                  'shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide',
+                  responded
+                    ? 'bg-muted text-muted-foreground'
+                    : 'bg-status-warning/15 text-status-warning',
+                )}
+              >
+                {responded ? 'replied' : 'awaiting'}
+              </span>
+            )}
+            {s.size != null && (
+              <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/60">
+                {fmtBytes(Number(s.size))}
+              </span>
+            )}
+          </div>
+        </div>
+      </button>
+    </li>
+  )
+}
+
 /** Inbox — everything arriving at this agent, in one structured place: what is
  *  waiting on a human (approvals, review), where it receives (delivery
  *  channels), and its incoming message threads. */
@@ -1468,7 +1675,9 @@ function InboxTab({ agentId }: { agentId: string }) {
   const approvals = (approvalsQ.data?.approvals ?? []).filter((a) => a.agent_did === did)
   const channels = channelsQ.data?.channels ?? []
   const sessions = (sessionsQ.data?.sessions ?? []) as unknown as Dict[]
-  const inbox = sessions.filter((s) => /messag|inbox/i.test(String(s.sid ?? '')))
+  const inbox = sessions
+    .filter((s) => /messag|inbox/i.test(String(s.sid ?? '')))
+    .sort((a, b) => Number(b.mtime ?? b.updated_at ?? 0) - Number(a.mtime ?? a.updated_at ?? 0))
   const tasks = (tasksQ.data?.tasks ?? []) as unknown as Dict[]
   const reviewTasks = tasks.filter((t) => String(t.status) === 'review')
 
@@ -1521,33 +1730,25 @@ function InboxTab({ agentId }: { agentId: string }) {
 
       <Section title="Inbox threads">
         {inbox.length === 0 ? (
-          <EmptyState title="No inbox messages" description="Direct messages and mentions to this agent land here." />
+          <EmptyState
+            title="No inbox messages"
+            description="Direct messages and mentions to this agent land here."
+          />
         ) : (
-          <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border">
-            {inbox.map((s) => (
-              <li key={String(s.sid)}>
-                <button
-                  type="button"
-                  onClick={() => setActive(String(s.sid))}
-                  className="flex w-full items-center justify-between gap-3 bg-card px-3 py-2 text-left text-sm transition-colors hover:bg-muted/40"
-                >
-                  <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-foreground">
-                    {String(s.sid)}
-                  </span>
-                  {s.messages != null && (
-                    <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-                      {String(s.messages)} msgs
-                    </span>
-                  )}
-                  {s.updated_at != null && (
-                    <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground/70">
-                      {relativeTime(String(s.updated_at))}
-                    </span>
-                  )}
-                </button>
-              </li>
-            ))}
-          </ul>
+          <div className="space-y-2">
+            <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <Mail className="size-3.5" /> Unread = touched in the last 24h · newest first
+            </div>
+            <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border">
+              {inbox.map((s) => (
+                <InboxRow
+                  key={String(s.sid)}
+                  s={s}
+                  onOpen={() => setActive(String(s.sid))}
+                />
+              ))}
+            </ul>
+          </div>
         )}
       </Section>
 

@@ -1,8 +1,8 @@
-import { Link2, Lock } from 'lucide-react'
+import { Clock, Link2, Lock } from 'lucide-react'
 import { SeverityBadge } from '@/components/status-badge'
 import { StatusChip } from '@/components/ai'
 import { cn } from '@/lib/utils'
-import { shortId } from '@/lib/format'
+import { fmtTime, relativeTime, shortId } from '@/lib/format'
 import type { Task } from '@/lib/types'
 
 /** One kanban card — title, priority, owner, status, blocked badge, run link. */
@@ -17,6 +17,8 @@ export function TaskCard({
   blocked: boolean
   onClick: () => void
 }) {
+  const timestamp = task.updated_at ?? task.created_at ?? null
+  const blockedCount = task.blocked_by?.length ?? 0
   return (
     <button
       type="button"
@@ -40,19 +42,33 @@ export function TaskCard({
           {blocked && (
             <span
               className="flex items-center gap-1 rounded-md bg-status-warning/15 px-1.5 py-0.5 text-[11px] font-semibold text-status-warning"
-              title="Blocked on unfinished dependencies"
+              title={`Blocked on ${blockedCount || 'unfinished'} ${
+                blockedCount === 1 ? 'dependency' : 'dependencies'
+              }`}
             >
-              <Lock className="size-3" /> blocked
+              <Lock className="size-3" /> blocked{blockedCount > 0 && ` ${blockedCount}`}
             </span>
           )}
           <StatusChip value={task.status} />
         </div>
       </div>
 
-      {task.run_id && (
-        <div className="flex items-center gap-1.5 border-t border-border/60 pt-2 font-mono text-[11px] text-muted-foreground">
-          <Link2 className="size-3 shrink-0" />
-          {shortId(task.run_id, 8)}
+      {(timestamp || task.run_id) && (
+        <div className="flex items-center justify-between gap-2 border-t border-border/60 pt-2 text-[11px] text-muted-foreground">
+          {timestamp ? (
+            <span className="flex items-center gap-1" title={fmtTime(timestamp)}>
+              <Clock className="size-3 shrink-0" />
+              {relativeTime(timestamp)}
+            </span>
+          ) : (
+            <span />
+          )}
+          {task.run_id && (
+            <span className="flex items-center gap-1 font-mono">
+              <Link2 className="size-3 shrink-0" />
+              {shortId(task.run_id, 8)}
+            </span>
+          )}
         </div>
       )}
     </button>

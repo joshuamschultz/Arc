@@ -1,10 +1,66 @@
 import { useState } from 'react'
 import { EmptyState, ErrorState, LoadingRows, QueryState } from '@/components/states'
-import { useAgentDailyNote, useAgentDailyNotes } from '@/lib/queries'
+import { useAgentDailyNote, useAgentDailyNotes, useRoster } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 import type { DailyNoteDetail } from '@/lib/types'
 
 const _WIKI_LINK = /\[\[([^\]]+)\]\]/g
+
+/** The agent a note belongs to — its display name and roster color (a dot). */
+interface NoteAgent {
+  name: string
+  color: string
+}
+
+type NoteSource = 'script' | 'skill' | 'agent'
+
+/** Chip palette for the note's source: script=blue, skill=violet, agent=emerald. */
+const _SOURCE_STYLES: Record<NoteSource, string> = {
+  script: 'border-blue-500/30 bg-blue-500/10 text-blue-400',
+  skill: 'border-violet-500/30 bg-violet-500/10 text-violet-400',
+  agent: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400',
+}
+
+/**
+ * Classify what produced a curated daily note. The on-disk note carries no source
+ * field (only `day` + `classification`), so we read an optional `source`/`origin`
+ * if the store ever stamps one and otherwise fall back to `agent` — consolidation
+ * (the agent's own sleep pass) is what authors these rollups today.
+ */
+function noteSource(meta: object): NoteSource {
+  const m = meta as { source?: string; origin?: string }
+  const raw = String(m.source ?? m.origin ?? '').toLowerCase()
+  if (raw === 'script' || raw === 'skill' || raw === 'agent') return raw
+  return 'agent'
+}
+
+/** A small color-coded chip naming the note's source (script / skill / agent). */
+function SourceTag({ source }: { source: NoteSource }) {
+  return (
+    <span
+      className={cn(
+        'shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide',
+        _SOURCE_STYLES[source],
+      )}
+    >
+      {source}
+    </span>
+  )
+}
+
+/** A dot + name chip identifying the owning agent, tinted with its roster color. */
+function AgentTag({ agent }: { agent: NoteAgent }) {
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+      <span
+        aria-hidden
+        className="size-1.5 rounded-full"
+        style={{ background: agent.color || 'var(--primary)' }}
+      />
+      {agent.name}
+    </span>
+  )
+}
 
 /** Render a bullet's text, lightly styling `[[slug]]` wiki-links inline. */
 function Bullet({ text }: { text: string }) {
@@ -38,7 +94,7 @@ const _SECTIONS: [keyof Omit<DailyNoteDetail, 'day' | 'classification'>, string]
   ['tasks', 'Tasks'],
 ]
 
-function DayDetail({ agentId, day }: { agentId: string; day: string }) {
+function DayDetail({ agentId, day, agent }: { agentId: string; day: string; agent: NoteAgent }) {
   const query = useAgentDailyNote(agentId, day)
   if (query.isLoading) return <LoadingRows rows={8} />
   if (query.isError) return <ErrorState error={query.error} />
@@ -49,11 +105,13 @@ function DayDetail({ agentId, day }: { agentId: string; day: string }) {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between border-b border-border px-4 py-2 text-xs text-muted-foreground">
+      <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2 text-xs text-muted-foreground">
         <span className="rounded-sm border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-foreground">
           {detail.day}
         </span>
-        <span className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+        <AgentTag agent={agent} />
+        <SourceTag source={noteSource(detail)} />
+        <span className="ml-auto rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
           {detail.classification}
         </span>
       </div>
@@ -84,7 +142,14 @@ function DayDetail({ agentId, day }: { agentId: string; day: string }) {
  *  Goals/Tasks), following FileTree's left-list/right-detail layout. */
 export function DailyNotesBrowser({ agentId }: { agentId: string }) {
   const notes = useAgentDailyNotes(agentId)
+  const roster = useRoster()
   const [selected, setSelected] = useState<string | null>(null)
+
+  const match = (roster.data?.agents ?? []).find((a) => a.agent_id === agentId)
+  const agent: NoteAgent = {
+    name: match?.display_name || match?.name || agentId,
+    color: typeof match?.color === 'string' ? match.color : '',
+  }
 
   return (
     <QueryState
@@ -120,8 +185,11 @@ export function DailyNotesBrowser({ agentId }: { agentId: string }) {
                     )}
                   >
                     <span className="font-mono text-xs">{meta.day}</span>
-                    <span className="shrink-0 rounded-full border border-border bg-muted/40 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-                      {meta.classification}
+                    <span className="flex shrink-0 items-center gap-1">
+                      <SourceTag source={noteSource(meta)} />
+                      <span className="rounded-full border border-border bg-muted/40 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                        {meta.classification}
+                      </span>
                     </span>
                   </button>
                 </li>
@@ -130,7 +198,7 @@ export function DailyNotesBrowser({ agentId }: { agentId: string }) {
           </div>
           <div className="overflow-hidden">
             {active ? (
-              <DayDetail agentId={agentId} day={active} />
+              <DayDetail agentId={agentId} day={active} agent={agent} />
             ) : (
               <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
                 Select a day to view

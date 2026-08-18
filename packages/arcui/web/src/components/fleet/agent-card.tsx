@@ -1,6 +1,6 @@
-import { SignedSeal } from '@/components/hitl'
+import { Activity } from 'lucide-react'
 import { useAgentTimeseries } from '@/lib/queries'
-import { initials } from '@/lib/format'
+import { fmtNumber, initials } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import type { Agent } from '@/lib/types'
 
@@ -8,7 +8,6 @@ import type { Agent } from '@/lib/types'
 type FleetAgent = Agent & {
   activity?: string
   current_action?: string
-  signed_today?: number
 }
 
 /**
@@ -32,9 +31,26 @@ function Sparkline({ values }: { values: number[] }) {
   )
 }
 
-function CardSpark({ agentId }: { agentId: string }) {
+/**
+ * Proof-of-work footer: a live count of the agent's LLM calls over the last 24h
+ * beside the token sparkline — one timeseries fetch feeds both. Replaces the
+ * always-zero "signed today" line, which no roster/registry field populated.
+ */
+function CardFooter({ agentId }: { agentId: string }) {
   const ts = useAgentTimeseries(agentId, '24h')
-  return <Sparkline values={(ts.data?.buckets ?? []).map((b) => b.total_tokens ?? 0)} />
+  const buckets = ts.data?.buckets ?? []
+  const calls = buckets.reduce((sum, b) => sum + (b.request_count ?? 0), 0)
+  return (
+    <>
+      <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-[11px] font-medium text-muted-foreground">
+        <Activity className="size-3.5 text-primary/70" />
+        {fmtNumber(calls)} calls today
+      </span>
+      <div className="w-24">
+        <Sparkline values={buckets.map((b) => b.total_tokens ?? 0)} />
+      </div>
+    </>
+  )
 }
 
 const ACTIVITY_DOT: Record<string, string> = {
@@ -59,8 +75,8 @@ function ActivityBadge({ activity, online }: { activity?: string; online?: boole
 
 /**
  * Agent card, mockup-faithful: who the agent is, what it's doing right now, and
- * a calm proof-of-work footer — how many actions it has signed today, with a
- * 24h activity sparkline. The whole card opens the agent's detail.
+ * a calm proof-of-work footer — how many LLM calls it has made today, with a
+ * 24h token-activity sparkline. The whole card opens the agent's detail.
  */
 export function AgentCard({ agent, onOpen }: { agent: Agent; onOpen: () => void }) {
   const a = agent as FleetAgent
@@ -96,14 +112,10 @@ export function AgentCard({ agent, onOpen }: { agent: Agent; onOpen: () => void 
       </div>
 
       <div className="mt-auto flex items-end justify-between gap-4 border-t border-border/60 pt-3">
-        <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-[11px] font-medium text-signed">
-          <SignedSeal className="size-3.5" />
-          {a.signed_today ?? 0} signed today
-        </span>
-        {a.agent_id && (
-          <div className="w-24">
-            <CardSpark agentId={a.agent_id} />
-          </div>
+        {a.agent_id ? (
+          <CardFooter agentId={a.agent_id} />
+        ) : (
+          <span className="text-[11px] font-medium text-muted-foreground">No activity yet</span>
         )}
       </div>
     </button>

@@ -46,5 +46,6 @@ def test_woff2_binaries_present() -> None:
     woff2 = list(_ASSETS_DIR.glob("*.woff2"))
     assert woff2, "no WOFF2 font binaries in static/assets — fonts not self-hosted"
     names = " ".join(p.name for p in woff2).lower()
-    assert "jakarta" in names, "Plus Jakarta Sans WOFF2 missing"
+    assert "hanken-grotesk" in names, "Hanken Grotesk (body) WOFF2 missing"
+    assert "bricolage-grotesque" in names, "Bricolage Grotesque (display) WOFF2 missing"
     assert "plex-mono" in names or "plexmono" in names, "IBM Plex Mono WOFF2 missing"

@@ -220,7 +220,17 @@ class RubricResponse(BaseModel):
 
 
 class SessionEntry(BaseModel):
-    """One row in the per-agent sessions list."""
+    """One row in the per-agent sessions list.
+
+    The trailing fields enrich the Inbox tab: ``kind`` classifies the session
+    (``messaging`` teammate DM, ``chat`` human, or the sid namespace for
+    ``cli``/``pulse``/``scheduler``/…); ``counterpart`` is the teammate's display
+    name when the sid resolves to a known peer (``None`` otherwise — a human
+    correspondent's DID is not recoverable from the one-way session key);
+    ``message_count``/``last_role``/``last_text``/``last_ts`` come from a bounded
+    read of the session transcript (all ``None`` when the file is unreadable or
+    too large).
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -228,6 +238,12 @@ class SessionEntry(BaseModel):
     path: str
     size: int
     mtime: float
+    kind: str = "chat"
+    counterpart: str | None = None
+    message_count: int | None = None
+    last_role: str | None = None
+    last_text: str | None = None
+    last_ts: str | None = None
 
 
 class SessionsListResponse(BaseModel):

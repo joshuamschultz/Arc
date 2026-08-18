@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 from arcgateway import fs_reader
 from arcgateway.fs_reader import FileTooLargeError, PathTraversalError
+from arctrust.session_identity import build_session_key
 from pydantic import BaseModel
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -22,6 +24,102 @@ from arcui.schemas import (
     SessionsListResponse,
     TasksResponse,
 )
+
+# Preview snippet cap for the Inbox row — enough to identify the message,
+# never the whole body.
+_PREVIEW_MAX = 240
+
+
+def _peer_map(request: Request, agent_did: str | None) -> dict[str, str]:
+    """Reverse-resolve teammate DM sessions → the peer's display name.
+
+    A messaging session is named ``build_session_key(agent_did, peer_did)`` — a
+    one-way hash, so the peer DID cannot be read back from the sid. Instead we
+    forward-hash every known teammate's DID against this agent's DID and match:
+    deterministic, no reversal, and it doubles as the ``messaging`` classifier.
+    Human correspondents are not on the roster, so their sessions stay opaque.
+    """
+    provider = getattr(request.app.state, "roster_provider", None)
+    if provider is None or not agent_did:
+        return {}
+    out: dict[str, str] = {}
+    for entry in provider():
+        peer_did = getattr(entry, "did", "")
+        if not peer_did or peer_did == agent_did:
+            continue
+        label = getattr(entry, "display_name", "") or getattr(entry, "name", "") or peer_did
+        out[build_session_key(agent_did, peer_did)] = label
+    return out
+
+
+def _session_kind(sid: str, peer_map: dict[str, str]) -> str:
+    """Classify a session for the Inbox filter.
+
+    A teammate DM (sid resolves to a known peer) is ``messaging``; a namespaced
+    sid (``cli:run:…``, ``pulse:tick``, ``serve:stdin``) is its namespace; a bare
+    key that matches no peer is a human ``chat``.
+    """
+    if sid in peer_map:
+        return "messaging"
+    if ":" in sid:
+        return sid.split(":", 1)[0]
+    return "chat"
+
+
+def _extract_text(content: Any) -> str:
+    """Flatten a message ``content`` (string or list of parts) to plain text."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = [str(p["text"]) for p in content if isinstance(p, dict) and "text" in p]
+        return " ".join(parts)
+    return str(content) if content is not None else ""
+
+
+def _summarize_transcript(text: str) -> tuple[int | None, str | None, str | None, str | None]:
+    """Fold a session JSONL into (message_count, last_role, last_text, last_ts).
+
+    Counts only ``type == "message"`` lines (``checkpoint`` lines are loop
+    metadata, not turns) and reads the last one's role/preview/timestamp.
+    """
+    count = 0
+    last: dict[str, Any] | None = None
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict) and obj.get("type") == "message":
+            count += 1
+            last = obj
+    if last is None:
+        return (count if count else None), None, None, None
+    preview = _extract_text(last.get("content")).strip()[:_PREVIEW_MAX] or None
+    return count, last.get("role"), preview, last.get("timestamp")
+
+
+def _read_session_summary(
+    agent_id: str, workspace: Path, sid: str
+) -> tuple[int | None, str | None, str | None, str | None]:
+    """Bounded read of one session transcript for the Inbox row.
+
+    Degrades to all-``None`` when the file is missing, too large (fs_reader caps
+    at 1 MiB), or blocked — the row still renders with its cheap metadata.
+    """
+    try:
+        content = fs_reader.read_file(
+            scope="agent",
+            agent_id=agent_id,
+            agent_root=workspace,
+            rel_path=f"sessions/{sid}.jsonl",
+            caller_did=_CALLER_DID,
+        )
+    except (FileNotFoundError, PathTraversalError, FileTooLargeError, OSError):
+        return None, None, None, None
+    return _summarize_transcript(content.content)
 
 
 async def get_sessions(request: Request) -> JSONResponse:
@@ -49,17 +147,25 @@ async def get_sessions(request: Request) -> JSONResponse:
             status_code=400,
         )
 
+    peer_map = _peer_map(request, _agent_did(request, agent_id))
     sessions: list[SessionEntry] = []
     for entry in entries:
         if entry.type != "file" or not entry.path.endswith(".jsonl"):
             continue
         sid = entry.path.rsplit("/", 1)[-1].removesuffix(".jsonl")
+        count, last_role, last_text, last_ts = _read_session_summary(agent_id, workspace, sid)
         sessions.append(
             SessionEntry(
                 sid=sid,
                 path=entry.path,
                 size=entry.size,
                 mtime=entry.mtime,
+                kind=_session_kind(sid, peer_map),
+                counterpart=peer_map.get(sid),
+                message_count=count,
+                last_role=last_role,
+                last_text=last_text,
+                last_ts=last_ts,
             )
         )
     sessions.sort(key=lambda s: float(s.mtime), reverse=True)

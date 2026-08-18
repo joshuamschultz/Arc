@@ -84,7 +84,7 @@ export function ToolDrawer({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-xl">
+      <SheetContent side="right" className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl lg:max-w-3xl">
         <SheetHeader className="border-b border-border px-5 py-4">
           <SheetTitle className="font-mono text-sm">{toolName}</SheetTitle>
           {detail.data && (

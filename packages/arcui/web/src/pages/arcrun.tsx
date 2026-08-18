@@ -156,16 +156,7 @@ export function ArcRunPage() {
 
         <main className="flex-1 overflow-auto">
           <RunRiver run={active} />
-          {active && (
-            <div className="border-t border-border p-6">
-              <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-                Spawn lineage
-              </h3>
-              <div className="rounded-lg border border-border bg-card p-4">
-                <SpawnLineage root={null} />
-              </div>
-            </div>
-          )}
+          {active && <SpawnLineage root={active.actor_did ?? null} />}
         </main>
       </div>
       )}

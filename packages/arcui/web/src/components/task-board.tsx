@@ -1,5 +1,6 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { TaskCard } from '@/components/task-card'
+import { FilterPills } from '@/components/filter-pills'
 import { isBlocked } from '@/lib/tasks'
 import { cn } from '@/lib/utils'
 import type { Task, TaskStatus } from '@/lib/types'
@@ -14,6 +15,22 @@ const COLUMNS: { id: TaskStatus; label: string; dot: string }[] = [
   { id: 'done', label: 'Done', dot: 'bg-status-online' },
   { id: 'failed', label: 'Failed', dot: 'bg-status-error' },
 ]
+
+// Time-scope pills. Default is 7 days so a long-lived `done` column stops
+// dominating the board; `all` disables the window entirely.
+const SCOPES: { value: string; label: string; days: number | null }[] = [
+  { value: '1', label: '1 day', days: 1 },
+  { value: '7', label: '7 days', days: 7 },
+  { value: '30', label: '30 days', days: 30 },
+  { value: 'all', label: 'All', days: null },
+]
+
+/** Most recent activity on a task, in epoch ms — updated_at, else created_at. */
+function recency(t: Task): number {
+  const stamp = t.updated_at ?? t.created_at
+  const ms = stamp ? Date.parse(stamp) : NaN
+  return Number.isNaN(ms) ? 0 : ms
+}
 
 /** Kanban board — one column per `TaskStatus`, plus a `failed` lane.
  *
@@ -35,25 +52,48 @@ export function TaskBoard({
   onSelectTask: (task: Task) => void
   focusStatus?: TaskStatus | 'all'
 }) {
+  const [scope, setScope] = useState('7')
+
+  // `statusById` covers the FULL task set (blocked-dependency lookups must see
+  // dependencies even when the time window hides them), while the columns only
+  // render tasks inside the window.
   const statusById = useMemo(() => {
     const m = new Map<string, string>()
     for (const t of tasks) if (t.id) m.set(t.id, t.status ?? 'backlog')
     return m
   }, [tasks])
 
+  // Captured once at mount: a stable "now" keeps the window filter pure across
+  // re-renders (calling Date.now() during render is an impurity the linter flags).
+  const [now] = useState(() => Date.now())
+  const scoped = useMemo(() => {
+    const days = SCOPES.find((s) => s.value === scope)?.days ?? null
+    if (days == null) return tasks
+    const cutoff = now - days * 86_400_000
+    return tasks.filter((t) => recency(t) >= cutoff)
+  }, [tasks, scope, now])
+
   const byColumn = useMemo(() => {
     const grouped = new Map<TaskStatus, Task[]>(COLUMNS.map((c) => [c.id, []]))
-    for (const t of tasks) {
+    for (const t of scoped) {
       const col = grouped.get((t.status ?? 'backlog') as TaskStatus)
       if (col) col.push(t)
     }
+    // Most-recent-first within each lane so live work sits at the top.
+    for (const col of grouped.values()) col.sort((a, b) => recency(b) - recency(a))
     return grouped
-  }, [tasks])
+  }, [scoped])
 
   const columns = focusStatus === 'all' ? COLUMNS : COLUMNS.filter((c) => c.id === focusStatus)
 
   return (
-    <div className="flex h-full gap-3 overflow-x-auto pb-2">
+    <div className="flex h-full flex-col gap-3">
+      <FilterPills
+        value={scope}
+        onChange={setScope}
+        options={SCOPES.map((s) => ({ value: s.value, label: s.label }))}
+      />
+      <div className="flex flex-1 gap-3 overflow-x-auto pb-2">
       {columns.map((col) => {
         const items = byColumn.get(col.id) ?? []
         return (
@@ -90,6 +130,7 @@ export function TaskBoard({
           </div>
         )
       })}
+      </div>
     </div>
   )
 }

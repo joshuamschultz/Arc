@@ -28,6 +28,7 @@ import os
 from pathlib import Path
 
 from arcgateway import team_roster
+from arctrust.session_identity import build_session_key
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
@@ -134,6 +135,66 @@ def test_session_list_is_newest_first(tmp_path: Path) -> None:
 
     assert next(r["sid"] for r in rows) == "session-002"
     assert [r["mtime"] for r in rows] == sorted((r["mtime"] for r in rows), reverse=True)
+
+
+_DM_TURNS: tuple[dict[str, object], ...] = (
+    {
+        "type": "message",
+        "role": "user",
+        "content": "Message from did:arc:beta (chat, normal priority):\n> ping",
+        "timestamp": "2026-08-12T09:00:00+00:00",
+    },
+    {
+        "type": "message",
+        "role": "assistant",
+        "content": "on it",
+        "timestamp": "2026-08-12T09:00:05+00:00",
+    },
+    # A checkpoint line is loop metadata, not a turn — it must not be counted.
+    {"type": "checkpoint", "turn_count": 1, "timestamp": "2026-08-12T09:00:06+00:00"},
+)
+
+
+def _add_teammate(team_root: Path, name: str, did: str) -> None:
+    agent = team_root / f"{name}_agent"
+    (agent / "workspace" / "sessions").mkdir(parents=True)
+    (agent / "arcagent.toml").write_text(
+        f'[agent]\nname = "{name}"\norg = "research"\ntype = "scout"\n'
+        f'[identity]\ndid = "{did}"\n',
+        encoding="utf-8",
+    )
+
+
+def test_session_list_enriches_inbox_fields(tmp_path: Path) -> None:
+    """Inbox needs kind/counterpart/message_count/last_role/last_text/last_ts.
+
+    A teammate DM resolves to the peer's name via forward-hashing the roster; a
+    bare human-chat key resolves to no peer and stays ``kind=chat``.
+    """
+    team = _build_team_dir(tmp_path)
+    _add_teammate(team, "beta", "did:arc:beta")
+    sessions = team / "alpha_agent" / "workspace" / "sessions"
+    dm_sid = build_session_key("did:arc:alpha", "did:arc:beta")
+    _write_session(sessions, dm_sid, _DM_TURNS)
+
+    app, auth = _make_app(team)
+    client = TestClient(app)
+    rows = client.get(f"/api/agents/{_AGENT}/sessions", headers=_viewer(auth)).json()["sessions"]
+
+    dm = next(r for r in rows if r["sid"] == dm_sid)
+    assert dm["kind"] == "messaging"
+    assert dm["counterpart"] == "beta"
+    assert dm["message_count"] == 2  # checkpoint line excluded
+    assert dm["last_role"] == "assistant"
+    assert dm["last_text"] == "on it"
+    assert dm["last_ts"] == "2026-08-12T09:00:05+00:00"
+
+    chat = next(r for r in rows if r["sid"] == "session-001")
+    assert chat["kind"] == "chat"
+    assert chat["counterpart"] is None
+    assert chat["message_count"] == 3
+    assert chat["last_role"] == "user"
+    assert chat["last_text"] == "go"
 
 
 def test_session_list_unknown_agent_is_404(tmp_path: Path) -> None:

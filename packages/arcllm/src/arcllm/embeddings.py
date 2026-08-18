@@ -81,6 +81,32 @@ def _count_tokens(texts: list[str]) -> int:
     return sum(max(1, len(t.split())) for t in texts)
 
 
+# Cap embed trace bodies: a single embed can batch many memory lines at once
+# (consolidation), so the input text is truncated before it rides the spool.
+# The output vectors are NEVER stored — only their shape (dims + count).
+_MAX_EMBED_INPUTS = 8
+_MAX_EMBED_INPUT_CHARS = 500
+
+
+def _embed_request_body(texts: list[str], *, store_raw: bool) -> dict[str, Any]:
+    """Compact request descriptor for an embed call, for trace visibility.
+
+    Carries the input text only when raw-body capture is enabled (mirrors the
+    completion path's ``store_raw_bodies`` gate); otherwise just the shape.
+    """
+    body: dict[str, Any] = {"count": len(texts), "total_chars": sum(len(t) for t in texts)}
+    if store_raw:
+        body["input"] = [t[:_MAX_EMBED_INPUT_CHARS] for t in texts[:_MAX_EMBED_INPUTS]]
+        if len(texts) > _MAX_EMBED_INPUTS:
+            body["inputs_omitted"] = len(texts) - _MAX_EMBED_INPUTS
+    return body
+
+
+def _embed_response_body(dims: int, count: int) -> dict[str, Any]:
+    """Compact response descriptor — the vector shape, never the vectors."""
+    return {"embedding_dims": dims, "count": count}
+
+
 # ---------------------------------------------------------------------------
 # Backends
 # ---------------------------------------------------------------------------
@@ -351,11 +377,23 @@ def _emit_telemetry(
     usage: Usage,
     cost: float,
     latency_ms: float,
+    request_body: dict[str, Any] | None = None,
+    response_body: dict[str, Any] | None = None,
 ) -> None:
-    """Emit an ``llm_call`` telemetry record for one embed (T-011, AU-2)."""
+    """Emit an ``llm_call`` telemetry record for one embed (T-011, AU-2).
+
+    Request/response bodies ride ``extra`` so the trace UI shows the actual
+    embed (input text + vector shape), not ``null`` — mirroring the completion
+    path's ``_record_spool``.
+    """
     from arcstore.records import SpoolRecord
     from arcstore.spool import record as spool_record
 
+    extra: dict[str, Any] = {}
+    if request_body is not None:
+        extra["request_body"] = request_body
+    if response_body is not None:
+        extra["response_body"] = response_body
     event = SpoolRecord(
         kind="llm_call",
         actor_did=telemetry.get("agent_did") or _UNKNOWN_DID,
@@ -367,6 +405,7 @@ def _emit_telemetry(
         cost_usd=cost,
         latency_ms=latency_ms,
         outcome="ok",
+        extra=extra,
     )
     if on_event is not None:
         on_event(event)
@@ -441,5 +480,7 @@ async def embed(
         usage=response.usage,
         cost=cost,
         latency_ms=latency_ms,
+        request_body=_embed_request_body(texts, store_raw=tel.get("store_raw_bodies", True)),
+        response_body=_embed_response_body(response.dims, len(response.vectors)),
     )
     return response
