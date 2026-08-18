@@ -204,3 +204,26 @@ def test_to_document_round_trips_through_parse(example_document: dict[str, Any])
     definition = parse_definition(example_document)
 
     assert parse_definition(definition.to_document()) == definition
+
+
+def test_display_name_defaults_to_none_when_absent(example_document: dict[str, Any]) -> None:
+    definition = parse_definition(example_document)
+
+    assert definition.name is None
+    # TOML cannot hold None, so an unset name never appears in the document.
+    assert "name" not in definition.to_document()["workflow"]
+
+
+def test_display_name_round_trips_through_parse_and_serialize(
+    example_document: dict[str, Any],
+) -> None:
+    example_document["workflow"]["name"] = "Customer Onboarding"
+    definition = parse_definition(example_document)
+
+    assert definition.name == "Customer Onboarding"
+    document = definition.to_document()
+    assert document["workflow"]["name"] == "Customer Onboarding"
+    # The label is part of the signed canonical projection, and it survives the
+    # full parse -> serialize -> parse round trip unchanged.
+    assert parse_definition(document) == definition
+    assert definition.canonical_document()["workflow"]["name"] == "Customer Onboarding"

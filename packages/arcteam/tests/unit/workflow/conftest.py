@@ -181,6 +181,7 @@ class Budget:
 class Definition:
     id: str
     version: int = 1
+    name: str | None = None
     owner: str | None = None
     channel: str | None = None
     budget: Budget | None = None

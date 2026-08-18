@@ -36,5 +36,15 @@ class ProgressConfig(ModuleConfig):
     # before being quoted back to a person (LLM01 / ASI09).
     max_step_chars: int = Field(default=90, ge=20, le=400)
 
+    # A plain (non-dynamic) run says nothing until it ends, which reads as a hang
+    # on a job that legitimately takes minutes. Once a run has been going this
+    # long, a single "still working" milestone goes out — and no sooner, so a
+    # quick answer that lands in a few seconds is never preceded by noise.
+    heartbeat_after_seconds: float = Field(default=45.0, ge=1.0)
+
+    # Floor on the gap between two "still working" milestones, so a long run gets
+    # a periodic reassurance rather than one per turn.
+    heartbeat_every_seconds: float = Field(default=45.0, ge=1.0)
+
 
 __all__ = ["ProgressConfig"]

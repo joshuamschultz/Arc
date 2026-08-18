@@ -1113,6 +1113,37 @@ async def tasks_bind_run_fn(ctx: Any) -> None:
 
 
 @hook(event="agent:assemble_prompt", priority=60)
+async def inject_team_handoff_section(ctx: Any) -> None:
+    """Teach the agent to hand work to the teammate who owns it (ADR arcteam).
+
+    Present ONLY because the tasks module is loaded — the loader subscribes this
+    hook when it registers ``assign_task``/``create_task``, so a headless agent
+    without the module is never told to call tools it does not have. The messaging
+    module contributes the companion channel/DM/mention guidance for its own
+    tools; the two seams never name each other's tools.
+    """
+    sections = ctx.data.get("sections") if hasattr(ctx, "data") else None
+    if not isinstance(sections, dict):
+        return
+    sections["handoffs"] = "\n".join(
+        [
+            "## Team Handoffs",
+            "",
+            "Hand work to the teammate who owns it. Do not do everything yourself.",
+            "",
+            "- Do it yourself when it is quick and clearly your job.",
+            "- Hand off when the job belongs to someone else or needs their skill.",
+            "- Give an at-rest task to a teammate: "
+            '`assign_task(id, to_handle="@handle")`. They pick it up and run it.',
+            "- Make new work owned by a teammate: "
+            '`create_task(title=..., owner="@handle")`.',
+            "- Use the same `@handle` you would tag in a channel; it resolves to that agent.",
+            "- After you hand off, let them run it. Ask in the channel if you need a status.",
+        ]
+    )
+
+
+@hook(event="agent:assemble_prompt", priority=60)
 async def inject_workflow_node_section(ctx: Any) -> None:
     """Inject the running node's instructions and upstream outputs (REQ-233/239).
 

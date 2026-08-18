@@ -31,7 +31,7 @@ from arcagent.core.session_internal import AssembledPrompt, SessionManager, wire
 from arcagent.core.session_internal.capability_ledger import bind_session_id, reset_session_id
 from arcagent.core.telemetry import AgentTelemetry
 from arcagent.tools._policy_fill import resolve_run_budget
-from arcagent.tools.approval_policy import build_loop_controls, narrowed_loop_controls
+from arcagent.tools.approval_policy import narrowed_loop_controls
 
 if TYPE_CHECKING:
     from arcagent.core.agent import ArcAgent
@@ -471,7 +471,7 @@ async def start_tracked_run(
                 store_raw_bodies=agent._config.telemetry.capture_tool_io,
                 max_tokens=max_tokens,
                 max_cost_usd=max_cost_usd,
-                **build_loop_controls(agent, session),
+                **narrowed_loop_controls(agent, session, None),
             )
         finally:
             reset_session_id(session_token)

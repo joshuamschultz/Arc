@@ -78,6 +78,12 @@ async def narrate_run_progress(ctx: Any) -> None:
     raw_payload = data.get("data")
     payload: Mapping[str, Any] = raw_payload if isinstance(raw_payload, Mapping) else {}
 
+    if event == "strategy.selected":
+        _begin_run(st, target, payload)
+        return
+    if event == "turn.start":
+        await _maybe_heartbeat(st, target)
+        return
     if event == "dynamic.agent.start":
         _record_child_start(st, target)
         return
@@ -99,6 +105,44 @@ async def drain_on_shutdown(_ctx: Any) -> None:
     if pending:
         await asyncio.gather(*pending, return_exceptions=True)
     st.tallies.clear()
+
+
+# -- Still-working heartbeat (plain runs) --------------------------------
+
+
+def _begin_run(st: _runtime._State, target: str, payload: Mapping[str, Any]) -> None:
+    """Start (or restart) the heartbeat clock for the run on this channel.
+
+    Fired on ``strategy.selected``, once per run. Resets the per-run line budget
+    too, so each fresh run on a channel gets its own ceiling rather than
+    inheriting the last one's. The dynamic strategy narrates its own stages, so
+    it is marked to skip the turn heartbeat.
+    """
+    tally = st.tallies.setdefault(target, Tally())
+    tally.run_started = time.monotonic()
+    tally.last_heartbeat = 0.0
+    tally.lines_sent = 0
+    tally.last_kind = ""
+    tally.suppress_heartbeat = str(payload.get("strategy", "")) == "dynamic"
+
+
+async def _maybe_heartbeat(st: _runtime._State, target: str) -> None:
+    """Send a "still working" line if the run has been going long enough.
+
+    Fired on every ``turn.start``. Stays silent until the run passes
+    ``heartbeat_after_seconds`` (so a quick answer is never preceded by noise),
+    then at most once per ``heartbeat_every_seconds``.
+    """
+    tally = st.tallies.get(target)
+    if tally is None or tally.suppress_heartbeat or tally.run_started == 0.0:
+        return
+    now = time.monotonic()
+    if now - tally.run_started < st.config.heartbeat_after_seconds:
+        return
+    if tally.last_heartbeat and now - tally.last_heartbeat < st.config.heartbeat_every_seconds:
+        return
+    tally.last_heartbeat = now
+    await _send(st, target, narrator.heartbeat_line())
 
 
 # -- Child-agent accounting ----------------------------------------------

@@ -305,18 +305,25 @@ def _fold_run(run: dict[str, Any], row: dict[str, Any]) -> None:
 def _finalize_run(run: dict[str, Any], *, now: float) -> dict[str, Any]:
     start, end = _epoch(run["started_at"]), _epoch(run["ended_at"])
     duration_ms = round((end - start) * 1000, 1) if start is not None and end is not None else None
-    if run["_error"]:
-        status = "error"
-    elif run["_completed"]:
+    if run["_completed"]:
+        # A run that reached its terminal (loop.complete, emitted once in
+        # build_result on every clean exit) FINISHED. Any tool/LLM error along
+        # the way was recovered — the loop kept going to completion — so a single
+        # failed step must not paint the whole run red. That false red made every
+        # long multi-tool coding run look failed while quick single-shot runs
+        # looked fine. "error" is reserved for a run that errored and then died
+        # without ever completing.
         status = "completed"
     elif end is not None and (now - end) > _STALE_AFTER_SECONDS:
-        # No terminal event, and nothing has happened in a long time — this is
-        # not "still working", it's a process that died mid-run (crash, service
-        # restart, hard /stop) before it ever got to write loop.complete. Left
-        # as "running" it would say that forever; every subsequent read of this
-        # same dead row keeps computing the same wrong answer.
-        status = "stale"
+        # No terminal event, and nothing has happened in a long time — the
+        # process died mid-run (crash, service restart, hard /stop) before it
+        # wrote loop.complete. If its last signal was an error it genuinely
+        # failed; otherwise it was simply killed in flight. Left as "running" it
+        # would say that forever; every subsequent read keeps computing it.
+        status = "error" if run["_error"] else "stale"
     else:
+        # No terminal yet, still recent — genuinely in flight (and possibly
+        # recovering from a tool error mid-turn), not failed.
         status = "running"
     return {
         "run_id": run["run_id"],

@@ -333,6 +333,13 @@ async def _compose_embedded(
     # Slash-command registry + persisted session-rotation epochs. The epoch DB
     # sits beside the pairing DB so "New session" survives a gateway restart.
     command_registry = build_default_registry()
+    # Deployment workflows become ``/name`` commands. specs() reads the on-disk
+    # bundle store, so ordering vs the runner host below does not matter — a
+    # workflow is in the menu whether or not the runner is up; run() resolves
+    # the live runner lazily via RunnerHost.active() at call time.
+    from arcgateway.commands.workflow_provider import GatewayWorkflowProvider
+
+    command_registry.set_workflow_provider(GatewayWorkflowProvider())
 
     def _media_store_for(agent_did: str) -> MediaStore | None:
         """Resolve the addressed agent's own artefact store (SPEC-065 COMP-002).
@@ -388,12 +395,14 @@ async def _compose_embedded(
         if outbound is not None:
             session_router.register_adapter(outbound)
 
-    # Hand the command set to any adapter that must subscribe explicitly
-    # (Slack) — Telegram/web deliver "/cmd" as message text and need nothing.
+    # Hand the command set (name + description) to any adapter that publishes a
+    # native menu — Slack subscribes each command; Telegram calls setMyCommands.
+    # command_specs() carries built-ins plus every workflow, so the menu is a
+    # boot-time snapshot of both.
     for outbound in remote_adapters:
         set_names = getattr(outbound, "set_command_names", None)
         if callable(set_names):
-            set_names(command_registry.names())
+            set_names(command_registry.command_specs())
 
     _logger.info(
         "bootstrap: embedded gateway built (tier=%s web=%s remote=%s broker=%s)",

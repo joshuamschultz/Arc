@@ -132,8 +132,15 @@ class WorkflowControlPlane(Protocol):
     edit or run means.
     """
 
-    async def list_workflows(self, *, actor: OperatorActor) -> list[dict[str, Any]]:
-        """Every workflow summary: id, name, version, status, trigger, last run."""
+    async def list_workflows(
+        self, *, actor: OperatorActor, include_archived: bool = False
+    ) -> list[dict[str, Any]]:
+        """Every workflow summary: id, name, version, status, trigger, last run.
+
+        Archived definitions are excluded unless ``include_archived`` is set —
+        the active list is the default, and an operator opts into the retired
+        ones (COMP-022).
+        """
         ...
 
     async def get_workflow(
@@ -332,7 +339,10 @@ async def list_workflows(request: Request) -> JSONResponse:
     if plane is None:
         return _error("workflow_control_plane_unavailable", 503)
 
-    workflows = await plane.list_workflows(actor=_actor(request))
+    include_archived = request.query_params.get("include_archived") in ("1", "true", "True")
+    workflows = await plane.list_workflows(
+        actor=_actor(request), include_archived=include_archived
+    )
     emit_mutation_audit(
         request, target="workflow:list", operation="workflow.list", outcome="applied"
     )

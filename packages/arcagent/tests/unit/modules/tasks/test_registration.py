@@ -95,3 +95,11 @@ class TestLoaderRegistration:
         assert any(h.meta.name == "tasks_bind_run_fn" for h in ready_hooks), (
             "agent:ready run-fn bind hook not registered by loader"
         )
+
+        # The arcteam handoff guidance reaches the prompt only if the real loader
+        # discovers its assemble-prompt hook — assert the wiring, not just that
+        # the function exists (dead-wiring guard).
+        prompt_hooks = await reg.get_hooks("agent:assemble_prompt")
+        assert any(h.meta.name == "inject_team_handoff_section" for h in prompt_hooks), (
+            "arcteam handoff assemble-prompt hook not registered by loader"
+        )

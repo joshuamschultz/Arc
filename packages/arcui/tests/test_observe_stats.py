@@ -226,7 +226,11 @@ class TestComputeRuns:
         assert r["ended_at"] == "2026-05-31T00:00:07+00:00"
         assert round(r["duration_ms"]) == 6000
 
-    def test_status_error_when_any_failure(self) -> None:
+    def test_completed_run_with_tool_error_is_completed_not_error(self) -> None:
+        # A run that reached loop.complete FINISHED. A single failed tool call
+        # along the way was recovered (the loop kept going to its terminal), so
+        # the run must show "completed", not a misleading "error" that made every
+        # long multi-tool coding run look failed.
         events = self._events()
         events.append(
             {
@@ -236,11 +240,38 @@ class TestComputeRuns:
                 "tool_name": "web.fetch",
                 "phase": "error",
                 "outcome": "error",
-                "ts": "2026-05-31T00:00:08+00:00",
+                "ts": "2026-05-31T00:00:06.5+00:00",  # before loop.complete at :07
             }
         )
         runs = compute_runs(events)
-        assert runs[0]["status"] == "error"
+        assert runs[0]["status"] == "completed"
+
+    def test_recent_run_with_tool_error_is_still_running(self) -> None:
+        # A live run that just hit a failing tool call but has not reached its
+        # terminal is recovering, not failed — it must stay "running", never flip
+        # red mid-turn.
+        recent = (datetime.now(UTC) - timedelta(seconds=5)).isoformat()
+        runs = compute_runs(
+            [
+                {
+                    "kind": "run_event",
+                    "request_id": "r",
+                    "actor_did": "did:a",
+                    "name": "turn.start",
+                    "ts": recent,
+                },
+                {
+                    "kind": "tool_event",
+                    "request_id": "r",
+                    "actor_did": "did:a",
+                    "tool_name": "bash",
+                    "phase": "error",
+                    "outcome": "error",
+                    "ts": recent,
+                },
+            ]
+        )
+        assert runs[0]["status"] == "running"
 
     def test_status_running_without_completion(self) -> None:
         # A fresh, recent event with no terminal marker yet — genuinely in flight.

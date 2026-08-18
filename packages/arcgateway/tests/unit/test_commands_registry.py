@@ -7,7 +7,7 @@ from typing import Any, cast
 import pytest
 
 from arcgateway.commands import CommandRegistry, build_default_registry
-from arcgateway.commands.base import CommandContext
+from arcgateway.commands.base import CommandContext, CommandSpec
 from arcgateway.executor import InboundEvent
 
 
@@ -108,3 +108,98 @@ def test_default_registry_has_new_and_help() -> None:
     reg = build_default_registry()
     assert set(reg.names()) == {"new", "help"}
     assert reg.get("reset") is reg.get("new")  # alias
+
+
+# --- Workflow slash commands --------------------------------------------
+
+
+class _FakeWorkflowProvider:
+    """A stand-in that exposes two workflows and records what was run."""
+
+    def __init__(self) -> None:
+        self.ran: list[tuple[str, str, str]] = []
+
+    def specs(self) -> list[CommandSpec]:
+        return [
+            CommandSpec(name="briefing", description="Run the morning briefing"),
+            CommandSpec(name="new", description="a workflow that clashes with /new"),
+        ]
+
+    async def run(self, workflow_id: str, *, actor_did: str, args: str) -> str:
+        self.ran.append((workflow_id, actor_did, args))
+        return f"Started {workflow_id} (run r-123)"
+
+
+def test_workflow_names_join_the_menu_but_never_shadow_a_builtin() -> None:
+    reg = build_default_registry()
+    reg.set_workflow_provider(_FakeWorkflowProvider())
+    # "briefing" is added; the "new" workflow is dropped — the built-in wins.
+    assert "briefing" in reg.names()
+    assert reg.names().count("new") == 1
+    specs = {s.name: s.description for s in reg.command_specs()}
+    assert specs["briefing"] == "Run the morning briefing"
+    assert specs["new"] != "a workflow that clashes with /new"  # the built-in's text
+
+
+@pytest.mark.asyncio
+async def test_dispatch_runs_a_workflow_command() -> None:
+    reg = build_default_registry()
+    provider = _FakeWorkflowProvider()
+    reg.set_workflow_provider(provider)
+    sent: list[str] = []
+
+    async def _reply(text: str) -> None:
+        sent.append(text)
+
+    handled = await reg.dispatch(
+        _event("/briefing extra input"),
+        "did:arc:agent:bot",
+        "did:arc:user:alice",
+        cast(Any, object()),
+        _reply,
+    )
+
+    assert handled is True
+    assert sent == ["Started briefing (run r-123)"]
+    assert provider.ran == [("briefing", "did:arc:user:alice", "extra input")]
+
+
+@pytest.mark.asyncio
+async def test_a_builtin_wins_a_name_clash_with_a_workflow() -> None:
+    # A registered command named "echo" and a workflow named "echo": the
+    # built-in must handle /echo, and the workflow must NOT run.
+    reg = CommandRegistry()
+    cmd = _RecordingCommand()  # name "echo"
+    reg.register(cmd)
+
+    class _EchoClashProvider(_FakeWorkflowProvider):
+        def specs(self) -> list[CommandSpec]:
+            return [CommandSpec(name="echo", description="clashing workflow")]
+
+    provider = _EchoClashProvider()
+    reg.set_workflow_provider(provider)
+    sent: list[str] = []
+
+    async def _reply(text: str) -> None:
+        sent.append(text)
+
+    handled = await reg.dispatch(
+        _event("/echo hi"), "a", "u", cast(Any, object()), _reply
+    )
+    assert handled is True
+    assert sent == ["echo:hi"]  # the command ran
+    assert provider.ran == []  # the workflow did NOT
+
+
+@pytest.mark.asyncio
+async def test_unknown_token_still_falls_through_with_a_provider() -> None:
+    reg = build_default_registry()
+    reg.set_workflow_provider(_FakeWorkflowProvider())
+    sent: list[str] = []
+
+    async def _reply(text: str) -> None:
+        sent.append(text)
+
+    handled = await reg.dispatch(_event("/nope hi"), "a", "u", cast(Any, object()), _reply)
+    assert handled is False
+    assert sent == []

@@ -87,10 +87,12 @@ class DashboardWorkflowPlane:
 
     # -- reads ---------------------------------------------------------------
 
-    async def list_workflows(self, *, actor: OperatorActor) -> list[dict[str, Any]]:
+    async def list_workflows(
+        self, *, actor: OperatorActor, include_archived: bool = False
+    ) -> list[dict[str, Any]]:
         del actor
         summaries: list[dict[str, Any]] = []
-        for workflow_id in self._definitions.list_ids(include_archived=True):
+        for workflow_id in self._definitions.list_ids(include_archived=include_archived):
             bundle = self._load(workflow_id)
             if bundle is None:
                 continue

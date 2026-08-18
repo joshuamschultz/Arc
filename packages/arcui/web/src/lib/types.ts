@@ -680,7 +680,9 @@ export interface WorkflowLastRun {
 export interface WorkflowSummary {
   [key: string]: unknown
   id: string
-  name: string
+  // Display name; may be null when the definition has none — fall back to `id`
+  // wherever the workflow is titled.
+  name: string | null
   version: number
   status: WorkflowStatus
   trigger?: Dict | null

@@ -3,12 +3,15 @@ import { useNavigate, useParams } from 'react-router-dom'
 import {
   Archive,
   ArchiveRestore,
+  Check,
   ChevronLeft,
+  Pencil,
   Play,
   Plus,
   ShieldCheck,
   StopCircle,
   Trash2,
+  X,
 } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
 import { Button } from '@/components/ui/button'
@@ -31,6 +34,7 @@ import { RunDetailDrawer } from '@/components/run-detail-drawer'
 import { WorkflowGraph, type NodeStatusUpdate } from '@/components/workflow-graph'
 import { WorkflowNodeForm } from '@/components/workflow-node-form'
 import { fromDraft, toDraft, type NodeDraft } from '@/lib/workflow-node-draft'
+import { useOperatorMode } from '@/hooks/use-operator-mode'
 import { useWorkflowRunLiveStatus } from '@/hooks/use-workflow-run-live-status'
 import {
   useArchiveWorkflow,
@@ -738,6 +742,100 @@ function RunsTab({ workflow }: { workflow: WorkflowDetail }) {
   )
 }
 
+/** The workflow name in the header, editable in place for an operator.
+ *
+ * The name is the definition's display description; renaming is a versioned
+ * definition edit through the same PATCH path as every other change, so it
+ * bumps the version and drops the signature exactly as editing the graph does.
+ * Falls back to the id whenever the definition carries no name.
+ */
+function WorkflowTitle({
+  id,
+  workflow,
+  onBack,
+}: {
+  id: string
+  workflow: WorkflowDetail | undefined
+  onBack: () => void
+}) {
+  const [operatorMode] = useOperatorMode()
+  const patch = usePatchWorkflow(id)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const displayName = workflow?.name || id
+
+  const start = () => {
+    setDraft(displayName)
+    setError(null)
+    setEditing(true)
+  }
+
+  const cancel = () => {
+    setEditing(false)
+    setError(null)
+  }
+
+  const save = async () => {
+    if (!workflow) return
+    const name = draft.trim()
+    if (!name || name === displayName) {
+      cancel()
+      return
+    }
+    try {
+      await patch.mutateAsync({ patch: { name }, expectedVersion: workflow.version })
+      setEditing(false)
+      setError(null)
+    } catch (e) {
+      setError(describeError(e).message)
+    }
+  }
+
+  return (
+    <span className="flex items-center gap-2">
+      <Button variant="ghost" size="icon" onClick={onBack}>
+        <ChevronLeft className="size-4" />
+      </Button>
+      {editing ? (
+        <span className="flex items-center gap-1.5">
+          <Input
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                void save()
+              } else if (e.key === 'Escape') {
+                e.preventDefault()
+                cancel()
+              }
+            }}
+            className="h-8 w-56 text-sm"
+          />
+          <Button size="icon" variant="ghost" disabled={patch.isPending} onClick={save} title="Save name">
+            <Check className="size-4" />
+          </Button>
+          <Button size="icon" variant="ghost" onClick={cancel} title="Cancel rename">
+            <X className="size-4" />
+          </Button>
+          {error && <span className="text-xs text-destructive">{error}</span>}
+        </span>
+      ) : (
+        <span className="flex items-center gap-1.5">
+          {displayName}
+          {operatorMode && workflow && (
+            <Button size="icon" variant="ghost" onClick={start} title="Rename workflow">
+              <Pencil className="size-3.5" />
+            </Button>
+          )}
+        </span>
+      )}
+    </span>
+  )
+}
+
 export function WorkflowDetailPage() {
   const { id = '' } = useParams()
   const navigate = useNavigate()
@@ -783,12 +881,7 @@ export function WorkflowDetailPage() {
     <div className="flex h-full flex-col">
       <PageHeader
         title={
-          <span className="flex items-center gap-2">
-            <Button variant="ghost" size="icon" onClick={() => navigate('/workflows')}>
-              <ChevronLeft className="size-4" />
-            </Button>
-            {workflow.data?.name ?? id}
-          </span>
+          <WorkflowTitle id={id} workflow={workflow.data} onBack={() => navigate('/workflows')} />
         }
         description={
           workflow.data ? (

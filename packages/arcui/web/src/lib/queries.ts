@@ -645,8 +645,15 @@ export const useIdentityCost = (window = '24h') =>
 // which itself only relays to the (not-yet-merged) arcteam control plane —
 // this file adds no business logic, only react-query plumbing.
 
-export const useWorkflows = () =>
-  useApiQuery<WorkflowsListResponse>(['workflows'], '/api/workflows')
+// `includeArchived` is part of the query key, not just the URL: archived-on and
+// archived-off are different server responses, so a shared cache entry would
+// flash the wrong list for a beat after the toggle flips. Both still invalidate
+// together on the ['workflows'] prefix after any mutation.
+export const useWorkflows = (includeArchived = false) =>
+  useApiQuery<WorkflowsListResponse>(
+    ['workflows', includeArchived],
+    includeArchived ? '/api/workflows?include_archived=true' : '/api/workflows',
+  )
 
 export const useWorkflow = (id: string | null) =>
   useQuery<WorkflowDetail>({

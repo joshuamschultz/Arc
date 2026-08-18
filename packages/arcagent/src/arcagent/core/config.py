@@ -619,7 +619,14 @@ class ArcRunConfig(BaseModel):
     )
     allowed_strategies: list[str] | None = Field(
         default=None,
-        description="Restrict the loop to these strategy names. None = all registered strategies.",
+        description=(
+            "Operator ceiling on strategy names a run may use. None = every "
+            "registered strategy is permitted. This bounds an explicit request "
+            "(a workflow node pinning 'code'); it is NOT the default an ordinary "
+            "message takes — an un-pinned turn runs 'react' alone so it never pays "
+            "a model-selection call. Widen this to opt basic turns into "
+            "model-selected control flow. Federal floors to ['react']."
+        ),
     )
     sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
     approval_opt_in: list[str] = Field(

@@ -10,9 +10,33 @@ export interface MentionHandle {
   color?: string
 }
 
-interface ActiveMention {
+export interface CommandOption {
+  /** The slash command's token, inserted as `/name `. */
+  name: string
+  /** Human-facing display name; falls back to `name`. */
+  label: string
+}
+
+// The token the caret is currently editing — either an `@mention` anywhere in
+// the message or a `/command` pinned to the very start. `at` is where the
+// insertion begins; `query` is what has been typed after the trigger char.
+interface ActiveToken {
+  kind: 'mention' | 'command'
   at: number
   query: string
+}
+
+// One normalized suggestion the popup renders, whichever source produced it.
+interface Suggestion {
+  key: string
+  /** Text spliced in at `at`, e.g. `@coder ` or `/help `. */
+  insert: string
+  at: number
+  /** Primary label with its trigger char, e.g. `@coder` / `/help`. */
+  primary: string
+  /** Secondary muted label (the readable name), when it differs. */
+  hint?: string
+  color?: string
 }
 
 const MAX_SUGGESTIONS = 6
@@ -21,7 +45,7 @@ const MAX_SUGGESTIONS = 6
 // at the beginning of the input or after whitespace, and ends at the first
 // whitespace — so ``a@b`` (an email-ish token) never opens the picker and a
 // completed ``@intake `` is left alone.
-function activeMention(value: string, caret: number): ActiveMention | null {
+function activeMention(value: string, caret: number): ActiveToken | null {
   const upto = value.slice(0, caret)
   const at = upto.lastIndexOf('@')
   if (at === -1) return null
@@ -29,24 +53,37 @@ function activeMention(value: string, caret: number): ActiveMention | null {
   if (before && !/\s/.test(before)) return null
   const query = upto.slice(at + 1)
   if (/\s/.test(query)) return null
-  return { at, query }
+  return { kind: 'mention', at, query }
+}
+
+// Detect the ``/command`` token — a slash is a command only as the first
+// character of the message, and the token ends at the first whitespace, so a
+// completed ``/help `` is left alone and a mid-message slash never triggers.
+function activeCommand(value: string, caret: number): ActiveToken | null {
+  const upto = value.slice(0, caret)
+  if (!upto.startsWith('/')) return null
+  const query = upto.slice(1)
+  if (/\s/.test(query)) return null
+  return { kind: 'command', at: 0, query }
 }
 
 /**
- * Autosizing composer with ``@name`` autocomplete against the team roster.
+ * Autosizing composer with ``@name`` mention and ``/command`` autocomplete.
  * Enter sends; Shift+Enter inserts a newline.
  *
- * The mention text is inserted verbatim into the value, so a posted message
- * carries ``@handle`` through arcteam's existing mention machinery
- * (``apply_mentions`` records it and raises the recipient's attention flag).
- * The component owns only the picker UX — the parent owns the value and the
- * send action.
+ * The inserted text is spliced verbatim into the value: an ``@handle`` carries
+ * through arcteam's mention machinery (``apply_mentions``), and a ``/name``
+ * lands as the operator's chosen command. Both share one popup and one set of
+ * keyboard bindings — the only difference is which source (mentions vs
+ * commands) the active token draws from. The component owns only the picker
+ * UX; the parent owns the value and the send action.
  */
 export function MentionComposer({
   value,
   onChange,
   onSubmit,
   handles,
+  commands = [],
   placeholder,
   disabled = false,
 }: {
@@ -54,26 +91,48 @@ export function MentionComposer({
   onChange: (next: string) => void
   onSubmit: () => void
   handles: MentionHandle[]
+  commands?: CommandOption[]
   placeholder?: string
   disabled?: boolean
 }) {
   const inputRef = useRef<HTMLTextAreaElement>(null)
-  const [mention, setMention] = useState<ActiveMention | null>(null)
+  const [token, setToken] = useState<ActiveToken | null>(null)
   const [active, setActive] = useState(0)
 
-  const matches = useMemo(() => {
-    if (mention === null) return []
-    const q = mention.query.toLowerCase()
+  const suggestions = useMemo<Suggestion[]>(() => {
+    if (token === null) return []
+    const q = token.query.toLowerCase()
+    if (token.kind === 'command') {
+      return commands
+        .filter((c) => c.name.toLowerCase().includes(q) || c.label.toLowerCase().includes(q))
+        .slice(0, MAX_SUGGESTIONS)
+        .map((c) => ({
+          key: `/${c.name}`,
+          insert: `/${c.name} `,
+          at: token.at,
+          primary: `/${c.name}`,
+          hint: c.label !== c.name ? c.label : undefined,
+        }))
+    }
     return handles
       .filter((h) => h.handle.toLowerCase().includes(q) || h.label.toLowerCase().includes(q))
       .slice(0, MAX_SUGGESTIONS)
-  }, [mention, handles])
+      .map((h) => ({
+        key: `@${h.handle}`,
+        insert: `@${h.handle} `,
+        at: token.at,
+        primary: `@${h.handle}`,
+        hint: h.label !== h.handle ? h.label : undefined,
+        color: h.color,
+      }))
+  }, [token, handles, commands])
 
-  const open = matches.length > 0
+  const open = suggestions.length > 0
 
   const refresh = (next: string, caret: number) => {
-    const found = activeMention(next, caret)
-    setMention(found)
+    // A `/command` is start-anchored and thus more specific; check it first so a
+    // leading slash never gets read as anything else.
+    setToken(activeCommand(next, caret) ?? activeMention(next, caret))
     setActive(0)
   }
 
@@ -82,17 +141,14 @@ export function MentionComposer({
     refresh(e.target.value, e.target.selectionStart ?? e.target.value.length)
   }
 
-  const insert = (handle: string) => {
+  const insert = (item: Suggestion) => {
     const el = inputRef.current
     const caret = el?.selectionStart ?? value.length
-    const found = activeMention(value, caret)
-    const at = found ? found.at : value.length
-    const inserted = `@${handle} `
-    const next = value.slice(0, at) + inserted + value.slice(caret)
+    const next = value.slice(0, item.at) + item.insert + value.slice(caret)
     onChange(next)
-    setMention(null)
+    setToken(null)
     setActive(0)
-    const newCaret = at + inserted.length
+    const newCaret = item.at + item.insert.length
     requestAnimationFrame(() => {
       el?.focus()
       el?.setSelectionRange(newCaret, newCaret)
@@ -108,22 +164,22 @@ export function MentionComposer({
     if (open) {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
-        setActive((i) => (i + 1) % matches.length)
+        setActive((i) => (i + 1) % suggestions.length)
         return
       }
       if (e.key === 'ArrowUp') {
         e.preventDefault()
-        setActive((i) => (i - 1 + matches.length) % matches.length)
+        setActive((i) => (i - 1 + suggestions.length) % suggestions.length)
         return
       }
       if (e.key === 'Enter' || e.key === 'Tab') {
         e.preventDefault()
-        insert(matches[active].handle)
+        insert(suggestions[active])
         return
       }
       if (e.key === 'Escape') {
         e.preventDefault()
-        setMention(null)
+        setToken(null)
         return
       }
     }
@@ -140,17 +196,17 @@ export function MentionComposer({
           role="listbox"
           className="absolute bottom-full left-0 z-20 mb-1.5 max-h-56 w-64 overflow-auto rounded-lg border border-border bg-popover p-1 shadow-lg"
         >
-          {matches.map((m, i) => (
-            <li key={m.handle}>
+          {suggestions.map((s, i) => (
+            <li key={s.key}>
               <button
                 type="button"
                 role="option"
                 aria-selected={i === active}
                 // mousedown fires before the input blurs, so the caret/value are
-                // still intact when we splice the mention in.
+                // still intact when we splice the suggestion in.
                 onMouseDown={(e) => {
                   e.preventDefault()
-                  insert(m.handle)
+                  insert(s)
                 }}
                 onMouseEnter={() => setActive(i)}
                 className={cn(
@@ -160,10 +216,10 @@ export function MentionComposer({
               >
                 <span
                   className="size-2 shrink-0 rounded-full"
-                  style={{ background: m.color || 'var(--primary)' }}
+                  style={{ background: s.color || 'var(--primary)' }}
                 />
-                <span className="font-medium text-foreground">@{m.handle}</span>
-                {m.label !== m.handle && <span className="truncate text-xs text-muted-foreground">{m.label}</span>}
+                <span className="font-medium text-foreground">{s.primary}</span>
+                {s.hint && <span className="truncate text-xs text-muted-foreground">{s.hint}</span>}
               </button>
             </li>
           ))}

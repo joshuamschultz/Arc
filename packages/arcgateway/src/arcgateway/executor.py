@@ -368,16 +368,29 @@ class AsyncioExecutor:
                     event.session_key,
                     outcome,
                 )
+                delivered_any = False
                 for handle in opened:
                     result = await handle.result()
-                    content = result.content or ""
+                    content = getattr(result, "content", None) or ""
                     if content:
+                        delivered_any = True
                         yield Delta(
                             kind="token",
                             content=content,
                             is_final=False,
                             turn_id=turn_id,
                         )
+                if opened and not delivered_any:
+                    # A run happened but returned no assistant text. Never leave
+                    # the user staring at silence — a finished-but-empty turn is
+                    # indistinguishable from a lost one otherwise (the reported
+                    # "in the dark" complaint). The detail is in the run trace.
+                    yield Delta(
+                        kind="token",
+                        content="(the agent finished without a reply)",
+                        is_final=False,
+                        turn_id=turn_id,
+                    )
             except Exception as exc:  # reason: fail-closed — log + close turn
                 _logger.exception(
                     "AsyncioExecutor: agent error session=%s: %s",

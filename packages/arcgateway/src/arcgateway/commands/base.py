@@ -55,3 +55,36 @@ class SlashCommand(Protocol):
     async def handle(self, ctx: CommandContext) -> str | None:
         """Run the command; return reply text or ``None`` if self-handled."""
         ...
+
+
+@dataclass(frozen=True)
+class CommandSpec:
+    """One command's name and one-line description, for menus and autocomplete.
+
+    The unit every surface's ``/`` menu is built from — the built-in commands
+    and the deployment's workflows alike — so Telegram's ``setMyCommands``,
+    Slack's manifest, and arcui's autocomplete all read one list.
+    """
+
+    name: str
+    description: str
+
+
+@runtime_checkable
+class WorkflowProvider(Protocol):
+    """Turns the deployment's workflows into runnable slash commands.
+
+    A workflow ``id`` (a bare name like ``briefing``) becomes ``/briefing``.
+    ``specs`` is read live so a workflow created after boot still appears in
+    arcui's autocomplete (the Telegram/Slack menus are a boot-time snapshot).
+    ``run`` fires the workflow deterministically — bypassing the LLM — and
+    returns the line to reply to the user.
+    """
+
+    def specs(self) -> list[CommandSpec]:
+        """The runnable workflows as ``(name, description)`` specs."""
+        ...
+
+    async def run(self, workflow_id: str, *, actor_did: str, args: str) -> str:
+        """Start ``workflow_id``; return the reply text (run id / error)."""
+        ...

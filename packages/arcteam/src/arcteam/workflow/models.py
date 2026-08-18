@@ -195,6 +195,10 @@ class WorkflowDefinition(BaseModel):
     schema_version: str = SCHEMA_VERSION
     id: str = Field(min_length=1, max_length=64, pattern=WORKFLOW_ID_PATTERN)
     version: int = Field(default=1, ge=1)
+    # ``id`` names the bundle directory and every schedule, run, signature, and
+    # slash-command keys off it, so it is immutable. ``name`` is the mutable
+    # human label a surface renders; when absent, surfaces fall back to ``id``.
+    name: str | None = Field(default=None, max_length=200)
     description: str = ""
     owner: str
     channel: str | None = None
