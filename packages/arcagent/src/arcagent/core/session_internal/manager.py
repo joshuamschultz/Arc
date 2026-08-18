@@ -311,6 +311,61 @@ class SessionManager:
         """Return the most recent persisted checkpoint record, or None (REQ-003)."""
         return self._last_checkpoint
 
+    async def prune(self) -> None:
+        """Discrete observation-masking — the 70-85% band of the S001 SDD ladder.
+
+        Replace stale tool outputs with placeholders to reclaim context WITHOUT an
+        LLM summary — the lighter step below the compaction threshold. Like
+        compaction it is a DISCRETE, persisted boundary (not a per-turn rewrite),
+        so the reclaimed baseline stays cache-stable rather than busting the
+        prompt cache every turn; the recent window is protected. Idempotent: a
+        repeated prune finds nothing new to mask and no-ops.
+        """
+        if self._context_manager is None:
+            return
+        async with self._lock:
+            if len(self._messages) < 4:
+                return
+            snapshot = list(self._messages)
+            snapshot_revision = self._revision
+            before = len(snapshot)
+
+        protected = int(self._context_config.max_tokens * 0.40)
+        masked = self._context_manager.prune_observations(
+            snapshot, protected_recent_tokens=protected
+        )
+        if masked == snapshot:
+            return  # nothing stale to mask
+
+        async with self._lock:
+            if self._revision != snapshot_revision:
+                if self._telemetry is not None:
+                    self._telemetry.audit_event(
+                        "context.prune_skipped",
+                        {"session_id": self._session_id, "reason": "concurrent_append"},
+                    )
+                return
+            self._messages = list(masked)
+            self._revision += 1
+            if self._jsonl_path is not None:
+                with open(self._jsonl_path, "a", encoding="utf-8") as f:
+                    f.write(
+                        json.dumps(
+                            {
+                                "type": "compaction_boundary",
+                                "messages": masked,
+                                "timestamp": datetime.now(UTC).isoformat(),
+                            }
+                        )
+                        + "\n"
+                    )
+            if self._telemetry is not None:
+                self._telemetry.audit_event(
+                    "context.prune",
+                    {"session_id": self._session_id, "messages": before},
+                )
+        _logger.info("Pruned observations in session %s (%d messages)", self._session_id, before)
+
     async def compact(self, model: Any) -> None:
         """Discrete, persisted compaction (SPEC-029 D-396/398/399/400).
 

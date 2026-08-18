@@ -39,6 +39,41 @@ def _sm(workspace: Path, context_manager: Any) -> SessionManager:
     )
 
 
+class TestPrune:
+    """S001 SDD ladder, 70-85% band: a discrete prune masks stale tool outputs
+    without an LLM summary, persists a boundary, and is idempotent."""
+
+    async def test_prune_masks_old_tool_output_and_is_idempotent(self, tmp_path: Path) -> None:
+        tel = _telemetry()
+        cm = ContextManager(
+            config=ContextConfig(max_tokens=400, estimate_multiplier=1.0),
+            telemetry=_telemetry(),
+        )
+        sm = SessionManager(
+            config=SessionConfig(),
+            context_config=ContextConfig(max_tokens=400, estimate_multiplier=1.0),
+            telemetry=tel,
+            workspace=tmp_path,
+            context_manager=cm,
+        )
+        await sm.create_session()
+        await sm.append_message({"role": "tool", "content": "OLD TOOL OUTPUT " * 40})
+        for _ in range(6):
+            await sm.append_message({"role": "user", "content": "recent context " * 30})
+
+        await sm.prune()
+
+        msgs = sm.get_messages()
+        assert any("[output pruned" in str(m.get("content", "")) for m in msgs)
+        assert not any("OLD TOOL OUTPUT" in str(m.get("content", "")) for m in msgs)
+        assert "context.prune" in [c.args[0] for c in tel.audit_event.call_args_list]
+
+        # Idempotent: nothing new to mask on a repeat, so no second prune boundary.
+        tel.audit_event.reset_mock()
+        await sm.prune()
+        assert "context.prune" not in [c.args[0] for c in tel.audit_event.call_args_list]
+
+
 # --- Fail-open: a hung compaction must be skipped, never wedge the turn ------
 
 

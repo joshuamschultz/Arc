@@ -534,7 +534,13 @@ async def maybe_compact(agent: ArcAgent, session: SessionManager) -> None:
     context = agent._context
     if context is None:
         return
+    # S001 SDD ladder: >compact_threshold summarize (LLM); else >prune_threshold
+    # mask stale tool outputs (cheap, no LLM). Both are discrete, persisted
+    # boundaries so the reclaimed baseline stays prompt-cache-stable.
     ratio = session.context_ratio()
-    if ratio >= agent._config.context.compact_threshold:
+    cfg = agent._config.context
+    if ratio >= cfg.compact_threshold:
         eval_model = agent._ensure_model()
         await session.compact(eval_model)
+    elif ratio >= cfg.prune_threshold:
+        await session.prune()

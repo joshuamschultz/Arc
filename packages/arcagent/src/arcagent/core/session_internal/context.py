@@ -469,7 +469,14 @@ class ContextManager:
             role = _msg_attr(msg, "role", "")
             content = _msg_content_str(msg)
 
-            if i >= protected_start or role != "tool" or not content:
+            # Skip already-pruned outputs so a repeated prune is idempotent (no
+            # placeholder-of-a-placeholder churn, no needless re-persist).
+            if (
+                i >= protected_start
+                or role != "tool"
+                or not content
+                or content.startswith("[output pruned")
+            ):
                 result.append(msg)
                 continue
 
