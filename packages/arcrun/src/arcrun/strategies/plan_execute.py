@@ -46,6 +46,13 @@ class PlanExecuteStrategy(Strategy):
         return "plan_execute"
 
     @property
+    def auto_selectable(self) -> bool:
+        # Opt-in only: a caller (e.g. ArcFlow) asks for plan_execute by name to
+        # fan out independent items. It must never be auto-offered for an
+        # arbitrary task — being registered is not being a candidate.
+        return False
+
+    @property
     def description(self) -> str:
         return load_stock("arcrun", "strategy_plan_execute_description")
 

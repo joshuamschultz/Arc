@@ -65,9 +65,16 @@ def _load_strategies() -> None:
     from arcrun.strategies.code import CodeExecStrategy
     from arcrun.strategies.dynamic import DynamicStrategy
     from arcrun.strategies.oneshot import OneShotStrategy
+    from arcrun.strategies.plan_execute import PlanExecuteStrategy
     from arcrun.strategies.react import ReactStrategy
 
-    for s in (ReactStrategy(), CodeExecStrategy(), DynamicStrategy(), OneShotStrategy()):
+    for s in (
+        ReactStrategy(),
+        CodeExecStrategy(),
+        DynamicStrategy(),
+        OneShotStrategy(),
+        PlanExecuteStrategy(),
+    ):
         STRATEGIES[s.name] = s
 
 
