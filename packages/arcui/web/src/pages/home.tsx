@@ -8,13 +8,60 @@ import {
   CheckCircle2,
   Boxes,
   Activity as ActivityIcon,
+  Wrench,
+  Coins,
+  DollarSign,
+  Zap,
 } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
 import { InsightStat, StatusChip } from '@/components/ai'
 import { StatusDot } from '@/components/status-badge'
-import { useApprovals, useRuns, useTeamTasks, useRoster } from '@/lib/queries'
-import { initials, relativeTime, shortId } from '@/lib/format'
-import type { Agent, RunSummary } from '@/lib/types'
+import { ChartCard, AreaSeries } from '@/components/charts'
+import { Sparkline } from '@/components/llm/sparkline'
+import {
+  useApprovals,
+  useRuns,
+  useTeamTasks,
+  useRoster,
+  useLlmStats,
+  useTimeseries,
+} from '@/lib/queries'
+import { initials, relativeTime, shortId, fmtTokens, fmtCost, fmtNumber } from '@/lib/format'
+import type { Agent, RunSummary, TaskStatus } from '@/lib/types'
+
+/** Momentum within the window: later-half sum vs earlier-half, as a percentage.
+ * Undefined when there isn't enough signal to be honest about a direction. */
+function windowTrend(values: number[]): number | undefined {
+  if (values.length < 4) return undefined
+  const mid = Math.floor(values.length / 2)
+  const first = values.slice(0, mid).reduce((a, b) => a + b, 0)
+  const second = values.slice(mid).reduce((a, b) => a + b, 0)
+  if (first <= 0) return undefined
+  return Math.round(((second - first) / first) * 100)
+}
+
+/** Even relative labels for the 24h token-volume chart (mirrors arcllm). */
+function bucketLabels(n: number): string[] {
+  if (n <= 1) return ['now']
+  return Array.from({ length: n }, (_, i) =>
+    i === n - 1 ? 'now' : `-${Math.round(((n - 1 - i) / (n - 1)) * 24)}h`,
+  )
+}
+
+// Task-status breakdown segments. Static class strings — Tailwind JIT cannot
+// see dynamically built names — mirroring the ai.tsx tone-class pattern.
+const TASK_SEGMENTS: Array<{
+  label: string
+  bar: string
+  dot: string
+  match: (s: TaskStatus) => boolean
+}> = [
+  { label: 'Backlog', bar: 'bg-muted-foreground/40', dot: 'bg-muted-foreground/60', match: (s) => s === 'backlog' || s === 'todo' },
+  { label: 'In progress', bar: 'bg-status-info', dot: 'bg-status-info', match: (s) => s === 'in_progress' },
+  { label: 'Review', bar: 'bg-status-warning', dot: 'bg-status-warning', match: (s) => s === 'review' },
+  { label: 'Done', bar: 'bg-status-online', dot: 'bg-status-online', match: (s) => s === 'done' },
+  { label: 'Failed', bar: 'bg-status-error', dot: 'bg-status-error', match: (s) => s === 'failed' },
+]
 
 /**
  * Home / Today — the operator's daily driver. Answers "what needs me now?" and
@@ -26,10 +73,12 @@ export function HomePage() {
   const runsQ = useRuns()
   const tasksQ = useTeamTasks()
   const rosterQ = useRoster()
+  const statsQ = useLlmStats('24h')
+  const tsQ = useTimeseries('24h')
 
   const approvals = approvalsQ.data?.approvals ?? []
   const runs = useMemo<RunSummary[]>(() => runsQ.data?.runs ?? [], [runsQ.data])
-  const tasks = tasksQ.data?.tasks ?? []
+  const tasks = useMemo(() => tasksQ.data?.tasks ?? [], [tasksQ.data])
   const agents = useMemo<Agent[]>(
     () => (rosterQ.data?.agents ?? []).filter((a) => !a.hidden),
     [rosterQ.data],
@@ -56,6 +105,37 @@ export function HomePage() {
   const needsYou = approvals.length + failedRuns.length + reviewTasks.length
   const recent = runs.slice(0, 6)
 
+  // --- Activity (last 24h) — authoritative LLM stats + the run snapshot ------
+  const stats = statsQ.data
+  const buckets = tsQ.data?.buckets ?? []
+  const labels = bucketLabels(buckets.length)
+  const volume = buckets.map((b, i) => ({ label: labels[i], tokens: b.total_tokens }))
+  const requestSpark = buckets.map((b) => b.request_count)
+  const tokenSpark = buckets.map((b) => b.total_tokens)
+  const toolCalls = runs.reduce((sum, r) => sum + (r.tool_calls ?? 0), 0)
+
+  // Run outcomes across the current snapshot — the "how are runs going" totals.
+  const runStatus = useMemo(() => {
+    const c = { running, completed: 0, failed: 0, stale: 0 }
+    for (const r of runs) {
+      const s = (r.status || '').toLowerCase()
+      if (['completed', 'success', 'done', 'ok'].includes(s)) c.completed += 1
+      else if (['failed', 'error'].includes(s)) c.failed += 1
+      else if (s === 'stale') c.stale += 1
+    }
+    return c
+  }, [runs, running])
+
+  // --- State (totals) — tasks by status -------------------------------------
+  const taskCounts = useMemo(() => {
+    const total = tasks.length
+    const segs = TASK_SEGMENTS.map((seg) => ({
+      ...seg,
+      count: tasks.filter((t) => seg.match((t.status ?? 'backlog') as TaskStatus)).length,
+    }))
+    return { total, segs }
+  }, [tasks])
+
   return (
     <div className="flex h-full flex-col">
       <PageHeader
@@ -68,6 +148,85 @@ export function HomePage() {
           <InsightStat label="Online" value={online} />
           <InsightStat label="Needs you" value={needsYou} />
           <InsightStat label="Running" value={running} icon={<ActivityIcon className="size-4" />} />
+        </div>
+
+        {/* Activity — last 24h */}
+        <section className="space-y-2.5">
+          <SectionHead title="Activity · last 24h" href="/arcllm" cta="LLM metrics" />
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <InsightStat
+              label="LLM calls"
+              value={fmtNumber(stats?.request_count ?? 0)}
+              delta={windowTrend(requestSpark)}
+              spark={<Sparkline data={requestSpark} />}
+              icon={<Zap className="size-4" />}
+            />
+            <InsightStat
+              label="Tokens"
+              value={fmtTokens(stats?.total_tokens ?? 0)}
+              delta={windowTrend(tokenSpark)}
+              spark={<Sparkline data={tokenSpark} color="var(--chart-1)" />}
+              icon={<Coins className="size-4" />}
+            />
+            <InsightStat
+              label="Cost"
+              value={fmtCost(stats?.total_cost ?? 0)}
+              icon={<DollarSign className="size-4" />}
+            />
+            <InsightStat
+              label="Tool calls · recent"
+              value={fmtNumber(toolCalls)}
+              icon={<Wrench className="size-4" />}
+            />
+          </div>
+        </section>
+
+        {/* Work state — token volume + task/run breakdowns */}
+        <div className="grid gap-6 lg:grid-cols-2">
+          <ChartCard title="Token volume · 24h">
+            {volume.length > 1 ? (
+              <AreaSeries data={volume} dataKey="tokens" />
+            ) : (
+              <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                Not enough activity yet to chart.
+              </div>
+            )}
+          </ChartCard>
+
+          <div className="space-y-4 rounded-lg border border-border bg-card p-4">
+            <div>
+              <div className="mb-2 flex items-center justify-between">
+                <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                  Tasks
+                </h3>
+                <span className="text-[11px] font-semibold tabular-nums text-muted-foreground">
+                  {taskCounts.total} total
+                </span>
+              </div>
+              <StackedBar segs={taskCounts.segs} total={taskCounts.total} />
+              <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 sm:grid-cols-3">
+                {taskCounts.segs.map((s) => (
+                  <div key={s.label} className="flex items-center gap-2 text-xs">
+                    <span className={`size-2 shrink-0 rounded-full ${s.dot}`} />
+                    <span className="min-w-0 flex-1 truncate text-muted-foreground">{s.label}</span>
+                    <span className="font-semibold tabular-nums text-foreground">{s.count}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="border-t border-border pt-3">
+              <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                Runs
+              </h3>
+              <div className="grid grid-cols-4 gap-2 text-center">
+                <RunStat label="Running" value={runStatus.running} tone="text-status-info" />
+                <RunStat label="Done" value={runStatus.completed} tone="text-status-online" />
+                <RunStat label="Failed" value={runStatus.failed} tone="text-status-error" />
+                <RunStat label="Stale" value={runStatus.stale} tone="text-status-warning" />
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* Needs you */}
@@ -203,6 +362,47 @@ function SectionHead({ title, href, cta }: { title: string; href: string; cta: s
       >
         {cta} <ArrowRight className="size-3" />
       </Link>
+    </div>
+  )
+}
+
+/** A single proportional bar of task-status segments. Empty → a flat track. */
+function StackedBar({
+  segs,
+  total,
+}: {
+  segs: Array<{ label: string; bar: string; count: number }>
+  total: number
+}) {
+  if (total === 0) {
+    return <div className="h-2.5 rounded-full bg-muted" />
+  }
+  return (
+    <div className="flex h-2.5 overflow-hidden rounded-full bg-muted">
+      {segs
+        .filter((s) => s.count > 0)
+        .map((s) => (
+          <div
+            key={s.label}
+            className={s.bar}
+            style={{ width: `${(s.count / total) * 100}%` }}
+            title={`${s.label}: ${s.count}`}
+          />
+        ))}
+    </div>
+  )
+}
+
+/** One run-outcome count, big number over a muted label. */
+function RunStat({ label, value, tone }: { label: string; value: number; tone: string }) {
+  return (
+    <div className="rounded-md bg-muted/40 py-2">
+      <div className={`font-display text-lg font-extrabold leading-none tabular-nums ${tone}`}>
+        {value}
+      </div>
+      <div className="mt-1 text-[10px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
+        {label}
+      </div>
     </div>
   )
 }

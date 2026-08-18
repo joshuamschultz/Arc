@@ -1,15 +1,19 @@
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { motion } from 'motion/react'
-import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { ArrowRight, ChevronDown } from 'lucide-react'
 import { StatusChip } from '@/components/ai'
 import { EmptyState } from '@/components/states'
 import { initials, relativeTime, shortId } from '@/lib/format'
 import type { RunSummary } from '@/lib/types'
 
+// Render this many at a time; a huge fleet history stays smooth by revealing
+// runs in pages instead of mounting hundreds of motion nodes at once.
+const PAGE = 60
+
 /**
- * Cover Flow — flip through runs like album art. The centered run is in focus;
- * click it to open its trace, click a side card to bring it to center. Drag,
- * scroll, or arrow-key. Motion springs handle the 3D transitions.
+ * Flip — a scannable, motion-y wall of runs. Instead of one card floating in a
+ * sea of empty canvas, every run is a tile in a responsive grid that springs in
+ * on a stagger, lifts on hover, and scrolls. Click any tile to open its trace.
  */
 export function RunCoverflow({
   runs,
@@ -22,12 +26,7 @@ export function RunCoverflow({
   colorFor: (name: string) => string | undefined
   onOpen: (r: RunSummary) => void
 }) {
-  const [center, setCenter] = useState(0)
-  const down = useRef(false)
-  const startX = useRef(0)
-  const acc = useRef(0)
-
-  const go = (n: number) => setCenter(Math.max(0, Math.min(runs.length - 1, n)))
+  const [shown, setShown] = useState(PAGE)
 
   if (!runs.length) {
     return (
@@ -37,65 +36,35 @@ export function RunCoverflow({
     )
   }
 
+  const visible = runs.slice(0, shown)
+  const remaining = runs.length - visible.length
+
   return (
     <div className="flex h-full flex-col">
-      <div
-        className="relative flex-1 cursor-grab overflow-hidden [perspective:1600px] active:cursor-grabbing"
-        tabIndex={0}
-        onKeyDown={(e) => {
-          if (e.key === 'ArrowLeft') go(center - 1)
-          if (e.key === 'ArrowRight') go(center + 1)
-        }}
-        onPointerDown={(e) => {
-          down.current = true
-          startX.current = e.clientX
-          ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
-        }}
-        onPointerMove={(e) => {
-          if (!down.current) return
-          const dx = e.clientX - startX.current
-          if (Math.abs(dx) > 70) {
-            go(center + (dx < 0 ? 1 : -1))
-            startX.current = e.clientX
-          }
-        }}
-        onPointerUp={() => {
-          down.current = false
-        }}
-        onWheel={(e) => {
-          acc.current += e.deltaY + e.deltaX
-          if (Math.abs(acc.current) > 60) {
-            go(center + (acc.current > 0 ? 1 : -1))
-            acc.current = 0
-          }
-        }}
-      >
-        <div className="absolute inset-0 flex items-center justify-center">
-          {runs.map((r, i) => {
-            const o = i - center
-            const ax = Math.abs(o)
+      <div className="flex items-center justify-between border-b border-border px-5 py-3">
+        <span className="text-sm font-medium text-foreground">Run wall</span>
+        <span className="font-mono text-xs tabular-nums text-muted-foreground">
+          {visible.length} / {runs.length}
+        </span>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-5">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-4">
+          {visible.map((r, i) => {
             const name = resolveName(r)
+            // Stagger only within the freshest page so revealing more never
+            // waits on a long tail of delays.
+            const delay = Math.min(i % PAGE, 24) * 0.012
             return (
               <motion.button
                 key={r.run_id}
                 type="button"
-                onClick={() => (o === 0 ? onOpen(r) : go(i))}
-                initial={false}
-                animate={{
-                  x: o * 250,
-                  z: -ax * 180 + (o === 0 ? 60 : 0),
-                  rotateY: -o * 40,
-                  scale: o === 0 ? 1.06 : 0.9,
-                  opacity: ax > 3 ? 0 : 1,
-                }}
-                transition={{ type: 'spring', stiffness: 260, damping: 30 }}
-                style={{
-                  position: 'absolute',
-                  transformStyle: 'preserve-3d',
-                  zIndex: 100 - ax,
-                  pointerEvents: ax > 3 ? 'none' : 'auto',
-                }}
-                className="w-[300px] rounded-2xl border border-border bg-card p-5 text-left shadow-lg"
+                onClick={() => onOpen(r)}
+                initial={{ opacity: 0, y: 18, scale: 0.96 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                transition={{ type: 'spring', stiffness: 320, damping: 26, delay }}
+                whileHover={{ y: -4, scale: 1.02 }}
+                className="group flex flex-col rounded-2xl border border-border bg-card p-4 text-left shadow-sm transition-shadow hover:shadow-lg hover:border-primary/40"
               >
                 <div className="flex items-center gap-2.5">
                   <span
@@ -114,38 +83,32 @@ export function RunCoverflow({
                     <StatusChip value={r.status} />
                   </span>
                 </div>
-                <div className="mt-5 font-display text-base font-bold tracking-tight text-foreground">
+                <div className="mt-4 font-display text-base font-bold tracking-tight text-foreground">
                   {r.turns} turns · {r.tool_calls} tools
                 </div>
                 <div className="mt-3 flex items-center justify-between border-t border-border pt-3 text-[11px] text-muted-foreground">
                   <span>{relativeTime(r.started_at)}</span>
-                  {o === 0 && <span className="font-semibold text-primary">Open trace →</span>}
+                  <span className="flex items-center gap-1 font-semibold text-primary opacity-0 transition-opacity group-hover:opacity-100">
+                    Open trace <ArrowRight className="size-3" />
+                  </span>
                 </div>
               </motion.button>
             )
           })}
         </div>
-      </div>
-      <div className="flex items-center justify-center gap-4 border-t border-border py-3">
-        <button
-          type="button"
-          onClick={() => go(center - 1)}
-          className="grid size-9 place-items-center rounded-lg border border-border text-muted-foreground hover:text-foreground"
-          aria-label="Previous"
-        >
-          <ChevronLeft className="size-4" />
-        </button>
-        <span className="min-w-16 text-center font-mono text-xs tabular-nums text-muted-foreground">
-          {center + 1} / {runs.length}
-        </span>
-        <button
-          type="button"
-          onClick={() => go(center + 1)}
-          className="grid size-9 place-items-center rounded-lg border border-border text-muted-foreground hover:text-foreground"
-          aria-label="Next"
-        >
-          <ChevronRight className="size-4" />
-        </button>
+
+        {remaining > 0 && (
+          <div className="mt-6 flex justify-center">
+            <button
+              type="button"
+              onClick={() => setShown((n) => n + PAGE)}
+              className="flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:border-primary/40"
+            >
+              <ChevronDown className="size-4" />
+              Show {Math.min(remaining, PAGE)} more
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )

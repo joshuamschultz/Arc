@@ -156,7 +156,12 @@ export function ArcRunPage() {
 
         <main className="flex-1 overflow-auto">
           <RunRiver run={active} />
-          {active && <SpawnLineage root={active.actor_did ?? null} />}
+          {active && (
+            <SpawnLineage
+              root={active.actor_did ?? null}
+              onFocusChild={(c) => setQ(c.label)}
+            />
+          )}
         </main>
       </div>
       )}
