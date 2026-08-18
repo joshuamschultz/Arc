@@ -322,11 +322,20 @@ async def inject_messaging_sections(ctx: Any) -> None:
             "",
             "### Communication Rules",
             "",
-            "- Reply to `action_required: true` DMs promptly.",
-            "- Channel messages are FYI — only respond if relevant to your role.",
-            "- Use `thread_id` from the original message when replying in threads.",
-            "- If stuck, message the relevant teammate. Don't work in silence.",
-            "- Use `notify_user` for the human. Use `messaging_send` for agents/channels.",
+            "- Talk to the team in the open channel so everyone can follow: "
+            '`messaging_send(to="channel://<name>", body=...)`.',
+            "- Need one teammate to act? Put `@their_handle` in the `body`. "
+            "The tag wakes that agent.",
+            '- Only direct-message (`to="agent://<handle>"`) something meant for '
+            "that one agent. Prefer the open channel.",
+            "- Reply in place: reuse the `thread_id` from the message you are "
+            "answering, so your reply lands in the same thread.",
+            "- Channel messages are FYI — only jump in when it fits your role.",
+            "- Reply to `action_required: true` messages promptly.",
+            "- Blocked? Say so in the channel and tag who can help. "
+            "Never work in silence.",
+            "- `notify_user` is for the human only. Use `messaging_send` for "
+            "teammates and channels.",
         ]
     )
 

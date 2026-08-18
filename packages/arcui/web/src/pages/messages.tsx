@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
-import { AlertCircle, Hash, MessageSquare, RotateCcw, Send, Wrench } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { AlertCircle, Hash, MessageSquare, RotateCcw, Wrench } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
-import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { Markdown } from '@/components/markdown'
-import { MentionComposer, type MentionHandle } from '@/components/mention-composer'
+import { MentionComposer, type CommandOption, type MentionHandle } from '@/components/mention-composer'
 import { EmptyState } from '@/components/states'
 import { StatusDot, StatusText } from '@/components/status-badge'
 import { OperatorModeToggle } from '@/components/operator-mode-toggle'
@@ -18,7 +17,8 @@ import { useChatSession, type ChatMessage } from '@/hooks/use-chat'
 import { useTeamStream, type TeamFrame } from '@/hooks/use-team-stream'
 import { GateCard } from '@/components/gate-card'
 import { useOperatorMode } from '@/hooks/use-operator-mode'
-import { useRoster, useTeamChannels, useChannelMessages } from '@/lib/queries'
+import { useComposerDraft } from '@/hooks/use-composer-draft'
+import { useRoster, useTeamChannels, useChannelMessages, useWorkflows } from '@/lib/queries'
 import { apiPost, ApiError } from '@/lib/api'
 import { initials } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -63,9 +63,9 @@ function Bubble({ m }: { m: ChatMessage }) {
   )
 }
 
-function ChatPanel({ agentId }: { agentId: string }) {
+function ChatPanel({ agentId, commands }: { agentId: string; commands: CommandOption[] }) {
   const { messages, status, sendMessage, resetForNewSession } = useChatSession(agentId)
-  const [text, setText] = useState('')
+  const [text, setText] = useComposerDraft(`agent:${agentId}`)
   const [resetting, setResetting] = useState(false)
   const [resetError, setResetError] = useState<string | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
@@ -78,12 +78,6 @@ function ChatPanel({ agentId }: { agentId: string }) {
     if (!text.trim()) return
     sendMessage(text)
     setText('')
-  }
-  const onKey = (e: KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      send()
-    }
   }
 
   const newSession = async () => {
@@ -128,17 +122,15 @@ function ChatPanel({ agentId }: { agentId: string }) {
         <div ref={endRef} />
       </div>
       <div className="flex items-end gap-2 border-t border-border bg-card/30 p-3">
-        <Textarea
-          rows={1}
+        <MentionComposer
           value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={onKey}
-          placeholder={status === 'ready' ? 'Message…' : 'Connecting…'}
+          onChange={setText}
+          onSubmit={send}
+          handles={[]}
+          commands={commands}
+          placeholder={status === 'ready' ? 'Message… (/ for commands)' : 'Connecting…'}
           disabled={status !== 'ready'}
         />
-        <Button onClick={send} disabled={status !== 'ready' || !text.trim()} size="icon">
-          <Send className="size-4" />
-        </Button>
       </div>
     </div>
   )
@@ -197,18 +189,20 @@ function ChannelPanel({
   channel,
   onOpenMembers,
   mentionHandles,
+  commands,
   names,
 }: {
   channel: Channel
   onOpenMembers: () => void
   mentionHandles: MentionHandle[]
+  commands: CommandOption[]
   names: Map<string, string>
 }) {
   const name = channel.name
   const history = useChannelMessages(name)
   const { frames, status, post } = useTeamStream(name)
   const endRef = useRef<HTMLDivElement>(null)
-  const [text, setText] = useState('')
+  const [text, setText] = useComposerDraft(`channel:${name}`)
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
   const [sendWarning, setSendWarning] = useState<string | null>(null)
@@ -350,7 +344,8 @@ function ChannelPanel({
             onChange={setText}
             onSubmit={send}
             handles={mentionHandles}
-            placeholder={status === 'ready' ? `Message #${name}… (@ to mention)` : 'Connecting…'}
+            commands={commands}
+            placeholder={status === 'ready' ? `Message #${name}… (@ to mention, / for commands)` : 'Connecting…'}
             disabled={status !== 'ready' || sending}
           />
         </div>
@@ -359,9 +354,17 @@ function ChannelPanel({
   )
 }
 
+// Built-in composer commands, ahead of the per-workflow ones. `new` resets the
+// session; `help` shows guidance. Workflows contribute `/<id>` each.
+const BUILTIN_COMMANDS: CommandOption[] = [
+  { name: 'new', label: 'Start a fresh session' },
+  { name: 'help', label: 'Show available commands' },
+]
+
 export function MessagesPage() {
   const roster = useRoster()
   const channels = useTeamChannels()
+  const workflows = useWorkflows()
   const [sel, setSel] = useState<Selection>(null)
   const [operatorMode] = useOperatorMode()
   const [creating, setCreating] = useState(false)
@@ -387,6 +390,19 @@ export function MessagesPage() {
         }))
         .filter((h) => h.handle),
     [agents],
+  )
+
+  // Slash commands = built-ins + one `/<id>` per workflow (label falls back to
+  // its id). Shared by direct-agent chat and channel composers alike.
+  const commands = useMemo<CommandOption[]>(
+    () => [
+      ...BUILTIN_COMMANDS,
+      ...(workflows.data?.workflows ?? []).map((w) => ({
+        name: w.id,
+        label: w.name || w.id,
+      })),
+    ],
+    [workflows.data],
   )
 
   return (
@@ -469,13 +485,14 @@ export function MessagesPage() {
               <EmptyState icon={<MessageSquare className="size-7" />} title="Select a conversation" description="Pick an agent to chat, or a channel to follow." />
             </div>
           ) : sel.kind === 'agent' ? (
-            <ChatPanel key={sel.id} agentId={sel.id} />
+            <ChatPanel key={sel.id} agentId={sel.id} commands={commands} />
           ) : selectedChannel ? (
             <ChannelPanel
               key={sel.id}
               channel={selectedChannel}
               onOpenMembers={() => setManagingMembers(true)}
               mentionHandles={mentionHandles}
+              commands={commands}
               names={names}
             />
           ) : (

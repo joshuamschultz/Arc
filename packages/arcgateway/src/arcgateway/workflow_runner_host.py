@@ -83,6 +83,17 @@ class RunnerHost:
         """The process's currently-running RunnerHost, or ``None``."""
         return cls._active
 
+    @property
+    def runner(self) -> WorkflowRunnerProtocol:
+        """The live WorkflowRunner this host drives.
+
+        Exposed so another surface in this process — the slash-command
+        workflow provider — composes its control plane onto the SAME store,
+        run plane, and tier the engine already enforces, instead of building a
+        second set that could disagree.
+        """
+        return self._runner
+
     @classmethod
     async def start(cls, runner: WorkflowRunnerProtocol) -> RunnerHost:
         """Start ``runner.run_forever()`` as a background task; register the singleton.

@@ -48,6 +48,7 @@ from arcgateway.adapters.base import (
 )
 from arcgateway.adapters.base import as_parts as _as_parts
 from arcgateway.audit import emit_event
+from arcgateway.commands.base import CommandSpec
 from arcgateway.delivery import DeliveryTarget
 from arcgateway.parts import MediaPart, TextPart
 
@@ -243,17 +244,18 @@ class SlackAdapter:
         # a personal-tier test that never networks can still construct.
         self._http_session: Any | None = None
 
-    def set_command_names(self, names: Sequence[str]) -> None:
+    def set_command_names(self, specs: Sequence[CommandSpec]) -> None:
         """Register slash-command names to subscribe to on ``connect``.
 
         Slack — unlike Telegram — does NOT deliver slash commands as ``message``
         events, so each command must be explicitly subscribed via
         ``@app.command``. Bootstrap calls this with the gateway's
-        ``CommandRegistry.names()`` before ``connect``. Every name here must
-        also be declared in the Slack app manifest with the ``commands`` scope
-        (a manifest/reinstall step — code alone cannot register Slack commands).
+        ``CommandRegistry.command_specs()`` before ``connect``; only each spec's
+        name is subscribed. Every name here must also be declared in the Slack
+        app manifest with the ``commands`` scope (a manifest/reinstall step —
+        code alone cannot register Slack commands).
         """
-        self._command_names = tuple(names)
+        self._command_names = tuple(spec.name for spec in specs)
 
     async def connect(self) -> None:
         """Establish Socket Mode connection."""

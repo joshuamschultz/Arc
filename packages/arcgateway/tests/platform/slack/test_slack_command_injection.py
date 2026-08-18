@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from arcgateway.adapters.slack.adapter import SlackAdapter
+from arcgateway.commands.base import CommandSpec
 from arcgateway.executor import InboundEvent
 from arcgateway.parts import flatten_text
 
@@ -34,7 +35,9 @@ def _make_adapter() -> tuple[SlackAdapter, list[InboundEvent]]:
 
 def test_set_command_names_stores_tuple() -> None:
     adapter, _ = _make_adapter()
-    adapter.set_command_names(["new", "help"])
+    adapter.set_command_names(
+        [CommandSpec(name="new", description="Start a new session"), CommandSpec("help", "Help")]
+    )
     assert adapter._command_names == ("new", "help")
 
 

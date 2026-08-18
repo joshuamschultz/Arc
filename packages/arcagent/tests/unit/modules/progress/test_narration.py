@@ -9,12 +9,14 @@ ever addressed to anything other than the origin stamped on its own event.
 from __future__ import annotations
 
 import asyncio
+import time
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from arcagent.modules.progress import _runtime, narrator
+from arcagent.modules.progress._runtime import Tally
 from arcagent.modules.progress.capabilities import (
     drain_on_shutdown,
     narrate_run_progress,
@@ -128,6 +130,74 @@ class TestRouting:
 
         await _emit("dynamic.validated", "web:dashboard", bytes=100)
         await _emit("dynamic.completed", "web:dashboard", status="completed")
+
+
+class TestHeartbeat:
+    """A plain run says nothing until it ends, which reads as a hang on a job
+    that legitimately runs for minutes. One "still working" milestone goes out
+    once the run passes the threshold — and never before, so a quick answer is
+    not preceded by noise."""
+
+    async def test_a_short_run_gets_no_heartbeat(self) -> None:
+        channel = _Channel()
+        st = _configure(channel)
+        # Run just started (well under heartbeat_after_seconds).
+        st.tallies["telegram:1"] = Tally(run_started=time.monotonic())
+
+        await _emit("turn.start", "telegram:1", turn_number=1)
+
+        assert channel.sent == []
+
+    async def test_a_long_run_gets_a_still_working_line(self) -> None:
+        channel = _Channel()
+        st = _configure(channel, heartbeat_after_seconds=30.0)
+        st.tallies["telegram:1"] = Tally(run_started=time.monotonic() - 100)
+
+        await _emit("turn.start", "telegram:1", turn_number=8)
+
+        assert channel.texts == ["Still working on this."]
+
+    async def test_heartbeat_does_not_repeat_within_the_interval(self) -> None:
+        channel = _Channel()
+        st = _configure(channel, heartbeat_after_seconds=30.0, heartbeat_every_seconds=60.0)
+        st.tallies["telegram:1"] = Tally(run_started=time.monotonic() - 100)
+
+        await _emit("turn.start", "telegram:1", turn_number=8)
+        await _emit("turn.start", "telegram:1", turn_number=9)
+
+        assert channel.texts == ["Still working on this."]
+
+    async def test_dynamic_runs_suppress_the_turn_heartbeat(self) -> None:
+        # The dynamic strategy narrates its own stages; a turn heartbeat on top
+        # would double it. strategy.selected marks the run to skip it, even once
+        # the run is well past the threshold.
+        channel = _Channel()
+        st = _configure(channel, heartbeat_after_seconds=30.0)
+
+        await _emit("strategy.selected", "telegram:1", strategy="dynamic")
+        st.tallies["telegram:1"].run_started = time.monotonic() - 100
+        await _emit("turn.start", "telegram:1", turn_number=2)
+
+        assert channel.sent == []
+
+    async def test_a_turn_with_no_run_start_seen_stays_quiet(self) -> None:
+        # No strategy.selected means no clock — a stray turn.start says nothing.
+        channel = _Channel()
+        _configure(channel)
+
+        await _emit("turn.start", "telegram:1", turn_number=1)
+
+        assert channel.sent == []
+
+    async def test_strategy_selected_starts_the_clock_for_a_plain_run(self) -> None:
+        channel = _Channel()
+        st = _configure(channel)
+
+        await _emit("strategy.selected", "telegram:1", strategy="react")
+
+        tally = st.tallies["telegram:1"]
+        assert tally.run_started > 0.0
+        assert tally.suppress_heartbeat is False
 
 
 class TestFanOut:

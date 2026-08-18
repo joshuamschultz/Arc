@@ -170,6 +170,78 @@ class TestAsyncioExecutor:
             assert delta.turn_id == session_key
 
 
+class TestAsyncioExecutorNeverSilent:
+    """A run must never leave the user in silence: a completion with no
+    assistant text still gets a finish notice, and a crash gets a failure
+    notice (finish/failure visibility — the user reported being "in the dark"
+    when a coding turn finished empty or died without telling them)."""
+
+    @staticmethod
+    def _event() -> InboundEvent:
+        return InboundEvent(
+            platform="telegram",
+            chat_id="1",
+            user_did="did:arc:user:x",
+            agent_did="did:arc:agent:y",
+            session_key="k",
+            message="do the thing",
+        )
+
+    @staticmethod
+    def _factory_delivering(content: str) -> Any:
+        """agent_factory whose run handle returns a result with ``content``."""
+        result = MagicMock()
+        result.content = content
+        handle = MagicMock()
+        handle.result = AsyncMock(return_value=result)
+
+        async def factory(_agent_did: str) -> Any:
+            agent = MagicMock()
+
+            async def deliver_message(**kwargs: Any) -> str:
+                kwargs["on_handle"](handle)
+                return "ok"
+
+            agent.deliver_message = deliver_message
+            return agent
+
+        return factory
+
+    @pytest.mark.asyncio
+    async def test_empty_completion_still_notifies_the_user(self) -> None:
+        executor = AsyncioExecutor(agent_factory=self._factory_delivering(""))
+        deltas = [d async for d in await executor.run(self._event())]
+        tokens = [d for d in deltas if d.kind == "token"]
+        assert tokens, "an empty-completion run must still yield a finish notice"
+        assert deltas[-1].kind == "done" and deltas[-1].is_final is True
+
+    @pytest.mark.asyncio
+    async def test_nonempty_completion_does_not_add_a_noise_notice(self) -> None:
+        executor = AsyncioExecutor(agent_factory=self._factory_delivering("here you go"))
+        deltas = [d async for d in await executor.run(self._event())]
+        tokens = [d.content for d in deltas if d.kind == "token"]
+        assert tokens == ["here you go"], "a normal reply must not get an extra notice"
+
+    @pytest.mark.asyncio
+    async def test_crash_yields_a_failure_notice(self) -> None:
+        async def factory(_agent_did: str) -> Any:
+            agent = MagicMock()
+
+            async def deliver_message(**_kwargs: Any) -> str:
+                raise RuntimeError("boom /secret/path")
+
+            agent.deliver_message = deliver_message
+            return agent
+
+        executor = AsyncioExecutor(agent_factory=factory)
+        deltas = [d async for d in await executor.run(self._event())]
+        tokens = [d for d in deltas if d.kind == "token"]
+        assert tokens, "a crashed run must yield a failure notice"
+        # Never leak raw exception text (paths/secrets) to the channel.
+        assert "secret" not in tokens[0].content
+        assert deltas[-1].kind == "done"
+
+
 # ---------------------------------------------------------------------------
 # SubprocessExecutor — T1.6 unit-level tests
 # (full round-trip subprocess tests live in tests/integration/test_subprocess_executor.py)

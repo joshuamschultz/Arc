@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { GitBranch, Plus } from 'lucide-react'
+import { Archive, GitBranch, Plus } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
 import { OperatorModeToggle } from '@/components/operator-mode-toggle'
 import { Button } from '@/components/ui/button'
@@ -116,7 +116,7 @@ function WorkflowRow({ w }: { w: WorkflowSummary }) {
       </span>
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="font-semibold text-foreground">{w.name}</span>
+          <span className="font-semibold text-foreground">{w.name || w.id}</span>
           <StatusPill status={w.status} />
           <span className="text-xs text-muted-foreground">v{w.version}</span>
         </div>
@@ -141,7 +141,8 @@ function WorkflowRow({ w }: { w: WorkflowSummary }) {
 }
 
 export function WorkflowsPage() {
-  const workflows = useWorkflows()
+  const [showArchived, setShowArchived] = useState(false)
+  const workflows = useWorkflows(showArchived)
   const [operatorMode] = useOperatorMode()
   const [creating, setCreating] = useState(false)
 
@@ -152,6 +153,15 @@ export function WorkflowsPage() {
         description="Named, signed, conversationally-authored multi-agent workflows."
         actions={
           <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant={showArchived ? 'secondary' : 'ghost'}
+              onClick={() => setShowArchived((v) => !v)}
+              aria-pressed={showArchived}
+              title={showArchived ? 'Hide archived workflows' : 'Show archived workflows'}
+            >
+              <Archive className="size-3.5" /> {showArchived ? 'Hide archived' : 'Show archived'}
+            </Button>
             <OperatorModeToggle />
             {operatorMode && (
               <Button size="sm" onClick={() => setCreating(true)}>

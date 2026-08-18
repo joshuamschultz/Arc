@@ -86,3 +86,31 @@ class TestProgressForwarding:
         await _drain()
 
         assert progress.seen == []
+
+    async def test_strategy_pick_and_turn_start_feed_the_heartbeat(self) -> None:
+        # A plain run's start marker and each turn are forwarded on the progress
+        # channel (with the origin) so a consumer can pace a "still working" line.
+        bus = ModuleBus()
+        progress = _Recorder(bus, "agent:run_progress")
+        bridge = create_arcrun_bridge(bus, reply_target="telegram:7")
+
+        bridge(_event("strategy.selected", strategy="react"))
+        bridge(_event("turn.start", turn_number=1))
+        await _drain()
+
+        assert progress.seen == [
+            {"event": "strategy.selected", "reply_target": "telegram:7", "data": {"strategy": "react"}},
+            {"event": "turn.start", "reply_target": "telegram:7", "data": {"turn_number": 1}},
+        ]
+
+    async def test_turn_start_keeps_its_plan_mapping_too(self) -> None:
+        # turn.start still drives the existing pre_plan consumers — the heartbeat
+        # forwarding is additive, not a replacement.
+        bus = ModuleBus()
+        plan = _Recorder(bus, "agent:pre_plan")
+        bridge = create_arcrun_bridge(bus, reply_target="web:1")
+
+        bridge(_event("turn.start", turn_number=2))
+        await _drain()
+
+        assert plan.seen == [{"turn_number": 2}]

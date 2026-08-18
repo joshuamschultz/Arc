@@ -43,8 +43,12 @@ class FakeControlPlane:
         self.list_runs_result: list[dict[str, Any]] = []
         self.get_run_result: dict[str, Any] | None = None
 
-    async def list_workflows(self, *, actor: OperatorActor) -> list[dict[str, Any]]:
-        self.calls.append(("list_workflows", (), {"actor": actor}))
+    async def list_workflows(
+        self, *, actor: OperatorActor, include_archived: bool = False
+    ) -> list[dict[str, Any]]:
+        self.calls.append(
+            ("list_workflows", (), {"actor": actor, "include_archived": include_archived})
+        )
         return self.list_workflows_result
 
     async def get_workflow(
@@ -196,6 +200,18 @@ class TestListAndGet:
         }
         assert _mutations(caplog)[0]["operation"] == "workflow.list"
         assert _mutations(caplog)[0]["outcome"] == "applied"
+        # Archived definitions are excluded unless the operator opts in.
+        assert plane.calls[0][2]["include_archived"] is False
+
+    def test_list_workflows_include_archived_passthrough(self) -> None:
+        app, auth, plane, _ = _make_app()
+        app.state.audit = UIAuditLogger()
+        client = TestClient(app)
+
+        resp = client.get("/api/workflows?include_archived=true", headers=_operator(auth))
+
+        assert resp.status_code == 200
+        assert plane.calls[0][2]["include_archived"] is True
 
     def test_get_workflow_not_found(self) -> None:
         app, auth, plane, _ = _make_app()

@@ -139,9 +139,10 @@ def create_arcrun_bridge(
     Maps ArcRun lifecycle events to Module Bus events:
       tool.start  → agent:pre_tool
       tool.end    → agent:post_tool
-      turn.start  → agent:pre_plan
+      turn.start  → agent:pre_plan  (+ agent:run_progress heartbeat tick)
       turn.end    → agent:post_plan
-      dynamic.*   → agent:run_progress
+      dynamic.*        → agent:run_progress
+      strategy.selected → agent:run_progress  (run-start marker)
 
     llm.call is NOT mapped — the arcllm bridge emits llm:call_complete
     from TraceRecord with trace_id, bodies, and phase timings.
@@ -167,31 +168,44 @@ def create_arcrun_bridge(
     }
     supervisor = task_supervisor or BackgroundTaskSupervisor(logger=_logger)
 
+    # The two lifecycle markers a plain (non-dynamic) run needs so a consumer can
+    # pace a "still working" milestone: the strategy pick (the run's start) and
+    # each turn (the heartbeat tick). Forwarded on the same progress channel as
+    # the dynamic stages, and, like them, carrying the origin so a long run can
+    # speak on the phone it was started from.
+    _progress_markers = {"strategy.selected", "turn.start"}
+
     def bridge(event: arcrun.Event) -> None:
         # Always copy to a plain dict — Event.data is typed as
         # MappingProxyType[Any, Any] (read-only) by arcrun; ModuleBus.emit
         # requires dict[str, Any]. Shallow copy is intentional here.
-        bus_event = _event_map.get(event.type)
-        data: dict[str, Any]
-        if bus_event is not None:
-            data = dict(event.data)
-        elif event.type.startswith("dynamic."):
-            bus_event = "agent:run_progress"
-            data = {
-                "event": event.type,
-                "reply_target": reply_target,
-                "data": dict(event.data),
-            }
-        else:
+        forwarded: list[tuple[str, dict[str, Any]]] = []
+        mapped = _event_map.get(event.type)
+        if mapped is not None:
+            forwarded.append((mapped, dict(event.data)))
+        if event.type.startswith("dynamic.") or event.type in _progress_markers:
+            forwarded.append(
+                (
+                    "agent:run_progress",
+                    {
+                        "event": event.type,
+                        "reply_target": reply_target,
+                        "data": dict(event.data),
+                    },
+                )
+            )
+        if not forwarded:
             return
         try:
             asyncio.get_running_loop()
-            supervisor.create(bus.emit(bus_event, data), name=f"arcrun_bridge:{bus_event}")
         except RuntimeError:
             _logger.warning(
                 "No running event loop for bridge event: %s",
                 event.type,
             )
+            return
+        for bus_event, data in forwarded:
+            supervisor.create(bus.emit(bus_event, data), name=f"arcrun_bridge:{bus_event}")
 
     return bridge
 

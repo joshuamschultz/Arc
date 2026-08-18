@@ -24,7 +24,7 @@ from arcagent.core.agent_dispatch import build_run_context, maybe_compact, track
 from arcagent.core.agent_lifecycle import activate_runtime_bindings
 from arcagent.core.session_internal import wire_messages
 from arcagent.core.session_internal.capability_ledger import bind_session_id, reset_session_id
-from arcagent.tools.approval_policy import build_loop_controls
+from arcagent.tools.approval_policy import narrowed_loop_controls
 from arcagent.tools.checkpoint_signing import verify_record
 
 if TYPE_CHECKING:
@@ -79,7 +79,7 @@ async def resume_stream(agent: ArcAgent, *, session_key: str) -> AsyncIterator[a
             store_raw_bodies=agent._config.telemetry.capture_tool_io,
             resume_from=cp,
             on_handle=on_handle,
-            **build_loop_controls(agent, session),
+            **narrowed_loop_controls(agent, session, None),
         )
         async for event in raw_stream:
             if isinstance(event, arcrun.TurnEndEvent):

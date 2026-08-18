@@ -94,6 +94,15 @@ def line_for(event: str, payload: Mapping[str, Any], *, max_step_chars: int) -> 
     return None
 
 
+def heartbeat_line() -> Line:
+    """A single reassurance that a long-running plain run is still going.
+
+    Fixed text written by us, never the model — this line only says "not stuck",
+    so it carries no run detail a script could speak through (LLM01 / ASI09).
+    """
+    return Line("Still working on this.", kind="heartbeat")
+
+
 def fanout_line(count: int) -> Line:
     """A batch of child agents has just been started."""
     if count == 1:
@@ -133,4 +142,4 @@ def short_title(raw: Any, limit: int) -> str:
     return clean if len(clean) <= limit else clean[: limit - 3].rstrip() + "..."
 
 
-__all__ = ["Line", "fanin_line", "fanout_line", "line_for", "short_title"]
+__all__ = ["Line", "fanin_line", "fanout_line", "heartbeat_line", "line_for", "short_title"]

@@ -235,9 +235,18 @@ def narrowed_loop_controls(
     ``arcrun.toml``: the request is intersected with a configured allowlist, so
     the tighter set always wins — the same rule the per-run token/cost budget
     follows.
+
+    An un-pinned turn (``requested is None`` — the ordinary inbound message)
+    takes ``react`` alone unless the operator widened the ceiling. With one
+    strategy allowed arcrun skips the per-run ``select_strategy`` model call
+    entirely, so a basic message runs one full-context react turn instead of
+    paying a stripped selection call that could route it onto a model-authored
+    ``code`` / ``dynamic`` path. Widening the ceiling is how an operator opts
+    basic turns back into model-selected control flow.
     """
     controls = build_loop_controls(agent, session)
     if requested is None:
+        controls["allowed_strategies"] = controls.get("allowed_strategies") or [_REACT]
         return controls
     configured = controls.get("allowed_strategies")
     controls["allowed_strategies"] = (

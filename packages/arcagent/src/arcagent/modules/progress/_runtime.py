@@ -44,6 +44,13 @@ class Tally:
     failed: int = 0
     pending: int = 0
     flush_task: asyncio.Task[None] | None = None
+    # "Still working" heartbeat state for a plain (non-dynamic) run. ``run_started``
+    # is the monotonic time the current run's strategy was picked; 0.0 means no run
+    # is being tracked yet. ``suppress_heartbeat`` is set for the dynamic strategy,
+    # which narrates its own stages and needs no heartbeat on top.
+    run_started: float = 0.0
+    last_heartbeat: float = 0.0
+    suppress_heartbeat: bool = False
 
 
 @dataclass

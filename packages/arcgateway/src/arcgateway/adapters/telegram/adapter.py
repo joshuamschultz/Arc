@@ -46,7 +46,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Iterator
+import re
+from collections.abc import Awaitable, Callable, Iterator, Sequence
 from typing import Any
 
 from arcgateway.adapters._backoff import exponential_backoff
@@ -66,6 +67,7 @@ from arcgateway.adapters.base import (
 )
 from arcgateway.adapters.base import as_parts as _as_parts
 from arcgateway.audit import emit_event
+from arcgateway.commands.base import CommandSpec
 from arcgateway.delivery import DeliveryTarget
 from arcgateway.parts import MediaPart, TextPart
 
@@ -73,6 +75,12 @@ _logger = logging.getLogger("arcgateway.adapters.telegram.adapter")
 
 # Telegram API hard limit for sendMessage
 _TELEGRAM_MAX_MESSAGE_LENGTH = 4096
+
+# setMyCommands constraints: a command is 1-32 chars of [a-z0-9_]; a description
+# is at most 256 chars; and the menu holds at most 100 commands.
+_TELEGRAM_COMMAND_RE = re.compile(r"^[a-z0-9_]{1,32}$")
+_TELEGRAM_MAX_COMMAND_DESCRIPTION = 256
+_TELEGRAM_MAX_COMMANDS = 100
 
 # ── Polling-conflict backoff before hand-off to GatewayRunner ────────────────
 _CONFLICT_BACKOFF_SECONDS = 1.0
@@ -196,6 +204,8 @@ class TelegramAdapter:
         self._polling_task: asyncio.Task[None] | None = None
         self._bot_id: int | None = None
         self._running = False
+        # The native command menu published via setMyCommands on connect().
+        self._command_specs: tuple[CommandSpec, ...] = ()
 
         # Fatal error tracking — set by _set_fatal_error(), observed by the
         # runner through wait_closed() (which unblocks on _closed_event).
@@ -251,6 +261,10 @@ class TelegramAdapter:
         # Initialize the bot (one-time API call to verify token + get bot_info).
         await self._initialize_with_retry()
 
+        # Publish the native "/" command menu now that the bot is live. Cosmetic
+        # and best-effort: a failed setMyCommands must not stop the adapter.
+        await self._publish_command_menu()
+
         # Start polling in a background task so connect() returns promptly.
         self._polling_task = asyncio.create_task(
             self._run_polling_loop(),
@@ -263,6 +277,49 @@ class TelegramAdapter:
             self._agent_did,
         )
         self._audit(_EVENT_CONNECT, {"agent_did": self._agent_did})
+
+    def set_command_names(self, specs: Sequence[CommandSpec]) -> None:
+        """Record the slash-command menu to publish to Telegram on ``connect``.
+
+        Telegram delivers slash commands as ordinary ``message`` text (unlike
+        Slack), so nothing here is needed for dispatch — this only drives the
+        native "/" menu the client shows. The specs are stored and published via
+        ``setMyCommands`` once the bot is live; illegal names are filtered there.
+        """
+        self._command_specs = tuple(specs)
+
+    async def _publish_command_menu(self) -> None:
+        """Publish the recorded specs as Telegram's native command menu.
+
+        Names Telegram will not accept (uppercase, punctuation, over 32 chars)
+        are skipped rather than rejecting the whole menu; descriptions are
+        truncated to Telegram's 256-char limit and the list is capped at 100.
+        Best-effort: a failed API call is logged, never raised.
+        """
+        if not self._command_specs or self._application is None:
+            return
+        from telegram import BotCommand
+
+        commands: list[Any] = []
+        for spec in self._command_specs:
+            name = spec.name.lower()
+            if not _TELEGRAM_COMMAND_RE.match(name):
+                _logger.debug("TelegramAdapter: skipping illegal command name %r", spec.name)
+                continue
+            commands.append(
+                BotCommand(
+                    command=name,
+                    description=spec.description[:_TELEGRAM_MAX_COMMAND_DESCRIPTION],
+                )
+            )
+            if len(commands) >= _TELEGRAM_MAX_COMMANDS:
+                break
+        if not commands:
+            return
+        try:
+            await self._application.bot.set_my_commands(commands)
+        except Exception:  # reason: the "/" menu is cosmetic — never fail connect() for it
+            _logger.warning("TelegramAdapter: set_my_commands failed", exc_info=True)
 
     async def disconnect(self) -> None:
         """Stop polling and shut down the Telegram application cleanly.
