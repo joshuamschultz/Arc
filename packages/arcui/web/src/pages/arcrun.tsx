@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { Search } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
 import { RunRiver } from '@/components/run-river'
+import { RunCoverflow } from '@/components/run-coverflow'
 import { SpawnLineage } from '@/components/run-observability'
 import { EmptyState, LoadingRows } from '@/components/states'
 import { StatusChip } from '@/components/ai'
@@ -39,6 +40,7 @@ export function ArcRunPage() {
   const runs = useMemo<RunSummary[]>(() => data?.runs ?? [], [data])
   const [active, setActive] = useState<RunSummary | null>(null)
   const [q, setQ] = useState('')
+  const [mode, setMode] = useState<'trace' | 'flip'>('trace')
 
   const [searchParams] = useSearchParams()
   const runParam = searchParams.get('run')
@@ -61,7 +63,37 @@ export function ArcRunPage() {
       <PageHeader
         title="Activity"
         description="Every run — pick one to see its signed action trace, step by step."
+        actions={
+          <div className="inline-flex gap-1 rounded-lg border border-border bg-card p-1">
+            {(['trace', 'flip'] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setMode(m)}
+                className={cn(
+                  'rounded-md px-3 py-1 text-xs font-semibold transition-colors',
+                  mode === m
+                    ? 'bg-primary/12 text-foreground'
+                    : 'text-muted-foreground hover:text-foreground',
+                )}
+              >
+                {m === 'trace' ? 'Trace' : 'Flip'}
+              </button>
+            ))}
+          </div>
+        }
       />
+      {mode === 'flip' ? (
+        <RunCoverflow
+          runs={filtered}
+          resolveName={(r) => resolveAgent(r, nameByDid)}
+          colorFor={(n) => colorByName.get(n)}
+          onOpen={(r) => {
+            setActive(r)
+            setMode('trace')
+          }}
+        />
+      ) : (
       <div className="flex flex-1 overflow-hidden">
         <aside className="flex w-[300px] shrink-0 flex-col border-r border-border">
           <div className="border-b border-border p-2.5">
@@ -136,6 +168,7 @@ export function ArcRunPage() {
           )}
         </main>
       </div>
+      )}
     </div>
   )
 }
