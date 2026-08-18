@@ -56,7 +56,7 @@ import {
   useGatedCapabilities,
   useRoster,
 } from '@/lib/queries'
-import { useQueryClient } from '@tanstack/react-query'
+import { ApprovalRequest } from '@/components/hitl'
 import { useOperatorMode } from '@/hooks/use-operator-mode'
 import type { MentionHandle } from '@/components/mention-composer'
 import {
@@ -1258,18 +1258,9 @@ function TrustTab({ agentId }: { agentId: string }) {
   const approvalsQ = useApprovals()
   const gatedQ = useGatedCapabilities(false)
   const [operatorMode] = useOperatorMode()
-  const queryClient = useQueryClient()
 
   const approvals = (approvalsQ.data?.approvals ?? []).filter((a) => a.agent_did === did)
   const gated = (gatedQ.data?.gated ?? []).filter((g) => g.agent_id === agentId)
-
-  const act = async (id: string, decision: 'approve' | 'deny') => {
-    try {
-      await apiPost(`/api/approvals/${encodeURIComponent(id)}/${decision}`)
-    } finally {
-      queryClient.invalidateQueries({ queryKey: ['approvals'] })
-    }
-  }
 
   return (
     <div className="space-y-6">
@@ -1279,36 +1270,7 @@ function TrustTab({ agentId }: { agentId: string }) {
         ) : (
           <div className="space-y-2">
             {approvals.map((a) => (
-              <div
-                key={a.id}
-                className="flex items-center gap-3 rounded-lg border border-border bg-card p-3.5"
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm font-semibold text-foreground">
-                    Wants to run <span className="font-mono">{a.tool}</span>
-                  </div>
-                  <div className="truncate text-xs text-muted-foreground">
-                    {a.legs?.length ? a.legs.join(', ') : 'trifecta gate'} · {relativeTime(a.created_at)}
-                  </div>
-                </div>
-                {operatorMode ? (
-                  <div className="flex shrink-0 gap-2">
-                    <Button size="sm" onClick={() => act(a.id, 'approve')}>
-                      Approve
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => act(a.id, 'deny')}>
-                      Deny
-                    </Button>
-                  </div>
-                ) : (
-                  <Link
-                    to="/approvals"
-                    className="shrink-0 rounded-md border border-border bg-secondary px-3 py-1.5 text-xs font-semibold text-secondary-foreground hover:border-foreground/20"
-                  >
-                    Review
-                  </Link>
-                )}
-              </div>
+              <ApprovalRequest key={a.id} a={a} operatorMode={operatorMode} />
             ))}
           </div>
         )}
