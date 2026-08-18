@@ -233,6 +233,7 @@ function bucketLabels(window: string, n: number): string[] {
 // --- Tabs ------------------------------------------------------------------
 
 function OverviewTab({ agentId }: { agentId: string }) {
+  const navigate = useNavigate()
   const agent = useAgent(agentId)
   const config = useAgentConfig(agentId)
   const stats = useAgentStats(agentId, '24h')
@@ -497,7 +498,12 @@ function OverviewTab({ agentId }: { agentId: string }) {
               ) : (
                 <div className="space-y-1.5">
                   {taskList.slice(0, 8).map((t, i) => (
-                    <div key={i} className="flex items-center justify-between gap-3 text-sm">
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => navigate(`/agents/${agentId}/tasks`)}
+                      className="-mx-1.5 flex w-[calc(100%+0.75rem)] items-center justify-between gap-3 rounded-md px-1.5 py-1 text-left text-sm transition-colors hover:bg-muted/40"
+                    >
                       <span className="min-w-0 truncate text-foreground">
                         {String(t.title ?? t.id ?? 'task')}
                       </span>
@@ -506,7 +512,7 @@ function OverviewTab({ agentId }: { agentId: string }) {
                           {String(t.status)}
                         </span>
                       )}
-                    </div>
+                    </button>
                   ))}
                 </div>
               )}
@@ -520,7 +526,12 @@ function OverviewTab({ agentId }: { agentId: string }) {
                   {scheduleList.slice(0, 8).map((sc, i) => {
                     const sched = sc as Dict
                     return (
-                      <div key={i} className="flex items-center justify-between gap-3 text-sm">
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => navigate(`/agents/${agentId}/schedules`)}
+                        className="-mx-1.5 flex w-[calc(100%+0.75rem)] items-center justify-between gap-3 rounded-md px-1.5 py-1 text-left text-sm transition-colors hover:bg-muted/40"
+                      >
                         <span className="min-w-0 truncate text-foreground">
                           {String(sched.name ?? sched.id ?? 'schedule')}
                         </span>
@@ -529,7 +540,7 @@ function OverviewTab({ agentId }: { agentId: string }) {
                             {String(sched.cron ?? sched.schedule ?? sched.next_run)}
                           </span>
                         )}
-                      </div>
+                      </button>
                     )
                   })}
                 </div>
