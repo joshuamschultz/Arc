@@ -56,7 +56,7 @@ from arcagent.core.model_manager import (
     ensure_model,
 )
 from arcagent.core.module_bus import ModuleBus
-from arcagent.core.runtime_dependencies import RuntimeBinding
+from arcagent.core.runtime_dependencies import RuntimeBinding, RuntimeDependencies
 from arcagent.core.session_coordination import SessionRunCoordinator
 from arcagent.core.session_internal import ContextManager, SessionManager
 from arcagent.core.session_internal.capability_ledger import (
@@ -193,6 +193,20 @@ class ArcAgent:
         # state. ``agent_lifecycle.activate_runtime_bindings`` replays this
         # list at the top of every turn-dispatch entry point.
         self._runtime_bindings: list[RuntimeBinding[Any]] = []
+        # The dependency menu built once at module setup, kept so a module
+        # enabled later in the session (set_module_enabled) is configured from
+        # the same values as one enabled at startup.
+        self._runtime_deps: RuntimeDependencies | None = None
+
+    async def set_module_enabled(self, name: str, *, enabled: bool) -> str:
+        """Enable or disable one module at runtime, with no agent restart.
+
+        Binds or unbinds every effect the module contributes — tools, hooks,
+        background tasks, and per-agent state. Delegates to the lifecycle.
+        """
+        from arcagent.core.agent_lifecycle import set_module_enabled
+
+        return await set_module_enabled(self, name, enabled=enabled)
 
     def _policy_audit_log_path(self) -> Path:
         """Resolve the WORM chain file for policy-decision audit (SPEC-034).

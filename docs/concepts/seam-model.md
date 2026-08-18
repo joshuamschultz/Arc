@@ -192,13 +192,18 @@ module owns with a new set inside a single synchronous step — an emitter sees
 the old set or the complete new set, never a half-rebuilt bridge. That is how a
 capability can be reloaded under a live agent without dropping an event.
 
-!!! note "Where this is going"
-    The bus proves the pattern for **event handlers**. The direction of travel
-    is to make a whole part's activation a single revertible transaction — so
-    enabling, disabling, or upgrading a module at runtime cleanly binds and
-    unbinds *all* of its effects (tools, hooks, background loops) in one step,
-    the same way `replace_handlers` does for hooks today. The goal is that
-    "survive its own absence" holds not just across a restart, but live, mid-run.
+### Enabling and disabling a module, live
+
+A whole module's activation is a single revertible transaction.
+`agent.set_module_enabled(name, enabled=…)` binds or unbinds **all** of a
+module's effects at once — its tools, hooks, background loops, and per-agent
+state — with no restart. The capability half rides the transactional reload:
+the module's scan root is added or dropped, and the rescan registers or removes
+its tools, hooks, and tasks. The runtime half is the module's own `configure()`
+on enable and an optional `teardown()` on disable, for resources the capability
+registry does not already own (a live connection, a self-spawned task). So
+"survive its own absence" holds not just across a restart, but live, mid-run —
+which is what makes a module safe to turn off, swap, or upgrade in place.
 
 ---
 

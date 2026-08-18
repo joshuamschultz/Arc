@@ -28,6 +28,7 @@ from arcprompt import load_stock
 
 from arcagent.capabilities.capability_loader import CapabilityLoader
 from arcagent.capabilities.capability_registry import CapabilityRegistry
+from arcagent.core.config import ModuleEntry
 from arcagent.core.module_bus import EventContext
 from arcagent.core.module_discovery import active_modules, module_root, module_statuses
 from arcagent.core.runtime_dependencies import (
@@ -35,6 +36,7 @@ from arcagent.core.runtime_dependencies import (
     RuntimeBinding,
     RuntimeDependencies,
     RuntimeModule,
+    RuntimeTeardownable,
 )
 from arcagent.core.tool_registry import RegisteredTool, ToolTransport
 from arcagent.tools._egress_build import build_egress_proxy
@@ -312,6 +314,9 @@ def configure_module_runtimes(
         human_gate=agent._human_gate,
         agent_run_fn=agent.run_collected,
     )
+    # Kept so a module enabled later in the session is configured from the same
+    # menu as one enabled at startup (set_module_enabled).
+    agent._runtime_deps = dependencies
 
     _warn_config_without_folder(agent)
 
@@ -335,6 +340,48 @@ def configure_module_runtimes(
             agent._runtime_bindings.append(
                 RuntimeBinding(mod_name, runtime_mod.bind, runtime_mod.state())
             )
+
+
+async def set_module_enabled(agent: ArcAgent, name: str, *, enabled: bool) -> str:
+    """Enable or disable one module at runtime — bind or unbind all its effects.
+
+    A module contributes tools, hooks, background tasks, and per-agent state. The
+    capability half (tools/hooks/tasks) rides the transactional reload: this adds
+    or drops the module's ``module:<name>`` scan root and lets the reload
+    (de)register from it. This function owns only the runtime half — configure on
+    enable, ``teardown`` on disable — plus the task-local binding. No restart.
+    """
+    loader = agent._capability_loader
+    deps = agent._runtime_deps
+    if loader is None or deps is None:
+        raise RuntimeError("Module hot-swap requires a started agent")
+
+    if enabled == (name in active_modules(agent._config)):
+        return f"module {name!r} already {'enabled' if enabled else 'disabled'}"
+
+    entry = agent._config.modules.get(name) or ModuleEntry()
+    if enabled:
+        agent._config.modules[name] = entry.model_copy(update={"enabled": True})
+        runtime_mod = load_module_runtime(name)
+        try:
+            runtime_mod.configure(**deps.select_for(runtime_mod.configure, entry.config))
+        except Exception as exc:
+            raise RuntimeError(f"Module {name!r} configuration failed") from exc
+        if isinstance(runtime_mod, RuntimeBindable):
+            agent._runtime_bindings.append(
+                RuntimeBinding(name, runtime_mod.bind, runtime_mod.state())
+            )
+    else:
+        runtime_mod = load_module_runtime(name)
+        if isinstance(runtime_mod, RuntimeTeardownable):
+            await runtime_mod.teardown()
+        agent._runtime_bindings[:] = [
+            binding for binding in agent._runtime_bindings if binding.module_name != name
+        ]
+        agent._config.modules[name] = entry.model_copy(update={"enabled": False})
+
+    loader.set_module_roots(agent._config_path.parent.resolve(), active_modules(agent._config))
+    return await agent.reload()
 
 
 def _warn_config_without_folder(agent: ArcAgent) -> None:

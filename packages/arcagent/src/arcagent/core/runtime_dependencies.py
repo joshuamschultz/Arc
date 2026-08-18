@@ -103,6 +103,21 @@ class RuntimeBindable(Protocol):
     def bind(self, state: object) -> None: ...
 
 
+@runtime_checkable
+class RuntimeTeardownable(Protocol):
+    """Optional inverse of ``configure``.
+
+    A module that owns resources beyond its ``@background_task`` capabilities —
+    a live connection, a self-spawned poll task — implements ``teardown`` to
+    release them when the module is disabled at runtime. A module without it is
+    still fully unwound: its capabilities are removed by the reload and its
+    task-local state is dropped. So ``teardown`` is opt-in, for effects the
+    capability registry does not already own.
+    """
+
+    async def teardown(self) -> None: ...
+
+
 StateT = TypeVar("StateT")
 
 
@@ -124,4 +139,5 @@ __all__ = [
     "RuntimeBinding",
     "RuntimeDependencies",
     "RuntimeModule",
+    "RuntimeTeardownable",
 ]

@@ -37,7 +37,7 @@ reverse-topo teardown.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -306,6 +306,22 @@ class CapabilityLoader:
         # inspectable/installable on hosts that cannot execute that tier.
         self._isolated_runner = isolated_runner
         self._ignored_python_paths = frozenset(path.resolve() for path in ignored_python_paths)
+
+    def set_module_roots(self, agent_dir: Path, module_names: Sequence[str]) -> None:
+        """Replace the ``module:*`` scan roots, leaving every other root in place.
+
+        The next :meth:`prepare_reload` re-scans this set, so a dropped module's
+        root disappears and its tools/hooks/background tasks are removed, while an
+        added module's root appears and its capabilities register. Module roots
+        stay last, preserving last-wins precedence (ADR-023). This is the
+        scan-root half of live module enable/disable — the runtime configure and
+        teardown are the agent lifecycle's job.
+        """
+        from arcagent.capabilities.inventory import append_module_scan_roots
+
+        kept = [root for root in self._scan_roots if not root[0].startswith(MODULE_ROOT_PREFIX)]
+        append_module_scan_roots(kept, agent_dir, list(module_names))
+        self._scan_roots = kept
 
     async def scan_and_register(self) -> _ReloadDelta:
         """Walk scan roots in precedence order; register everything found."""
