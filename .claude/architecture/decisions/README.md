@@ -1,7 +1,7 @@
 # Architecture Decision Records — index
 
-**36 decision records in the repo-level series, across three locations. The next free number in
-that series is ADR-033.** Specs carry their own ADR series with their own numbering — see
+**37 decision records in the repo-level series, across three locations. The next free number in
+that series is ADR-034.** Specs carry their own ADR series with their own numbering — see
 [An ADR number is only unique within its series](#an-adr-number-is-only-unique-within-its-series).
 
 This file is the authority on what exists and what number is free. Three pages under `docs/`
@@ -61,7 +61,7 @@ the standalone files in this directory.
 | [ADR-017C](../../adrs/ADR-017C-defense-in-depth-dynamic-sandbox.md) | Defense in depth — dynamic sandbox |
 | [ADR-017D](../../adrs/ADR-017D-tier-flows-through-registry-construction.md) | Tier flows through registry construction |
 
-## ADR-018–032
+## ADR-018–033
 
 | ADR | Status | Title |
 |---|---|---|
@@ -80,14 +80,15 @@ the standalone files in this directory.
 | [ADR-030](ADR-030-mcp-capability-and-extension-placement.md) | Accepted | Agents get MCP capability; extensions plug in from outside |
 | [ADR-031](ADR-031-dynamic-script-not-declared-graph.md) | Accepted | Ad-hoc model-authored orchestration is a restricted script, not a declared graph |
 | [ADR-032](ADR-032-channel-responder-selection-routes-on-published-indexes.md) | Accepted | A channel responder is chosen by routing over published indexes, not self-assessment |
+| [ADR-033](ADR-033-module-dependency-contract-is-the-configure-signature.md) | Accepted | A module's dependency contract is its `configure()` signature, not a core registry |
 
 ## Writing a new one
 
-Take **ADR-033**, add a file here as `ADR-NNN-<slug>.md`, and follow the existing template:
+Take **ADR-034**, add a file here as `ADR-NNN-<slug>.md`, and follow the existing template:
 `Status`, `Date`, `Relates to` / `Supersedes` where applicable, then `Context`, `Decision`,
 `Consequences`.
 
-Then add a row to the ADR-018–032 table above and bump the next-free number in the heading. That is
+Then add a row to the ADR-018–033 table above and bump the next-free number in the heading. That is
 the only list that needs updating — the pages under `docs/` link here rather than copying it.
 
 If a decision supersedes part of an earlier ADR, say so in **both** — ADR-018/ADR-030 is the worked

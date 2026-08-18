@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum
@@ -39,6 +40,30 @@ class RuntimeDependencies:
     human_gate: Any
     agent_run_fn: Callable[..., Awaitable[Any]]
 
+    def select_for(
+        self, configure: Callable[..., None], module_config: dict[str, Any]
+    ) -> dict[str, Any]:
+        """The dependencies a module's ``configure`` asks for, by parameter name.
+
+        A module declares its contract by naming keyword parameters that match
+        the closed :class:`DependencyKey` vocabulary; it receives exactly those
+        and nothing else (least privilege — a module that never names
+        ``operator_signer`` never gets it). Core names no module: the signature
+        is the whole contract, so a new module needs no registration here.
+
+        ``config`` is the module's own ``[modules.NAME.config]`` table; every
+        other key mirrors the field of the same name on this container.
+        Parameters outside the vocabulary keep their own defaults.
+        """
+        menu: dict[str, Any] = {
+            key.value: getattr(self, key.value)
+            for key in DependencyKey
+            if key is not DependencyKey.CONFIG
+        }
+        menu[DependencyKey.CONFIG.value] = module_config
+        wanted = inspect.signature(configure).parameters
+        return {name: value for name, value in menu.items() if name in wanted}
+
 
 class DependencyKey(Enum):
     """Closed vocabulary accepted by explicit module runtime specifications."""
@@ -61,37 +86,6 @@ class DependencyKey(Enum):
     HUMAN_GATE = "human_gate"
     OPERATOR_SIGNER = "operator_signer"
     AGENT_RUN_FN = "agent_run_fn"
-
-
-@dataclass(frozen=True)
-class RuntimeModuleSpec:
-    """Explicit injection contract for one module runtime."""
-
-    dependencies: tuple[DependencyKey, ...]
-    optional: bool = False
-
-    def kwargs(self, deps: RuntimeDependencies, module_config: dict[str, Any]) -> dict[str, Any]:
-        values: dict[DependencyKey, Any] = {
-            DependencyKey.CONFIG: module_config,
-            DependencyKey.EVAL_CONFIG: deps.eval_config,
-            DependencyKey.TELEMETRY: deps.telemetry,
-            DependencyKey.WORKSPACE: deps.workspace,
-            DependencyKey.LLM_CONFIG: deps.llm_config,
-            DependencyKey.AGENT_NAME: deps.agent_name,
-            DependencyKey.TEAM_ROOT: deps.team_root,
-            DependencyKey.BUS: deps.bus,
-            DependencyKey.AGENT_DID: deps.agent_did,
-            DependencyKey.IDENTITY: deps.identity,
-            DependencyKey.CONFIG_PATH: deps.config_path,
-            DependencyKey.TOOL_REGISTRY: deps.tool_registry,
-            DependencyKey.TIER: deps.tier,
-            DependencyKey.POLICY_PIPELINE: deps.policy_pipeline,
-            DependencyKey.EGRESS_PROXY: deps.egress_proxy,
-            DependencyKey.HUMAN_GATE: deps.human_gate,
-            DependencyKey.OPERATOR_SIGNER: deps.operator_signer,
-            DependencyKey.AGENT_RUN_FN: deps.agent_run_fn,
-        }
-        return {key.value: values[key] for key in self.dependencies}
 
 
 class RuntimeModule(Protocol):
@@ -130,5 +124,4 @@ __all__ = [
     "RuntimeBinding",
     "RuntimeDependencies",
     "RuntimeModule",
-    "RuntimeModuleSpec",
 ]

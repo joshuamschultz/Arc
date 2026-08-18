@@ -31,12 +31,10 @@ from arcagent.capabilities.capability_registry import CapabilityRegistry
 from arcagent.core.module_bus import EventContext
 from arcagent.core.module_discovery import active_modules, module_root, module_statuses
 from arcagent.core.runtime_dependencies import (
-    DependencyKey,
     RuntimeBindable,
     RuntimeBinding,
     RuntimeDependencies,
     RuntimeModule,
-    RuntimeModuleSpec,
 )
 from arcagent.core.tool_registry import RegisteredTool, ToolTransport
 from arcagent.tools._egress_build import build_egress_proxy
@@ -46,59 +44,6 @@ if TYPE_CHECKING:
     from arcagent.core.agent import ArcAgent
 
 _logger = logging.getLogger("arcagent.agent_lifecycle")
-
-K = DependencyKey
-_COMMON = (K.CONFIG, K.TELEMETRY, K.WORKSPACE)
-_RUNTIME_SPECS: dict[str, RuntimeModuleSpec] = {
-    "browser": RuntimeModuleSpec((*_COMMON, K.BUS)),
-    "connectors": RuntimeModuleSpec(
-        (
-            *_COMMON,
-            K.IDENTITY,
-            K.CONFIG_PATH,
-            K.TOOL_REGISTRY,
-            K.OPERATOR_SIGNER,
-            K.TIER,
-            K.POLICY_PIPELINE,
-            K.HUMAN_GATE,
-        )
-    ),
-    "memory": RuntimeModuleSpec(
-        (*_COMMON, K.BUS, K.AGENT_DID, K.AGENT_NAME, K.IDENTITY, K.POLICY_PIPELINE)
-    ),
-    "messaging": RuntimeModuleSpec(
-        (*_COMMON, K.TEAM_ROOT, K.AGENT_NAME, K.IDENTITY, K.OPERATOR_SIGNER)
-    ),
-    "policy": RuntimeModuleSpec((*_COMMON, K.EVAL_CONFIG, K.LLM_CONFIG, K.AGENT_NAME)),
-    "proactive": RuntimeModuleSpec((*_COMMON, K.AGENT_NAME, K.LLM_CONFIG)),
-    "progress": RuntimeModuleSpec(_COMMON),
-    "pulse": RuntimeModuleSpec((*_COMMON, K.LLM_CONFIG, K.AGENT_NAME, K.BUS, K.AGENT_RUN_FN)),
-    "runcontrol": RuntimeModuleSpec((*_COMMON, K.IDENTITY)),
-    "scheduler": RuntimeModuleSpec((*_COMMON, K.BUS, K.AGENT_RUN_FN)),
-    "session": RuntimeModuleSpec(_COMMON),
-    "skills": RuntimeModuleSpec(
-        (
-            *_COMMON,
-            K.EVAL_CONFIG,
-            K.LLM_CONFIG,
-            K.AGENT_NAME,
-            K.AGENT_DID,
-            K.IDENTITY,
-            K.OPERATOR_SIGNER,
-            K.HUMAN_GATE,
-        )
-    ),
-    "tasks": RuntimeModuleSpec((*_COMMON, K.IDENTITY, K.OPERATOR_SIGNER, K.TEAM_ROOT)),
-    "user_profile": RuntimeModuleSpec((*_COMMON, K.AGENT_NAME)),
-    "voice": RuntimeModuleSpec((K.CONFIG, K.TELEMETRY)),
-    "web": RuntimeModuleSpec((*_COMMON, K.AGENT_NAME)),
-    "workflows": RuntimeModuleSpec(
-        (*_COMMON, K.IDENTITY, K.HUMAN_GATE, K.OPERATOR_SIGNER, K.TIER)
-    ),
-    "workpad": RuntimeModuleSpec(
-        (*_COMMON, K.EVAL_CONFIG, K.LLM_CONFIG, K.AGENT_NAME, K.AGENT_DID)
-    ),
-}
 
 
 def _resolve_working_dir(
@@ -372,21 +317,17 @@ def configure_module_runtimes(
 
     for mod_name in active_modules(agent._config):
         mod_entry = agent._config.modules[mod_name]
-        spec = _RUNTIME_SPECS.get(mod_name)
-        if spec is None:
-            raise RuntimeError(f"Enabled module {mod_name!r} has no runtime dependency contract")
         try:
             runtime_mod = load_module_runtime(mod_name)
-            runtime_mod.configure(**spec.kwargs(dependencies, mod_entry.config))
+            # The module's ``configure`` signature is its whole dependency
+            # contract — core names no module and holds no per-module registry.
+            kwargs = dependencies.select_for(runtime_mod.configure, mod_entry.config)
+            runtime_mod.configure(**kwargs)
         except Exception as exc:
-            if not spec.optional:
-                # Chain the cause. ``from None`` here left the only signal as
-                # "configuration failed" with the real error discarded, which
-                # makes a required module's startup failure undiagnosable from
-                # logs alone — the one moment the cause matters most.
-                raise RuntimeError(f"Required module {mod_name!r} configuration failed") from exc
-            _logger.exception("Optional module %s runtime configuration failed", mod_name)
-            continue
+            # Every enabled module is required. Half-configuring the agent and
+            # continuing hides the failure until some later tool silently
+            # no-ops, so abort with the cause chained (undiagnosable otherwise).
+            raise RuntimeError(f"Required module {mod_name!r} configuration failed") from exc
 
         # Task 27 follow-up (hotfix) — record the built state so every turn
         # can rebind it in whatever asyncio.Task actually dispatches it.

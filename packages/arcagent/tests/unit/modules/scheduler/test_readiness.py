@@ -165,18 +165,39 @@ async def _bind_elsewhere(workspace: Path, fn: Any) -> None:
 def test_the_lifecycle_offers_the_run_callback_to_modules() -> None:
     """Producer and consumer of the binding, checked against each other.
 
-    The scheduler declares `agent_run_fn` in `configure()`; core offers it in
-    the by-signature kwargs. If either side drops it, the module is configured
-    with no callback again and nothing fires — the failure this replaced.
+    The scheduler declares `agent_run_fn` in `configure()`; because that name is
+    in the dependency vocabulary, `select_for` hands the callback over. If either
+    side drops it, the module is configured with no callback again and nothing
+    fires — the failure this replaced.
     """
-    import inspect
+    from pathlib import Path
 
-    from arcagent.core import agent_lifecycle
-    from arcagent.core.runtime_dependencies import DependencyKey
+    from arcagent.core.runtime_dependencies import DependencyKey, RuntimeDependencies
     from arcagent.modules.scheduler import _runtime
 
-    spec = agent_lifecycle._RUNTIME_SPECS["scheduler"]
-    assert DependencyKey.AGENT_RUN_FN in spec.dependencies
-    assert "agent_run_fn" in inspect.signature(_runtime.configure).parameters, (
-        "the scheduler no longer asks for the run callback"
+    assert DependencyKey.AGENT_RUN_FN.value == "agent_run_fn"
+
+    sentinel = object()
+    deps = RuntimeDependencies(
+        workspace=Path("."),
+        config_path=Path("arcagent.toml"),
+        eval_config=None,  # type: ignore[arg-type]
+        llm_config=None,  # type: ignore[arg-type]
+        telemetry=None,
+        bus=None,
+        tool_registry=None,
+        agent_name="a",
+        agent_did="did:x",
+        team_root="/team",
+        tier="personal",
+        identity=None,
+        operator_signer=None,
+        policy_pipeline=None,
+        egress_proxy=None,
+        human_gate=None,
+        agent_run_fn=sentinel,  # type: ignore[arg-type]
+    )
+    kwargs = deps.select_for(_runtime.configure, {})
+    assert kwargs["agent_run_fn"] is sentinel, (
+        "the scheduler no longer receives the run callback by signature"
     )
