@@ -9,11 +9,13 @@ import {
   FileCode,
   Eye,
   EyeOff,
-  ShieldCheck,
   ShieldOff,
+  ShieldAlert,
 } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
 import { OperatorModeToggle } from '@/components/operator-mode-toggle'
+import { StatusChip, InsightStat } from '@/components/ai'
+import { SignedSeal, ContextNote } from '@/components/hitl'
 import { Button } from '@/components/ui/button'
 import { QueryState, EmptyState } from '@/components/states'
 import { useOperatorMode } from '@/hooks/use-operator-mode'
@@ -24,34 +26,18 @@ import {
 } from '@/lib/queries'
 import { apiPost, ApiError } from '@/lib/api'
 import { shortId } from '@/lib/format'
-import { cn } from '@/lib/utils'
 
-// Human-readable gloss for the loader's gate reasons — the operator shouldn't
-// need to know the internal verdict tokens to make the call.
-const STATUS_LABEL: Record<GatedCapability['status'], string> = {
+// Plain-language status shown on each card's StatusChip. The operator shouldn't
+// need to know the loader's internal verdict tokens to make the call; StatusChip
+// carries the tone (a denial or verification error reads red; the rest stay
+// calm), and this map carries the words.
+const STATUS_CHIP: Record<GatedCapability['status'], string> = {
   deny: 'denied',
   new_sighting: 'new sighting',
   unsigned: 'unsigned',
   invalid: 'invalid signature',
   error: 'error',
   loaded: 'loaded',
-}
-
-// Severity coloring: an active denial or a verification error is red; a first
-// sighting or a merely-unsigned artifact is amber (needs a look, not alarm); an
-// invalid signature is neutral — the artifact is simply not trusted as-is. A
-// loaded capability is green: nothing is wrong with it, it is only here because
-// the operator asked to see what they could re-sign.
-const STATUS_CLASS: Record<GatedCapability['status'], string> = {
-  deny: 'border-destructive/30 bg-destructive/10 text-destructive',
-  error: 'border-destructive/30 bg-destructive/10 text-destructive',
-  new_sighting:
-    'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400',
-  unsigned:
-    'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400',
-  invalid: 'border-border bg-muted/40 text-muted-foreground',
-  loaded:
-    'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
 }
 
 // Said once so the tooltip, the accessible description, and the visible hint all
@@ -87,7 +73,7 @@ function SourceBody({
         {query.data.source}
       </pre>
       {query.data.hash !== expectedHash && (
-        <p className="border-t border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-700 dark:text-amber-400">
+        <p className="border-t border-status-warning/30 bg-status-warning/10 px-2.5 py-1.5 text-xs text-status-warning">
           This artifact changed after it was read. Close and reopen to review what is on disk now.
         </p>
       )}
@@ -145,19 +131,12 @@ function GatedCard({ c }: { c: GatedCapability }) {
           <KindIcon />
         </span>
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className="font-semibold text-foreground">{c.name}</span>
             <span className="rounded-sm border border-border bg-muted/40 px-1.5 py-0.5 text-[11px] font-medium capitalize text-muted-foreground">
               {c.kind}
             </span>
-            <span
-              className={cn(
-                'rounded-sm border px-1.5 py-0.5 text-[11px] font-medium',
-                STATUS_CLASS[c.status],
-              )}
-            >
-              {STATUS_LABEL[c.status]}
-            </span>
+            <StatusChip value={STATUS_CHIP[c.status]} />
           </div>
 
           <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
@@ -168,12 +147,13 @@ function GatedCard({ c }: { c: GatedCapability }) {
           {/* Who signed the bytes on disk. `status` cannot answer this: a
               capability the AGENT signed itself loads exactly like one the
               operator signed, and telling those apart is the whole reason an
-              operator would re-sign. Full DID on hover — the row shows the
-              prefix so a wall of them stays scannable. */}
+              operator would re-sign. The tan seal marks a present signature;
+              full DID on hover — the row shows the prefix so a wall of them
+              stays scannable. */}
           <div className="mt-1.5 flex flex-wrap items-center gap-x-1.5 text-xs">
             {signed ? (
               <>
-                <ShieldCheck className="size-3.5 text-muted-foreground" />
+                <SignedSeal className="size-4" />
                 <span className="text-muted-foreground">signed by</span>
                 <span className="font-mono text-foreground/80" title={c.signer_did}>
                   {shortId(c.signer_did, 28)}
@@ -244,7 +224,7 @@ function GatedCard({ c }: { c: GatedCapability }) {
             </div>
           ) : (
             <p className="mt-3 text-xs italic text-muted-foreground/80">
-              Enable operator mode to approve or disapprove.
+              Turn on operator controls in the left rail to approve or disapprove.
             </p>
           )}
         </div>
@@ -263,6 +243,24 @@ function groupByAgent(gated: GatedCapability[]): [string, GatedCapability[]][] {
     else groups.set(c.agent_label, [c])
   }
   return [...groups.entries()]
+}
+
+/** The 3–5 numbers that matter, above the list (REDESIGN §12.2 summary-first). */
+function PendingSummary({
+  gated,
+  includeLoaded,
+}: {
+  gated: GatedCapability[]
+  includeLoaded: boolean
+}) {
+  const signed = gated.filter((c) => c.signer_did !== '').length
+  return (
+    <div className="grid grid-cols-3 gap-3">
+      <InsightStat label={includeLoaded ? 'Shown' : 'Pending'} value={gated.length} />
+      <InsightStat label="Unsigned" value={gated.length - signed} />
+      <InsightStat label="Signed" value={signed} />
+    </div>
+  )
 }
 
 /** Switches the page between the attention queue and the full inventory.
@@ -288,7 +286,7 @@ function IncludeLoadedToggle({
       title="Show capabilities that already load, so a hand-edited or agent-signed one can be signed with the operator key."
     >
       {on ? <Eye className="size-3.5" /> : <EyeOff className="size-3.5" />}
-      {on ? 'Showing all capabilities' : 'Showing gated only'}
+      {on ? 'Showing all capabilities' : 'Showing pending only'}
     </Button>
   )
 }
@@ -303,11 +301,11 @@ export function GatedCapabilitiesPage() {
   return (
     <div className="flex h-full flex-col">
       <PageHeader
-        title="Gated"
+        title="Pending capabilities"
         description={
           includeLoaded
-            ? 'Every tool and skill, gated or loaded — sign or re-sign any of them with the operator key.'
-            : 'Tools and skills the loader quarantined pending operator trust.'
+            ? 'Every tool and skill, pending or loaded — sign or re-sign any of them with the operator key.'
+            : 'Tools and skills held back until you verify them.'
         }
         actions={
           <>
@@ -317,32 +315,46 @@ export function GatedCapabilitiesPage() {
         }
       />
       <div className="flex-1 overflow-auto p-6">
-        <QueryState
-          query={gated}
-          isEmpty={(data) => data.gated.length === 0}
-          empty={
-            <EmptyState
-              icon={<PackageCheck className="size-7" />}
-              title="No gated capabilities"
-              description="Tools and skills held back by signing or policy checks will appear here. Switch to all capabilities to sign one that already loads."
-            />
-          }
-        >
-          {(data) => (
-            <div className="mx-auto flex max-w-3xl flex-col gap-6">
-              {groupByAgent(data.gated).map(([agentLabel, items]) => (
-                <div key={agentLabel} className="flex flex-col gap-3">
-                  <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    {agentLabel}
-                  </h2>
-                  {items.map((c) => (
-                    <GatedCard key={`${c.agent_id}:${c.name}`} c={c} />
-                  ))}
-                </div>
-              ))}
-            </div>
-          )}
-        </QueryState>
+        <div className="mx-auto flex max-w-3xl flex-col gap-6">
+          {/* Guidance-first: one plain sentence on what a held capability is and
+              why, shown even when the queue is empty. No dead ends. */}
+          <ContextNote icon={<ShieldAlert />}>
+            A pending capability is a tool or skill Arc loaded but held back — because it is
+            unsigned, changed, or seen for the first time. Read its source, then approve to let this
+            agent use it with your operator signature.
+          </ContextNote>
+
+          <QueryState
+            query={gated}
+            isEmpty={(data) => data.gated.length === 0}
+            empty={
+              <EmptyState
+                icon={<PackageCheck className="size-7" />}
+                title="Nothing waiting on you"
+                description="Tools and skills held back by signing or policy checks will appear here. Switch to all capabilities to sign one that already loads."
+              />
+            }
+          >
+            {(data) => (
+              <>
+                <PendingSummary gated={data.gated} includeLoaded={includeLoaded} />
+                {groupByAgent(data.gated).map(([agentLabel, items]) => (
+                  <div key={agentLabel} className="flex flex-col gap-3">
+                    <h2 className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                      {agentLabel}
+                      <span className="rounded-sm bg-muted px-1.5 py-0.5 tabular-nums text-muted-foreground">
+                        {items.length}
+                      </span>
+                    </h2>
+                    {items.map((c) => (
+                      <GatedCard key={`${c.agent_id}:${c.name}`} c={c} />
+                    ))}
+                  </div>
+                ))}
+              </>
+            )}
+          </QueryState>
+        </div>
       </div>
     </div>
   )

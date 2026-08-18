@@ -13,29 +13,10 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { QueryState, EmptyState } from '@/components/states'
+import { WorkflowCard, WorkflowSummaryStrip } from '@/components/workflows-view/workflow-card'
 import { useOperatorMode } from '@/hooks/use-operator-mode'
 import { useCreateWorkflow, useWorkflows } from '@/lib/queries'
 import { ApiError } from '@/lib/api'
-import { fmtTime } from '@/lib/format'
-import type { WorkflowSummary } from '@/lib/types'
-
-const STATUS_TONE: Record<string, string> = {
-  draft: 'border-status-warning/30 bg-status-warning/10 text-status-warning',
-  signed: 'border-status-online/30 bg-status-online/10 text-status-online',
-  archived: 'border-border bg-muted/30 text-muted-foreground',
-}
-
-function StatusPill({ status }: { status: string }) {
-  return (
-    <span
-      className={`inline-flex items-center rounded-md border px-1.5 py-0.5 text-[11px] font-medium capitalize ${
-        STATUS_TONE[status] ?? 'border-border bg-muted/30 text-muted-foreground'
-      }`}
-    >
-      {status}
-    </span>
-  )
-}
 
 /** Operator-only create-workflow form — a name + optional trigger JSON.
  *
@@ -102,44 +83,6 @@ function CreateWorkflowSheet({ open, onOpenChange }: { open: boolean; onOpenChan
   )
 }
 
-function WorkflowRow({ w }: { w: WorkflowSummary }) {
-  const navigate = useNavigate()
-  const lastRun = w.last_run
-  return (
-    <button
-      type="button"
-      onClick={() => navigate(`/workflows/${encodeURIComponent(w.id)}`)}
-      className="flex w-full items-center gap-3 rounded-lg border border-border bg-card px-4 py-3 text-left transition-colors hover:bg-muted/40"
-    >
-      <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary/15 text-primary">
-        <GitBranch className="size-4" />
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="font-semibold text-foreground">{w.name || w.id}</span>
-          <StatusPill status={w.status} />
-          <span className="text-xs text-muted-foreground">v{w.version}</span>
-        </div>
-        {w.trigger && (
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            trigger: {String((w.trigger as Record<string, unknown>).type ?? 'manual')}
-          </p>
-        )}
-      </div>
-      <div className="shrink-0 text-right text-xs text-muted-foreground">
-        {lastRun ? (
-          <>
-            <div className="capitalize">{lastRun.status.replace(/_/g, ' ')}</div>
-            {lastRun.ended_at && <div>{fmtTime(lastRun.ended_at)}</div>}
-          </>
-        ) : (
-          <span>No runs yet</span>
-        )}
-      </div>
-    </button>
-  )
-}
-
 export function WorkflowsPage() {
   const [showArchived, setShowArchived] = useState(false)
   const workflows = useWorkflows(showArchived)
@@ -184,10 +127,13 @@ export function WorkflowsPage() {
           }
         >
           {(data) => (
-            <div className="mx-auto flex max-w-3xl flex-col gap-2">
-              {data.workflows.map((w) => (
-                <WorkflowRow key={w.id} w={w} />
-              ))}
+            <div className="mx-auto flex max-w-5xl flex-col gap-4">
+              <WorkflowSummaryStrip workflows={data.workflows} />
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                {data.workflows.map((w) => (
+                  <WorkflowCard key={w.id} w={w} />
+                ))}
+              </div>
             </div>
           )}
         </QueryState>

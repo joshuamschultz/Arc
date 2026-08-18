@@ -1,12 +1,14 @@
 import { useMemo, useState } from 'react'
 import { Activity, Coins, Cpu, Gauge, TrendingDown } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
-import { StatCard } from '@/components/stat-card'
 import { FilterPills } from '@/components/filter-pills'
+import { InsightStat } from '@/components/ai'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ChartCard, AreaSeries, BarSeries } from '@/components/charts'
 import { TraceTable } from '@/components/trace-table'
 import { EmptyState } from '@/components/states'
+import { Sparkline } from '@/components/llm/sparkline'
+import { BreakerBadge } from '@/components/llm/breaker-badge'
 import {
   useBudgets,
   useCircuitBreakers,
@@ -46,6 +48,17 @@ function dictToSeries(dict: Dict | undefined): Array<{ label: string; value: num
     .sort((a, b) => b.value - a.value)
 }
 
+/** Momentum within the window: later-half sum vs earlier-half, as a percentage.
+ * Undefined when there isn't enough signal to be honest about a direction. */
+function windowTrend(values: number[]): number | undefined {
+  if (values.length < 4) return undefined
+  const mid = Math.floor(values.length / 2)
+  const first = values.slice(0, mid).reduce((a, b) => a + b, 0)
+  const second = values.slice(mid).reduce((a, b) => a + b, 0)
+  if (first <= 0) return undefined
+  return Math.round(((second - first) / first) * 100)
+}
+
 function Overview() {
   const [window, setWindow] = useState('7d')
   const stats = useLlmStats(window)
@@ -63,6 +76,10 @@ function Overview() {
     tokens: b.total_tokens,
     requests: b.request_count,
   }))
+  const requestSpark = buckets.map((b) => b.request_count)
+  const tokenSpark = buckets.map((b) => b.total_tokens)
+  const latencySpark = buckets.map((b) => b.latency_avg)
+  const costSpark = buckets.map((b) => b.total_cost)
   const providerCost = useMemo(
     () => dictToSeries(s?.provider_costs).map((d) => ({ label: d.label, cost: d.value })),
     [s],
@@ -83,7 +100,12 @@ function Overview() {
 
   return (
     <div className="space-y-5">
-      <FilterPills value={window} onChange={setWindow} options={WINDOWS} />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+          Usage window
+        </span>
+        <FilterPills value={window} onChange={setWindow} options={WINDOWS} />
+      </div>
 
       {savings > 0 && (
         <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-status-warning/30 bg-status-warning/10 px-4 py-2 text-sm text-foreground">
@@ -101,10 +123,44 @@ function Overview() {
       )}
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard label="Requests" value={fmtNumber(s?.request_count ?? 0)} icon={<Activity className="size-4" />} hint={`${s?.error_count ?? 0} errors`} />
-        <StatCard label="Tokens" value={fmtTokens(s?.total_tokens ?? 0)} icon={<Cpu className="size-4" />} />
-        <StatCard label="Avg latency" value={fmtLatency(s?.latency_avg ?? 0)} icon={<Gauge className="size-4" />} hint={`p95 ${fmtLatency(s?.latency_p95 ?? 0)}`} />
-        <StatCard label="Cost" value={fmtCost(s?.total_cost ?? 0)} icon={<Coins className="size-4" />} />
+        <InsightStat
+          label="Requests"
+          value={fmtNumber(s?.request_count ?? 0)}
+          delta={windowTrend(requestSpark)}
+          icon={<Activity className="size-4" />}
+          spark={<Sparkline data={requestSpark} color="var(--chart-1)" />}
+        />
+        <InsightStat
+          label="Tokens"
+          value={fmtTokens(s?.total_tokens ?? 0)}
+          delta={windowTrend(tokenSpark)}
+          icon={<Cpu className="size-4" />}
+          spark={<Sparkline data={tokenSpark} color="var(--chart-2)" />}
+        />
+        <InsightStat
+          label="Avg latency"
+          value={fmtLatency(s?.latency_avg ?? 0)}
+          icon={<Gauge className="size-4" />}
+          spark={<Sparkline data={latencySpark} color="var(--chart-4)" />}
+        />
+        <InsightStat
+          label="Cost"
+          value={fmtCost(s?.total_cost ?? 0)}
+          icon={<Coins className="size-4" />}
+          spark={<Sparkline data={costSpark} color="var(--chart-3)" />}
+        />
+      </div>
+
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+        <span>
+          <span className="tabular-nums text-foreground">{fmtNumber(s?.error_count ?? 0)}</span> errors
+        </span>
+        <span>
+          <span className="tabular-nums text-foreground">{fmtNumber(s?.retry_count ?? 0)}</span> retries
+        </span>
+        <span>
+          p95 <span className="tabular-nums text-foreground">{fmtLatency(s?.latency_p95 ?? 0)}</span>
+        </span>
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -131,13 +187,15 @@ function Overview() {
       )}
 
       <section className="space-y-2">
-        <h3 className="text-sm font-semibold text-foreground">Model performance</h3>
+        <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+          Model performance
+        </h3>
         {modelRows.length === 0 ? (
           <EmptyState title="No model activity yet" />
         ) : (
           <div className="overflow-hidden rounded-lg border border-border bg-card">
             <table className="w-full text-sm">
-              <thead className="bg-muted/40 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+              <thead className="bg-muted/40 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
                 <tr className="border-b border-border">
                   <th className="px-4 py-2.5 text-left">Model</th>
                   <th className="px-4 py-2.5 text-right">Calls</th>
@@ -165,50 +223,50 @@ function Overview() {
       </section>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <div className="rounded-lg border border-border bg-card p-4 shadow-xs">
-          <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Circuit breakers</h3>
+        <div className="rounded-lg border border-border bg-card p-4">
+          <h3 className="mb-3 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Circuit breakers</h3>
           {(breakers.data?.circuit_breakers ?? []).length === 0 ? (
             <p className="text-xs text-muted-foreground">All circuits closed.</p>
           ) : (
             <ul className="divide-y divide-border/60">
               {(breakers.data?.circuit_breakers ?? []).map((cb, i) => (
-                <li key={i} className="flex items-center justify-between py-1.5 text-sm first:pt-0 last:pb-0">
-                  <span className="inline-flex items-center rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-xs text-foreground">{String((cb as Dict).name ?? '—')}</span>
-                  <span className="capitalize text-muted-foreground">{String((cb as Dict).state ?? '—')}</span>
+                <li key={i} className="flex items-center justify-between gap-2 py-2 text-sm first:pt-0 last:pb-0">
+                  <span className="truncate font-mono text-xs text-foreground">{String((cb as Dict).name ?? '—')}</span>
+                  <BreakerBadge state={String((cb as Dict).state ?? '')} />
                 </li>
               ))}
             </ul>
           )}
         </div>
-        <div className="rounded-lg border border-border bg-card p-4 shadow-xs">
-          <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Budgets</h3>
+        <div className="rounded-lg border border-border bg-card p-4">
+          <h3 className="mb-3 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Budgets</h3>
           {(budgets.data?.budgets ?? []).length === 0 ? (
             <p className="text-xs text-muted-foreground">No budgets configured.</p>
           ) : (
             <ul className="divide-y divide-border/60">
               {(budgets.data?.budgets ?? []).map((b, i) => (
-                <li key={i} className="flex items-center justify-between py-1.5 text-sm first:pt-0 last:pb-0">
-                  <span className="inline-flex items-center rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-xs text-foreground">{String((b as Dict).name ?? `budget ${i + 1}`)}</span>
+                <li key={i} className="flex items-center justify-between gap-2 py-2 text-sm first:pt-0 last:pb-0">
+                  <span className="truncate font-mono text-xs text-foreground">{String((b as Dict).name ?? `budget ${i + 1}`)}</span>
                   <span className="tabular-nums text-muted-foreground">{fmtCost(((b as Dict).used ?? (b as Dict).spent) as number)}</span>
                 </li>
               ))}
             </ul>
           )}
         </div>
-        <div className="rounded-lg border border-border bg-card p-4 shadow-xs">
-          <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Cost efficiency</h3>
+        <div className="rounded-lg border border-border bg-card p-4">
+          <h3 className="mb-3 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Cost efficiency</h3>
           <div className="divide-y divide-border/60 text-sm">
-            <div className="flex items-center justify-between py-1.5 first:pt-0">
+            <div className="flex items-center justify-between gap-2 py-2 first:pt-0">
               <span className="text-muted-foreground">Potential savings</span>
               <span className="tabular-nums text-foreground">{fmtCost(eff.data?.potential_savings_usd ?? 0)}</span>
             </div>
-            <div className="flex items-center justify-between py-1.5">
+            <div className="flex items-center justify-between gap-2 py-2">
               <span className="text-muted-foreground">Cheapest model</span>
-              <span className="inline-flex items-center rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-xs text-foreground">{eff.data?.cheapest_model ?? '—'}</span>
+              <span className="truncate font-mono text-xs text-foreground">{eff.data?.cheapest_model ?? '—'}</span>
             </div>
-            <div className="flex items-center justify-between py-1.5 last:pb-0">
+            <div className="flex items-center justify-between gap-2 py-2 last:pb-0">
               <span className="text-muted-foreground">Most used</span>
-              <span className="inline-flex items-center rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-xs text-foreground">{eff.data?.most_used_model ?? '—'}</span>
+              <span className="truncate font-mono text-xs text-foreground">{eff.data?.most_used_model ?? '—'}</span>
             </div>
           </div>
         </div>
@@ -230,7 +288,10 @@ function Calls() {
 export function ArcLlmPage() {
   return (
     <div className="flex h-full flex-col">
-      <PageHeader title="ArcLLM" description="LLM-call telemetry — requests, responses, cost, and latency." />
+      <PageHeader
+        title="Model usage"
+        description="How much the fleet spends on the model — requests, tokens, latency, and cost, with the raw call trace one click deeper."
+      />
       <Tabs defaultValue="overview" className="flex flex-1 flex-col overflow-hidden">
         <div className="border-b border-border px-6">
           <TabsList className="my-2">

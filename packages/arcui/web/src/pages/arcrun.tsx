@@ -3,12 +3,13 @@ import { useSearchParams } from 'react-router-dom'
 import type { ColumnDef } from '@tanstack/react-table'
 import { Workflow, Users } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
-import { StatCard } from '@/components/stat-card'
+import { InsightStat, StatusChip } from '@/components/ai'
+import { SignedSeal } from '@/components/hitl'
 import { DataTable } from '@/components/data-table'
-import { StatusText } from '@/components/status-badge'
 import { RunDetailDrawer } from '@/components/run-detail-drawer'
 import { SpawnLineage } from '@/components/run-observability'
 import { LoadingRows } from '@/components/states'
+import { RunSparkline } from '@/components/activity/run-sparkline'
 import { useRoster, useRuns } from '@/lib/queries'
 import { fmtLatency, fmtNumber, relativeTime, shortId } from '@/lib/format'
 import type { RunSummary } from '@/lib/types'
@@ -52,7 +53,7 @@ export function ArcRunPage() {
       {
         accessorKey: 'status',
         header: 'Status',
-        cell: (c) => <StatusText value={c.getValue() as string} />,
+        cell: (c) => <StatusChip value={c.getValue() as string} />,
       },
       {
         accessorKey: 'turns',
@@ -82,6 +83,18 @@ export function ArcRunPage() {
   const [active, setActive] = useState<RunSummary | null>(null)
   const agentsWithRuns = new Set(rows.map((r) => resolveAgent(r, nameByDid))).size
 
+  // Real telemetry for the Runs tile sparkline: run durations in chronological
+  // order (oldest → newest), capped to the most recent stretch so the trend
+  // reads. No fabricated series — plots only runs that recorded a duration.
+  const durationSeries = useMemo<number[]>(() => {
+    return rows
+      .filter((r) => r.duration_ms != null)
+      .slice()
+      .sort((a, b) => (a.started_at ?? '').localeCompare(b.started_at ?? ''))
+      .map((r) => r.duration_ms as number)
+      .slice(-24)
+  }, [rows])
+
   // Deep-link support: `/arcrun?run=<id>` (e.g. a task's run link) auto-opens
   // that run once the rows load. Applied during render — keyed on the param so
   // it fires once and never fights a manual selection (mirrors the drawer's
@@ -97,15 +110,30 @@ export function ArcRunPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <PageHeader title="ArcRun" description="Agentic-loop runs — one per user-question→final-response cycle. Click a run for its step-by-step timeline." />
+      <PageHeader title="Activity" description="Every agentic-loop run — one per user-question → final-response cycle. Click a run for its step-by-step timeline." />
       <div className="flex-1 space-y-5 overflow-auto p-6">
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-2">
-          <StatCard label="Runs" value={rows.length} icon={<Workflow className="size-4" />} />
-          <StatCard label="Agents with runs" value={agentsWithRuns} icon={<Users className="size-4" />} />
+        <div className="grid grid-cols-2 gap-3">
+          <InsightStat
+            label="Runs"
+            value={fmtNumber(rows.length)}
+            icon={<Workflow className="size-4" />}
+            spark={<RunSparkline values={durationSeries} />}
+          />
+          <InsightStat
+            label="Agents with runs"
+            value={fmtNumber(agentsWithRuns)}
+            icon={<Users className="size-4" />}
+          />
         </div>
 
         <section className="space-y-2">
-          <h3 className="text-sm font-semibold text-foreground">Runs</h3>
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-sm font-semibold text-foreground">Runs</h3>
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+              <SignedSeal className="size-4" />
+              Signed audit ledger
+            </span>
+          </div>
           {isLoading ? (
             <LoadingRows />
           ) : (

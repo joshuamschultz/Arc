@@ -11,19 +11,13 @@ import {
 } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
 import { OperatorModeToggle } from '@/components/operator-mode-toggle'
+import { StatusChip } from '@/components/ai'
+import { ContextNote } from '@/components/hitl'
 import { AgentGrantChips } from '@/components/connection-grants'
 import { ConnectorAuthorizePanel } from '@/components/connector-authorize-panel'
 import { ConnectorSecretsSheet } from '@/components/connector-secrets-sheet'
 import { HostRequirementLine } from '@/components/host-setup-panel'
 import { Button } from '@/components/ui/button'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
 import { QueryState, EmptyState } from '@/components/states'
 import { useOperatorMode } from '@/hooks/use-operator-mode'
 import {
@@ -43,12 +37,29 @@ import { cn } from '@/lib/utils'
 function doctorTone(status: string): string {
   const s = status.toLowerCase()
   if (s.includes('ok') || s.includes('pass')) {
-    return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+    return 'border-status-online/30 bg-status-online/12 text-status-online'
   }
   if (s.includes('fail') || s.includes('error') || s.includes('missing')) {
-    return 'border-destructive/30 bg-destructive/10 text-destructive'
+    return 'border-status-error/30 bg-status-error/12 text-status-error'
   }
-  return 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400'
+  return 'border-status-warning/30 bg-status-warning/12 text-status-warning'
+}
+
+// A small uppercase heading with the item count beside it, used to head each
+// connection group. Plain word first, technical detail never.
+function SectionHeading({ label, count }: { label: string; count?: number }) {
+  return (
+    <div className="flex items-center gap-2">
+      <h2 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+        {label}
+      </h2>
+      {count != null && count > 0 && (
+        <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-muted-foreground">
+          {count}
+        </span>
+      )}
+    </div>
+  )
 }
 
 // "Why is this one not working?" — the doctor rows exactly as the route
@@ -109,7 +120,21 @@ function SearchPathLine({ roots }: { roots: string[] }) {
   )
 }
 
-function ConnectionRow({
+// The connection's live reachability as one plain-language chip. `StatusChip`
+// carries the app's shared status vocabulary and colour, so a connection reads
+// the same as a task or a run. Detail text sits beside the chip, never inside.
+function ReachabilityChip({
+  probe,
+}: {
+  probe: ReturnType<typeof useProbeConnector>
+}) {
+  if (probe.isPending) return <StatusChip value="running" />
+  if (probe.isError) return <StatusChip value="error" />
+  if (probe.data) return <StatusChip value={probe.data.reachable ? 'online' : 'failed'} />
+  return <span className="text-[11px] text-muted-foreground">Not checked</span>
+}
+
+function ConnectionCard({
   inst,
   bundle,
   agents,
@@ -120,7 +145,7 @@ function ConnectionRow({
   /** The catalog entry backing this instance, absent if the bundle has left
    *  the extension search path. */
   bundle: CatalogBundle | undefined
-  /** The whole fleet, so the row can show who does NOT hold this as well. */
+  /** The whole fleet, so the card can show who does NOT hold this as well. */
   agents: Agent[]
   operatorMode: boolean
   onReauth: (bundle: CatalogBundle, instance: string) => void
@@ -134,163 +159,157 @@ function ConnectionRow({
 
   const busy = probe.isPending || approve.isPending || remove.isPending
   // No declared secrets means the host binary holds the credential: there is
-  // nothing to type, so this row signs in rather than opening a blank form.
+  // nothing to type, so this card signs in rather than opening a blank form.
   const holdsOwnLogin = bundle !== undefined && bundle.secrets.length === 0
 
   return (
-    <>
-      <TableRow>
-        <TableCell className="font-medium text-foreground">{inst.instance}</TableCell>
-        <TableCell>
+    <div className="rounded-lg border border-border bg-card">
+      <div className="flex flex-wrap items-start justify-between gap-3 p-4">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className="font-display text-[15px] font-semibold text-foreground">
+            {inst.instance}
+          </span>
           <span
             title={inst.extension}
-            className="rounded-sm border border-border bg-muted/40 px-1.5 py-0.5 text-[11px] text-foreground"
+            className="rounded-sm border border-border bg-muted/40 px-1.5 py-0.5 text-[11px] text-muted-foreground"
           >
             {inst.extension_display_name}
           </span>
-        </TableCell>
-        <TableCell className="min-w-64">
-          <AgentGrantChips
-            instance={inst.instance}
-            agents={agents}
-            holders={inst.agents}
-            operatorMode={operatorMode}
-          />
-        </TableCell>
-        <TableCell className="min-w-48">
-          {probe.isPending ? (
-            <span className="text-xs text-muted-foreground">Checking…</span>
-          ) : probe.isError ? (
-            <span className="text-xs text-destructive">{probe.error.message}</span>
-          ) : probe.data ? (
-            <span
-              className={cn(
-                'text-xs',
-                probe.data.reachable
-                  ? 'text-emerald-600 dark:text-emerald-400'
-                  : 'text-destructive',
-              )}
-            >
-              {probe.data.reachable ? 'Reachable' : 'Unreachable'}
-              {probe.data.detail && (
-                <span className="text-muted-foreground"> — {probe.data.detail}</span>
-              )}
-            </span>
+        </div>
+        <div className="flex flex-col items-end gap-1 text-right">
+          <ReachabilityChip probe={probe} />
+          {probe.isError ? (
+            <span className="text-[11px] text-destructive">{probe.error.message}</span>
           ) : (
-            <span className="text-xs text-muted-foreground">Not checked</span>
+            probe.data?.detail && (
+              <span className="text-[11px] text-muted-foreground">{probe.data.detail}</span>
+            )
           )}
-        </TableCell>
-        <TableCell>
-          <div className="flex flex-wrap items-center gap-1.5">
-            <Button variant="ghost" size="xs" onClick={() => setShowDoctor(!showDoctor)}>
-              <Stethoscope /> {showDoctor ? 'Hide doctor' : 'Doctor'}
+        </div>
+      </div>
+
+      <div className="space-y-1.5 border-t border-border px-4 py-3">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+          Who can use it
+        </p>
+        <AgentGrantChips
+          instance={inst.instance}
+          agents={agents}
+          holders={inst.agents}
+          operatorMode={operatorMode}
+        />
+      </div>
+
+      <div className="flex flex-wrap items-center gap-1.5 border-t border-border px-4 py-3">
+        <Button variant="ghost" size="xs" onClick={() => setShowDoctor(!showDoctor)}>
+          <Stethoscope /> {showDoctor ? 'Hide doctor' : 'Doctor'}
+        </Button>
+        {operatorMode && (
+          <>
+            <Button
+              variant="outline"
+              size="xs"
+              disabled={busy}
+              onClick={() => probe.mutate()}
+              title="Open a live connection and report what it serves"
+            >
+              <RefreshCw /> Probe
             </Button>
-            {operatorMode && (
+            <Button
+              variant="outline"
+              size="xs"
+              disabled={busy}
+              onClick={() => approve.mutate()}
+              title="Record the tool contract this connection serves right now"
+            >
+              <ShieldCheck /> Approve
+            </Button>
+            {holdsOwnLogin ? (
+              <Button
+                variant="outline"
+                size="xs"
+                onClick={() => setShowAuth(!showAuth)}
+                title={`Check or renew the ${inst.extension_display_name} sign-in on this computer`}
+              >
+                <LogIn /> {showAuth ? 'Hide sign-in' : 'Sign in'}
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                size="xs"
+                disabled={busy || !bundle}
+                onClick={() => bundle && onReauth(bundle, inst.instance)}
+                title={
+                  bundle
+                    ? 'Replace this connection’s credentials'
+                    : `${inst.extension_display_name} is no longer on the extension search path`
+                }
+              >
+                Re-auth
+              </Button>
+            )}
+            {confirmRemove ? (
               <>
                 <Button
-                  variant="outline"
+                  variant="destructive"
                   size="xs"
                   disabled={busy}
-                  onClick={() => probe.mutate()}
-                  title="Open a live connection and report what it serves"
+                  onClick={() => remove.mutate(inst.instance)}
                 >
-                  <RefreshCw /> Probe
+                  Confirm remove
                 </Button>
-                <Button
-                  variant="outline"
-                  size="xs"
-                  disabled={busy}
-                  onClick={() => approve.mutate()}
-                  title="Record the tool contract this connection serves right now"
-                >
-                  <ShieldCheck /> Approve
+                <Button variant="ghost" size="xs" onClick={() => setConfirmRemove(false)}>
+                  Cancel
                 </Button>
-                {holdsOwnLogin ? (
-                  <Button
-                    variant="outline"
-                    size="xs"
-                    onClick={() => setShowAuth(!showAuth)}
-                    title={`Check or renew the ${inst.extension_display_name} sign-in on this computer`}
-                  >
-                    <LogIn /> {showAuth ? 'Hide sign-in' : 'Sign in'}
-                  </Button>
-                ) : (
-                  <Button
-                    variant="outline"
-                    size="xs"
-                    disabled={busy || !bundle}
-                    onClick={() => bundle && onReauth(bundle, inst.instance)}
-                    title={
-                      bundle
-                        ? 'Replace this connection’s credentials'
-                        : `${inst.extension_display_name} is no longer on the extension search path`
-                    }
-                  >
-                    Re-auth
-                  </Button>
-                )}
-                {confirmRemove ? (
-                  <>
-                    <Button
-                      variant="destructive"
-                      size="xs"
-                      disabled={busy}
-                      onClick={() => remove.mutate(inst.instance)}
-                    >
-                      Confirm remove
-                    </Button>
-                    <Button variant="ghost" size="xs" onClick={() => setConfirmRemove(false)}>
-                      Cancel
-                    </Button>
-                  </>
-                ) : (
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    disabled={busy}
-                    onClick={() => setConfirmRemove(true)}
-                    className="text-destructive hover:text-destructive"
-                    title="Remove this connection and its stored credentials"
-                  >
-                    <Trash2 /> Remove
-                  </Button>
-                )}
               </>
+            ) : (
+              <Button
+                variant="ghost"
+                size="xs"
+                disabled={busy}
+                onClick={() => setConfirmRemove(true)}
+                className="text-destructive hover:text-destructive"
+                title="Remove this connection and its stored credentials"
+              >
+                <Trash2 /> Remove
+              </Button>
             )}
-          </div>
+          </>
+        )}
+      </div>
+
+      {(approve.isError || approve.data || remove.isError) && (
+        <div className="space-y-1 border-t border-border px-4 py-2">
           {approve.isError && (
-            <p className="mt-1 text-xs text-destructive">{approve.error.message}</p>
+            <p className="text-xs text-destructive">{approve.error.message}</p>
           )}
           {approve.data && (
-            <p className="mt-1 text-xs text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               Approved {approve.data.approved.length} tool
               {approve.data.approved.length === 1 ? '' : 's'}.
             </p>
           )}
           {remove.isError && (
-            <p className="mt-1 text-xs text-destructive">{remove.error.message}</p>
+            <p className="text-xs text-destructive">{remove.error.message}</p>
           )}
-        </TableCell>
-      </TableRow>
+        </div>
+      )}
+
       {showAuth && (
-        <TableRow className="hover:bg-transparent">
-          <TableCell colSpan={5} className="p-3">
-            <ConnectorAuthorizePanel
-              instance={inst.instance}
-              extension={inst.extension}
-              operatorMode={operatorMode}
-            />
-          </TableCell>
-        </TableRow>
+        <div className="border-t border-border p-4">
+          <ConnectorAuthorizePanel
+            instance={inst.instance}
+            extension={inst.extension}
+            operatorMode={operatorMode}
+          />
+        </div>
       )}
       {showDoctor && (
-        <TableRow className="hover:bg-transparent">
-          <TableCell colSpan={5} className="p-3">
-            <DoctorPanel instance={inst.instance} />
-          </TableCell>
-        </TableRow>
+        <div className="border-t border-border p-4">
+          <DoctorPanel instance={inst.instance} />
+        </div>
       )}
-    </>
+    </div>
   )
 }
 
@@ -313,10 +332,10 @@ function BundleCard({
     // what to connect.
     <div
       title={`from ${bundle.root}`}
-      className="flex flex-col rounded-lg border border-border bg-card p-4 shadow-xs"
+      className="flex flex-col rounded-lg border border-border bg-card p-4"
     >
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        <span className="font-semibold text-foreground" title={bundle.name}>
+        <span className="font-display text-[15px] font-semibold text-foreground" title={bundle.name}>
           {bundle.display_name}
         </span>
         <span className="font-mono text-[11px] text-muted-foreground">v{bundle.version}</span>
@@ -330,7 +349,7 @@ function BundleCard({
           approval: {bundle.approval_default}
         </span>
         {connectedCount > 0 && (
-          <span className="rounded-sm border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-400">
+          <span className="rounded-sm border border-status-online/30 bg-status-online/12 px-1.5 py-0.5 text-[11px] font-medium text-status-online">
             {connectedCount} connected
           </span>
         )}
@@ -416,9 +435,7 @@ export function ConnectionsPage() {
           {/* No search path here. Where bundles are read from is a fact about
               bundles, not about a connected account, and it belongs beside the
               list it explains. */}
-          <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Connected
-          </h2>
+          <SectionHeading label="Connected" count={instances.length} />
           <QueryState
             query={connections}
             isEmpty={(data) => data.connections.length === 0}
@@ -431,39 +448,34 @@ export function ConnectionsPage() {
             }
           >
             {(data) => (
-              <div className="rounded-lg border border-border bg-card">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Connection</TableHead>
-                      <TableHead>Extension</TableHead>
-                      <TableHead>Who can use it</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {data.connections.map((inst) => (
-                      <ConnectionRow
-                        key={inst.instance}
-                        inst={inst}
-                        bundle={bundleFor(inst.extension)}
-                        agents={agents}
-                        operatorMode={operatorMode}
-                        onReauth={(bundle, instance) => setSheet({ bundle, instance })}
-                      />
-                    ))}
-                  </TableBody>
-                </Table>
+              <div className="space-y-3">
+                <ContextNote tone="info">
+                  Each connection is one account this computer holds. The chips under{' '}
+                  <span className="font-medium">Who can use it</span> decide which agents may reach
+                  it — filled means yes, outlined means no.{' '}
+                  {operatorMode
+                    ? 'Click a chip to grant or revoke.'
+                    : 'Turn on operator controls to grant or revoke.'}
+                </ContextNote>
+                <div className="space-y-3">
+                  {data.connections.map((inst) => (
+                    <ConnectionCard
+                      key={inst.instance}
+                      inst={inst}
+                      bundle={bundleFor(inst.extension)}
+                      agents={agents}
+                      operatorMode={operatorMode}
+                      onReauth={(bundle, instance) => setSheet({ bundle, instance })}
+                    />
+                  ))}
+                </div>
               </div>
             )}
           </QueryState>
         </section>
 
         <section className="space-y-3">
-          <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Available
-          </h2>
+          <SectionHeading label="Available" count={bundles.length} />
           <QueryState
             query={catalog}
             isEmpty={(data) => data.available.length === 0 && data.unreadable.length === 0}
@@ -489,7 +501,7 @@ export function ConnectionsPage() {
                   ))}
                 </div>
                 {data.unreadable.length > 0 && (
-                  <div className="space-y-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                  <div className="space-y-1 rounded-md border border-status-warning/30 bg-status-warning/12 px-3 py-2 text-xs text-status-warning">
                     <p className="flex items-center gap-2 font-medium">
                       <TriangleAlert className="size-4 shrink-0" />
                       Bundles found but not readable

@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react'
-import { Plus } from 'lucide-react'
+import { Plus, Loader, CheckCircle2, Timer, XCircle } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
 import { FilterPills } from '@/components/filter-pills'
-import { StatCard } from '@/components/stat-card'
+import { InsightStat } from '@/components/ai'
 import { EmptyState, QueryState } from '@/components/states'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -153,10 +153,26 @@ export function TasksPage() {
       />
       <div className="flex-1 space-y-4 overflow-hidden p-6">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <StatCard label="In progress" value={metrics.inProgress} />
-          <StatCard label="Done today" value={metrics.doneToday} />
-          <StatCard label="Avg time to done" value={metrics.avgDone != null ? fmtSeconds(metrics.avgDone) : '—'} />
-          <StatCard label="Failed" value={metrics.failed} />
+          <InsightStat
+            label="In progress"
+            value={metrics.inProgress}
+            icon={<Loader className="size-3.5" />}
+          />
+          <InsightStat
+            label="Done today"
+            value={metrics.doneToday}
+            icon={<CheckCircle2 className="size-3.5" />}
+          />
+          <InsightStat
+            label="Avg time to done"
+            value={metrics.avgDone != null ? fmtSeconds(metrics.avgDone) : '—'}
+            icon={<Timer className="size-3.5" />}
+          />
+          <InsightStat
+            label="Failed"
+            value={metrics.failed}
+            icon={<XCircle className="size-3.5" />}
+          />
         </div>
 
         <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
