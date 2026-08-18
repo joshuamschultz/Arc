@@ -6,6 +6,61 @@ import type { TimelineEntry } from '@/lib/types'
 
 const CODE_EXEC_TOOLS = new Set(['execute_python', 'execute'])
 
+/** snake/dot_case → Title Case, for names we have no friendly label for. */
+export function prettifyName(name: string): string {
+  return name
+    .replace(/[._]+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
+// Plain-language descriptions so a non-technical viewer can read a trace. Keyed
+// by the raw tool / run-event name; anything unmapped falls back to prettifyName.
+const TOOL_DESCRIPTIONS: Record<string, string> = {
+  search_similar_entity: 'Searched memory for related entities',
+  list_procedures: 'Listed saved procedures',
+  read_card: 'Read a memory card',
+  write_card: 'Saved a memory card',
+  recall: 'Recalled from memory',
+  remember: 'Saved to memory',
+  memory_search: 'Searched memory',
+  read: 'Read a file',
+  write: 'Wrote a file',
+  edit: 'Edited a file',
+  bash: 'Ran a shell command',
+  execute_python: 'Ran Python code',
+  execute: 'Ran code',
+  web_search: 'Searched the web',
+  web_extract: 'Read a web page',
+  send_message: 'Sent a message',
+  notify_user: 'Notified the operator',
+}
+
+const EVENT_DESCRIPTIONS: Record<string, string> = {
+  'run.start': 'Run started',
+  'run.end': 'Run ended',
+  'turn.start': 'Turn started',
+  'turn.end': 'Turn ended',
+  'strategy.selected': 'Chose a strategy',
+  'strategy.select': 'Chose a strategy',
+}
+
+/** A human title + one-line description for a trace step, for the operator who
+ *  does not know the tool names. */
+export function describeAction(item: Item): { title: string; description: string } {
+  if (item.kind === 'llm') {
+    return { title: item.model, description: 'Model call — the agent thought about what to do next' }
+  }
+  if (item.kind === 'run') {
+    const key = item.name.toLowerCase()
+    return { title: prettifyName(item.name), description: EVENT_DESCRIPTIONS[key] ?? 'Run event' }
+  }
+  const key = item.name.toLowerCase()
+  const base = TOOL_DESCRIPTIONS[key] ?? `Ran the ${item.name} tool`
+  const via = item.activatedSkill ? ` · used skill "${item.activatedSkill}"` : ''
+  return { title: prettifyName(item.name), description: base + via }
+}
+
 // A tool call pairs its start (carrying input) with its end/error (carrying
 // output). LLM and run markers pass through as their own items.
 export interface ToolItem {
@@ -20,6 +75,7 @@ export interface ToolItem {
   implicit?: boolean
   activatedSkill?: string | null
   skillActivated?: boolean
+  requestId?: string | null
 }
 export interface LlmItem {
   kind: 'llm'
@@ -29,6 +85,9 @@ export interface LlmItem {
   tokensOut: number
   latency_ms?: number | null
   traceId?: string | null
+  requestId?: string | null
+  agentLabel?: string | null
+  costUsd?: number | null
 }
 export interface RunItem {
   kind: 'run'
@@ -59,6 +118,7 @@ export function mergeTimeline(entries: TimelineEntry[], runIsLive: boolean): Ite
           output: null,
           status: 'running',
           implicit: e.extra?.implicit === true,
+          requestId: e.request_id,
         }
         items.push(item)
         const q = pending.get(name) ?? []
@@ -90,6 +150,7 @@ export function mergeTimeline(entries: TimelineEntry[], runIsLive: boolean): Ite
             implicit: e.extra?.implicit === true,
             activatedSkill,
             skillActivated,
+            requestId: e.request_id,
           })
         }
       }
@@ -102,6 +163,9 @@ export function mergeTimeline(entries: TimelineEntry[], runIsLive: boolean): Ite
         tokensOut: e.completion_tokens ?? 0,
         latency_ms: e.latency_ms,
         traceId: e.record_id ?? null,
+        requestId: e.request_id,
+        agentLabel: e.agent_label,
+        costUsd: e.cost_usd,
       })
     } else {
       items.push({ kind: 'run', ts: e.ts, name: e.name ?? 'event' })
