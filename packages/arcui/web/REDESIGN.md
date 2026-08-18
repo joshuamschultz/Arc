@@ -266,30 +266,30 @@ StatCard kept every prop. All 14 routes intact.
 
 Gap list (from the audit — check off as closed):
 
-- ☐ **GAP-5 (Josh's example): agent Tasks tab is a bare board.** Add the full
-  board chrome to the agent-detail `tasks` tab — New-task (`CreateTaskSheet`,
-  default owner = this agent), status/priority/owner/tag filters, the 4 stat
-  cards, count strip. Endpoints exist. `agent-detail.tsx` ~`:770-788`.
-- ☐ **GAP-3: per-agent Approvals.** Filter `useApprovals()` by the agent's DID;
-  show a pending-approvals panel in agent-detail. Zero backend.
-- ☐ **GAP-4: per-agent Pending capabilities (gated).** Filter
-  `useGatedCapabilities()` by `agent_id`; approve/re-sign/disapprove already
-  agent-keyed. Add to the agent tools/skills tab. Zero backend.
+- ☑ **GAP-5 (Josh's example): agent Tasks tab** now has the full board chrome —
+  4 stat cards, status/priority pills, tag filter, count strip, New-task that
+  pre-owns to this agent. `7b29e007`.
+- ☑ **GAP-3: per-agent Approvals** — new agent Trust tab; Approve/Deny inline
+  under operator mode. `27521d68`.
+- ☑ **GAP-4: per-agent Pending capabilities** — Trust tab lists the agent's
+  quarantined caps with a Manage link to act. `27521d68`.
 - ☐ **GAP-1: Knowledge tab in agent-detail.** Reuse the `knowledge-*` browsers
   with the detail page's `agentId`; all endpoints agent-scoped. Zero backend.
 - ☐ **GAP-2: Runs/step-timeline/spawn at agent scope.** Add a Runs tab.
   `useRunTimeline`/`useSpawnTree` reusable; `/api/runs` is fleet-wide — filter
   by resolved DID client-side (or add `agent_id` param). Small backend optional.
-- ☐ **GAP-6: Policy divergence (both ways).** Import `TopPerformers` +
-  `PolicyConfigCards` + `SystemPolicyRules` into `pages/policy.tsx`; add the
-  bullet search/sort/hide-retired bar to the agent policy tab.
-- ☐ **GAP-7: Fleet Tools & Skills page inert.** Wire `onRowClick` to open the
-  existing `ToolDrawer`/`SkillDrawer` (detail endpoints already agent+name keyed).
+- ◐ **GAP-6: Policy divergence.** Fleet page gained `TopPerformers` (`2c503805`).
+  Still: `PolicyConfigCards`/`SystemPolicyRules` need a config (fleet page has
+  none — likely skip); add the bullet search/sort/hide-retired bar to the agent
+  policy tab.
+- ☐ **GAP-7: Fleet Tools & Skills page inert.** Deferred — a fleet tool row
+  spans many agents, so which agent to open the drawer for is ambiguous; needs
+  a picker, not a naive first-agent guess.
 - ☐ **GAP-8 (product, needs backend): schedules have no create/delete/run-now**
   anywhere — server is GET+PATCH only. Equal-parity gap; flag, don't fake.
 - ☑ **GAP-9:** connections grant/revoke is intentionally fleet-only — no change.
-- ☐ **Consistency: OperatorModeToggle on only 8/16 screens.** Move it to the
-  rail (beside the theme toggle) as one global operator control.
+- ☑ **Consistency: global OperatorModeToggle** moved into the rail — now on all
+  screens. `7b29e007`.
 
 ---
 
