@@ -20,16 +20,19 @@ export function CreateTaskSheet({
   open,
   onOpenChange,
   roster,
+  defaultOwnerDid = '',
 }: {
   open: boolean
   onOpenChange: (o: boolean) => void
   roster: Agent[]
+  /** Pre-select an owner (e.g. the agent whose Tasks tab opened this). */
+  defaultOwnerDid?: string
 }) {
   const queryClient = useQueryClient()
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [priority, setPriority] = useState<TaskPriority>('medium')
-  const [ownerDid, setOwnerDid] = useState('')
+  const [ownerDid, setOwnerDid] = useState(defaultOwnerDid)
   const [requiresReview, setRequiresReview] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -38,7 +41,7 @@ export function CreateTaskSheet({
     setTitle('')
     setDescription('')
     setPriority('medium')
-    setOwnerDid('')
+    setOwnerDid(defaultOwnerDid)
     setRequiresReview(false)
     setError(null)
   }

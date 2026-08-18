@@ -1,8 +1,12 @@
 import { useState, type ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, Plus } from 'lucide-react'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Input } from '@/components/ui/input'
+import { FilterPills } from '@/components/filter-pills'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { CreateTaskSheet } from '@/components/create-task-sheet'
+import { fmtSeconds, isBlocked } from '@/lib/tasks'
 import { Button } from '@/components/ui/button'
 import { apiPost } from '@/lib/api'
 import { RestartGatewayButton } from '@/components/restart-gateway-button'
@@ -63,7 +67,12 @@ import {
 } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import type { ColumnDef } from '@tanstack/react-table'
-import type { CapabilityInventoryItem, Dict, Task } from '@/lib/types'
+import type { CapabilityInventoryItem, Dict, Task, TaskStatus, TaskPriority } from '@/lib/types'
+
+const TASK_STATUS_FILTERS: (TaskStatus | 'all')[] = [
+  'all', 'backlog', 'todo', 'in_progress', 'review', 'done', 'failed',
+]
+const TASK_PRIORITY_FILTERS: (TaskPriority | 'all')[] = ['all', 'low', 'medium', 'high', 'critical']
 
 const TABS = [
   'overview',
@@ -750,15 +759,20 @@ function TasksTab({ agentId }: { agentId: string }) {
   const roster = useRoster()
   const [operatorMode] = useOperatorMode()
   const [selected, setSelected] = useState<Task | null>(null)
-  const rows = q.data?.tasks ?? []
+  const [creating, setCreating] = useState(false)
+  const [statusFilter, setStatusFilter] = useState<TaskStatus | 'all'>('all')
+  const [priorityFilter, setPriorityFilter] = useState<TaskPriority | 'all'>('all')
+  const [tagFilter, setTagFilter] = useState('all')
+
+  const tasks = q.data?.tasks ?? []
   const agents = roster.data?.agents ?? []
+  const thisDid = agents.find((a) => a.agent_id === agentId)?.did ?? ''
   const byDid = new Map(agents.filter((a) => a.did).map((a) => [a.did as string, a]))
   const resolveOwner = (ownerDid: string | null | undefined): string | null => {
     if (!ownerDid) return null
     const a = byDid.get(ownerDid)
     return a ? String(a.display_name || a.name || ownerDid) : ownerDid
   }
-
   const mentionHandles: MentionHandle[] = agents
     .map((a) => ({
       handle: String(a.name || a.agent_id || ''),
@@ -767,15 +781,122 @@ function TasksTab({ agentId }: { agentId: string }) {
     }))
     .filter((h) => h.handle)
 
+  const statusById = new Map<string, string>()
+  for (const t of tasks) if (t.id) statusById.set(t.id, t.status ?? 'backlog')
+
+  const statusCounts: Record<string, number> = { all: tasks.length }
+  for (const t of tasks) {
+    const k = t.status ?? 'backlog'
+    statusCounts[k] = (statusCounts[k] ?? 0) + 1
+  }
+  const priorityCounts: Record<string, number> = { all: tasks.length }
+  for (const t of tasks) {
+    const k = t.priority ?? 'medium'
+    priorityCounts[k] = (priorityCounts[k] ?? 0) + 1
+  }
+  const tags = [...new Set(tasks.flatMap((t) => t.tags ?? []))].sort()
+
+  const today = new Date().toISOString().slice(0, 10)
+  let inProgress = 0
+  let doneToday = 0
+  let failed = 0
+  let blocked = 0
+  const doneDurations: number[] = []
+  for (const t of tasks) {
+    if (t.status === 'in_progress') inProgress++
+    if (t.status === 'failed') failed++
+    if (isBlocked(t, statusById)) blocked++
+    if (t.status === 'done') {
+      const completed = t.completed_at ?? t.updated_at
+      if (completed?.slice(0, 10) === today) doneToday++
+      if (t.duration_seconds != null) doneDurations.push(t.duration_seconds)
+      else if (t.started_at && t.completed_at)
+        doneDurations.push((Date.parse(t.completed_at) - Date.parse(t.started_at)) / 1000)
+    }
+  }
+  const avgDone = doneDurations.length
+    ? doneDurations.reduce((a, b) => a + b, 0) / doneDurations.length
+    : null
+
+  const boardTasks = tasks.filter(
+    (t) =>
+      (priorityFilter === 'all' || t.priority === priorityFilter) &&
+      (tagFilter === 'all' || (t.tags ?? []).includes(tagFilter)),
+  )
+
   return (
-    <>
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+          <span className="tabular-nums">{tasks.length} tasks</span>
+          <span className="text-border">·</span>
+          <span className="tabular-nums">{blocked} blocked</span>
+        </div>
+        {operatorMode && (
+          <Button size="sm" onClick={() => setCreating(true)}>
+            <Plus className="size-3.5" /> New task
+          </Button>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <StatCard label="In progress" value={inProgress} />
+        <StatCard label="Done today" value={doneToday} />
+        <StatCard label="Avg time to done" value={avgDone != null ? fmtSeconds(avgDone) : '—'} />
+        <StatCard label="Failed" value={failed} />
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <FilterPills
+          value={statusFilter}
+          onChange={(v) => setStatusFilter(v as TaskStatus | 'all')}
+          options={TASK_STATUS_FILTERS.map((s) => ({
+            value: s,
+            label: s === 'all' ? 'All' : s.replace(/_/g, ' '),
+            count: statusCounts[s] ?? 0,
+          }))}
+        />
+        <FilterPills
+          value={priorityFilter}
+          onChange={(v) => setPriorityFilter(v as TaskPriority | 'all')}
+          options={TASK_PRIORITY_FILTERS.map((p) => ({
+            value: p,
+            label: p === 'all' ? 'All priority' : p,
+            count: priorityCounts[p] ?? 0,
+          }))}
+        />
+        {tags.length > 0 && (
+          <Select value={tagFilter} onValueChange={setTagFilter}>
+            <SelectTrigger size="sm">
+              <SelectValue placeholder="Tag" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All tags</SelectItem>
+              {tags.map((tag) => (
+                <SelectItem key={tag} value={tag}>
+                  {tag}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+      </div>
+
       <QueryState
         query={q}
-        isEmpty={() => rows.length === 0}
+        isEmpty={() => tasks.length === 0}
         empty={<EmptyState title="No tasks" description="This agent has no owned tasks." />}
       >
-        {() => <TaskBoard tasks={rows} resolveOwner={resolveOwner} onSelectTask={setSelected} />}
+        {() => (
+          <TaskBoard
+            tasks={boardTasks}
+            resolveOwner={resolveOwner}
+            onSelectTask={setSelected}
+            focusStatus={statusFilter}
+          />
+        )}
       </QueryState>
+
       <TaskDrawer
         task={selected}
         open={selected != null}
@@ -783,8 +904,15 @@ function TasksTab({ agentId }: { agentId: string }) {
         operatorMode={operatorMode}
         roster={agents}
         mentionHandles={mentionHandles}
+        allTasks={tasks}
       />
-    </>
+      <CreateTaskSheet
+        open={creating}
+        onOpenChange={setCreating}
+        roster={agents}
+        defaultOwnerDid={thisDid}
+      />
+    </div>
   )
 }
 

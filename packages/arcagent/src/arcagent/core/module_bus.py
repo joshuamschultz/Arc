@@ -12,14 +12,7 @@ import logging
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
-
-from arcagent.core.config import ArcAgentConfig, LLMConfig
-
-if TYPE_CHECKING:
-    from arcagent.core.telemetry import AgentTelemetry
-    from arcagent.core.tool_registry import ToolRegistry
+from typing import Any
 
 _logger = logging.getLogger("arcagent.module_bus")
 
@@ -78,23 +71,6 @@ class SubscriptionToken:
 
     event: str
     value: int
-
-
-@dataclass(frozen=True)
-class ModuleContext:
-    """Dependency injection container for module startup.
-
-    Frozen: modules cannot reassign shared references, but the
-    objects themselves are mutable (e.g. modules can call
-    tool_registry.register()).
-    """
-
-    bus: ModuleBus
-    tool_registry: ToolRegistry
-    config: ArcAgentConfig
-    telemetry: AgentTelemetry
-    workspace: Path
-    llm_config: LLMConfig
 
 
 class ModuleBus:

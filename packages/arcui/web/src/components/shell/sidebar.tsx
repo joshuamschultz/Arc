@@ -1,9 +1,10 @@
 import { Fragment } from 'react'
 import { NavLink } from 'react-router-dom'
-import { Moon, Sun } from 'lucide-react'
+import { Moon, Sun, Lock, LockOpen } from 'lucide-react'
 import { NAV_ITEMS, NAV_GROUPS } from '@/app/nav'
 import { cn } from '@/lib/utils'
 import { useTheme } from '@/hooks/use-theme'
+import { useOperatorMode } from '@/hooks/use-operator-mode'
 import {
   Tooltip,
   TooltipContent,
@@ -17,6 +18,7 @@ import {
  */
 export function Sidebar() {
   const { dark, toggle } = useTheme()
+  const [operator, setOperator] = useOperatorMode()
 
   return (
     <nav
@@ -68,6 +70,26 @@ export function Sidebar() {
       </div>
 
       <div className="mt-2 flex flex-col items-center gap-1.5">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={() => setOperator(!operator)}
+              aria-label={operator ? 'Operator controls on' : 'Operator controls off'}
+              className={cn(
+                'grid size-11 place-items-center rounded-[11px] transition-colors',
+                operator
+                  ? 'bg-primary/12 text-primary'
+                  : 'text-sidebar-foreground/60 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground',
+              )}
+            >
+              {operator ? <LockOpen className="size-[18px]" /> : <Lock className="size-[18px]" />}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="right">
+            {operator ? 'Operator controls on' : 'Operator controls off'}
+          </TooltipContent>
+        </Tooltip>
         <button
           type="button"
           onClick={toggle}

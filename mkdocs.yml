@@ -73,6 +73,9 @@ extra_css:
 nav:
   - Home: README.md
 
+  - Concepts:
+      - The Seam Model — Why Everything Is a Plugin: concepts/seam-model.md
+
   - Walkthrough:
       - 1. What Arc Is: walkthrough/01-what-is-arc.md
       - 2. Architecture: walkthrough/02-architecture.md
