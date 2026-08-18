@@ -260,9 +260,36 @@ tasks, schedules, tools, skills, sessions/runs (traces), knowledge, policy,
 prompts, connections/capabilities. Also chat actions, approvals, and per-row
 row-actions in every table.
 
-Gap list (filled by the audit, checked off as closed):
+**Regression check (redesign so far): CLEAN.** The removed topbar held only the
+theme toggle (moved to the rail) + a text wordmark (cosmetic). PageHeader and
+StatCard kept every prop. All 14 routes intact.
 
-_pending audit — populated from the full feature inventory._
+Gap list (from the audit — check off as closed):
+
+- ☐ **GAP-5 (Josh's example): agent Tasks tab is a bare board.** Add the full
+  board chrome to the agent-detail `tasks` tab — New-task (`CreateTaskSheet`,
+  default owner = this agent), status/priority/owner/tag filters, the 4 stat
+  cards, count strip. Endpoints exist. `agent-detail.tsx` ~`:770-788`.
+- ☐ **GAP-3: per-agent Approvals.** Filter `useApprovals()` by the agent's DID;
+  show a pending-approvals panel in agent-detail. Zero backend.
+- ☐ **GAP-4: per-agent Pending capabilities (gated).** Filter
+  `useGatedCapabilities()` by `agent_id`; approve/re-sign/disapprove already
+  agent-keyed. Add to the agent tools/skills tab. Zero backend.
+- ☐ **GAP-1: Knowledge tab in agent-detail.** Reuse the `knowledge-*` browsers
+  with the detail page's `agentId`; all endpoints agent-scoped. Zero backend.
+- ☐ **GAP-2: Runs/step-timeline/spawn at agent scope.** Add a Runs tab.
+  `useRunTimeline`/`useSpawnTree` reusable; `/api/runs` is fleet-wide — filter
+  by resolved DID client-side (or add `agent_id` param). Small backend optional.
+- ☐ **GAP-6: Policy divergence (both ways).** Import `TopPerformers` +
+  `PolicyConfigCards` + `SystemPolicyRules` into `pages/policy.tsx`; add the
+  bullet search/sort/hide-retired bar to the agent policy tab.
+- ☐ **GAP-7: Fleet Tools & Skills page inert.** Wire `onRowClick` to open the
+  existing `ToolDrawer`/`SkillDrawer` (detail endpoints already agent+name keyed).
+- ☐ **GAP-8 (product, needs backend): schedules have no create/delete/run-now**
+  anywhere — server is GET+PATCH only. Equal-parity gap; flag, don't fake.
+- ☑ **GAP-9:** connections grant/revoke is intentionally fleet-only — no change.
+- ☐ **Consistency: OperatorModeToggle on only 8/16 screens.** Move it to the
+  rail (beside the theme toggle) as one global operator control.
 
 ---
 
@@ -307,8 +334,8 @@ Rename to plain terms; keep the technical id in hover/detail only:
 - **Motion** guides attention (§7); the spatial history views live under
   Activity as an operator-friendly way to flip through runs/checkpoints.
 
-**Decision gates (confirm before restructuring nav):** (a) add the Home landing;
-(b) regroup + rename the rail per 12.3. Both change navigation, so land them as
-one deliberate change once confirmed; everything else (per-screen altitude,
-drawers, gap-fills, polish, motion) proceeds regardless.
+**Decision gates — CONFIRMED (Josh):** (a) add the Home/Today landing; (b)
+regroup + rename the rail per 12.3 (business labels: Model usage, Rules, Audit,
+Pending capabilities; developer telemetry under an Advanced group). Routes stay;
+`DEFAULT_PATH` → `home`.
 
