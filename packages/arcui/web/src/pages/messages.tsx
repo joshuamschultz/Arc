@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircle, Hash, MessageSquare, RotateCcw } from 'lucide-react'
+import { AlertCircle, Hash, MessageSquare, RotateCcw, ShieldAlert } from 'lucide-react'
 import { ToolChip } from '@/components/ai'
 import { PageHeader } from '@/components/page-header'
 import { Button } from '@/components/ui/button'
@@ -82,7 +82,9 @@ function ChatPanel({ agentId, commands }: { agentId: string; commands: CommandOp
   const roster = useRoster()
   const approvalsQ = useApprovals()
   const [operatorMode] = useOperatorMode()
-  const did = (roster.data?.agents ?? []).find((a) => a.agent_id === agentId)?.did ?? ''
+  const agent = (roster.data?.agents ?? []).find((a) => a.agent_id === agentId)
+  const did = agent?.did ?? ''
+  const label = String(agent?.display_name || agent?.name || agentId)
   const pending = (approvalsQ.data?.approvals ?? []).filter((a) => a.agent_did === did)
 
   useEffect(() => {
@@ -111,8 +113,15 @@ function ChatPanel({ agentId, commands }: { agentId: string; commands: CommandOp
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
-        <span className="rounded-md border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-foreground">
-          {agentId}
+        <span className="flex items-center gap-2">
+          <span
+            className="flex size-6 items-center justify-center rounded-md text-[11px] font-semibold text-primary-foreground"
+            style={{ background: (agent?.color as string) || 'var(--primary)' }}
+          >
+            {initials(label)}
+          </span>
+          <span className="text-sm font-semibold text-foreground">{label}</span>
+          <StatusDot online={agent?.online} className="[&>span:last-child]:hidden" />
         </span>
         <div className="flex items-center gap-3">
           {resetError && <span className="text-xs text-destructive">{resetError}</span>}
@@ -300,11 +309,9 @@ function ChannelPanel({
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
-        <span className="flex items-center gap-2">
-          <Hash className="size-3.5 text-muted-foreground" />
-          <span className="rounded-md border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-foreground">
-            {name}
-          </span>
+        <span className="flex items-center gap-1.5">
+          <Hash className="size-4 text-muted-foreground" />
+          <span className="text-sm font-bold text-foreground">{name}</span>
           <MembersButton count={channel.members.length} onClick={onOpenMembers} />
         </span>
         <StatusText value={status} />
@@ -313,42 +320,60 @@ function ChannelPanel({
         {rows.length === 0 ? (
           <EmptyState icon={<Hash className="size-7" />} title="No messages in this channel" />
         ) : (
-          rows.map((m) =>
-            m.gate ? (
-              <div key={m.key} className="-mx-1.5 px-1.5 py-2">
-                <GateCard taskId={m.gate.task_id} nodeId={m.gate.node_id} body={m.body} />
-              </div>
-            ) : (
+          rows.map((m, i) => {
+            if (m.gate) {
+              return (
+                <div key={m.key} className="-mx-1.5 px-1.5 py-2">
+                  <GateCard taskId={m.gate.task_id} nodeId={m.gate.node_id} body={m.body} />
+                </div>
+              )
+            }
+            // Slack-style grouping: a run of messages from one sender shows the
+            // avatar and name once, then continuations are body-only.
+            const prev = rows[i - 1]
+            const cont = prev && !prev.gate && prev.from === m.from
+            return (
               <div
                 key={m.key}
-                className="-mx-1.5 flex items-start gap-3 rounded-lg px-1.5 py-2 transition-colors hover:bg-muted/40"
+                className={cn(
+                  'group/msg -mx-1.5 flex items-start gap-3 rounded-lg px-1.5 transition-colors hover:bg-muted/40',
+                  cont ? 'py-0.5' : 'mt-1.5 py-1',
+                )}
               >
-                <span
-                  className="flex size-7 shrink-0 items-center justify-center rounded-md text-[11px] font-semibold text-primary-foreground"
-                  style={{ background: handleColor.get(m.from) || 'var(--primary)' }}
-                >
-                  {initials(m.from)}
-                </span>
+                {cont ? (
+                  <span className="w-7 shrink-0 pt-0.5 text-right text-[9px] tabular-nums text-transparent group-hover/msg:text-muted-foreground">
+                    {m.ts?.slice(-8, -3)}
+                  </span>
+                ) : (
+                  <span
+                    className="flex size-7 shrink-0 items-center justify-center rounded-md text-[11px] font-semibold text-primary-foreground"
+                    style={{ background: handleColor.get(m.from) || 'var(--primary)' }}
+                  >
+                    {initials(m.from)}
+                  </span>
+                )}
                 <div className="min-w-0 flex-1 text-sm">
-                  <div className="mb-0.5 flex flex-wrap items-center gap-2 text-xs">
-                    <span className="font-semibold text-foreground">@{m.from}</span>
-                    {m.mentions.map((h) => (
-                      <span
-                        key={h}
-                        className="rounded-sm border border-primary/20 bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary"
-                      >
-                        @{h}
+                  {!cont && (
+                    <div className="mb-0.5 flex flex-wrap items-center gap-2 text-xs">
+                      <span className="font-semibold text-foreground">{m.from}</span>
+                      {m.mentions.map((h) => (
+                        <span
+                          key={h}
+                          className="rounded-sm border border-primary/20 bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary"
+                        >
+                          @{h}
+                        </span>
+                      ))}
+                      <span className="ml-auto shrink-0 text-[10px] tabular-nums text-muted-foreground">
+                        {m.ts}
                       </span>
-                    ))}
-                    <span className="ml-auto shrink-0 text-[10px] tabular-nums text-muted-foreground">
-                      {m.ts}
-                    </span>
-                  </div>
+                    </div>
+                  )}
                   <Markdown>{m.body}</Markdown>
                 </div>
               </div>
-            ),
-          )
+            )
+          })
         )}
         <div ref={endRef} />
       </div>
@@ -390,12 +415,23 @@ export function MessagesPage() {
   const roster = useRoster()
   const channels = useTeamChannels()
   const workflows = useWorkflows()
+  const approvalsQ = useApprovals()
   const [sel, setSel] = useState<Selection>(null)
   const [operatorMode] = useOperatorMode()
   const [creating, setCreating] = useState(false)
   const [managingMembers, setManagingMembers] = useState(false)
 
   const agents = (roster.data?.agents ?? []).filter((a) => !a.hidden)
+
+  // Pending approvals per agent DID — an agent blocked on a human decision wears
+  // a badge in the DM list so the operator sees it without opening every chat.
+  const pendingByDid = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const a of approvalsQ.data?.approvals ?? []) {
+      if (a.agent_did) m.set(a.agent_did, (m.get(a.agent_did) ?? 0) + 1)
+    }
+    return m
+  }, [approvalsQ.data])
   // Who is speaking, as a person would say it. Without this a sender renders as
   // the trailing hex of its DID, which names the agent to the system and to
   // nobody else.
@@ -434,14 +470,21 @@ export function MessagesPage() {
     <div className="flex h-full flex-col">
       <PageHeader title="Messages" description="Direct agent chat and team channels." actions={<OperatorModeToggle />} />
       <div className="grid flex-1 grid-cols-[260px_1fr] overflow-hidden">
-        <aside className="overflow-auto border-r border-border p-2">
+        <aside className="overflow-auto border-r border-border bg-sidebar/40 p-2">
+          <div className="mb-1 flex items-center gap-2 border-b border-border px-2 pb-2.5 pt-1">
+            <span className="grid size-6 place-items-center rounded-md bg-primary text-[11px] font-bold text-primary-foreground">
+              A
+            </span>
+            <span className="text-sm font-bold tracking-tight text-foreground">Arc Fleet</span>
+          </div>
           <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-            Agents
+            Direct messages
           </div>
           {agents.length === 0 && <div className="px-2 py-1 text-xs text-muted-foreground">No agents</div>}
           {agents.map((a) => {
             const label = String(a.display_name || a.name || a.agent_id)
             const selected = sel?.kind === 'agent' && sel.id === a.agent_id
+            const approvals = a.did ? pendingByDid.get(a.did) ?? 0 : 0
             return (
               <button
                 key={a.agent_id}
@@ -454,14 +497,26 @@ export function MessagesPage() {
                   selected && 'bg-primary/8 text-foreground before:opacity-100',
                 )}
               >
-                <span
-                  className="flex size-7 shrink-0 items-center justify-center rounded-md text-xs font-semibold text-primary-foreground"
-                  style={{ background: (a.color as string) || 'var(--primary)' }}
-                >
-                  {initials(label)}
+                <span className="relative shrink-0">
+                  <span
+                    className="flex size-7 items-center justify-center rounded-md text-xs font-semibold text-primary-foreground"
+                    style={{ background: (a.color as string) || 'var(--primary)' }}
+                  >
+                    {initials(label)}
+                  </span>
+                  <StatusDot
+                    online={a.online}
+                    className="absolute -bottom-0.5 -right-0.5 [&>span:last-child]:hidden"
+                  />
                 </span>
-                <span className="min-w-0 flex-1 truncate text-foreground">{label}</span>
-                <StatusDot online={a.online} className="[&>span:last-child]:hidden" />
+                <span className={cn('min-w-0 flex-1 truncate', approvals > 0 ? 'font-semibold text-foreground' : 'text-foreground')}>
+                  {label}
+                </span>
+                {approvals > 0 && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-status-warning/15 px-1.5 py-0.5 text-[10px] font-semibold text-status-warning">
+                    <ShieldAlert className="size-3" /> {approvals}
+                  </span>
+                )}
               </button>
             )
           })}

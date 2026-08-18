@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Plus } from 'lucide-react'
+import { motion } from 'motion/react'
+import { ArrowLeft, Plus, FileText, Pencil } from 'lucide-react'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Input } from '@/components/ui/input'
 import { FilterPills } from '@/components/filter-pills'
@@ -40,6 +41,7 @@ import { QueryState, EmptyState } from '@/components/states'
 import {
   useAgent,
   useAgentCapabilities,
+  useAgentChannels,
   useAgentConfig,
   useAgentPolicy,
   useAgentPolicyStats,
@@ -92,6 +94,7 @@ const TASK_PRIORITY_FILTERS: (TaskPriority | 'all')[] = ['all', 'low', 'medium',
 const TABS = [
   'overview',
   'identity',
+  'inbox',
   'sessions',
   'runs',
   'llm',
@@ -1078,31 +1081,43 @@ function PromptsTab({ agentId }: { agentId: string }) {
           <div className="space-y-6">
             {[...byPackage.entries()].map(([pkg, prompts]) => (
               <Section key={pkg} title={pkg}>
-                <div className="divide-y divide-border rounded-md border border-border">
-                  {prompts.map((p) => (
-                    <button
+                {/* Side-by-side prompt cards — glance across the set, click one
+                    to open it for editing. Motion gives the row a light spring
+                    on enter and a lift on hover so it reads as a gallery. */}
+                <div className="flex snap-x gap-3 overflow-x-auto pb-2">
+                  {prompts.map((p, i) => (
+                    <motion.button
                       key={p.name}
                       type="button"
                       onClick={() => setSelected({ package: p.package, name: p.name })}
-                      className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: Math.min(i * 0.03, 0.3), type: 'spring', stiffness: 320, damping: 26 }}
+                      whileHover={{ y: -4 }}
+                      whileTap={{ scale: 0.98 }}
+                      className="group flex w-[240px] shrink-0 snap-start flex-col gap-2 rounded-xl border border-border bg-card p-4 text-left shadow-sm transition-colors hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
                     >
-                      <div className="min-w-0">
-                        <div className="truncate font-mono text-xs text-foreground">{p.name}</div>
-                        <div className="truncate text-[11px] text-muted-foreground">
-                          {p.description}
-                        </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <FileText className="size-4 text-muted-foreground" />
+                        <span
+                          className={cn(
+                            'shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide',
+                            p.status === 'overridden'
+                              ? 'border-primary/40 bg-primary/10 text-primary'
+                              : 'border-border bg-muted/40 text-muted-foreground',
+                          )}
+                        >
+                          {p.status}
+                        </span>
                       </div>
-                      <span
-                        className={cn(
-                          'shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide',
-                          p.status === 'overridden'
-                            ? 'border-primary/40 bg-primary/10 text-primary'
-                            : 'border-border bg-muted/40 text-muted-foreground',
-                        )}
-                      >
-                        {p.status}
-                      </span>
-                    </button>
+                      <div className="truncate font-mono text-xs font-semibold text-foreground">{p.name}</div>
+                      <div className="line-clamp-3 text-[11px] leading-relaxed text-muted-foreground">
+                        {p.description}
+                      </div>
+                      <div className="mt-auto flex items-center gap-1 pt-1 text-[10px] font-medium text-primary opacity-0 transition-opacity group-hover:opacity-100">
+                        <Pencil className="size-3" /> Click to edit
+                      </div>
+                    </motion.button>
                   ))}
                 </div>
               </Section>
@@ -1437,9 +1452,119 @@ function RunsTab({ agentId }: { agentId: string }) {
   )
 }
 
+/** Inbox — everything arriving at this agent, in one structured place: what is
+ *  waiting on a human (approvals, review), where it receives (delivery
+ *  channels), and its incoming message threads. */
+function InboxTab({ agentId }: { agentId: string }) {
+  const roster = useRoster()
+  const channelsQ = useAgentChannels(agentId)
+  const sessionsQ = useAgentSessions(agentId)
+  const tasksQ = useAgentTasks(agentId)
+  const approvalsQ = useApprovals()
+  const [operatorMode] = useOperatorMode()
+  const [active, setActive] = useState<string | null>(null)
+
+  const did = (roster.data?.agents ?? []).find((a) => a.agent_id === agentId)?.did ?? ''
+  const approvals = (approvalsQ.data?.approvals ?? []).filter((a) => a.agent_did === did)
+  const channels = channelsQ.data?.channels ?? []
+  const sessions = (sessionsQ.data?.sessions ?? []) as unknown as Dict[]
+  const inbox = sessions.filter((s) => /messag|inbox/i.test(String(s.sid ?? '')))
+  const tasks = (tasksQ.data?.tasks ?? []) as unknown as Dict[]
+  const reviewTasks = tasks.filter((t) => String(t.status) === 'review')
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <StatCard label="Delivery channels" value={channels.length} />
+        <StatCard label="Inbox threads" value={inbox.length} />
+        <StatCard label="Pending approvals" value={approvals.length} />
+        <StatCard label="Awaiting review" value={reviewTasks.length} />
+      </div>
+
+      {(approvals.length > 0 || reviewTasks.length > 0) && (
+        <Section title="Needs attention">
+          <div className="space-y-2">
+            {approvals.map((a) => (
+              <ApprovalRequest key={a.id} a={a} operatorMode={operatorMode} />
+            ))}
+            {reviewTasks.map((t) => (
+              <div
+                key={String(t.id)}
+                className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-3 py-2 text-sm"
+              >
+                <span className="min-w-0 truncate text-foreground">
+                  {String(t.description ?? t.title ?? t.id)}
+                </span>
+                <StatusChip value="review" />
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      <Section title="Delivery channels">
+        {channels.length === 0 ? (
+          <EmptyState title="No delivery channels seen yet" description="Channels appear as the agent receives messages." />
+        ) : (
+          <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border">
+            {channels.map((c) => (
+              <li key={c.target} className="flex items-center justify-between gap-3 bg-card px-3 py-2 text-sm">
+                <span className="truncate text-foreground">{c.label}</span>
+                <span className="shrink-0 rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+                  {c.target}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Section>
+
+      <Section title="Inbox threads">
+        {inbox.length === 0 ? (
+          <EmptyState title="No inbox messages" description="Direct messages and mentions to this agent land here." />
+        ) : (
+          <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border">
+            {inbox.map((s) => (
+              <li key={String(s.sid)}>
+                <button
+                  type="button"
+                  onClick={() => setActive(String(s.sid))}
+                  className="flex w-full items-center justify-between gap-3 bg-card px-3 py-2 text-left text-sm transition-colors hover:bg-muted/40"
+                >
+                  <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-foreground">
+                    {String(s.sid)}
+                  </span>
+                  {s.messages != null && (
+                    <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+                      {String(s.messages)} msgs
+                    </span>
+                  )}
+                  {s.updated_at != null && (
+                    <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground/70">
+                      {relativeTime(String(s.updated_at))}
+                    </span>
+                  )}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Section>
+
+      <RunReplayDrawer
+        agentId={agentId}
+        sid={active}
+        open={!!active}
+        onOpenChange={(o) => !o && setActive(null)}
+      />
+    </div>
+  )
+}
+
 const TAB_RENDER: Record<TabId, (agentId: string) => ReactNode> = {
   overview: (id) => <OverviewTab agentId={id} />,
   identity: (id) => <IdentityTab agentId={id} />,
+  inbox: (id) => <InboxTab agentId={id} />,
   sessions: (id) => <SessionsTab agentId={id} />,
   runs: (id) => <RunsTab agentId={id} />,
   llm: (id) => <LlmTab agentId={id} />,
@@ -1459,6 +1584,7 @@ const TAB_RENDER: Record<TabId, (agentId: string) => ReactNode> = {
 const TAB_LABEL: Record<TabId, string> = {
   overview: 'Overview',
   identity: 'Identity',
+  inbox: 'Inbox',
   sessions: 'Sessions',
   runs: 'Runs',
   llm: 'LLM',
