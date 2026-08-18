@@ -12,6 +12,8 @@ SPEC-041 Phase 1 (T-010/T-011/T-012). Verifies:
 from __future__ import annotations
 
 import importlib.util
+from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
@@ -54,7 +56,7 @@ class _FakeEmbedder(EmbeddingProvider):
 
 
 @pytest.fixture(autouse=True)
-def _clean() -> None:
+def _clean() -> Iterator[None]:
     clear_budgets()
     clear_embedder_cache()
     yield
@@ -173,6 +175,34 @@ async def test_embed_omits_input_text_when_raw_capture_disabled() -> None:
     assert "input" not in request_body
     assert request_body["count"] == 1
     assert captured[0].extra["response_body"] == {"embedding_dims": 4, "count": 1}
+
+
+async def test_embed_spool_record_carries_bodies_for_trace_ui(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The arcui trace reads request/response from the *spooled* llm_call row
+    (arcstore.spool -> ingest -> arcui.db ``extra``), not from ``on_event``. A
+    pre-fix embed spooled an empty ``extra``, so the trace showed ``null`` even
+    though the on_event record was fine. Assert the real spool line — the one
+    the UI ingests — carries the bodies, so the trace is never blank again."""
+    from arcstore.spool import read, spool_path
+
+    monkeypatch.setenv("ARCSTORE_DATA_DIR", str(tmp_path))
+    fake = _FakeEmbedder(dims=4)
+    # No on_event: exercise the arcstore_enabled spool branch on its own, the
+    # exact path that feeds the trace DB the UI renders.
+    await embed(
+        ["remember the budget line"],
+        model="fake-embed",
+        provider=fake,
+        telemetry={"agent_did": "did:arc:local:executor/test"},
+    )
+    spooled = [r for r in read(spool_path()) if r.kind == "llm_call"]
+    assert len(spooled) == 1
+    extra = spooled[0].extra
+    assert extra["request_body"]["input"] == ["remember the budget line"]
+    assert extra["response_body"] == {"embedding_dims": 4, "count": 1}
+    assert spooled[0].actor_did == "did:arc:local:executor/test"
 
 
 # ---------------------------------------------------------------------------
