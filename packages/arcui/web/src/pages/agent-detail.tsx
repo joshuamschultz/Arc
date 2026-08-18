@@ -1578,7 +1578,8 @@ function RunsTab({ agentId }: { agentId: string }) {
 function InboxRow({ s, onOpen }: { s: Dict; onOpen: () => void }) {
   const sid = String(s.sid ?? '')
   const label =
-    String(s.from ?? s.sender ?? s.title ?? s.subject ?? '').trim() || `Thread ${shortId(sid, 10)}`
+    String(s.counterpart ?? s.from ?? s.sender ?? s.title ?? s.subject ?? '').trim() ||
+    `Thread ${shortId(sid, 10)}`
   const preview = String(s.preview ?? s.snippet ?? s.last_text ?? '').trim()
   const when = (s.updated_at ?? s.mtime) as string | number | undefined
   const rawTs = Number(s.updated_at ?? s.mtime ?? 0)
@@ -1675,8 +1676,16 @@ function InboxTab({ agentId }: { agentId: string }) {
   const approvals = (approvalsQ.data?.approvals ?? []).filter((a) => a.agent_did === did)
   const channels = channelsQ.data?.channels ?? []
   const sessions = (sessionsQ.data?.sessions ?? []) as unknown as Dict[]
+  // The backend classifies each session with `kind` (messaging = teammate DM,
+  // chat = human) — those are the inbox; namespaced system sessions
+  // (cli/pulse/scheduler/serve) are not. Fall back to the sid heuristic only for
+  // an older backend that predates the field.
   const inbox = sessions
-    .filter((s) => /messag|inbox/i.test(String(s.sid ?? '')))
+    .filter((s) => {
+      const kind = String(s.kind ?? '')
+      if (kind) return kind === 'messaging' || kind === 'chat'
+      return /messag|inbox/i.test(String(s.sid ?? ''))
+    })
     .sort((a, b) => Number(b.mtime ?? b.updated_at ?? 0) - Number(a.mtime ?? a.updated_at ?? 0))
   const tasks = (tasksQ.data?.tasks ?? []) as unknown as Dict[]
   const reviewTasks = tasks.filter((t) => String(t.status) === 'review')
