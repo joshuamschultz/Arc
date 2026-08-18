@@ -246,9 +246,10 @@ Status: ☑ done · ◐ in progress · ☐ todo
   - ☑ HITL set: ApprovalRequest, TrifectaGate, SignedSeal, ContextNote
     (`components/hitl.tsx`) — used on Approvals, agent Trust tab, and **inline
     in agent chat** when blocked on a gate.
-  - ☐ Message status indicators, streaming, Thinking trace, Tool chips in chat.
+  - ☑ Tool chips in chat; inline HITL approval in chat.
+  - ☑ All 10 list/detail screens redesigned (parallel wave) + agent-detail.
   - ☐ Motion spatial views (Cover Flow runs / Time Machine checkpoints).
-  - ☐ Agent Knowledge + Runs tabs.
+  - ☐ Streaming + Thinking-trace wiring in chat (needs reasoning in the data).
 
 ---
 
@@ -279,11 +280,10 @@ Gap list (from the audit — check off as closed):
   under operator mode. `27521d68`.
 - ☑ **GAP-4: per-agent Pending capabilities** — Trust tab lists the agent's
   quarantined caps with a Manage link to act. `27521d68`.
-- ☐ **GAP-1: Knowledge tab in agent-detail.** Reuse the `knowledge-*` browsers
-  with the detail page's `agentId`; all endpoints agent-scoped. Zero backend.
-- ☐ **GAP-2: Runs/step-timeline/spawn at agent scope.** Add a Runs tab.
-  `useRunTimeline`/`useSpawnTree` reusable; `/api/runs` is fleet-wide — filter
-  by resolved DID client-side (or add `agent_id` param). Small backend optional.
+- ☑ **GAP-1: Knowledge tab in agent-detail** — reuses the knowledge browsers at
+  the detail agent's scope. `2e06e892`.
+- ☑ **GAP-2: Runs tab at agent scope** — this agent's runs (filtered by DID) +
+  StatusChip + RunDetailDrawer + scoped SpawnLineage. `2e06e892`.
 - ◐ **GAP-6: Policy divergence.** Fleet page gained `TopPerformers` (`2c503805`).
   Still: `PolicyConfigCards`/`SystemPolicyRules` need a config (fleet page has
   none — likely skip); add the bullet search/sort/hide-retired bar to the agent
