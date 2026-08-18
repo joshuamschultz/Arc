@@ -89,6 +89,13 @@ export const useTeamTasks = () =>
     refetchInterval: 4000,
   })
 
+/** One prior tool call that lit a trifecta leg — mirrors the agent's ledger entry. */
+export interface ApprovalProvenance {
+  legs?: string[]
+  tool?: string
+  args?: string
+  at?: string
+}
 export interface PendingApproval {
   id: string
   agent_did: string
@@ -99,6 +106,13 @@ export interface PendingApproval {
   status: string
   created_at: string
   expires_at: string
+  // SPEC-035 approval enrichment. `arguments` is the redacted, length-bounded
+  // per-argument preview of the blocked call (WHAT/WHO/WHERE); `provenance`
+  // records which prior tool calls lit each trifecta leg and when (WHY it fired);
+  // `session_id` is the run/session the call belongs to. All bounded by the agent.
+  arguments?: Record<string, string>
+  provenance?: ApprovalProvenance[]
+  session_id?: string
 }
 export interface ApprovalsResponse {
   approvals: PendingApproval[]

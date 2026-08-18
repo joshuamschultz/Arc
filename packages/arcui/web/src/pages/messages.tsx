@@ -29,7 +29,7 @@ import {
   useWorkflows,
 } from '@/lib/queries'
 import { apiPost, ApiError } from '@/lib/api'
-import { initials } from '@/lib/format'
+import { initials, fmtTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import type { Agent, Channel, Dict } from '@/lib/types'
 
@@ -277,7 +277,7 @@ function ChatPanel({
                 >
                   {cont ? (
                     <span className="w-7 shrink-0 pt-0.5 text-right text-[9px] tabular-nums text-transparent group-hover/msg:text-muted-foreground">
-                      {row.time?.replace(/:\d+\s/, ' ')}
+                      {fmtTime(row.time)}
                     </span>
                   ) : (
                     <span
@@ -294,7 +294,7 @@ function ChatPanel({
                         <RoleChip mine={row.mine} />
                         {row.time && (
                           <span className="ml-auto shrink-0 text-[10px] tabular-nums text-muted-foreground">
-                            {row.time}
+                            {fmtTime(row.time)}
                           </span>
                         )}
                       </div>
@@ -358,7 +358,10 @@ function buildNameIndex(agents: Agent[]): Map<string, string> {
   for (const agent of agents) {
     const readable = agent.display_name || agent.name || agent.agent_id
     if (!readable) continue
-    for (const key of [agent.did, agent.agent_id, agent.name]) {
+    // Also index the DID's trailing hex (e.g. `7e3e1a09`) — a mention or sender
+    // often arrives already collapsed to that tail, which must still resolve.
+    const tail = agent.did ? (agent.did.split('/').pop()?.split(':').pop() ?? '') : ''
+    for (const key of [agent.did, agent.agent_id, agent.name, tail]) {
       if (key) index.set(key, readable)
     }
   }
@@ -378,7 +381,11 @@ function handleOf(ref: string, names?: Map<string, string>): string {
   if (known) return known
   if (ref.startsWith('did:')) {
     const tail = ref.split('/').pop()?.split(':').pop() ?? ref
-    return names?.get(tail) ?? tail
+    const byTail = names?.get(tail)
+    if (byTail) return byTail
+    // The operator (the person) is not a roster agent — name them, don't show a hex.
+    if (ref.includes(':operator') || ref.includes('/operator')) return 'Operator'
+    return tail
   }
   if (ref.includes('://')) {
     const target = ref.split('://')[1] ?? ref
@@ -514,7 +521,7 @@ function ChannelPanel({
         >
           {cont ? (
             <span className="w-7 shrink-0 pt-0.5 text-right text-[9px] tabular-nums text-transparent group-hover/msg:text-muted-foreground">
-              {m.ts?.slice(-8, -3)}
+              {fmtTime(m.ts)}
             </span>
           ) : (
             <span
@@ -538,7 +545,7 @@ function ChannelPanel({
                   </span>
                 ))}
                 <span className="ml-auto shrink-0 text-[10px] tabular-nums text-muted-foreground">
-                  {m.ts}
+                  {fmtTime(m.ts)}
                 </span>
               </div>
             )}

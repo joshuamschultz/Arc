@@ -11,7 +11,31 @@ import {
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { apiDelete, apiPost, ApiError } from '@/lib/api'
+import { useRoster } from '@/lib/queries'
 import type { Channel } from '@/lib/types'
+
+/** Resolve a channel member ref (usually a DID) to the name a person would use:
+ *  the roster display name, "Operator" for the human, else the DID's short tail. */
+function useMemberName(): (ref: string) => string {
+  const roster = useRoster()
+  const agents = roster.data?.agents ?? []
+  const byKey = new Map<string, string>()
+  for (const a of agents) {
+    const readable = a.display_name || a.name || a.agent_id
+    if (!readable) continue
+    const tail = a.did ? (a.did.split('/').pop()?.split(':').pop() ?? '') : ''
+    for (const k of [a.did, a.agent_id, a.name, tail]) if (k) byKey.set(k, readable)
+  }
+  return (ref: string) => {
+    const hit = byKey.get(ref)
+    if (hit) return hit
+    if (ref.startsWith('did:')) {
+      const tail = ref.split('/').pop()?.split(':').pop() ?? ref
+      return byKey.get(tail) ?? (ref.includes('operator') ? 'Operator' : tail)
+    }
+    return byKey.get(ref) ?? ref
+  }
+}
 
 const CHANNELS_KEY = ['team', 'channels']
 
@@ -104,6 +128,7 @@ export function ChannelMembersSheet({
   operatorMode: boolean
 }) {
   const queryClient = useQueryClient()
+  const memberName = useMemberName()
   const [newMember, setNewMember] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -163,8 +188,9 @@ export function ChannelMembersSheet({
                   key={m}
                   className="flex items-center justify-between gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm transition-colors hover:bg-muted/30"
                 >
-                  <span className="truncate rounded-sm border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-foreground">
-                    {m}
+                  <span className="flex min-w-0 flex-col">
+                    <span className="truncate font-medium text-foreground">{memberName(m)}</span>
+                    <span className="truncate font-mono text-[10px] text-muted-foreground">{m}</span>
                   </span>
                   {operatorMode && (
                     <Button variant="ghost" size="icon-xs" disabled={busy === m} onClick={() => remove(m)} title="Remove member">
