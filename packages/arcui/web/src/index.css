@@ -68,7 +68,8 @@
   --signed: oklch(0.590 0.078 62);
   --signed-foreground: oklch(0.99 0.005 70);
 
-  --font-sans: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'Hanken Grotesk', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Bricolage Grotesque', 'Hanken Grotesk', ui-sans-serif, system-ui, sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', monospace;
   --font-serif: 'Lora', ui-serif, serif;
 
@@ -188,6 +189,7 @@
   --color-signed-foreground: var(--signed-foreground);
 
   --font-sans: var(--font-sans);
+  --font-display: var(--font-display);
   --font-mono: var(--font-mono);
   --font-serif: var(--font-serif);
 
@@ -211,7 +213,7 @@
     @apply border-border outline-ring/50;
   }
   html {
-    font-size: 14px;
+    font-size: 15px;
   }
   body {
     @apply bg-background text-foreground;

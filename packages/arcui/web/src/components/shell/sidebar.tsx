@@ -1,81 +1,84 @@
+import { Fragment } from 'react'
 import { NavLink } from 'react-router-dom'
-import { PanelLeftClose, PanelLeftOpen } from 'lucide-react'
-import { NAV_ITEMS } from '@/app/nav'
+import { Moon, Sun } from 'lucide-react'
+import { NAV_ITEMS, NAV_GROUPS } from '@/app/nav'
 import { cn } from '@/lib/utils'
+import { useTheme } from '@/hooks/use-theme'
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 
-interface SidebarProps {
-  collapsed: boolean
-  onToggle: () => void
-}
+/**
+ * Slim icon rail. Fourteen destinations read as five clusters separated by
+ * hairlines; labels live in right-side tooltips. The brand mark sits on top,
+ * the theme toggle and operator avatar on the bottom.
+ */
+export function Sidebar() {
+  const { dark, toggle } = useTheme()
 
-export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   return (
     <nav
-      className={cn(
-        'flex h-full flex-col border-r border-sidebar-border bg-sidebar py-3 transition-[width] duration-200 ease-out',
-        collapsed ? 'w-[56px]' : 'w-[220px]',
-      )}
+      className="flex h-full w-[64px] shrink-0 flex-col items-center border-r border-sidebar-border bg-sidebar py-3"
       aria-label="Primary"
     >
-      <ul className="flex flex-1 flex-col gap-0.5 px-2">
-        {NAV_ITEMS.filter((i) => !i.hidden).map((item) => {
-          const link = (
-            <NavLink
-              to={`/${item.path}`}
-              className={({ isActive }) =>
-                cn(
-                  'group relative flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-sidebar-foreground/65 transition-colors duration-150',
-                  'hover:bg-sidebar-accent/60 hover:text-sidebar-foreground',
-                  'before:absolute before:left-0 before:top-1/2 before:h-5 before:w-[2px] before:-translate-y-1/2 before:rounded-full before:bg-sidebar-primary before:opacity-0 before:transition-opacity before:duration-150',
-                  isActive &&
-                    'bg-sidebar-primary/10 text-sidebar-foreground before:opacity-100',
-                  collapsed && 'justify-center px-0',
-                )
-              }
-            >
-              <item.icon className="size-[18px] shrink-0" />
-              {!collapsed && <span className="truncate">{item.label}</span>}
-            </NavLink>
-          )
+      <div className="mb-3 grid size-9 place-items-center rounded-[10px] bg-primary shadow-sm">
+        <svg viewBox="0 0 24 24" fill="none" className="size-5" aria-hidden="true">
+          <path
+            d="M4 17a8 8 0 0 1 16 0"
+            stroke="var(--primary-foreground)"
+            strokeWidth="2.4"
+            strokeLinecap="round"
+          />
+          <circle cx="12" cy="19" r="2.2" fill="var(--primary-foreground)" />
+        </svg>
+      </div>
+
+      <div className="flex flex-1 flex-col items-center gap-1">
+        {NAV_GROUPS.map((group, gi) => {
+          const items = NAV_ITEMS.filter((i) => i.group === group && !i.hidden)
+          if (!items.length) return null
           return (
-            <li key={item.path}>
-              {collapsed ? (
-                <Tooltip>
-                  <TooltipTrigger asChild>{link}</TooltipTrigger>
+            <Fragment key={group}>
+              {gi > 0 && <div className="my-1.5 h-px w-6 bg-sidebar-border" />}
+              {items.map((item) => (
+                <Tooltip key={item.path}>
+                  <TooltipTrigger asChild>
+                    <NavLink
+                      to={`/${item.path}`}
+                      aria-label={item.label}
+                      className={({ isActive }) =>
+                        cn(
+                          'grid size-11 place-items-center rounded-[11px] text-sidebar-foreground/60 transition-colors duration-150 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground',
+                          isActive &&
+                            'bg-primary/12 text-primary hover:bg-primary/12 hover:text-primary',
+                        )
+                      }
+                    >
+                      <item.icon className="size-[20px]" />
+                    </NavLink>
+                  </TooltipTrigger>
                   <TooltipContent side="right">{item.label}</TooltipContent>
                 </Tooltip>
-              ) : (
-                link
-              )}
-            </li>
+              ))}
+            </Fragment>
           )
         })}
-      </ul>
+      </div>
 
-      <div className="px-2">
+      <div className="mt-2 flex flex-col items-center gap-1.5">
         <button
           type="button"
-          onClick={onToggle}
-          className={cn(
-            'flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-sidebar-foreground/55 transition-colors duration-150 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground',
-            collapsed && 'justify-center px-0',
-          )}
-          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          onClick={toggle}
+          aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'}
+          className="grid size-11 place-items-center rounded-[11px] text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-foreground"
         >
-          {collapsed ? (
-            <PanelLeftOpen className="size-[18px]" />
-          ) : (
-            <>
-              <PanelLeftClose className="size-[18px]" />
-              <span>Collapse</span>
-            </>
-          )}
+          {dark ? <Sun className="size-[18px]" /> : <Moon className="size-[18px]" />}
         </button>
+        <div className="grid size-9 place-items-center rounded-[10px] bg-secondary text-[11px] font-bold text-secondary-foreground">
+          JS
+        </div>
       </div>
     </nav>
   )

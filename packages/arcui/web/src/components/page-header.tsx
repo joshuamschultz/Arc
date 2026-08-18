@@ -9,13 +9,13 @@ interface PageHeaderProps {
 /** Standard page heading used across every section. */
 export function PageHeader({ title, description, actions }: PageHeaderProps) {
   return (
-    <div className="flex items-start justify-between gap-4 border-b border-border px-6 py-3.5">
+    <div className="flex items-start justify-between gap-4 border-b border-border px-6 py-4">
       <div className="min-w-0">
-        <h1 className="text-lg font-semibold tracking-tight text-foreground">
+        <h1 className="font-display text-[22px] font-extrabold leading-tight tracking-[-0.02em] text-foreground">
           {title}
         </h1>
         {description && (
-          <p className="mt-0.5 text-[13px] leading-snug text-muted-foreground">
+          <p className="mt-1 text-[13px] leading-snug text-muted-foreground">
             {description}
           </p>
         )}
