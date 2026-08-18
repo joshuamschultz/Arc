@@ -52,8 +52,11 @@ import {
   useAgentTimeseries,
   useAgentTools,
   useAgentTraces,
+  useApprovals,
+  useGatedCapabilities,
   useRoster,
 } from '@/lib/queries'
+import { useQueryClient } from '@tanstack/react-query'
 import { useOperatorMode } from '@/hooks/use-operator-mode'
 import type { MentionHandle } from '@/components/mention-composer'
 import {
@@ -85,6 +88,7 @@ const TABS = [
   'tasks',
   'schedules',
   'policy',
+  'trust',
   'workspace',
   'files',
   'connect',
@@ -1243,6 +1247,109 @@ function ConnectTab({ agentId }: { agentId: string }) {
   )
 }
 
+/**
+ * Governance scoped to one agent — its pending trifecta approvals (actionable)
+ * and its quarantined capabilities. The fleet-wide screens still exist; this is
+ * the same data filtered to the agent you are looking at (GAP-3 / GAP-4).
+ */
+function TrustTab({ agentId }: { agentId: string }) {
+  const agent = useAgent(agentId)
+  const did = String(agent.data?.did ?? '')
+  const approvalsQ = useApprovals()
+  const gatedQ = useGatedCapabilities(false)
+  const [operatorMode] = useOperatorMode()
+  const queryClient = useQueryClient()
+
+  const approvals = (approvalsQ.data?.approvals ?? []).filter((a) => a.agent_did === did)
+  const gated = (gatedQ.data?.gated ?? []).filter((g) => g.agent_id === agentId)
+
+  const act = async (id: string, decision: 'approve' | 'deny') => {
+    try {
+      await apiPost(`/api/approvals/${encodeURIComponent(id)}/${decision}`)
+    } finally {
+      queryClient.invalidateQueries({ queryKey: ['approvals'] })
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <Section title={`Pending approvals (${approvals.length})`}>
+        {approvals.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Nothing is waiting on you for this agent.</p>
+        ) : (
+          <div className="space-y-2">
+            {approvals.map((a) => (
+              <div
+                key={a.id}
+                className="flex items-center gap-3 rounded-lg border border-border bg-card p-3.5"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold text-foreground">
+                    Wants to run <span className="font-mono">{a.tool}</span>
+                  </div>
+                  <div className="truncate text-xs text-muted-foreground">
+                    {a.legs?.length ? a.legs.join(', ') : 'trifecta gate'} · {relativeTime(a.created_at)}
+                  </div>
+                </div>
+                {operatorMode ? (
+                  <div className="flex shrink-0 gap-2">
+                    <Button size="sm" onClick={() => act(a.id, 'approve')}>
+                      Approve
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => act(a.id, 'deny')}>
+                      Deny
+                    </Button>
+                  </div>
+                ) : (
+                  <Link
+                    to="/approvals"
+                    className="shrink-0 rounded-md border border-border bg-secondary px-3 py-1.5 text-xs font-semibold text-secondary-foreground hover:border-foreground/20"
+                  >
+                    Review
+                  </Link>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </Section>
+
+      <Section title={`Pending capabilities (${gated.length})`}>
+        {gated.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            No quarantined tools or skills for this agent.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {gated.map((g) => (
+              <div
+                key={`${g.kind}-${g.name}`}
+                className="flex items-center gap-3 rounded-lg border border-border bg-card p-3.5"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold text-foreground">
+                    {g.name}{' '}
+                    <span className="text-xs font-normal text-muted-foreground">({g.kind})</span>
+                  </div>
+                  <div className="truncate font-mono text-xs text-muted-foreground">
+                    {g.status} · {g.hash}
+                  </div>
+                </div>
+                <Link
+                  to="/gated"
+                  className="shrink-0 rounded-md border border-border bg-secondary px-3 py-1.5 text-xs font-semibold text-secondary-foreground hover:border-foreground/20"
+                >
+                  Manage
+                </Link>
+              </div>
+            ))}
+          </div>
+        )}
+      </Section>
+    </div>
+  )
+}
+
 const TAB_RENDER: Record<TabId, (agentId: string) => ReactNode> = {
   overview: (id) => <OverviewTab agentId={id} />,
   identity: (id) => <IdentityTab agentId={id} />,
@@ -1254,6 +1361,7 @@ const TAB_RENDER: Record<TabId, (agentId: string) => ReactNode> = {
   tasks: (id) => <TasksTab agentId={id} />,
   schedules: (id) => <SchedulesTab agentId={id} />,
   policy: (id) => <PolicyTab agentId={id} />,
+  trust: (id) => <TrustTab agentId={id} />,
   workspace: (id) => <FileTree agentId={id} root="workspace" rootLabel="workspace" />,
   files: (id) => <FileTree agentId={id} root="agent" rootLabel="agent root" />,
   connect: (id) => <ConnectTab agentId={id} />,
@@ -1270,6 +1378,7 @@ const TAB_LABEL: Record<TabId, string> = {
   tasks: 'Tasks',
   schedules: 'Schedules',
   policy: 'Policy',
+  trust: 'Trust',
   workspace: 'Workspace',
   files: 'Files',
   connect: 'Connect',
