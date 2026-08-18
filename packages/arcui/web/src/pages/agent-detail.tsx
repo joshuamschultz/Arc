@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, Plus } from 'lucide-react'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Input } from '@/components/ui/input'
 import { FilterPills } from '@/components/filter-pills'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -54,9 +54,21 @@ import {
   useAgentTraces,
   useApprovals,
   useGatedCapabilities,
+  useKnowledge,
+  useRuns,
   useRoster,
 } from '@/lib/queries'
 import { ApprovalRequest } from '@/components/hitl'
+import { StatusChip, InsightStat } from '@/components/ai'
+import { KnowledgeOverview } from '@/components/knowledge-view/overview'
+import { MemoryBrowser } from '@/components/knowledge-memories'
+import { EntityBrowser } from '@/components/knowledge-entities'
+import { InsightBrowser } from '@/components/knowledge-insights'
+import { ProcedureBrowser } from '@/components/knowledge-procedures'
+import { EventBrowser } from '@/components/knowledge-events'
+import { DailyNotesBrowser } from '@/components/knowledge-daily-notes'
+import { RunDetailDrawer } from '@/components/run-detail-drawer'
+import { SpawnLineage } from '@/components/run-observability'
 import { useOperatorMode } from '@/hooks/use-operator-mode'
 import type { MentionHandle } from '@/components/mention-composer'
 import {
@@ -70,7 +82,7 @@ import {
 } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import type { ColumnDef } from '@tanstack/react-table'
-import type { CapabilityInventoryItem, Dict, Task, TaskStatus, TaskPriority } from '@/lib/types'
+import type { CapabilityInventoryItem, Dict, Task, TaskStatus, TaskPriority, RunSummary } from '@/lib/types'
 
 const TASK_STATUS_FILTERS: (TaskStatus | 'all')[] = [
   'all', 'backlog', 'todo', 'in_progress', 'review', 'done', 'failed',
@@ -81,10 +93,12 @@ const TABS = [
   'overview',
   'identity',
   'sessions',
+  'runs',
   'llm',
   'skills',
   'tools',
   'prompts',
+  'knowledge',
   'tasks',
   'schedules',
   'policy',
@@ -1312,14 +1326,127 @@ function TrustTab({ agentId }: { agentId: string }) {
   )
 }
 
+const KNOWLEDGE_TABS = [
+  { value: 'overview', label: 'Overview' },
+  { value: 'insights', label: 'Insights' },
+  { value: 'procedures', label: 'Procedures' },
+  { value: 'entities', label: 'Entities' },
+  { value: 'events', label: 'Events' },
+  { value: 'daily-notes', label: 'Daily Notes' },
+  { value: 'memories', label: 'Raw stream' },
+]
+
+/** GAP-1: the full Knowledge surface, scoped to this agent (reuses the browsers). */
+function KnowledgeTab({ agentId }: { agentId: string }) {
+  const query = useKnowledge(agentId)
+  const [selectedEntitySlug, setSelectedEntitySlug] = useState<string | null>(null)
+  const [tab, setTab] = useState('overview')
+  const focusEntity = (slug: string) => {
+    setSelectedEntitySlug(slug)
+    setTab('entities')
+  }
+  return (
+    <Tabs value={tab} onValueChange={setTab} className="flex flex-1 flex-col">
+      <TabsList className="mb-4 flex-wrap">
+        {KNOWLEDGE_TABS.map((t) => (
+          <TabsTrigger key={t.value} value={t.value}>
+            {t.label}
+          </TabsTrigger>
+        ))}
+      </TabsList>
+      <TabsContent value="overview">
+        <QueryState query={query} isEmpty={() => !query.data}>
+          {(data) => <KnowledgeOverview data={data} agentId={agentId} onNavigate={setTab} />}
+        </QueryState>
+      </TabsContent>
+      <TabsContent value="insights">
+        <InsightBrowser agentId={agentId} />
+      </TabsContent>
+      <TabsContent value="procedures">
+        <ProcedureBrowser agentId={agentId} />
+      </TabsContent>
+      <TabsContent value="entities">
+        <EntityBrowser
+          agentId={agentId}
+          selectedSlug={selectedEntitySlug}
+          onSelectSlug={setSelectedEntitySlug}
+        />
+      </TabsContent>
+      <TabsContent value="events">
+        <EventBrowser agentId={agentId} />
+      </TabsContent>
+      <TabsContent value="daily-notes">
+        <DailyNotesBrowser agentId={agentId} />
+      </TabsContent>
+      <TabsContent value="memories">
+        <MemoryBrowser agentId={agentId} onNavigateEntity={focusEntity} />
+      </TabsContent>
+    </Tabs>
+  )
+}
+
+/** GAP-2: this agent's runs — the step timeline + spawn lineage at agent scope. */
+function RunsTab({ agentId }: { agentId: string }) {
+  const runsQ = useRuns()
+  const roster = useRoster()
+  const [active, setActive] = useState<RunSummary | null>(null)
+  const did = (roster.data?.agents ?? []).find((a) => a.agent_id === agentId)?.did ?? ''
+  const runs = (runsQ.data?.runs ?? []).filter((r) => r.actor_did === did || r.agent === agentId)
+  const held = runs.filter((r) => (r.status || '').toLowerCase() === 'held').length
+  const failed = runs.filter((r) => (r.status || '').toLowerCase() === 'failed').length
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <InsightStat label="Runs" value={runs.length} />
+        <InsightStat label="Held" value={held} />
+        <InsightStat label="Failed" value={failed} />
+      </div>
+      {runs.length === 0 ? (
+        <EmptyState
+          title="No runs for this agent yet"
+          description="Each user question to final response appears here as the agent works."
+        />
+      ) : (
+        <div className="overflow-hidden rounded-lg border border-border bg-card">
+          {runs.map((r, i) => (
+            <button
+              key={r.run_id}
+              type="button"
+              onClick={() => setActive(r)}
+              className={cn(
+                'flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-muted/40',
+                i > 0 && 'border-t border-border',
+              )}
+            >
+              <span className="font-mono text-xs text-primary">{shortId(r.run_id, 16)}</span>
+              <StatusChip value={r.status} />
+              <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+                {relativeTime(r.started_at)}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+      <RunDetailDrawer run={active} open={!!active} onOpenChange={(o) => !o && setActive(null)} />
+      <Section title="Spawn lineage">
+        <div className="rounded-lg border border-border bg-card p-4">
+          <SpawnLineage root={did || null} />
+        </div>
+      </Section>
+    </div>
+  )
+}
+
 const TAB_RENDER: Record<TabId, (agentId: string) => ReactNode> = {
   overview: (id) => <OverviewTab agentId={id} />,
   identity: (id) => <IdentityTab agentId={id} />,
   sessions: (id) => <SessionsTab agentId={id} />,
+  runs: (id) => <RunsTab agentId={id} />,
   llm: (id) => <LlmTab agentId={id} />,
   skills: (id) => <SkillsTab agentId={id} />,
   tools: (id) => <ToolsTab agentId={id} />,
   prompts: (id) => <PromptsTab agentId={id} />,
+  knowledge: (id) => <KnowledgeTab agentId={id} />,
   tasks: (id) => <TasksTab agentId={id} />,
   schedules: (id) => <SchedulesTab agentId={id} />,
   policy: (id) => <PolicyTab agentId={id} />,
@@ -1333,10 +1460,12 @@ const TAB_LABEL: Record<TabId, string> = {
   overview: 'Overview',
   identity: 'Identity',
   sessions: 'Sessions',
+  runs: 'Runs',
   llm: 'LLM',
   skills: 'Skills',
   tools: 'Tools',
   prompts: 'Prompts',
+  knowledge: 'Knowledge',
   tasks: 'Tasks',
   schedules: 'Schedules',
   policy: 'Policy',

@@ -10,8 +10,8 @@ import {
   Activity as ActivityIcon,
 } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
-import { StatCard } from '@/components/stat-card'
-import { StatusDot, StatusText } from '@/components/status-badge'
+import { InsightStat, StatusChip } from '@/components/ai'
+import { StatusDot } from '@/components/status-badge'
 import { useApprovals, useRuns, useTeamTasks, useRoster } from '@/lib/queries'
 import { initials, relativeTime, shortId } from '@/lib/format'
 import type { Agent, RunSummary } from '@/lib/types'
@@ -64,10 +64,10 @@ export function HomePage() {
       />
       <div className="flex-1 space-y-6 overflow-auto p-6">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <StatCard label="Agents" value={agents.length} icon={<Boxes className="size-4" />} />
-          <StatCard label="Online" value={online} />
-          <StatCard label="Needs you" value={needsYou} />
-          <StatCard label="Running" value={running} icon={<ActivityIcon className="size-4" />} />
+          <InsightStat label="Agents" value={agents.length} icon={<Boxes className="size-4" />} />
+          <InsightStat label="Online" value={online} />
+          <InsightStat label="Needs you" value={needsYou} />
+          <InsightStat label="Running" value={running} icon={<ActivityIcon className="size-4" />} />
         </div>
 
         {/* Needs you */}
@@ -176,7 +176,7 @@ export function HomePage() {
                     <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
                       {runAgent(r)}
                     </span>
-                    <StatusText value={r.status} />
+                    <StatusChip value={r.status} />
                     <span className="whitespace-nowrap text-xs text-muted-foreground">
                       {relativeTime(r.started_at)}
                     </span>
