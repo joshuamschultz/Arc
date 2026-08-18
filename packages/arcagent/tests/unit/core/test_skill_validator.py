@@ -46,6 +46,33 @@ class TestFrontmatterValidation:
         (folder / "SKILL.md").write_text("just text\n")
         result = validate_skill_folder(folder, "builtins")
         assert any(e.code == "malformed_frontmatter" for e in result.errors)
+        # A genuinely missing block says exactly that.
+        assert any("no leading --- frontmatter block" in e.detail for e in result.errors)
+
+    def test_invalid_yaml_frontmatter_reports_yaml_error_not_missing_block(
+        self, tmp_path: Path
+    ) -> None:
+        """A leading --- block WITH invalid YAML (an unquoted colon in a value —
+        the common real case) must report the YAML error, not the misleading
+        'no leading --- frontmatter block' — the block is right there."""
+        from arcagent.capabilities.skill_validator import validate_skill_folder
+
+        folder = tmp_path / "skill"
+        folder.mkdir()
+        (folder / "SKILL.md").write_text(
+            "---\n"
+            "name: x\n"
+            "version: 1.0.0\n"
+            "description: Do the thing. TRIGGER: when asked. SKIP: otherwise.\n"
+            "triggers: [a]\n"
+            "tools: [read]\n"
+            "---\n\n## Resources\n"
+        )
+        result = validate_skill_folder(folder, "builtins")
+        malformed = [e for e in result.errors if e.code == "malformed_frontmatter"]
+        assert malformed, "invalid YAML should still be a malformed_frontmatter error"
+        assert any("invalid YAML frontmatter" in e.detail for e in malformed)
+        assert not any("no leading --- frontmatter block" in e.detail for e in malformed)
 
     def test_missing_required_field(self, tmp_path: Path) -> None:
         from arcagent.capabilities.skill_validator import validate_skill_folder

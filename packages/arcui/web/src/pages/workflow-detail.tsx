@@ -42,6 +42,7 @@ import {
   usePatchWorkflow,
   useRequestSignature,
   useRunWorkflow,
+  useTeamChannels,
   useUnarchiveWorkflow,
   useWorkflow,
   useWorkflowFile,
@@ -443,6 +444,7 @@ function TriggerChannelTab({ workflow }: { workflow: WorkflowDetail }) {
   const [end, setEnd] = useState(hours.end ?? '')
   const [timezone, setTimezone] = useState(hours.timezone ?? '')
   const [channel, setChannel] = useState(workflow.channel ?? '')
+  const channelsQ = useTeamChannels()
   const [error, setError] = useState<string | null>(null)
 
   const saveTrigger = async () => {
@@ -560,9 +562,28 @@ function TriggerChannelTab({ workflow }: { workflow: WorkflowDetail }) {
         <label className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
           Bound channel
         </label>
-        <Input value={channel} onChange={(e) => setChannel(e.target.value)} placeholder="workflow-onboarding" />
+        <Select
+          value={channel || '__none__'}
+          onValueChange={(v) => setChannel(v === '__none__' ? '' : v)}
+        >
+          <SelectTrigger>
+            <SelectValue placeholder="Select a channel…" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__none__">None</SelectItem>
+            {channel &&
+              !(channelsQ.data?.channels ?? []).some((c) => c.name === channel) && (
+                <SelectItem value={channel}>#{channel}</SelectItem>
+              )}
+            {(channelsQ.data?.channels ?? []).map((c) => (
+              <SelectItem key={c.name} value={c.name}>
+                #{c.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <p className="text-[11px] text-muted-foreground">
-          Where runs narrate: node starts, gate decisions, and the outcome. Leave empty for none.
+          Where runs narrate: node starts, gate decisions, and the outcome. Choose None for no narration.
         </p>
         <Button size="sm" onClick={saveChannel} disabled={patchWorkflow.isPending}>
           Save channel

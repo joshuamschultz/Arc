@@ -124,16 +124,13 @@ def validate_skill_folder(
         return result
 
     text = skill_md.read_text(encoding="utf-8")
-    parsed = _parse_skill_md(text)
-    if parsed is None:
+    try:
+        fm, body = _parse_skill_md(text)
+    except ValueError as exc:
         result.errors.append(
-            SkillValidationError(
-                code="malformed_frontmatter",
-                detail=f"{skill_md} has no leading --- frontmatter block",
-            )
+            SkillValidationError(code="malformed_frontmatter", detail=f"{skill_md} {exc}")
         )
         return result
-    fm, body = parsed
 
     _check_required_fields(fm, result)
     _check_required_sections(body, result)
@@ -185,16 +182,22 @@ def render_resources_section(folder: Path) -> str:
 # --- Internals -------------------------------------------------------------
 
 
-def _parse_skill_md(text: str) -> tuple[dict[str, Any], str] | None:
+def _parse_skill_md(text: str) -> tuple[dict[str, Any], str]:
+    """Split the leading ``---`` frontmatter from the body. Raises ``ValueError``
+    with a SPECIFIC reason — a missing block and invalid YAML are different
+    failures, and reporting "no leading --- block" for a YAML syntax error (an
+    unquoted colon in a value is the common one) sends the operator hunting for a
+    delimiter that is right there."""
     match = _FRONTMATTER_RE.match(text)
     if match is None:
-        return None
+        raise ValueError("has no leading --- frontmatter block")
     try:
         fm = yaml.safe_load(match.group(1)) or {}
-    except yaml.YAMLError:
-        return None
-    body = match.group(2)
-    return fm, body
+    except yaml.YAMLError as exc:
+        raise ValueError(f"has invalid YAML frontmatter: {exc}") from exc
+    if not isinstance(fm, dict):
+        raise ValueError("frontmatter is not a key/value mapping")
+    return fm, match.group(2)
 
 
 def _check_required_fields(fm: dict[str, Any], result: SkillValidationResult) -> None:
