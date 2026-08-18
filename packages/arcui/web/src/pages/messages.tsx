@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircle, Hash, MessageSquare, RotateCcw, Wrench } from 'lucide-react'
+import { AlertCircle, Hash, MessageSquare, RotateCcw } from 'lucide-react'
+import { ToolChip } from '@/components/ai'
 import { PageHeader } from '@/components/page-header'
 import { Button } from '@/components/ui/button'
 import { Markdown } from '@/components/markdown'
@@ -39,9 +40,8 @@ type Selection =
 function Bubble({ m }: { m: ChatMessage }) {
   if (m.role === 'tool_call') {
     return (
-      <div className="inline-flex max-w-full items-center gap-1.5 self-center rounded-md border border-border bg-muted/40 px-2 py-1 text-[11px] text-muted-foreground">
-        <Wrench className="size-3 shrink-0" /> {m.tool}
-        {m.text && <span className="truncate font-mono text-muted-foreground/80">{m.text}</span>}
+      <div className="self-center">
+        <ToolChip tool={m.tool ?? 'tool'} arg={m.text || undefined} />
       </div>
     )
   }
