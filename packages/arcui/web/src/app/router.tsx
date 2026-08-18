@@ -1,5 +1,6 @@
 import { createBrowserRouter, Navigate } from 'react-router-dom'
 import { AppShell } from '@/components/shell/app-shell'
+import { HomePage } from '@/pages/home'
 import { AgentsPage } from '@/pages/agents'
 import { TasksPage } from '@/pages/tasks'
 import { ToolsSkillsPage } from '@/pages/tools-skills'
@@ -24,6 +25,9 @@ export const router = createBrowserRouter([
     element: <AppShell />,
     children: [
       { index: true, element: <Navigate to={`/${DEFAULT_PATH}`} replace /> },
+
+      // Home / Today — operator daily driver.
+      { path: 'home', element: <HomePage /> },
 
       // Phase 3 — fleet pages.
       { path: 'agents', element: <AgentsPage /> },

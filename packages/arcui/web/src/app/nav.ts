@@ -1,4 +1,5 @@
 import {
+  Home,
   Boxes,
   MessageSquare,
   Cpu,
@@ -16,8 +17,9 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 
-/** Rail groups, in order. Keeps 14 destinations legible as five clusters. */
-export const NAV_GROUPS = ['work', 'watch', 'govern', 'build', 'system'] as const
+/** Rail groups, in order. Business-first: what you do, what you govern, what
+ *  you watch, then developer/advanced surfaces, then system. */
+export const NAV_GROUPS = ['work', 'govern', 'watch', 'advanced', 'system'] as const
 export type NavGroup = (typeof NAV_GROUPS)[number]
 
 export interface NavItem {
@@ -31,29 +33,30 @@ export interface NavItem {
 }
 
 /**
- * Top-level navigation, grouped for the slim rail: work you do with agents,
- * things you watch, things you govern, capabilities you build on, and system.
- * Routes are unchanged; labels use the operator's vocabulary.
+ * Top-level navigation for a business operator. Labels use plain language;
+ * developer telemetry (model usage, tool wiring) sits under "advanced". Routes
+ * are unchanged — only labels and grouping. Technical ids live in detail views.
  */
 export const NAV_ITEMS: NavItem[] = [
+  { path: 'home', label: 'Home', icon: Home, group: 'work' },
   { path: 'agents', label: 'Fleet', icon: Boxes, group: 'work' },
   { path: 'messages', label: 'Chat', icon: MessageSquare, group: 'work' },
   { path: 'tasks', label: 'Tasks', icon: ListChecks, group: 'work' },
-  { path: 'workflows', label: 'Workflows', icon: GitBranch, group: 'work' },
-
-  { path: 'arcrun', label: 'Activity', icon: Workflow, group: 'watch' },
-  { path: 'arcllm', label: 'ArcLLM', icon: Cpu, group: 'watch' },
-  { path: 'knowledge', label: 'Knowledge', icon: BookOpen, group: 'watch' },
-  { path: 'security', label: 'Audit', icon: Shield, group: 'watch' },
 
   { path: 'approvals', label: 'Approvals', icon: ShieldAlert, group: 'govern' },
-  { path: 'gated', label: 'Gated', icon: PackageCheck, group: 'govern' },
-  { path: 'policy', label: 'Policy', icon: ShieldCheck, group: 'govern' },
+  { path: 'gated', label: 'Pending capabilities', icon: PackageCheck, group: 'govern' },
+  { path: 'policy', label: 'Rules', icon: ShieldCheck, group: 'govern' },
+  { path: 'security', label: 'Audit', icon: Shield, group: 'govern' },
 
-  { path: 'tools-skills', label: 'Tools & Skills', icon: Wrench, group: 'build' },
-  { path: 'connections', label: 'Connections', icon: Plug, group: 'build' },
+  { path: 'arcrun', label: 'Activity', icon: Workflow, group: 'watch' },
+  { path: 'workflows', label: 'Workflows', icon: GitBranch, group: 'watch' },
+  { path: 'knowledge', label: 'Knowledge', icon: BookOpen, group: 'watch' },
+
+  { path: 'arcllm', label: 'Model usage', icon: Cpu, group: 'advanced' },
+  { path: 'tools-skills', label: 'Tools & Skills', icon: Wrench, group: 'advanced' },
+  { path: 'connections', label: 'Connections', icon: Plug, group: 'advanced' },
 
   { path: 'settings', label: 'Settings', icon: Settings, group: 'system' },
 ]
 
-export const DEFAULT_PATH = 'agents'
+export const DEFAULT_PATH = 'home'
