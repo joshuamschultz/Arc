@@ -1,5 +1,5 @@
 import { AlignLeft, Pencil, Terminal, GitPullRequest, Wrench, Bot, MessageSquare } from 'lucide-react'
-import { mergeTimeline, type Item } from '@/components/run-detail-drawer'
+import { mergeTimeline, type Item } from '@/lib/run-timeline'
 import { StatusChip } from '@/components/ai'
 import { SignedSeal } from '@/components/hitl'
 import { LoadingRows, EmptyState } from '@/components/states'
@@ -11,16 +11,20 @@ import type { RunSummary } from '@/lib/types'
 /**
  * Run River — a run's signed action trace as a vertical timeline. Each tool the
  * agent ran is a governed, signed step; the spine connects them in order. Reads
- * the real run-timeline (same fold as the drawer), rendered as the mockup's
- * signature view.
+ * the real run-timeline (same fold as the drawer), rendered as the signature.
  */
-function toolIcon(name: string) {
-  const n = name.toLowerCase()
-  if (n.includes('read') || n.includes('cat') || n.includes('grep') || n.includes('ls')) return AlignLeft
-  if (n.includes('edit') || n.includes('write') || n.includes('patch')) return Pencil
-  if (n.includes('bash') || n.includes('exec') || n.includes('pytest') || n.includes('shell')) return Terminal
-  if (n.includes('pr') || n.includes('git') || n.includes('push')) return GitPullRequest
-  return Wrench
+function StepIcon({ item }: { item: Item }) {
+  const c = 'size-3.5'
+  if (item.kind === 'llm') return <Bot className={c} />
+  if (item.kind === 'run') return <MessageSquare className={c} />
+  const n = item.name.toLowerCase()
+  if (n.includes('read') || n.includes('cat') || n.includes('grep') || n.includes('ls'))
+    return <AlignLeft className={c} />
+  if (n.includes('edit') || n.includes('write') || n.includes('patch')) return <Pencil className={c} />
+  if (n.includes('bash') || n.includes('exec') || n.includes('pytest') || n.includes('shell'))
+    return <Terminal className={c} />
+  if (n.includes('pr') || n.includes('git') || n.includes('push')) return <GitPullRequest className={c} />
+  return <Wrench className={c} />
 }
 
 function argOf(input: unknown): string | null {
@@ -31,62 +35,61 @@ function argOf(input: unknown): string | null {
   return v != null ? String(v) : null
 }
 
-function RiverStep({ item, last }: { item: Item; last: boolean }) {
-  let Icon = MessageSquare
-  let op = ''
-  let arg: string | null = null
-  let status: string | undefined
-  let latency: number | null | undefined
-  let signed = false
-  let held = false
-
+function describe(item: Item) {
   if (item.kind === 'tool') {
-    Icon = toolIcon(item.name)
-    op = item.name
-    arg = argOf(item.input)
-    status = item.status
-    latency = item.latency_ms
-    signed = true
-    held = item.status === 'running' || item.status === 'stale'
-  } else if (item.kind === 'llm') {
-    Icon = Bot
-    op = item.model
-    arg = item.tokensIn || item.tokensOut ? `${fmtNumber(item.tokensIn)} in / ${fmtNumber(item.tokensOut)} out` : null
-    latency = item.latency_ms
-  } else {
-    Icon = MessageSquare
-    op = item.name
+    return {
+      op: item.name,
+      arg: argOf(item.input),
+      status: item.status as string | undefined,
+      latency: item.latency_ms,
+      signed: true,
+      held: item.status === 'running' || item.status === 'stale',
+    }
   }
+  if (item.kind === 'llm') {
+    return {
+      op: item.model,
+      arg: item.tokensIn || item.tokensOut ? `${fmtNumber(item.tokensIn)} in / ${fmtNumber(item.tokensOut)} out` : null,
+      status: undefined,
+      latency: item.latency_ms,
+      signed: false,
+      held: false,
+    }
+  }
+  return { op: item.name, arg: null, status: undefined, latency: undefined, signed: false, held: false }
+}
 
+function RiverStep({ item, last }: { item: Item; last: boolean }) {
+  const d = describe(item)
   return (
     <div className="relative flex gap-4 pb-5 last:pb-1">
-      {!last && <span className="absolute left-[13px] top-7 bottom-0 w-px bg-border" />}
+      {!last && <span className="absolute bottom-0 left-[13px] top-7 w-px bg-border" />}
       <span
         className={cn(
           'z-[1] grid size-7 shrink-0 place-items-center rounded-lg border',
-          held
+          d.held
             ? 'border-status-warning/50 bg-status-warning/10 text-status-warning'
             : item.kind === 'run'
               ? 'border-transparent bg-primary/12 text-primary'
               : 'border-border bg-card text-muted-foreground',
         )}
       >
-        <Icon className="size-3.5" />
+        <StepIcon item={item} />
       </span>
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2 text-sm">
-          <span className="font-semibold text-foreground">{op}</span>
-          {arg && <span className="truncate font-mono text-xs text-muted-foreground">{arg}</span>}
+          <span className="font-semibold text-foreground">{d.op}</span>
+          {d.arg && <span className="truncate font-mono text-xs text-muted-foreground">{d.arg}</span>}
         </div>
         <div className="mt-1.5 flex flex-wrap items-center gap-2.5">
-          {status && <StatusChip value={status} />}
-          {signed && (
+          {d.status && <StatusChip value={d.status} />}
+          {d.signed && (
             <span className="inline-flex items-center gap-1 text-[11px] text-signed">
               <SignedSeal className="size-3.5" /> signed
             </span>
           )}
-          {latency != null && (
-            <span className="text-[11px] tabular-nums text-muted-foreground">{fmtLatency(latency)}</span>
+          {d.latency != null && (
+            <span className="text-[11px] tabular-nums text-muted-foreground">{fmtLatency(d.latency)}</span>
           )}
           {item.ts && <span className="text-[11px] tabular-nums text-muted-foreground/70">{fmtTime(item.ts)}</span>}
         </div>

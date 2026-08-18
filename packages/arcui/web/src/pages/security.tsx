@@ -10,15 +10,12 @@ import { SignedSeal } from '@/components/hitl'
 import { SeverityBadge } from '@/components/status-badge'
 import { QueryState, EmptyState } from '@/components/states'
 import {
-  auditField,
-  actorRole,
-  isSigned,
-  isVerified,
   AuditVerdict,
   LedgerHash,
   LedgerSummary,
   SignedMark,
 } from '@/components/audit/ledger'
+import { auditField, actorRole, isSigned, isVerified } from '@/components/audit/ledger-utils'
 import { useTeamAudit } from '@/lib/queries'
 import { relativeTime, fmtTime, shortId } from '@/lib/format'
 import type { AuditEvent } from '@/lib/types'

@@ -5,7 +5,7 @@ import type { Dict } from '@/lib/types'
 // nesting (modules → memory → config → dynamics) stays scannable instead of
 // collapsing into one thin rail.
 
-export function isPlainObject(value: unknown): value is Dict {
+function isPlainObject(value: unknown): value is Dict {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
