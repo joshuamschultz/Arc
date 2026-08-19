@@ -15,8 +15,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from arcprompt import load_stock
-
 from arcrun.sandbox import Sandbox
 from arcrun.state import RunState
 from arcrun.strategies import Strategy
@@ -30,14 +28,6 @@ class OneShotStrategy(Strategy):
     @property
     def name(self) -> str:
         return "oneshot"
-
-    @property
-    def description(self) -> str:
-        return load_stock("arcrun", "strategy_oneshot_description")
-
-    @property
-    def prompt_guidance(self) -> str:
-        return load_stock("arcrun", "strategy_oneshot")
 
     @property
     def auto_selectable(self) -> bool:

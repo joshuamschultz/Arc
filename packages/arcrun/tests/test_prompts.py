@@ -127,26 +127,41 @@ class TestStrategyPromptGuidanceProperty:
         assert "Python" in guidance or "code" in guidance.lower()
 
 
-class TestStrategyABCPromptGuidance:
-    """Strategy ABC enforces prompt_guidance as abstract."""
+class TestStrategyABCContract:
+    """The ABC requires ``name`` + ``__call__``; the prompt is markdown-backed.
 
-    def test_strategy_without_prompt_guidance_cannot_instantiate(self) -> None:
+    A strategy's copy lives as ``strategy_<name>[_description]`` markdown, so
+    ``description`` and ``prompt_guidance`` default to loading it — a custom
+    strategy needs no inline Python prompt. Only the behavioural surface
+    (``name`` and the loop body) stays abstract.
+    """
+
+    def test_strategy_without_name_cannot_instantiate(self) -> None:
         from arcrun.strategies import Strategy
 
-        class IncompleteStrategy(Strategy):
-            @property
-            def name(self) -> str:
-                return "incomplete"
-
-            @property
-            def description(self) -> str:
-                return "Missing prompt_guidance"
-
-            async def __call__(self, model, state, sandbox, max_turns):
-                pass
+        class NoName(Strategy):
+            async def __call__(self, model, state, sandbox, max_turns):  # type: ignore[no-untyped-def]
+                return None
 
         with pytest.raises(TypeError):
-            IncompleteStrategy()
+            NoName()  # type: ignore[abstract]
+
+    def test_a_bare_strategy_loads_with_markdown_backed_prompts(self) -> None:
+        from arcrun.strategies import Strategy
+
+        class Bare(Strategy):
+            @property
+            def name(self) -> str:
+                return "bare_probe_no_md"
+
+            async def __call__(self, model, state, sandbox, max_turns):  # type: ignore[no-untyped-def]
+                return None
+
+        strategy = Bare()
+        # No strategy_bare_probe_no_md.md ships, so the default resolves to "" —
+        # a bare strategy still constructs and reports empty prompt, not a crash.
+        assert strategy.prompt_guidance == ""
+        assert strategy.description == ""
 
 
 class TestPromptGuidanceContent:

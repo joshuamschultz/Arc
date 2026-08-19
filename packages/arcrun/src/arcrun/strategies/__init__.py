@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
@@ -20,19 +21,25 @@ class Strategy(ABC):
     def name(self) -> str: ...
 
     @property
-    @abstractmethod
-    def description(self) -> str: ...
+    def description(self) -> str:
+        """One-line summary the selector shows the model.
+
+        Defaults to the stock ``strategy_<name>_description`` markdown, so a
+        strategy's copy lives in the prompt folder like every other prompt in
+        the system rather than inline in Python. Override only to compute it.
+        """
+        return _stock(f"strategy_{self.name}_description")
 
     @property
-    @abstractmethod
     def prompt_guidance(self) -> str:
-        """Model-facing guidance on when and how to leverage this strategy.
+        """Model-facing guidance injected into the system prompt.
 
-        Returned text is injected into the system prompt so the LLM
-        understands when this strategy applies and what behavior to
-        expect from the execution loop.
+        Defaults to the stock ``strategy_<name>`` markdown (same convention as
+        :attr:`description`). The text teaches the LLM when this strategy applies
+        and what the loop will do; override only to compute it. Empty when a
+        strategy ships no such file, so a bare strategy still loads.
         """
-        ...
+        return _stock(f"strategy_{self.name}")
 
     @property
     def auto_selectable(self) -> bool:
@@ -54,6 +61,21 @@ class Strategy(ABC):
 STRATEGIES: dict[str, Strategy] = {}
 
 
+def _stock(prompt_name: str) -> str:
+    """A stock prompt body, or "" when a strategy ships none.
+
+    Strategy copy lives as markdown under ``arcrun/context/`` and is resolved
+    through arcprompt, so an operator overlay is honored at prompt-assembly time
+    the same as any other stock prompt.
+    """
+    from arcprompt import PromptMissing, load_stock
+
+    try:
+        return load_stock("arcrun", prompt_name)
+    except PromptMissing:
+        return ""
+
+
 def available_strategies() -> MappingProxyType[str, Strategy]:
     """Return a read-only view of the registered execution strategies."""
     if not STRATEGIES:
@@ -61,21 +83,68 @@ def available_strategies() -> MappingProxyType[str, Strategy]:
     return MappingProxyType(STRATEGIES)
 
 
-def _load_strategies() -> None:
-    from arcrun.strategies.code import CodeExecStrategy
-    from arcrun.strategies.dynamic import DynamicStrategy
-    from arcrun.strategies.oneshot import OneShotStrategy
-    from arcrun.strategies.plan_execute import PlanExecuteStrategy
-    from arcrun.strategies.react import ReactStrategy
+def _strategy_classes(module: Any) -> list[type[Strategy]]:
+    """Concrete Strategy subclasses DEFINED in ``module`` — not ones it imported.
 
-    for s in (
-        ReactStrategy(),
-        CodeExecStrategy(),
-        DynamicStrategy(),
-        OneShotStrategy(),
-        PlanExecuteStrategy(),
-    ):
-        STRATEGIES[s.name] = s
+    The ``__module__`` check is what keeps the base ``Strategy`` (imported into
+    every strategy file) and any shared helper class out of the discovered set.
+    """
+    import inspect
+
+    return [
+        obj
+        for obj in vars(module).values()
+        if inspect.isclass(obj)
+        and issubclass(obj, Strategy)
+        and obj.__module__ == module.__name__
+        and not inspect.isabstract(obj)
+    ]
+
+
+def _register(classes: Iterable[type[Strategy]]) -> dict[str, Strategy]:
+    """Instantiate each class, keyed by ``name``; raise on a duplicate name.
+
+    A duplicate is a hard error rather than a silent last-writer-wins, so two
+    files can never quietly shadow each other. Every strategy must construct
+    with no arguments.
+    """
+    registered: dict[str, Strategy] = {}
+    for cls in classes:
+        strategy = cls()
+        if strategy.name in registered:
+            raise ValueError(
+                f"duplicate strategy name {strategy.name!r}: "
+                f"{type(registered[strategy.name]).__name__} and {cls.__name__}"
+            )
+        registered[strategy.name] = strategy
+    return registered
+
+
+def _load_strategies() -> None:
+    """Discover and register every strategy in this package — in-tree drop-ins.
+
+    A strategy is a plugin: any module under ``arcrun/strategies/`` that defines
+    a concrete :class:`Strategy` subclass is registered by its ``name``, with no
+    central list to edit. Add, remove, or replace a file and the available set
+    changes to match — interchangeable by construction.
+
+    The scan root is in-tree, so it ships and is signed with the release wheel;
+    discovery therefore adds no untrusted-load surface. An external, unsigned
+    strategy would arrive through a separate signature-verified path (the module
+    model), never this scan.
+    """
+    import importlib
+    import pkgutil
+
+    classes: list[type[Strategy]] = []
+    for info in pkgutil.iter_modules(__path__):
+        if info.ispkg or info.name.startswith("_"):
+            continue
+        module = importlib.import_module(f"{__name__}.{info.name}")
+        classes.extend(_strategy_classes(module))
+    # Built atomically off to the side: a duplicate-name raise leaves STRATEGIES
+    # empty so the next call re-scans and re-raises, rather than half-populated.
+    STRATEGIES.update(_register(classes))
 
 
 async def select_strategy(

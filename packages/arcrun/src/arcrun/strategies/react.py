@@ -9,8 +9,6 @@ import os
 import time
 from typing import Any
 
-from arcprompt import load_stock
-
 from arcrun._messages import (
     TextBlock,
     ToolUseBlock,
@@ -149,14 +147,6 @@ class ReactStrategy(Strategy):
     @property
     def name(self) -> str:
         return "react"
-
-    @property
-    def description(self) -> str:
-        return load_stock("arcrun", "strategy_react_description")
-
-    @property
-    def prompt_guidance(self) -> str:
-        return load_stock("arcrun", "strategy_react")
 
     async def __call__(
         self,

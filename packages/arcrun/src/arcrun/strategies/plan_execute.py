@@ -17,8 +17,6 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from arcprompt import load_stock
-
 from arcrun.parallel_dispatch import dispatch_ready
 from arcrun.sandbox import Sandbox
 from arcrun.state import RunState
@@ -51,14 +49,6 @@ class PlanExecuteStrategy(Strategy):
         # fan out independent items. It must never be auto-offered for an
         # arbitrary task — being registered is not being a candidate.
         return False
-
-    @property
-    def description(self) -> str:
-        return load_stock("arcrun", "strategy_plan_execute_description")
-
-    @property
-    def prompt_guidance(self) -> str:
-        return load_stock("arcrun", "strategy_plan_execute")
 
     async def run_ready(
         self,

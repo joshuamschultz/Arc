@@ -24,14 +24,6 @@ class CodeExecStrategy(Strategy):
     def name(self) -> str:
         return "code"
 
-    @property
-    def description(self) -> str:
-        return load_stock("arcrun", "strategy_code_description")
-
-    @property
-    def prompt_guidance(self) -> str:
-        return load_stock("arcrun", "strategy_code")
-
     async def __call__(
         self,
         model: Any,

@@ -77,14 +77,6 @@ class DynamicStrategy(Strategy):
     def name(self) -> str:
         return "dynamic"
 
-    @property
-    def description(self) -> str:
-        return load_stock("arcrun", "strategy_dynamic_description")
-
-    @property
-    def prompt_guidance(self) -> str:
-        return load_stock("arcrun", "strategy_dynamic")
-
     async def __call__(
         self,
         model: Any,
