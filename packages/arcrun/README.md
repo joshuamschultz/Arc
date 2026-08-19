@@ -177,15 +177,85 @@ arc run exec --tool calculator --params '{"expression": "2 ** 32"}'
 
 | Symbol | What It Does |
 |---|---|
-| `Strategy` | ABC for a pluggable execution style (`name`, `description`, `prompt_guidance`, `auto_selectable`) |
-| `available_strategies()` | Read-only view of the registered strategies |
-| `get_strategy_prompts(name)` | Return the system + user prompt guidance for a strategy |
+| `Strategy` | ABC for a pluggable execution style. Required: `name`, `__call__`. Optional: `auto_selectable` (default `True`); `description` / `prompt_guidance` default to markdown (below) |
+| `available_strategies()` | Read-only view of the registered strategies (triggers discovery on first use) |
+| `get_strategy_prompts(*, allowed_strategies=None, tool_names=None, resolve=load_stock)` | Prompt fragments for the system prompt, keyed by section |
+| `run_oneshot(model, *, user, ...)` | One bounded model call, no tools — the cheapest run |
+| `run_structured(model, messages, *, tool, ...)` | One **forced tool call**; returns the tool arguments. Raises `StructuredCallError` if the model skips the tool |
 
 Built-in strategies: `react` (Reason + Act; the fallback), `code` (code-first generation),
 `dynamic` (model authors a restricted-Python orchestration script), `oneshot` (single
 model call, no loop), `plan_execute` (runs a flat list of independent items concurrently).
 When `allowed_strategies=None`, the model picks among the **auto-selectable** strategies per
 run; passing a one-item list pins the run to that strategy with no selection call.
+
+#### Writing a custom strategy
+
+Strategies are **in-tree drop-in plugins**. Add a file under `arcrun/strategies/`
+that defines a concrete `Strategy` subclass and it is discovered automatically —
+registered by its `name`, with no central list to edit. Remove the file and it
+is gone; a duplicate `name` is a hard error, never a silent shadow.
+
+Two rules: the class must be **constructible with no arguments**, and its `name`
+must be unique.
+
+**Prompts are markdown, not Python.** `description` and `prompt_guidance` default
+to loading `strategy_<name>_description.md` and `strategy_<name>.md` from
+`arcrun/context/` (resolved through arcprompt, so operator overlays are honored).
+Drop those two files beside the others and your copy ships — no inline strings.
+A strategy with no markdown simply reports empty guidance; it still loads.
+
+**What `__call__` receives, and how it calls arcllm.** The loop hands the
+strategy the model, the run state, a sandbox, and a turn ceiling. The strategy
+drives the model through `arcllm` — arcrun owns the call, so a strategy is the
+one place a raw `model.invoke(...)` is correct.
+
+```python
+# arcrun/strategies/echo_once.py
+from typing import Any
+
+from arcrun.sandbox import Sandbox
+from arcrun.state import RunState
+from arcrun.strategies import Strategy
+from arcrun.strategies.react import accumulate_usage, build_result
+from arcrun.types import LoopResult
+
+
+class EchoOnceStrategy(Strategy):
+    @property
+    def name(self) -> str:
+        return "echo_once"                     # -> strategy_echo_once[_description].md
+
+    async def __call__(
+        self,
+        model: Any,                            # the arcllm model handle
+        state: RunState,                       # .messages, .registry, .event_bus,
+        sandbox: Sandbox,                      #   .tool_choice, .max_tokens, .max_turns
+        max_turns: int,
+    ) -> LoopResult:
+        tools = state.registry.list_schemas()  # advertise the run's tools to the model
+        cap = {"max_tokens": state.max_tokens} if state.max_tokens is not None else {}
+
+        # Generate through arcllm. Pass tools + tool_choice to force/allow calls;
+        # the response carries .content, .tool_calls, .stop_reason, .usage.
+        response = await model.invoke(state.messages, tools=tools, **cap)
+
+        accumulate_usage(state, response)      # cost/tokens feed the budget breaker
+        state.turn_count = 1
+        state.event_bus.emit("turn.end", {"turn_number": 1})
+        return build_result(state, (response.content or "").strip() or None)
+```
+
+Set `auto_selectable = False` (a property) when a strategy only makes sense when
+a caller names it, so the selector never offers it for an arbitrary task.
+
+For a bounded call **without** writing a loop, reuse the facades instead of
+`model.invoke`: `run_oneshot` for one text answer, `run_structured` for one
+forced tool call whose arguments you read back.
+
+> **Trust:** the scan root is in-tree — it ships and is signed with the release
+> wheel — so discovery adds no untrusted-load surface. An external, unsigned
+> strategy is a separate, signature-verified path, not this drop-in scan.
 
 ---
 
