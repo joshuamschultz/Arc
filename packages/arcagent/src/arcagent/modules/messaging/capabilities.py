@@ -194,8 +194,20 @@ def _format_delivery(msg: Any) -> str:
     lines = [
         f"Message from {sender} ({msg_type}, {priority} priority){flag}:",
         f"> {body}",
-        "Reply with messaging_send if a response is warranted.",
     ]
+    channel_target, _ = _origin_reply_target(msg)
+    if channel_target:
+        # A channel post is answered in place: the turn's final text is posted
+        # back to this channel automatically, so a plain reply IS the answer.
+        # Reserving messaging_send for other targets stops the model double-posting
+        # its own reply into the same channel.
+        name = sanitize_text(channel_target[len("channel://") :], max_length=200)
+        lines.append(
+            f"Reply normally — your answer is posted to #{name} automatically. "
+            "Use messaging_send only to reach a different channel or DM a teammate."
+        )
+    else:
+        lines.append("Reply with messaging_send if a response is warranted.")
     return "\n".join(lines)
 
 
@@ -416,6 +428,48 @@ async def _publish_digest_entry(text: str, *, kind: str, artifact_id: str = "") 
 def _artifact_id(text: str) -> str:
     """A stable id for an artifact, so re-filing updates its pointer in place."""
     return hashlib.sha256(text.strip().encode("utf-8")).hexdigest()[:16]
+
+
+def _final_assistant_text(messages: Any) -> str:
+    """The last assistant message's text from a post_respond payload, or ""."""
+    if not isinstance(messages, list):
+        return ""
+    for entry in reversed(messages):
+        if isinstance(entry, dict) and entry.get("role") == "assistant":
+            return str(entry.get("content") or "")
+    return ""
+
+
+@hook(event="agent:post_respond", priority=100)
+async def deliver_channel_reply(ctx: Any) -> None:
+    """Post a woken channel turn's answer back to the channel it came from.
+
+    A turn opened by an arcteam channel post (an operator's group message in the
+    arcui dashboard) produces its reply as the run's final assistant text — the
+    same contract every gateway turn already relies on. That text is committed to
+    the session but, unlike a gateway turn, nothing streams it back to the origin
+    channel, so the agent answers into the void: the run trace shows a full reply
+    while the channel shows silence (the reported bug).
+
+    Fires on every turn; delivers only when the origin is an arcteam channel
+    (``channel://…``). A gateway turn carries a ``platform:chat_id`` target (no
+    ``://``) whose reply the executor already streamed, and an origin-less
+    proactive run carries None — both are skipped, so no turn is answered twice.
+    An empty final text (the model answered through a tool and closed silently)
+    is skipped too: there is nothing to echo, and whitespace would be noise.
+    """
+    target = turn_context.inbound_channel()
+    if not target or not target.startswith("channel://"):
+        return
+    final_text = _final_assistant_text(ctx.data.get("messages") if hasattr(ctx, "data") else None)
+    if not final_text.strip():
+        return
+    st = _runtime.state()
+    try:
+        await _send_to_team(st, target, final_text)
+    except Exception as exc:  # reason: a failed reply must not crash the finalizer
+        _logger.warning("channel reply to %s failed: %s", target, exc)
+        _trace_send_failure(st, "messaging_send", target, exc)
 
 
 @hook(event="agent:shutdown", priority=100)
@@ -869,6 +923,7 @@ async def messaging_sweep_loop(_ctx: Any) -> None:
 
 
 __all__ = [
+    "deliver_channel_reply",
     "inject_messaging_sections",
     "list_team_files",
     "messaging_bind_run_fn",

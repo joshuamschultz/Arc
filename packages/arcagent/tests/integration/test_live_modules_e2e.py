@@ -58,6 +58,7 @@ from arcrun import StreamEvent, ToolContext, TurnEndEvent
 from arctrust import ValidatorsConfig, generate_keypair
 from arctrust.paths import identity_dir, module_root, operator_dir
 
+from arcagent.core import turn_context
 from arcagent.core.agent import ArcAgent
 from arcagent.core.config import (
     AgentConfig,
@@ -997,6 +998,48 @@ async def test_messaging_configures_and_registers_without_touching_a_network(
         result = await _call_tool(agent, "messaging_list_entities", {})
 
     assert isinstance(result, str)
+
+
+async def test_a_channel_turns_answer_is_posted_back_to_that_channel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A woken channel turn's final text lands back in the channel it came from.
+
+    The reported bug: an operator's group post in the arcui dashboard reaches a
+    member, the run produces a full answer, and the channel shows silence —
+    because nothing streamed the run's final text back onto the team bus. The
+    fix is an ``agent:post_respond`` hook; this proves it is bridged to the real
+    module bus, reads the turn's origin channel, and drives the real messenger.
+
+    Emitted on the real bus rather than through a stubbed loop: a hook that was
+    written but never subscribed (the producers-unwired trap) fails here.
+    """
+    deployment = _deployment(tmp_path, monkeypatch)
+    _install(deployment, ("messaging",), tmp_path)
+    config = _config(deployment, ("messaging",))
+
+    async with _booted(deployment, config) as agent:
+        st = _runtime_of("messaging").state()
+        st.svc.send = AsyncMock()
+        assert agent._bus is not None
+        turn_context.set_inbound_channel("channel://work")
+        try:
+            await agent._bus.emit(
+                "agent:post_respond",
+                {
+                    "messages": [
+                        {"role": "user", "content": "what is the tech stack for NNL?"},
+                        {"role": "assistant", "content": "Haystack + Qdrant + vLLM."},
+                    ],
+                },
+            )
+        finally:
+            turn_context.set_inbound_channel(None)
+
+    st.svc.send.assert_awaited_once()
+    sent = st.svc.send.await_args.args[0]
+    assert sent.to == ["channel://work"]
+    assert sent.body == "Haystack + Qdrant + vLLM."
 
 
 # --------------------------------------------------------------------------
