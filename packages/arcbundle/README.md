@@ -90,6 +90,43 @@ surface that installs a bundle records the same fact. Pass `sink=` and
 - **Module runtime is never agent-writable.** Materialized files land mode `0444`
   inside `0555` directories, at the deployment root outside the tool fence.
 
+## Install
+
+```bash
+pip install arcbundle        # standalone — builds/verifies on a low-side box
+# or
+pip install arcmas           # full Arc stack
+```
+
+Its only runtime dependencies are `arctrust` and Pydantic, so it installs and
+runs with no agent stack present.
+
+## Use
+
+```python
+from pathlib import Path
+import arcbundle
+
+# Low side: package a module folder into a signed bundle directory.
+arcbundle.build_bundle(
+    Path("modules/browser"),
+    module="browser", version="1.2.0",
+    private_key=seed, issuer="did:arc:acme",
+    out=Path("browser.arcbundle"),
+)
+
+# Install host: verify in full, then write atomically. Nothing lands unverified.
+verified = arcbundle.verify_bundle(
+    Path("browser.arcbundle"),
+    tier="federal",
+    trusted_issuers={"did:arc:acme": public_key},
+)
+module_dir = arcbundle.materialize(verified, dest_root=Path("~/.arc/modules"))
+
+# Per agent: copy just the tools + skills the agent may load.
+arcbundle.copy_capabilities(module_dir, agent_dir, module="browser")
+```
+
 ## Tests
 
 `packages/arcbundle/tests/`

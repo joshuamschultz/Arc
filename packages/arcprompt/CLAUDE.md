@@ -8,7 +8,7 @@ Editable, signed, inspectable system prompts: stock markdown in owning packages 
 
 ## Layer
 
-**Prompt plane (leaf).** Depends only on `arctrust`. Enforced by `tests/architecture/test_no_arcprompt_imports_upward.py`. Consumed by `arcrun`, `arcagent`, `arcmemory`. Injected into packages that must stay leaf-clean (e.g. `arcskill` never imports arcprompt).
+**Prompt plane (leaf).** Depends only on `arctrust`. Enforced by the repo-root `tests/architecture/test_no_arcprompt_imports_upward.py`. Consumed by `arcrun`, `arcagent`, `arcmemory`. Injected into packages that must stay leaf-clean (e.g. `arcskill` never imports arcprompt).
 
 ## Layout
 
@@ -22,7 +22,7 @@ src/arcprompt/
   errors.py
 ```
 
-Stock prompts live in the **owning** package: `packages/<pkg>/src/<pkg>/context/<name>.md` (shipped in wheels — see `tests/architecture/test_prompt_markdown_ships_in_wheels.py`).
+Stock prompts live in the **owning** package: `packages/<pkg>/src/<pkg>/context/<name>.md` (shipped in wheels — see the repo-root `tests/architecture/test_prompt_markdown_ships_in_wheels.py`).
 
 ## Entry points
 

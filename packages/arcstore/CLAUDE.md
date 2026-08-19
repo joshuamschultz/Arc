@@ -15,20 +15,20 @@ Operational / observability data plane: always-on local spool plus pluggable bac
 ```
 src/arcstore/
   spool.py          # Always-on ambient spool — fail-open
-  records.py
-  config.py         # ArcStoreConfig, data-dir resolution
-  tasks.py          # Task store / claim semantics
-  runs.py           # Run store (SPEC-061 ArcFlow substrate)
-  approvals.py
-  cancellations.py
-  ingest.py
-  query.py
-  backends/         # sqlite, …
+  records.py        # SpoolRecord (metadata-only by default)
+  config.py         # ArcStoreConfig, resolve_data_dir, store_db_path
+  tasks.py          # Task model + TaskStore (atomic claim / board moves)
+  runs.py           # Run model + RunStore (SPEC-061 ArcFlow substrate)
+  approvals.py      # Mechanical operator-signed approval spine (SPEC-035)
+  cancellations.py  # Operator kill-switch / stale-cancel age-out
+  ingest.py         # StoreIngest — crash-safe spool + WORM tailer
+  query.py          # Read API over the ingested backend
+  backends/         # StorageBackend + MutableTaskBackend impls: sqlite (default), memory
 ```
 
 ## Entry points
 
-Phase-1 spool: `SpoolRecord`, `record`, `read`, `spool_path`, `resolve_data_dir`, `ArcStoreConfig`. Domain APIs as `arcstore.tasks`, `arcstore.runs`, etc.
+Package root: `SpoolRecord`, `record`, `read`, `spool_path`, `resolve_data_dir`, `store_db_path`, `ArcStoreConfig`. Domain APIs under their submodules — `arcstore.tasks` (`Task`, `TaskStore`), `arcstore.runs` (`Run`, `RunStore`), `arcstore.ingest`, `arcstore.query`, `arcstore.backends`.
 
 ## Package rules
 

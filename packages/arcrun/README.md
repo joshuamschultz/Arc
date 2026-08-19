@@ -6,7 +6,7 @@
 *Async ReAct execution engine. Tool sandbox, streaming, parallel dispatch, hash-chained event log.*
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-002550.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Tests](https://img.shields.io/badge/tests-531%2B-0055BC.svg)](#status)
+[![Tests](https://img.shields.io/badge/tests-780%2B-0055BC.svg)](#status)
 [![Coverage](https://img.shields.io/badge/coverage-spawn_92%25-003B82.svg)](#status)
 [![Strict mypy](https://img.shields.io/badge/mypy-strict-0073FE.svg)](#status)
 [![asyncio](https://img.shields.io/badge/runtime-asyncio-0073FE.svg)](#)
@@ -41,16 +41,21 @@ flowchart TB
     arcrun[arcrun<br/>think → act → observe loop]:::runtime --> arcllm[arcllm]:::llm
     arcrun --> arctrust[arctrust]:::found
     arcrun --> arcstore[arcstore]:::found
+    arcrun --> arcprompt[arcprompt]:::found
 ```
 
-Depends on `arcllm`, `arctrust`, and `arcstore`. Nothing else.
+Depends on `arcllm`, `arctrust`, `arcstore`, and `arcprompt`. Nothing else.
+
+`arcrun` owns the **model-execution seam**: it re-exports the ArcLLM model facade
+(`load_model`, `Model`, `Message`, `ToolCall`, …), so a caller reaches the model
+through `import arcrun` and never has to `import arcllm` directly.
 
 ---
 
 ## 🚀 Install
 
 ```bash
-pip install arcrun           # standalone (pulls in arcllm + arctrust + arcstore)
+pip install arcrun           # standalone (pulls in arcllm + arctrust + arcstore + arcprompt)
 # or
 pip install arcmas           # full Arc stack
 ```
@@ -59,17 +64,19 @@ pip install arcmas           # full Arc stack
 
 ## 🧪 Quick Example
 
+`run(...)` takes a **model**, a **capability provider** (the tools), a **system prompt**,
+and a **task**. `StaticProvider` adapts a fixed `list[Tool]` to the provider contract.
+
 ```python
-from arcllm import load_model
-from arcrun import run, Tool, ToolContext
+from arcrun import run, StaticProvider, Tool, ToolContext, load_model
 
 async def read_file(params: dict, ctx: ToolContext) -> str:
     return open(params["path"]).read()
 
 model = load_model("anthropic")
 result = await run(
-    model=model,
-    tools=[Tool(
+    model,
+    StaticProvider([Tool(
         name="read_file",
         description="Read a file from the workspace.",
         input_schema={
@@ -78,14 +85,15 @@ result = await run(
             "required": ["path"],
         },
         execute=read_file,
-    )],
-    task="Read /workspace/report.txt and summarize it.",
+    )]),
+    "You are a careful file-reading assistant.",   # system_prompt
+    "Read /workspace/report.txt and summarize it.",  # task
     max_turns=10,
 )
 
 print(result.content)
 print(f"{result.turns} turns, ${result.cost_usd:.4f}")
-print(f"{len(result.events)} events emitted")
+print(f"used strategy '{result.strategy_used}', {len(result.events)} events emitted")
 ```
 
 ---
@@ -112,17 +120,23 @@ arc run exec --tool calculator --params '{"expression": "2 ** 32"}'
 
 | Symbol | What It Does |
 |---|---|
-| `run(...)` / `run_async(...)` | Synchronous and async one-shot execution. Returns a `LoopResult` |
-| `RunHandle` | Long-running execution with **steer**, **follow-up**, and **cancel** |
-| `run_stream(...)` | Async generator yielding `StreamEvent`s for real-time UIs |
-| `LoopResult` | `content`, `turns`, `tool_calls_made`, `tokens_used`, `cost_usd`, `strategy_used`, `events` |
-| `make_spawn_tool(...)` | Factory for a sandboxed subprocess tool that spawns child arcrun loops (parallel dispatch) |
+| `run(...)` | Blocking run to completion. `run(model, capabilities, system_prompt, task, *, max_turns=25, allowed_strategies=None, …)` → `LoopResult` |
+| `run_async(...)` | Same arguments; returns a `RunHandle` immediately for steering a live run |
+| `run_oneshot(model, *, user, ...)` | Single model call, no tool loop — the cheapest possible run |
+| `run_stream(...)` | Async generator yielding `StreamEvent`s for real-time UIs; `collect()` folds them into a `RunResult` |
+| `RunHandle` | Live run: `await steer(...)`, `await follow_up(...)`, `await cancel(...)`, `await result()` |
+| `LoopResult` | `content`, `turns`, `tool_calls_made`, `tokens_used`, `cost_usd`, `strategy_used`, `events`, `completion_payload`, `completion_tool` |
 
-### Tool API
+> Child-loop spawning (`make_spawn_tool`) lives in **`arcagent`**, not arcrun — arcrun stays a pure loop and never owns sub-run orchestration.
+
+### Capability / Tool API
 
 | Symbol | What It Does |
 |---|---|
-| `Tool` | Definition: `name`, `description`, `input_schema`, `execute(params, ctx)` |
+| `CapabilityProvider` | Protocol the loop consumes: `advertise()`, `load()`, `invoke()`. Concrete providers (skills, trust layers) live in the host |
+| `StaticProvider` | Adapts a fixed `list[Tool]` to the provider contract — the zero-config path |
+| `provider_tools(provider, *, caller_did)` | Build the loop's internal registry tools from a provider |
+| `Tool` | Definition: `name`, `description`, `input_schema`, `execute(params, ctx)`, `classification` (`read_only`/`state_modifying`), `signals_completion` |
 | `ToolContext` | Per-call context: `run_id`, `caller_did`, `http` (egress proxy), workspace, audit sink |
 | `ToolRegistry` | Deny-by-default registry; tools must be explicitly registered |
 
@@ -131,12 +145,12 @@ arc run exec --tool calculator --params '{"expression": "2 ** 32"}'
 | Symbol | What It Does |
 |---|---|
 | `make_execute_tool(tier, relax, ...)` | Factory for the built-in `execute_python` tool. Resolves an isolation backend once at build time, tier-routed |
-| `resolve_execution_backend(tier, relax, platform_supports_vm)` | Pure router: `(tier, relax, platform fact)` → `"vm"` \| `"docker"` \| `"local"` |
-| `ExecutorBackend` | Protocol every isolation backend implements — `LocalBackend`, `DockerBackend`, `VmBackend` |
-| `VmBackend` | Firecracker-microVM backend (`isolation="vm"`) — jailer + seccomp-L2; fails closed without `/dev/kvm` |
+| `run_shell(command, *, tier, workspace, ...)` | Route a shell command through the tier-resolved backend; fails closed at federal with no VM |
+| `resolve_execution_backend(tier, relax, platform_supports_vm)` | Pure router: `(tier, relax, platform fact)` → `"vm"` \| `"docker"` \| `"local"` (in `arcrun.builtins`) |
+| `VmBackend` / `DockerBackend` / `LocalBackend` | Isolation backends in `arcrun.backends`; each honors the `ExecutorBackend` protocol |
 | `SandboxConfig` | Workspace path, env vars, timeout, output cap |
 | `SandboxError`, `SandboxOOMError`, `SandboxRuntimeError`, `SandboxTimeoutError`, `SandboxUnavailableError` | Typed exception hierarchy |
-| `IsolationUnavailableError`, `IsolationRelaxationError` | Tier-routing refusals — federal with no VM support, or a relax value below the tier floor |
+| `ExecutionIsolationError`, `IsolationUnavailableError`, `IsolationRelaxationError` | Tier-routing refusals — federal with no VM support, or a relax value below the tier floor |
 
 ### Event API
 
@@ -146,25 +160,32 @@ arc run exec --tool calculator --params '{"expression": "2 ** 32"}'
 | `EventBus` | Inline emission; observers get every event |
 | `verify_chain(events)` | Verify a hash chain end-to-end. Returns `ChainVerificationResult` |
 | `GENESIS_PREV_HASH` | The known starting hash for chain verification |
+| `RunSeal`, `SealSigner`, `SealBroken` | Optional Ed25519 seal over a run's event chain (`arcrun.dynamic.seal`) |
+| `LoopCheckpoint`, `to_checkpoint`, `apply_checkpoint` | Serializable per-turn checkpoint for resume (`resume_from=`); arcrun emits, the host persists |
 
 ### Streaming Events
 
 | Event | Fires When |
 |---|---|
 | `StreamEvent` | Base class |
-| `TokenEvent` | Each streamed token from the model |
+| `TokenEvent` | Streamed model text |
 | `ToolStartEvent` | A tool call begins |
 | `ToolEndEvent` | A tool call returns |
-| `TurnEndEvent` | The model finishes a turn |
+| `TurnEndEvent` | The model finishes a turn — always closes the stream |
 
 ### Strategies
 
 | Symbol | What It Does |
 |---|---|
-| `Strategy` | Pluggable execution style |
-| `get_strategy_prompts(name)` | Return the system + user prompts for a strategy |
+| `Strategy` | ABC for a pluggable execution style (`name`, `description`, `prompt_guidance`, `auto_selectable`) |
+| `available_strategies()` | Read-only view of the registered strategies |
+| `get_strategy_prompts(name)` | Return the system + user prompt guidance for a strategy |
 
-Built-in strategies: `react` (default — Reason + Act), `code` (code-first generation).
+Built-in strategies: `react` (Reason + Act; the fallback), `code` (code-first generation),
+`dynamic` (model authors a restricted-Python orchestration script), `oneshot` (single
+model call, no loop), `plan_execute` (runs a flat list of independent items concurrently).
+When `allowed_strategies=None`, the model picks among the **auto-selectable** strategies per
+run; passing a one-item list pins the run to that strategy with no selection call.
 
 ---
 
@@ -217,13 +238,13 @@ This is the foundation that makes the agent loop **forensically auditable**.
 
 ## ⚡ Parallel Tool Dispatch
 
-When the model returns multiple tool calls in one turn, `arcrun` can dispatch them in parallel — significantly cutting wall-clock time on independent calls. `BatchClassifier` reads each call's `Tool.classification` (`read_only` vs `state_modifying`) — the sole signal that decides the batch: a read-only batch runs concurrently, semaphore-bounded; anything state-modifying or unclassified runs sequential, fail-closed. Each dispatch:
+When the model returns multiple tool calls in one turn, `arcrun` can dispatch them in parallel — significantly cutting wall-clock time on independent calls. `BatchClassifier` reads each call's `Tool.classification` (`read_only` vs `state_modifying`) — the sole signal that decides the batch: a read-only batch runs concurrently through `dispatch_ready` (`asyncio.gather`, semaphore-bounded by `max_parallel`); anything state-modifying or unclassified runs sequential, fail-closed. Each dispatch:
 
-- Runs in its own subprocess (sandbox boundary)
+- Runs concurrently within the loop's event group (no shared mutable state between reads)
 - Gets its own `ToolContext` with per-call audit emission
-- Joins back to the main loop with results in the original order
+- Joins back to the main loop with results in the original submission order
 
-`make_spawn_tool` lets the agent itself spawn sub-loops as a tool — the foundation for delegated subagents.
+Child-loop spawning — an agent spawning sub-loops as a tool, the foundation for delegated subagents — is not part of arcrun; it lives in `arcagent`, which owns sub-run orchestration.
 
 ---
 
@@ -233,20 +254,24 @@ Long-running tasks support three intervention points:
 
 | Mechanism | Effect |
 |---|---|
-| **Steer** | Inject a message mid-turn; remaining tool calls are skipped |
-| **Follow-up** | Inject a message at end-of-turn; loop doesn't exit |
-| **Cancel** | Cooperative cancellation via `asyncio.Event` |
+| **Steer** | `await handle.steer(caller_did, msg)` — inject a message mid-turn; remaining tool calls are skipped |
+| **Follow-up** | `await handle.follow_up(caller_did, msg)` — inject a message at end-of-turn; loop doesn't exit |
+| **Cancel** | `await handle.cancel(caller_did, reason=None)` — cooperative cancellation |
+
+Every intervention carries a `caller_did` — the identity of whoever is steering — so the interjection is itself an audited, attributable event.
 
 ```python
-handle = await run_async(model=model, tools=tools, task="...")
+handle = await run_async(
+    model, capabilities, "You are a data analyst.", "Summarize every quarter.",
+)
 
 # Mid-execution:
-await handle.steer("Wait, focus on the 2024 data only.")
+await handle.steer(operator_did, "Wait, focus on the 2024 data only.")
 
 # Or cancel:
-handle.cancel.set()
+await handle.cancel(operator_did, reason="scope changed")
 
-result = await handle.result
+result = await handle.result()
 ```
 
 This is what makes Arc usable for human-in-the-loop workflows — the human can interject at any point without losing the run state.
@@ -295,7 +320,7 @@ This is what makes Arc usable for human-in-the-loop workflows — the human can 
 uv run --no-sync pytest packages/arcrun/tests
 ```
 
-- **Tests:** 531+
+- **Tests:** 780+
 - **Coverage:** spawn module 92%; overall high
 - **Type check:** `mypy --strict` clean
 - **Lint:** `ruff check` clean

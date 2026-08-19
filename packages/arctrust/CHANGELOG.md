@@ -7,27 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Simplification-sweep cleanup (no version bump).
+## [0.10.0] - 2026-08-19
+
+Catch-up release: the leaf gains data-protection primitives (PII/secret
+redaction, at-rest audit sealing), human user identities, a single session-key
+derivation, and the lifecycle-split Arc-home resolver — plus the canonical-JSON
+serializer and policy-cache hardening previously staged under Unreleased.
 
 ### Added
-- `arctrust.canonical.canonical_json(obj) -> bytes` — the one deterministic canonical-JSON
-  serializer (`sort_keys=True`, compact separators, `ensure_ascii=True`) a signature binds
-  to. Adopted across packages (arcllm `_signing.py`, arcagent checkpoint signing) in place
-  of hand-rolled per-package serialization, with a byte-identity cross-package test proving
-  every adopter produces the same bytes for the same input.
+- **Arc-home lifecycle split** (`arctrust.paths`) — `~/.arc` is now resolved as
+  `runtime/` (replaced wholesale on update), `config/` (preserved), and `state/`
+  (never touched), with the fleet (`arc_team`) living OUTSIDE the home under
+  `~/arc`. New accessors: `arc_runtime` / `arc_config` / `arc_state` / `arc_team`,
+  `arc_runtime_root` / `arc_runtime_version`, `activate_runtime` (atomic `current`
+  symlink flip for update + rollback), `runtime_venv` / `runtime_bin`,
+  `gateway_runtime_dir` / `gateway_pairing_db`, `users_file`, `audit_dir`. A
+  one-time `home_migration` moves a flat pre-split `~/.arc` into the new layout.
+- **`arctrust.users`** — human user identities for a deployment (SPEC-057):
+  `User`, `UserStore`, the `OPERATOR` / `VIEWER` roles, `UserStoreError`, and
+  `default_users_path`. Email + Argon2id password hash + a per-user signing DID,
+  stored in one `0600` file so an approval names a *person*, not "the operator
+  token".
+- **`arctrust.redaction` + `arctrust.secrets`** — regex PII/secret detection and
+  redaction shared across packages: `RegexPiiDetector`, `PiiDetector` (Protocol),
+  `redact_text`, `PiiMatch`, `EntityToggle`, the `SECRETS` category folded over
+  `SECRET_PATTERNS` (AWS/GitHub/JWT/PEM/DB-URL structured prefixes, ADR-423), and
+  the `luhn_valid` / `iban_mod97_valid` / `aba_checksum_valid` checksum gates.
+- **`arctrust.audit_cipher`** — `RecordCipher` + `derive_record_key`: seals a WORM
+  record's captured content (`extra`) at rest (D-577 / SPEC-062). The seal sits
+  UNDER the hash, so the chain commits to the ciphertext and `verify_chain` still
+  needs no key; the envelope (`actor_did`, `action`, `target`, `outcome`, `ts`)
+  stays in the clear as the operational index.
+- **`arctrust.session_identity`** — the one derivation of a conversation/session
+  key (SPEC-065). Lives in the leaf so every surface (arcgateway, arcagent inbox,
+  arcui/arctui) derives the same key for the same pair; rotation `generation` is
+  an argument only the session-owning surface passes.
+- `arctrust.canonical.canonical_json(obj) -> bytes` — the one deterministic
+  canonical-JSON serializer (`sort_keys=True`, compact separators,
+  `ensure_ascii=True`) a signature binds to. Adopted across packages (arcllm
+  `_signing.py`, arcagent checkpoint signing) with a byte-identity cross-package
+  test proving every adopter produces the same bytes.
+- `sign_artifact_with_signer` — sign an artifact through the `Signer` seam
+  (vault/HSM custody) rather than a raw in-process private key.
+- `register_operator` (`trust_store.py`) — write an operator public key into the
+  trust store.
+- Witness divergence detection (`arctrust.witness`) — `WitnessDivergenceError`
+  and `verify_local_head_witnessed`.
 
 ### Changed
-- **Policy decision-cache key now includes a digest of mutable `PolicyContext` state**
-  (`provider_usage`, `clearance`, `tool_runtime`, `team_scope`). Previously the cache key
-  didn't account for this state, so a repeated signed call could replay a stale `ALLOW`
-  from before a budget was exceeded, a clearance changed, or team scope narrowed, for the
-  remainder of the cache TTL (LLM10). It now misses and re-evaluates whenever that state
-  moves.
+- **Policy decision-cache key now includes a digest of mutable `PolicyContext`
+  state** (`provider_usage`, `clearance`, `tool_runtime`, `team_scope`).
+  Previously the cache key didn't account for this state, so a repeated signed
+  call could replay a stale `ALLOW` from before a budget was exceeded, a
+  clearance changed, or team scope narrowed, for the remainder of the cache TTL
+  (LLM10). It now misses and re-evaluates whenever that state moves.
 
 ### Removed
 - **`TierConfig`** (dead — tier→layer-set mapping had already been absorbed into
-  `build_pipeline`; `arcagent.core.tool_policy` migrated off it). No longer exported from
-  `arctrust`.
+  `build_pipeline`; `arcagent.core.tool_policy` migrated off it). No longer
+  exported from `arctrust`.
 
 ## [0.9.0] - 2026-07-06
 

@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Docs: README + CLAUDE.md refreshed to current API — 17 providers (LiteLLM gateway in, phantom OpenRouter/NVIDIA out), always-on routing, the `embed()` surface, install extras, and the `response.cost_usd` example fix.
+
+## [0.8.0] - 2026-08-19
+
+### Added
+- **`claude-sonnet-5` added to the Anthropic catalog and made the default model.** 1M context,
+  128K max output, tools/vision/thinking, $3/$15 per MTok (cache read $0.30, write $3.75).
+  `default_model` moves from `claude-sonnet-4-6`.
+
+### Changed
 - **Routing is now the always-on entry point to every call.** `load_model` no longer chooses
   between "an adapter" and "a router" — it always returns a `RoutingModule`, holding one route
   (a pass-through, no span, no selection) or several. This also ends the old fork where routing
@@ -26,6 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Route adapters build lazily, except the default.** Declaring four models costs four TOML
   reads and only the connection pools actually reached. The default is still built during
   `load_model` so a misspelled provider fails at startup, not mid-turn.
+- Provider-name regexes deduped; `load_model` wrapper blocks and the SSE parser
+  (`_parse_openai_sse_line` + new `_parse_stream_usage`/`_parse_stream_tool_call` helpers)
+  decomposed for readability. No change to `load_model`'s public signature or behavior.
 
 ### Fixed
 - **Every call was billed at the default model's price.** `TelemetryModule` sits above the
@@ -38,13 +51,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stream into one Delta by calling `invoke()` — so any routed deployment silently lost
   token-by-token output. It now streams from the selected route and learns tool-call ids from
   the stream.
-
-### Added
-- **`claude-sonnet-5` added to the Anthropic catalog and made the default model.** 1M context,
-  128K max output, tools/vision/thinking, $3/$15 per MTok (cache read $0.30, write $3.75).
-  `default_model` moves from `claude-sonnet-4-6`.
-
-### Fixed
 - **`claude-sonnet-5` rejected any non-default `temperature` with `HTTP 400`.** New per-model
   catalog flag `supports_temperature` (default `true`); the Anthropic adapter drops the parameter
   from the wire body when `false` — including explicitly-passed values, since eval configs set
@@ -53,11 +59,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hand-rolled their own `invoke()`; deduping them onto the shared `OpenaiAdapter` base
   (each now overrides only `_completions_url()`) fixed a URL-construction bug specific to
   the Google streaming path.
-
-### Changed
-- Provider-name regexes deduped; `load_model` wrapper blocks and the SSE parser
-  (`_parse_openai_sse_line` + new `_parse_stream_usage`/`_parse_stream_tool_call` helpers)
-  decomposed for readability. No change to `load_model`'s public signature or behavior.
 
 ## [0.7.0] - 2026-07-07
 

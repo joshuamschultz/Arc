@@ -16,25 +16,30 @@ Must not import any higher layer (`tests/test_layering.py`, architecture guards)
 
 ```
 src/arcrun/
-  loop.py           # Core run / run_async / run_stream
-  executor.py
-  registry.py       # ToolRegistry
-  events.py         # EventBus, verify_chain
-  streams.py
+  loop.py             # run / run_async / run_oneshot + RunHandle
+  streams.py          # run_stream / collect / StreamEvent types
+  model.py            # ArcLLM model facade (load_model, Model, Message, …) re-export
+  _messages.py        # SystemPrompt alias, message helpers
+  capabilities.py     # CapabilityProvider Protocol, StaticProvider (impls live in hosts)
+  registry.py         # ToolRegistry
+  executor.py         # Per-tool dispatch + JSON-schema param validation
+  parallel_dispatch.py# BatchClassifier + dispatch_ready
+  events.py           # EventBus, verify_chain, hash chain
+  state.py            # RunState (per-run budgets, breakers, counters)
+  types.py            # Tool, ToolContext, LoopResult, SandboxConfig
   sandbox.py
-  capabilities.py   # CapabilityProvider Protocol (implementations live in hosts)
-  checkpoint.py
-  prompts.py
-  strategies/       # Strategy selection (react, code, dynamic)
-  dynamic/          # Dynamic strategy internals: host boundary, grammar, interpreter, journal
-  builtins/         # Loop-level builtins
-  backends/         # docker, firecracker, spawn, …
-  context/          # Stock system-prompt markdown
+  checkpoint.py       # LoopCheckpoint (resume_from)
+  prompts.py          # get_strategy_prompts
+  strategies/         # react, code, dynamic, oneshot, plan_execute + selection
+  dynamic/            # Dynamic strategy internals: host boundary, grammar, interpreter, journal, seal
+  builtins/           # execute_python / run_shell / task_complete
+  backends/           # local, docker, vm (firecracker), loader, policy
+  context/            # Stock system-prompt / strategy markdown
 ```
 
 ## Entry points
 
-`run` / `run_async` / `run_stream`, `RunHandle`, `ToolRegistry`, `Tool`/`ToolContext`, `EventBus`, `Strategy` (react / code / dynamic), sandbox helpers, stream event types, `SystemPrompt`, `dynamic.ScriptHost`.
+`run` / `run_async` / `run_oneshot` / `run_stream`, `RunHandle`, `CapabilityProvider`/`StaticProvider`, `ToolRegistry`, `Tool`/`ToolContext`, `EventBus`, `Strategy` + `available_strategies` (react / code / dynamic / oneshot / plan_execute), sandbox helpers (`make_execute_tool`, `run_shell`), stream event types, `SystemPrompt`, the ArcLLM model facade (`load_model`, `Model`, …), `dynamic.ScriptHost`.
 
 ## Package rules
 

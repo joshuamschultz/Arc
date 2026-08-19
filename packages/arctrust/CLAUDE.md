@@ -14,27 +14,33 @@ Cryptographic leaf of Arc: DID identity, Ed25519 signing, fail-closed policy, an
 
 ```
 src/arctrust/
-  identity.py       # AgentIdentity, ChildIdentity, DID
-  keypair.py        # Ed25519 KeyPair, sign/verify
-  policy.py         # PolicyPipeline, Decision, ToolCall — first-DENY, fail-closed
-  audit.py          # AuditEvent, sinks, emit()
-  operator.py       # OperatorKey (≠ agent identity)
-  signer.py         # Signing helpers
-  tofu.py           # Trust-on-first-use layer
-  artifact.py       # Signed artifact verification
-  canonical.py      # canonical_json — reuse for anything signed
-  classification.py # Classification-aware helpers
-  fips.py           # FIPS mode helpers
-  witness.py        # Witness / attestation
-  trust_store.py    # Trust store loaders
-  validators.py     # Shared validators
-  paths.py          # THE resolver: ~/.arc (runtime/config/state) + the fleet outside it
-  home_migration.py # One-time move of a flat ~/.arc into the split layout
+  identity.py         # AgentIdentity, ChildIdentity, DID
+  keypair.py          # Ed25519 KeyPair, sign/verify
+  operator.py         # OperatorKey (audit authority, ≠ agent identity)
+  users.py            # Human user identities (User, UserStore, OPERATOR/VIEWER)
+  session_identity.py # The ONE conversation/session-key derivation
+  signer.py           # Signer seam — in-process / vault-transit, ed25519 / ecdsa-p256
+  fips.py             # FIPS gate (signing + encryption)
+  policy.py           # PolicyPipeline, Decision, ToolCall — first-DENY, fail-closed
+  classification.py   # Classification ladder + no-read-up helpers
+  audit.py            # AuditEvent, sinks (WormSink), emit(), verify_chain
+  audit_cipher.py     # RecordCipher — seals WORM record content at rest (D-577)
+  artifact.py         # Detached artifact signing / verification
+  canonical.py        # canonical_json — reuse for anything signed
+  tofu.py             # Trust-on-first-use capability-source gate
+  validators.py       # Persisted source approvals ([security.validators])
+  trust_store.py      # Operator / issuer pubkey loaders + register_operator
+  redaction.py        # PII/secret detection + redact_text
+  secrets.py          # SECRET_PATTERNS (structured-prefix secret scanning)
+  witness.py          # External witness anchors + divergence detection
+  paths.py            # THE resolver: ~/.arc (runtime/config/state) + fleet outside it
+  home_migration.py   # One-time move of a flat ~/.arc into the split layout
+  _notary.py          # Reference out-of-process notary (child of FileNotaryTransit)
 ```
 
 ## Entry points
 
-Public surface is `arctrust` (`__init__.py`): `AgentIdentity`, `KeyPair`, `sign`/`verify`, `PolicyPipeline`/`build_pipeline`, `AuditEvent`/`emit`, TOFU helpers, `canonical_json`, FIPS/witness utilities.
+Public surface is `arctrust` (`__init__.py`): `AgentIdentity`, `KeyPair`, `sign`/`verify`, `OperatorKey`, `User`/`UserStore`, `Signer`/`build_signer`, `PolicyPipeline`/`build_pipeline`, `AuditEvent`/`emit`/`WormSink`, `RecordCipher`, TOFU helpers, `redact_text`/`SECRET_PATTERNS`, `canonical_json`, the `arctrust.paths` accessors, and FIPS/witness utilities. (`session_identity` is imported as `arctrust.session_identity`, not re-exported at the root.)
 
 Docs: `packages/arctrust/README.md`, repo `docs/trust-model.md`. Four Pillars (ADR-019) live here.
 

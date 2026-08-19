@@ -2,14 +2,14 @@
 
 # 🌐 arcllm
 
-### **One LLM Client. 16 Providers. Zero SDKs.**
+### **One LLM Client. 17 Providers. Zero SDKs.**
 *Direct HTTP to every major model provider. PII redaction, request signing, OpenTelemetry, and audit baked in.*
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-002550.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Tests](https://img.shields.io/badge/tests-1%2C209%2B-0055BC.svg)](#status)
 [![Coverage](https://img.shields.io/badge/coverage-99%25-003B82.svg)](#status)
 [![Strict mypy](https://img.shields.io/badge/mypy-strict-0073FE.svg)](#status)
-[![Providers](https://img.shields.io/badge/providers-16-F68D2E.svg)](#-supported-providers)
+[![Providers](https://img.shields.io/badge/providers-17-F68D2E.svg)](#-supported-providers)
 [![No SDKs](https://img.shields.io/badge/vendor_SDKs-zero-54585C.svg)](#-zero-provider-sdks)
 
 </div>
@@ -20,7 +20,7 @@
 
 `arcllm` is a provider-agnostic LLM client built around one principle: **never import a vendor SDK.**
 
-Every call to OpenAI, Anthropic, Google, Cohere, Mistral, Groq — all 16 supported providers — is a direct HTTP request via `httpx`. You can read every byte. You can audit the wire format. You can run in environments where pulling in a transitive dependency you don't control isn't an option.
+Every call to OpenAI, Anthropic, Google, Cohere, Mistral, Groq — all 17 supported providers — is a direct HTTP request via `httpx`. You can read every byte. You can audit the wire format. You can run in environments where pulling in a transitive dependency you don't control isn't an option.
 
 It also handles the boring-but-critical stuff that every production LLM client eventually grows: PII redaction, request signing, retries with exponential backoff, fallback chains across providers, rate limiting, OpenTelemetry export, structured audit events.
 
@@ -41,7 +41,7 @@ flowchart TB
     arcrun[arcrun]:::runtime --> arcllm
     arcagent[arcagent]:::agent --> arcllm
     arccli[arccli]:::entry --> arcllm
-    arcllm[arcllm<br/>16 providers · direct HTTP]:::llm --> arcstore[arcstore]:::found
+    arcllm[arcllm<br/>17 providers · direct HTTP]:::llm --> arcstore[arcstore]:::found
 ```
 
 Depends on one internal package — `arcstore` (hash-chained trace/audit storage) — plus three third-party libraries: `httpx`, `pydantic`, `opentelemetry-api`. **No vendor SDKs. That's the entire runtime dependency graph.**
@@ -55,6 +55,18 @@ pip install arcllm           # standalone
 # or
 pip install arcmas           # full Arc stack
 ```
+
+Optional extras (each pulls a heavier dependency only when you need it):
+
+| Extra | Adds |
+|---|---|
+| `arcllm[local]` | On-device embeddings — `all-MiniLM-L6-v2` via `sentence-transformers` (also powers phrase routing) |
+| `arcllm[otel]` | OpenTelemetry SDK + OTLP exporters |
+| `arcllm[trace-encryption]` | AES-256-GCM sealing of captured trace bodies (`cryptography`) |
+| `arcllm[injection-semantic]` | Embedding-similarity tier for prompt-injection scanning (`numpy`) |
+| `arcllm[guardrails-schema]` | JSON-schema validation for output guardrails (`jsonschema`) |
+
+`arcllm` imports and runs without any of these — a missing extra degrades that one capability, it never crashes the import.
 
 ---
 
@@ -72,7 +84,7 @@ response = await model.invoke([
 
 print(response.content)              # "The document describes..."
 print(response.usage.total_tokens)   # 412
-print(response.usage.cost_usd)       # 0.00318
+print(response.cost_usd)             # 0.00318
 print(response.stop_reason)          # "end_turn"
 ```
 
@@ -82,7 +94,7 @@ That's it. Switch to OpenAI? Change `"anthropic"` to `"openai"`. Switch to a loc
 
 ## 🌐 Supported Providers
 
-All 16 go through direct HTTP. None pulls in a vendor SDK.
+All 17 go through direct HTTP. None pulls in a vendor SDK.
 
 | Cloud | On-Prem (air-gapped) |
 |---|---|
@@ -97,10 +109,9 @@ All 16 go through direct HTTP. None pulls in a vendor SDK.
 | **xAI** · Grok | |
 | **Together** · open-weight models | |
 | **Fireworks** · open-weight models | |
-| **OpenRouter** · multi-provider gateway | |
-| **NVIDIA** · NIM-hosted models | |
 | **Moonshot** · Kimi | |
 | **HuggingFace** · Inference API | |
+| **LiteLLM** · self-hosted OpenAI-compatible proxy fronting every provider (`litellm/<alias>`) | |
 
 Browse from the CLI:
 
@@ -302,6 +313,23 @@ That's the entire model registry. No code change required to add a new model.
 
 ---
 
+## 🔢 Embeddings
+
+`arcllm` also owns embedding *inference* — one `embed()` call, the same budget, telemetry, and audit plumbing as completions. It persists, indexes, and ranks nothing; consumers (like `arcmemory`) get vectors and do their own storage.
+
+```python
+from arcllm import embed
+
+resp = await embed(["some text", "more text"])
+resp.vectors    # list[list[float]], unit-normalized
+resp.dims       # 384
+resp.model      # "all-MiniLM-L6-v2"
+```
+
+Three backends via `resolve_embedder`: the on-device `all-MiniLM-L6-v2` default (offline, deterministic — needs `arcllm[local]`), an OpenAI-wire provider endpoint, and a `none` sentinel. With no embedder available, `embed()` raises the typed `ArcLLMEmbeddingUnavailableError` so a consumer degrades gracefully rather than crashing.
+
+---
+
 ## 🧱 Public API
 
 ```python
@@ -313,6 +341,7 @@ from arcllm import (
     LLMProvider, LLMResponse,
     Message, Tool, ToolCall, ToolUseBlock, ToolResultBlock,
     TextBlock, ImageBlock, ContentBlock,
+    Delta, ToolCallDelta, ResponseFormat,
     StopReason, Usage,
 
     # Config
@@ -320,15 +349,22 @@ from arcllm import (
     ModelMetadata, ModuleConfig, DefaultsConfig, VaultConfig,
     load_global_config, load_provider_config,
 
+    # Embeddings (lazy — never pulls httpx/torch on `import arcllm`)
+    embed, resolve_embedder, EmbeddingResponse,
+
+    # Trace store / replay (lazy)
+    TraceStore, JSONLTraceStore, TraceRecord, load_for_replay,
+
     # Errors
     ArcLLMError, ArcLLMAPIError, ArcLLMConfigError, ArcLLMParseError,
     QueueFullError, QueueTimeoutError,
     ArcLLMInjectionError, ArcLLMGuardrailError,
     ArcLLMTraceNotFoundError, ArcLLMTraceIntegrityError,
+    ArcLLMEmbeddingUnavailableError,
 )
 ```
 
-Provider adapters are lazy-imported — they're only loaded when you call `load_model("provider_name")`.
+Provider adapters, modules, embeddings, and the trace store are lazy-imported — they only load when first accessed (e.g. when you call `load_model("provider_name")` or `embed(...)`), so a bare `import arcllm` stays light.
 
 ---
 

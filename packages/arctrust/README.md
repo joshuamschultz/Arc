@@ -6,7 +6,7 @@
 *Identity · Signing · Audit · Policy — the leaf every other Arc package depends on.*
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-002550.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Tests](https://img.shields.io/badge/tests-346%2B-0055BC.svg)](#status)
+[![Tests](https://img.shields.io/badge/tests-470%2B-0055BC.svg)](#status)
 [![Coverage](https://img.shields.io/badge/coverage-99%25-003B82.svg)](#status)
 [![Strict mypy](https://img.shields.io/badge/mypy-strict-0073FE.svg)](#status)
 [![Ed25519](https://img.shields.io/badge/crypto-Ed25519-F68D2E.svg)](#cryptography)
@@ -17,14 +17,16 @@
 
 ## ✨ What is arctrust?
 
-`arctrust` is the cryptographic floor of the Arc stack. Every other Arc package depends on it — `arctrust` itself depends on nothing but PyNaCl (libsodium) and Pydantic.
+`arctrust` is the cryptographic floor of the Arc stack. Every other Arc package depends on it — `arctrust` itself imports **no Arc package**, resting only on PyNaCl (libsodium), Pydantic, PyCA `cryptography` (ECDSA-P256 + the FIPS probe), and tomlkit.
 
-It gives you the four primitives every secure agent needs:
+It gives you the four pillars every secure agent needs (ADR-019):
 
-- 🪪 **Identity** — Ed25519 keypairs and DIDs (`did:arc:{org}:{type}/{hash}`)
-- ✍️ **Signing** — sign and verify arbitrary bytes with libsodium
-- 📜 **Audit** — structured events with hash-chained tamper-evident sinks
-- ✅ **Policy** — a deny-by-default, fail-closed policy pipeline that decides whether a tool call is allowed
+- 🪪 **Identity** — Ed25519 keypairs and DIDs (`did:arc:{org}:{type}/{hash}`), plus human user identities and the operator audit key
+- ✍️ **Sign** — sign and verify arbitrary bytes and artifacts through one `Signer` seam (in-process or vault/HSM custody)
+- ✅ **Authorize** — a deny-by-default, fail-closed `PolicyPipeline` that decides whether a tool call is allowed
+- 📜 **Audit** — structured events written to a durable, hash-chained, tamper-evident WORM sink
+
+Around those pillars it also carries the shared crypto-adjacent primitives every layer needs and none may reimplement: the **one Arc-home path resolver** (`arctrust.paths`), **PII/secret redaction**, **at-rest audit sealing**, canonical JSON, classification, and FIPS gating.
 
 If you're building anything that needs to *prove* what happened, this is where you start.
 
@@ -223,6 +225,7 @@ formalized in the arctrust user-identity spec.
 |---|---|
 | `content_sha256(content)` | Returns the `sha256:<hex>` digest of `content` |
 | `sign_artifact(content, signer_did, private_key)` | Signs `content` with an Ed25519 seed under `signer_did`; returns an `ArtifactSignature` |
+| `sign_artifact_with_signer(content, signer_did, signer)` | Same, through the `Signer` seam — so artifact signing can use vault/HSM custody instead of a raw in-process seed |
 | `verify_artifact(content, manifest, trusted_public_key=None)` | Re-verifies `content` against its `ArtifactSignature` at load time. Never raises — any malformed field, digest mismatch, or (when pinned) key mismatch is `False` |
 | `ArtifactSignature` | Frozen Pydantic model serialisable to a `.arcsig` sidecar (`to_json`/`from_json`): content digest, signer DID, signer public key, signature, algorithm, timestamp |
 
@@ -251,6 +254,54 @@ cross-package signature verification. A byte-identity test proves every adopter 
 | `TrustStoreError` | Raised on missing files, wrong permissions, or malformed keys |
 
 **Trust store files must be `0600` permissions.** Loading a file with group- or world-readable bits is a hard error.
+
+### Human Users (`arctrust.users`)
+
+| Symbol | What It Does |
+|---|---|
+| `User` | One person: email, Argon2id password hash, and a signing DID of their own |
+| `UserStore` | Loads / persists users from one `0600` file under `arc_state` (same custody as `operator.key`) |
+| `OPERATOR` · `VIEWER` | The two roles |
+| `default_users_path` · `UserStoreError` | Path accessor + structured load/permission error |
+
+A bearer token proves someone holds a secret; it does not say *who*. Users give a deployment real people, so an approval and its audit record name a person — not "the operator token" (SPEC-057).
+
+### PII / Secret Redaction (`arctrust.redaction`, `arctrust.secrets`)
+
+| Symbol | What It Does |
+|---|---|
+| `RegexPiiDetector` · `PiiDetector` (Protocol) | Regex PII/secret detection with a pluggable override |
+| `redact_text(text, matches)` | Replaces detected spans with typed placeholders (`[PII:…]` / `[SECRET:…]`) |
+| `SECRET_PATTERNS` | Structured-prefix secret patterns (AWS / GitHub / JWT / PEM / DB-URL) folded into one togglable `SECRETS` category (ADR-423) |
+| `luhn_valid` · `iban_mod97_valid` · `aba_checksum_valid` | Checksum gates that keep card/IBAN/routing matches from false-firing |
+
+Deliberate scope boundary: **structured prefixes only** — no Shannon-entropy generic-secret tier, so a bare high-entropy token with no recognizable prefix is not caught here (one deterministic detect→redact path, ADR-423).
+
+### Audit Encryption at Rest (`arctrust.audit_cipher`)
+
+| Symbol | What It Does |
+|---|---|
+| `RecordCipher` | Seals a WORM record's captured content (`extra`) at rest — full connector inputs/outputs (D-577 / SPEC-062) |
+| `derive_record_key` | Derives the at-rest key from material the deployment **already** custodies (the operator seed) — no second secret to store or rotate |
+
+The seal sits **under the hash, not over it**: `WormSink` seals before it hashes, so the chain commits to the ciphertext. `verify_chain` therefore needs no key at all — an auditor can prove the chain is untampered while remaining unable to read what it says, and a flipped byte inside the ciphertext still fails verification. The envelope (`actor_did`, `action`, `target`, `outcome`, `ts`) stays in the clear as the operational index.
+
+### Arc-Home Paths (`arctrust.paths`)
+
+The **single resolver** for every path under `~/.arc`. Nothing in Arc composes its own home path — one split resolver is how a test once wrote into a developer's real `~/.arc`, and how one surface read a different directory than another.
+
+| Symbol | What It Does |
+|---|---|
+| `arc_home` | `${ARC_CONFIG_DIR:-~/.arc}` — the **install**; disposable |
+| `arc_runtime` · `arc_runtime_root` · `arc_runtime_version` | `<home>/runtime/current` — **replaced wholesale** on update |
+| `arc_config` | `<home>/config` — **preserved** across updates |
+| `arc_state` | `<home>/state` — operator key, identity, trust store, arcstore, NATS, bundles; **never touched** |
+| `arc_team` | `${ARC_TEAM_ROOT:-~/arc}/team` — the fleet, **outside** the home, so deleting the home can't reach it |
+| `activate_runtime` | Atomic `current` symlink flip — an update is a flip, a rollback is flipping it back |
+| `trust_dir` · `operator_dir` · `identity_dir` · `store_dir` · `nats_dir` · `bundles_dir` · `capabilities_dir` · `blueprints_dir` · `skills_dir` · `audit_dir` · `users_file` · `gateway_*` | One named accessor per path under `arc_state` |
+| `config_file` · `env_file` · `module_root` · `runtime_venv` · `runtime_bin` | Config / runtime path accessors |
+
+Each accessor takes an optional explicit base for `--arc-dir`, and resolves the environment **per call** (never at import) because `ARC_CONFIG_DIR` is routinely exported after the module loads. Enforced by `tests/architecture/test_arc_home_single_resolver.py`.
 
 ---
 
@@ -297,7 +348,7 @@ cross-package signature verification. A byte-identity test proves every adopter 
 uv run --no-sync pytest packages/arctrust/tests
 ```
 
-- **Tests:** 346+
+- **Tests:** 470+
 - **Coverage:** 99%
 - **Type check:** `mypy --strict` clean
 - **Lint:** `ruff check` clean

@@ -71,6 +71,8 @@ over their lifetime rather than being appended once. Backend methods:
 | `mutable_read` | Read one row by key |
 | `mutable_query` | List rows in a collection, optionally filtered by a `where` dict |
 | `mutable_merge` | Server-side partial patch — merges disjoint fields atomically (no read-modify-write clobber) |
+| `mutable_increment` | Atomic `json_set`/`json_extract` arithmetic on numeric fields — the reserve/settle budget counters ride this |
+| `mutable_create_batch` | `INSERT OR IGNORE` across a whole batch in one transaction — cross-owner frontier materialization, idempotent per row id |
 | `mutable_delete` | Hard-delete a row |
 | `update_if` | **Atomic conditional write** — `UPDATE … WHERE <condition>`; the compare-and-swap primitive the whole task system's single-owner claim is built on |
 
@@ -118,6 +120,7 @@ exactly one writer wins and the loser no-ops rather than clobbering.
 | Method | Transition |
 |---|---|
 | `create` | New task; unowned → `backlog`, owned → `todo` (unless status given explicitly) |
+| `create_batch` | Atomic cross-owner batch create — idempotent per row id, so a crashed runner's replay returns the existing rows rather than duplicating (ArcFlow frontier materialization) |
 | `claim_next` | Self-claim the highest-priority ready unowned task (deps-met), respecting the one-`in_progress` cap |
 | `start_task` | `todo`/`backlog` → `in_progress`; stamps `run_id`, `started_at`, increments `attempts` |
 | `finish` | Owner completes: → `done`/`failed`, stamps `completed_at` + `duration_seconds` |
@@ -130,6 +133,65 @@ exactly one writer wins and the loser no-ops rather than clobbering.
 | `decompose` support (`children`, `deps_met`, `deps_would_cycle`) | Subtask reconcile + acyclic dependency enforcement |
 
 `MutableTaskBackend` is the narrow Protocol `TaskStore` depends on — not a concrete backend.
+
+---
+
+## 🔀 The `runs` Directory (`arcstore.runs`)
+
+The second consumer of the mutable plane is the **`runs` collection** — the durable
+backing for one execution of a signed `workflow.toml` DAG (SPEC-061 ArcFlow, COMP-006).
+The operational spool's `SpoolKind` set is closed and carries no run identity, so a run
+gets its own directory on the shared mutable plane rather than a new spool kind. `arcstore`
+owns the `Run` aggregate and `RunStore`; `arcteam`/`arcrun` drive them.
+
+### The `Run` aggregate
+
+A frozen Pydantic model (mutation goes through `RunStore`, never in place):
+
+| Field | Meaning |
+|---|---|
+| `id`, `workflow_id`, `workflow_version`, `content_hash` | Run identity + the exact signed definition it instantiates |
+| `status` | `pending` → `running` → `waiting_gate` → `done` / `failed` / `cancelled` |
+| `initiator_did`, `runner_did` | Who started it + which runner is executing it |
+| `budget` (`RunBudget`) | Reserve-then-settle token + wall-clock counters (reserved vs spent, never double-counted) |
+| `path_taken` (`list[PathEntry]`), `path_len` | Append-only honest trace of the nodes that actually ran; `path_len` is the CAS discriminant for concurrent appends |
+| `last_error` | Sanitized terminal failure note |
+| `created_at`, `updated_at`, `completed_at` | Set by the store on write |
+
+`PathEntry` records one node (`node_id`, `kind`, `outcome`, optional `router_choice` /
+`loop_iteration`); an untaken branch has no row at all (lazy materialization).
+
+### `RunStore`
+
+| Method | Purpose |
+|---|---|
+| `create` / `get` / `list` | Insert a run; fetch by id; list by `workflow_id` / `status` |
+| `transition` | Status-conditional `update_if` on `expected_status` — two writers racing the same frontier resolve to exactly one winner, the loser gets `"conflict"` |
+| `append_path_entry` | CAS-append one `PathEntry` on `path_len` (a plain merge-patch would replace the whole array, not append) |
+| `reserve_budget` / `settle_budget` | Hold budget before a node dispatches, then move actual usage from reserved into spent atomically |
+
+`MutableRunBackend` is the narrow Protocol `RunStore` depends on — not a concrete backend.
+
+---
+
+## ⚙️ Install & Entry Points
+
+```bash
+pip install arcstore                 # spool + sqlite backend
+pip install "arcstore[postgres]"     # + asyncpg backend deps
+pip install "arcstore[cloud]"        # + boto3
+```
+
+Public surface off the package root:
+
+- **Spool** — `SpoolRecord`, `record`, `read`, `spool_path`
+- **Paths** — `resolve_data_dir` (env `ARCSTORE_DATA_DIR` > configured `data_dir` >
+  `arctrust.paths.store_dir`), `store_db_path` (the `store/arcui.db` file the arcui reads),
+  `ArcStoreConfig`
+
+Domain APIs live under their submodules: `arcstore.tasks` (`Task`, `TaskStore`),
+`arcstore.runs` (`Run`, `RunStore`), plus `arcstore.ingest` / `arcstore.query` for the
+tailer and read API, and `arcstore.backends` for `SqliteBackend` and the in-memory backend.
 
 ---
 

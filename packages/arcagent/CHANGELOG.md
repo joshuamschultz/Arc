@@ -7,28 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added / Changed
+## [0.17.0] - 2026-08-19
 
-- **Config split into three files.** An agent's configuration is now `arcagent.toml`
-  (identity, security, tools, context, memory, and all behaviour/comms modules) +
-  `arcllm.toml` (`[llm]` / `[eval]` / `[budget]` — everything LLM-wire) + `arcrun.toml`
-  (loop controls: `max_turns`, `tool_timeout`, strategies, sandbox, approvals). The loader
-  composes the three sibling file-families (packaged < user-wide `~/.arc` < per-agent) with
-  env overrides last; `arc agent create` scaffolds all three, fully populated with every
-  operator-settable knob and a comment. Existing single-file tomls must be regenerated.
-- **Memory producer wiring.** `select_brain` now threads the loop model + the agent's signing
-  identity + policy pipeline into `ArcMemoryBrain`, so the agentic consolidation engine
-  actually runs and its memory-tool writes are signed + authorized (previously dead/unsigned).
-- Persisted workpad/policy cadence counters (survive restarts) + idle-flush so `context.md`
-  and learned policy update in real sessions, not only on an unreachable turn threshold.
-
-SPEC-056 Mission Control, Phases 1–4 — the `tasks` module grows from a shared list into a
-self-driving execution engine: agents autonomously run assigned work with retry/timeout/reclaim
-reliability, decompose tasks into dependency DAGs, auto-route ownerless work, gate results behind
-an opt-in human review, and notify the operator on every key transition. Plus memory-curation and
-policy-cadence fixes that cut background-job cost.
+Config split into three sibling files, ArcFlow workflows and connectors as new modules, a
+module system that declares its own deps and reconfigures live (ADR-033/034), honest run/task
+status with end-to-end trace visibility, and the SPEC-056 Mission Control reliability engine.
 
 ### Added
+- **ArcFlow workflows module** (`arcagent.modules.workflows`, SPEC-061) — a builder surface of
+  twelve `@tool` functions (`workflow_create`, `workflow_add_node`, `workflow_edit_node`, …)
+  that author **named, signed workflow-DAGs**, instantiated onto the task-DAG substrate rather
+  than a third engine. The gateway-hosted runner is injected via
+  `arcagent.set_workflow_runner(...)`; trifecta legs thread across stage sessions so a workflow
+  can't launder a forbidden composition across steps. Runs on demand.
+- **Connectors module** (`arcagent.modules.connectors`, D-588) — vendor-CLI-first extension
+  bundles surfaced as a `connectors` `@capability`. Connections are deployment-wide, grants are
+  per-agent, deny-by-default. `Connections` / `catalog` / `resolve_deployment` re-exported from
+  the root facade.
+- **Recovered planning module** (`arcagent.modules.planning`) + the `plan_execute` strategy — a
+  Plan-Execute DAG planner driving one bounded arcrun run per step.
+- **Run-trace visibility** — a swallowed send failure, a memory recall, and each named strategy
+  step now surface as `tool_event`s in the run trace, and the run feed reports honest run/task
+  status (a failed tool step is no longer reported as a failed run).
+- **Live module management (ADR-034)** — modules enable/disable/upgrade at runtime with no
+  restart; a module reaches a deployment as a signed bundle under `~/.arc/modules/`, never in
+  the wheel. Module dependencies are now declared through each module's `configure()` signature
+  (ADR-033), replacing the removed `ModuleContext` DI container.
+- **SPEC-056 Mission Control, Phases 1–4** — the `tasks` module grows from a shared list into a
+  self-driving execution engine:
 - **Opt-in task-dispatch loop** (`[modules.tasks.config] dispatch = true`, off by default) — a
   `@background_task` that pulls the agent's highest-priority ready `todo` task (dependencies met,
   retry backoff elapsed, not a coordinator parent) and wakes a real agent run via the `agent_run_fn`
@@ -59,6 +65,22 @@ policy-cadence fixes that cut background-job cost.
   it can never block or roll back the durable transition that triggered it.
 - **User messages captured into memory** — the memory capture path now records inbound user turns,
   not only tool calls and agent self-talk, so consolidation sees the human side of the conversation.
+
+### Changed
+- **Config split into three files.** An agent's configuration is now `arcagent.toml`
+  (identity, security, tools, context, memory, and all behaviour/comms modules) +
+  `arcllm.toml` (`[llm]` / `[eval]` / `[budget]` — everything LLM-wire) + `arcrun.toml`
+  (loop controls: `max_turns`, `tool_timeout`, strategies, sandbox, approvals). The loader
+  composes the three sibling file-families (packaged < user-wide `~/.arc` < per-agent) with
+  env overrides last; `arc agent create` scaffolds all three, fully populated with every
+  operator-settable knob and a comment. Existing single-file tomls must be regenerated.
+- **Memory producer wiring.** `select_brain` now threads the loop model + the agent's signing
+  identity + policy pipeline into `ArcMemoryBrain`, so the agentic consolidation engine
+  actually runs and its memory-tool writes are signed + authorized (previously dead/unsigned).
+- Persisted workpad/policy cadence counters (survive restarts) + idle-flush so `context.md`
+  and learned policy update in real sessions, not only on an unreachable turn threshold.
+- **Module DI removed (ADR-033).** The unused `ModuleContext` DI container is gone; a module's
+  deps come from its `configure()` signature.
 
 ### Fixed
 - **Background jobs gated to a turn cadence.** Policy eval, daily-notes reflection, and distillation

@@ -14,6 +14,10 @@ Simplification-sweep cleanup (no version bump — internal only, no public API c
   fail-closed semantics preserved.
 - Ed25519 signature checks in `backends/_verifier.py` now go through `arctrust.verify`
   instead of a hand-rolled PyNaCl call.
+- Docs refreshed (2026-08-19) to current reality: `run()`/`run_async()` take a
+  `CapabilityProvider` + `SystemPrompt` (not a bare `tools=` list), the five built-in
+  strategies (react / code / dynamic / oneshot / plan_execute), `run_oneshot`, the
+  `RunHandle` steer/follow-up/cancel signatures, and the ArcLLM model facade re-export.
 
 ### Removed
 - The write-only `parallel_safe` field on `Tool`/capabilities — `Tool.classification`

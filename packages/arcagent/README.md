@@ -24,9 +24,12 @@ It wraps the lower layers (`arcrun` for the loop, `arcllm` for the model, `arctr
 - 🪪 **Cryptographic identity** — refuses to start without a valid DID
 - 🧩 **Unified capability system (SPEC-021)** — one loader discovers `@tool` / `@hook` / `@background_task` / `@capability`-class Python files and `SKILL.md` folders across four scan roots with explicit precedence
 - 💾 **Persistent sessions** — JSONL transcripts of every conversation
-- 🚌 **Module bus** — priority-ordered event handlers with veto power
+- 🚌 **Module bus** — priority-ordered event handlers with veto power; modules enable/disable/upgrade live, no restart (ADR-034), and declare their deps through their `configure()` signature (ADR-033)
 - 🪟 **Cache-preserving context management** — append-only turns + discrete, structured compaction at a boundary
-- ⚙️ **TOML configuration** — one file, full surface area, validated by Pydantic
+- ✅ **Tasks (Mission Control)** — a self-driving execution engine: retry/timeout/reclaim reliability, dependency DAGs, auto-routing, review gates
+- 🔀 **Workflows (ArcFlow)** — signed workflow-DAGs the agent authors and runs on demand
+- 🔌 **Connectors** — vendor-CLI-first extension bundles (deployment-wide connection, per-agent grant, deny-by-default)
+- ⚙️ **TOML configuration** — three sibling files (`arcagent.toml` / `arcllm.toml` / `arcrun.toml`), full surface area, validated by Pydantic
 
 > 🛡️ **Identity required. Tools deny-by-default. Every action audited. Sessions on disk you can read.**
 
@@ -143,19 +146,28 @@ await agent.shutdown()
 
 ---
 
-## ⚙️ Configuration: `arcagent.toml`
+## ⚙️ Configuration: three sibling files
+
+An agent's configuration is split across three sibling TOML files, each owned by the
+layer it configures — so a standalone `arcllm` or `arcrun` reads only its own file:
+
+| File | Owns | Example keys |
+|---|---|---|
+| **`arcagent.toml`** | identity, security, tools, context, memory, and every behaviour/comms module | `[identity]`, `[security]`, `[tools.policy]`, `[modules.*]` |
+| **`arcllm.toml`** | everything LLM-wire | `[llm]`, `[eval]`, `[budget]` |
+| **`arcrun.toml`** | loop controls | `max_turns`, `tool_timeout`, strategies, sandbox, approvals |
+
+The loader composes each file-family in precedence order (packaged < user-wide `~/.arc` <
+per-agent), with env overrides last. `arc agent create` scaffolds all three, fully
+populated with every operator-settable knob and a comment.
 
 ```toml
+# arcagent.toml
 [agent]
 name = "my-agent"
 org = "acme"
 type = "executor"
 workspace = "./workspace"
-
-[llm]
-model = "anthropic/claude-sonnet-4-5-20250929"
-max_tokens = 8192
-temperature = 0.7
 
 [identity]
 did = "did:arc:acme:executor/abc123..."   # filled by `arc agent create`
@@ -471,6 +483,26 @@ reliability engine, and every config knob.
 
 ---
 
+## 🔀 Workflows (ArcFlow, SPEC-061)
+
+`arcagent.modules.workflows` gives an agent a builder surface for **named, signed
+workflow-DAGs** — repeatable multi-step orchestrations that instantiate onto the same
+task-DAG substrate the tasks module uses, rather than a third execution engine. Twelve
+`@tool` functions (`workflow_create`, `workflow_add_node`, `workflow_edit_node`, …) let the
+model author a workflow, which the gateway-hosted runner then executes on demand. The
+trifecta legs thread across stage sessions so a workflow can't launder a forbidden
+composition across steps.
+
+```toml
+[modules.workflows]
+enabled = true
+```
+
+> The runner is injected by the surface (gateway) via `arcagent.set_workflow_runner(...)`; a
+> headless agent still authors and stores workflows, and runs them once a runner is bound.
+
+---
+
 ## 💾 Sessions
 
 Every conversation persists as a JSONL transcript:
@@ -635,21 +667,26 @@ Honest scope: a valid signature proves the artifact is unmodified since the sign
 
 ## 🧱 Public API
 
+The root package is the facade — reach for public names off `import arcagent`, not deep
+imports:
+
 ```python
 from arcagent import (
-    # Errors
-    ArcAgentError, ConfigError, IdentityError, IdentityRequired,
-    ToolError, ToolVetoedError, ContextError, ModuleBusError,
-)
-
-from arcagent.core import (
     ArcAgent,                 # the main agent class
     ArcAgentConfig,           # Pydantic config model
+    SecurityConfig, load_config, deep_merge,   # config
+    KeyStore, KeyStatus,      # operator key management
+    CapabilityLoader, CapabilityRegistry,      # capability system
+    tool,                     # the @tool decorator (with hook/background_task/capability)
+    inspect_extensions,       # the four-family extension seams (brain/skills/tools/hook-builds)
+    Connections, catalog,     # connectors
+    # Errors
+    ArcAgentError, ConfigError, IdentityError,
+    ToolError, ToolVetoedError, ContextError, ModuleBusError, ExtensionError,
 )
-
-from arcagent.core.config import load_config
 ```
 
+`arcagent.brain` (`Brain` / `NullBrain` / `select_brain`) is the pluggable-memory seam.
 Every operation emits arctrust audit events.
 
 ---

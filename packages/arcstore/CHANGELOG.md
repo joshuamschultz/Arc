@@ -7,9 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-SPEC-056 Mission Control, task-lifecycle hardening — additive `Task` fields + `TaskStore`
-transitions that back the reliability engine, decomposition DAG, and review gate. All new
-fields have defaults, so rows written before they existed still load.
+### Changed
+- Documentation refresh — README now covers the `runs` / ArcFlow surface, `create_batch`,
+  the `mutable_increment` / `mutable_create_batch` primitives, and `store_db_path`.
+
+## [0.3.0] - 2026-08-19
+
+SPEC-056 Mission Control task-lifecycle hardening + the SPEC-061 ArcFlow execution substrate.
+All new `Task` fields have defaults, so rows written before they existed still load.
 
 ### Added
 - **Lifecycle timing + retry fields on `Task`** — `started_at`, `completed_at`,
@@ -22,12 +27,27 @@ fields have defaults, so rows written before they existed still load.
   claims a task, so an `in_progress` task links its run from the moment it starts.
 - **Race-safe terminal + retry transitions on `TaskStore`** — `finish`, `requeue`, `dead_letter`,
   `request_cancel`, `route` (assign an unowned task), `approve_review`/`reject_review` (operator
-  resolves a `review` task), and `edit` (status-conditional at-rest edit, refuses `in_progress`).
-  Each is a status-conditional `update_if`, so two contending actors resolve to exactly one winner.
+  resolves a `review` task), `set_status`, and `edit` (status-conditional at-rest edit, refuses
+  `in_progress`). Each is a status-conditional `update_if`, so two contending actors resolve to
+  exactly one winner.
 - **Decomposition DAG support** — `children` (subtasks by `parent_id`), `deps_met`
-  (all `blocked_by` done), and `deps_would_cycle` (reject an edge that would form a cycle before
-  it is ever written).
+  (all `blocked_by` done), `unassigned`, and `deps_would_cycle` (reject an edge that would form a
+  cycle before it is ever written).
 - **`delete`** — hard-delete a task row (operator action, attributed + audited).
+- **`runs` domain (`arcstore.runs`, SPEC-061 ArcFlow COMP-006)** — a durable `Run` aggregate on
+  a new `"runs"` collection of the shared mutable plane (the closed `SpoolKind` set is left
+  untouched — no `run_id` added to `SpoolRecord`). `Run` / `PathEntry` / `RunBudget` mirror
+  `tasks.py`'s conventions (frozen pydantic, one sanitized free-text field, optional audit sink).
+  `RunStore` provides `create` / `get` / `list`, a status-conditional `transition`, a CAS-based
+  `append_path_entry` (a plain merge-patch would replace the whole `path_taken` array instead of
+  appending), and `reserve_budget` / `settle_budget` accounting.
+- **`TaskStore.create_batch` (COMP-007)** — atomic cross-owner batch task creation for frontier
+  materialization, idempotent on each task's own id so a crashed runner's replay returns the
+  existing rows instead of duplicating them.
+- **Two new mutable-plane backend primitives** — `mutable_create_batch` (`INSERT OR IGNORE`
+  across the whole batch in one `BEGIN IMMEDIATE` transaction) and `mutable_increment` (atomic
+  `json_set` / `json_extract` arithmetic backing the run budget counters), both single-statement
+  with no read-then-write gap.
 
 ## [0.2.0] - 2026-07-12
 

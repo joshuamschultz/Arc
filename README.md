@@ -17,10 +17,11 @@
 
 **[📚 Read the Docs](https://joshuamschultz.github.io/Arc/)** ·
 **[Quick Start](#-quick-start)** ·
+**[How Arc Improves](#-how-arc-improves-without-marking-its-own-homework)** ·
 **[Architecture](#-architecture)** ·
 **[Security](#%EF%B8%8F-security-architecture)** ·
 **[Compliance](#-compliance-mapping)** ·
-**[CLI Reference](docs/cli.md)**
+**[CLI Reference](docs/reference/cli.md)**
 
 </div>
 
@@ -31,19 +32,19 @@
 **Full documentation: [joshuamschultz.github.io/Arc](https://joshuamschultz.github.io/Arc/)** — or read it
 right here in the repo: **[`docs/`](docs/README.md)**.
 
-Fourteen documents that take you from *"what is this?"* to *"I know which file to
-open."* Every one opens with a plain-language summary anyone can finish, then goes
+A guided documentation set that takes you from *"what is this?"* to *"I know which file to
+open."* The walkthroughs open with a plain-language summary, then go
 to the real mechanism with diagrams, then points at the exact code.
 
 | Start here | If you are… |
 |---|---|
-| **[1. What Arc Is](docs/01-what-is-arc.md)** | New to Arc, or not an engineer — assumes nothing |
-| **[3. Anatomy of a Turn](docs/03-anatomy-of-a-turn.md)** | A contributor: one message traced through every layer |
-| **[2. Architecture](docs/02-architecture.md)** | Wondering which of the 18 packages your change belongs in |
-| **[10. The Security Model](docs/10-security-model.md)** | Evaluating identity, signing, authorization, and audit |
-| **[11. Extension Points](docs/11-extension-points.md)** | Adding a provider, platform, tool, or memory backend |
-| **[13. Contributing](docs/13-contributing.md)** | Ready to open your first PR |
-| **[14. Glossary](docs/14-glossary.md)** | Hitting an unfamiliar term |
+| **[1. What Arc Is](docs/walkthrough/01-what-is-arc.md)** | New to Arc, or not an engineer — assumes nothing |
+| **[3. Anatomy of a Turn](docs/walkthrough/03-anatomy-of-a-turn.md)** | A contributor: one message traced through every layer |
+| **[2. Architecture](docs/walkthrough/02-architecture.md)** | Wondering which package your change belongs in |
+| **[10. The Security Model](docs/walkthrough/10-security-model.md)** | Evaluating identity, signing, authorization, and audit |
+| **[11. Extension Points](docs/walkthrough/11-extension-points.md)** | Adding a provider, platform, tool, or memory backend |
+| **[Contributing](docs/building/contributing.md)** | Ready to open your first PR |
+| **[Glossary](docs/reference/glossary.md)** | Hitting an unfamiliar term |
 
 Prefer to *run* things rather than read? [`walkthroughs/`](walkthroughs/) holds
 executable notebooks per package.
@@ -272,7 +273,23 @@ arc agent run my-agent "Read the CSVs in workspace/data/ and summarize the trend
 
 Inside the chat REPL: `/help`, `/tools`, `/cost`, `/skills`, `/sessions`, `/switch <id>`, `/identity`, `/quit`.
 
-### 6. (Optional) Watch It Run — and Message It — in a Browser
+### 6. Review and Approve Capabilities
+
+Agent-authored tools and skills do not silently become trusted code. See what the
+loader has gated, inspect the named file, then approve the exact bytes:
+
+```bash
+arc trust list --all                         # one agent: --agent is optional
+arc trust approve <capability-name>          # signs it and pins its key + source hash
+arc trust disapprove <capability-name>       # revoke the signature and pins
+```
+
+With more than one agent, add `--agent <agent-id>`. Approval is deliberately an
+operator-only CLI/UI action: the model cannot call it. Editing an approved artifact
+changes its hash and gates it again. See [Signing a Gated Capability](docs/runbooks/signing-capabilities.md)
+for key custody, inspection, promotion between tiers, and failure recovery.
+
+### 7. Open the Browser UI
 
 The dashboard **is** the gateway (SPEC-023) — one process serves the UI, live
 telemetry, and a per-agent web chat box, and it loads agents from
@@ -281,11 +298,11 @@ telemetry, and a per-agent web chat box, and it loads agents from
 ```bash
 # --team-root turns on the in-process web chat platform; agents load lazily
 # the first time you open one, not up front.
-arc ui start --team-root ./team --show-tokens
+arc ui start --team-root . --show-tokens
 #    Prints a viewer token + operator token and the URL (default 127.0.0.1:8420).
 
-# Open the printed http://127.0.0.1:8420/ URL with the viewer token
-# (on a loopback bind the browser opens pre-authenticated) and message the agent.
+# Open the printed http://127.0.0.1:8420/ URL. On a loopback bind Arc opens it
+# pre-authenticated; otherwise enter the printed viewer or operator token.
 ```
 
 There is no `--agent-token` and no agent-side `--ui` push flag — `arcui` reads everything
@@ -301,6 +318,10 @@ arc ui tail --viewer-token <token> --layer llm
 > `scripts/deploy-node.sh`. `scripts/arc-stack.sh` is a separate,
 > non-canonical dev-convenience wrapper around the older per-agent
 > `arc agent serve` pattern — see its header comment before reaching for it.
+
+Want every setting? Start with the [configuration walkthrough](docs/walkthrough/12-configuration.md),
+then use the [TOML/config reference](docs/reference/config.md) and
+[tier presets](docs/reference/tiers-and-presets.md) as lookups.
 
 ---
 
@@ -520,6 +541,39 @@ Arc is built for organizations where AI works *alongside* humans as accountable 
 📚 **Knowledge teams** — ingest, classify, cross-reference documents — surface connections across thousands of pages humans would never spot.
 
 Agents can self-improve through a plain-text policy file. Good behaviors get reinforced. Harmful patterns get suppressed. The policy is human-readable, auditable, and version-controlled.
+
+---
+
+## 🔁 How Arc Improves Without Marking Its Own Homework
+
+Arc can learn from experience, but "self-improving" does not mean unrestricted
+self-modification. Different kinds of learning use different stores and gates:
+
+- **Skills improve by evidence.** A reflector may propose a bounded edit, but a
+  deterministic golden-task suite runs in the tier-appropriate sandbox and must
+  show a strict improvement before the candidate can advance. Third-party skills
+  still pass signature, transparency-log, static-analysis, dry-run, and revocation
+  checks. [How prompts, tools, and skills fit together](docs/walkthrough/06-prompts-tools-skills.md)
+- **Policy bullets learn behavior.** A reflector periodically turns grounded turn
+  history into short, scored rules. Useful rules rise; harmful or ineffective rules
+  decay and retire. The file is capped, atomically written, human-readable, and every
+  change is audited. Federal deployments stage learned bullets for human review.
+- **Memory heals through consolidation.** Fast capture preserves the event record;
+  a slower "sleep" pass curates noise, corroborates facts, merges duplicates, mints
+  reusable insights and procedures, decays weak associations, and rebuilds derived
+  indexes without discarding the source record. Recall is clearly bounded as data,
+  not allowed to become instructions. [Memory lifecycle deep dive](docs/walkthrough/07-memory-lifecycle.md)
+- **The workpad keeps context current.** A background maintainer refreshes
+  `context.md` so open loops survive long sessions, while immutable identity and
+  goal-lock files remain outside the agent's control.
+- **System prompts are tunable, signed artifacts.** Stock prompts are inspectable
+  Markdown. Per-agent overrides are operator-signed, hash-identified, frozen for a
+  run, and recorded in a provenance audit event; a broken or tampered override fails
+  loudly instead of falling back. [Prompt tuning and provenance](docs/reference/prompts.md)
+
+The common rule is simple: **the model may propose; deterministic checks and the
+operator decide what becomes trusted.** Improvements remain attributable,
+reversible, and reviewable through diffs, signatures, hashes, and audit history.
 
 ---
 
@@ -778,7 +832,7 @@ arc gateway pair list                                     # show pending DM pair
 arc gateway pair approve ABCD1234                         # approve a pairing code
 ```
 
-Full reference: [docs/cli.md](docs/cli.md).
+Full reference: [CLI reference](docs/reference/cli.md).
 
 ---
 
