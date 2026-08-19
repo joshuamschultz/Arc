@@ -32,11 +32,11 @@ from __future__ import annotations
 import json
 import logging
 from collections import defaultdict
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from datetime import UTC, datetime, timedelta
 from itertools import combinations
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
 from arctrust.identity import AgentIdentity
@@ -77,6 +77,8 @@ from arcmemory.types import (
 )
 
 _log = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
 
 _MANIFEST_NAME = ".consolidate-manifest.json"
 _LAST_RUN_NAME = ".consolidate-last-run"
@@ -307,12 +309,39 @@ class Consolidator:
     async def _distill_pipeline(
         self, events: list[Event]
     ) -> tuple[list[tuple[str, Fact]], list[Insight], list[Procedure], list[LifeEvent], int]:
-        """The deterministic single-shot distiller path (fallback + engine=pipeline)."""
-        facts = await self._extract_facts(events)
-        insights = await self._mint_insights(events, [f for _, f in facts])
-        procedures = await self._extract_procedures(events)
-        life_events = await self._extract_events(events)
+        """The deterministic single-shot distiller path (fallback + engine=pipeline).
+
+        Each step is isolated: a malformed LLM response for one distiller (a bad
+        insights or procedures payload) degrades that step to empty and the rest
+        still run — and, crucially, ``run`` continues to daily notes. Left
+        unisolated, one ValidationError aborted the whole sleep pass, so a single
+        bad response cost the agent a full day of memory — no daily notes, no
+        entities — which is exactly what "degrade, don't crash" forbids.
+        """
+        facts = await self._safe_distill("facts", self._extract_facts(events), [])
+        insights = await self._safe_distill(
+            "insights", self._mint_insights(events, [f for _, f in facts]), []
+        )
+        procedures = await self._safe_distill("procedures", self._extract_procedures(events), [])
+        life_events = await self._safe_distill("events", self._extract_events(events), [])
         return facts, insights, procedures, life_events, 0
+
+    async def _safe_distill(self, step: str, coro: Awaitable[_T], default: _T) -> _T:
+        """Await one distill step, degrading to ``default`` on any failure.
+
+        A distiller failure is a telemetry-worthy degrade, never a crash that
+        loses the other steps and the daily notes downstream of it.
+        """
+        try:
+            return await coro
+        except Exception as exc:  # reason: one step must never abort the sleep pass
+            _log.warning(
+                "distill step %r degraded to empty (%s) — consolidation continues",
+                step,
+                type(exc).__name__,
+            )
+            self._emit("memory.distill_degraded", step)
+            return default
 
     # -- nightly hygiene (heavier, once-per-local-day) ---------------------
 

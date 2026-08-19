@@ -73,7 +73,13 @@ class FakeDistiller:
 
 
 class RaisingDistiller:
-    """Succeeds at facts, then crashes minting — simulates a mid-run failure."""
+    """Succeeds at the additive steps, then crashes summarizing the day — a genuine
+    mid-consolidation failure AFTER files are written but before the manifest commits.
+
+    The additive distill steps (facts/insights/procedures/events) now *degrade*
+    rather than crash (a bad LLM payload must never cost the whole sleep pass), so
+    a crash used to prove manifest-consistency has to come from a step that still
+    aborts the run — day summarization, which runs after the additive writes."""
 
     def __init__(self, extraction: FactExtraction) -> None:
         self._extraction = extraction
@@ -82,7 +88,7 @@ class RaisingDistiller:
         return self._extraction
 
     async def mint_insights(self, events: list[Event], facts: list) -> InsightMint:
-        raise RuntimeError("boom mid-consolidation")
+        return InsightMint(insights=[])
 
     async def extract_procedures(
         self, events: list[Event], existing: list[Procedure]
@@ -99,7 +105,7 @@ class RaisingDistiller:
         return EventExtraction()
 
     async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
-        return DaySummaryDraft()
+        raise RuntimeError("boom mid-consolidation")
 
 
 def _seed_day(workspace: Path, db: MemoryDB, scope: Scope) -> None:
@@ -239,6 +245,37 @@ async def test_crash_mid_write_leaves_consistent_manifest(workspace, db, scope) 
     assert recovered.pending_recovery
     await recovered.recover()
     assert not manifest_path.exists()
+
+
+async def test_a_failed_distill_step_degrades_and_the_pass_completes(workspace, db, scope) -> None:
+    """The fleet-wide regression: a malformed LLM payload for ONE distiller
+    (insights) crashed the whole sleep pass, so an agent got no daily notes and
+    no entities for the day. A failed step must degrade to empty while facts and
+    the daily-notes step downstream still land."""
+
+    class InsightsFailDistiller(RaisingDistiller):
+        async def mint_insights(self, events: list[Event], facts: list) -> InsightMint:
+            raise RuntimeError("bad insights payload")
+
+        async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
+            return DaySummaryDraft()
+
+    _seed_day(workspace, db, scope)
+    distiller = InsightsFailDistiller(
+        FactExtraction(facts=[FactCandidate(slug="alice", predicate="role", value="manager")])
+    )
+    consolidator = _consolidator(workspace, db, scope, distiller)
+
+    result = await consolidator.run(now=_NOW)  # must NOT raise
+
+    assert result.insights_minted == 0  # the failed step degraded to empty
+    assert result.facts_updated >= 1  # facts still landed despite the failure
+    fact = next(
+        f
+        for f in SemanticStore(workspace, WeightedGraph(db), scope=scope.key).read("alice").facts
+        if f.predicate == "role"
+    )
+    assert fact.value == "manager"
 
 
 # -- cadence: consolidation runs on an interval, not every turn -------------

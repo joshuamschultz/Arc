@@ -45,3 +45,16 @@ def test_an_envelope_around_a_non_dict_is_left_alone() -> None:
     """``{"steps": [...]}`` under an unexpected key is not an envelope to open."""
     payload = {"anything": [1, 2, 3]}
     assert unwrap_envelope(payload, "steps") is payload
+
+
+def test_a_key_repeated_wrap_is_flattened() -> None:
+    """The live crash: the model wrapped the answer in a REPEAT of its own key —
+    ``{"insights": {"insights": [...]}}`` — so ``expected`` is present but its
+    value is the whole object again, not the list the model field wants. Left
+    unpeeled, InsightMint.insights got a dict and every consolidation crashed
+    (list_type), aborting the sleep pass fleet-wide."""
+    assert unwrap_envelope({"insights": {"insights": [1, 2]}}, "insights") == {"insights": [1, 2]}
+    # Also when it arrives inside a provider envelope first.
+    assert unwrap_envelope(
+        {"output": {"procedures": {"procedures": [{"slug": "x"}]}}}, "procedures"
+    ) == {"procedures": [{"slug": "x"}]}

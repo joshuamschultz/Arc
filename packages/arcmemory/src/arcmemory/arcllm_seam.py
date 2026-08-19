@@ -131,11 +131,22 @@ def unwrap_envelope(data: dict[str, Any], expected: str) -> dict[str, Any]:
     Narrow on purpose: exactly one key, whose value is a dict, and only when
     ``expected`` is not already present — so a legitimate one-key answer is never
     mistaken for an envelope.
+
+    Also handles the inverse the same providers produce: the answer wrapped in a
+    *repeat* of its own key — ``{"insights": {"insights": [...]}}`` — where the
+    top-level ``expected`` is present but its value is the whole object again, not
+    the list the model field wants. Left unpeeled, every consolidation crashed
+    with ``list_type`` (``InsightMint.insights`` got a dict), which aborted the
+    entire sleep pass — no daily notes, no entities, fleet-wide.
     """
-    if expected in data or len(data) != 1:
-        return data
-    inner = next(iter(data.values()))
-    return inner if isinstance(inner, dict) else data
+    if len(data) == 1 and expected not in data:
+        inner = next(iter(data.values()))
+        if isinstance(inner, dict):
+            data = inner
+    value = data.get(expected)
+    if isinstance(value, dict) and expected in value:
+        return {**data, expected: value[expected]}
+    return data
 
 
 class ArcLLMDistiller:
