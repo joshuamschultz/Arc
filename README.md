@@ -1,10 +1,10 @@
 <div align="center">
 
-<img src="docs/assets/banner-arc.jpg" width="100%" alt="Arc — the security-first agent stack. One turn rising through four gates: identity, sign, authorize, audit.">
+<img src="docs/assets/banner-arc.jpg" width="100%" alt="Arc — the self-tuning agent runtime. A performance curve climbs and brightens each pass over a bank of tuning dials; every action stays signed and secure.">
 
 
-### **The Security-First Autonomous Agent Stack**
-*For environments where trust is non-negotiable.*
+### **The Self-Tuning Agent Runtime for Business**
+*Shape it to any business case. It sharpens every turn — and stays secure by default.*
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-002550.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-0073FE.svg?logo=python&logoColor=white)](https://www.python.org/downloads/)
@@ -56,7 +56,7 @@ Arc is a stack of small Python packages for building AI agents you can actually 
 
 You can use just the bottom layer (a clean LLM client), the middle layer (a tool-using agent loop), or the whole thing (a fleet of cryptographically-identified agents talking through a signed message bus). Pick how much you need. Each layer is independently installable.
 
-> 🛡️ **Every LLM call attributable. Every tool call authorized. Every action audited. Every byte traceable.**
+> ⚡ **Tune it to any business. It learns your work and sharpens every turn — while every action stays attributable, authorized, and audited.**
 
 ---
 
