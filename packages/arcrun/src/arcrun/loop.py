@@ -247,6 +247,46 @@ async def run_oneshot(
     return await asyncio.wait_for(call, timeout=timeout)
 
 
+class StructuredCallError(RuntimeError):
+    """A forced structured call returned no tool call to read."""
+
+
+async def run_structured(
+    model: Any,
+    messages: list[Any],
+    *,
+    tool: Any,
+    max_tokens: int | None = None,
+    timeout: float | None = None,
+) -> dict[str, Any]:
+    """One forced tool call; return the model's tool arguments.
+
+    The structured-output sibling of :func:`run_oneshot`. A caller that needs a
+    schema filled — a plan DAG, a labelled extraction — forces exactly ``tool``
+    and reads its arguments back, without holding a provider handle or running a
+    loop (ADR-032). Every model call in the stack keeps one owner: arcrun.
+
+    Bounded like ``run_oneshot``: one turn, one tool, an optional output ceiling
+    and deadline. ``timeout`` raises :class:`TimeoutError` rather than blocking a
+    caller on a hung provider. Raises :class:`StructuredCallError` when the model
+    answers without calling the tool, so a caller never mistakes an empty draft
+    for a valid one. The call is spooled under the ambient run context already in
+    scope, so it lands in the caller's trace.
+    """
+    cap: dict[str, Any] = {"max_tokens": max_tokens} if max_tokens is not None else {}
+    call = model.invoke(
+        messages,
+        tools=[tool],
+        tool_choice={"type": "tool", "name": tool.name},
+        **cap,
+    )
+    response = await (asyncio.wait_for(call, timeout=timeout) if timeout is not None else call)
+    calls = getattr(response, "tool_calls", None) or []
+    if not calls:
+        raise StructuredCallError(f"model emitted no '{tool.name}' tool call")
+    return dict(calls[0].arguments)
+
+
 async def run_async(
     model: Any,
     capabilities: CapabilityProvider,

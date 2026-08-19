@@ -1,9 +1,10 @@
-"""Goal -> Plan decomposition and remaining-plan revision, via arcllm.
+"""Goal -> Plan decomposition and remaining-plan revision, via arcrun.
 
-Inference is arcllm's job: the planner asks the model for a structured DAG
+Inference is arcrun's job: the planner asks the model for a structured DAG
 through the **portable tool-forced path** (a single forced tool call whose
-arguments validate into a plan draft). The module imports no provider adapter
-and runs no turn-loop — that would cross the concern boundary (REQ-002).
+arguments validate into a plan draft). It never touches a provider handle —
+``arcrun.run_structured`` owns the model call — and runs no turn-loop, so the
+concern boundary holds (REQ-002, ADR-032).
 
 Decomposition is ReWOO-style: one upfront planner call produces the whole DAG
 (REQ-001). Replan is Reflexion-lite: on a failed step the model is re-invoked
@@ -19,7 +20,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterable, Sequence
-from typing import Any, Protocol
+from typing import Any
 
 import arcrun
 from arcprompt import load_stock
@@ -45,12 +46,6 @@ class DecompositionError(ValueError):
     """Raised when the model returns an ungrounded, malformed, or hijacking plan."""
 
 
-class PlanModel(Protocol):
-    """Minimal arcllm surface the decomposer needs (one structured call)."""
-
-    async def invoke(self, messages: Any, tools: Any = None, **kwargs: Any) -> Any: ...
-
-
 class _StepDraft(BaseModel):
     step_id: str
     description: str
@@ -74,18 +69,14 @@ def _plan_tool() -> arcrun.ModelTool:
     )
 
 
-async def _invoke_for_draft(model: PlanModel, messages: list[arcrun.Message]) -> _PlanDraft:
-    """One forced structured call; validate the arguments into a plan draft."""
-    response = await model.invoke(
-        messages,
-        tools=[_plan_tool()],
-        tool_choice={"type": "tool", "name": _TOOL_NAME},
-    )
-    calls = getattr(response, "tool_calls", None) or []
-    if not calls:
-        raise DecompositionError("model returned no structured plan")
+async def _invoke_for_draft(model: Any, messages: list[arcrun.Message]) -> _PlanDraft:
+    """One forced structured call through arcrun; validate into a plan draft."""
     try:
-        return _PlanDraft.model_validate(calls[0].arguments)
+        arguments = await arcrun.run_structured(model, messages, tool=_plan_tool())
+    except arcrun.StructuredCallError as exc:
+        raise DecompositionError("model returned no structured plan") from exc
+    try:
+        return _PlanDraft.model_validate(arguments)
     except ValidationError as exc:
         raise DecompositionError(f"model plan failed schema validation: {exc}") from exc
 
@@ -132,7 +123,7 @@ def _validate_or_raise(plan: Plan) -> None:
 async def decompose(
     goal: str,
     *,
-    model: PlanModel,
+    model: Any,
     goal_source_did: str,
     parent_goal_hash: str,
     budget: PlanBudget,
@@ -173,7 +164,7 @@ async def replan(
     plan: Plan,
     failure_reason: str,
     *,
-    model: PlanModel,
+    model: Any,
     known_tools: Iterable[str],
 ) -> Plan:
     """Revise the *remaining* plan around a failure (REQ-030/032).
@@ -218,7 +209,6 @@ async def replan(
 
 __all__ = [
     "DecompositionError",
-    "PlanModel",
     "decompose",
     "replan",
 ]

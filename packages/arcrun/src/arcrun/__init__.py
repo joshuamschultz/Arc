@@ -24,7 +24,14 @@ from arcrun.capabilities import (
 from arcrun.checkpoint import LoopCheckpoint, apply_checkpoint, to_checkpoint
 from arcrun.dynamic.seal import RunSeal, SealBroken, SealSigner
 from arcrun.events import GENESIS_PREV_HASH, ChainVerificationResult, Event, EventBus, verify_chain
-from arcrun.loop import RunHandle, run, run_async, run_oneshot
+from arcrun.loop import (
+    RunHandle,
+    StructuredCallError,
+    run,
+    run_async,
+    run_oneshot,
+    run_structured,
+)
 from arcrun.model import (
     ContentBlock,
     Delta,
@@ -120,6 +127,7 @@ __all__ = [
     "StopReason",
     "Strategy",
     "StreamEvent",
+    "StructuredCallError",
     "SystemPrompt",
     "TextBlock",
     "TokenEvent",
@@ -158,6 +166,7 @@ __all__ = [
     "run_oneshot",
     "run_shell",
     "run_stream",
+    "run_structured",
     "stream_llm_response",
     "system_messages",
     "to_checkpoint",
