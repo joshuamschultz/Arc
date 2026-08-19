@@ -8,7 +8,7 @@ Meta-package install vehicle: `pip install arcmas` pulls the full-stack story. *
 
 ## Layer
 
-**Install meta.** Declared deps currently center on `arccmd` and `arcmemory`; wider stack arrives transitively via the CLI → agent / LLM / run / team graph. Not imported by other packages for logic.
+**Install meta.** Two direct deps — `arccmd` (the `arc` CLI) and `arcmemory`. The core stack arrives transitively via the CLI graph: `arcllm`, `arcrun`, `arc-agent`, `arcbundle`, `arcteam`, plus their `arctrust`/`arcstore`/`arcprompt`. The `arcgateway`, `arcui`, and `arcskill` surfaces are **not** pulled in — they are separate installs. Not imported by other packages for logic.
 
 ## Layout
 

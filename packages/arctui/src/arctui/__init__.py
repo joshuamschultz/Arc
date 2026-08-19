@@ -1,3 +1,3 @@
-"""arctui — single-process Textual terminal UI for chatting with an ArcAgent."""
+"""arctui — Textual terminal viewpoint that attaches to a gateway-served ArcAgent."""
 
-__version__ = "0.0.2"
+__version__ = "0.2.0"

@@ -6,7 +6,7 @@
 *Slash-command registry. JSON output on every data command. The single front door to the entire Arc stack.*
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-002550.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Tests](https://img.shields.io/badge/tests-330%2B-0055BC.svg)](#status)
+[![Tests](https://img.shields.io/badge/tests-790%2B-0055BC.svg)](#status)
 [![Strict mypy](https://img.shields.io/badge/mypy-strict-0073FE.svg)](#status)
 [![Slash-command registry](https://img.shields.io/badge/registry-slash_commands-0073FE.svg)](#)
 
@@ -18,7 +18,7 @@
 
 `arccli` is the unified `arc` command-line tool. Every Arc operation — creating an agent, running it, listing tools, inspecting LLM providers, starting the dashboard, approving a chat-platform pairing — is one `arc` subcommand.
 
-It's built on a **centralized slash-command registry** with lazy handler dispatch. **No Click, no Typer, no third-party CLI framework.** Subcommand groups (agent, llm, run, etc.) use stdlib `argparse` internally, but the top-level routing is a flat `CommandDef` registry shared by arccli, arcgateway, and platform adapters.
+It's built on a **centralized slash-command registry** with lazy handler dispatch. **No Typer, no third-party top-level CLI framework.** The top-level routing is a flat `CommandDef` registry shared by arccli, arcgateway, and platform adapters; subcommand groups (agent, llm, run, etc.) use stdlib `argparse` internally. (Two agent module CLIs — `arc agent policy` / `arc agent browser` — delegate to their packages' Click groups, so Click stays a dependency.)
 
 > ⚡ **Two modes: one-shot (`arc <command>`) and interactive REPL (`arc`). `--json` on every data command. CI-friendly by default.**
 
@@ -43,18 +43,23 @@ flowchart TB
     arccli --> arcui[arcui]:::surface
     arccli --> arcskill[arcskill]:::agent
     arccli --> arcgateway[arcgateway]:::surface
+    arctui[arctui]:::surface -.soft-registers 'arc tui'.-> arccli
 ```
 
-`arccli` is a **terminal layer** — nothing in Arc depends on it. It installs the `arc` console script.
+`arccli` is a **terminal layer** — nothing in the nucleus depends on it. It installs the `arc` and
+`arc-agent-worker` console scripts. Optional surfaces (`arcui`, `arcgateway`, `arctui`) are
+soft-imported: their subcommands appear only when the package is installed, and the core CLI works
+without them. `arctui` hard-depends on `arccmd` and registers `arc tui` on import — the arrow points
+*into* arccli, never out of it.
 
 ---
 
 ## 🚀 Install
 
 ```bash
-pip install arccli              # standalone
+pip install arccmd              # standalone (PyPI name is arccmd; import package is arccli)
 # or
-pip install arcmas              # full Arc stack (includes arccli)
+pip install arcmas              # full Arc stack (arcmas depends on arccmd)
 ```
 
 After install, the `arc` command is on your PATH:
@@ -95,22 +100,62 @@ arc agent run my-agent "Analyze this" --context ./report.md --json
 
 ## 🧱 Command Groups
 
+### Agents, runs, and LLM
+
 | Group | Purpose |
 |---|---|
-| **`arc agent`** | Agent lifecycle — create, build, chat, run, serve, status, tools, skills, extensions, sessions, config, reload, strategies, events |
-| **`arc llm`** | LLM provider operations — version, config, providers, provider, models, prompt, validate |
+| **`arc agent`** | Agent lifecycle — create, build, chat, run, serve, status, tools, skills, extensions, sessions, config, memory, reload, strategies, events (plus the `policy` / `browser` module CLIs) |
 | **`arc run`** | arcrun loop without an agent directory — version, exec, task |
+| **`arc llm`** | LLM provider operations — version, config, providers, provider, models, prompt, validate |
+| **`arc keys`** | Provider API keys — list, set (hidden prompt), remove |
+
+### Setup, install, and bring-up
+
+| Group | Purpose |
+|---|---|
+| **`arc init`** | Interactive first-time setup wizard with tier presets, optional `--blueprint` bootstrap |
+| **`arc install`** | Install every module each agent's config enables, then verify the checkout |
+| **`arc up`** | One supervised bring-up of the whole stack — preflight, modules, verify, start |
+| **`arc runtime`** | Install-level framework version control — list, and flip `current` (update or rollback) |
+| **`arc identity`** | Manage the standalone signing authority for direct arcrun/arcllm runs |
+
+### Tools, skills, and extensibility
+
+| Group | Purpose |
+|---|---|
 | **`arc skill`** | Skill management — list, create, validate, search |
 | **`arc ext`** | Capability + extension-point management — list, create, install, validate, inspect, verify |
+| **`arc connector`** | Connect an agent to an external system — add, auth, list, probe, remove |
+| **`arc module`** | Signed module bundles — list, bundle, install, remove |
 | **`arc blueprint`** | Signed preset-config bootstrap — list, show, apply, verify, sign |
+| **`arc prompt`** | View + edit/overwrite editable system prompts — list, show, diff, edit, reset |
+| **`arc workflow`** | ArcFlow — list, show, create, edit, archive, unarchive, purge, run, cancel, sign, verify |
+
+### Team, tasks, and observability
+
+| Group | Purpose |
+|---|---|
 | **`arc team`** | Team messaging (Slack for agents) — create, add-member, remove-member, up, down, serve, send, inbox, read, thread, channels, register, entities, status, config, init, memory-status, backfill-workspaces |
-| **`arc task`** | Mission Control task system (SPEC-056) — create, list, edit, assign, complete, talk (steer an in-progress owner) |
+| **`arc task`** | Mission Control task system (SPEC-056) — create, list, edit, assign, complete, talk |
 | **`arc ui`** | Multi-agent dashboard — start, tail |
+| **`arc tui`** | Terminal viewpoint onto a served agent (soft-registered by `arctui` when installed) |
+| **`arc store`** | Operational store lifecycle — init, status, verify, backfill |
+| **`arc memory`** | Agent memory maintenance — dedup pre-canonicalization card duplicates, status (semantic recall) |
+
+### Operator controls
+
+| Group | Purpose |
+|---|---|
+| **`arc approve`** | Mechanical operator approval for blocked agent actions (SPEC-035) — list, `<id>`, `--deny` |
+| **`arc trust`** | Operator approval for gated capabilities — list, approve, disapprove |
+| **`arc stop`** | Operator kill switch — stop a running agent run by run id or session |
+| **`arc user`** | Accounts that can sign in — add, list, passwd, role, telegram |
 | **`arc gateway pair`** | Gateway pairing operator commands — list, approve, revoke |
-| **`arc init`** | Interactive first-time setup wizard with tier presets, optional `--blueprint` bootstrap |
+| **`arc gateway adapter`** | List / install official gateway adapter packages (telegram, slack, mattermost) |
+| **`arc gateway connect-telegram`** | Guided: bind one agent to one Telegram bot (paste token + user ID) |
 | **`arc help`, `arc version`** | Info and REPL utilities |
 
-`--json` is supported on every data-returning subcommand for CI/CD integration.
+`--json` is supported on data-returning subcommands for CI/CD integration.
 
 ---
 
@@ -127,7 +172,9 @@ arc init --blueprint enterprise-ops                       # bootstrap from a pac
 arc agent create my-agent --model anthropic/claude-sonnet-4-5-20250929
 arc agent create my-agent --with-code-exec                # with sandboxed code execution
 arc agent create my-agent --no-register                   # skip arcteam registration
-arc agent build my-agent --check                          # ALWAYS pass --check
+arc agent build my-agent --check                          # ALWAYS pass --check first (validate, write nothing)
+arc agent build my-agent --force                          # regenerate an existing arcagent.toml (DID + name preserved)
+arc agent build my-agent --tier federal                   # set the deployment tier for every subsystem
 arc agent chat my-agent
 arc agent chat my-agent --task "one-shot question"        # non-interactive single turn
 arc agent chat my-agent --session-id <id>                 # resume session
@@ -239,6 +286,8 @@ arc task talk <task_id> "any update?" --actor @lead              # steer an in-p
 arc memory dedup ./agents                     # dry-run: report legacy duplicate memory cards that would merge
 arc memory dedup --apply ./agents             # merge variant-slug cards into the canonical file, delete variants
 arc memory dedup --apply <agent-dir>/workspace  # one workspace, or a root that is searched for nested workspaces
+arc memory status ./agents                    # is semantic (vector) recall LIVE, or degraded to BM25 + graph? (exit 1 if down)
+arc agent memory ./my-agent --json            # straight database view of one agent's stored memory
 
 # === Multi-agent dashboard ===
 arc ui start
@@ -253,10 +302,81 @@ arc ui tail --viewer-token <t> --layer llm
 arc ui tail --viewer-token <t> --agent did:arc:acme:.../
 arc ui tail --viewer-token <t> --group research-team
 
-# === Gateway pairing ===
+# === Gateway pairing & connect ===
 arc gateway pair list
 arc gateway pair approve ABCD1234
 arc gateway pair revoke ABCD1234
+arc gateway adapter list                                       # official adapter packages + install status
+arc gateway adapter install telegram                            # pip/uv-install arcgateway-telegram
+arc gateway connect-telegram --agent ./my-agent                 # guided: paste @BotFather token (hidden) + your user ID
+arc gateway connect-telegram --agent ./my-agent --user-id 12345 # non-interactive user ID (token still prompted securely)
+
+# === Terminal UI (needs arctui installed) ===
+arc tui                                                         # attach to a local gateway, or spawn one
+arc tui --agent employee                                       # pick a roster agent
+arc tui --url http://host:8420 --token <viewer-token>          # attach to a remote gateway
+
+# === Provider API keys ===
+arc keys list
+arc keys set anthropic                                          # hidden prompt; written to the env file, never config/LLM
+arc keys remove openai
+
+# === Connectors (external systems) ===
+arc connector list --agent ./my-agent
+arc connector add ./my-agent <connector>                       # connection is deployment-wide; grant is per-agent
+arc connector auth ./my-agent <connector>
+arc connector probe ./my-agent <connector>
+arc connector remove ./my-agent <connector>
+
+# === Signed module bundles (SPEC-066) ===
+arc module list
+arc module bundle ./my-module                                   # produce a signed bundle
+arc module install ./my-module.arcbundle
+arc module remove <module>
+
+# === ArcFlow workflows (SPEC-061) ===
+arc workflow list
+arc workflow show <name>
+arc workflow run <name>
+arc workflow sign ./my-workflow.toml
+arc workflow verify <name>
+
+# === Editable system prompts (arcprompt) ===
+arc prompt list
+arc prompt show <id>
+arc prompt diff <id>
+arc prompt edit <id>                                            # overlay pinned to the operator key
+arc prompt reset <id>
+
+# === Install / bring-up / runtime ===
+arc install --team-root ./team                                 # install every enabled module, then verify
+arc up --check --team-root ./team                              # preflight only
+arc up --team-root ./team                                      # supervised bring-up of the whole stack
+arc runtime list                                               # installed framework versions
+arc runtime activate 0.8.0                                     # flip 'current' (atomic update or rollback)
+arc identity init                                              # create the standalone signing authority
+arc identity show
+
+# === Operator controls ===
+arc approve list                                               # pending mechanical-approval requests
+arc approve <id>                                               # sign an operator grant (or: --deny)
+arc trust list
+arc trust approve <capability>                                 # signs, not a hash pin
+arc stop list                                                  # running agent runs
+arc stop <run_id> --reason "operator halt"
+arc stop --session <session-key>
+
+# === Sign-in accounts ===
+arc user list
+arc user add alice --role operator
+arc user passwd alice
+arc user telegram alice 12345                                  # bind a Telegram user ID
+
+# === Operational store ===
+arc store status
+arc store init
+arc store verify
+arc store backfill
 
 # === Help & REPL ===
 arc help
@@ -319,7 +439,7 @@ arc init --tier federal --provider anthropic --dir /etc/arc
 
 Why this design:
 
-1. **Fewer dependencies in the trust path.** No Click, no Typer — `argparse` ships with Python and is only used inside subcommand groups, not at the top level.
+1. **Fewer dependencies in the trust path.** No Typer, and no Click at the top level — `argparse` ships with Python and is only used inside subcommand groups. (Click is pulled in only for the two delegated agent-module CLIs, `arc agent policy` / `arc agent browser`.)
 2. **Shared contract.** The registry is the single source of truth for arccli, arcgateway, and chat platforms. Gateway-only commands (`gateway pair *`) are invisible in the CLI help. CLI-only commands (`init`, `quit`) don't appear in Telegram menus.
 3. **Easier to read and modify.** Every command entry is a `CommandDef` in `arccli.commands.registry`. Handlers are plain functions. No metaclasses, no decorator trees.
 
@@ -357,7 +477,7 @@ them as inbound events.
 uv run --no-sync pytest packages/arccli/tests
 ```
 
-- **Tests:** 303
+- **Tests:** 790+ across 87 files
 - **Type check:** `mypy --strict` clean
 - **Lint:** `ruff check` clean
 

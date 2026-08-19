@@ -6,14 +6,52 @@ versioning.
 
 ## [Unreleased]
 
+### Changed
+
+- Documentation refresh — README, CLAUDE.md, and this changelog reconciled with the
+  current source tree (agentic consolidation, confirm-gated dedup, events store, degrade
+  visibility). No code change.
+
+## [0.7.0] — 2026-08-19
+
+Consolidation grows up: the "sleep" pass becomes a bounded reasoning **agent** with signed
+memory tools (falling back to the deterministic pipeline), entity de-dup is confirm-gated,
+procedures evolve non-lossily instead of truncating, and the semantic channel can no longer
+go dark in silence. Ships the `MemoryOperator` read/mutate facade and a first-class events
+store for the user's timeline.
+
 ### Added
 
+- **Agentic consolidation (default engine).** The "sleep" pass is now a bounded arcrun
+  ReAct loop over a signed/authorized/audited memory-tool registry (`arcmemory.tools`,
+  `arcmemory.agent_consolidate`) — it searches before writing, merges, and links with
+  judgment. Degrades cleanly to the deterministic pipeline distiller on
+  breach/timeout/no-model/arcrun-absent (no data loss). arcrun is confined to a single
+  adapter (`react_adapter.py`) so another harness is a sibling adapter, not a refactor.
+  Retrieval stays fast (ambient recall + a `recall` tool).
+- **Confirm-gated entity de-duplication.** Same-type cards are clustered by name-embedding
+  into candidates (wide `entity_merge_candidate_threshold`), then **one LLM call per cluster
+  confirms** which are the same real-world entity before any merge — never auto-merged on
+  embedding alone. Loud `memory.dedup_skipped` audit when no embedder/confirmer is wired.
+  Search-before-write identity resolution (exact → alias → embedding → LLM) and **nightly
+  hygiene** (alias merge + reciprocal backlink repair + workspace dedup) live in
+  `arcmemory.hygiene`.
+- **`MemoryOperator`** (`arcmemory.operator`, COMP-001) — the single typed
+  read/search/mutation facade arcui (and any other consumer) uses instead of touching SQLite
+  directly (REQ-087). Paged episodic listing with created/recency/importance(1–10)/source
+  metadata, entity listing + graph link traversal, ranked search delegating to the production
+  `Retriever`, and honest mutations (`edit_entry`, `set_metadata`, `delete_entry` →
+  `MutationResult` applied|error, never partial) accepting an actor DID for the audit trail.
+- **Events store** (`arcmemory.stores.events`) — a first-class card for what HAPPENED in the
+  *user's* life (a meeting held, a sale closed, a call taken): when it occurred (distinct from
+  when it was recorded), its type, the `[[participants]]` (shared-graph edges, so a person is
+  one hop from their history), and how it came out. The user's timeline, not the agent's.
 - **The semantic channel can no longer go dark silently.** `arcmemory.degrade` warns
   once per process per reason (never once per query) when the vector list is dropped —
   no embedder wired, a wired embedder that cannot serve, or an unloadable `sqlite-vec`.
-  `arc memory status` is the operator readout: it runs a real embed probe, reports the
-  sqlite-vec extension and per-workspace `chunks / embedded` coverage, and exits 1 when
-  the channel is down. The per-query `recall.degraded` audit event is unchanged.
+  `arc memory status` (`arcmemory.status`) is the operator readout: it runs a real embed
+  probe, reports the sqlite-vec extension and per-workspace `chunks / embedded` coverage,
+  and exits 1 when the channel is down. The per-query `recall.degraded` audit event is unchanged.
 - **The embedder is now installed by the deployment command.** `arcmemory[local]` is a
   dependency of the root `arc` package, so a plain `uv sync --all-packages` installs it
   (extras are not installed otherwise — that gap is why the fleet ran without an
@@ -23,48 +61,25 @@ versioning.
   `[modules.memory.config.backend]` plus `ARC_EMBED_API_KEY` in the environment wire
   arcllm's OpenAI-compatible `provider` backend. It previously had no way to carry a
   base_url, so selecting it always failed.
-
-### Fixed
-
-- **A misconfigured embedder no longer crashes recall.** `ArcLLMConfigError` (an unknown
-  backend name, a `provider` backend with no base_url) escaped `ArcLLMEmbedder` and
-  propagated out through `retrieve()`. It is now translated to
-  `EmbeddingUnavailableError`, which the `embed_or_none` funnel collapses to a dropped
-  vector channel — a typo in an agent TOML degrades recall, never breaks it.
-
-- **Agentic consolidation (default engine).** The "sleep" pass is now a bounded arcrun
-  ReAct loop over a signed/authorized/audited memory-tool registry (`arcmemory.tools`) —
-  it searches before writing, merges, and links with judgment. Degrades cleanly to the
-  deterministic pipeline distiller on breach/timeout/no-model/arcrun-absent (no data loss).
-  arcrun is confined to a single adapter (`react_adapter.py`) so another harness is a
-  sibling adapter, not a refactor. Retrieval stays fast (ambient recall + a `recall` tool).
-- **Confirm-gated entity de-duplication.** Same-type cards are clustered by name-embedding
-  into candidates (wide `entity_merge_candidate_threshold`), then **one LLM call per cluster
-  confirms** which are the same real-world entity before any merge — never auto-merged on
-  embedding alone. Loud `memory.dedup_skipped` audit when no embedder/confirmer is wired.
-- **Search-before-write identity resolution** (exact → alias → embedding → LLM) and
-  **nightly hygiene** (alias merge + reciprocal backlink repair + workspace dedup).
 - **`SETUP.md`** — out-of-band setup (the `sentence-transformers` embedder requirement).
 
 ### Changed
 
-- **Distillation learns from the session CONVERSATION only** (`user` + `respond` turns).
-  Tool frames and other operational kinds are filtered deterministically before the LLM
-  call, so the agent's own mechanics never become facts/insights/methods.
+- **Distillation learns from the session CONVERSATION only** (`user` + `respond` turns;
+  `arcmemory.curate`). Tool frames and other operational kinds are filtered deterministically
+  before the LLM call, so the agent's own mechanics never become facts/insights/methods.
 - **Procedures are session-derived methods, not tool-sequence detection.** The deterministic
   `_promote_procedures` (repeated action-sequences → cards) is removed; procedures are
   distilled by the LLM as reusable methods (explicit + implicit) and **evolve in place** as
   steps are added / removed / modified.
+- **`sqlite-vec` is now a base dependency** (was the optional `[vec]` extra). Semantic
+  vector recall (surface + structural channels) works **out of the box** — no
+  `arcmemory[vec]` install step. Load-time guarding is unchanged: if the extension
+  is somehow unavailable, retrieval still degrades to BM25 + graph and never fails.
+  `arcmemory[vec]` is retained as a no-op alias. *(Live-test follow-up — Josh: "full use out of the box".)*
 - Agentic-loop caps raised (turns 8→16, tokens 12k→20k, timeout 120s→180s) so a memory-rich
   agent has room to write, not just read. Day-summary distillation tolerates dict-shaped LLM
   bullets instead of crashing the whole consolidation.
-
-- **`MemoryOperator`** (`arcmemory.operator`, T-702/703, COMP-001) — the single typed
-  read/search/mutation facade arcui (and any other consumer) uses instead of touching SQLite
-  directly (REQ-087). Paged episodic listing with created/recency/importance(1–10)/source
-  metadata, entity listing + graph link traversal, ranked search delegating to the production
-  `Retriever`, and honest mutations (`edit_entry`, `set_metadata`, `delete_entry` →
-  `MutationResult` applied|error, never partial) accepting an actor DID for the audit trail.
 
 ### Fixed
 
@@ -95,14 +110,15 @@ versioning.
   framework. Verified with a fixture hand-written from the exact pre-migration schema (git
   history, not inferred): zero data loss, capture and the `MemoryOperator` facade both work
   post-migration.
-
-### Changed
-
-- **`sqlite-vec` is now a base dependency** (was the optional `[vec]` extra). Semantic
-  vector recall (surface + structural channels) works **out of the box** — no
-  `arcmemory[vec]` install step. Load-time guarding is unchanged: if the extension
-  is somehow unavailable, retrieval still degrades to BM25 + graph and never fails.
-  `arcmemory[vec]` is retained as a no-op alias. *(Live-test follow-up — Josh: "full use out of the box".)*
+- **Fleet-wide consolidation restored** — the sleep pass unwraps a key-repeat/wrapped LLM
+  answer instead of dropping it, and degrades loudly rather than silently no-op'ing.
+- **A misconfigured embedder no longer crashes recall.** `ArcLLMConfigError` (an unknown
+  backend name, a `provider` backend with no base_url) escaped `ArcLLMEmbedder` and
+  propagated out through `retrieve()`. It is now translated to
+  `EmbeddingUnavailableError`, which the `embed_or_none` funnel collapses to a dropped
+  vector channel — a typo in an agent TOML degrades recall, never breaks it.
+- **The raw stream no longer crowds curated memory out of recall**, and the fleet stopped
+  telling every agent it is an executive assistant (stock consolidation prompt fix).
 
 ## [0.6.0] — 2026-07-07
 

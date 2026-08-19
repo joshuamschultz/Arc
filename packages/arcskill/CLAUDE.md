@@ -14,13 +14,18 @@ Depends only on `arctrust` (+ pydantic/yaml). Used from `arcagent` skill modules
 
 ```
 src/arcskill/
-  hub/              # install, verify, scan, lifecycle, dry-run / docker
-  lock.py           # Lockfile
+  hub/              # install, verify, scan, lifecycle, dry-run / docker, MODULE.yaml
+  lock.py           # HubLockFile
   context/          # Stock prompt markdown (shipped in wheel)
-  improver/         # Optional self-improvement (eval gate, suitegen, …)
+  improver/         # Optional self-improvement (SPEC-044/054)
+    mutate / evalgate / guardrails / lifecycle   # code-repair, golden gate, bounds, Curator
+    suitegen / promote / toggles / nudge/        # eval bootstrap: suite-gen, trace promote, toggles, signals
+    seams.py                                     # injected Protocol seams (LLM/sandbox/sign/audit)
 ```
 
 Top-level package exports little; stable surface is `arcskill.hub` and `arcskill.lock`.
+`arcskill.improver` exports `ArcSkillImprover` / `ImproverConfig`; arcagent wires the
+seams through `arcagent.skilladapt` and drives it via the `SkillAdapter` Protocol.
 
 ## Entry points
 

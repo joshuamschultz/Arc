@@ -16,15 +16,20 @@
 
 ## ✨ What is arcui?
 
-`arcui` is the dashboard. Run it once. Point it at your team directory. Watch your fleet work.
+`arcui` is the dashboard. Run it once. Point it at your team directory. Watch your fleet work — and steer it.
 
 It's a Starlette server, backed by `arcstore`'s durable spool + WORM record (the **Observe
-plane**), that renders a real-time UI for LLM calls, tool invocations, costs, and audit
-events read back on demand — agents don't need an opt-in reporter module to show up. You can
-filter by layer (LLM / run / agent / team), by agent DID, or by team. A WebSocket also pushes
-live team-chat messages (`/ws/chat/{agent_id}`).
+plane**), that renders a UI for LLM calls, tool invocations, costs, runs, tasks, and audit
+events read back on demand — agents don't need an opt-in reporter module to show up. It both
+**observes** (read-on-demand REST from the arcstore mirror) and **operates** (operator-gated
+mutations: edit config, tasks, channels, files, prompts; approve gated calls; chat with a
+running agent). It backs `arc ui start`, which also embeds a gateway (web-chat WS + optional
+Slack/Telegram) and the workflow runner.
 
-> 📡 **Reads on demand from the shared arcstore record. Two-token auth (viewer/operator).**
+`arcagent` runs fully headless **without** `arcui` — the dashboard is optional; nothing imports
+it to show up.
+
+> 📡 **Reads on demand from the shared arcstore record. Only `/ws/chat` and `/ws/team` are live sockets. Two-token auth (viewer/operator).**
 
 ---
 
@@ -165,10 +170,17 @@ arc ui tail --viewer-token <t> --group research-team       # filter by team
 
 ```python
 from arcui import (
-    create_app,            # Starlette factory; takes AuthConfig, max_agents, team_root, gateway_config, data_dir, ...
+    create_app,            # Starlette factory (see kwargs below)
     serve,                 # convenience: create_app + uvicorn.run
-    attach_llm,            # connect an arcllm model so traces stream live
+    attach_llm,            # connect an arcllm model so its traces read live
 )
+
+# create_app is keyword-only. Everything defaults to a safe, standalone app:
+#   auth_config, config_controller, agent_info, max_agents=100,
+#   team_root, gateway_config, messaging_service, team_post_forwarder,
+#   team_stream_interval=1.0, data_dir, workspace_dir,
+#   allow_external_task_refs=False,          # ADR-019 tier = stringency
+#   workflow_control_plane, gate_control_plane  # None → workflow routes 503
 ```
 
 ### How agent data reaches the dashboard
@@ -198,20 +210,25 @@ The dashboard surfaces:
 
 ### Pages (path-routed)
 
-The dashboard is a React single-page app with path-based routing. Bookmark a route and the deep-link reopens to it. The navigation mirrors the package boundary — LLM-call data lives under **ArcLLM**, agentic-loop data under **ArcRun**.
+The dashboard is a React single-page app with path-based routing. Bookmark a route and the deep-link reopens to it. The 2027 control-plane redesign wave regrouped the nav around what the operator does — **Work**, **Govern**, **Watch**, **Advanced**, **System** — with the technical package names kept only inside detail views. The screens below are business-first labels over the same read-on-demand data.
 
-| Page | Path | Source |
+| Page (label) | Path | What it shows |
 |------|------|--------|
-| Agents | `/agents` | `/api/team/roster` — total + live count, card grid |
-| Agent Detail | `/agents/:id/:tab` | 9 tabs: Overview · Identity · Runs · LLM · Skills · Tools · Policy · Memory · Files |
-| ArcLLM | `/arcllm` | LLM telemetry — overview charts + live Calls table with raw/structured per-call drawer (`/api/stats`, `/api/traces`) |
-| ArcRun | `/arcrun` | Agentic-loop runs — fleet sessions table + run-replay drawer + live run activity |
-| Messages | `/messages` | Agent chat (`/ws/chat/{id}`) + team channels (`/api/team/channels`) |
-| Knowledge | `/knowledge` | `/api/knowledge/{id}` — context budget, memory, workspace tree, graph |
-| Tasks | `/tasks` | `/api/team/tasks` — across all agents, filter by status |
-| Tools & Skills | `/tools-skills` | `/api/team/tools-skills` — tools matrix + skills directory |
-| Security | `/security` | `/api/team/audit` + policy denials + connection panel |
-| Policy | `/policy` | `/api/team/policy/{bullets,stats}` — fleet-wide ACE bullets |
+| Home | `/home` | Today landing — fleet at a glance, recent activity, open loops |
+| Fleet | `/agents` | `/api/team/roster` — status / current action / signed-today cards |
+| Agent Detail | `/agents/:id/:tab` | Per-agent tabs: Overview · Identity · Sessions · LLM · Skills · Tools · Tasks · Schedules · Policy · Prompts · Connect · Trust · Knowledge · Runs · Inbox |
+| Chat | `/messages` | Slack-style agent chat (`/ws/chat/{id}`), inline HITL approvals, team channels (`/ws/team`) |
+| Tasks | `/tasks` | Mission Control kanban + per-status filters (`/api/team/tasks`) |
+| Approvals | `/approvals` | Pending trifecta / gate approvals with full request context |
+| Pending capabilities | `/gated` | Agent-authored / operator-added skills & tools awaiting review |
+| Rules | `/policy` | `/api/team/policy/{bullets,stats}` — fleet-wide ACE policy bullets |
+| Audit | `/security` | The signed ledger — `/api/team/audit`, policy denials, connection panel |
+| Activity (Run River) | `/arcrun` | Agentic-loop runs — two-pane signed action trace + run-replay drawer + honest run status |
+| Workflows | `/workflows`, `/workflows/:id` | SPEC-061 ArcFlow DAGs — graph, run history, gate resolution (503 when no control plane) |
+| Knowledge | `/knowledge` | Context budget, memory, entities, procedures, workspace tree |
+| Model usage (ArcLLM) | `/arcllm` | LLM telemetry — overview charts + live Calls table with per-call drawer (`/api/stats`, `/api/traces`) |
+| Tools & Skills | `/tools-skills` | Fleet tools matrix + skills directory (durable enumeration) |
+| Connections | `/connections` | Shared connectors + per-agent grants |
 | Settings | `/settings` | arcllm config (PATCH `/api/arcllm-config`), operator-gated |
 
 ### WebSockets
@@ -227,9 +244,9 @@ views read the `arcstore` mirror on demand instead. Two WebSockets remain:
 
 ### Frontend (`web/`)
 
-The frontend is a **React 19 + shadcn/ui + Tailwind v4** SPA (Sage Green theme) under `packages/arcui/web/`. It's built with Vite straight into `src/arcui/static/`, which the Starlette server serves unchanged (`Route("/", index)` + `Mount("/assets")`). The built output is committed, so `pip install` / `arc ui start` need no Node toolchain.
+The frontend is a **React 19 + shadcn/ui + Tailwind v4** SPA under `packages/arcui/web/`, styled in the 2027 control-plane design language — a graphite neutral surface with a sparingly-used emerald accent (OKLCH tokens, full light + dark). It's built with Vite straight into `src/arcui/static/`, which the Starlette server serves unchanged (`Route("/", _index)` + `Mount("/assets")`). The built output is committed, so `pip install` / `arc ui start` need no Node toolchain.
 
-Air-gap-friendly: **no CDN dependency**. Fonts (Plus Jakarta Sans, IBM Plex Mono) are self-hosted via `@fontsource` and bundled by Vite. `sw.js` is a one-time kill-switch service worker that unregisters any previously-installed caching SW (Vite content-hashing handles cache-busting).
+Air-gap-friendly: **no CDN dependency**. Fonts (Hanken Grotesk, Bricolage Grotesque, IBM Plex Mono, Lora) are self-hosted and bundled by Vite. `sw.js` is a one-time kill-switch service worker that unregisters any previously-installed caching SW (Vite content-hashing plus a per-startup `{{ARC_BUILD_ID}}` cache-bust handle staleness).
 
 ```bash
 cd packages/arcui/web

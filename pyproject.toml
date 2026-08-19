@@ -1,9 +1,22 @@
 [project]
 name = "arc"
-version = "0.2.0"
-description = "Arc: Autonomous agent framework"
+version = "0.3.0"
+description = "Arc: a governed runtime for autonomous agents — identity, signing, policy, and audit on every action"
+readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
+authors = [{ name = "Josh Schultz", email = "hello@joshuaschultz.com" }]
+keywords = ["agents", "llm", "autonomous", "runtime", "security", "audit", "federal"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
 dependencies = [
     "arc-agent",
     "arccmd",
@@ -40,6 +53,11 @@ dependencies = [
     "arcgateway[telegram]",
     "croniter>=6.2.2",
 ]
+
+[project.urls]
+Homepage = "https://github.com/joshuamschultz/Arc"
+Repository = "https://github.com/joshuamschultz/Arc"
+Issues = "https://github.com/joshuamschultz/Arc/issues"
 
 [dependency-groups]
 dev = [

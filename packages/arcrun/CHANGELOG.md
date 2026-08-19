@@ -7,17 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Simplification-sweep cleanup (no version bump — internal only, no public API change).
+- Docs refreshed (2026-08-19) to current reality: `run()` capability/system-prompt
+  signature, the five built-in strategies, `run_oneshot`, the `RunHandle` intervention
+  signatures, and the ArcLLM model facade re-export.
+
+## [0.10.0] - 2026-08-19
+
+Records public changes shipped since 0.9.0 (the loop now consumes a `CapabilityProvider`
+rather than a bare tool list, three new strategies, resume + seal), plus the
+simplification-sweep cleanup that had been sitting under an "internal only" note.
+
+### Added
+- **`dynamic` strategy** (`strategies/dynamic.py`) — the model authors a restricted-Python
+  orchestration script executed behind the `dynamic/grammar.py` whitelist + `ScriptHost`
+  boundary; the ad-hoc counterpart to a static ArcFlow graph.
+- **`oneshot` strategy** (`strategies/oneshot.py`) + top-level `run_oneshot(model, *, user, ...)`
+  — a single model call with no tool loop, the cheapest possible run.
+- **`plan_execute` strategy** (`strategies/plan_execute.py`, registered in `STRATEGIES`) —
+  runs a flat list of independent ready items concurrently via the wired dispatcher,
+  submission-order preserved, failures isolated.
+- **CapabilityProvider seam** (`capabilities.py`) — `CapabilityProvider` Protocol
+  (`advertise`/`load`/`invoke`), `StaticProvider` for the fixed-`list[Tool]` zero-config path,
+  and `provider_tools()`. Concrete providers (skills, trust layers) live in the host.
+- **Checkpoint resume** (`checkpoint.py`) — `LoopCheckpoint` + `to_checkpoint`/`apply_checkpoint`;
+  `run()`/`run_async()` gain `resume_from` (fresh-and-frozen registry, tool-set verified,
+  loop re-enters at the saved turn) and `on_checkpoint`. arcrun emits; the host persists.
+- **Run seal** (`dynamic/seal.py`) — `RunSeal`/`SealSigner`/`SealBroken`: an optional Ed25519
+  seal over a run's event chain.
+- **Strategy selection** — `available_strategies()` read-only view; `Strategy.auto_selectable`
+  governs whether the selector may offer a strategy when `allowed_strategies=None`.
 
 ### Changed
+- **BREAKING — `run()`/`run_async()` signature** — the loop now takes a `CapabilityProvider`
+  and a `SystemPrompt` (`run(model, capabilities, system_prompt, task, ...)`) instead of a bare
+  `tools=` list. Wrap a fixed tool list in `StaticProvider([...])`.
+- **BREAKING — `RunHandle` interventions** — `steer`/`follow_up`/`cancel` are now async and
+  each requires a `caller_did` (an audited, attributable interjection); `cancel(caller_did,
+  reason=None)` replaces the old `cancel` event, and `result()` is a method.
+- **Model facade re-export** — arcrun re-exports the ArcLLM model surface (`load_model`,
+  `Model`, `Message`, `ToolCall`, …) so callers reach the model through `import arcrun`.
 - `run()`/`run_async()` forwarding deduped; `verify_allowed_backends_signature` decomposed,
   fail-closed semantics preserved.
 - Ed25519 signature checks in `backends/_verifier.py` now go through `arctrust.verify`
   instead of a hand-rolled PyNaCl call.
-- Docs refreshed (2026-08-19) to current reality: `run()`/`run_async()` take a
-  `CapabilityProvider` + `SystemPrompt` (not a bare `tools=` list), the five built-in
-  strategies (react / code / dynamic / oneshot / plan_execute), `run_oneshot`, the
-  `RunHandle` steer/follow-up/cancel signatures, and the ArcLLM model facade re-export.
 
 ### Removed
 - The write-only `parallel_safe` field on `Tool`/capabilities — `Tool.classification`

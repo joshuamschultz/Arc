@@ -7,12 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-19
+
 ### Added
 
 - **`arcmemory` added to the full-stack install.** Scaffolded agents now default to
   `brain = "arcmemory"`, so the whole-stack meta-package ships the memory substrate — a fresh
   `pip install arcmas` agent has a working Brain (daily-log + episodic index + entity graph) out
   of the box. `arc-agent` keeps arcmemory an optional import (clean layering); arcmas provides it.
+
+### Changed
+
+- **README made honest about the install closure.** The "What's in the Box" table previously
+  listed `arcgateway`, `arcui`, and `arcskill` as installed by `arcmas`. They are **not** in the
+  dependency graph (`arcmas` → `arccmd` + `arcmemory`, and the CLI pulls `arcllm`, `arcrun`,
+  `arc-agent`, `arcbundle`, `arcteam`, plus their transitive `arctrust`/`arcstore`/`arcprompt`).
+  Those three surfaces are now documented as separate installs. Package docstring updated to match.
 
 ## [0.3.0] - 2026-04-26
 

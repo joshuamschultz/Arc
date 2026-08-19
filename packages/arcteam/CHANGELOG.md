@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-19
+
+Two additions land: **ArcFlow** (SPEC-061), a signed workflow-definition layer with a
+deterministic runner, and **channel relevance-triage**, so a channel question is answered by
+the agent that actually holds the answer instead of by everyone or no one.
+
+### Added
+
+- **ArcFlow workflow engine (`workflow/`, SPEC-061)** — a named, semi-permanent, signed graph
+  of nodes (agent / tool / script / router / gate). `models.py` is the typed `workflow.toml`;
+  `validator.py` runs whole-graph static validation; `predicates.py` is a frozen predicate
+  grammar with no `eval` (no calls, no attribute access, no env reads); `resolver.py` binds
+  `$nodes`/`$input` references as typed values, never string-interpolated; `runner.py` is a
+  deterministic frontier runner with budget/state helpers; `store.py`/`stores.py` own canonical
+  hashing, the file manifest, and the operator-pinned signature gate. The load-bearing
+  invariant: **parsing or validating a perfect definition never confers signed status** —
+  only `sign_definition`, which demands an operator private key that never enters an agent
+  process, produces a signature.
+- **`WorkflowControlPlane` (`workflow/control_plane.py`)** — one create / edit / archive /
+  unarchive / purge / run / resolve-gate / cancel code path shared by the CLI, agent tools,
+  and the dashboard, so no surface can diverge on how a workflow is written or run.
+- **Channel relevance-triage** — an agent publishes an `AgentDigest` (`digest.py`) of pointers
+  (title, proper nouns, project tags — never contents) when it files an artifact, so what it
+  holds is findable across the private-memory boundary. `routing.py` ranks those digests
+  against a question with BM25 + dense fusion (Reciprocal Rank Fusion), running lexical-only
+  when a deployment has no embedder rather than failing. Responder selection routes on the
+  published indexes instead of asking every agent, separately, "is this relevant to you?".
+- **Runnable workflow response-target** — a workflow's narration binding is a messaging URI
+  and its run output is delivered there.
+
+### Fixed
+
+- **Channel membership is live, and a bad handle says so** — a channel `@mention` now joins
+  the agent so its reply is not refused for non-membership; an unresolvable handle raises
+  rather than being silently swallowed.
+- **A bare channel name is coerced to `channel://` at the one write choke point**
+  (`normalize_channel`) — a dropdown or older save submitting a bare group name is promoted to
+  `channel://<name>` instead of being stored bare and blowing up `parse_uri` the moment a run
+  tries to narrate.
+- **An unpinned store no longer calls self-signed workflows verified** — signature
+  verification is pinned to the operator key at the composition root.
+
 ## [0.6.0] - 2026-07-12
 
 SPEC-056 Mission Control: arcteam gets a dedicated, signed message type so cross-agent task

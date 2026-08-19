@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-19
+
+A wide operator-surface expansion: memory maintenance, connectors, signed module
+bundles, an install-level runtime version manager, supervised bring-up, an ArcFlow
+CLI, guided Telegram connect, and the `arc tui` viewpoint.
+
 ### Added
 - **`arc memory dedup [--apply] <workspace…>`** — operator maintenance that merges memory cards
   whose slugs diverged before slug canonicalization landed (e.g. `Custom ERP.md` / `custom_erp.md`
@@ -17,9 +23,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a workspace is cleaned directly; otherwise it is treated as a root and searched for nested
   workspaces, so a whole fleet dir cleans in one call. Restart each agent after applying so its
   index rebuilds and stale rows drop.
+- **`arc memory status [<workspace…>]`** — reports whether the semantic (vector) channel of hybrid
+  recall is live, or degraded to BM25 + graph (the degrade is silent to the *agent*, never to the
+  *operator*). Probes the real embedder seam and exits non-zero when the channel is down, so a
+  deploy check can gate on it.
 - **Multiline input in `arc agent chat`** — in a TTY, Enter submits and Shift+Enter / Alt+Enter
   insert a newline (prompt_toolkit multiline session), so multi-paragraph prompts compose without
   premature submission. Non-interactive stdin (pipes) still reads a line at a time.
+- **`arc agent memory`** — a straight database view of an agent's stored memory (`--limit`, `--json`).
+- **`arc connector`** — connect this deployment to an external system, and manage it (`add`, `auth`,
+  `list`, `probe`, `remove`). Connections are deployment-wide; grants are per-agent; deny by default.
+- **`arc gateway connect-telegram --agent <dir>`** — guided, non-technical Telegram pairing: paste
+  the @BotFather token and your numeric user ID and one bot is bound to one agent. The token is
+  captured with a hidden prompt and written only to the env file (`0600`) — never echoed, logged,
+  placed in config, or routed through an agent chat/LLM.
+- **`arc gateway adapter list` / `install <name>`** — list and pip/uv-install official gateway
+  adapter packages (`telegram`, `slack`, `mattermost`); the gateway discovers them via entry point.
+- **`arc module`** — the operator surface for signed module bundles (SPEC-066): `list`, `bundle`,
+  `install`, `remove`.
+- **`arc trust`** — operator approval for gated agent capabilities (`list`, `approve`, `disapprove`);
+  `approve` signs rather than pinning a hash.
+- **`arc install [--team-root <dir>]`** — install every module each agent's config enables, then
+  verify the checkout is ready to start.
+- **`arc up [--check] [--team-root <dir>]`** — one supervised bring-up of the whole stack: preflight,
+  modules, verify, start.
+- **`arc runtime <list | activate <version>>`** — install-level version control for the framework
+  itself; `activate` flips the `current` symlink for an atomic update or rollback.
+- **`arc workflow`** — the ArcFlow operator CLI (SPEC-061): `list`, `show`, `create`, `edit`,
+  `archive`, `unarchive`, `purge`, `run`, `cancel`, `sign`, `verify`.
+- **`arc prompt`** — view + edit/overwrite editable system prompts across all Arc packages
+  (`list`, `show`, `diff`, `edit`, `reset`).
+- **`arc approve`** — mechanical operator approval for blocked agent actions (SPEC-035): `list`,
+  `<id>`, `--deny`.
+- **`arc stop`** — operator kill switch to stop a running agent run by run id or session, no SSH.
+- **`arc keys`** — set (hidden prompt), list, and remove the API keys Arc's LLM providers read.
+- **`arc user`** — manage the accounts that can sign in (`add`, `list`, `passwd`, `role`, `telegram`).
+- **`arc store`** — manual / air-gapped control over the operational store (`init`, `status`,
+  `verify`, `backfill`).
+- **`arc identity <init|show>`** — manage the standalone signing authority for direct arcrun/arcllm
+  runs and gateway pairing approvals.
+- **`arc tui`** — soft-registered by `arctui` (when installed): a viewpoint that attaches to a running
+  gateway or spawns `arc ui start` and attaches, without constructing a second `ArcAgent` (SPEC-058).
+- **`--force` on `arc agent build`** — regenerate an existing `arcagent.toml` (DID and name preserved).
+- **`--tier` on `arc agent create` / `build`** — set the deployment tier for every subsystem
+  (`personal` default).
+
+### Changed
+- **`arc gateway pair`/`connect-telegram` and every operator action** resolve through the single
+  `arctrust.paths` resolver and the deployment operator key, consistent with the `~/.arc` (install)
+  vs `~/arc` (operator fleet) lifecycle split.
 
 ## [0.7.0] - 2026-07-12
 

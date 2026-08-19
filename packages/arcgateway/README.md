@@ -51,20 +51,30 @@ For end-users, install the meta package:
 pip install arcmas              # arcgateway is included in the meta package
 ```
 
-For Arc monorepo development, install all sibling packages in editable mode together — installing only `arcgateway` leaves `arcagent`, `arcllm`, `arcrun`, `arccli` un-linked and import errors surface as cryptic "module not found" failures during test runs:
+Remote platforms are **in-tree adapter folders** (Telegram, Slack, Mattermost),
+not separate packages. What is optional is the third-party client each needs, so
+each ships as an **extra**:
+
+```bash
+pip install 'arcgateway[telegram]'      # adds python-telegram-bot
+pip install 'arcgateway[slack]'         # adds slack-bolt / slack-sdk
+pip install 'arcgateway[mattermost]'    # adds aiohttp
+```
+
+Without its extra, a platform is skipped at personal/enterprise tier (reason
+recorded) and refuses startup at federal tier.
+
+For Arc monorepo development, install the sibling packages in editable mode together — installing only `arcgateway` leaves `arcagent`, `arcllm`, `arcrun`, `arccli` un-linked and import errors surface as cryptic "module not found" failures during test runs:
 
 ```bash
 uv pip install -e packages/arcgateway \
-               -e packages/arcgateway-telegram \
-               -e packages/arcgateway-slack \
-               -e packages/arcgateway-mattermost \
                -e packages/arccli \
                -e packages/arcagent \
                -e packages/arcllm \
                -e packages/arcrun
 ```
 
-`make install` runs this canonical command from the repo root.
+`make install` runs the canonical command from the repo root.
 
 ---
 
@@ -81,7 +91,7 @@ await runner.run()              # blocks; SIGINT/SIGTERM handled gracefully
 ```
 
 Configure platform adapters in `gateway.toml` (enable a block **and** install
-its extension package):
+its extra):
 
 ```toml
 [gateway]
@@ -90,17 +100,30 @@ agent_did = "did:arc:agent:default"
 [security]
 require_pairing = true
 
-# pip install arcgateway-telegram
+# pip install 'arcgateway[telegram]'
 [platforms.telegram]
 enabled = true
 token_env = "TELEGRAM_BOT_TOKEN"
 allowed_user_ids = [123456789]
 
-# pip install arcgateway-slack
+# pip install 'arcgateway[slack]'
 [platforms.slack]
 enabled = false
 bot_token_env = "SLACK_BOT_TOKEN"
 app_token_env = "SLACK_APP_TOKEN"
+```
+
+**Multi-bot (one bot per agent):** name the block freely and set `platform =`
+to pick the adapter folder. `arc gateway connect-telegram` (or the arcui
+settings panel) does this for you — it stores the bot token in the gateway's
+env file (`0600`, **never** the config or an agent chat) and writes the block:
+
+```toml
+[platforms.olivia_telegram]
+enabled = true
+platform = "telegram"
+agent_did = "did:arc:agent:olivia"
+token_env = "TELEGRAM_BOT_TOKEN_OLIVIA"
 ```
 
 ---
@@ -173,13 +196,17 @@ from arcgateway import (
     SessionRouter,           # per-(user, agent) session routing
     build_session_key,       # canonical (user_hash, agent_did) tuple
 
-    InboundEvent,            # normalized event from any platform
+    InboundEvent,            # normalized event from any surface (ordered parts + flattened text)
     Delta,                   # streamed response chunk
 
     Executor,                # protocol
     AsyncioExecutor,         # in-process implementation
 
     DeliveryTarget,          # parsed "platform:chat_id[:thread_id]" address
+
+    # SPEC-065 — the part vocabulary + inbound-media custody
+    Part, TextPart, MediaPart, flatten_text,
+    MediaStore, StoredMedia, MediaTooLargeError,
 )
 
 # SPEC-022 — agent data plane (read-only)
@@ -218,48 +245,62 @@ Audit events emitted on every fs op: `gateway.fs.read`, `gateway.fs.tree`, `gate
 
 ---
 
-## 🔌 Platform Adapters — a plugin system
+## 🔌 Platform Adapters — the filesystem is the registry
 
-The gateway core contains **zero** platform-specific code. The only built-in
-adapter is `web` (the in-process browser chat surface arcui hosts). Every remote
-platform ships as a **separate extension package** that registers an
-`AdapterPlugin` under the `arcgateway.adapters` entry-point group:
+The gateway core names **zero** platforms. A platform is a **folder**:
+`src/arcgateway/adapters/<name>/` exporting a module-level
+`PLATFORM = AdapterSpec(...)` (SPEC-065 REQ-308). The registry finds it by
+directory scan — adding a platform is adding a folder, deleting the folder
+deletes the platform, and `registry.py` is never edited either way.
 
-| Platform | Package | Bot Token Source |
-|---|---|---|
-| **Telegram** | [`arcgateway-telegram`](../arcgateway-telegram) | `TELEGRAM_BOT_TOKEN` env or vault |
-| **Slack** | [`arcgateway-slack`](../arcgateway-slack) | `SLACK_BOT_TOKEN` / `SLACK_APP_TOKEN` |
-| **Mattermost** | [`arcgateway-mattermost`](../arcgateway-mattermost) | `MM_BOT_TOKEN` env or vault |
+The one built-in that always ships is `web` (the in-process browser chat surface
+arcui hosts — no token, no client library). The remote platforms are in-tree
+folders whose third-party client is an optional extra:
 
-Install a platform from the CLI (pip/uv under the hood, official names only):
+| Platform | Folder | Extra | Bot Token Source |
+|---|---|---|---|
+| **web** | `adapters/web.py` | — (always on) | none |
+| **Telegram** | `adapters/telegram/` | `arcgateway[telegram]` | `TELEGRAM_BOT_TOKEN` env or vault |
+| **Slack** | `adapters/slack/` | `arcgateway[slack]` | `SLACK_BOT_TOKEN` / `SLACK_APP_TOKEN` |
+| **Mattermost** | `adapters/mattermost/` | `arcgateway[mattermost]` | `MM_BOT_TOKEN` env or vault |
+
+Install a platform's client from the CLI (uv/pip under the hood, official names only):
 
 ```bash
-arc gateway adapter list                # show official adapters + install status
-arc gateway adapter install telegram    # installs arcgateway-telegram
+arc gateway adapter list                # official adapters + install status
+arc gateway adapter install telegram    # installs the arcgateway[telegram] extra
 # standalone daemon equivalent:
 arcgateway adapter install telegram
 ```
 
-…or install the package directly:
+…or install the extra directly:
 
 ```bash
-pip install arcgateway arcgateway-telegram     # install only the platforms you need
+pip install 'arcgateway[telegram]'      # only the clients you need
 ```
 
 At startup `arcgateway.adapters.registry`:
-1. **Discovers** every installed plugin via `importlib.metadata.entry_points`.
-2. **Authorizes** it — validates the name and applies a tier-aware allowlist
-   (official plugins always allowed; unofficial ones load with an audit warning
-   at personal/enterprise and are **blocked** at federal).
+1. **Discovers** every platform folder that exports a `PLATFORM` descriptor. An
+   import failure is caught, audited, and skipped — one broken folder can't take
+   down the daemon.
+2. **Authorizes** it — validates the name (regex; no path traversal/injection)
+   and applies a tier-aware allowlist (official platforms always allowed;
+   unofficial ones load with an audit warning at personal/enterprise and are
+   **blocked** at federal).
 3. **Builds** an adapter for each enabled `[platforms.<name>]` block, gating on
-   credential presence (a missing token skips at personal, fails closed at federal).
+   credential/dependency presence (a missing token or extra skips at personal,
+   fails closed at federal).
 4. **Audits** every load / skip / block (`gateway.adapter.*`).
 
-**Writing a new platform** = one package: an adapter class implementing
-`BasePlatformAdapter` (`connect` / `disconnect` / `send`), a Pydantic config
-model, and a `PLUGIN = AdapterPlugin(name, build)` registered via the entry
-point. No changes to the gateway core. See `arcgateway-telegram` as the
-reference implementation.
+**Writing a new platform** = one folder: an adapter class satisfying the
+`BasePlatformAdapter` protocol (`connect` / `disconnect` / `to_parts` / `send`),
+a Pydantic config model, and `PLATFORM = AdapterSpec(name, requires, supports, build)`.
+Add its client to `[project.optional-dependencies]` and import it **lazily inside
+`connect()`** — never at module import — so a gateway without the extra still
+starts. No changes to the gateway core. An adapter does exactly three things
+(lifecycle, `to_parts`, `send`); download, naming, size ceilings, audit, session
+identity, pairing, and message splitting all belong to the gateway (one
+implementation each). See `adapters/telegram/` as the reference.
 
 ---
 

@@ -17,6 +17,10 @@ Imported by `arcgateway`, `arccli`, `arcui`; arcagent bootstraps via hooks witho
 ```
 src/arcteam/
   team.py / messenger.py / registry.py / audit.py / storage.py / files.py / crypto.py
+  types.py / config.py / nats_server.py
+  mentions.py         # @handle extraction + resolution (routes + joins on resolve)
+  digest.py           # AgentDigest — pointers an agent publishes (never contents)
+  routing.py          # BM25 + dense RRF ranking of digests → who should answer
   backends/           # NATS, …
   memory/             # Team memory service
   workflow/           # ArcFlow (SPEC-061)
@@ -35,6 +39,7 @@ src/arcteam/
 |---------|---------|-------------|
 | Team formation / roster / channels | Yes | Individual agent lifecycle |
 | Inter-agent messaging (wake + narration) | Yes | Carrying work in message bodies (handoffs = task rows) |
+| Relevance-triage: agents publish digests, a ranker picks the responder | Yes | Asking each agent "is this relevant to you?" (a blind self-query — ADR-032) |
 | Workflow definition + deterministic runner | Yes | LLM sequencing / orchestrator agent — ad-hoc, disposable orchestration lives in `arcrun`'s `dynamic` strategy, not here |
 | Task/run substrate | Uses `arcstore` | Reimplementing a third DAG engine |
 | Signing workflows | Definition store + operator pin | Agent self-signing as “verified” |

@@ -14,22 +14,32 @@ Sits **below** `arcagent`. Depends on `arctrust`, `arcllm`, `arcprompt`, `arcsto
 
 ```
 src/arcmemory/
-  brain.py              # ArcMemoryBrain, build_brain
-  capture.py            # FastCapture
-  retrieve.py           # Retriever
-  consolidate.py        # Consolidator
-  stores/               # episodic / semantic / procedural / insight / events
-  index/                # graph / surface / structural
-  arcllm_seam.py        # Embedder / distiller seams
+  brain.py              # ArcMemoryBrain (the Brain port)
+  provider.py           # build_brain — arcagent's generic seam entrypoint
+  capture.py            # FastCapture (zero-LLM fast path)
+  retrieve.py           # Retriever (single-pass, gated recall)
+  consolidate.py        # Consolidator (deterministic pipeline "sleep")
+  agent_consolidate.py  # Agentic "sleep" — bounded ReAct loop (default engine)
+  tools.py              # Signed/authorized/audited memory-tool registry
   react_adapter.py      # Sole arcrun touchpoint
-  operator.py
-  security.py           # ACL / classification gating
-  context/              # Stock prompts
+  distill.py            # Distiller seam (facts / insights / procedures / dedup)
+  arcllm_seam.py        # ArcLLMEmbedder / ArcLLMDistiller (arcllm-backed seams)
+  hygiene.py            # Nightly dedup / backlink repair / alias merge
+  curate.py             # Deterministic conversation-only input filter
+  operator.py           # MemoryOperator — typed read/search/mutate facade
+  stores/               # episodic / semantic / procedural / insight / events / daily
+  index/                # graph / surface / structural / rebuild / source
+  db.py                 # MemoryDB — per-agent SQLite (self-migrating)
+  security.py           # ACL / no-read-up classification gating
+  acl.py                # Session ACL / cross-session visibility
+  degrade.py, status.py # Loud semantic-degrade + operator status readout
+  fusion.py, tagging.py, mdfile.py, slug.py, types.py, config.py
+  context/              # Stock prompts (distill / consolidate)
 ```
 
 ## Entry points
 
-`ArcMemoryBrain`, `build_brain`, store types, `FastCapture`, `Retriever`, `Consolidator`, indexes, `ArcLLMEmbedder`/`ArcLLMDistiller`, security helpers, `semantic_status` / `semantic_degraded`.
+`ArcMemoryBrain`, `build_brain`, store types, `FastCapture`, `Retriever`, `Consolidator`, `run_agentic_consolidation` / `build_memory_tools`, `MemoryOperator`, indexes, `ArcLLMEmbedder`/`ArcLLMDistiller`, hygiene helpers, security helpers, `semantic_status` / `semantic_degraded`.
 
 ## Package rules
 

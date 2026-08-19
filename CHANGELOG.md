@@ -7,32 +7,101 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### SPEC-056 Mission Control — task-lifecycle, dispatch + coordination hardening
+## [0.3.0] - 2026-08-19
 
-The task system grows from a shared list into a self-driving execution engine, and coordination
-signals move onto the team bus. See each package `CHANGELOG.md` for detail.
+The runtime hardens into a governed control plane: signed module bundles, signed workflow DAGs,
+governed connectors, honest run/task telemetry, and a full operator UI — plus a fleet-wide
+documentation and version reconciliation so every package README, CLAUDE.md, and CHANGELOG matches
+its shipped code.
 
-- **arcstore** — additive `Task` lifecycle fields (timing, retry, review, classification) +
-  race-safe `TaskStore` transitions (`finish`/`requeue`/`dead_letter`/`request_cancel`/`route`/
-  `approve_review`/`reject_review`/`edit`/`delete`) and decomposition-DAG support.
-- **arcagent** — opt-in task-dispatch loop, lifecycle reliability engine (retry/backoff, timeout,
-  stuck-reclaim, cancel, dead-letter), decomposition + dependency DAG, auto-routing, opt-in review
-  gate, operator notifications; user messages captured into memory; background jobs (policy eval,
-  daily-notes, distillation) gated to a turn cadence; owner's-own-channel exempt from the
-  Lethal-Trifecta gate.
-- **arcmemory** — distillation-input curation (drop mechanical tool plumbing, keep substantive
-  content); entity dedup by canonical slug; consolidation gated to an interval; oversized distill
-  input chunked.
-- **arccli** — `arc memory dedup [--apply]` (merge legacy duplicate memory files); multiline input
-  in `arc agent chat` (Enter sends, Shift+Enter newline).
-- **arcgateway** — cross-surface slash-command framework (`/new`, `/reset`, `/help`) with session
-  epoch rotation; Slack slash-command intake.
-- **arcui** — Mission Control board UX (status transitions, cancel/approve/reject, delete),
-  editable + human-readable agent schedules, New-session button, markdown-rendered replies,
-  multiline composer.
+### Package versions
 
-Documentation: `packages/arcagent/docs/tasks-module.md` (full task-system reference),
-`docs/config-reference.md` (consolidated config knobs).
+| Package | Change |
+|---------|--------|
+| arc (root) | 0.2.0 → 0.3.0 |
+| arcagent | 0.16.0 → 0.17.0 |
+| arcllm | 0.7.0 → 0.8.0 |
+| arcrun | 0.9.0 → 0.10.0 |
+| arctrust | 0.9.0 → 0.10.0 |
+| arcstore | 0.2.0 → 0.3.0 |
+| arcteam | 0.6.0 → 0.7.0 |
+| arcmemory | 0.6.0 → 0.7.0 |
+| arcgateway | 0.2.0 → 0.3.0 |
+| arcui | 0.3.0 → 0.4.0 |
+| arccli (arccmd) | 0.7.0 → 0.8.0 |
+| arcskill | 0.2.0 → 0.3.0 |
+| arcmas | 0.3.0 → 0.4.0 |
+| arctui | 0.1.0 → 0.2.0 |
+| arcbundle | 0.9.0 (first changelog) |
+| arcprompt | 0.1.0 (release documented) |
+| arcmodel | 0.0.2 (stub, unchanged) |
+
+### Added
+
+- **Signed module bundles + capability trust (SPEC-066)** — new `arcbundle` package for
+  provable-absence signed distribution units; `arc module` command set with bundle audit and
+  capability copy; `arc trust approve` signs through the capability seam instead of pinning a hash;
+  a VERIFIED trust class; the arcui Trust panel shows a capability's source before approve unlocks.
+- **ArcFlow signed workflows (SPEC-061)** — named `workflow.toml` DAGs (`arcteam` engine +
+  control plane) instantiating onto the task substrate, with `eval`-free predicates and a
+  draft-vs-signed invariant; a runnable workflow response-target across surfaces.
+- **Governed connectors (D-588)** — vendor-CLI-first connector bundles (1Password on `op`, Jira on
+  `acli`) so Arc holds no third-party token; deployment-wide connections, per-agent grants,
+  deny-by-default.
+- **arcrun strategies** — `dynamic` (model writes its own restricted-Python orchestration),
+  `oneshot`, and `plan_execute` strategies join `react`; always-on routing (`load_model` always
+  returns a router); `CapabilityProvider`/`StaticProvider` seam and `LoopCheckpoint` resume.
+- **Editable system prompts (arcprompt, SPEC-047)** — signed, overlay-able prompts pinned to the
+  operator key.
+- **arctui attach-or-serve (SPEC-058)** — the terminal client is a viewpoint that attaches to the
+  gateway over `/ws/chat` (or spawns `arc ui start`), never owning an ArcAgent.
+- **arcui 2027 control-plane redesign** — business-first navigation and a full operator surface:
+  Fleet cards, Run River activity + signed action trace, the Audit signed ledger, Mission Control
+  board, Slack-style chat with inline HITL approval, agent-detail Trust/Knowledge/Runs tabs, and an
+  AI-native component library.
+- **arcmemory agentic memory** — agentic consolidation (bounded arcrun ReAct pass with signed
+  memory tools), procedure folding, entity corroboration with currency discounting, LLM-confirmed
+  dedup, and a recall-provenance events store.
+- **arcteam coordination** — agents publish what they hold and a ranker reads it for responder
+  selection; channel relevance-triage gate (fails closed); DID registry + pull-cursor mailboxes.
+- **Live module management (ADR-034)** — enable / disable / upgrade modules with no restart; a
+  module reaches a deployment as a signed bundle under `~/.arc/modules/`, never in the wheel.
+- **Deploy** — deterministic one-command VM deploy for DGX + Azure; `arc install` / `arc up`
+  supervised bring-up; a verify-turn deploy check that actually sends a message.
+- **SPEC-056 Mission Control hardening** — task-dispatch loop, reliability engine
+  (retry/backoff, timeout, stuck-reclaim, cancel, dead-letter), decomposition + dependency DAG,
+  auto-routing, opt-in review gate, operator notifications; `arc memory dedup [--apply]` and
+  multiline `arc agent chat`; the cross-surface slash-command framework (`/new`, `/reset`, `/help`)
+  with session-epoch rotation and Slack slash intake.
+
+### Changed
+
+- Three-file agent config split (`arcagent.toml` / `arcllm.toml` / `arcrun.toml` sibling chains).
+- Gateway platform adapters (Telegram/Slack) are in-tree folders discovered by an `AdapterSpec`
+  descriptor (SPEC-065), not separate packages; bot tokens live in env (0600), never config or LLM.
+- `~/.arc` (install) vs `~/arc` (operator) lifecycle split; `arctrust.paths` is the single
+  arc-home resolver.
+- **BREAKING (arcrun):** `run()`/`run_async()` take `capabilities` + `system_prompt` instead of
+  `tools=`; `RunHandle.steer/follow_up/cancel` are async and require `caller_did`.
+
+### Fixed
+
+- Honest run/task status — a failed tool step no longer reports the whole run as errored; every run
+  emits a terminal (no dangling/stale runs); named trace steps, run feed, and operator names.
+- Channel answering — cold-start digest-router and membership asymmetry no longer leave channel
+  questions unanswered; a bare channel name coerces to `channel://` on save.
+- Trace visibility — swallowed send failures and memory recalls now surface as tool_events; a run's
+  sub-agent spawns show in its own trace.
+- `plan_execute` strategy registered (was defined but unwired); deploy prunes old runtimes so a
+  box's disk cannot fill; fleet-wide memory consolidation restored.
+
+### Docs / hygiene
+
+- Fleet-wide documentation reconciliation: every package README, CLAUDE.md, and CHANGELOG rewritten
+  to match shipped code; stale `.egg-info` build artifacts removed; per-package version anchors
+  (`pyproject` / `__init__.__version__` / CHANGELOG top) brought into sync; dead ruff ignores and a
+  missing `arctui → arc-agent` dependency edge fixed. Root `[project]` metadata completed
+  (readme, authors, keywords, classifiers, urls).
 
 ## [2026-07-12] — SPEC-056 Mission Control multi-agent task system
 

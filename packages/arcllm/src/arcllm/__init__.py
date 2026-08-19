@@ -1,6 +1,6 @@
 """ArcLLM — Unified LLM abstraction layer for autonomous agents."""
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 
 import importlib
 from typing import Any

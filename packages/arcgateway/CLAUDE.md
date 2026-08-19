@@ -15,19 +15,24 @@ Long-running daemon that makes ArcAgents reachable from chat platforms (and web)
 ```
 src/arcgateway/
   runner.py / session.py / executor*.py / cli.py / config.py
+  audit.py            # ADR-019 — single arctrust emission point; configure_sink() at startup
   parts.py            # SPEC-065 COMP-001 — TextPart / MediaPart / the envelope's vocabulary
   media_store.py      # SPEC-065 COMP-002 — where an artefact lands, and its audit
   media_custody.py    # SPEC-065 COMP-002 — fetch/ceiling/refusal, and what the sender is told
-  pairing*.py / delivery.py / connect.py / fleet.py / bootstrap.py
+  pairing*.py / session_pairing.py / delivery.py / channel_delivery.py
+  connect.py          # bind one Telegram bot to one agent (token → env 0600, never config/LLM)
+  session_epoch.py    # /new session-rotation generation store (db-backed, survives restart)
+  fleet.py / bootstrap.py / broker_bootstrap.py / identity.py / stream_bridge.py
   fs_reader.py / fs_watcher.py / team_roster.py / agent_config.py   # SPEC-022 data plane
   policy_parser.py / file_events.py
   adapters/
     base.py           # the whole adapter contract + InboundDraft / PendingMedia
     _media.py         # shared media plumbing: kind_for / describe / bounded read
-    registry.py       # the directory scan; _text.py — the one message splitter
+    registry.py       # the directory scan (PLATFORM descriptor); _text.py — the one message splitter
+    _backoff.py / _reconnect.py       # shared adapter resilience helpers
     telegram/ slack/ mattermost/     # in-tree platforms, each with a PLATFORM descriptor
     web.py / in_process.py / install.py
-  commands/           # Slash commands
+  commands/           # cross-surface slash commands (registry + /new, /reset, /help)
   workflow_runner_host.py   # SPEC-061 RunnerHost — agent side of fleet, not arcui
 ```
 
@@ -41,7 +46,8 @@ Console script: `arcgateway` → `arcgateway.cli:main`.
 
 - **No pairing → no agent response.** User IDs hashed in allowlists.
 - Use `import arcagent` and its public facade; do not couple gateway code to ArcAgent's internal layout.
-- **A platform is a folder.** `adapters/<name>/` exporting `PLATFORM = AdapterSpec(...)` is discovered by scan; deleting the folder deletes the platform, and `registry.py` never learns either name.
+- **A platform is a folder.** `adapters/<name>/` exporting `PLATFORM = AdapterSpec(...)` is discovered by scan; deleting the folder deletes the platform, and `registry.py` never learns either name. `web` is the only always-on core adapter; remote clients ship as extras (`arcgateway[telegram|slack|mattermost]`).
+- **Bot tokens are credentials — never through config or the LLM (LLM07).** `connect.py` stores the token in the gateway's env file (`0600`) under a per-agent var and writes the `[platforms.<slug>]` block; a token must never be echoed, logged, or routed through an agent chat. Multi-bot = one `[platforms.*]` block per agent with `platform = "telegram"` + its own `agent_did`.
 - **An adapter does three things and no more** (REQ-310): lifecycle, `to_parts(payload)`, `send(target, parts)`. Download, naming, size ceilings, audit, session identity, pairing and splitting belong to the gateway — one implementation each, so a fourth platform cannot get them wrong. `tests/adapters/test_adapter_contract_surface.py` reads adapter sources for those responsibilities and fails on a second implementation.
 - **Media travels as a reference, never bytes.** An adapter hands up `PendingMedia` (what it is + how to fetch it); `MediaCustodian` fetches within the ceiling, `MediaStore` writes and audits, and the agent gets a `MediaPart` pointing into its workspace.
 - Federal: block unofficial platforms / missing credentials as configured.

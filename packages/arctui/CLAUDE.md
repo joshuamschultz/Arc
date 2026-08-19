@@ -14,13 +14,18 @@ Textual TUI for chatting with / monitoring a **served** agent. Viewpoint only �
 
 ```
 src/arctui/
-  app.py              # ArcTUI
-  transcript.py / activity.py / input_composer.py
-  entry.py            # Registers arc tui into COMMAND_REGISTRY
-  serve.py / gateway_client.py / transport.py
+  entry.py            # `arc tui` handler: resolve agent + gateway, open transport, run TUI
+  serve.py            # Attach-or-serve resolver — ensure_gateway / Endpoint / viewer token
+  gateway_client.py   # GatewayChatClient — WS ChatTransport onto /ws/chat/{agent_id}
+  transport.py        # ChatTransport Protocol + TurnEvent (the render seam)
+  roster.py           # resolve_agent / list_agents (arcgateway.team_roster discovery)
+  trust.py            # Folder-trust — append launch dir to agent allowed_paths
+  app.py              # ArcTUI (Textual App)
+  transcript.py / activity.py / input_composer.py / command_completer.py
   connect.py          # Connector calls for /connect — no Textual in it
   connect_screen.py   # ConnectScreen / ConnectionsScreen modals
-  roster.py / trust.py / theme.py / command_completer.py
+  prompts.py          # Approval / clarify / secret-input modals
+  theme.py            # Palette tokens + TCSS
   tests/              # Colocated unit + smoke (no top-level packages/arctui/tests/)
 ```
 
@@ -30,9 +35,9 @@ src/arctui/
 
 ## Package rules
 
-- SPEC-058: attach/spawn gateway viewpoint — **do not construct `ArcAgent`** here (avoids second WORM lock / dual ownership).
-- Graceful no-agent mode if the target agent is missing.
-- Talk to gateway/chat transport; don't own the agent process.
+- SPEC-058: attach-or-serve gateway viewpoint — **do not construct `ArcAgent`** here (avoids a second WORM lock / dual ownership). `serve.ensure_gateway` probes `/api/health`: attach to a running gateway or spawn a detached `arc ui start --no-browser`, then attach over `/ws/chat/{agent_id}`.
+- Graceful no-agent mode if the agent/gateway can't be resolved (empty/ambiguous roster, unreachable gateway).
+- Talk to the gateway through the `ChatTransport` seam; render `TurnEvent`s. Don't own the agent process, and don't couple render code to the concrete client.
 - D-586: `/connect` is handled in the TUI, never routed to the arccli registry —
   that handler prompts with `getpass` against the terminal Textual owns. The
   install sequence itself stays in `arcagent.modules.connectors.install`.

@@ -180,18 +180,33 @@ from arcskill.hub import (
     # Lifecycle
     install,
     uninstall,
+    update,
     quarantine_skill,
     check_revocation_on_boot,
+    should_unload,
+    start_crl_refresh_task,
 
     # Scan
     scan,
     ScanResult,
+    Finding,
+
+    # Verify / dry-run
+    verify_bundle,
+    VerifyResult,
+    run_dry_run,
+    DryRunResult,
 
     # Config
     HubConfig,
     HubPolicy,
     TierPolicy,
     SkillSource,
+    RevocationConfig,
+    FindingsAllowed,
+
+    # Result
+    InstallResult,
 
     # Errors
     HubDisabled,
@@ -321,6 +336,7 @@ Federal tier additionally requires:
 - ✅ Sandboxed dry-run
 - ✅ Skill self-improvement (`arcskill.improver`, SPEC-044) — code-repair mutation, golden-task gate, bounded edits, Curator lifecycle
 - ✅ Eval harness for golden-task quality scoring (`arcskill.improver.evalgate`, sandboxed via `hub.dry_run`)
+- ✅ Eval bootstrap (SPEC-054) — golden-suite generation from a skill's own prose (`suitegen`), verified-trace promotion into replay anchors (`promote`), layered toggles (`toggles`), and turn-end nudge signals (`nudge`)
 
 **Wave-3 (deferred):**
 

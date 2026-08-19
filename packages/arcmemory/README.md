@@ -368,7 +368,7 @@ core.
 
 ## Honest status
 
-`0.6.0`, **alpha.** All SPEC-041 phases have landed (zero-LLM capture, surface +
+`0.7.0`, **alpha.** All SPEC-041 phases have landed (zero-LLM capture, surface +
 structural / analogical recall, the agentic sleep pass with signed memory tools +
 pipeline fallback, nightly hygiene, search-before-write identity resolution, no-read-up
 recall), and the subsystem is fully tested (adversarial fail-closed security tests

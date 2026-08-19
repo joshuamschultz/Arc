@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "arctui"
-version = "0.1.0"
+version = "0.2.0"
 description = "Arc terminal UI — Textual-based chat transcript, tool-activity panel, and slash-command REPL"
 requires-python = ">=3.11"
 license = "Apache-2.0"
@@ -21,6 +21,9 @@ dependencies = [
     # gateway_client uses websockets.asyncio.client (the attach transport) — added in 13.0.
     "websockets>=13",
     "arccmd>=0.4",
+    # app.py imports arcagent directly (allowed downward dep) — declare the edge
+    # rather than lean on arccmd pulling arc-agent transitively.
+    "arc-agent",
 ]
 
 [project.urls]

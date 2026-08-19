@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-19
+
+SPEC-054 eval bootstrap — the improver stops waiting for a hand-written golden suite and
+grows one. New generation, promotion, and toggle machinery feeds the SPEC-044 acceptance
+gate; all of it lives inside `arcskill.improver` and stays provider-free behind injected
+seams.
+
+### Added
+- **Golden-suite generation** (`improver.suitegen.SuiteGenerator`): one bounded LLM call
+  proposes a pytest module from the skill's own Contract/Examples/Validation prose, then
+  each candidate walks an adoption cascade — per-candidate `ast.parse`, anti-tautology
+  reject, sandboxed flake runs, and a negative-control mutation probe — so only
+  oracle-grounded, non-tautological anchors enter `evals/test_golden_generated.py`
+  (add-only, `@generated`-marked). Failures quarantine as improvement targets.
+- **Verified-trace promotion** (`improver.promote`): evaluator-labeled successful runtime
+  traces become deterministic replay anchors under `evals/promoted/` (volatile
+  timestamps/UUIDs canonicalized); observed failures become quarantine repro files;
+  `retire_stale` retires version-mismatched anchors visibly (never a silent skip).
+- **Layered toggles** (`improver.toggles`): adapter-master / global `suite.autogen` /
+  per-skill frontmatter switches resolve once per pass into an immutable snapshot;
+  deny-wins.
+- **Turn-end nudge signals** (`improver.nudge`): `NudgeEmitter` evaluates the four
+  trigger conditions per `agent:post_plan` event, with dedup.
+
+### Fixed
+- Suite-generated candidates are now materialized into the sandbox bundle before the
+  dry-run, so generation is evaluated against real files (T-735 E2E finding).
+- A Docker client whose daemon is unreachable is no longer treated as an available
+  sandbox — the dry-run fails closed instead of silently skipping isolation.
+
 ## [0.2.0] - 2026-07-08
 
 SPEC-044 — arcskill becomes the optional **skill self-improvement** supercharger. The

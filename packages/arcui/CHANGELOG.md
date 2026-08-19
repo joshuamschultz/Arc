@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-19
+
+The 2027 control-plane redesign wave: the dashboard is rebuilt from a telemetry
+viewer into an operator console that both **observes and operates** the fleet.
+A full-screen redesign moves every surface into one graphite + emerald design
+language, regroups the nav around what the operator does (Work / Govern / Watch /
+Advanced / System), and adds honest run/task status, live workflow control, and
+inline human-in-the-loop approvals.
+
+### Added
+
+- **Business-first navigation + Home landing** — the nav is regrouped and
+  relabeled around operator intent (Fleet, Chat, Tasks, Approvals, Rules, Audit,
+  Activity, Workflows, Knowledge, Model usage, Tools & Skills, Connections);
+  technical package names survive only inside detail views. A new Home/Today
+  landing summarizes the fleet, recent activity, and open loops.
+- **Redesigned screens (parallel wave)** — Fleet cards (status / current action /
+  signed-today), the **Run River** two-pane Activity view with the signed action
+  trace + run-replay drawer, an expandable run trace (inputs/outputs, skills,
+  plain language), the **Audit** screen rebuilt as the signed ledger, and a
+  Motion Cover Flow view for runs.
+- **Workflows (SPEC-061 ArcFlow) surface** — `/workflows` list + `/workflows/:id`
+  detail with the DAG graph, run history, node metadata, response-target
+  channel dropdown, and gate resolution; every route degrades to 503 when no
+  workflow/gate control plane is wired (`workflow_control_plane` /
+  `gate_control_plane` kwargs). The embedded workflow runner is named.
+- **Human-in-the-loop set** — a distinctive HITL component set (approval,
+  trifecta label, seal, context), inline approvals inside agent chat and the
+  Messages screen, an Approvals screen with full request context, and a Pending
+  capabilities screen for agent-authored / operator-added skills & tools.
+- **Per-agent detail expansion** — new Trust, Knowledge, and Runs tabs, an agent
+  Inbox tab, Tasks-tab parity, and a global operator toggle. Overview task /
+  schedule rows click through to their tab.
+- **Slack-style Chat** — messages render tool calls as chips, approvals appear
+  inline, and readable operator names + times replace raw ids; a prompt gallery
+  (area-filtered motion rows with click-to-edit) and an agent inbox using the
+  enriched session fields (kind + counterpart).
+- **AI-native component library** (`ai.tsx`) underpinning the redesign.
+- **New route surfaces** — connectors (Connections), keys, trust, approvals, and
+  gated-capabilities routes join the server.
+
+### Changed
+
+- **Honest run / task status** (arcagent + arcrun + arcui) — a run whose single
+  tool step failed no longer reads as a failed run; a resolved rules-router shows
+  done, not pending; trace steps are named; a run's sub-agent spawns show in the
+  run's own trace; the fleet tools matrix reads the durable enumeration, not the
+  live-only view; version history is honest and the overview deep-links.
+- **Design language** — flattened StatCards and leftover accent spines, an
+  expandable nav rail, and gateway channels wired into the response-target
+  dropdown.
+
+### Fixed
+
+- **Accurate skill YAML error** surfaced verbatim instead of a synthesized state.
+- **Workflow-gate approval 405** on the gate route resolved.
+
 ## [0.3.0] - 2026-07-12
 
 SPEC-056 Mission Control, Phase D: the dashboard gets a team-wide task kanban and a per-agent

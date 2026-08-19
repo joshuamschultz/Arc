@@ -1,13 +1,18 @@
-"""arcmas — the full Arc autonomous agent framework.
+"""arcmas — one install for the Arc core runtime stack.
 
 Install with: pip install arcmas
 
-This meta-package installs all Arc components:
-  - arcllm:   Provider-agnostic LLM abstraction
-  - arcrun:   Async execution engine
-  - arc-agent: Agent nucleus with tools, memory, and policy (import arcagent)
-  - arccmd:    Unified CLI (the ``arc`` command, import arccli)
-  - arcteam:  Multi-agent team coordination
+This meta-package declares two direct dependencies — ``arccmd`` (the ``arc``
+CLI, import ``arccli``) and ``arcmemory`` (the scaffold-default Brain). The rest
+of the core stack arrives transitively through the CLI's dependency graph:
+arctrust, arcllm, arcstore, arcprompt, arcrun, arc-agent (import ``arcagent``),
+arcbundle, and arcteam.
+
+The messaging gateway (``arcgateway``), web dashboard (``arcui``), and skill
+verification (``arcskill``) surfaces are separate installs — arcmas does not
+pull them in.
+
+No product runtime API lives here; this package only pins the install surface.
 """
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"

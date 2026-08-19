@@ -3,10 +3,10 @@
 # 🤝 arcteam
 
 ### **Multi-Agent Coordination for Arc**
-*Entity registry. Channels and DMs. Operator-signed audit chain. Pluggable storage backends.*
+*Entity registry. Channels and DMs. Relevance-triaged answers. Signed ArcFlow workflows. Operator-signed audit chain.*
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-002550.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Tests](https://img.shields.io/badge/tests-364-0055BC.svg)](#status)
+[![Tests](https://img.shields.io/badge/tests-752-0055BC.svg)](#status)
 [![Strict mypy](https://img.shields.io/badge/mypy-strict-0073FE.svg)](#status)
 [![Signed Audit](https://img.shields.io/badge/audit-Ed25519_signed-F68D2E.svg)](#%EF%B8%8F-security-architecture)
 
@@ -21,9 +21,11 @@
 Think of it as a tiny Slack-for-agents:
 
 - 👥 **Entity registry** — every agent and human gets registered with a type, role, and ID
-- 📬 **Channels and DMs** — broadcast or direct messages, with priorities and message types
+- 📬 **Channels and DMs** — broadcast or direct messages, with priorities, message types, and `@mentions`
+- 🎯 **Relevance-triaged answers** — a channel question is ranked to the agent that actually holds the answer, not fanned to everyone
+- 🧭 **ArcFlow workflows** — named, signed, deterministic node graphs (SPEC-061)
 - 🪵 **Operator-signed audit chain** — every operation tamper-evident and non-repudiable
-- 💾 **Pluggable storage** — file-backed for production, in-memory for tests
+- 💾 **Pluggable storage** — NATS JetStream for production, in-memory for tests
 - 🧠 **Team memory** — per-entity memory index with dirty tracking
 
 > 🛡️ **Every message audited. Asymmetrically signed chain. Per-entity DIDs. No shared credentials.**
@@ -35,25 +37,33 @@ Think of it as a tiny Slack-for-agents:
 ```mermaid
 flowchart TB
     classDef surface fill:#5A9CFF,stroke:#003B82,color:#002550
-    classDef agent fill:#0073FE,stroke:#0055BC,color:#FFFFFF
-    classDef entry fill:#D6E6FF,stroke:#0073FE,color:#002550
+    classDef consumer fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef leaf fill:#D6E6FF,stroke:#0073FE,color:#002550
 
-    arccli[arccli]:::entry --> arcteam
-    arcagent[arcagent]:::agent --> arcteam
-    arctrust[arctrust]:::agent --> arcteam
-    arcteam[arcteam<br/>entity registry · messaging · signed audit]:::surface
+    arcgateway[arcgateway]:::consumer --> arcteam
+    arcui[arcui]:::consumer --> arcteam
+    arccli[arccli]:::consumer --> arcteam
+    arcteam[arcteam<br/>registry · messaging · triage · workflows · signed audit]:::surface
+    arcteam --> arcstore[arcstore<br/>tasks/runs substrate]:::leaf
+    arcteam --> arctrust[arctrust<br/>sign · audit]:::leaf
 ```
 
-Depends on `arctrust` for the signing primitive and audit event schema — the audit chain is signed with the OPERATOR's key (the audit authority, resolved via `arctrust`/`arccli`'s operator-key custody), never a team member's own DID, so no agent can forge its own trail (SPEC-053). `arccli` and `arcagent` consume `arcteam`.
+`arcteam` sits at the **coordination / workflows** layer. It depends **down** on `arcstore`
+(the durable tasks/runs substrate ArcFlow instantiates onto) and `arctrust` (the signing
+primitive and audit-event schema). It never imports **up** into `arcagent`, `arcrun`, `arcui`,
+`arccli`, or `arcgateway`.
+
+The audit chain is signed with the **operator's** key (the audit authority, resolved via
+`arctrust`/`arccli`'s operator-key custody), never a team member's own DID, so no agent can
+forge its own trail (SPEC-053). `arcgateway`, `arcui`, and `arccli` consume `arcteam`; `arcagent`
+bootstraps it through hooks without owning the engine.
 
 ---
 
 ## 🚀 Install
 
 ```bash
-pip install arcteam            # standalone
-# or
-pip install arcmas             # full Arc stack
+pip install arcteam            # pulls arcstore + arctrust
 ```
 
 ---
@@ -61,10 +71,9 @@ pip install arcmas             # full Arc stack
 ## 🧪 Quick Example
 
 ```python
-from arcteam import MessagingService, EntityRegistry
+from arcteam import MessagingService, EntityRegistry, Entity, EntityType, Message, MsgType, Priority
 from arcteam.backends.nats import NatsBackend
 from arcteam.audit import AuditLogger
-from arcteam.types import Entity, EntityType
 
 # Set up (production substrate: NATS JetStream)
 backend = await NatsBackend.connect("nats://127.0.0.1:4222")
@@ -77,24 +86,25 @@ svc = MessagingService(backend, registry, audit)
 await registry.register(Entity(
     id="analyst-1",
     name="Senior Analyst",
-    type=EntityType("agent"),
+    type=EntityType.AGENT,
     roles=["lead", "reviewer"],
 ))
 await registry.register(Entity(
     id="executor-1",
     name="Task Executor",
-    type=EntityType("agent"),
+    type=EntityType.AGENT,
     roles=["worker"],
 ))
 
-# Send a structured message
-await svc.send(
-    sender="analyst-1",
-    to=["executor-1"],
+# Send a structured message. `send` takes a fully-formed Message envelope;
+# recipients are addressed by typed URI (agent:// user:// channel:// role://).
+await svc.send(Message(
+    sender="agent://analyst-1",
+    to=["agent://executor-1"],
     body="Analyze the CSVs in workspace/data/ and report trends.",
-    msg_type="task",
-    priority="high",
-)
+    msg_type=MsgType.TASK,
+    priority=Priority.HIGH,
+))
 ```
 
 ---
@@ -193,6 +203,54 @@ write is truth, and the signed `task_assigned` DM is the wake. See
 
 ---
 
+## 🧭 ArcFlow Workflows (SPEC-061)
+
+A **workflow** is a named, semi-permanent, **signed** graph of nodes — agent, tool, script,
+router, gate — that an agent authors from a conversation, a human edits in an IDE, or an
+operator builds in the dashboard. `arcteam.workflow` owns the *definition and the deterministic
+runner*, never the LLM sequencing: the model never decides the next node.
+
+| Piece | File | Job |
+|---|---|---|
+| Definition | `workflow/models.py` | The typed `workflow.toml` — node kinds, routes, budget, triggers |
+| Validation | `workflow/validator.py` | Whole-graph static validation → repair-oriented typed issues |
+| Predicates | `workflow/predicates.py` | Frozen grammar behind one `evaluate` seam — **no `eval`**, no calls, no attribute access, no env reads |
+| References | `workflow/resolver.py` | `$nodes`/`$input` bound as **typed values**, never string-interpolated |
+| Runner | `workflow/runner.py` | Deterministic frontier runner (+ budget / state helpers) |
+| Signing + store | `workflow/store.py`, `stores.py` | Canonical hashing, file manifest, operator-pinned signature gate, versioning, archival |
+| Control plane | `workflow/control_plane.py` | One create / edit / archive / run / resolve-gate / cancel path for CLI, agent tools, and dashboard |
+
+> 🔑 **Parsing or validating a perfect definition yields `status="draft"`.** Only
+> `sign_definition` — which demands an operator private key that never enters an agent process —
+> produces a signature. Nothing in this subpackage can confer signed status on its own.
+
+The runner instantiates onto the shared task/run substrate in `arcstore` — ArcFlow is **not** a
+third DAG engine. A workflow's narration binding is a messaging URI, so its run output is
+delivered to the bound `channel://` / `agent://` / `user://` / `role://` target.
+
+---
+
+## 🎯 Channel Relevance-Triage
+
+Ask a channel a question and the naive design fans it to every member, or asks each agent
+separately *"is this relevant to you?"* — a question no agent can answer, because its memory is
+private and invisible to its teammates (ADR-032). arcteam solves this with **published pointers,
+ranked deterministically**:
+
+- 📇 **`digest.py`** — when an agent files an artifact, it publishes an `AgentDigest`: a list of
+  pointers (title, proper nouns, project tags), one line per thing it holds. **Never contents.**
+  The agent that holds the answer becomes findable because it published a pointer at ingest, not
+  because it guessed correctly about itself.
+- 🥇 **`routing.py`** — one deterministic ranking with every candidate digest visible at once,
+  costing **no model call**. BM25 (which anchors on rare proper-noun tokens) and a dense embedding
+  are fused with Reciprocal Rank Fusion. With no embedder installed, the ranking runs lexical-only
+  rather than failing.
+
+A resolved `@mention` also **joins** the mentioned agent to the channel, so its reply is never
+refused for non-membership; an unresolvable handle is reported, not silently swallowed.
+
+---
+
 ## 🛡️ Security Architecture
 
 ### Operator-Signed Audit Chain
@@ -257,7 +315,7 @@ The `StorageBackend` Protocol is small enough to roll your own — point at SQLi
 uv run --no-sync pytest packages/arcteam/tests
 ```
 
-- **Tests:** 364+
+- **Tests:** 752+ (`unit/` incl. `unit/workflow/`, `integration/` live runner + NATS + store conformance, `e2e/`)
 - **Type check:** `mypy --strict` clean
 - **Lint:** `ruff check` clean
 

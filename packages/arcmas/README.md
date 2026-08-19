@@ -44,20 +44,35 @@ The deployment tier only changes how *strict* the verification is — not whethe
 
 ## 📦 What's in the Box
 
-`pip install arcmas` installs the entire stack:
+`arcmas` declares two direct dependencies — `arccmd` (the `arc` CLI) and `arcmemory`. The rest of
+the **core runtime stack** arrives transitively through the CLI's dependency graph. This is the full
+set a single `pip install arcmas` resolves:
 
 | Package | What It Does |
 |---------|---------|
 | 🪪 [**arctrust**](../arctrust/) | Cryptographic foundation — Ed25519 keypairs, DID identity, audit emission, policy pipeline |
-| 🌐 [**arcllm**](../arcllm/) | 16 LLM providers via direct HTTP — no SDKs |
+| 🌐 [**arcllm**](../arcllm/) | LLM providers via direct HTTP — no vendor SDKs |
+| 🗄️ [**arcstore**](../arcstore/) | The shared record every surface reads from |
+| ✍️ [**arcprompt**](../arcprompt/) | Signed, overlay-able system prompts |
 | ⚙️ [**arcrun**](../arcrun/) | Async think → act → observe loop — tool sandbox, streaming, parallel dispatch |
-| 🤖 [**arcagent**](../arcagent/) | The agent — DID-required, skills, extensions, persistent sessions, module bus |
+| 🤖 [**arcagent**](../arcagent/) *(dist `arc-agent`)* | The agent — DID-required, skills, extensions, persistent sessions, module bus |
 | 🧠 [**arcmemory**](../arcmemory/) | Dual-speed analogical memory — daily-log journal, episodic index, entity graph; the scaffold-default Brain |
-| 📡 [**arcgateway**](../arcgateway/) | Multi-platform daemon — Telegram, Slack, Mattermost with operator-approved pairing |
-| 🔧 [**arcskill**](../arcskill/) *(optional)* | Verified skill install (Sigstore + Rekor), scan, lock, CRL lifecycle, plus optional self-improvement (`arcskill.improver`) |
+| 📦 [**arcbundle**](../arcbundle/) | Signed config-only distribution units (blueprints) |
 | 🤝 [**arcteam**](../arcteam/) | Multi-agent messaging — entity registry, channels, operator-key-signed audit |
-| 📊 [**arcui**](../arcui/) | Real-time dashboard — reads on demand from the shared arcstore record, two-token auth |
-| ⌨️ [**arccli**](../arccli/) | Unified `arc` command-line tool |
+| ⌨️ [**arccli**](../arccli/) *(dist `arccmd`)* | Unified `arc` command-line tool |
+
+### Surfaces you add separately
+
+These ship as their own packages and are **not** pulled in by `arcmas`. Install the ones you need:
+
+| Package | Install | What It Adds |
+|---------|---------|--------------|
+| 📡 [**arcgateway**](../arcgateway/) | `pip install 'arcgateway[telegram]'` | Multi-platform daemon — Telegram, Slack, Mattermost with operator-approved pairing |
+| 📊 [**arcui**](../arcui/) | `pip install arcui` | Real-time dashboard — reads on demand from the shared arcstore record, two-token auth |
+| 🔧 [**arcskill**](../arcskill/) | `pip install arcskill` | Verified skill install (Sigstore + Rekor), scan, lock, CRL lifecycle, plus optional self-improvement (`arcskill.improver`) |
+
+The `arc gateway`, `arc ui`, and `arc skill` command groups are present in the CLI but need their
+package installed before they can run.
 
 ---
 
@@ -105,7 +120,7 @@ arc agent build my-agent --check
 # 4. Talk to it
 arc agent chat my-agent
 
-# 5. (Optional) watch in a browser
+# 5. (Optional) watch in a browser — needs `pip install arcui`
 arc ui start --show-tokens          # reads agent activity from arcstore on demand
 ```
 
