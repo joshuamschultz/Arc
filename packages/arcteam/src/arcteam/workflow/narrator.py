@@ -140,16 +140,15 @@ class RunNarrator:
     async def _post(self, channel: str | None, body: str, **meta: Any) -> None:
         """Build and send one narration message; a failed delivery is not an error.
 
-        Raises ``ValueError`` for a channel binding that is not a channel — a
-        misbound workflow is a definition defect, caught once when the run
-        starts, not a per-message surprise.
+        An empty / unset binding means no narration. Any valid messaging URI is
+        a legal target — a group ``channel://``, an ``agent://`` (whose gateway
+        relays it out to Telegram/Slack), a ``user://`` or ``role://``. Only the
+        channel scheme gates membership, so admission runs for channels alone.
         """
-        if channel is None or self._sender is None:
+        if not channel or self._sender is None:
             return
         scheme, name = parse_uri(channel)
-        if scheme != "channel":
-            raise ValueError(f"narration binds to a channel, not {channel!r}")
-        if self._ensure_channel is not None and name not in self._admitted:
+        if scheme == "channel" and self._ensure_channel is not None and name not in self._admitted:
             # The messenger refuses a sender that is not a registered member of
             # the target channel, so admission has to happen before the first
             # post or every one is silently dropped. Once per channel.
@@ -172,12 +171,17 @@ class RunNarrator:
 
 
 def assert_channel_binding(channel: str | None) -> None:
-    """Validate a workflow's channel binding once, at run start."""
-    if channel is None:
+    """Validate a workflow's response binding once, at run start.
+
+    Empty or unset means no narration — the common case, and it must not raise.
+    A non-empty value must be a valid messaging URI (``channel://``,
+    ``agent://``, ``user://``, or ``role://``); ``parse_uri`` rejects a bare
+    name or an unknown scheme. A bare channel name saved by an older UI is the
+    exact ``Invalid URI: ''``-class defect this guard now reports clearly.
+    """
+    if not channel:
         return
-    scheme, _ = parse_uri(channel)
-    if scheme != "channel":
-        raise ValueError(f"workflow channel binding must be a channel URI, got {channel!r}")
+    parse_uri(channel)
 
 
 __all__ = ["NarrationSender", "RunNarrator", "assert_channel_binding"]

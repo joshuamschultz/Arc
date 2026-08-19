@@ -46,13 +46,15 @@ async def test_narration_never_wakes_an_agent() -> None:
         assert message.meta["class"] == "narration"
 
 
-async def test_narration_addresses_a_channel_only() -> None:
+async def test_narration_can_address_an_agent_for_gateway_relay() -> None:
+    """A response binding may target an agent, not only a group channel — its
+    gateway relays the narration out to Telegram/Slack. The old channel-only
+    guard is gone; agent/user/role URIs are legal targets."""
     sender = RecordingSender()
     narrator = RunNarrator(sender, sender_did=RUNNER_DID)
 
-    with pytest.raises(ValueError, match="channel"):
-        await narrator.run_outcome(channel="agent://sales", run_id="r1", status="done", detail="")
-    assert sender.sent == []
+    await narrator.run_outcome(channel="agent://sales", run_id="r1", status="done", detail="")
+    assert [tuple(m.to) for m in sender.sent] == [("agent://sales",)]
 
 
 async def test_a_dropped_send_never_reaches_the_caller() -> None:
@@ -67,6 +69,37 @@ async def test_an_unbound_workflow_narrates_nowhere() -> None:
     narrator = RunNarrator(sender, sender_did=RUNNER_DID)
     await narrator.run_outcome(channel=None, run_id="r1", status="done", detail="")
     assert sender.sent == []
+
+
+async def test_an_empty_string_binding_narrates_nowhere() -> None:
+    """An empty binding is the common 'no narration' case — it must be treated
+    exactly like None, never parsed as a URI (parse_uri('') is the run-breaking
+    'Invalid URI' defect this closes)."""
+    sender = RecordingSender()
+    narrator = RunNarrator(sender, sender_did=RUNNER_DID)
+    await narrator.run_outcome(channel="", run_id="r1", status="done", detail="")
+    assert sender.sent == []
+
+
+def test_assert_channel_binding_accepts_empty_and_any_messaging_uri() -> None:
+    from arcteam.workflow.narrator import assert_channel_binding
+
+    # Empty / unset never raises — no narration is the default.
+    assert_channel_binding(None)
+    assert_channel_binding("")
+    # Group channel, agent, user, and role targets are all legal.
+    for uri in ("channel://onboarding", "agent://sales", "user://josh", "role://ops"):
+        assert_channel_binding(uri)
+
+
+def test_assert_channel_binding_rejects_a_bare_name() -> None:
+    """A bare name saved by an older UI (`workflow-onboarding`, no scheme) is a
+    definition defect — caught once at run start with a clear message, not a
+    per-message surprise."""
+    from arcteam.workflow.narrator import assert_channel_binding
+
+    with pytest.raises(ValueError, match="Invalid URI"):
+        assert_channel_binding("workflow-onboarding")
 
 
 async def test_no_sender_is_a_working_configuration() -> None:

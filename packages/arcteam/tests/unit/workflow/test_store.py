@@ -227,6 +227,41 @@ def test_editing_a_signed_definition_drops_it_back_to_draft(tmp_path: Path) -> N
     assert store.load("onboarding").status == "draft"
 
 
+def test_version_history_retains_the_signer_of_a_superseded_version(tmp_path: Path) -> None:
+    """The bug: signing v1, then editing to v2, showed v1 as an unsigned draft
+    because retention dropped the sidecar. History must name v1's signer even
+    after it is superseded, and the current draft honestly reports no signer."""
+    keypair = generate_keypair()
+    store = DefinitionStore(
+        tmp_path / "workflows", tier="personal", operator_public_key=keypair.public_key
+    )
+    _seed(store)
+    sign_definition(store, "onboarding", signer_did=OPERATOR_DID, private_key=keypair.private_key)
+
+    edited = {**DOCUMENT, "workflow": {**DOCUMENT["workflow"], "description": "changed"}}
+    store.save_draft(parse_definition(edited), actor_did="did:arc:agent:sales", expected_version=1)
+
+    history = {r.version: r for r in store.version_history("onboarding")}
+    assert history[1].signer_did == OPERATOR_DID
+    assert history[1].signed_at is not None
+    assert history[2].signer_did is None  # the current draft is genuinely unsigned
+
+
+def test_version_history_shows_the_current_signature(tmp_path: Path) -> None:
+    """The live, unsuperseded version reads its signer from the live sidecar."""
+    keypair = generate_keypair()
+    store = DefinitionStore(
+        tmp_path / "workflows", tier="personal", operator_public_key=keypair.public_key
+    )
+    _seed(store)
+    sign_definition(store, "onboarding", signer_did=OPERATOR_DID, private_key=keypair.private_key)
+
+    history = store.version_history("onboarding")
+    assert history[-1].version == 1
+    assert history[-1].signer_did == OPERATOR_DID
+    assert history[-1].signed_at is not None
+
+
 def test_file_drift_under_a_signature_fails_the_run_closed(tmp_path: Path) -> None:
     """A long run can outlive an editor save; a hybrid of two versions never runs."""
     keypair = generate_keypair()

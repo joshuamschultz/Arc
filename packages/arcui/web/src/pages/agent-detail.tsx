@@ -1,5 +1,5 @@
-import { useState, type ReactNode } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { useEffect, useState, type ReactNode } from 'react'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { motion } from 'motion/react'
 import { ArrowLeft, Plus, FileText, Pencil, Mail } from 'lucide-react'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
@@ -501,10 +501,16 @@ function OverviewTab({ agentId }: { agentId: string }) {
                     <button
                       key={i}
                       type="button"
-                      onClick={() => navigate(`/agents/${agentId}/tasks`)}
+                      onClick={() =>
+                        navigate(
+                          t.id
+                            ? `/agents/${agentId}/tasks?open=${encodeURIComponent(String(t.id))}`
+                            : `/agents/${agentId}/tasks`,
+                        )
+                      }
                       className="-mx-1.5 flex w-[calc(100%+0.75rem)] items-center justify-between gap-3 rounded-md px-1.5 py-1 text-left text-sm transition-colors hover:bg-muted/40"
                     >
-                      <span className="min-w-0 truncate text-foreground">
+                      <span className="min-w-0 truncate text-primary hover:underline">
                         {String(t.title ?? t.id ?? 'task')}
                       </span>
                       {t.status != null && (
@@ -529,10 +535,16 @@ function OverviewTab({ agentId }: { agentId: string }) {
                       <button
                         key={i}
                         type="button"
-                        onClick={() => navigate(`/agents/${agentId}/schedules`)}
+                        onClick={() =>
+                          navigate(
+                            sched.id
+                              ? `/agents/${agentId}/schedules?open=${encodeURIComponent(String(sched.id))}`
+                              : `/agents/${agentId}/schedules`,
+                          )
+                        }
                         className="-mx-1.5 flex w-[calc(100%+0.75rem)] items-center justify-between gap-3 rounded-md px-1.5 py-1 text-left text-sm transition-colors hover:bg-muted/40"
                       >
-                        <span className="min-w-0 truncate text-foreground">
+                        <span className="min-w-0 truncate text-primary hover:underline">
                           {String(sched.name ?? sched.id ?? 'schedule')}
                         </span>
                         {(sched.cron ?? sched.schedule ?? sched.next_run) != null && (
@@ -795,8 +807,20 @@ function TasksTab({ agentId }: { agentId: string }) {
   const [statusFilter, setStatusFilter] = useState<TaskStatus | 'all'>('all')
   const [priorityFilter, setPriorityFilter] = useState<TaskPriority | 'all'>('all')
   const [tagFilter, setTagFilter] = useState('all')
+  const [searchParams, setSearchParams] = useSearchParams()
 
   const tasks = q.data?.tasks ?? []
+
+  // Deep link from the overview: `?open=<task-id>` opens that task's drawer,
+  // then the param is consumed so closing the drawer does not reopen it.
+  useEffect(() => {
+    const openId = searchParams.get('open')
+    if (!openId || tasks.length === 0) return
+    const match = tasks.find((t) => t.id === openId)
+    if (match) setSelected(match)
+    searchParams.delete('open')
+    setSearchParams(searchParams, { replace: true })
+  }, [searchParams, tasks, setSearchParams])
   const agents = roster.data?.agents ?? []
   const thisDid = agents.find((a) => a.agent_id === agentId)?.did ?? ''
   const byDid = new Map(agents.filter((a) => a.did).map((a) => [a.did as string, a]))
@@ -980,6 +1004,19 @@ function SchedulesTab({ agentId }: { agentId: string }) {
   const rows = (q.data?.schedules ?? []) as Dict[]
   const [selected, setSelected] = useState<Dict | null>(null)
   const [operatorMode] = useOperatorMode()
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  // Deep link from the overview: `?open=<schedule-id>` opens that schedule's
+  // drawer, then the param is consumed so closing it does not reopen it.
+  useEffect(() => {
+    const openId = searchParams.get('open')
+    if (!openId || rows.length === 0) return
+    const match = rows.find((r) => String(r.id) === openId)
+    if (match) setSelected(match)
+    searchParams.delete('open')
+    setSearchParams(searchParams, { replace: true })
+  }, [searchParams, rows, setSearchParams])
+
   return (
     <>
       <QueryState

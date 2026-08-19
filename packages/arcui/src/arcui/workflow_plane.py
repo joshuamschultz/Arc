@@ -113,7 +113,15 @@ class DashboardWorkflowPlane:
         ]
         detail["edges"] = _edges(definition)
         detail["channel"] = definition.channel
-        detail["versions"] = [{"version": v} for v in self._definitions.versions(workflow_id)]
+        detail["versions"] = [
+            {
+                "version": record.version,
+                "signer": record.signer_did,
+                "reason": None,
+                "created_at": record.signed_at,
+            }
+            for record in self._definitions.version_history(workflow_id)
+        ]
         return detail
 
     async def list_runs(self, workflow_id: str, *, actor: OperatorActor) -> list[dict[str, Any]]:

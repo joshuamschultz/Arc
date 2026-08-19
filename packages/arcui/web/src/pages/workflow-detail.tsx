@@ -20,7 +20,9 @@ import { Textarea } from '@/components/ui/textarea'
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
@@ -41,6 +43,7 @@ import {
   useCancelWorkflowRun,
   usePatchWorkflow,
   useRequestSignature,
+  useRoster,
   useRunWorkflow,
   useTeamChannels,
   useUnarchiveWorkflow,
@@ -445,7 +448,19 @@ function TriggerChannelTab({ workflow }: { workflow: WorkflowDetail }) {
   const [timezone, setTimezone] = useState(hours.timezone ?? '')
   const [channel, setChannel] = useState(workflow.channel ?? '')
   const channelsQ = useTeamChannels()
+  const rosterQ = useRoster()
   const [error, setError] = useState<string | null>(null)
+
+  // A response target is a messaging URI, not a bare name — the runner parses it
+  // (channel:// group, agent:// whose gateway relays to Telegram/Slack). Storing
+  // a bare name is the `Invalid URI` defect; the dropdown only ever emits URIs.
+  const channelTargets = channelsQ.data?.channels ?? []
+  const agentTargets = (rosterQ.data?.agents ?? []).filter(
+    (a): a is typeof a & { agent_id: string } => !a.hidden && Boolean(a.agent_id),
+  )
+  const targetKnown =
+    channelTargets.some((c) => `channel://${c.name}` === channel) ||
+    agentTargets.some((a) => `agent://${a.agent_id}` === channel)
 
   const saveTrigger = async () => {
     setError(null)
@@ -560,33 +575,51 @@ function TriggerChannelTab({ workflow }: { workflow: WorkflowDetail }) {
       </div>
       <div className="space-y-1.5">
         <label className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-          Bound channel
+          Response target
         </label>
         <Select
           value={channel || '__none__'}
           onValueChange={(v) => setChannel(v === '__none__' ? '' : v)}
         >
           <SelectTrigger>
-            <SelectValue placeholder="Select a channel…" />
+            <SelectValue placeholder="Select a response target…" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="__none__">None</SelectItem>
-            {channel &&
-              !(channelsQ.data?.channels ?? []).some((c) => c.name === channel) && (
-                <SelectItem value={channel}>#{channel}</SelectItem>
-              )}
-            {(channelsQ.data?.channels ?? []).map((c) => (
-              <SelectItem key={c.name} value={c.name}>
-                #{c.name}
-              </SelectItem>
-            ))}
+            {channel && !targetKnown && (
+              <SelectGroup>
+                <SelectLabel>Current (unrecognized — re-select to fix)</SelectLabel>
+                <SelectItem value={channel}>{channel}</SelectItem>
+              </SelectGroup>
+            )}
+            {channelTargets.length > 0 && (
+              <SelectGroup>
+                <SelectLabel>Channels</SelectLabel>
+                {channelTargets.map((c) => (
+                  <SelectItem key={`channel://${c.name}`} value={`channel://${c.name}`}>
+                    #{c.name}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            )}
+            {agentTargets.length > 0 && (
+              <SelectGroup>
+                <SelectLabel>Agents (gateway relays out to Telegram/Slack)</SelectLabel>
+                {agentTargets.map((a) => (
+                  <SelectItem key={`agent://${a.agent_id}`} value={`agent://${a.agent_id}`}>
+                    {a.display_name || a.name || a.agent_id}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            )}
           </SelectContent>
         </Select>
         <p className="text-[11px] text-muted-foreground">
-          Where runs narrate: node starts, gate decisions, and the outcome. Choose None for no narration.
+          Where a run narrates its progress and posts its outcome — a group channel or
+          an agent (which relays out through its gateway). Choose None for no narration.
         </p>
         <Button size="sm" onClick={saveChannel} disabled={patchWorkflow.isPending}>
-          Save channel
+          Save response target
         </Button>
       </div>
     </div>

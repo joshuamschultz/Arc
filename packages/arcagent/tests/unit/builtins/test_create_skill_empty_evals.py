@@ -88,3 +88,34 @@ class TestCreateSkillEmptyEvals:
             and "assert True" in path.read_text(encoding="utf-8", errors="ignore")
         ]
         assert offenders == []
+
+    async def test_description_with_colons_stays_valid_yaml(self, configured: Path) -> None:
+        """A description carrying colons (``TRIGGER: ...`` / ``SKIP: ...``) is the
+        common real case. The scaffold must emit quoted YAML so the loader can
+        re-parse and re-sign it — the hand-built f-string frontmatter used to
+        write invalid YAML that the validator then rejected with a misleading
+        'no leading --- block' message."""
+        import yaml
+
+        from arcagent.builtins.capabilities.create_skill import create_skill
+        from arcagent.capabilities.skill_validator import validate_skill_folder
+
+        colon_desc = "Ingest meetings. TRIGGER: when asked to summarize. SKIP: otherwise."
+        result = await create_skill(
+            name="colon-skill",
+            description=colon_desc,
+            triggers=["summarize meeting"],
+            tools=["read"],
+        )
+        assert "Created skill 'colon-skill'" in result
+        folder = configured / "capabilities/skills" / "colon-skill"
+
+        text = (folder / "SKILL.md").read_text(encoding="utf-8")
+        fm_block = text.split("---\n")[1]
+        parsed = yaml.safe_load(fm_block)
+        assert parsed["description"] == colon_desc
+
+        validated = validate_skill_folder(folder, "workspace")
+        assert validated.ok, [e.detail for e in validated.errors]
+        assert validated.entry is not None
+        assert validated.entry.description == colon_desc

@@ -121,6 +121,22 @@ class WorkflowBundle(BaseModel):
         return None if self.status == "archived" else self.definition.trigger
 
 
+class VersionRecord(BaseModel):
+    """One row of a workflow's version history: who signed it and when.
+
+    ``signer_did``/``signed_at`` are ``None`` for a version that was never
+    signed, or one retained before the sidecar-retention fix landed — reported
+    honestly, never as a fabricated "unsigned draft" for a version the operator
+    actually signed.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    version: int
+    signer_did: str | None = None
+    signed_at: str | None = None
+
+
 class DefinitionStore:
     """Load, verify, version, and archive workflow bundles under one root.
 
@@ -491,7 +507,12 @@ class DefinitionStore:
         return resolved
 
     def _retain_current(self, bundle_root: Path) -> None:
-        """Copy the current definition into ``versions/`` before overwriting it."""
+        """Copy the current definition into ``versions/`` before overwriting it.
+
+        The signature sidecar is retained alongside it, so the version history
+        can truthfully show who signed each superseded revision instead of
+        reporting every one as an unsigned draft the moment it is superseded.
+        """
         current = bundle_root / DEFINITION_FILE
         if not current.is_file():
             return
@@ -499,6 +520,42 @@ class DefinitionStore:
         archive = bundle_root / VERSIONS_DIR
         archive.mkdir(exist_ok=True)
         _atomic_write(archive / f"{definition.version}.toml", current.read_bytes())
+        sidecar = bundle_root / SIDECAR_FILE
+        if sidecar.is_file():
+            _atomic_write(archive / f"{definition.version}.arcsig", sidecar.read_bytes())
+
+    def version_history(self, workflow_id: str) -> tuple[VersionRecord, ...]:
+        """Every version's signer + signed-at, ascending, current version last.
+
+        Prior versions read their retained sidecar; the current version reads
+        the live one. A version with no retained sidecar (unsigned, or retained
+        before sidecar retention existed) reports ``None`` — not a fabricated
+        draft.
+        """
+        root = self.path_for(workflow_id)
+        records: list[VersionRecord] = []
+        vdir = root / VERSIONS_DIR
+        if vdir.is_dir():
+            for path in sorted(vdir.glob("*.toml"), key=lambda p: int(p.stem)):
+                version = int(path.stem)
+                sig = _read_signature(vdir / f"{version}.arcsig")
+                records.append(
+                    VersionRecord(
+                        version=version,
+                        signer_did=sig.signer_did if sig else None,
+                        signed_at=sig.signed_at if sig else None,
+                    )
+                )
+        current = self.load(workflow_id)
+        live = load_sidecar(root)
+        records.append(
+            VersionRecord(
+                version=current.definition.version,
+                signer_did=current.signer_did,
+                signed_at=live.signed_at if live else None,
+            )
+        )
+        return tuple(records)
 
     def emit_audit(self, event: str, payload: dict[str, Any]) -> None:
         """Emit one lifecycle event through the wired hook, if any."""
@@ -538,13 +595,12 @@ def sign_definition(
     return signed
 
 
-def load_sidecar(bundle_root: Path) -> ArtifactSignature | None:
-    """Read the detached signature, or ``None`` if absent or corrupt.
+def _read_signature(path: Path) -> ArtifactSignature | None:
+    """Read one detached signature file, or ``None`` if absent or corrupt.
 
     A corrupt or forged sidecar is treated as unsigned rather than as an error,
     which keeps the failure mode fail-closed instead of denial-of-service.
     """
-    path = bundle_root / SIDECAR_FILE
     if not path.is_file():
         return None
     try:
@@ -552,6 +608,11 @@ def load_sidecar(bundle_root: Path) -> ArtifactSignature | None:
     except Exception:  # reason: any unreadable sidecar counts as unsigned (fail-closed)
         _logger.warning("unreadable workflow signature sidecar at %s; treating as unsigned", path)
         return None
+
+
+def load_sidecar(bundle_root: Path) -> ArtifactSignature | None:
+    """Read a bundle's live detached signature, or ``None`` if absent/corrupt."""
+    return _read_signature(bundle_root / SIDECAR_FILE)
 
 
 def _escape_issue(reference: str) -> ValidationIssue:
@@ -585,6 +646,7 @@ __all__ = [
     "VERSIONS_DIR",
     "DefinitionStatus",
     "DefinitionStore",
+    "VersionRecord",
     "WorkflowAuditHook",
     "WorkflowBundle",
     "canonical_bytes",

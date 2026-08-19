@@ -10,6 +10,8 @@ blank — the loader auto-fills it from folder contents on every reload.
 
 from __future__ import annotations
 
+import yaml
+
 from arcagent.builtins.capabilities import _runtime
 from arcagent.tools._decorator import tool
 
@@ -39,18 +41,21 @@ def _render_skill_md(
     version: str,
     body: str,
 ) -> str:
-    """Compose the SKILL.md content with frontmatter + 7 sections."""
-    triggers_yaml = ", ".join(triggers)
-    tools_yaml = ", ".join(tools)
-    frontmatter = (
-        "---\n"
-        f"name: {name}\n"
-        f"version: {version}\n"
-        f"description: {description}\n"
-        f"triggers: [{triggers_yaml}]\n"
-        f"tools: [{tools_yaml}]\n"
-        "---\n"
-    )
+    """Compose the SKILL.md content with frontmatter + 7 sections.
+
+    The frontmatter is emitted with ``yaml.safe_dump`` — never hand-built
+    f-strings — so a description carrying a colon (``TRIGGER: when asked``)
+    is quoted correctly instead of producing invalid YAML the loader then
+    rejects. Matches ``update_skill``'s round-trip.
+    """
+    fm = {
+        "name": name,
+        "version": version,
+        "description": description,
+        "triggers": list(triggers),
+        "tools": list(tools),
+    }
+    frontmatter = "---\n" + yaml.safe_dump(fm, sort_keys=False, allow_unicode=True) + "---\n"
     sections = "\n\n".join(f"{header}\n" for header in _REQUIRED_SECTIONS)
     return frontmatter + "\n" + sections + ("\n" + body if body else "")
 
