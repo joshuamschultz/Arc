@@ -42,6 +42,31 @@ def test_eventbus_records_lifecycle_run_events() -> None:
     assert all(r.request_id == "r1" for r in recorded)
 
 
+def test_breach_terminal_stamps_reason_on_run_event_outcome() -> None:
+    # A budget/turn/token cap emits loop.completed carrying a breach ``reason``.
+    # It must ride onto the spool row's ``outcome`` so an observer can tell a
+    # capped run from a clean completion — both also emit loop.complete, so the
+    # terminal event name alone cannot distinguish them.
+    recorded: list = []
+    bus = EventBus(run_id="r1", spool_actor_did="did:arc:acme:analyst/aabbccdd")
+    with patch.object(events_mod, "_spool_record", recorded.append):
+        bus.emit("loop.completed", {"reason": "max_cost", "cost_usd": 2.0})
+        bus.emit("loop.complete", {})  # universal terminal, no reason
+    by_name = {r.name: r.outcome for r in recorded if r.kind == "run_event"}
+    assert by_name["loop.completed"] == "max_cost"
+    assert by_name["loop.complete"] is None  # clean terminal stays ok
+
+
+def test_clean_completion_has_no_breach_outcome() -> None:
+    # A structured completion emits loop.completed carrying the task payload
+    # (status/summary) but NO ``reason`` — it must read as ok, not a breach.
+    recorded: list = []
+    bus = EventBus(run_id="r1", spool_actor_did="did:arc:acme:analyst/aabbccdd")
+    with patch.object(events_mod, "_spool_record", recorded.append):
+        bus.emit("loop.completed", {"status": "success", "summary": "done"})
+    assert [r.outcome for r in recorded if r.kind == "run_event"] == [None]
+
+
 def test_no_spool_without_actor_did() -> None:
     recorded: list = []
     bus = EventBus(run_id="r1")  # no actor → no operational recording

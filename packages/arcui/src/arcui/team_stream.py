@@ -45,6 +45,15 @@ def default_handle_of(ref: str) -> str:
     (REQ-062).
     """
     if ref.startswith("did:"):
+        # The operator (a human) has no roster entry to name it, and its DID
+        # tail is a key fingerprint — an 8-char hex hash, not a handle. Collapse
+        # it to the reserved ``operator`` handle so the browser renders
+        # "Operator", never a bare fingerprint. The history route ships the full
+        # DID, which the SPA resolves the same way; without this the live frame
+        # loses the ``:operator`` marker and the two disagree (bf6ee9f7 vs. the
+        # name).
+        if ":operator" in ref or "/operator" in ref:
+            return "operator"
         tail = ref.rsplit("/", 1)[-1]
         return tail.rsplit(":", 1)[-1]
     if "://" in ref:

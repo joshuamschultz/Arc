@@ -60,6 +60,12 @@ class TestDefaultHandleOf:
     def test_strips_did_to_last_segment(self) -> None:
         assert default_handle_of("did:arc:local:agent/architect") == "architect"
 
+    def test_operator_did_names_the_human_not_a_fingerprint(self) -> None:
+        # The operator posts under a key-bound DID whose tail is an 8-char hex
+        # fingerprint; collapsing it blindly renders `bf6ee9f7`. The reserved
+        # `operator` handle lets the SPA say "Operator".
+        assert default_handle_of("did:arc:local:operator/bf6ee9f7") == "operator"
+
     def test_strips_leading_at(self) -> None:
         assert default_handle_of("@builder") == "builder"
 
@@ -86,6 +92,16 @@ class TestRenderTeamFrame:
         )
         assert frame["mentions"] == ["architect"]
         assert all("did:" not in m for m in frame["mentions"])
+
+    def test_operator_frame_names_the_human(self) -> None:
+        # Regression: the live frame used to collapse the operator DID to its
+        # hex fingerprint, so a channel post the operator made showed `bf6ee9f7`
+        # while the same post in history showed "Operator".
+        frame = render_team_frame(
+            _msg(sender="did:arc:local:operator/bf6ee9f7", channel="work", body="hi")
+        )
+        assert frame["from"] == "operator"
+        assert "did:" not in frame["from"]
 
     def test_channel_extracted_from_to(self) -> None:
         frame = render_team_frame(_msg(sender="agent://intake", channel="access", body="x"))

@@ -26,6 +26,7 @@ from .conftest import (
     Route,
     complete_node,
     evaluate,
+    fail_node,
     path_kinds,
     resolve_args,
     task_id,
@@ -279,6 +280,40 @@ async def test_llm_router_undeclared_choice_fails_the_run(stores: Any, registry:
     record = await runs.get(run.run_id)
     assert record.status == "failed"
     assert "undeclared route" in (record.resolution or "")
+
+
+async def test_failed_node_finalizes_the_run_instead_of_hanging(
+    stores: Any, registry: Any
+) -> None:
+    """A node task that goes ``failed`` must terminate the run, not leave it running.
+
+    This is the workflow half of the budget-cap bug: a node whose agent loop was
+    halted by a cost/turn cap now has its row marked ``failed`` by the dispatch
+    settler. The runner must roll that up — fail the run and never materialize the
+    downstream node — rather than treat the node as forever in-flight (which is
+    what left a real run stuck "running" while its node stayed "in_progress").
+    """
+    definition = Definition(
+        id="chain",
+        nodes=(
+            Node(id="first", kind="agent", agent="@sales"),
+            Node(id="second", kind="agent", agent="@ops", needs=("first",)),
+        ),
+    )
+    flow_tasks, runs, tasks = stores
+    runner = build(stores, registry, definition)
+    run = await runner.start_run("chain", input={}, initiator_did="did:arc:x/1")
+
+    # The dispatch settler's terminal for a budget-capped node.
+    await fail_node(tasks, task_id(run.run_id, "first", 0), SALES_DID, "loop halted: max_cost")
+    await runner.advance(run.run_id)
+
+    record = await runs.get(run.run_id)
+    assert record.status == "failed"
+    assert "first" in (record.resolution or "")
+    # The downstream node was never handed out — the run stopped at the failure.
+    node_ids = {r.metadata["node_id"] for r in await flow_tasks.query_by_flow_run(run.run_id)}
+    assert node_ids == {"first"}
 
 
 async def test_two_runs_can_never_derive_the_same_task_row(stores: Any, registry: Any) -> None:

@@ -154,6 +154,12 @@ class DashboardWorkflowPlane:
                 "task_id": task.id,
                 "task_run_id": task.metadata.get("run_id") or task.run_id,
                 "kind": task.metadata.get("node_kind"),
+                # Per-node timing + owner so the run detail can show a real
+                # activity feed (who ran each node, when, how long) instead of
+                # just a coloured graph.
+                "owner_did": task.owner_did,
+                "started_at": task.started_at,
+                "completed_at": task.completed_at,
             }
         for entry in run.path_taken:
             if entry.outcome == "skipped":

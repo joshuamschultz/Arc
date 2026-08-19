@@ -660,10 +660,39 @@ function VersionsTab({ workflow }: { workflow: WorkflowDetail }) {
  * terminal, `pending` while still in flight — lazy materialization means an
  * untaken branch never gets a task row to read a status from.
  */
+/** Wall-clock duration between two ISO stamps, as a short human string. */
+function fmtDuration(start?: string | null, end?: string | null): string | null {
+  if (!start) return null
+  const from = Date.parse(start)
+  const to = end ? Date.parse(end) : Date.now()
+  if (!Number.isFinite(from) || !Number.isFinite(to) || to < from) return null
+  const s = Math.round((to - from) / 1000)
+  if (s < 60) return `${s}s`
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`
+}
+
+const NODE_STATUS_TONE: Record<string, string> = {
+  done: 'border-status-online/30 bg-status-online/10 text-status-online',
+  running: 'border-status-info/30 bg-status-info/10 text-status-info',
+  failed: 'border-status-error/30 bg-status-error/10 text-status-error',
+  waiting_gate: 'border-status-warning/30 bg-status-warning/10 text-status-warning',
+  skipped: 'border-border bg-muted/30 text-muted-foreground',
+  pending: 'border-border bg-muted/20 text-muted-foreground',
+}
+
 function RunGraph({ workflow, runId }: { workflow: WorkflowDetail; runId: string }) {
   const run = useWorkflowRun(runId, 4000)
+  const rosterQ = useRoster()
   const liveStatus = useWorkflowRunLiveStatus(workflow.channel ?? null, runId)
   const [timelineRun, setTimelineRun] = useState<RunSummary | null>(null)
+
+  // did -> display name, so the feed names the agent that ran each node.
+  const ownerName = (did?: string | null): string | null => {
+    if (!did) return null
+    const a = (rosterQ.data?.agents ?? []).find((x) => x.did === did)
+    return a ? String(a.display_name || a.name || a.agent_id || did) : shortId(did, 16)
+  }
 
   const reached = useMemo(() => {
     const map = new Map(run.data?.nodes.map((n) => [n.node_id, n]))
@@ -704,6 +733,18 @@ function RunGraph({ workflow, runId }: { workflow: WorkflowDetail; runId: string
     (n) => n.status === 'waiting_gate' && n.task_id,
   )
 
+  // The feed reads in execution order: the path actually taken first, then any
+  // node with a row that isn't on the path, then the still-pending definition
+  // nodes — so a run reads top-to-bottom the way it ran.
+  const byId = new Map((run.data?.nodes ?? []).map((n) => [n.node_id, n]))
+  const order: string[] = []
+  const pushOnce = (id: string) => {
+    if (id && !order.includes(id)) order.push(id)
+  }
+  for (const id of run.data?.path_taken ?? []) pushOnce(id)
+  for (const n of run.data?.nodes ?? []) pushOnce(n.node_id)
+  for (const n of workflow.nodes) pushOnce(n.id)
+
   return (
     <>
       {waitingGates.map((gate) => (
@@ -724,6 +765,70 @@ function RunGraph({ workflow, runId }: { workflow: WorkflowDetail; runId: string
           onNodeClick={openTimeline}
         />
       </div>
+
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between px-0.5">
+          <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+            Node activity
+          </span>
+          {run.data && (
+            <span className="text-[11px] text-muted-foreground">
+              <StatusText value={run.data.status} />
+              {run.data.started_at ? ` · started ${fmtTime(run.data.started_at)}` : ''}
+              {fmtDuration(run.data.started_at, run.data.ended_at)
+                ? ` · ${fmtDuration(run.data.started_at, run.data.ended_at)}`
+                : ''}
+            </span>
+          )}
+        </div>
+        <div className="divide-y divide-border/60 rounded-lg border border-border">
+          {order.map((id) => {
+            const rec = byId.get(id)
+            const status = nodeStatus[id]?.status ?? rec?.status ?? 'pending'
+            const kind = rec?.kind ?? workflow.nodes.find((n) => n.id === id)?.kind
+            const owner = ownerName(rec?.owner_did)
+            const dur = fmtDuration(rec?.started_at, rec?.completed_at)
+            const canOpen = Boolean(rec?.task_run_id)
+            return (
+              <div
+                key={id}
+                className={`flex items-center gap-3 px-2.5 py-2 text-sm ${
+                  canOpen ? 'cursor-pointer hover:bg-muted/40' : ''
+                }`}
+                onClick={canOpen ? () => openTimeline(id) : undefined}
+              >
+                <span
+                  className={`inline-flex shrink-0 items-center rounded-md border px-1.5 py-0.5 text-[10px] font-medium capitalize ${
+                    NODE_STATUS_TONE[status] ?? NODE_STATUS_TONE.pending
+                  }`}
+                >
+                  {status.replace('_', ' ')}
+                </span>
+                <span className="min-w-0 flex-1 truncate">
+                  <span className="text-foreground">{id}</span>
+                  {kind && <span className="ml-1.5 text-[11px] text-muted-foreground">{kind}</span>}
+                  {rec?.iteration != null && (
+                    <span className="ml-1.5 text-[11px] text-muted-foreground">
+                      · iter {String(rec.iteration)}
+                    </span>
+                  )}
+                </span>
+                {owner && (
+                  <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:inline">
+                    {owner}
+                  </span>
+                )}
+                <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+                  {rec?.started_at ? fmtTime(rec.started_at) : '—'}
+                  {dur ? ` · ${dur}` : ''}
+                </span>
+                {canOpen && <span className="shrink-0 text-[11px] text-primary">trace →</span>}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
       <RunDetailDrawer
         run={timelineRun}
         open={timelineRun !== null}

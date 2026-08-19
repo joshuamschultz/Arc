@@ -31,6 +31,42 @@ _RUN_EVENT_TYPES = frozenset(
     {"strategy.selected", "turn.start", "turn.end", "loop.complete", "loop.completed"}
 )
 
+# Reasons the SPEC-043 breaker records on ``loop.completed`` when the loop was
+# halted by a cap rather than a clean completion. Carried onto the spool record's
+# ``outcome`` so an observer (arcui) can tell a capped run from a completed one —
+# both emit ``loop.complete``, so the terminal event name alone cannot.
+_BREACH_TERMINAL_REASONS = frozenset(
+    {"max_turns", "max_cost", "max_tokens", "runaway_loop", "error_cascade"}
+)
+
+
+def _run_event_outcome(event: Event) -> str | None:
+    """The breach reason to stamp on a terminal run_event, or None for a clean one.
+
+    Only ``loop.completed`` carries a ``reason`` (the breaker path); a structured
+    completion carries the task payload with no ``reason`` key, and every other
+    lifecycle event is unremarkable — all of which read as ``ok``.
+    """
+    if event.type != "loop.completed":
+        return None
+    reason = event.data.get("reason")
+    return reason if isinstance(reason, str) and reason in _BREACH_TERMINAL_REASONS else None
+
+
+def _run_event_extra(event: Event) -> dict[str, Any]:
+    """The small scalar detail an observer needs to describe a lifecycle event.
+
+    ``strategy.selected`` carries WHICH strategy was chosen — the name the loop
+    picked (react / code / dynamic). Without it on the spool record the trace can
+    only say "chose a strategy" and never which one. Kept to a single whitelisted
+    scalar; bodies never ride a run_event.
+    """
+    if event.type == "strategy.selected":
+        strategy = event.data.get("strategy")
+        if isinstance(strategy, str) and strategy:
+            return {"strategy": strategy}
+    return {}
+
 # Tool-lifecycle event types mirrored as ``tool_event`` records (SPEC-028 FR-1).
 # Code execution (``execute_python``) rides these like any other tool (FR-2).
 _TOOL_EVENT_TYPES = frozenset({"tool.start", "tool.end", "tool.error"})
@@ -207,6 +243,8 @@ class EventBus:
                         actor_did=actor_did,
                         request_id=self._run_id,
                         name=event.type,
+                        outcome=_run_event_outcome(event),
+                        extra=_run_event_extra(event),
                     )
                 )
             elif event.type in _TOOL_EVENT_TYPES:

@@ -369,23 +369,40 @@ function buildNameIndex(agents: Agent[]): Map<string, string> {
 }
 
 /**
+ * Whether a reference denotes the operator (a human), not a roster agent.
+ *
+ * The operator posts under a key-bound DID (`did:arc:…:operator/<hex>`), the
+ * reserved `operator` handle the live serializer collapses that DID to, or a
+ * `user://operator` URI — none of which the roster carries. Recognizing all
+ * three keeps the label "Operator" whether the row arrives as history (full
+ * DID) or as a live frame (already collapsed to `operator`).
+ */
+function isOperatorRef(ref: string): boolean {
+  return (
+    ref.replace(/^@/, '') === 'operator' ||
+    ref.includes(':operator') ||
+    ref.includes('/operator') ||
+    ref.startsWith('user://')
+  )
+}
+
+/**
  * Render who is speaking, as a person would say it.
  *
  * A DID collapsed to its trailing segment is a hex suffix — `7e3e1a09` — which
- * identifies an agent to the system and to nobody else. Every reference is
- * resolved through the roster first, and the collapse is kept only as the
- * last resort for a ref no roster entry claims.
+ * identifies an entity to the system and to nobody else. Every reference is
+ * resolved through the roster first, then named as the operator when it is the
+ * human, and the hex collapse is kept only as the last resort for a ref no
+ * roster entry and no known role claims.
  */
 function handleOf(ref: string, names?: Map<string, string>): string {
   const known = names?.get(ref)
   if (known) return known
+  // The operator (the person) is not a roster agent — name them, never a hex.
+  if (isOperatorRef(ref)) return 'Operator'
   if (ref.startsWith('did:')) {
     const tail = ref.split('/').pop()?.split(':').pop() ?? ref
-    const byTail = names?.get(tail)
-    if (byTail) return byTail
-    // The operator (the person) is not a roster agent — name them, don't show a hex.
-    if (ref.includes(':operator') || ref.includes('/operator')) return 'Operator'
-    return tail
+    return names?.get(tail) ?? tail
   }
   if (ref.includes('://')) {
     const target = ref.split('://')[1] ?? ref
@@ -422,10 +439,15 @@ function ChannelPanel({
 
   // Sender colors reuse the same roster colors shown in the agent rail, so a
   // channel message row's avatar matches the sender's identity elsewhere in
-  // the UI.
+  // the UI. Keyed by the display label too, because a resolved row's `from` is
+  // the readable name (e.g. "Brian"), not the raw handle ("brian").
   const handleColor = useMemo(() => {
     const map = new Map<string, string>()
-    for (const h of mentionHandles) if (h.color) map.set(h.handle, h.color)
+    for (const h of mentionHandles) {
+      if (!h.color) continue
+      map.set(h.handle, h.color)
+      if (h.label) map.set(h.label, h.color)
+    }
     return map
   }, [mentionHandles])
 

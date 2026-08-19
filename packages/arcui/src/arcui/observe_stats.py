@@ -258,6 +258,7 @@ def _new_run(run_id: str) -> dict[str, Any]:
         "cost_usd": 0.0,
         "_error": False,
         "_completed": False,
+        "_breached": False,
     }
 
 
@@ -272,6 +273,11 @@ def _fold_event_kind(run: dict[str, Any], row: dict[str, Any]) -> None:
             # loop.complete is the universal terminal (every run exit); loop.completed
             # is the structured-completion variant. Either means the run finished.
             run["_completed"] = True
+            # A ``loop.completed`` carrying a non-ok outcome is a BREACH terminal
+            # (max_cost / max_turns / …): the run reached an end, but by hitting a
+            # cap, not by completing. That must not read as a clean "completed".
+            if (row.get("outcome") or "ok") != "ok":
+                run["_breached"] = True
     elif kind == "tool_event":
         # One invocation == one ``start`` (start/end/error share a tool call).
         if row.get("phase") == "start":
@@ -305,7 +311,13 @@ def _fold_run(run: dict[str, Any], row: dict[str, Any]) -> None:
 def _finalize_run(run: dict[str, Any], *, now: float) -> dict[str, Any]:
     start, end = _epoch(run["started_at"]), _epoch(run["ended_at"])
     duration_ms = round((end - start) * 1000, 1) if start is not None and end is not None else None
-    if run["_completed"]:
+    if run["_breached"]:
+        # Reached a terminal, but by hitting a budget/turn/token cap — an
+        # incomplete outcome the agent did not choose. Honest status is "error"
+        # (the existing non-clean terminal), never "completed": a $2 cost cap on
+        # a run that ballooned to 589K input tokens is a failure, not a finish.
+        status = "error"
+    elif run["_completed"]:
         # A run that reached its terminal (loop.complete, emitted once in
         # build_result on every clean exit) FINISHED. Any tool/LLM error along
         # the way was recovered — the loop kept going to completion — so a single

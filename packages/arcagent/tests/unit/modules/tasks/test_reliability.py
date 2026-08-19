@@ -14,6 +14,7 @@ import asyncio
 import json
 from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -223,6 +224,132 @@ class TestCancel:
         task = await st.store.get("t1")
         assert task is not None
         assert task.status == "failed" and task.resolution == "cancelled"
+
+
+class _CappedRun:
+    """Run stub mimicking a breaker-halted loop.
+
+    A budget/turn/token cap does NOT raise: the arcrun breaker synthesizes a
+    ``completion_payload`` with ``status="failed"`` and ``error=<reason>``, emits
+    ``loop.complete``, and RETURNS a ``RunResult``. The agent never called
+    ``complete_task``. This stub reproduces exactly that return shape.
+    """
+
+    def __init__(self, reason: str = "max_cost") -> None:
+        self.calls = 0
+        self.reason = reason
+
+    async def __call__(self, text: str, *, session_key: str, run_id: str | None = None, **_: Any) -> Any:
+        self.calls += 1
+        return SimpleNamespace(
+            content=f"{self.reason} limit reached before task completed.",
+            completion_payload={
+                "status": "failed",
+                "summary": f"{self.reason} limit reached before task completed.",
+                "error": self.reason,
+            },
+            completion_tool=None,
+        )
+
+
+@pytest.mark.asyncio
+class TestBudgetCapSettlement:
+    """A loop the breaker halts must terminally fail its task — the reported bug.
+
+    Before the fix the capped run returned normally, ``_await_run`` treated it as
+    a clean finish, and the row sat ``in_progress`` (dashboard "running") until
+    stuck-reclaim guessed it dead — while a workflow that materialised it as a
+    node never finalised.
+    """
+
+    async def test_cost_cap_without_completion_fails_task(self, state: Any) -> None:
+        from arcagent.modules.tasks.capabilities import _dispatch_tick
+
+        st, identity = state
+        run = _CappedRun(reason="max_cost")
+        st.agent_run_fn = run
+        # max_attempts=3 proves a cap is TERMINAL now, not a retryable attempt:
+        # a cap is deterministic, so retrying only re-burns the ceiling.
+        await _seed_todo(st, identity, "t1", max_attempts=3)
+
+        await _dispatch_tick()
+
+        task = await st.store.get("t1")
+        assert task is not None
+        assert task.status == "failed"
+        assert task.attempts == 1  # not retried
+        assert task.last_error and "max_cost" in task.last_error
+        assert task.resolution and "limit reached" in task.resolution
+        assert task.completed_at is not None
+        assert run.calls == 1
+
+    async def test_max_turns_cap_also_fails_task(self, state: Any) -> None:
+        from arcagent.modules.tasks.capabilities import _dispatch_tick
+
+        st, identity = state
+        st.agent_run_fn = _CappedRun(reason="max_turns")
+        await _seed_todo(st, identity, "t1", max_attempts=2)
+
+        await _dispatch_tick()
+
+        task = await st.store.get("t1")
+        assert task is not None
+        assert task.status == "failed"
+        assert task.last_error and "max_turns" in task.last_error
+
+    async def test_agent_completion_wins_over_capped_payload(self, state: Any) -> None:
+        """If the agent finished via its own tool, that terminal row wins.
+
+        Guards against clobbering a genuine ``done`` when a stray halt payload
+        rides along — ``_settle_capped_run`` only touches an ``in_progress`` row.
+        """
+        from arcagent.modules.tasks.capabilities import _dispatch_tick
+
+        st, identity = state
+
+        async def run(text: str, *, session_key: str, run_id: str | None = None, **_: Any) -> Any:
+            await st.store.finish(
+                "t1", status="done", resolution="did it", actor_did=identity.did
+            )
+            return SimpleNamespace(
+                completion_payload={"status": "failed", "error": "max_cost", "summary": "x"},
+                completion_tool=None,
+            )
+
+        st.agent_run_fn = run
+        await _seed_todo(st, identity, "t1", max_attempts=3)
+
+        await _dispatch_tick()
+
+        task = await st.store.get("t1")
+        assert task is not None
+        assert task.status == "done"  # the agent's terminal is not overridden
+
+    async def test_clean_return_without_halt_reason_is_left_for_reclaim(self, state: Any) -> None:
+        """A normal end-of-turn with no completion (and no cap) is NOT auto-failed.
+
+        Only a breaker halt is a terminal here; an ordinary run that ends without
+        calling ``complete_task`` stays ``in_progress`` for stuck-reclaim, exactly
+        as before — the fix must not over-reach.
+        """
+        from arcagent.modules.tasks.capabilities import _dispatch_tick
+
+        st, identity = state
+
+        async def run(text: str, *, session_key: str, run_id: str | None = None, **_: Any) -> Any:
+            return SimpleNamespace(
+                completion_payload={"status": "success", "summary": "done thinking"},
+                completion_tool=None,
+            )
+
+        st.agent_run_fn = run
+        await _seed_todo(st, identity, "t1", max_attempts=3)
+
+        await _dispatch_tick()
+
+        task = await st.store.get("t1")
+        assert task is not None
+        assert task.status == "in_progress"  # untouched — reclaim owns this case
 
 
 @pytest.mark.asyncio

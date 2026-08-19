@@ -246,6 +246,26 @@ class TestComputeRuns:
         runs = compute_runs(events)
         assert runs[0]["status"] == "completed"
 
+    def test_budget_capped_run_is_error_not_completed(self) -> None:
+        # A run whose loop was halted by a cap emits ``loop.completed`` with a
+        # non-ok outcome (the breach reason) AND the universal ``loop.complete``.
+        # It reached a terminal, but by hitting a ceiling — so it must read
+        # "error", never a clean "completed" (the status-honesty bug: a cost-cap
+        # run was shown as done while its task/workflow hung).
+        events = self._events()
+        events.append(
+            {
+                "kind": "run_event",
+                "request_id": "run-1",
+                "actor_did": "did:a",
+                "name": "loop.completed",
+                "outcome": "max_cost",
+                "ts": "2026-05-31T00:00:06.9+00:00",  # before loop.complete at :07
+            }
+        )
+        runs = compute_runs(events)
+        assert runs[0]["status"] == "error"
+
     def test_recent_run_with_tool_error_is_still_running(self) -> None:
         # A live run that just hit a failing tool call but has not reached its
         # terminal is recovering, not failed — it must stay "running", never flip

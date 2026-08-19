@@ -722,6 +722,18 @@ _RELIABILITY_TICK = 5.0
 # Highest-priority-first ordering (mirrors arcstore's claim order, SDD §2).
 _PRIORITY_RANK: dict[Priority, int] = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 
+# Reasons the arcrun loop stamps on ``completion_payload.error`` when the loop
+# ITSELF halts a run — the SPEC-043 breakers (max_turns / max_cost / max_tokens /
+# runaway_loop / error_cascade, mirrored from
+# ``arcrun.builtins.task_complete.BudgetBreachReason``) plus the operator-cancel
+# code. On any of these the agent never reached its own terminator, so the run
+# returns NORMALLY carrying a "failed" payload while the arcstore row is still
+# ``in_progress``. That is a terminal failure, not a completed step — a cap is
+# deterministic, so a retry would only re-burn the same ceiling.
+_LOOP_HALT_REASONS = frozenset(
+    {"max_turns", "max_cost", "max_tokens", "runaway_loop", "error_cascade", "cancelled"}
+)
+
 
 async def _is_dispatchable(st: _runtime._State, task: Task, now: str) -> bool:
     """Whether a todo task should be started now (P1 gates + P2 DAG gates).
@@ -797,8 +809,10 @@ async def _run_task(st: _runtime._State, task: Task, run_id: str, self_did: str)
             # A script node is deterministic code, not a model turn: run its
             # bundle script directly instead of the loop (SPEC-061). It still
             # rides the same reliability wrapper, cancel path, and leg carrier.
+            is_script = True
             run = asyncio.ensure_future(_run_script_node(st, task, node, self_did))
         else:
+            is_script = False
             run = asyncio.ensure_future(
                 st.agent_run_fn(
                     _format_task_prompt(task),
@@ -809,7 +823,14 @@ async def _run_task(st: _runtime._State, task: Task, run_id: str, self_did: str)
             )
         st.running[task.id] = run
         try:
-            await _await_run(st, task, run, timeout, self_did)
+            result = await _await_run(st, task, run, timeout, self_did)
+            # The model path returns a RunResult; a loop the breaker halted
+            # returns NORMALLY with a "failed" payload, so the clean-return
+            # branch above did nothing and the row is still in_progress. Convert
+            # that into a terminal failure now instead of waiting for
+            # stuck-reclaim to guess. A script node transitions its own row.
+            if not is_script:
+                await _settle_capped_run(st, task.id, self_did, result)
         finally:
             st.running.pop(task.id, None)
     if node is not None and carrier is not None:
@@ -884,10 +905,16 @@ async def _seal_run_legs(st: _runtime._State, task: Task) -> None:
 
 async def _await_run(
     st: _runtime._State, task: Task, run: asyncio.Task[Any], timeout: float | None, self_did: str
-) -> None:
-    """Await one dispatched run, routing every outcome to the retry engine."""
+) -> Any:
+    """Await one dispatched run, routing every outcome to the retry engine.
+
+    Returns the run's result on a clean return (the model path's ``RunResult``,
+    inspected by :func:`_settle_capped_run` for a breaker-halted loop) and
+    ``None`` on the failure/cancel branches, which have already transitioned the
+    task themselves.
+    """
     try:
-        await asyncio.wait_for(run, timeout)
+        return await asyncio.wait_for(run, timeout)
     except TimeoutError:
         await _handle_attempt_failure(st, task.id, self_did, f"timeout after {timeout:g}s")
     except asyncio.CancelledError:
@@ -900,6 +927,47 @@ async def _await_run(
             raise  # genuine shutdown — never swallow the loop's own cancellation
     except Exception as exc:  # reason: any run failure feeds the retry engine (LLM10/ASI08)
         await _handle_attempt_failure(st, task.id, self_did, f"{type(exc).__name__}: {exc}")
+    return None
+
+
+async def _settle_capped_run(
+    st: _runtime._State, task_id: str, self_did: str, result: Any
+) -> None:
+    """Terminally fail a task whose loop was halted by a budget/turn cap.
+
+    A capped loop (max_cost / max_turns / max_tokens / runaway_loop /
+    error_cascade / operator cancel) does NOT raise: the breaker synthesizes a
+    ``completion_payload`` with ``status="failed"`` and ``error=<reason>``,
+    emits ``loop.complete``, and returns — so the run reads as a clean finish
+    even though the agent never called ``complete_task``/``fail_task``. Left
+    alone the row sits ``in_progress`` (the dashboard shows "running") until
+    stuck-reclaim guesses it dead minutes later, and a workflow that
+    materialised it as a node never finalises because the node is still
+    in-flight. The terminal signal is already in hand, so act on it now.
+
+    Guarded on the row still being ``in_progress``: an agent that finished
+    through its own tools wrote the terminal row first, and that decision wins
+    (``dead_letter`` is itself status-conditional, so the guard is belt-and-
+    braces against a race).
+    """
+    payload = getattr(result, "completion_payload", None)
+    if not isinstance(payload, dict):
+        return
+    reason = payload.get("error")
+    if not isinstance(reason, str) or reason not in _LOOP_HALT_REASONS:
+        return
+    current = await st.store.get(task_id)
+    if current is None or current.status != "in_progress":
+        return
+    raw_summary = str(payload.get("summary") or f"loop halted: {reason}")
+    summary = sanitize_text(raw_summary, max_length=500)
+    failed = await st.store.dead_letter(
+        task_id, actor_did=self_did, resolution=summary, last_error=f"loop halted: {reason}"
+    )
+    if failed is not None:
+        await _notify_operator(
+            st, f"failed: {current.title} ({reason})", current.classification, alert=True
+        )
 
 
 async def _handle_attempt_failure(

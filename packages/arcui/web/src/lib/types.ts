@@ -743,6 +743,9 @@ export interface WorkflowRunNodeStatus {
   /** The row a gate is resolved by — present on a node that has one. */
   task_id?: string | null
   kind?: string | null
+  owner_did?: string | null
+  started_at?: string | null
+  completed_at?: string | null
 }
 
 export interface WorkflowRunDetail {
@@ -753,6 +756,8 @@ export interface WorkflowRunDetail {
   status: WorkflowRunStatus
   path_taken: string[]
   nodes: WorkflowRunNodeStatus[]
+  started_at?: string | null
+  ended_at?: string | null
 }
 
 export type GateDecision = 'approve' | 'fail_run' | 'return_for_revision'

@@ -6,6 +6,17 @@ import type { TimelineEntry } from '@/lib/types'
 
 const CODE_EXEC_TOOLS = new Set(['execute_python', 'execute'])
 
+// An embedder call (memory retrieval) is NOT the reasoning model — it turns text
+// into vectors to search memory. It rides the same llm_call telemetry as a
+// reasoning turn, so the trace mislabelled it "the agent thought about what to do
+// next". An embedder never emits completion tokens AND its model name is one of
+// the well-known embedding families, so the pair is an unambiguous tell.
+const EMBED_MODEL_RX = /(embed|minilm|bge|gte|e5|nomic)/i
+
+function isEmbeddingCall(item: LlmItem): boolean {
+  return item.tokensOut === 0 && EMBED_MODEL_RX.test(item.model)
+}
+
 /** snake/dot_case → Title Case, for names we have no friendly label for. */
 export function prettifyName(name: string): string {
   return name
@@ -49,10 +60,22 @@ const EVENT_DESCRIPTIONS: Record<string, string> = {
  *  does not know the tool names. */
 export function describeAction(item: Item): { title: string; description: string } {
   if (item.kind === 'llm') {
+    if (isEmbeddingCall(item)) {
+      return {
+        title: item.model,
+        description: 'Memory lookup — turned text into vectors to search memory (not a reasoning step)',
+      }
+    }
     return { title: item.model, description: 'Model call — the agent thought about what to do next' }
   }
   if (item.kind === 'run') {
     const key = item.name.toLowerCase()
+    if (key === 'strategy.selected' || key === 'strategy.select') {
+      const strategy = typeof item.extra?.strategy === 'string' ? item.extra.strategy : null
+      if (strategy) {
+        return { title: prettifyName(item.name), description: `Chose the "${strategy}" strategy` }
+      }
+    }
     return { title: prettifyName(item.name), description: EVENT_DESCRIPTIONS[key] ?? 'Run event' }
   }
   if (item.kind === 'spawn') {
@@ -101,6 +124,9 @@ export interface RunItem {
   kind: 'run'
   ts?: string | null
   name: string
+  // Small scalar detail the backend carries on a lifecycle run_event — e.g.
+  // `strategy` on `strategy.selected`, so the trace can say WHICH strategy.
+  extra?: Record<string, unknown> | null
 }
 export interface SpawnItem {
   kind: 'spawn'
@@ -191,7 +217,7 @@ export function mergeTimeline(entries: TimelineEntry[], runIsLive: boolean): Ite
         costUsd: e.cost_usd,
       })
     } else {
-      items.push({ kind: 'run', ts: e.ts, name: e.name ?? 'event' })
+      items.push({ kind: 'run', ts: e.ts, name: e.name ?? 'event', extra: e.extra ?? null })
     }
   }
   if (!runIsLive) {
