@@ -317,9 +317,50 @@ async def remove_member_route(request: Request) -> JSONResponse:
     return await _mutate_member(request, operation="channel.member_remove")
 
 
+async def list_gateways(request: Request) -> JSONResponse:
+    """GET /api/team/gateways — enabled remote chat surfaces (Telegram, Slack, …).
+
+    A workflow's response can narrate out through a gateway, but the messaging
+    URI scheme only knows agent/channel/user/role — a platform is not itself a
+    recipient. Each enabled ``[platforms.<name>]`` block binds a platform to the
+    agent whose bot relays it, so the destination surfaced here is that agent
+    (``agent_did``); the caller renders it as a first-class "Telegram" choice
+    that stores the bound agent's URI. Grows automatically as platforms are
+    connected. ``web`` is the in-process browser surface, never a narration
+    target, so it is excluded. Read-only; raw ``gateway.toml``, no secrets.
+    """
+    del request
+    from arctrust.paths import config_file
+
+    path = config_file("gateway.toml")
+    if not path.is_file():
+        return JSONResponse({"gateways": []})
+    try:
+        import tomllib
+
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        logger.exception("team_chat: gateway.toml parse failed")
+        return JSONResponse({"gateways": []})
+    default_did = str((data.get("gateway") or {}).get("agent_did", "") or "")
+    gateways: list[dict[str, Any]] = []
+    for name, block in (data.get("platforms") or {}).items():
+        if name == "web" or not isinstance(block, dict) or not block.get("enabled"):
+            continue
+        gateways.append(
+            {
+                "name": name,
+                "platform": str(block.get("platform", name)),
+                "agent_did": str(block.get("agent_did", "") or default_did),
+            }
+        )
+    return JSONResponse({"gateways": gateways})
+
+
 routes = [
     Route("/api/team/channels", list_channels, methods=["GET"]),
     Route("/api/team/channels", create_channel_route, methods=["POST"]),
+    Route("/api/team/gateways", list_gateways, methods=["GET"]),
     Route(
         "/api/team/channels/{channel_name}/members",
         add_member_route,

@@ -387,6 +387,17 @@ function isOperatorRef(ref: string): boolean {
 }
 
 /**
+ * Whether a reference denotes the workflow runner (a system entity, not an
+ * agent). It posts run narration under a key-bound DID
+ * (`did:arc:…:workflow-runner/<hex>`) or the reserved `workflow-runner` handle
+ * the live serializer collapses that DID to — neither in the roster, so without
+ * this its narration reads as a bare hex (`bf6ee9f7`).
+ */
+function isWorkflowRunnerRef(ref: string): boolean {
+  return ref.includes('workflow-runner')
+}
+
+/**
  * Render who is speaking, as a person would say it.
  *
  * A DID collapsed to its trailing segment is a hex suffix — `7e3e1a09` — which
@@ -400,6 +411,8 @@ function handleOf(ref: string, names?: Map<string, string>): string {
   if (known) return known
   // The operator (the person) is not a roster agent — name them, never a hex.
   if (isOperatorRef(ref)) return 'Operator'
+  // The workflow runner is a system entity, not a roster agent — name it too.
+  if (isWorkflowRunnerRef(ref)) return 'Workflow'
   if (ref.startsWith('did:')) {
     const tail = ref.split('/').pop()?.split(':').pop() ?? ref
     return names?.get(tail) ?? tail

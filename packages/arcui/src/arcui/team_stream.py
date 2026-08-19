@@ -54,6 +54,12 @@ def default_handle_of(ref: str) -> str:
         # name).
         if ":operator" in ref or "/operator" in ref:
             return "operator"
+        # The workflow runner posts run narration (``Run started…``, ``Node X
+        # started``) under a key-bound DID whose tail is also a fingerprint, not
+        # a handle. Collapse it to the reserved ``workflow-runner`` handle so the
+        # narration reads "Workflow", never a bare hex (bf6ee9f7).
+        if "workflow-runner" in ref:
+            return "workflow-runner"
         tail = ref.rsplit("/", 1)[-1]
         return tail.rsplit(":", 1)[-1]
     if "://" in ref:

@@ -46,6 +46,7 @@ import {
   useRoster,
   useRunWorkflow,
   useTeamChannels,
+  useTeamGateways,
   useUnarchiveWorkflow,
   useWorkflow,
   useWorkflowFile,
@@ -449,6 +450,7 @@ function TriggerChannelTab({ workflow }: { workflow: WorkflowDetail }) {
   const [channel, setChannel] = useState(workflow.channel ?? '')
   const channelsQ = useTeamChannels()
   const rosterQ = useRoster()
+  const gatewaysQ = useTeamGateways()
   const [error, setError] = useState<string | null>(null)
 
   // A response target is a messaging URI, not a bare name — the runner parses it
@@ -458,6 +460,16 @@ function TriggerChannelTab({ workflow }: { workflow: WorkflowDetail }) {
   const agentTargets = (rosterQ.data?.agents ?? []).filter(
     (a): a is typeof a & { agent_id: string } => !a.hidden && Boolean(a.agent_id),
   )
+  // A gateway (Telegram/Slack) is not itself a URI recipient — it relays through
+  // the agent it is bound to. So each enabled platform becomes a choice that
+  // stores that agent's URI, resolved from the roster by the bound DID. A
+  // platform bound to an agent not in the roster is skipped (no handle to form).
+  const gatewayTargets = (gatewaysQ.data?.gateways ?? [])
+    .map((g) => {
+      const agent = agentTargets.find((a) => a.did === g.agent_did)
+      return agent ? { platform: g.platform, uri: `agent://${agent.agent_id}`, agent } : null
+    })
+    .filter((g): g is NonNullable<typeof g> => g !== null)
   const targetKnown =
     channelTargets.some((c) => `channel://${c.name}` === channel) ||
     agentTargets.some((a) => `agent://${a.agent_id}` === channel)
@@ -598,6 +610,20 @@ function TriggerChannelTab({ workflow }: { workflow: WorkflowDetail }) {
                 {channelTargets.map((c) => (
                   <SelectItem key={`channel://${c.name}`} value={`channel://${c.name}`}>
                     #{c.name}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            )}
+            {gatewayTargets.length > 0 && (
+              <SelectGroup>
+                <SelectLabel>Gateway channels</SelectLabel>
+                {gatewayTargets.map((g) => (
+                  <SelectItem key={`gw-${g.platform}-${g.uri}`} value={g.uri}>
+                    <span className="capitalize">{g.platform}</span>
+                    <span className="text-muted-foreground">
+                      {' '}
+                      · {g.agent.display_name || g.agent.name || g.agent.agent_id}
+                    </span>
                   </SelectItem>
                 ))}
               </SelectGroup>

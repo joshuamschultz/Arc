@@ -23,6 +23,7 @@ import type {
   AgentsListResponse,
   AuditEventsResponse,
   ChannelsResponse,
+  GatewaysResponse,
   ConfigResponse,
   DailyNoteDetail,
   DailyNotesResponse,
@@ -226,6 +227,9 @@ export const useTaskActivity = (taskId: string | null, limit = 100) =>
 
 export const useTeamChannels = () =>
   useApiQuery<ChannelsResponse>(['team', 'channels'], '/api/team/channels')
+
+export const useTeamGateways = () =>
+  useApiQuery<GatewaysResponse>(['team', 'gateways'], '/api/team/gateways')
 
 export interface ChannelMessagesResponse {
   channel: string

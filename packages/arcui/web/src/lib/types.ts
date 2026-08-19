@@ -409,6 +409,15 @@ export interface ChannelsResponse {
   channels: Channel[]
 }
 
+export interface GatewayDestination {
+  name: string
+  platform: string
+  agent_did: string
+}
+export interface GatewaysResponse {
+  gateways: GatewayDestination[]
+}
+
 export interface ConfigResponse {
   config: Dict
   raw: string
