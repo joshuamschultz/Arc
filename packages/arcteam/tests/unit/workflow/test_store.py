@@ -85,6 +85,42 @@ def _seed(store: DefinitionStore, document: dict[str, Any] | None = None) -> Any
     )
 
 
+# --- narration binding -------------------------------------------------------
+
+
+def test_a_bare_channel_name_is_promoted_to_a_uri_on_save(store: DefinitionStore) -> None:
+    """The nightly-meeting-ingest defect: a surface stores ``channel = "work"``,
+    then every run is refused because ``parse_uri`` rejects a bare name. The one
+    write choke point promotes it to ``channel://work`` before it reaches disk,
+    so the binding the runner reads is always a valid messaging URI."""
+    from arcteam.workflow.narrator import assert_channel_binding
+
+    document = {
+        "workflow": {"id": "meetings", "owner": "@sales", "channel": "work"},
+        "node": [{"id": "collect", "kind": "agent", "agent": "@sales"}],
+    }
+    store.save_draft(
+        parse_definition(document), actor_did="did:arc:agent:sales", expected_version=None
+    )
+
+    reloaded = store.load("meetings").definition
+    assert reloaded.channel == "channel://work"
+    # The run-start guard now accepts the stored binding instead of refusing it.
+    assert_channel_binding(reloaded.channel)
+
+
+def test_an_already_qualified_channel_is_written_unchanged(store: DefinitionStore) -> None:
+    document = {
+        "workflow": {"id": "meetings", "owner": "@sales", "channel": "channel://work"},
+        "node": [{"id": "collect", "kind": "agent", "agent": "@sales"}],
+    }
+    store.save_draft(
+        parse_definition(document), actor_did="did:arc:agent:sales", expected_version=None
+    )
+
+    assert store.load("meetings").definition.channel == "channel://work"
+
+
 # --- canonical hashing -------------------------------------------------------
 
 

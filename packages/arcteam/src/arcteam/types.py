@@ -48,6 +48,9 @@ class Priority(StrEnum):
 # URI scheme pattern: scheme://name
 _URI_PATTERN = re.compile(r"^(agent|user|channel|role)://([a-zA-Z0-9_-]+)$")
 
+# A bare group name, with no scheme — what a dropdown or an older save submits.
+_BARE_NAME = re.compile(r"^[a-zA-Z0-9_-]+$")
+
 # Valid URI schemes
 VALID_SCHEMES = frozenset({"agent", "user", "channel", "role"})
 
@@ -73,6 +76,31 @@ def make_uri(scheme: str, name: str) -> str:
     if scheme not in VALID_SCHEMES:
         raise ValueError(f"Invalid scheme: {scheme!r}. Must be one of {VALID_SCHEMES}")
     return f"{scheme}://{name}"
+
+
+def normalize_channel(value: str | None) -> str | None:
+    """Coerce a narration binding to a messaging URI, or ``None`` when unset.
+
+    A workflow's narration target is a messaging URI — ``channel://``,
+    ``agent://``, ``user://``, or ``role://``. A surface that submits a bare
+    group name (``"work"`` from a dropdown or an older save) means the group
+    channel of that name, so it is promoted to ``channel://<name>`` at the one
+    write choke point, rather than being stored bare and then blowing up
+    :func:`parse_uri` the moment a run tries to narrate. An already-qualified
+    URI passes through unchanged; an empty or unset value is ``None`` (no
+    narration). Anything else is returned as-is for a downstream guard to
+    report — coercion repairs the common case, it does not hide malformed input.
+    """
+    if value is None:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    if _URI_PATTERN.match(text):
+        return text
+    if _BARE_NAME.match(text):
+        return make_uri("channel", text)
+    return text
 
 
 MAX_BODY_BYTES = 65536  # 64KB

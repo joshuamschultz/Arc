@@ -13,6 +13,7 @@ from arcteam.types import (
     Priority,
     generate_message_id,
     make_uri,
+    normalize_channel,
     parse_uri,
 )
 
@@ -123,6 +124,27 @@ class TestURIParsing:
     def test_make_uri_invalid_scheme(self) -> None:
         with pytest.raises(ValueError, match="Invalid scheme"):
             make_uri("http", "example")
+
+
+class TestNormalizeChannel:
+    """A narration binding is coerced to a messaging URI at the write seam."""
+
+    def test_bare_name_becomes_a_channel_uri(self) -> None:
+        # The exact defect: a dropdown/older save stores "work"; a run then
+        # blows up parse_uri. Coercion makes it channel://work before disk.
+        assert normalize_channel("work") == "channel://work"
+
+    def test_already_qualified_uri_passes_through(self) -> None:
+        assert normalize_channel("channel://work") == "channel://work"
+        assert normalize_channel("agent://sales") == "agent://sales"
+
+    def test_empty_or_unset_is_none(self) -> None:
+        assert normalize_channel(None) is None
+        assert normalize_channel("") is None
+        assert normalize_channel("   ") is None
+
+    def test_surrounding_whitespace_is_trimmed(self) -> None:
+        assert normalize_channel("  work  ") == "channel://work"
 
 
 class TestEnumSerialization:

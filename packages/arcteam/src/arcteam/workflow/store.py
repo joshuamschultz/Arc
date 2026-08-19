@@ -47,6 +47,7 @@ from typing import Any, Literal
 from arctrust import ArtifactSignature, sign_artifact, verify_artifact
 from pydantic import BaseModel, ConfigDict
 
+from arcteam.types import normalize_channel
 from arcteam.workflow.errors import (
     InvalidWorkflowIdError,
     PurgeRefusedError,
@@ -312,7 +313,13 @@ class DefinitionStore:
         version = self._next_version(definition.id, expected_version)
         incoming = self._resolve_files(bundle_root, files or {})
 
-        pending = definition.model_copy(update={"version": version})
+        # A bare channel name is promoted to channel://<name> on the way to
+        # disk, so the one narration binding that reaches the runner is always a
+        # valid messaging URI — a run must never be refused because an authoring
+        # surface stored "work" where a run expects "channel://work".
+        pending = definition.model_copy(
+            update={"version": version, "channel": normalize_channel(definition.channel)}
+        )
         text = dump_toml(pending.to_document())
         issues = validate_definition(
             pending,
