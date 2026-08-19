@@ -161,16 +161,20 @@ class DashboardWorkflowPlane:
                 "started_at": task.started_at,
                 "completed_at": task.completed_at,
             }
+        # A rules router (and any node the runner evaluates inline) never becomes
+        # a task row, so it is absent from the loop above. Its outcome lives only
+        # in the path: "skipped" means a branch not taken; anything else means the
+        # node was reached and resolved (a router that routed) — surface it as
+        # done, not "pending", so a resolved router doesn't read as still running
+        # while its chosen downstream node already ran.
         for entry in run.path_taken:
-            if entry.outcome == "skipped":
-                nodes.setdefault(
-                    entry.node_id,
-                    {
-                        "node_id": entry.node_id,
-                        "status": "skipped",
-                        "iteration": entry.loop_iteration,
-                    },
-                )
+            if entry.node_id in nodes:
+                continue
+            nodes[entry.node_id] = {
+                "node_id": entry.node_id,
+                "status": "skipped" if entry.outcome == "skipped" else "done",
+                "iteration": entry.loop_iteration,
+            }
         detail["nodes"] = list(nodes.values())
         return detail
 

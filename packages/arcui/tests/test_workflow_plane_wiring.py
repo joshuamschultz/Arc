@@ -97,8 +97,12 @@ async def test_list_and_detail_read_the_real_bundle(plane: Any) -> None:
     detail = await plane.get_workflow("onboarding", actor=actor)
     assert detail is not None
     assert [n["id"] for n in detail["nodes"]] == ["collect"]
-    # Retained prior revisions only — a bundle authored once has no history yet.
-    assert detail["versions"] == []
+    # Version history includes the current version, even with no retained prior
+    # revisions — a bundle authored once is version 1, reported honestly as an
+    # unsigned draft (signer/created None) rather than omitted.
+    assert detail["versions"] == [
+        {"version": 1, "signer": None, "reason": None, "created_at": None}
+    ]
 
 
 async def test_create_lands_a_draft_from_a_name(plane: Any) -> None:
