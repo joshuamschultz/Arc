@@ -24,15 +24,18 @@ Two entry points, two intents:
   operator's ``enabled`` / delivery / timeout, because changing a trigger is an
   intentional act but disabling its schedule was one too.
 
-The workflows module is reached lazily and every failure is swallowed with a
-log: a deployment without it, or with it not yet configured, simply has no
-workflow schedules to reconcile — never a broken scheduler.
+The workflow bundles are read straight off the shared deployment root, not
+through the workflows module's per-agent runtime: the backfill runs at
+capability-setup time, before that module's ``ContextVar`` is reliably bound in
+this task, and the store is deployment-wide anyway. Every failure is swallowed
+with a log — a deployment without arcteam's workflow engine simply has no
+workflow schedules to reconcile, never a broken scheduler.
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from arcagent.modules.scheduler import _runtime
@@ -207,30 +210,38 @@ def push_one(
     store.update(schedule_id, updates, context=config.validation_context())
 
 
-# --- workflows-runtime access (lazy, best-effort) -------------------------
+# --- workflow-store access (deployment-wide, binding-independent) ----------
+
+# Test seam: overridden to inject a fake definition store. Production leaves it
+# None and reads the real deployment store off disk.
+_definitions_factory: Callable[[], Any] | None = None
 
 
-async def _load_all_triggers() -> dict[str, Any] | None:
-    """Every non-deleted workflow id → its effective trigger, or ``None``.
+def _definitions() -> Any:
+    """A read-only handle on the deployment's workflow bundles, or ``None``.
 
-    ``None`` (the whole return) means the workflows module is absent or not
-    configured in this task — there is simply nothing to reconcile, which is not
-    an error.
+    Built directly from the shared bundle root (``workflows_dir()``) rather than
+    through the workflows module's per-agent runtime, deliberately: the backfill
+    runs at capability-setup time, where that module's ``ContextVar`` may not yet
+    be bound in this task — and the bundle store is deployment-wide, not per
+    agent, so the direct read is both correct and immune to that timing. ``None``
+    means arcteam's workflow engine is not installed: nothing to reconcile.
     """
+    if _definitions_factory is not None:
+        return _definitions_factory()
     try:
-        from arcagent.modules.workflows import _runtime as workflows_runtime
+        from arcteam.workflow import DefinitionStore
+        from arctrust.paths import workflows_dir
     except ImportError:
         return None
-    try:
-        workflows_runtime.state()
-    except RuntimeError:
-        return None  # module not configured on this deployment/task
-
-    await workflows_runtime.ensure_control_plane()
-    definitions = workflows_runtime.state().definitions
-    if definitions is None:
+    root = workflows_dir()
+    if not root.is_dir():
         return None
+    return DefinitionStore(root=root, tier="personal")
 
+
+def _all_triggers(definitions: Any) -> dict[str, Any]:
+    """Every non-archived workflow id → its effective trigger."""
     triggers: dict[str, Any] = {}
     for workflow_id in definitions.list_ids(include_archived=True):
         try:
@@ -240,31 +251,14 @@ async def _load_all_triggers() -> dict[str, Any] | None:
     return triggers
 
 
-async def _load_one_trigger(workflow_id: str) -> tuple[bool, Any]:
-    """One workflow's effective trigger. ``(False, None)`` if unreachable."""
-    try:
-        from arcagent.modules.workflows import _runtime as workflows_runtime
-    except ImportError:
-        return False, None
-    try:
-        workflows_runtime.state()
-    except RuntimeError:
-        return False, None
-
-    await workflows_runtime.ensure_control_plane()
-    definitions = workflows_runtime.state().definitions
-    if definitions is None or not definitions.exists(workflow_id):
-        return False, None
-    return True, definitions.load(workflow_id).effective_trigger
-
-
 async def reconcile_workflow_schedules() -> None:
     """Backfill the scheduler store from every workflow trigger. Best-effort."""
     try:
-        triggers = await _load_all_triggers()
-        if triggers is None:
+        definitions = _definitions()
+        if definitions is None:
             return
         state = _runtime.state()
+        triggers = _all_triggers(definitions)
         full_reconcile(state.store, state.config, triggers)
         _logger.info("Reconciled %d workflow trigger(s) into the scheduler", len(triggers))
     except Exception:  # reason: a sync failure must never break scheduler startup
@@ -274,9 +268,10 @@ async def reconcile_workflow_schedules() -> None:
 async def sync_workflow_schedule(workflow_id: str) -> None:
     """Push one workflow's trigger into the scheduler store. Best-effort."""
     try:
-        available, trigger = await _load_one_trigger(workflow_id)
-        if not available:
+        definitions = _definitions()
+        if definitions is None or not definitions.exists(workflow_id):
             return
+        trigger = definitions.load(workflow_id).effective_trigger
         state = _runtime.state()
         push_one(state.store, state.config, workflow_id, trigger)
     except Exception:  # reason: a sync failure must never break the builder tool
