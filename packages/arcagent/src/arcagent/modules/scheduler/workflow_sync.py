@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Mapping
+from datetime import UTC, datetime
 from typing import Any
 
 from arcagent.modules.scheduler import _runtime
@@ -62,6 +63,11 @@ _TIMING_FIELDS = ("type", "expression", "at", "every_seconds", "timezone", "acti
 def derived_id(workflow_id: str) -> str:
     """The deterministic schedule id for ``workflow_id``'s trigger."""
     return f"{DERIVED_ID_PREFIX}{workflow_id}"
+
+
+def _now() -> str:
+    """Current instant as an ISO string, for anchoring a new schedule."""
+    return datetime.now(UTC).isoformat()
 
 
 def parse_cron_tz(expression: str) -> tuple[str | None, str]:
@@ -95,6 +101,8 @@ def desired_entry(
     workflow_id: str,
     trigger: Any,
     config: SchedulerConfig,
+    *,
+    anchor: str | None = None,
 ) -> ScheduleEntry | None:
     """The schedule a triggered workflow should have, or ``None`` for no schedule.
 
@@ -102,6 +110,10 @@ def desired_entry(
     whose timing the scheduler cannot honour (a bare-invalid cron, an interval
     below the module floor) — reported once, never materialised as a row that
     can never fire.
+
+    ``anchor`` (an ISO timestamp) seeds ``last_run`` so a freshly wired nightly
+    trigger waits for its next real slot instead of catch-up-firing the instant
+    it is created — wiring "run at 10pm" at noon must not run it at noon.
     """
     trigger_type = getattr(trigger, "type", None)
     if trigger is None or trigger_type == "manual":
@@ -117,6 +129,7 @@ def desired_entry(
         "metadata": ScheduleMetadata(
             created_by="system",
             reason=f"derived from workflow '{workflow_id}' trigger",
+            last_run=anchor,
         ),
     }
 
@@ -159,19 +172,22 @@ def full_reconcile(
     store: ScheduleStore,
     config: SchedulerConfig,
     triggers: Mapping[str, Any],
+    *,
+    anchor: str | None = None,
 ) -> None:
     """Create-if-absent for every triggered workflow; prune orphaned derived rows.
 
     ``triggers`` maps EVERY currently-known workflow id to its effective trigger
     (``None`` when archived or trigger-less). An existing entry is left untouched
     so an operator edit in the store wins; a derived entry with no corresponding
-    desired schedule — trigger removed, workflow deleted — is dropped.
+    desired schedule — trigger removed, workflow deleted — is dropped. ``anchor``
+    seeds ``last_run`` on newly created entries so they wait for their next slot.
     """
     existing = {entry.id: entry for entry in store.load()}
     wanted: set[str] = set()
 
     for workflow_id, trigger in triggers.items():
-        entry = desired_entry(workflow_id, trigger, config)
+        entry = desired_entry(workflow_id, trigger, config, anchor=anchor)
         if entry is None:
             continue
         wanted.add(entry.id)
@@ -188,9 +204,11 @@ def push_one(
     config: SchedulerConfig,
     workflow_id: str,
     trigger: Any,
+    *,
+    anchor: str | None = None,
 ) -> None:
     """Materialise (or update, or remove) one workflow's schedule right now."""
-    entry = desired_entry(workflow_id, trigger, config)
+    entry = desired_entry(workflow_id, trigger, config, anchor=anchor)
     schedule_id = derived_id(workflow_id)
     current = store.get(schedule_id)
 
@@ -240,40 +258,58 @@ def _definitions() -> Any:
     return DefinitionStore(root=root, tier="personal")
 
 
-def _all_triggers(definitions: Any) -> dict[str, Any]:
-    """Every non-archived workflow id → its effective trigger."""
+def _owner_of(bundle: Any) -> str:
+    """The bundle's owning agent handle, without the leading ``@``."""
+    return str(getattr(bundle.definition, "owner", "")).lstrip("@")
+
+
+def _owned_triggers(definitions: Any, agent_name: str) -> dict[str, Any]:
+    """Every workflow THIS agent owns → its effective trigger.
+
+    Ownership scoping is what keeps a deployment-wide workflow from being
+    scheduled by all six agents and firing six times a night: exactly one
+    agent — the owner — materialises its schedule. Archived owned workflows come
+    through with a ``None`` trigger, so ``full_reconcile`` prunes their entries.
+    """
     triggers: dict[str, Any] = {}
+    if not agent_name:
+        return triggers
     for workflow_id in definitions.list_ids(include_archived=True):
         try:
-            triggers[workflow_id] = definitions.load(workflow_id).effective_trigger
+            bundle = definitions.load(workflow_id)
         except Exception:  # reason: one unreadable bundle must not stall the rest
             _logger.warning("could not load workflow '%s' for schedule sync", workflow_id)
+            continue
+        if _owner_of(bundle) == agent_name:
+            triggers[workflow_id] = bundle.effective_trigger
     return triggers
 
 
 async def reconcile_workflow_schedules() -> None:
-    """Backfill the scheduler store from every workflow trigger. Best-effort."""
+    """Backfill this agent's schedule store from the workflows it owns. Best-effort."""
     try:
         definitions = _definitions()
         if definitions is None:
             return
         state = _runtime.state()
-        triggers = _all_triggers(definitions)
-        full_reconcile(state.store, state.config, triggers)
-        _logger.info("Reconciled %d workflow trigger(s) into the scheduler", len(triggers))
+        triggers = _owned_triggers(definitions, state.agent_name)
+        full_reconcile(state.store, state.config, triggers, anchor=_now())
+        _logger.info("Reconciled %d owned workflow trigger(s) into the scheduler", len(triggers))
     except Exception:  # reason: a sync failure must never break scheduler startup
         _logger.warning("workflow-trigger schedule reconciliation failed", exc_info=True)
 
 
 async def sync_workflow_schedule(workflow_id: str) -> None:
-    """Push one workflow's trigger into the scheduler store. Best-effort."""
+    """Push one owned workflow's trigger into the scheduler store. Best-effort."""
     try:
         definitions = _definitions()
         if definitions is None or not definitions.exists(workflow_id):
             return
-        trigger = definitions.load(workflow_id).effective_trigger
         state = _runtime.state()
-        push_one(state.store, state.config, workflow_id, trigger)
+        bundle = definitions.load(workflow_id)
+        if _owner_of(bundle) != state.agent_name:
+            return  # only the owner schedules its workflow
+        push_one(state.store, state.config, workflow_id, bundle.effective_trigger, anchor=_now())
     except Exception:  # reason: a sync failure must never break the builder tool
         _logger.warning(
             "could not sync a schedule for workflow '%s'", workflow_id, exc_info=True

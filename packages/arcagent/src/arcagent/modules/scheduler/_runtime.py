@@ -45,6 +45,10 @@ class _State:
     workspace: Path
     telemetry: AgentTelemetry
     store: ScheduleStore
+    # This agent's team handle, used to scope workflow-trigger backfill to the
+    # workflows THIS agent owns — deployment-wide workflows would otherwise be
+    # scheduled by every agent and fire N times a night.
+    agent_name: str = ""
     bus: Any = None
     agent_run_fn: AgentRunFn | None = None
     channel_deliver_fn: Callable[[str, str], Awaitable[None]] | None = None
@@ -84,6 +88,7 @@ def configure(
     config: dict[str, Any] | SchedulerConfig | None = None,
     telemetry: AgentTelemetry,
     workspace: Path = Path("."),
+    agent_name: str = "",
     bus: Any = None,
     agent_run_fn: AgentRunFn | None = None,
 ) -> None:
@@ -106,6 +111,7 @@ def configure(
             workspace=ws,
             telemetry=telemetry,
             store=ScheduleStore(ws / cfg.store_path),
+            agent_name=agent_name,
             bus=bus,
             agent_run_fn=agent_run_fn,
         )

@@ -20,16 +20,27 @@ from arcagent.modules.scheduler import workflow_sync
 from arcagent.modules.scheduler.config import SchedulerConfig
 
 
+class _FakeDefinition:
+    def __init__(self, owner: str) -> None:
+        self.owner = owner
+
+
 class _FakeBundle:
-    def __init__(self, trigger: object) -> None:
+    def __init__(self, trigger: object, owner: str) -> None:
         self.effective_trigger = trigger
+        self.definition = _FakeDefinition(owner)
 
 
 class _FakeDefinitions:
-    """The read half of the workflow store — just enough for the bridge."""
+    """The read half of the workflow store — just enough for the bridge.
 
-    def __init__(self, triggers: dict[str, object]) -> None:
+    Every workflow here is owned by ``sales_agent`` so the owner-scoped bridge
+    materialises it under a scheduler configured for that agent.
+    """
+
+    def __init__(self, triggers: dict[str, object], owner: str = "@sales_agent") -> None:
         self._triggers = triggers
+        self._owner = owner
 
     def list_ids(self, *, include_archived: bool = False) -> tuple[str, ...]:
         return tuple(self._triggers)
@@ -38,7 +49,7 @@ class _FakeDefinitions:
         return workflow_id in self._triggers
 
     def load(self, workflow_id: str) -> _FakeBundle:
-        return _FakeBundle(self._triggers[workflow_id])
+        return _FakeBundle(self._triggers[workflow_id], self._owner)
 
 
 @pytest.fixture
@@ -50,6 +61,7 @@ def wired(tmp_path: Path) -> Iterator[dict[str, object]]:
         config=SchedulerConfig(enabled=True, timezone="America/Chicago"),
         telemetry=None,  # type: ignore[arg-type]  # engine only forwards it
         workspace=tmp_path,
+        agent_name="sales_agent",
     )
     workflow_sync._definitions_factory = lambda: _FakeDefinitions(triggers)
     yield triggers

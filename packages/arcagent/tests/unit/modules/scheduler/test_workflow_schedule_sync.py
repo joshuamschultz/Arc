@@ -107,6 +107,16 @@ def test_full_reconcile_creates_a_schedule_for_a_triggered_workflow(tmp_path: Pa
     assert entries[0].workflow_id == "nightly"
 
 
+def test_anchor_seeds_last_run_so_a_fresh_schedule_does_not_catch_up(tmp_path: Path) -> None:
+    """Wiring a 10pm trigger at noon must not fire it at noon."""
+    store = _store(tmp_path)
+    anchor = "2026-08-20T17:00:00+00:00"
+    ws.full_reconcile(
+        store, _cfg(), {"nightly": Trigger(type="cron", expression=_NIGHTLY)}, anchor=anchor
+    )
+    assert store.get("wf:nightly").metadata.last_run == anchor  # type: ignore[union-attr]
+
+
 def test_full_reconcile_respects_an_operator_edit(tmp_path: Path) -> None:
     store = _store(tmp_path)
     # Operator disabled the derived schedule in schedules.json.
@@ -218,6 +228,42 @@ def test_a_workflows_own_timezone_fires_at_local_ten_pm_not_utc() -> None:
 
     assert engine._should_fire_cron(chicago, now) is True
     assert engine._should_fire_cron(plain, now) is False
+
+
+# --- ownership scoping ------------------------------------------------------
+
+
+class _Bundle:
+    def __init__(self, trigger: object, owner: str) -> None:
+        self.effective_trigger = trigger
+        self.definition = type("_Def", (), {"owner": owner})()
+
+
+class _Defs:
+    def __init__(self, bundles: dict[str, _Bundle]) -> None:
+        self._b = bundles
+
+    def list_ids(self, *, include_archived: bool = False) -> tuple[str, ...]:
+        return tuple(self._b)
+
+    def load(self, workflow_id: str) -> _Bundle:
+        return self._b[workflow_id]
+
+
+def test_owned_triggers_returns_only_this_agents_workflows() -> None:
+    defs = _Defs(
+        {
+            "mine": _Bundle(Trigger(type="cron", expression="0 22 * * *"), "@sales_agent"),
+            "theirs": _Bundle(Trigger(type="cron", expression="0 6 * * *"), "@josh_agent"),
+        }
+    )
+    owned = ws._owned_triggers(defs, "sales_agent")
+    assert set(owned) == {"mine"}
+
+
+def test_owned_triggers_is_empty_without_an_agent_name() -> None:
+    defs = _Defs({"mine": _Bundle(Trigger(type="cron", expression="0 22 * * *"), "@sales_agent")})
+    assert ws._owned_triggers(defs, "") == {}
 
 
 def _derived(workflow_id: str, **overrides: object) -> ScheduleEntry:
