@@ -1,11 +1,13 @@
 """DST regression suite for the live cron-firing path.
 
-The scheduler engine (``SchedulerEngine._should_fire_cron``) and the model
-validator both evaluate cron expressions with croniter in **UTC** — there is
-no per-expression timezone field. That makes firing immune to the wall-clock
-DST bug croniter historically exhibited when iterating inside a DST zone:
-because evaluation never happens in a DST zone, a daily cron fires at the same
-UTC instant every day and neither skips nor double-fires across a transition.
+The scheduler engine (``SchedulerEngine._should_fire_cron``) evaluates a cron
+expression in the entry's own zone if it sets one, else the configured module
+zone, else **UTC**. The entries here set neither, so they evaluate in UTC. That
+makes their firing immune to the wall-clock DST bug croniter historically
+exhibited when iterating inside a DST zone: because evaluation never happens in a
+DST zone, a daily cron fires at the same UTC instant every day and neither skips
+nor double-fires across a transition. (A per-entry ``timezone`` — used to honour
+a workflow trigger's ``CRON_TZ`` — is covered in ``test_workflow_schedule_sync``.)
 
 These tests pin that behavior on the real engine path so a future engine change
 (e.g. introducing zone-aware firing) cannot silently regress it.

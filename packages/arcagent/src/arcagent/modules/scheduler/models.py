@@ -140,6 +140,12 @@ class ScheduleEntry(BaseModel):
     at: str | None = None  # once (ISO 8601 with timezone)
     every_seconds: int | None = None  # interval
 
+    # IANA timezone this entry's cron/once time is evaluated in, overriding the
+    # module-wide default. A workflow trigger's ``CRON_TZ=`` prefix lands here so
+    # a per-workflow zone fires at the author's local time, not the agent's. None
+    # falls back to the SchedulerConfig timezone.
+    timezone: str | None = None
+
     # Delivery: where the run's final output is sent when the schedule fires.
     # ``platform:chat_id[:thread_id]`` (e.g. "telegram:12345"). None keeps the
     # result internal to the ``scheduler:<id>`` session (no channel delivery).
@@ -174,6 +180,14 @@ class ScheduleEntry(BaseModel):
     def _validate_deliver_to(cls, v: str | None) -> str | None:
         if v is not None and not _DELIVER_TO_RE.match(v):
             msg = f"Invalid deliver_to {v!r}, expected 'platform:chat_id[:thread_id]'"
+            raise ValueError(msg)
+        return v
+
+    @field_validator("timezone")
+    @classmethod
+    def _validate_schedule_timezone(cls, v: str | None) -> str | None:
+        if v is not None and v not in available_timezones():
+            msg = f"Unknown timezone '{v}'"
             raise ValueError(msg)
         return v
 

@@ -84,6 +84,14 @@ class Scheduler:
         st.engine = engine
         _logger.info("Scheduler capability started")
 
+        # Backfill schedules for any workflow whose trigger has no entry yet, so
+        # a workflow set "on a schedule" actually fires and shows up in the store.
+        # Best-effort inside the sync itself: a deployment without the workflows
+        # module simply has nothing to reconcile.
+        from arcagent.modules.scheduler.workflow_sync import reconcile_workflow_schedules
+
+        await reconcile_workflow_schedules()
+
     async def teardown(self) -> None:
         st = _runtime.state()
         if st.engine is None:

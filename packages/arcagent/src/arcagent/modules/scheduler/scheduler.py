@@ -356,11 +356,22 @@ class SchedulerEngine:
         name = getattr(self._config, "timezone", "") or ""
         return ZoneInfo(name) if name else UTC
 
+    def _entry_tz(self, entry: ScheduleEntry) -> tzinfo:
+        """The zone THIS entry is evaluated in — its own if set, else config.
+
+        A workflow trigger carrying ``CRON_TZ=America/Chicago`` fires at 10pm
+        Chicago regardless of the agent's default zone, which the per-entry field
+        is what makes possible.
+        """
+        if entry.timezone:
+            return ZoneInfo(entry.timezone)
+        return self._resolve_tz()
+
     def _should_fire_cron(self, entry: ScheduleEntry, now: datetime) -> bool:
         if entry.expression is None:
             return False
 
-        tz = self._resolve_tz()
+        tz = self._entry_tz(entry)
         now_local = now.astimezone(tz)
         if entry.metadata.last_run:
             base = datetime.fromisoformat(entry.metadata.last_run).astimezone(tz)
@@ -383,10 +394,11 @@ class SchedulerEngine:
         if entry.at is None:
             return False
         target = datetime.fromisoformat(entry.at)
-        # A naive "at" is interpreted in the configured zone (a user typing
-        # "2026-07-15T08:00" means 8am local), then compared in UTC.
+        # A naive "at" is interpreted in the entry's zone, else the configured
+        # one (a user typing "2026-07-15T08:00" means 8am local), then compared
+        # in UTC.
         if target.tzinfo is None:
-            target = target.replace(tzinfo=self._resolve_tz())
+            target = target.replace(tzinfo=self._entry_tz(entry))
         return target <= now
 
     def _on_execution_complete(

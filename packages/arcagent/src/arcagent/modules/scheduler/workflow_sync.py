@@ -1,0 +1,297 @@
+"""Materialise a workflow's declared trigger into a real schedule entry.
+
+A workflow declares *when* it runs in its own document (``[trigger]``), but the
+only thing that actually fires cron is the scheduler store — one loop, over
+``schedules.json``. Nothing bridged the two, so a workflow set "on a schedule"
+in the dashboard sat inert: a correct predicate behind dead activating wiring,
+this repository's recurring failure mode.
+
+This module is that bridge, and it runs in ONE direction: a triggered workflow
+becomes a ``workflow_run`` schedule entry the scheduler already knows how to
+dispatch (SPEC-061 COMP-017). The entry lands in ``schedules.json`` like any
+other, so it fires AND an operator can see and tune it there.
+
+Two entry points, two intents:
+
+* :func:`reconcile_workflow_schedules` — startup backfill. Creates a schedule for
+  any triggered workflow that lacks one, and prunes derived schedules whose
+  workflow lost its trigger or was archived/removed. It **creates-if-absent** and
+  never overwrites an existing entry, so an operator's edit in ``schedules.json``
+  survives every restart — the store is authoritative once the entry exists.
+* :func:`sync_workflow_schedule` — the push. Called the moment a trigger is set
+  in the builder, so the schedule appears immediately rather than at next boot.
+  It applies the new *timing* to an existing entry while preserving the
+  operator's ``enabled`` / delivery / timeout, because changing a trigger is an
+  intentional act but disabling its schedule was one too.
+
+The workflows module is reached lazily and every failure is swallowed with a
+log: a deployment without it, or with it not yet configured, simply has no
+workflow schedules to reconcile — never a broken scheduler.
+"""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Mapping
+from typing import Any
+
+from arcagent.modules.scheduler import _runtime
+from arcagent.modules.scheduler.config import SchedulerConfig
+from arcagent.modules.scheduler.models import (
+    ActiveHours,
+    ScheduleEntry,
+    ScheduleMetadata,
+)
+from arcagent.modules.scheduler.store import ScheduleStore
+
+_logger = logging.getLogger("arcagent.modules.scheduler.workflow_sync")
+
+#: Every derived entry's id is this prefix plus the workflow id, so the bridge
+#: can tell its own rows from an operator's hand-made ``workflow_run`` schedule
+#: and prune only the former.
+DERIVED_ID_PREFIX = "wf:"
+
+# Fields the push path rewrites on an existing entry — the timing only. enabled,
+# deliver_to, timeout_seconds, and metadata are the operator's and stay put.
+_TIMING_FIELDS = ("type", "expression", "at", "every_seconds", "timezone", "active_hours")
+
+
+def derived_id(workflow_id: str) -> str:
+    """The deterministic schedule id for ``workflow_id``'s trigger."""
+    return f"{DERIVED_ID_PREFIX}{workflow_id}"
+
+
+def parse_cron_tz(expression: str) -> tuple[str | None, str]:
+    """Split a ``CRON_TZ=<zone> <expr>`` prefix off a cron expression.
+
+    croniter rejects the inline ``CRON_TZ=`` form, so the zone is lifted into the
+    entry's ``timezone`` field and the bare five-field expression stored. A plain
+    expression comes back unchanged with no zone.
+    """
+    expr = expression.strip()
+    if expr[:8].upper() == "CRON_TZ=":
+        parts = expr.split(None, 1)
+        zone = parts[0].split("=", 1)[1]
+        rest = parts[1].strip() if len(parts) > 1 else ""
+        return (zone or None), rest
+    return None, expr
+
+
+def _active_hours(trigger_hours: Any) -> ActiveHours | None:
+    """Map a workflow trigger's active-hours window to the scheduler's shape."""
+    if trigger_hours is None:
+        return None
+    return ActiveHours(
+        start=trigger_hours.start,
+        end=trigger_hours.end,
+        timezone=trigger_hours.timezone,
+    )
+
+
+def desired_entry(
+    workflow_id: str,
+    trigger: Any,
+    config: SchedulerConfig,
+) -> ScheduleEntry | None:
+    """The schedule a triggered workflow should have, or ``None`` for no schedule.
+
+    ``None`` covers a missing trigger, a manual-only trigger, and any trigger
+    whose timing the scheduler cannot honour (a bare-invalid cron, an interval
+    below the module floor) — reported once, never materialised as a row that
+    can never fire.
+    """
+    trigger_type = getattr(trigger, "type", None)
+    if trigger is None or trigger_type == "manual":
+        return None
+
+    document: dict[str, Any] = {
+        "id": derived_id(workflow_id),
+        "action": "workflow_run",
+        "workflow_id": workflow_id,
+        "prompt": "",  # a typed action carries no prose (LLM01)
+        "timeout_seconds": config.default_timeout_seconds,
+        "active_hours": _active_hours(getattr(trigger, "active_hours", None)),
+        "metadata": ScheduleMetadata(
+            created_by="system",
+            reason=f"derived from workflow '{workflow_id}' trigger",
+        ),
+    }
+
+    if trigger_type == "cron":
+        expression = getattr(trigger, "expression", None)
+        if not expression:
+            return None
+        zone, bare = parse_cron_tz(expression)
+        document.update(type="cron", expression=bare, timezone=zone)
+    elif trigger_type == "interval":
+        interval = getattr(trigger, "interval_s", None)
+        if not interval:
+            return None
+        document.update(type="interval", every_seconds=interval)
+    else:
+        return None
+
+    try:
+        return ScheduleEntry.model_validate(document, context=config.validation_context())
+    except ValueError as exc:
+        _logger.warning(
+            "workflow '%s' trigger does not yield a valid schedule and will not "
+            "fire until corrected: %s",
+            workflow_id,
+            exc,
+        )
+        return None
+
+
+def _is_derived(entry: ScheduleEntry) -> bool:
+    """Whether the bridge wrote this entry — the only rows it may prune/overwrite."""
+    return (
+        entry.action == "workflow_run"
+        and entry.id.startswith(DERIVED_ID_PREFIX)
+        and entry.metadata.created_by == "system"
+    )
+
+
+def full_reconcile(
+    store: ScheduleStore,
+    config: SchedulerConfig,
+    triggers: Mapping[str, Any],
+) -> None:
+    """Create-if-absent for every triggered workflow; prune orphaned derived rows.
+
+    ``triggers`` maps EVERY currently-known workflow id to its effective trigger
+    (``None`` when archived or trigger-less). An existing entry is left untouched
+    so an operator edit in the store wins; a derived entry with no corresponding
+    desired schedule — trigger removed, workflow deleted — is dropped.
+    """
+    existing = {entry.id: entry for entry in store.load()}
+    wanted: set[str] = set()
+
+    for workflow_id, trigger in triggers.items():
+        entry = desired_entry(workflow_id, trigger, config)
+        if entry is None:
+            continue
+        wanted.add(entry.id)
+        if entry.id not in existing:
+            store.add(entry)
+
+    for entry_id, entry in existing.items():
+        if _is_derived(entry) and entry_id not in wanted:
+            store.remove(entry_id)
+
+
+def push_one(
+    store: ScheduleStore,
+    config: SchedulerConfig,
+    workflow_id: str,
+    trigger: Any,
+) -> None:
+    """Materialise (or update, or remove) one workflow's schedule right now."""
+    entry = desired_entry(workflow_id, trigger, config)
+    schedule_id = derived_id(workflow_id)
+    current = store.get(schedule_id)
+
+    if entry is None:
+        if current is not None and _is_derived(current):
+            store.remove(schedule_id)
+        return
+
+    if current is None:
+        store.add(entry)
+        return
+
+    updates: dict[str, Any] = {"workflow_id": workflow_id, "action": "workflow_run", "prompt": ""}
+    for field in _TIMING_FIELDS:
+        value = getattr(entry, field)
+        updates[field] = value.model_dump() if isinstance(value, ActiveHours) else value
+    store.update(schedule_id, updates, context=config.validation_context())
+
+
+# --- workflows-runtime access (lazy, best-effort) -------------------------
+
+
+async def _load_all_triggers() -> dict[str, Any] | None:
+    """Every non-deleted workflow id → its effective trigger, or ``None``.
+
+    ``None`` (the whole return) means the workflows module is absent or not
+    configured in this task — there is simply nothing to reconcile, which is not
+    an error.
+    """
+    try:
+        from arcagent.modules.workflows import _runtime as workflows_runtime
+    except ImportError:
+        return None
+    try:
+        workflows_runtime.state()
+    except RuntimeError:
+        return None  # module not configured on this deployment/task
+
+    await workflows_runtime.ensure_control_plane()
+    definitions = workflows_runtime.state().definitions
+    if definitions is None:
+        return None
+
+    triggers: dict[str, Any] = {}
+    for workflow_id in definitions.list_ids(include_archived=True):
+        try:
+            triggers[workflow_id] = definitions.load(workflow_id).effective_trigger
+        except Exception:  # reason: one unreadable bundle must not stall the rest
+            _logger.warning("could not load workflow '%s' for schedule sync", workflow_id)
+    return triggers
+
+
+async def _load_one_trigger(workflow_id: str) -> tuple[bool, Any]:
+    """One workflow's effective trigger. ``(False, None)`` if unreachable."""
+    try:
+        from arcagent.modules.workflows import _runtime as workflows_runtime
+    except ImportError:
+        return False, None
+    try:
+        workflows_runtime.state()
+    except RuntimeError:
+        return False, None
+
+    await workflows_runtime.ensure_control_plane()
+    definitions = workflows_runtime.state().definitions
+    if definitions is None or not definitions.exists(workflow_id):
+        return False, None
+    return True, definitions.load(workflow_id).effective_trigger
+
+
+async def reconcile_workflow_schedules() -> None:
+    """Backfill the scheduler store from every workflow trigger. Best-effort."""
+    try:
+        triggers = await _load_all_triggers()
+        if triggers is None:
+            return
+        state = _runtime.state()
+        full_reconcile(state.store, state.config, triggers)
+        _logger.info("Reconciled %d workflow trigger(s) into the scheduler", len(triggers))
+    except Exception:  # reason: a sync failure must never break scheduler startup
+        _logger.warning("workflow-trigger schedule reconciliation failed", exc_info=True)
+
+
+async def sync_workflow_schedule(workflow_id: str) -> None:
+    """Push one workflow's trigger into the scheduler store. Best-effort."""
+    try:
+        available, trigger = await _load_one_trigger(workflow_id)
+        if not available:
+            return
+        state = _runtime.state()
+        push_one(state.store, state.config, workflow_id, trigger)
+    except Exception:  # reason: a sync failure must never break the builder tool
+        _logger.warning(
+            "could not sync a schedule for workflow '%s'", workflow_id, exc_info=True
+        )
+
+
+__all__ = [
+    "DERIVED_ID_PREFIX",
+    "derived_id",
+    "desired_entry",
+    "full_reconcile",
+    "parse_cron_tz",
+    "push_one",
+    "reconcile_workflow_schedules",
+    "sync_workflow_schedule",
+]

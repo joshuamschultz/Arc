@@ -520,9 +520,20 @@ async def workflow_set_trigger(
         else:
             document.pop("trigger", None)
 
-    return await _edit_document(
+    result = await _edit_document(
         workflow_id, expected_version, reason="set the trigger", change=change
     )
+    # A cron/interval trigger fires only as a scheduler entry, so materialise one
+    # from the persisted definition. Reading the store back (not ``clean``) means
+    # a rejected edit re-affirms the OLD trigger rather than a phantom new one.
+    # Guarded import keeps the workflows module independent of the scheduler: a
+    # deployment without it simply skips materialisation.
+    try:
+        from arcagent.modules.scheduler.workflow_sync import sync_workflow_schedule
+    except ImportError:
+        return result
+    await sync_workflow_schedule(workflow_id)
+    return result
 
 
 @tool(
