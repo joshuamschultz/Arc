@@ -371,6 +371,37 @@ fi
 # scheduler never fires and its tasks never dispatch — nothing crashes, so
 # nothing is noticed. Idempotent, and non-zero when a config asks for a
 # capability this box cannot deliver, so a hollow node never reaches systemd.
+# A code change to a module ships in the runtime SOURCE, but agents load each
+# module from a SIGNED BUNDLE staged in state/bundles and materialized per agent.
+# `arc install` only materializes a module it finds ABSENT and only from the
+# already-staged bundle, so without this a changed capabilities.py keeps running
+# the old bundle forever — the module looks deployed and silently is not.
+#
+# On a personal box we hold the operator key, so rebuild every already-staged
+# bundle from the fresh source and drop the per-agent copies; `arc install` below
+# then re-materializes every module from the rebuilt bundles. Higher tiers
+# receive bundles pre-signed through the supply chain and must NOT rebuild on the
+# box, so they skip this and rely on a newer staged bundle being delivered.
+if [ "$TIER" = "personal" ]; then
+  log "Rebuilding staged module bundles from fresh source (personal tier)..."
+  export ARC_MODULE_SOURCE="$RUNTIME_ROOT/packages/arcagent/src/arcagent/modules"
+  shopt -s nullglob
+  for bundle in "$ARC_CONFIG_DIR"/state/bundles/*.arcbundle; do
+    name="$(basename "$bundle" .arcbundle)"
+    "$ARC_BIN" module bundle "$name" --force \
+      || fail "could not rebuild module bundle '$name' from source"
+  done
+  shopt -u nullglob
+  unset ARC_MODULE_SOURCE
+  # The per-agent capability copy is create-if-absent, so drop it to force
+  # `arc install` to re-copy the freshly rebuilt bundle. Only capabilities/modules
+  # is removed — skills and other capability roots are left untouched.
+  for agent_dir in "$TEAM_ROOT"/*/; do
+    rm -rf "${agent_dir}capabilities/modules"
+  done
+  ok "rebuilt module bundles and cleared per-agent copies for re-materialization"
+fi
+
 log "Installing modules for every agent..."
 "$ARC_BIN" install --team-root "$TEAM_ROOT" \
   || fail "arc install could not deliver every module the configs enable (see above)"
