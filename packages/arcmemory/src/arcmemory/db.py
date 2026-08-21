@@ -192,6 +192,21 @@ class MemoryDB:
             "CREATE INDEX IF NOT EXISTS idx_insight_trigger_scope ON insight_trigger(scope)"
         )
 
+        # Canonical item dedup + per-provenance classification (SPEC-073 COMP-011).
+        # Same bytes from two sources form ONE item; each source's provenance
+        # keeps its own classification so retrieval gates per-provenance, not
+        # on the item's highest label.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS items ("
+            "item_id TEXT PRIMARY KEY, content_hash TEXT NOT NULL, first_seen TEXT)"
+        )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS item_provenances ("
+            "item_id TEXT NOT NULL, source TEXT NOT NULL, external_id TEXT NOT NULL, "
+            "classification TEXT DEFAULT 'unclassified', "
+            "PRIMARY KEY(item_id, source, external_id))"
+        )
+
         conn.commit()
 
     @staticmethod

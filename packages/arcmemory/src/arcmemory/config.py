@@ -179,6 +179,51 @@ class MemoryConfig(BaseModel):
         default=True, description="surface WHEN-stamps, supersession, and temporal ranking"
     )
 
+    # -- Data-source ingestion & routing (SPEC-073) -----------------------------
+    # Document-search axis: how a blob body is chunked before embedding.
+    doc_chunk_tokens: int = Field(
+        default=512, description="target tokens per document chunk (recursive splitter)"
+    )
+    doc_chunk_overlap: float = Field(
+        default=0.10, description="fraction of overlap between adjacent document chunks"
+    )
+    doc_rerank_margin: float = Field(
+        default=0.05, description="doc-index rerank gate (distinct from recall rerank_margin)"
+    )
+
+    # Ingest caps — zero-trust boundary re-validated at ingest_batch (LLM10).
+    ingest_max_batch: int = Field(
+        default=1000, description="max records accepted in one ingest_batch call"
+    )
+    backfill_max_age_days: int = Field(
+        default=90, description="backfill window: oldest object age pulled on first sync"
+    )
+    backfill_max_object_bytes: int = Field(
+        default=10_485_760, description="per-object byte cap before extraction (10 MB)"
+    )
+    backfill_max_total_bytes: int = Field(
+        default=5_368_709_120, description="total backfill byte cap before embed (5 GB)"
+    )
+    backfill_max_objects: int = Field(
+        default=50_000, description="total object-count cap for one backfill"
+    )
+
+    # Pluggable index backend — SQLite default; Postgres+pgvector opt-in (deferred).
+    index_backend: Literal["sqlite", "postgres"] = Field(
+        default="sqlite", description="document/chunk index backend selector"
+    )
+
+    # Per-capability off-switches — each returns exact prior behavior when off.
+    doc_search_enabled: bool = Field(
+        default=True, description="enable the document-search ingestion axis"
+    )
+    datastore_enabled: bool = Field(
+        default=True, description="enable the structured-datastore ingestion axis"
+    )
+    source_sync_enabled: bool = Field(
+        default=True, description="enable living per-source incremental sync"
+    )
+
     @classmethod
     def for_tier(cls, tier: Tier) -> MemoryConfig:
         """Return the R-9 constant set for ``tier`` (federal is strictest)."""
@@ -198,6 +243,10 @@ class MemoryConfig(BaseModel):
                 consolidate_agent_timeout_seconds=120.0,
                 # Federal is no laxer than personal on proactive injection surface area.
                 proactive_max_cards=2,
+                # Ingestion caps are tighter at federal — a non-relaxable floor on
+                # bounded consumption (LLM10) for pushed source batches and backfills.
+                ingest_max_batch=500,
+                backfill_max_age_days=30,
             )
         if tier == "enterprise":
             return cls(tier="enterprise", alpha=0.2)

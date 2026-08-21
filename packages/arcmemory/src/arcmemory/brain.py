@@ -21,29 +21,45 @@ deployment wires arcllm-backed seams to light up semantic recall and distillatio
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+from arcstore.approvals import ApprovalStore
 from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
-from arctrust.classification import parse_classification
+from arctrust.classification import dominates, parse_classification
 from arctrust.identity import AgentIdentity
-from arctrust.policy import PolicyPipeline
+from arctrust.policy import PolicyContext, PolicyPipeline, ToolCall, sign_call
 
+from arcmemory import ingest
 from arcmemory.capture import FastCapture
 from arcmemory.config import MemoryConfig
 from arcmemory.consolidate import Consolidator
+from arcmemory.datastore import Datastore
 from arcmemory.db import MemoryDB
 from arcmemory.detectors import Decision, WindowDedup, WorkingSet, evaluate_moment
 from arcmemory.distill import Distiller
+from arcmemory.doc_index import DocHit, DocIndex
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder, IndexRebuilder
+from arcmemory.mapping import load_committed_mapping, stage_mapping_proposal
 from arcmemory.react_adapter import ReactLoop, run_react_loop
 from arcmemory.retrieve import Retriever, attributed_cards
 from arcmemory.security import render_recalls
 from arcmemory.stores.procedural import ProceduralStore
-from arcmemory.types import ConsolidationResult, Recall, RecallCard, Scope, Situation
+from arcmemory.stores.semantic import SemanticStore
+from arcmemory.types import (
+    ConsolidationResult,
+    IngestResult,
+    Recall,
+    RecallCard,
+    Scope,
+    Situation,
+    SourceMapping,
+    SourceRecord,
+)
 
 
 @dataclass
@@ -138,6 +154,9 @@ class ArcMemoryBrain:
         self._db = MemoryDB(self._workspace)
         self._graph = WeightedGraph(self._db, self._cfg)
         self._bundles: dict[str, _ScopeBundle] = {}
+        # Registered read-only datastore connections (SPEC-073 COMP-013), keyed
+        # by source_id -- held so datastore_query can dispatch without re-opening.
+        self._datastores: dict[str, Datastore] = {}
         # Proactive detected-moment recall (SPEC-071): one sliding-window dedup
         # across the brain, plus the per-session prior-cue baseline the
         # topic_shift detector compares against.
@@ -476,6 +495,204 @@ class ArcMemoryBrain:
                 self._audit,
             )
         return allowed
+
+    # -- security envelope (SPEC-073 COMP-013) ------------------------------
+
+    async def _guard(self, action: str, *, caller_did: str, target: str) -> bool:
+        """Identity+policy+audit envelope every ingest/mapping/retrieval op runs through.
+
+        Mirrors :meth:`arcmemory.tools._MemoryToolFactory._authorize`: with a
+        configured policy pipeline, a :class:`~arctrust.policy.ToolCall` is
+        built (signed with ``self._identity`` when one is present) and
+        evaluated; a DENY decision or any evaluation exception fails closed --
+        emits a deny :class:`~arctrust.audit.AuditEvent` and returns ``False``
+        without ever writing anything. No configured pipeline, or an ALLOW
+        decision, emits an allow event carrying the resolved ``caller_did`` and
+        returns ``True``. The audit payload never carries the op's raw
+        arguments -- only the action name and a target label -- so no secret
+        travels through this seam.
+        """
+        actor = caller_did or self._agent_did
+        if self._policy is not None:
+            call = ToolCall(
+                tool_name=action,
+                arguments={},
+                agent_did=actor,
+                session_id="",
+                classification="unclassified",
+            )
+            if self._identity is not None and self._identity.can_sign:
+                call = sign_call(call, self._identity)
+            ctx = PolicyContext(
+                tier=self._cfg.tier, policy_version="memory", bundle_age_seconds=0.0
+            )
+            try:
+                decision = await self._policy.evaluate(call, ctx)
+            except Exception as exc:  # fail-closed -- a raising pipeline denies
+                self._emit_guard(
+                    action,
+                    actor,
+                    target,
+                    outcome="deny",
+                    reason=f"policy-error:{type(exc).__name__}",
+                )
+                return False
+            if decision.is_deny():
+                self._emit_guard(
+                    action, actor, target, outcome="deny", reason=decision.reason or "denied"
+                )
+                return False
+        self._emit_guard(action, actor, target, outcome="allow", reason=None)
+        return True
+
+    def _emit_guard(
+        self, action: str, actor_did: str, target: str, *, outcome: str, reason: str | None
+    ) -> None:
+        emit(
+            AuditEvent(
+                actor_did=actor_did,
+                action=action,
+                target=target,
+                outcome=outcome,
+                tier=self._cfg.tier,
+                extra={"reason": reason} if reason else {},
+            ),
+            self._audit,
+        )
+
+    # -- ingestion (SPEC-073 COMP-002 / COMP-013) ---------------------------
+
+    async def register_source(
+        self, source_id: str, *, kind: str, sample: list[SourceRecord] | None = None
+    ) -> None:
+        """Idempotently register a connected source as a semantic Entity (T-1018)."""
+        ingest.register_source(
+            self._workspace, self._graph, self._scope(None), source_id, kind=kind
+        )
+
+    async def register_datastore(
+        self, source_id: str, conn: sqlite3.Connection, *, caller_did: str = ""
+    ) -> None:
+        """Register a read-only datastore connection; introspect + persist its ontology."""
+        if not await self._guard("datastore.register", caller_did=caller_did, target=source_id):
+            return
+        datastore = Datastore(conn)
+        datastore.introspect()
+        store = SemanticStore(self._workspace, self._graph, self._scope(None).key)
+        datastore.persist_ontology(store)
+        self._datastores[source_id] = datastore
+
+    async def propose_mapping(
+        self,
+        source_id: str,
+        *,
+        sample: list[SourceRecord] | None = None,
+        approval_store: ApprovalStore | None = None,
+        caller_did: str = "",
+    ) -> SourceMapping:
+        """Phase-1 heuristic proposal; staged as a SPEC-035 row when ``approval_store`` given."""
+        if not await self._guard("memory.map_source", caller_did=caller_did, target=source_id):
+            return SourceMapping(source_id=source_id, homes=[])
+        proposal = ingest.propose_mapping(source_id, sample)
+        if approval_store is not None:
+            await stage_mapping_proposal(
+                proposal, approval_store=approval_store, agent_did=self._agent_did
+            )
+        return proposal
+
+    async def ingest_batch(
+        self,
+        source_id: str,
+        records: list[SourceRecord],
+        *,
+        caller_did: str = "",
+        session_id: str | None = None,
+    ) -> IngestResult:
+        """Zero-trust-capped, mapping-routed, idempotent ingest (SPEC-073 COMP-013).
+
+        The batch cap (LLM10) is enforced BEFORE the envelope -- an over-cap
+        batch is rejected regardless of authorization, writing nothing. A
+        denied envelope also writes nothing. Absent a committed mapping the
+        Phase-1 default (memory-only) applies unchanged.
+        """
+        if len(records) > self._cfg.ingest_max_batch:
+            raise ValueError(
+                f"ingest_batch: batch of {len(records)} record(s) exceeds "
+                f"ingest_max_batch={self._cfg.ingest_max_batch}"
+            )
+        if not await self._guard("memory.ingest", caller_did=caller_did, target=source_id):
+            return IngestResult()
+        scope = self._scope(session_id)
+        store = SemanticStore(self._workspace, self._graph, scope.key)
+        committed = load_committed_mapping(source_id, store=store)
+        homes = committed.homes if committed is not None else ["memory"]
+        return await ingest.route_batch(
+            self._db,
+            self._workspace,
+            scope,
+            self._cfg,
+            source_id,
+            records,
+            homes,
+            agent_did=self._agent_did,
+            embedder=self._embedder,
+            audit_sink=self._audit,
+        )
+
+    async def document_search(
+        self,
+        query: str,
+        *,
+        source_id: str | None = None,
+        clearance: str = "unclassified",
+        top_k: int = 10,
+        caller_did: str = "",
+        session_id: str | None = None,
+    ) -> list[DocHit]:
+        """Envelope + per-source doc-pool search, classification-gated (no-read-up)."""
+        if not await self._guard(
+            "memory.document_search", caller_did=caller_did, target=source_id or ""
+        ):
+            return []
+        if not self._cfg.doc_search_enabled:
+            return []
+        hits = await DocIndex(
+            self._db, self._workspace, self._cfg, embedder=self._embedder, audit_sink=self._audit
+        ).document_search(query, self._agent_did, source_id=source_id, top_k=top_k)
+        strict = self._cfg.tier == "federal"
+        clr = parse_classification(clearance, strict=strict)
+        kept: list[DocHit] = []
+        for hit in hits:
+            try:
+                resource = parse_classification(hit.classification, strict=strict)
+            except ValueError:
+                continue  # unparseable label fails closed (dropped)
+            if dominates(clr, resource):
+                kept.append(hit)
+        return kept
+
+    async def datastore_query(
+        self,
+        source_id: str,
+        op: str,
+        table: str,
+        args: dict[str, object],
+        *,
+        clearance: str = "unclassified",
+        caller_did: str = "",
+        session_id: str | None = None,
+    ) -> object:
+        """Envelope + registered ``Datastore.query``; never executes agent SQL."""
+        if not await self._guard(
+            "memory.datastore_query", caller_did=caller_did, target=source_id
+        ):
+            return None
+        if not self._cfg.datastore_enabled:
+            return None
+        datastore = self._datastores.get(source_id)
+        if datastore is None:
+            return None
+        return datastore.query(op, table, args)
 
     # -- internals ---------------------------------------------------------
 

@@ -1,0 +1,277 @@
+{
+  "feature": "SPEC-073-arcmemory-datasource-ingestion",
+  "current_task": null,
+  "tasks": {
+    "T-1018": {
+      "description": "(red) Brain-port ingestion API contract + idempotency + ordering",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-1019": {
+      "description": "(green) Implement Brain-port ingestion API",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-1020": {
+      "description": "(red) IndexBackend conformance + SqliteIndexBackend parity + vec0 scope isolation",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-1021": {
+      "description": "(green) Extract SqliteIndexBackend + vec0 scope filter + factory",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-1022": {
+      "description": "(red) Config: new fields + per-capability off-switches",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-1023": {
+      "description": "(green) Add config fields + degrade wiring",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-1024": {
+      "description": "(red) Source adapter + Router fan-out",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-1025": {
+      "description": "(green) Implement adapter seam + Router",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-1026": {
+      "description": "(red) Memory sink routes through capture",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-1027": {
+      "description": "(green) Implement memory sink",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-1028": {
+      "description": "(red) Extractor + Chunker seams (per-type, sandboxed, sizes)",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-1029": {
+      "description": "(green) Implement Extractor + Chunker",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-1030": {
+      "description": "(red) Per-source hybrid doc index + document_search",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-1031": {
+      "description": "(green) Implement doc indexer + document_search",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-1032": {
+      "description": "(red) Datastore ontology + typed read-only ops + datastore_query",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-1033": {
+      "description": "(green) Implement schema introspection + typed-op generator + datastore_query",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-1034": {
+      "description": "(red) Blob ontology walker (bounded, coarse)",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-1035": {
+      "description": "(green) Implement blob ontology discovery walker",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-1036": {
+      "description": "(red) Classification discovery + document_sanitize + provenance dedup",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-1037": {
+      "description": "(green) Implement classify_remote_object + document_sanitize + provenance table",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-1038": {
+      "description": "(red) Mapping proposal + SPEC-035 approval + mapping-as-facts",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-1039": {
+      "description": "(green) Implement propose_mapping + approval wiring + mapping facts",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-1040": {
+      "description": "(red) Mutability-driven sync + backfill caps",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-1041": {
+      "description": "(green) Implement sync engine + cap enforcement + trigger seam",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-1042": {
+      "description": "(red) Three source-scoped retrieval tools registered",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-1043": {
+      "description": "(green) Register the three tools in the arcagent memory module",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-1044": {
+      "description": "(red) Security envelope on every op",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-1045": {
+      "description": "(green) Wire identity + policy + audit on all paths",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-1046": {
+      "description": "(red) Triad real-path E2E (all three axes)",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-1047": {
+      "description": "(green) Make the triad green end-to-end",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-1048": {
+      "description": "(red) Boundary + determinism guard",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-1049": {
+      "description": "(green) Enforce boundaries + determinism",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    },
+    "T-1050": {
+      "description": "(refactor) Degrade + hardening + off-switch verification",
+      "status": "pending",
+      "history": [],
+      "blockers": [],
+      "depends_on": []
+    }
+  },
+  "task_order": [
+    "T-1018",
+    "T-1019",
+    "T-1020",
+    "T-1021",
+    "T-1022",
+    "T-1023",
+    "T-1024",
+    "T-1025",
+    "T-1026",
+    "T-1027",
+    "T-1028",
+    "T-1029",
+    "T-1030",
+    "T-1031",
+    "T-1032",
+    "T-1033",
+    "T-1034",
+    "T-1035",
+    "T-1036",
+    "T-1037",
+    "T-1038",
+    "T-1039",
+    "T-1040",
+    "T-1041",
+    "T-1042",
+    "T-1043",
+    "T-1044",
+    "T-1045",
+    "T-1046",
+    "T-1047",
+    "T-1048",
+    "T-1049",
+    "T-1050"
+  ],
+  "meta": {
+    "last_updated": "2026-08-21",
+    "sessions": 1,
+    "total_tasks": 33
+  }
+}

@@ -25,8 +25,6 @@ injected, the vec list is simply dropped — BM25 + graph still answer, a
 
 from __future__ import annotations
 
-import sqlite3
-import struct
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -37,6 +35,8 @@ from pydantic import BaseModel, Field
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
 from arcmemory.fusion import rrf_fuse
+from arcmemory.index.backend import IndexBackend, open_index_backend
+from arcmemory.index.backend import _cosine as _cosine
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder, embed_or_none
 from arcmemory.index.source import iter_source_chunks
@@ -44,13 +44,6 @@ from arcmemory.security import content_hash
 from arcmemory.stores.episodic import EpisodicStore
 from arcmemory.tagging import entity_vocabulary, tag_entities
 from arcmemory.types import Recall, Scope
-
-try:  # optional [vec] extra — guarded, mirrors db.py
-    import sqlite_vec
-
-    _SQLITE_VEC_IMPORTABLE = True
-except ImportError:  # pragma: no cover - exercised only where the extra is absent
-    _SQLITE_VEC_IMPORTABLE = False
 
 
 class SurfaceResult(BaseModel):
@@ -122,6 +115,7 @@ class SurfaceIndex:
         self._cfg = config or MemoryConfig()
         self._embedder = embedder
         self._audit = audit_sink if audit_sink is not None else NullSink()
+        self._backend: IndexBackend = open_index_backend(self._cfg.index_backend, db=db)
         self._graph = WeightedGraph(db, self._cfg)
         self._episodic = EpisodicStore(db, workspace)
         self._mem_dir = self._workspace / "memory"
@@ -131,21 +125,23 @@ class SurfaceIndex:
 
     async def index_if_needed(self) -> int:
         """Embed + index only new/changed chunks; return how many were (re)indexed."""
-        conn = self._db.connect()
-        stored = {
-            row[0]: row[1]
-            for row in conn.execute(
-                "SELECT chunk_id, content_hash FROM chunks WHERE scope=?", (self._scope.key,)
-            ).fetchall()
-        }
+        stored = await self._backend.stored_hashes(self._scope.key)
         changed = [c for c in self._collect_chunks() if stored.get(c.chunk_id) != c.content_hash]
         if not changed:
             return 0
 
         embeddings = await self._embed([c.text for c in changed])
         for i, chunk in enumerate(changed):
-            self._upsert_chunk(conn, chunk, embeddings[i] if embeddings is not None else None)
-        conn.commit()
+            await self._backend.upsert_chunk(
+                scope=self._scope.key,
+                chunk_id=chunk.chunk_id,
+                source_path=chunk.source_path,
+                mtime=chunk.mtime,
+                classification=chunk.classification,
+                content_hash=chunk.content_hash,
+                text=chunk.text,
+                embedding=embeddings[i] if embeddings is not None else None,
+            )
         return len(changed)
 
     def _collect_chunks(self) -> list[_Chunk]:
@@ -163,41 +159,9 @@ class SurfaceIndex:
             for sc in iter_source_chunks(self._mem_dir, self._workspace, events)
         ]
 
-    def _upsert_chunk(
-        self, conn: sqlite3.Connection, chunk: _Chunk, embedding: list[float] | None
-    ) -> None:
-        """Write the provenance row, refresh FTS, and (when available) the vector."""
-        conn.execute(
-            "INSERT OR REPLACE INTO chunks "
-            "(chunk_id, scope, source_path, mtime, classification, content_hash) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                chunk.chunk_id,
-                self._scope.key,
-                chunk.source_path,
-                chunk.mtime,
-                chunk.classification,
-                chunk.content_hash,
-            ),
-        )
-        conn.execute(
-            "DELETE FROM fts_chunks WHERE chunk_id=? AND scope=?",
-            (chunk.chunk_id, self._scope.key),
-        )
-        conn.execute(
-            "INSERT INTO fts_chunks (chunk_id, scope, text) VALUES (?, ?, ?)",
-            (chunk.chunk_id, self._scope.key, chunk.text),
-        )
-        if embedding is not None:
-            conn.execute("DELETE FROM vec0 WHERE chunk_id=?", (chunk.chunk_id,))
-            conn.execute(
-                "INSERT INTO vec0 (chunk_id, embedding) VALUES (?, ?)",
-                (chunk.chunk_id, sqlite_vec.serialize_float32(embedding)),
-            )
-
     async def _embed(self, texts: list[str]) -> list[list[float]] | None:
         """Embed through the injected seam, or None when embeddings are unavailable."""
-        if not self._db.vec_available or not _SQLITE_VEC_IMPORTABLE:
+        if not self._backend.vec_available:
             return None
         return await embed_or_none(self._embedder, texts)
 
@@ -219,21 +183,13 @@ class SurfaceIndex:
         return SurfaceResult(recalls=recalls, degraded=degraded)
 
     async def _vec_search(self, text: str) -> list[str] | None:
-        """Brute-force cosine over ``vec0``; None when embeddings are unavailable."""
-        if not self._db.vec_available or not _SQLITE_VEC_IMPORTABLE:
+        """Cosine search via the backend, scope-isolated; None when unavailable."""
+        if not self._backend.vec_available:
             return None
         vectors = await embed_or_none(self._embedder, [text])
         if not vectors:
             return None
-        query = vectors[0]
-        conn = self._db.connect()
-        rows = conn.execute("SELECT chunk_id, embedding FROM vec0").fetchall()
-        scored: list[tuple[float, str]] = []
-        for chunk_id, blob in rows:
-            vector = list(struct.unpack(f"{len(blob) // 4}f", blob))
-            scored.append((_cosine(query, vector), chunk_id))
-        scored.sort(key=lambda pair: (-pair[0], pair[1]))
-        return [chunk_id for score, chunk_id in scored if score > 0.0]
+        return await self._backend.vec_search(self._scope.key, vectors[0])
 
     def _bm25_search(self, text: str) -> list[str]:
         """FTS5/BM25 chunk ids for ``text`` (best match first)."""
@@ -336,16 +292,6 @@ def _established_date(mtime: float | None) -> str:
         return datetime.fromtimestamp(float(mtime), UTC).strftime("%Y-%m-%d")
     except (ValueError, OverflowError, OSError):
         return ""
-
-
-def _cosine(a: list[float], b: list[float]) -> float:
-    """Cosine similarity of two equal-length vectors (0.0 on a zero vector)."""
-    dot = sum(x * y for x, y in zip(a, b, strict=False))
-    norm_a = sum(x * x for x in a) ** 0.5
-    norm_b = sum(y * y for y in b) ** 0.5
-    if norm_a == 0.0 or norm_b == 0.0:
-        return 0.0
-    return float(dot / (norm_a * norm_b))
 
 
 def _fts_query(text: str) -> str:

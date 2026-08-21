@@ -74,6 +74,40 @@ def sanitize(text: str, *, max_length: int = 2000) -> str:
     return clean
 
 
+def document_sanitize(
+    text: str,
+    *,
+    max_length: int | None = None,
+    actor_did: str = "",
+    tier: str = "personal",
+    audit_sink: AuditSink | None = None,
+) -> str:
+    """Stronger-prose sanitize for ingested document bodies (SPEC-073 COMP-011).
+
+    Runs the base :func:`sanitize` (normalize -> strip invisibles -> drop
+    injection spans -> cap) and applies :func:`_defang` so a forged
+    ``<memory-result>`` marker inside the body is neutralized before the text
+    can ever be indexed. When an injection pattern matched anywhere in the
+    RAW text, emits exactly one ``ingest.injection_defanged`` audit event
+    (hash-only, no plaintext) to ``audit_sink``; clean text emits nothing.
+    ``max_length=None`` means no cap (the base ``sanitize`` cap is bypassed).
+    """
+    if audit_sink is not None and _INJECTION_RE.search(text):
+        emit(
+            AuditEvent(
+                actor_did=actor_did,
+                action="ingest.injection_defanged",
+                target="ingest.document_sanitize",
+                outcome="allow",
+                tier=tier,
+                payload_hash=content_hash(text),
+            ),
+            audit_sink,
+        )
+    cap = len(text) if max_length is None else max_length
+    return _defang(sanitize(text, max_length=cap))
+
+
 def privacy_filter(text: str) -> str:
     """Redact secret-shaped substrings so no key/token becomes memory."""
     filtered = text
@@ -143,6 +177,34 @@ def dominating_classification(labels: list[str]) -> str:
     if known:
         return max(known, key=lambda pair: pair[0])[1]
     return "" if saw_unknown else "unclassified"
+
+
+def classify_remote_object(
+    *,
+    native_label: str | None,
+    container_label: str | None,
+    content_labels: list[str] | None = None,
+    strict: bool,
+) -> str:
+    """Classification precedence for an ingested remote object (SPEC-073 COMP-011).
+
+    A native item label wins; else inherit the container label; else fail
+    closed. ``strict`` (federal) with no labels returns ``""``; non-strict
+    returns ``"unclassified"``. A content scan (``content_labels``) may only
+    RAISE the chosen label via :func:`dominating_classification`, never lower
+    it -- the ladder comparator lives in exactly one place (``arctrust``).
+    """
+    if native_label:
+        chosen = native_label
+    elif container_label:
+        chosen = container_label
+    elif strict:
+        chosen = ""
+    else:
+        chosen = "unclassified"
+    if content_labels:
+        return dominating_classification([chosen, *content_labels])
+    return chosen
 
 
 def readable_within(ceiling: str, label: str) -> bool:
@@ -302,7 +364,9 @@ def token_estimate(text: str) -> int:
 __all__ = [
     "Deduper",
     "boundary_mark",
+    "classify_remote_object",
     "content_hash",
+    "document_sanitize",
     "dominating_classification",
     "enforce_budget",
     "gate_no_read_up",

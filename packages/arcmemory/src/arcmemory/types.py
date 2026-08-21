@@ -99,6 +99,9 @@ class Event(BaseModel):
     salience: float = 0.0
     refs: list[str] = Field(default_factory=list)
     entities: list[str] = Field(default_factory=list)
+    #: ISO-8601 from the source system (empty = unknown); drives last-writer-wins
+    #: ordering in :func:`arcmemory.ingest.ingest_batch` (SPEC-073).
+    source_updated_at: str = ""
 
 
 class Fact(BaseModel):
@@ -400,6 +403,48 @@ class ConsolidationResult(BaseModel):
     window_events: int = 0
 
 
+class SourceRecord(BaseModel):
+    """One normalized record pushed from a connected source, pre-routing (SPEC-073)."""
+
+    external_id: str
+    text: str
+    kind: str = "observation"
+    classification: str = "unclassified"
+    #: ISO-8601 from the source system ("" = unknown); drives last-writer-wins order.
+    source_updated_at: str = ""
+    salience: float = 0.0
+    metadata: dict[str, str] = Field(default_factory=dict)
+
+
+class SourceMapping(BaseModel):
+    """The operator-approved routing of a source to one-or-more homes."""
+
+    source_id: str
+    homes: list[str] = Field(default_factory=list)
+
+
+class Provenance(BaseModel):
+    """One source's claim on a canonical item (SPEC-073 COMP-011).
+
+    The same bytes arriving from two sources (Slack, Dropbox, ...) dedup into
+    ONE canonical item, but each source keeps its own ``classification`` --
+    retrieval gates per-provenance, never on the item's highest label, so a
+    stricter copy from one source cannot suppress a looser copy from another.
+    """
+
+    source: str
+    external_id: str = ""
+    classification: str = "unclassified"
+
+
+class IngestResult(BaseModel):
+    """Outcome of one ``ingest_batch`` call (audit + observability)."""
+
+    ingested: int = 0
+    skipped_stale: int = 0
+    deduped: int = 0
+
+
 __all__ = [
     "Bundle",
     "Confidence",
@@ -408,13 +453,17 @@ __all__ = [
     "Entity",
     "Event",
     "Fact",
+    "IngestResult",
     "Insight",
     "LifeEvent",
     "Procedure",
+    "Provenance",
     "Recall",
     "RecallCard",
     "Scope",
     "Situation",
+    "SourceMapping",
+    "SourceRecord",
     "TimeWindow",
     "utc_today",
 ]

@@ -12,6 +12,7 @@ the raw stream is never duplicated to a glass-box file here.
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -25,16 +26,17 @@ class EpisodicStore:
     def __init__(self, db: MemoryDB, workspace: Path) -> None:
         self._db = db
         self._workspace = Path(workspace)
+        self._source_updated_at_ensured = False
 
     def append(self, event: Event) -> None:
         """Persist one raw event to the stream with a per-scope monotonic seq."""
-        conn = self._db.connect()
+        conn = self._connect()
         seq = self._next_seq(event.scope)
         conn.execute(
             "INSERT OR REPLACE INTO episodic "
             "(event_id, ts, scope, kind, text, hash, classification, refs, seq, "
-            "salience, entities) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "salience, entities, source_updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 event.event_id,
                 event.ts,
@@ -47,26 +49,27 @@ class EpisodicStore:
                 seq,
                 event.salience,
                 json.dumps(event.entities),
+                event.source_updated_at,
             ),
         )
         conn.commit()
 
     def events(self, scope_key: str) -> list[Event]:
         """Return all events for a scope, in stream (seq) order."""
-        conn = self._db.connect()
+        conn = self._connect()
         rows = conn.execute(
             "SELECT event_id, ts, scope, kind, text, hash, classification, refs, "
-            "salience, entities FROM episodic WHERE scope = ? ORDER BY seq",
+            "salience, entities, source_updated_at FROM episodic WHERE scope = ? ORDER BY seq",
             (scope_key,),
         ).fetchall()
         return [self._row_to_event(r) for r in rows]
 
     def page(self, scope_key: str, *, limit: int, offset: int) -> list[Event]:
         """Return one page of a scope's events, newest first (for the operator view)."""
-        conn = self._db.connect()
+        conn = self._connect()
         rows = conn.execute(
             "SELECT event_id, ts, scope, kind, text, hash, classification, refs, "
-            "salience, entities FROM episodic WHERE scope = ? "
+            "salience, entities, source_updated_at FROM episodic WHERE scope = ? "
             "ORDER BY seq DESC LIMIT ? OFFSET ?",
             (scope_key, limit, offset),
         ).fetchall()
@@ -82,10 +85,11 @@ class EpisodicStore:
 
     def get(self, scope_key: str, event_id: str) -> Event | None:
         """Fetch a single event by id within a scope (None if absent)."""
-        conn = self._db.connect()
+        conn = self._connect()
         row = conn.execute(
             "SELECT event_id, ts, scope, kind, text, hash, classification, refs, "
-            "salience, entities FROM episodic WHERE scope = ? AND event_id = ?",
+            "salience, entities, source_updated_at FROM episodic "
+            "WHERE scope = ? AND event_id = ?",
             (scope_key, event_id),
         ).fetchone()
         return self._row_to_event(row) if row is not None else None
@@ -136,6 +140,7 @@ class EpisodicStore:
             refs=json.loads(r[7]) if r[7] else [],
             salience=float(r[8]) if r[8] is not None else 0.0,
             entities=json.loads(r[9]) if r[9] else [],
+            source_updated_at=str(r[10]) if r[10] else "",
         )
 
     def _next_seq(self, scope_key: str) -> int:
@@ -145,6 +150,24 @@ class EpisodicStore:
             "SELECT COALESCE(MAX(seq), -1) FROM episodic WHERE scope = ?", (scope_key,)
         ).fetchone()
         return int(current) + 1
+
+    def _connect(self) -> sqlite3.Connection:
+        """Open the DB and self-migrate ``source_updated_at`` onto ``episodic`` (SPEC-073).
+
+        A fresh ``MemoryDB`` schema (owned elsewhere) may not yet declare this
+        column, so it is ensured here, once per store instance -- the same
+        idempotent ``PRAGMA table_info`` + ``ALTER TABLE`` seam ``MemoryDB``
+        already uses for prior columns, kept local so this store can own its
+        own migration without editing the shared schema module.
+        """
+        conn = self._db.connect()
+        if not self._source_updated_at_ensured:
+            existing = {row[1] for row in conn.execute("PRAGMA table_info(episodic)")}
+            if "source_updated_at" not in existing:
+                conn.execute("ALTER TABLE episodic ADD COLUMN source_updated_at TEXT")
+                conn.commit()
+            self._source_updated_at_ensured = True
+        return conn
 
 
 __all__ = ["EpisodicStore"]

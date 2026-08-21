@@ -10,9 +10,25 @@
 |---|---|---|
 | Brainstorm | complete | 2026-08-21 |
 | Build decisions | complete (D-683..D-705 + Research Insights) | 2026-08-21 |
-| PRD | draft | 2026-08-21 |
-| SDD | draft | 2026-08-21 |
-| PLAN | draft | 2026-08-21 |
+| PRD | approved | 2026-08-21 |
+| SDD | approved | 2026-08-21 |
+| PLAN | COMPLETE (33/33 tasks) | 2026-08-21 |
+
+## Implementation Status: COMPLETE
+
+All 33 tasks (T-1018..T-1050) implemented TDD, four phases, every task RED→GREEN verified.
+
+- **Suite:** 597 passed, 1 skipped (pypdf extra absent), 1 xfailed (deferred postgres backend) in arcmemory; 56 arcagent memory-module tests green. `mypy --strict` clean (53 files); `ruff` clean; architecture tests green.
+- **New tests added:** ~120 across unit/architecture (ingest API, IndexBackend conformance + vec0 scope isolation, config, router, memory sink, datastore, blob ontology, ingest security/provenance, extractor/chunker, doc index, sync, mapping approval, security envelope, triad E2E, boundary/determinism, degrade).
+- **Two hardening gaps caught by the Phase-4 acceptance tests and fixed** (both `ingest.py`): (1) document-route chunks were stored unlabeled → a no-read-up leak on the doc axis (now threads `record.classification`); (2) `doc_search_enabled=False` gated only the read, not the ingest write (now gates both).
+
+### Key implementation learnings
+- **The un-scoped `vec0` scan was real, not theoretical.** `test_vec_scope_isolation` failed on the pre-existing global scan; the fix is a `JOIN chunks c ON c.chunk_id=v.chunk_id WHERE c.scope=?` inside the new `SqliteIndexBackend.vec_search`.
+- **Async Protocol vs. sync test oracle.** `SurfaceIndex`'s `_bm25_search`/`_to_recall` are called synchronously by a locked test, so those stayed inline while the new `IndexBackend` methods are async — don't force a sync caller through an async Protocol.
+- **`ApprovalStore` over a bare `open_backend('sqlite')` needs `backend.start()`** before first use (schema migration isn't implicit) — any non-test caller must start it too.
+- **Optional-extra mypy overrides belong in ROOT `pyproject.toml`** (mypy reads one config from the invocation dir); a package-local `[[tool.mypy.overrides]]` is dead for root-run strict. Clear `.mypy_cache` after any `[tool.mypy]` edit — a stale cache reports a false green.
+- **The doc index reuses `SurfaceIndex`'s SEARCH half over a dedicated `<did>:doc:<source>` scope** but upserts chunks directly (never `index_if_needed`, which would pull the agent's own memory files into the doc pool) — shared engine, separate pool.
+- **Datastore introspection is dependency-free** (stdlib `sqlite3` PRAGMA); every table/column identifier is allowlisted against the introspected schema before it touches SQL, all values bound — SQLAlchemy stays a future opt-in for non-sqlite.
 
 ## Summary
 

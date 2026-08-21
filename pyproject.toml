@@ -188,6 +188,12 @@ module = [
     "aiohttp.*",
     "browser_use",
     "browser_use.*",
+    "pypdf",
+    "pypdf.*",
+    "docx",
+    "docx.*",
+    "openpyxl",
+    "openpyxl.*",
 ]
 ignore_missing_imports = true
 

@@ -48,6 +48,10 @@ vec = ["sqlite-vec>=0.1.6"]
 # The vec0 table exists without this (sqlite-vec is a base dep) but stays EMPTY,
 # which is exactly the silent-degrade this extra closes.
 local = ["arcllm[local]>=0.1"]
+# Document extractors (PdfExtractor/DocxExtractor/XlsxExtractor, COMP-005) —
+# lazy-imported inside extract() so the default path stays dependency-free;
+# absence raises ExtractionUnavailable, never a crash.
+docs = ["pypdf>=4", "python-docx>=1", "openpyxl>=3"]
 
 [project.urls]
 Homepage = "https://github.com/joshuamschultz/Arc"
@@ -79,6 +83,13 @@ warn_unused_configs = true
 # without the extra installed.
 [[tool.mypy.overrides]]
 module = ["sqlite_vec", "sqlite_vec.*"]
+ignore_missing_imports = true
+
+# pypdf/python-docx/openpyxl are the optional [docs] extra, lazy-imported
+# inside extract.py's extractors (ExtractionUnavailable on absence). Ignore
+# missing imports/stubs so strict passes with or without the extra installed.
+[[tool.mypy.overrides]]
+module = ["pypdf", "pypdf.*", "docx", "docx.*", "openpyxl", "openpyxl.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

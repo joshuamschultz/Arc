@@ -455,6 +455,85 @@ async def memory_search(query: str, top_k: int = 5) -> str:
     return text or "No memory results found."
 
 
+@tool(
+    name="document_search",
+    description="Search for text inside a connected document source (e.g. Dropbox).",
+    classification="read_only",
+    when_to_use=(
+        "Find text inside a connected document source; pass source to scope the "
+        "search to one connected source."
+    ),
+)
+async def document_search(query: str, source: str | None = None, top_k: int = 10) -> str:
+    """Query a connected document source, boundary-marked. Graceful when none is wired."""
+    st = _runtime.state()
+    if not st.active:
+        return "Memory is not enabled for this agent."
+    search = getattr(st.brain, "document_search", None)
+    if search is None:
+        return "Document search is not available for this agent."
+    if not await _acl_allows("memory.search", st.agent_did):
+        return "No document results found."
+    hits = await search(query, source_id=source, top_k=top_k, caller_did=st.agent_did)
+    await _audit(
+        "memory.document_search",
+        {"query_len": len(query), "source": source or "", "hit": bool(hits), "tool": True},
+    )
+    return _render_doc_hits(query, hits)
+
+
+def _render_doc_hits(query: str, hits: list[Any]) -> str:
+    """Render document hits as a concise, provenance-carrying string."""
+    if not hits:
+        return f"No document results found for {query!r}."
+    lines = [f"Document results for {query!r}:"]
+    for hit in hits:
+        pointer = getattr(hit, "pointer", "")
+        text = getattr(hit, "text", "")
+        lines.append(f"- {pointer}: {text}")
+    return "\n".join(lines)
+
+
+@tool(
+    name="datastore_query",
+    description=(
+        "Exact lookup in a connected structured datastore (get_record/find/list)."
+    ),
+    classification="read_only",
+    when_to_use=(
+        "Exact lookup in a connected structured datastore — get_record/find/list; "
+        "never fuzzy search. Pass the source, the operation, and the table."
+    ),
+)
+async def datastore_query(
+    source: str, op: str, table: str, args: dict[str, Any] | None = None
+) -> str:
+    """Query a connected structured datastore. Graceful when none is wired."""
+    st = _runtime.state()
+    if not st.active:
+        return "Memory is not enabled for this agent."
+    query = getattr(st.brain, "datastore_query", None)
+    if query is None:
+        return "Datastore query is not available for this agent."
+    if not await _acl_allows("memory.search", st.agent_did):
+        return "No datastore results found."
+    result = await query(source, op, table, args or {}, caller_did=st.agent_did)
+    await _audit(
+        "memory.datastore_query",
+        {"source": source, "op": op, "table": table, "hit": result is not None, "tool": True},
+    )
+    return _render_datastore_result(result)
+
+
+def _render_datastore_result(result: object) -> str:
+    """Render a typed datastore result (dict/list/None) as a concise string."""
+    if result is None:
+        return "No datastore results found."
+    if isinstance(result, list) and not result:
+        return "No datastore results found."
+    return str(result)
+
+
 #: Told once per session, not per turn — the guidance is identical on every turn,
 #: so it belongs in the cached prefix rather than being re-billed each time.
 _PROCEDURE_GUIDANCE = (
@@ -599,6 +678,8 @@ __all__ = [
     "capture_tool",
     "capture_user",
     "consolidate_poll_once",
+    "datastore_query",
+    "document_search",
     "inject_insight",
     "inject_memory_disabled_note",
     "inject_recall",
