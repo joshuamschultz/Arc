@@ -156,7 +156,11 @@ class ArcMemoryBrain:
         self._bundles: dict[str, _ScopeBundle] = {}
         # Registered read-only datastore connections (SPEC-073 COMP-013), keyed
         # by source_id -- held so datastore_query can dispatch without re-opening.
+        # Each source carries the classification it was registered under; a whole
+        # connected datastore is one no-read-up unit (its rows aren't per-row labeled),
+        # so datastore_query gates the caller's clearance against this label.
         self._datastores: dict[str, Datastore] = {}
+        self._datastore_classification: dict[str, str] = {}
         # Proactive detected-moment recall (SPEC-071): one sliding-window dedup
         # across the brain, plus the per-session prior-cue baseline the
         # topic_shift detector compares against.
@@ -571,9 +575,20 @@ class ArcMemoryBrain:
         )
 
     async def register_datastore(
-        self, source_id: str, conn: sqlite3.Connection, *, caller_did: str = ""
+        self,
+        source_id: str,
+        conn: sqlite3.Connection,
+        *,
+        classification: str = "unclassified",
+        caller_did: str = "",
     ) -> None:
-        """Register a read-only datastore connection; introspect + persist its ontology."""
+        """Register a read-only datastore connection; introspect + persist its ontology.
+
+        ``classification`` is the label the whole connected datastore is trusted at
+        (set at connect/approval time); :meth:`datastore_query` gates the caller's
+        clearance against it (no-read-up), so a lower-cleared caller cannot read a
+        higher-classified datastore's rows.
+        """
         if not await self._guard("datastore.register", caller_did=caller_did, target=source_id):
             return
         datastore = Datastore(conn)
@@ -581,6 +596,7 @@ class ArcMemoryBrain:
         store = SemanticStore(self._workspace, self._graph, self._scope(None).key)
         datastore.persist_ontology(store)
         self._datastores[source_id] = datastore
+        self._datastore_classification[source_id] = classification
 
     async def propose_mapping(
         self,
@@ -691,6 +707,17 @@ class ArcMemoryBrain:
             return None
         datastore = self._datastores.get(source_id)
         if datastore is None:
+            return None
+        # No-read-up: the caller's clearance must dominate the datastore's registered
+        # label, or no rows are returned (fail-closed on an unparseable label).
+        strict = self._cfg.tier == "federal"
+        source_label = self._datastore_classification.get(source_id, "unclassified")
+        try:
+            clr = parse_classification(clearance, strict=strict)
+            resource = parse_classification(source_label, strict=strict)
+        except ValueError:
+            return None
+        if not dominates(clr, resource):
             return None
         return datastore.query(op, table, args)
 
