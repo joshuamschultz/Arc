@@ -287,6 +287,35 @@ set -a
 . "$ARC_ENV"
 set +a
 
+# --- 5b. optional postgres index backend (SPEC-073 COMP-007, OPT-IN) -------
+# Default: ARC_MEMORY_INDEX_BACKEND unset -> arcmemory uses its built-in sqlite +
+# sqlite-vec index and NONE of this runs (a default deploy is byte-for-byte the
+# same). Set ARC_MEMORY_INDEX_BACKEND=postgres + POSTGRES_PASSWORD in the deploy
+# .env to provision pgvector (via Docker) and point the fleet at it. The DSN is a
+# secret -> arc.env (0600), sourced into the service; never written to any toml.
+MEMORY_INDEX_BACKEND="$(grep -m1 '^ARC_MEMORY_INDEX_BACKEND=' "$ENV_FILE" | cut -d= -f2- || true)"
+if [ "$MEMORY_INDEX_BACKEND" = "postgres" ]; then
+  PG_PASSWORD="$(grep -m1 '^POSTGRES_PASSWORD=' "$ENV_FILE" | cut -d= -f2- || true)"
+  [ -n "$PG_PASSWORD" ] || fail "ARC_MEMORY_INDEX_BACKEND=postgres but POSTGRES_PASSWORD missing from $ENV_FILE"
+  PG_USER_V="$(grep -m1 '^POSTGRES_USER=' "$ENV_FILE" | cut -d= -f2- || true)"; PG_USER_V="${PG_USER_V:-arc}"
+  PG_DB_V="$(grep -m1 '^POSTGRES_DB=' "$ENV_FILE" | cut -d= -f2- || true)"; PG_DB_V="${PG_DB_V:-arcmemory}"
+  PG_PORT_V="$(grep -m1 '^ARC_PG_PORT=' "$ENV_FILE" | cut -d= -f2- || true)"; PG_PORT_V="${PG_PORT_V:-5432}"
+  POSTGRES_PASSWORD="$PG_PASSWORD" POSTGRES_USER="$PG_USER_V" POSTGRES_DB="$PG_DB_V" ARC_PG_PORT="$PG_PORT_V" \
+    "$RUNTIME_ROOT/scripts/install-postgres.sh"
+  if ! grep -q '^ARC_MEMORY_PG_DSN=' "$ARC_ENV"; then
+    ( umask 077
+      printf 'ARC_MEMORY_PG_DSN=postgresql://%s:%s@127.0.0.1:%s/%s\n' \
+        "$PG_USER_V" "$PG_PASSWORD" "$PG_PORT_V" "$PG_DB_V" >> "$ARC_ENV" )
+    ok "ARC_MEMORY_PG_DSN written to arc.env (0600)"
+  else
+    ok "ARC_MEMORY_PG_DSN already pinned in arc.env"
+  fi
+  set -a
+  # shellcheck disable=SC1090
+  . "$ARC_ENV"
+  set +a
+fi
+
 # --- 6. arc init -----------------------------------------------------------
 if [ -f "$ARC_CONFIG_DIR/config/gateway.toml" ]; then
   ok "arc init already run — leaving ~/.arc/config/*.toml as-is"
@@ -300,6 +329,12 @@ OVERLAYS="$RUNTIME_ROOT/scripts/deploy_node_overlays.py"
 log "Applying user-wide config overlays..."
 "$VENV_PY" "$OVERLAYS" agent-config \
   "$ARC_CONFIG_DIR/config/arcagent.toml" --provider "$PROVIDER" --model "${AGENT_MODEL#*/}"
+
+# Opt-in: point the memory index backend at postgres (config only; DSN is in arc.env).
+if [ "${MEMORY_INDEX_BACKEND:-}" = "postgres" ]; then
+  "$VENV_PY" "$OVERLAYS" memory-config \
+    "$ARC_CONFIG_DIR/config/arcagent.toml" --index-backend postgres
+fi
 
 GATEWAY_ARGS=(gateway-config "$ARC_CONFIG_DIR/config/gateway.toml")
 if [ "$ENABLE_TELEGRAM" = "1" ]; then

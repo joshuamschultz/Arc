@@ -176,7 +176,7 @@ arc agent run my-agent "Analyze this" --context ./report.md --json
 | **`arc ui`** | Multi-agent dashboard — start, tail |
 | **`arc tui`** | Terminal viewpoint onto a served agent (soft-registered by `arctui` when installed) |
 | **`arc store`** | Operational store lifecycle — init, status, verify, backfill |
-| **`arc memory`** | Agent memory maintenance — dedup pre-canonicalization card duplicates, status (semantic recall) |
+| **`arc memory`** | Agent memory maintenance — dedup duplicates, status (semantic recall), backend (index backend health) |
 
 ### Operator controls
 

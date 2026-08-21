@@ -19,16 +19,19 @@ never rebuilt, leaving chunks with no vectors. ``embedded_chunks`` vs
 from __future__ import annotations
 
 import sqlite3
+import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from arcmemory.db import MemoryDB, sqlite_vec_loadable
+from arcmemory.db import DEFAULT_DIMS, MemoryDB, sqlite_vec_loadable
 from arcmemory.degrade import degraded_reasons
+from arcmemory.index.backend import open_index_backend
 from arcmemory.index.rebuild import Embedder, EmbeddingUnavailableError
 
 _PROBE_TEXT = "arcmemory semantic channel probe"
+_PROBE_SCOPE = "__healthprobe__"
 
 
 class WorkspaceVectors(BaseModel):
@@ -119,4 +122,93 @@ def _count(conn: sqlite3.Connection, table: str) -> int:
     return int(row[0]) if row else 0
 
 
-__all__ = ["SemanticStatus", "WorkspaceVectors", "semantic_status"]
+class IndexBackendHealth(BaseModel):
+    """Whether the configured index backend opened and answered a read."""
+
+    backend: str
+    connected: bool
+    vec_available: bool = False
+    detail: str = ""
+
+
+async def probe_index_backend(
+    backend: str,
+    *,
+    dsn: str | None = None,
+    dims: int = DEFAULT_DIMS,
+    workspace: Path | None = None,
+) -> IndexBackendHealth:
+    """Open the named index backend and confirm it answers, mutating nothing.
+
+    A health readout, not a gate: it NEVER raises. Any failure — a missing DSN, an
+    unreachable server, an absent extra — becomes ``connected=False`` with the
+    reason in ``detail`` so an operator sees it plainly instead of a traceback.
+
+    * ``sqlite`` opens the per-agent ``MemoryDB(workspace)`` (workspace required)
+      and reports ``vec_available``.
+    * ``postgres`` builds the backend via ``open_index_backend`` and runs one
+      trivial read (``stored_hashes`` on a throwaway scope) to force the pool and
+      schema to initialise; success means the shared server is reachable.
+    """
+    if backend == "sqlite":
+        return _probe_sqlite(workspace)
+    return await _probe_remote(backend, dsn=dsn, dims=dims, workspace=workspace)
+
+
+def _probe_sqlite(workspace: Path | None) -> IndexBackendHealth:
+    """Open a per-agent sqlite index and report its vector channel."""
+    if workspace is None:
+        return IndexBackendHealth(
+            backend="sqlite",
+            connected=False,
+            detail="sqlite backend requires a workspace path.",
+        )
+    try:
+        db = MemoryDB(workspace)
+        db.connect()
+        vec_available = db.vec_available
+        db.close()
+    except Exception as exc:  # health readout: report, never raise
+        return IndexBackendHealth(backend="sqlite", connected=False, detail=str(exc))
+    note = "vec0 available" if vec_available else "vec0 unavailable (BM25 + graph only)"
+    return IndexBackendHealth(
+        backend="sqlite",
+        connected=True,
+        vec_available=vec_available,
+        detail=f"sqlite index opened; {note}.",
+    )
+
+
+async def _probe_remote(
+    backend: str, *, dsn: str | None, dims: int, workspace: Path | None
+) -> IndexBackendHealth:
+    """Open a server backend and force one read so pool + schema init are proven."""
+    tmp: tempfile.TemporaryDirectory[str] | None = None
+    try:
+        if workspace is None:
+            tmp = tempfile.TemporaryDirectory()
+            ws = Path(tmp.name)
+        else:
+            ws = workspace
+        index_backend = open_index_backend(backend, db=MemoryDB(ws, dims=dims), dsn=dsn)
+        await index_backend.stored_hashes(_PROBE_SCOPE)
+    except Exception as exc:  # health readout: report, never raise
+        return IndexBackendHealth(backend=backend, connected=False, detail=str(exc))
+    finally:
+        if tmp is not None:
+            tmp.cleanup()
+    return IndexBackendHealth(
+        backend=backend,
+        connected=True,
+        vec_available=index_backend.vec_available,
+        detail=f"{backend} index answered a health probe.",
+    )
+
+
+__all__ = [
+    "IndexBackendHealth",
+    "SemanticStatus",
+    "WorkspaceVectors",
+    "probe_index_backend",
+    "semantic_status",
+]

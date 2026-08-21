@@ -96,6 +96,27 @@ def apply_gateway_overlay(
     print(f"  [+] {path}: [platforms.web] enabled{telegram_note}")
 
 
+def apply_memory_overlay(path: Path, index_backend: str) -> None:
+    """Set the arcmemory document/chunk index backend (SPEC-073 COMP-007).
+
+    ``index_backend`` is a validated ``MemoryConfig`` field, so it rides the
+    ``dynamics`` sub-table (merged over the tier defaults + re-validated by
+    arcmemory.provider), not a flat backend key. Idempotent: re-running against an
+    already-patched file just rewrites the same value. The postgres DSN is NEVER
+    written here — it is a secret sourced from the ARC_MEMORY_PG_DSN env var
+    (arc.env), mirroring ARC_EMBED_API_KEY.
+    """
+    doc = _load(path)
+    modules = doc.setdefault("modules", tomlkit.table())
+    memory = modules.setdefault("memory", tomlkit.table())
+    config = memory.setdefault("config", tomlkit.table())
+    backend = config.setdefault("backend", tomlkit.table())
+    dynamics = backend.setdefault("dynamics", tomlkit.table())
+    dynamics["index_backend"] = index_backend
+    _save(path, doc)
+    print(f"  [+] {path}: [modules.memory.config.backend.dynamics] index_backend={index_backend}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -104,6 +125,10 @@ def main() -> None:
     agent_cmd.add_argument("path", type=Path)
     agent_cmd.add_argument("--provider", default="anthropic")
     agent_cmd.add_argument("--model", default="claude-sonnet-5")
+
+    mem_cmd = sub.add_parser("memory-config")
+    mem_cmd.add_argument("path", type=Path)
+    mem_cmd.add_argument("--index-backend", default="postgres", choices=["sqlite", "postgres"])
 
     gw_cmd = sub.add_parser("gateway-config")
     gw_cmd.add_argument("path", type=Path)
@@ -115,6 +140,8 @@ def main() -> None:
 
     if args.command == "agent-config":
         apply_agent_overlay(args.path, args.provider, args.model)
+    elif args.command == "memory-config":
+        apply_memory_overlay(args.path, args.index_backend)
     elif args.command == "gateway-config":
         apply_gateway_overlay(
             args.path, args.agent_did, args.enable_telegram, args.allowed_user_ids

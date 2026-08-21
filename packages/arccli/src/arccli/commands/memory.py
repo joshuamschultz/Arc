@@ -1,9 +1,10 @@
 """``arc memory`` — operator maintenance over an agent's glass-box memory files.
 
-Two subcommands:
+Three subcommands:
 
     arc memory dedup [--apply] <workspace> [<workspace> ...]
     arc memory status [<workspace> ...]
+    arc memory backend [--index-backend sqlite|postgres] [--dsn DSN] [<workspace> ...]
 
 ``dedup`` merges memory cards whose slugs diverged before slug canonicalization
 landed (one real thing became several files: "Custom ERP.md", "custom-erp.md"). The
@@ -30,7 +31,12 @@ from pathlib import Path
 
 from arcmemory.hygiene import DedupReport, dedup_workspace, discover_workspaces
 from arcmemory.provider import build_embedder
-from arcmemory.status import SemanticStatus, semantic_status
+from arcmemory.status import (
+    IndexBackendHealth,
+    SemanticStatus,
+    probe_index_backend,
+    semantic_status,
+)
 
 from arccli.commands._shared import dispatch, err, print_kv
 from arccli.commands._shared import write as _out
@@ -148,6 +154,54 @@ def _render_status(status: SemanticStatus) -> None:
     err(_INSTALL_HINT)
 
 
+def _backend(args: argparse.Namespace) -> None:
+    """Report whether the configured index backend is reachable.
+
+    The index backend is swappable: ``sqlite`` (per-agent file, always up) or
+    ``postgres`` (a shared pgvector server that a deployment must be able to prove
+    is reachable before trusting the switch). All backend logic lives in
+    :func:`arcmemory.status.probe_index_backend`; this is a thin renderer.
+    ``postgres`` exits 1 when the server does not answer so a deploy check can gate
+    on it — the same gate contract as ``status``.
+    """
+    if args.index_backend == "postgres":
+        health = asyncio.run(probe_index_backend("postgres", dsn=args.dsn or None))
+        _render_backend(health)
+        if not health.connected:
+            sys.exit(1)
+        return
+
+    workspaces: list[Path] = []
+    for raw in args.workspaces:
+        root = Path(raw).expanduser()
+        found = discover_workspaces(root)
+        if not found:
+            err(f"  no memory workspace found under {root}")
+        workspaces.extend(found)
+
+    if not workspaces:
+        _out("\nindex backend: sqlite (config default) — a per-agent file, always local.")
+        _out("Pass a workspace to report its vector channel, or --index-backend postgres.")
+        return
+
+    for workspace in workspaces:
+        health = asyncio.run(probe_index_backend("sqlite", workspace=workspace))
+        _out(f"\n{workspace}")
+        _render_backend(health)
+
+
+def _render_backend(health: IndexBackendHealth) -> None:
+    """Print one backend's reachability verdict and vector-channel status."""
+    print_kv(
+        [
+            ("backend", health.backend),
+            ("connected", "yes" if health.connected else "NO"),
+            ("vector channel", "available" if health.vec_available else "unavailable"),
+            ("detail", health.detail),
+        ]
+    )
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="arc memory",
@@ -187,10 +241,32 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Embedding backend to probe: local (default), provider, or none.",
     )
     status_p.add_argument("--model", default="", help="Embedding model to probe.")
+
+    backend_p = subs.add_parser(
+        "backend",
+        help="Report whether the configured index backend (sqlite/postgres) is reachable.",
+    )
+    backend_p.add_argument(
+        "workspaces",
+        nargs="*",
+        metavar="<workspace>",
+        help="Dirs containing memory/ to report the sqlite vector channel for (optional).",
+    )
+    backend_p.add_argument(
+        "--index-backend",
+        default="sqlite",
+        choices=("sqlite", "postgres"),
+        help="Index backend to probe: sqlite (default, per-agent file) or postgres.",
+    )
+    backend_p.add_argument(
+        "--dsn",
+        default="",
+        help="Postgres DSN (falls back to ARC_MEMORY_PG_DSN when omitted).",
+    )
     return parser
 
 
-_SUBCOMMANDS = {"dedup": _dedup, "status": _status}
+_SUBCOMMANDS = {"dedup": _dedup, "status": _status, "backend": _backend}
 
 
 def memory_handler(args: list[str]) -> None:

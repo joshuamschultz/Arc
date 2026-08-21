@@ -105,6 +105,36 @@ On every deploy of an arc host that runs memory:
 
 ---
 
+## 4. Postgres + pgvector index backend (SPEC-073, OPTIONAL)
+
+The document/chunk index sits behind a pluggable `IndexBackend` (COMP-007). The default is
+SQLite + `sqlite-vec` — nothing below is needed for it. To scale to Postgres + `pgvector`:
+
+**Config vs secret (the rule):** the *selection* is non-secret config —
+`[modules.memory.config.backend.dynamics] index_backend = "postgres"` in the agent toml
+(the deploy overlay `deploy_node_overlays.py memory-config` writes exactly this). The
+*connection string* is a secret — it comes from the `ARC_MEMORY_PG_DSN` env var (in
+`~/.arc/config/arc.env`, 0600, sourced into the service), never from any toml. This mirrors
+`ARC_EMBED_API_KEY`.
+
+**Install the extra:** `pip install "arcmemory[postgres]"` (pulls `asyncpg` + `pgvector`).
+Absent, `open_index_backend("postgres")` raises a clear "install arcmemory[postgres]" error.
+
+**Deploy lanes (both opt-in; a default deploy runs neither):**
+- **Host (DGX / Azure VM, systemd):** set `ARC_MEMORY_INDEX_BACKEND=postgres` and
+  `POSTGRES_PASSWORD=...` in the deploy `.env`. `deploy-node.sh` then runs
+  `scripts/install-postgres.sh` (a pgvector container via Docker, idempotent), writes
+  `ARC_MEMORY_PG_DSN` into `arc.env`, and applies the `memory-config` overlay fleet-wide.
+- **Docker (cloud compose):** `docker compose --profile postgres up` starts the
+  `pgvector/pgvector:pg16` service; set `ARC_MEMORY_PG_DSN` + `POSTGRES_PASSWORD` in `.env`.
+
+**Deploy gate:** confirm connectivity before trusting it —
+`arc memory backend --index-backend postgres` exits 0 when pgvector is reachable and the
+`vector` extension is present, non-zero otherwise (the same exit-code contract as
+`arc memory status`).
+
+---
+
 ## Change log of out-of-band setup actions
 
 - **2026-07-13** — Installed `sentence-transformers>=3.0` (→ `sentence-transformers 5.6.0`,

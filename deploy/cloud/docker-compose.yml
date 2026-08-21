@@ -18,10 +18,32 @@ services:
       ARC_TIER: ${ARC_TIER:-personal}
       ARC_ENABLE_TELEGRAM: ${ARC_ENABLE_TELEGRAM:-0}
       ARC_TELEGRAM_ALLOWED_USER_IDS: ${ARC_TELEGRAM_ALLOWED_USER_IDS:-}
+      # arcmemory document/chunk index backend (SPEC-073 COMP-007). Empty DSN =>
+      # the default sqlite+sqlite-vec index (no postgres). Set ARC_MEMORY_PG_DSN in
+      # .env AND start the postgres service (`--profile postgres`) to use pgvector.
+      ARC_MEMORY_PG_DSN: ${ARC_MEMORY_PG_DSN:-}
     volumes:
       - arc-data:/data
     expose:
       - "8420"
+
+  # Optional pgvector index backend for arcmemory (SPEC-073). Off by default — it
+  # only starts under `docker compose --profile postgres up` (or COMPOSE_PROFILES=
+  # postgres). When enabled, point ARC_MEMORY_PG_DSN at it, e.g.
+  #   ARC_MEMORY_PG_DSN=postgresql://arc:${POSTGRES_PASSWORD}@postgres:5432/arcmemory
+  # and set index_backend=postgres in the agent config (deploy_node_overlays memory-config).
+  postgres:
+    image: pgvector/pgvector:pg16
+    profiles: ["postgres"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-arc}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env to enable the postgres profile}
+      POSTGRES_DB: ${POSTGRES_DB:-arcmemory}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    expose:
+      - "5432"
 
   caddy:
     image: caddy:2-alpine
@@ -45,3 +67,4 @@ volumes:
   arc-data:
   caddy-data:
   caddy-config:
+  pg-data:

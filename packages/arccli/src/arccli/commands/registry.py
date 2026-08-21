@@ -635,7 +635,7 @@ COMMAND_REGISTRY: list[CommandDef] = [
     ),
     CommandDef(
         name="memory",
-        description="Agent memory maintenance — dedup pre-canonicalization card duplicates",
+        description="Agent memory maintenance — dedup duplicates, status, backend health",
         category="Tools & Skills",
         args_hint="<subcommand>",
         cli_only=True,
