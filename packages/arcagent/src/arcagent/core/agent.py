@@ -478,6 +478,7 @@ class ArcAgent:
             config=self._config.context,
             telemetry=self._telemetry,
             bus=self._bus,
+            agent_did=self._identity.did,
         )
 
         # 7. Session pool starts empty; managers are built on demand by

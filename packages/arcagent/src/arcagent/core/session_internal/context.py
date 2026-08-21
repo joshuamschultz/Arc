@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any
 
 import arcrun
 
+from arcagent.core import midloop_recall
 from arcagent.core.config import ContextConfig
 from arcagent.core.telemetry import AgentTelemetry
 
@@ -314,10 +315,14 @@ class ContextManager:
         config: ContextConfig,
         telemetry: AgentTelemetry | Any,
         bus: ModuleBus | None = None,
+        agent_did: str = "",
     ) -> None:
         self._config = config
         self._telemetry = telemetry
         self._bus = bus
+        # The agent whose DID keys the mid-loop recall buffer this manager drains
+        # in transform_context (SPEC-072 COMP-003). Empty for unit contexts.
+        self._agent_did = agent_did
         self._reported_input_tokens: int = 0
         self._reported_output_tokens: int = 0
 
@@ -508,8 +513,23 @@ class ContextManager:
             return messages
         if self._estimate_ratio(messages) >= self._config.emergency_threshold:
             _logger.warning("Emergency truncation: in-run context reached the hard ceiling")
-            return self._emergency_truncate(messages)
-        return messages
+            return self._append_midloop(self._emergency_truncate(messages))
+        return self._append_midloop(messages)
+
+    def _append_midloop(self, messages: list[Any]) -> list[Any]:
+        """Append any staged mid-loop recall block to the tail (SPEC-072 COMP-003).
+
+        Drains the per-run, DID-keyed buffer a decision-point moment staged, and appends
+        each block as a trailing message — append-only, so the cached prefix stays stable
+        (ARCRUN_ASSERT_APPEND_ONLY holds). Empty buffer → messages unchanged. The block is
+        an already-gated, boundary-marked DATA string the Brain rendered; it rides in as a
+        user-role message so the provider treats it as content, not instructions.
+        """
+        staged = midloop_recall.drain(self._agent_did)
+        if not staged:
+            return messages
+        appended = [{"role": "user", "content": block} for block in staged]
+        return [*messages, *appended]
 
     def compaction_split(self, messages: list[Any]) -> tuple[list[Any], list[Any]]:
         """Split messages into ``(older_to_summarize, recent_to_keep)``.

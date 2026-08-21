@@ -43,9 +43,16 @@ class MemoryConfig(ModuleConfig):
     budget: int = 1024
     # Governs whether arcagent emits `agent:moment` and subscribes for proactive recall.
     proactive_enabled: bool = True
-    # decision_point moments are opt-in: a mid-loop pre_plan cannot inject same-turn
-    # (audit-only until a mid-turn channel exists, A3), so memory ignores them by default.
+    # decision_point moments are opt-in: memory ignores them unless a mid-loop channel
+    # is wired (SPEC-072 COMP-003/005). Default off (SPEC-071 A3).
     proactive_decision_point: bool = False
+    # The pre-tool decision point is the finer, costlier site (tool name+args on every
+    # tool call). Opt-in on top of proactive_decision_point; pre_plan is the default site.
+    decision_point_pre_tool: bool = False
+    # Context-aware recall (SPEC-072): feed the Brain a bounded per-session working set
+    # so recall keys off entities in play, not only the latest message. On by default;
+    # folded into backend dynamics so it reaches the arcmemory Brain.
+    working_set_enabled: bool = True
 
     # Consolidation scheduling: fires on ANY of event-count / idle / interval (DC-5).
     consolidate_event_threshold: int = 20
@@ -69,8 +76,11 @@ class MemoryConfig(ModuleConfig):
             _v = getattr(self, _k)
             if _v != "":
                 self.backend.setdefault(_k, _v)
-        if self.dynamics:
-            self.backend.setdefault("dynamics", self.dynamics)
+        # The working-set toggle is a real arcmemory knob, so forward it through the
+        # dynamics passthrough (alongside any operator-supplied overrides). An explicit
+        # dynamics entry for the same key wins — the operator's TOML is authoritative.
+        dynamics = {"working_set_enabled": self.working_set_enabled, **self.dynamics}
+        self.backend.setdefault("dynamics", dynamics)
         return self
 
 

@@ -344,6 +344,9 @@ class Recall(BaseModel):
     confidence: Confidence = Confidence.KNOWN
     classification: str = "unclassified"
     verify_first: bool = False
+    #: WHEN the underlying memory was established (``YYYY-MM-DD``), so the model can
+    #: judge staleness. Empty string when no usable timestamp is known (unstamped).
+    established: str = ""
 
 
 class RecallCard(BaseModel):
@@ -364,6 +367,8 @@ class RecallCard(BaseModel):
     confidence: Confidence = Confidence.KNOWN
     classification: str = "unclassified"
     verify_first: bool = False
+    #: WHEN the underlying memory was established (``YYYY-MM-DD``); empty when unstamped.
+    established: str = ""
     provenance: list[str] = Field(default_factory=list)
     links: list[str] = Field(default_factory=list)
 

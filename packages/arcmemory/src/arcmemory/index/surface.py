@@ -28,6 +28,7 @@ from __future__ import annotations
 import sqlite3
 import struct
 from collections.abc import Iterable
+from datetime import UTC, datetime
 from pathlib import Path
 
 from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
@@ -281,7 +282,7 @@ class SurfaceIndex:
         """Hydrate a fused chunk id into a ``Recall`` (None if it vanished)."""
         conn = self._db.connect()
         meta = conn.execute(
-            "SELECT source_path, classification FROM chunks WHERE chunk_id=? AND scope=?",
+            "SELECT source_path, classification, mtime FROM chunks WHERE chunk_id=? AND scope=?",
             (chunk_id, self._scope.key),
         ).fetchone()
         text_row = conn.execute(
@@ -290,12 +291,16 @@ class SurfaceIndex:
         ).fetchone()
         if meta is None or text_row is None:
             return None
+        # Stamp WHEN the memory was established only when temporal features are on; the
+        # off-switch (SPEC-072) returns cards to their pre-temporal unstamped shape.
+        established = _established_date(meta[2]) if self._cfg.temporal_enabled else ""
         return Recall(
             source=chunk_id,
             content=text_row[0],
             score=score,
             kind="surface",
             classification=str(meta[1]),
+            established=established,
         )
 
     def _vocabulary(self) -> set[str]:
@@ -316,6 +321,21 @@ class SurfaceIndex:
             ),
             self._audit,
         )
+
+
+def _established_date(mtime: float | None) -> str:
+    """Establishment stamp for a chunk: its ``mtime`` as a UTC ``YYYY-MM-DD`` date.
+
+    The chunks table already carries each source's modification time — the day the
+    memory was last established on disk. A missing/zero/invalid mtime degrades to
+    unstamped (``""``); it never raises (SPEC-072 COMP-006).
+    """
+    if not mtime or mtime <= 0:
+        return ""
+    try:
+        return datetime.fromtimestamp(float(mtime), UTC).strftime("%Y-%m-%d")
+    except (ValueError, OverflowError, OSError):
+        return ""
 
 
 def _cosine(a: list[float], b: list[float]) -> float:

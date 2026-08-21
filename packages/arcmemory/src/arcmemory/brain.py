@@ -22,7 +22,7 @@ deployment wires arcllm-backed seams to light up semantic recall and distillatio
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -35,7 +35,7 @@ from arcmemory.capture import FastCapture
 from arcmemory.config import MemoryConfig
 from arcmemory.consolidate import Consolidator
 from arcmemory.db import MemoryDB
-from arcmemory.detectors import Decision, WindowDedup, evaluate_moment
+from arcmemory.detectors import Decision, WindowDedup, WorkingSet, evaluate_moment
 from arcmemory.distill import Distiller
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder, IndexRebuilder
@@ -48,15 +48,32 @@ from arcmemory.types import ConsolidationResult, Recall, RecallCard, Scope, Situ
 
 @dataclass
 class _MomentSessionState:
-    """The only session state a detector reads: the prior turn's cue baseline.
+    """The session state a detector reads: the prior-turn baseline + working set.
 
-    A detector inspects the baseline, it never mutates it. The brain owns the
-    baseline (``_prior_cues``) and updates it deliberately — only on the
-    ``topic_shift`` path (see :meth:`ArcMemoryBrain.on_moment`) — by rebinding its
-    own dict entry, never by writing back through this carrier.
+    A detector inspects these, it never mutates them. The brain owns the baseline
+    (``_prior_cues``, updated only on the ``topic_shift`` path) and the ``WorkingSet``;
+    both are passed in read-only. ``working_set`` is the bounded per-session set of
+    cues in play (SPEC-072 COMP-001) — empty when the working-set toggle is off, which
+    returns ``on_moment`` to its exact SPEC-071 behavior.
     """
 
     prior_cues: list[str]
+    working_set: list[str] = field(default_factory=list)
+
+
+def _augment_query(text: str, cues: list[str]) -> str:
+    """Append any query cue not already present in ``text`` (COMP-001 surfacing).
+
+    A working-set entity named a turn ago is absent from the current message, so the
+    text-driven surface channel would never find it. Folding the missing cues into the
+    search text lets it surface — while a SPEC-071 moment, whose cues are already in the
+    text, is left byte-for-byte unchanged (deterministic, no model call).
+    """
+    lowered = text.lower()
+    extra = [cue for cue in cues if cue and cue.lower() not in lowered]
+    if not extra:
+        return text
+    return f"{text} {' '.join(extra)}".strip()
 
 
 class _ScopeBundle:
@@ -126,6 +143,11 @@ class ArcMemoryBrain:
         # topic_shift detector compares against.
         self._window_dedup = WindowDedup(self._cfg.proactive_dedup_window)
         self._prior_cues: dict[str | None, list[str]] = {}
+        # SPEC-072 COMP-001: a bounded per-session working set of cues in play, so the
+        # detectors key off conversation context absent from the latest message.
+        self._working_set = WorkingSet(
+            self._cfg.working_set_max, self._cfg.working_set_decay_turns
+        )
 
     # -- Brain Protocol ----------------------------------------------------
 
@@ -233,8 +255,17 @@ class ArcMemoryBrain:
         from arcmemory.stores.semantic import SemanticStore
 
         cue_list = list(cues or [])
+        # Merge this turn's cues into the bounded per-session working set (COMP-001);
+        # off-switch → empty set, so the detectors see only the current cues (SPEC-071).
+        active = (
+            self._working_set.update(session_id, cue_list)
+            if self._cfg.working_set_enabled
+            else []
+        )
         store = SemanticStore(self._workspace, self._graph, self._scope(session_id).key)
-        session_state = _MomentSessionState(prior_cues=self._prior_cues.get(session_id, []))
+        session_state = _MomentSessionState(
+            prior_cues=self._prior_cues.get(session_id, []), working_set=active
+        )
         decision = evaluate_moment(
             kind, cues=cue_list, text=text, session_state=session_state, store=store
         )
@@ -262,7 +293,12 @@ class ArcMemoryBrain:
         bundle = self._bundle(session_id)
         await bundle.retriever.index()
         clr = parse_classification(clearance, strict=self._cfg.tier == "federal")
-        situation = Situation(text=text, cues=decision.query_cues)
+        # Fold the query cues into the search text so a working-set entity absent from
+        # the literal message still reaches the text-driven surface channel (COMP-001).
+        # No-op for SPEC-071 moments whose cues are already in the text.
+        situation = Situation(
+            text=_augment_query(text, decision.query_cues), cues=decision.query_cues
+        )
         effective_k = min(top_k, self._cfg.proactive_max_cards)
         result = await bundle.retriever.retrieve(
             situation, clearance=clr, top_k=effective_k, budget=budget

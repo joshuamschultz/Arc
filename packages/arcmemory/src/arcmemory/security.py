@@ -247,6 +247,10 @@ def boundary_mark(recall: Recall) -> str:
         f'confidence="{recall.confidence.value}" '
         f'verify_first="{str(recall.verify_first).lower()}"'
     )
+    # WHEN the memory was established, surfaced in-band so the consumer can weigh
+    # staleness (SPEC-072 COMP-006). Omitted entirely when unstamped — no placeholder.
+    if recall.established:
+        attrs += f' established="{_attr(recall.established)}"'
     return f"{_MEMORY_OPEN} {attrs}>\n{_defang(recall.content)}\n{_MEMORY_CLOSE}"
 
 

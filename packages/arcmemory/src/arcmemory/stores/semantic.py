@@ -46,6 +46,27 @@ def _format_confidence(confidence: float) -> str:
     return str(round(confidence, 2)).lstrip("0")
 
 
+def superseded_view(entity: Entity) -> list[str]:
+    """Explicit current-vs-superseded lines for an entity's contradicted facts (COMP-007).
+
+    A fact carrying a ``was_value`` records a supersession: a later write replaced the
+    value and folded the prior one into a retained trail (mark, never delete — REQ-357).
+    This renders that as one legible line per superseded fact so recall can present the
+    most recent as current and clearly mark the older. Deterministic and model-free —
+    the timestamp/order resolution already happened at write time; nothing is read back
+    or recomputed here. Facts with no contradiction trail contribute no line.
+    """
+    lines: list[str] = []
+    for fact in entity.facts:
+        if fact.was_value is None:
+            continue
+        lines.append(
+            f"{fact.predicate}: {fact.value} (current, {fact.date}) "
+            f"| superseded: {fact.was_value}"
+        )
+    return lines
+
+
 def format_fact(fact: Fact) -> str:
     """Render a ``Fact`` to its compact triplet line."""
     line = f"- {fact.predicate}: {fact.value} {_format_confidence(fact.confidence)} {fact.date}"
@@ -416,4 +437,5 @@ __all__ = [
     "format_fact",
     "parse_fact",
     "parse_facts",
+    "superseded_view",
 ]

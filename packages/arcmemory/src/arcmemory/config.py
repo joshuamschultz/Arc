@@ -159,6 +159,26 @@ class MemoryConfig(BaseModel):
         description="turns a proactively-injected card stays suppressed (in-window dedup)",
     )
 
+    # Context-aware recall (SPEC-072) — a bounded per-session working set feeds the
+    # detectors, so recall keys off entities in play across the conversation, not only
+    # the latest message's tokens. Deterministic and model-free (REQ-349/350/361).
+    working_set_enabled: bool = Field(
+        default=True, description="accumulate a per-session working set for the detectors"
+    )
+    working_set_max: int = Field(
+        default=32, description="max salient cues retained in the working set (bounded)"
+    )
+    working_set_decay_turns: int = Field(
+        default=5, description="turns a cue survives in the working set without a refresh"
+    )
+
+    # Time-aware recall (SPEC-072) — establishment stamps, supersession marking,
+    # optional time windows, recency tie-break, and the events/daily timeline. A single
+    # off switch returns recall to its pre-temporal behavior (REQ-356..360/362).
+    temporal_enabled: bool = Field(
+        default=True, description="surface WHEN-stamps, supersession, and temporal ranking"
+    )
+
     @classmethod
     def for_tier(cls, tier: Tier) -> MemoryConfig:
         """Return the R-9 constant set for ``tier`` (federal is strictest)."""

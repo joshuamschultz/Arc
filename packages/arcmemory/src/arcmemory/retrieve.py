@@ -33,7 +33,7 @@ from arcmemory.index.structural import Reranker, StructuralIndex
 from arcmemory.index.surface import SurfaceIndex
 from arcmemory.security import enforce_budget, gate_no_read_up, render_recalls
 from arcmemory.stores.semantic import extract_wiki_links
-from arcmemory.types import Bundle, Confidence, Recall, RecallCard, Scope, Situation
+from arcmemory.types import Bundle, Confidence, Recall, RecallCard, Scope, Situation, TimeWindow
 
 _DEFAULT_BUDGET = 1024
 
@@ -91,13 +91,18 @@ class Retriever:
         top_k: int = 5,
         budget: int = _DEFAULT_BUDGET,
         reranker: Reranker | None = None,
+        window: TimeWindow | None = None,
     ) -> Bundle:
-        """Fuse both channels, gate on clearance, and return a bounded bundle."""
+        """Fuse both channels, gate on clearance, and return a bounded bundle.
+
+        An optional ``window`` (SPEC-072 COMP-008) filters candidates to a time slice by
+        their establishment stamp BEFORE the bound; ``None`` is a no-op (prior behavior).
+        """
         pool = max(top_k * 2, top_k)
         surf = await self._surface.search(situation.text, top_k=pool)
         stru = await self._structural.match(situation, top_k=pool, reranker=reranker)
 
-        fused = _rrf_fuse([surf.recalls, stru.recalls])
+        fused = _rrf_fuse([surf.recalls, stru.recalls], recency=self._cfg.temporal_enabled)
         gated = _confidence_gate(fused)
         cleared = gate_no_read_up(
             gated,
@@ -107,7 +112,8 @@ class Retriever:
             tier=self._cfg.tier,
             audit_sink=self._audit,
         )
-        bounded, truncated = enforce_budget(cleared, top_k=top_k, budget=budget)
+        windowed = _within_window(cleared, window)
+        bounded, truncated = enforce_budget(windowed, top_k=top_k, budget=budget)
         return Bundle(
             recalls=bounded,
             degraded=surf.degraded or stru.degraded,
@@ -124,22 +130,33 @@ class Retriever:
         top_k: int = 5,
         budget: int = _DEFAULT_BUDGET,
         reranker: Reranker | None = None,
+        window: TimeWindow | None = None,
     ) -> list[RecallCard]:
         """Structured, glass-box recall: ranked cards WITH provenance + outbound links.
 
         Same single bounded pass as :meth:`retrieve`, but each kept recall is
         surfaced as a :class:`RecallCard` carrying its provenance (source slug ·
         kind · confidence) and the ``[[links]]`` its content points to — the shape
-        the agent-side ``recall`` tool renders (retrieval stays non-agentic).
+        the agent-side ``recall`` tool renders (retrieval stays non-agentic). An
+        optional ``window`` filters candidates to a time slice (COMP-008).
         """
         bundle = await self.retrieve(
-            situation, clearance=clearance, top_k=top_k, budget=budget, reranker=reranker
+            situation, clearance=clearance, top_k=top_k, budget=budget,
+            reranker=reranker, window=window,
         )
         return [_to_card(recall) for recall in bundle.recalls]
 
 
 def _to_card(recall: Recall) -> RecallCard:
-    """Project one gated recall onto its glass-box card (provenance + links)."""
+    """Project one gated recall onto its glass-box card (provenance + links).
+
+    The establishment timestamp (SPEC-072 COMP-006), when known, joins the provenance
+    trail so a caller inspecting the card sees WHEN the memory was set alongside WHERE
+    it came from. An unstamped recall simply omits it — never a placeholder.
+    """
+    provenance = [recall.source, recall.kind, recall.confidence.value]
+    if recall.established:
+        provenance.append(recall.established)
     return RecallCard(
         source=recall.source,
         kind=recall.kind,
@@ -148,24 +165,58 @@ def _to_card(recall: Recall) -> RecallCard:
         confidence=recall.confidence,
         classification=recall.classification,
         verify_first=recall.verify_first,
-        provenance=[recall.source, recall.kind, recall.confidence.value],
+        established=recall.established,
+        provenance=provenance,
         links=extract_wiki_links(recall.content),
     )
 
 
-def _rrf_fuse(channels: list[list[Recall]]) -> list[Recall]:
+def _within_window(recalls: list[Recall], window: TimeWindow | None) -> list[Recall]:
+    """Keep recalls whose establishment stamp falls inside ``window`` (SPEC-072 COMP-008).
+
+    ``None`` window is a no-op — recall behaves exactly as before. A card with an
+    establishment date OUTSIDE the window is dropped; an UNSTAMPED card (no known date)
+    is kept, because it cannot be confirmed out-of-window and over-dropping would silently
+    starve recall. Deterministic string-date comparison, no model on the path.
+    """
+    if window is None:
+        return recalls
+    return [r for r in recalls if not r.established or window.contains(r.established)]
+
+
+def _rrf_fuse(channels: list[list[Recall]], *, recency: bool = True) -> list[Recall]:
     """Reciprocal-rank-fuse the channels into one descending recall list (REQ-040).
 
     Sources are namespace-disjoint (surface chunk ids vs insight ids), so each recall
     object is carried through once and restamped with its fused score (from the shared
     scale-free ``rrf_fuse``) for the downstream budget/margin logic.
+
+    Recency is the TIE-BREAK only (SPEC-072 COMP-010): among recalls with an equal fused
+    score, the more recently established ranks higher, so a real relevance gap is never
+    overridden — the primary key stays the fused score. Unstamped cards sort as oldest.
+    ``recency=False`` (the temporal off-switch) restores the pre-temporal source-id order.
     """
     objects: dict[str, Recall] = {}
     for ranked in channels:
         for recall in ranked:
             objects.setdefault(recall.source, recall)
     fused = rrf_fuse([[recall.source for recall in ranked] for ranked in channels])
-    return [objects[source].model_copy(update={"score": score}) for source, score in fused]
+    recalls = [objects[source].model_copy(update={"score": score}) for source, score in fused]
+    if recency:
+        recalls.sort(key=lambda r: (-r.score, -_date_ordinal(r.established), r.source))
+    else:
+        recalls.sort(key=lambda r: (-r.score, r.source))
+    return recalls
+
+
+def _date_ordinal(established: str) -> int:
+    """A comparable integer for a ``YYYY-MM-DD`` stamp (0 when unstamped/malformed).
+
+    Deterministic recency key for the tie-break — larger is more recent. An empty or
+    malformed stamp maps to 0, so an unstamped card loses a tie to any stamped one.
+    """
+    digits = established.replace("-", "")
+    return int(digits) if digits.isdigit() else 0
 
 
 #: Prefix of a curated-file chunk id, and the store subdirectory that follows it.

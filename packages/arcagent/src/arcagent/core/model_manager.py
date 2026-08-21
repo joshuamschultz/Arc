@@ -126,6 +126,40 @@ def _submit_witness(
         _logger.warning("witness submission failed (non-federal) — swallowing", exc_info=True)
 
 
+def decision_point_moment(event: arcrun.Event) -> dict[str, Any] | None:
+    """Build an ``agent:moment`` decision-point payload for a loop decision point (COMP-004).
+
+    ``turn.start`` → a ``pre_plan`` moment (the default, cheaper site): the turn event
+    carries no situation text, so its cues come from the working set the Brain already
+    holds. ``tool.start`` → a ``pre_tool`` moment (the finer, opt-in site) carrying the
+    tool name as a cue and ``tool(args)`` as text so recall keys off what is about to run.
+    Any other event → ``None``. Thin and best-effort; the payload stays primitive.
+    """
+    if event.type == "turn.start":
+        return {
+            "kind": "decision_point",
+            "point": "pre_plan",
+            "cues": [],
+            "text": "",
+            "session_id": None,
+        }
+    if event.type == "tool.start":
+        data = dict(event.data)
+        tool = str(data.get("tool") or data.get("name") or "").strip()
+        if not tool:
+            return None
+        args = data.get("args")
+        text = f"{tool}({args})" if args not in (None, "", {}, []) else tool
+        return {
+            "kind": "decision_point",
+            "point": "pre_tool",
+            "cues": [tool],
+            "text": text,
+            "session_id": None,
+        }
+    return None
+
+
 def create_arcrun_bridge(
     bus: ModuleBus,
     *,
@@ -166,6 +200,10 @@ def create_arcrun_bridge(
         "turn.start": "agent:pre_plan",
         "turn.end": "agent:post_plan",
     }
+    # SPEC-072 COMP-004: also announce a decision-point moment at the plan (turn.start)
+    # and tool (tool.start) sites so the memory module can recall right before the agent
+    # acts. Emitted unconditionally here; the memory subscriber owns the config gates
+    # (proactive_decision_point, and decision_point_pre_tool for the pre_tool site).
     supervisor = task_supervisor or BackgroundTaskSupervisor(logger=_logger)
 
     # The two lifecycle markers a plain (non-dynamic) run needs so a consumer can
@@ -183,6 +221,9 @@ def create_arcrun_bridge(
         mapped = _event_map.get(event.type)
         if mapped is not None:
             forwarded.append((mapped, dict(event.data)))
+        moment = decision_point_moment(event)
+        if moment is not None:
+            forwarded.append(("agent:moment", moment))
         if event.type.startswith("dynamic.") or event.type in _progress_markers:
             forwarded.append(
                 (

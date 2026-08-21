@@ -21,12 +21,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from typing import Any
 
 import arcrun
 
-from arcagent.core import turn_context
+from arcagent.core import midloop_recall, turn_context
 from arcagent.modules.memory import _runtime
 from arcagent.tools._decorator import background_task, hook, tool
 from arcagent.utils.audit import safe_audit
@@ -143,18 +144,57 @@ async def _query_recall(st: _runtime._State, ctx: Any, query: str) -> str:
     return text
 
 
-def _merge_recall(query_text: str, proactive: list[str]) -> str:
-    """Append proactive entries to the query recall text, skipping duplicates.
+# The recall injection wire-marker (data boundary the model sees). This module owns
+# assembling sections["recall"], so it understands the block the Brain renders — it
+# reads no arcmemory type and imports no memory package (the boundary stays intact).
+_CARD_RE = re.compile(
+    r'<memory-result\b[^>]*?\bsource="([^"]*)"[^>]*>.*?</memory-result>', re.DOTALL
+)
 
-    A proactive card whose text already appears in the accumulated recall is
-    dropped so the same card is never repeated; ordering keeps the query-driven
-    recall first, proactive entries after.
+
+def _merge_recall(query_text: str, proactive: list[str]) -> str:
+    """Merge proactive entries into the query recall, deduped per CARD (SPEC-072 COMP-002).
+
+    A working-set proactive block may share a card with the same-turn query recall while
+    carrying net-new cards; whole-block dedup would re-inject the shared one. So each
+    proactive entry is filtered card-by-card against the cards already surfaced (keyed on
+    the ``source`` marker, so the same card wins even at a different fused score): only
+    net-new cards are kept, ordering query recall first. An entry with no parseable card
+    marker (e.g. a plain block) falls back to whole-entry dedup — SPEC-071 behavior.
     """
+    seen = {m.group(1) for m in _CARD_RE.finditer(query_text)}
     merged = query_text
     for entry in proactive:
-        if entry and entry not in merged:
-            merged = f"{merged}\n{entry}" if merged else entry
+        if not entry:
+            continue
+        novel = _net_new_cards(entry, seen)
+        if novel and novel not in merged:
+            merged = f"{merged}\n{novel}" if merged else novel
     return merged
+
+
+def _net_new_cards(entry: str, seen: set[str]) -> str:
+    """Strip cards whose source is already in ``seen``; record the kept ones.
+
+    Returns the entry's preamble plus its net-new card blocks, ``""`` when every card was
+    already surfaced. An entry with no ``source``-bearing card is returned verbatim (the
+    caller then whole-entry-dedups it), preserving the pre-SPEC-072 path.
+    """
+    cards = list(_CARD_RE.finditer(entry))
+    if not cards:
+        return entry
+    preamble = entry[: cards[0].start()].rstrip()
+    kept: list[str] = []
+    for match in cards:
+        source = match.group(1)
+        if source in seen:
+            continue
+        seen.add(source)
+        kept.append(match.group(0))
+    if not kept:
+        return ""
+    body = "\n".join(kept)
+    return f"{preamble}\n{body}" if preamble else body
 
 
 def _cache_recall(st: _runtime._State, key: int, text: str) -> None:
@@ -187,10 +227,16 @@ async def on_agent_moment(ctx: Any) -> None:
         return
 
     kind = str(ctx.data.get("kind", ""))
-    # decision_point is mid-loop pre_plan: it cannot inject same-turn (no re-assembly),
-    # so it would only ever produce an audit-only effect. Skip unless opted in (A3).
-    if kind == "decision_point" and not st.config.proactive_decision_point:
-        return
+    # decision_point fires mid-loop (pre_plan default / pre_tool opt-in). It cannot inject
+    # at prompt assembly (already built), so it is opt-in and routes to the mid-loop channel
+    # instead (SPEC-072 COMP-005). Skip unless enabled (SPEC-071 A3); the pre_tool site is a
+    # further opt-in on top, honored here since the loop emits both points unconditionally.
+    if kind == "decision_point":
+        if not st.config.proactive_decision_point:
+            return
+        point = str(ctx.data.get("point", "pre_plan"))
+        if point == "pre_tool" and not st.config.decision_point_pre_tool:
+            return
     cues = list(ctx.data.get("cues") or [])
     text = str(ctx.data.get("text", ""))
     session_id = ctx.data.get("session_id")
@@ -205,7 +251,13 @@ async def on_agent_moment(ctx: Any) -> None:
         session_id=session_id,
     )
     if text_out:
-        st.proactive_buffer.append(text_out)
+        # A decision-point recall rides the mid-loop channel (appended before the next
+        # model call by ContextManager.transform_context); every other kind is drained
+        # into sections["recall"] at the next prompt assembly.
+        if kind == "decision_point":
+            midloop_recall.stage(st.agent_did, text_out)
+        else:
+            st.proactive_buffer.append(text_out)
     await _audit("memory.proactive_recall", {"kind": kind, "hit": bool(text_out)})
 
 

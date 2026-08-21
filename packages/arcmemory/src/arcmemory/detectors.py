@@ -29,6 +29,19 @@ _TOPIC_SHIFT_THRESHOLD = 0.5
 
 _WORD_RE = re.compile(r"[a-z0-9]+")
 
+# The handful of high-frequency function words the working-set salience filter drops
+# so generic glue never crowds out a proper-noun/entity cue. Deliberately tiny and
+# deterministic — the bound + decay do the real work; this only skims obvious noise.
+_STOPWORDS: frozenset[str] = frozenset(
+    {"the", "and", "for", "that", "this", "with", "you", "are", "was", "but", "not", "its"}
+)
+
+
+def _is_salient(cue: str) -> bool:
+    """A cue worth keeping in the working set: not a trivial/too-short glue word."""
+    norm = cue.strip().lower()
+    return len(norm) >= 3 and norm not in _STOPWORDS
+
 
 @dataclass(frozen=True)
 class Decision:
@@ -105,8 +118,19 @@ def _task_start(
 def _decision_point(
     cues: list[str], text: str, session_state: SessionStateLike, store: EntityStoreLike
 ) -> Decision:
-    """The agent is about to choose — recall prior decisions on the same cues."""
-    return _fire_on_presence(cues, text)
+    """The agent is about to choose — recall prior decisions on what is in play.
+
+    Explicit cues/text (e.g. a pre_tool moment's tool + args) drive the query directly.
+    A cue-less pre_plan moment falls back to the per-session working set (SPEC-072
+    COMP-001/004), so it recalls on the entities in play at this plan step even though
+    the turn event itself carries no situation text. Empty on both → no fire.
+    """
+    if cues or text.strip():
+        return _fire_on_presence(cues, text)
+    working_set = list(getattr(session_state, "working_set", []) or [])
+    if working_set:
+        return Decision(fire=True, query_cues=list(working_set))
+    return Decision(fire=False, query_cues=[])
 
 
 def _expand_terms(value: str) -> set[str]:
@@ -137,14 +161,21 @@ def _known_entity_terms(store: EntityStoreLike) -> set[str]:
 def _entity_seen(
     cues: list[str], text: str, session_state: SessionStateLike, store: EntityStoreLike
 ) -> Decision:
-    """A known entity was named — recall what we already know about it."""
-    if not cues:
+    """A known entity is in play — recall what we already know about it.
+
+    "In play" spans the current cues AND the per-session working set (SPEC-072
+    COMP-001), so an entity named a turn ago still fires this detector even when the
+    latest message omits it. The working set is read defensively — a session_state
+    that predates it (only ``prior_cues``) simply contributes none.
+    """
+    working_set = list(getattr(session_state, "working_set", []) or [])
+    pool = list(dict.fromkeys([*cues, *working_set]))
+    if not pool:
         return Decision(fire=False, query_cues=[])
     known = _known_entity_terms(store)
-    fired = any(_norm(cue) in known for cue in cues)
-    return Decision(fire=True, query_cues=list(cues)) if fired else Decision(
-        fire=False, query_cues=[]
-    )
+    if any(_norm(cue) in known for cue in pool):
+        return Decision(fire=True, query_cues=pool)
+    return Decision(fire=False, query_cues=[])
 
 
 def _topic_shift(
@@ -235,6 +266,46 @@ class WindowDedup:
             del seen[cid]
 
 
+class WorkingSet:
+    """Bounded, decaying, salience-filtered per-session accumulator of cues in play.
+
+    Generalizes the SPEC-071 per-session prior-cue baseline (SPEC-072 COMP-001): each
+    :meth:`update` is one turn for its session, merging that turn's salient cues into
+    the set so a later detector can key off an entity named turns ago (REQ-349/350). A
+    cue not refreshed within ``decay_turns`` turns is dropped, and the set is capped at
+    ``max_size`` (newest kept) — so it never grows unbounded (REQ-350, Scalability).
+    Pure and model-free: no embedder, no LLM ever touches this hot path (REQ-361).
+    """
+
+    def __init__(self, max_size: int, decay_turns: int) -> None:
+        self._max = max(1, max_size)
+        self._decay = max(1, decay_turns)
+        self._turn: dict[str | None, int] = {}
+        self._members: dict[str | None, dict[str, int]] = {}
+
+    def update(self, session_id: str | None, cues: list[str]) -> list[str]:
+        """Merge this turn's salient cues; decay + bound; return the members (recent first)."""
+        turn = self._turn.get(session_id, 0) + 1
+        members = self._members.setdefault(session_id, {})
+        for cue in cues:
+            if _is_salient(cue):
+                members[cue.strip().lower()] = turn
+        stale = [cue for cue, last in members.items() if turn - last >= self._decay]
+        for cue in stale:
+            del members[cue]
+        if len(members) > self._max:
+            kept = dict(self._by_recency(members)[: self._max])
+            members.clear()
+            members.update(kept)
+        self._turn[session_id] = turn
+        return [cue for cue, _ in self._by_recency(members)]
+
+    @staticmethod
+    def _by_recency(members: dict[str, int]) -> list[tuple[str, int]]:
+        """Members ordered newest-first, ties broken by cue for determinism."""
+        return sorted(members.items(), key=lambda kv: (-kv[1], kv[0]))
+
+
 __all__ = [
     "DETECTORS",
     "Decision",
@@ -242,5 +313,6 @@ __all__ = [
     "EntityStoreLike",
     "SessionStateLike",
     "WindowDedup",
+    "WorkingSet",
     "evaluate_moment",
 ]
