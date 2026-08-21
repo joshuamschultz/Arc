@@ -63,13 +63,16 @@ def build_brain(context: dict[str, Any]) -> ArcMemoryBrain:
     embed_base_url = str(backend.get("embed_base_url", ""))
     distill_provider = str(backend.get("distill_provider", ""))
     distill_model = str(backend.get("distill_model", ""))
-    # Off by default (matches arcrun): the consolidation ReAct loop is its own
+    # Tier-driven default (SPEC-073 A3): the consolidation ReAct loop is its own
     # arcrun.run() invocation and does not inherit the agent's main-loop
-    # telemetry.capture_tool_io — without this, every memory tool call
+    # telemetry.capture_tool_io — without a default, every memory tool call
     # (search_similar_entity, list_procedures, ...) records only digests, never
     # the args/result an operator needs to see why a merge/search did or didn't
-    # fire. Set `[modules.memory.config.backend] capture_tool_io = true` to see them.
-    capture_tool_io = bool(backend.get("capture_tool_io", False))
+    # fire. Personal defaults to capturing (matches the arcagent tier default);
+    # enterprise/federal default to withholding (bodies may carry sensitive
+    # data). Set `[modules.memory.config.backend] capture_tool_io = true|false`
+    # to override either tier explicitly.
+    capture_tool_io = bool(backend.get("capture_tool_io", tier == "personal"))
 
     return ArcMemoryBrain(
         context["workspace"],

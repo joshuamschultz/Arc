@@ -268,6 +268,13 @@ class TelemetryConfig(BaseModel):
     # ArcRun observability surface can show each tool call's input/output. Bodies
     # may carry sensitive data — federal/enterprise deployments set this False to
     # keep only digests + sizes (NFR-2: raw capture is an explicit opt-in).
+    # This field's *default* is tier-derived, not the literal ``True`` below: the
+    # root ArcAgentConfig validator (``_resolve_tier_capture_tool_io``) checks
+    # whether this was explicitly set (via ``model_fields_set``) and, when not,
+    # overwrites it to ``security.tier == "personal"`` (personal→True,
+    # enterprise/federal→False). Kept as a plain ``bool`` (not ``bool | None``)
+    # so every existing reader of this field keeps a resolved-bool contract with
+    # no ``Optional`` fallout at call sites this task does not own.
     capture_tool_io: bool = True
 
 
@@ -668,6 +675,21 @@ class ArcAgentConfig(BaseModel):
     ui: UIConfig = UIConfig()
     budget: BudgetConfig = BudgetConfig()
     arcrun: ArcRunConfig = ArcRunConfig()
+
+    @model_validator(mode="after")
+    def _resolve_tier_capture_tool_io(self) -> ArcAgentConfig:
+        """Tier-derive ``telemetry.capture_tool_io`` when unset (SPEC-073 A3).
+
+        Personal defaults to capturing raw tool I/O; enterprise/federal
+        default to withholding it (bodies may carry sensitive data). An
+        explicit ``true``/``false`` in the TOML — detected via
+        ``model_fields_set`` rather than a ``None`` sentinel, so the field
+        stays a plain ``bool`` for every downstream reader — is honored
+        unchanged.
+        """
+        if "capture_tool_io" not in self.telemetry.model_fields_set:
+            self.telemetry.capture_tool_io = self.security.tier == "personal"
+        return self
 
 
 # Backward-compatible package-internal name; external callers use ``deep_merge``.

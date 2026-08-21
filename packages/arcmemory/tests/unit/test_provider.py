@@ -73,8 +73,9 @@ def test_build_brain_capture_tool_io_threads_to_store_raw_bodies(
 ) -> None:
     """`[modules.memory.config.backend] capture_tool_io` is this loop's OWN
     body-capture switch — it does not inherit the agent's main-loop
-    telemetry.capture_tool_io (a separate arcrun.run() invocation), so without
-    this thread every memory tool call records only digests, never a body."""
+    telemetry.capture_tool_io (a separate arcrun.run() invocation). Its DEFAULT is
+    tier-driven (personal captures bodies; federal/enterprise stay hidden), and an
+    explicit value in the backend toml overrides that default either way."""
     recorded: dict[str, object] = {}
 
     class _SpyBrain:
@@ -83,9 +84,15 @@ def test_build_brain_capture_tool_io_threads_to_store_raw_bodies(
 
     monkeypatch.setattr("arcmemory.provider.ArcMemoryBrain", _SpyBrain)
 
+    # personal tier (the _context default) with no explicit switch -> captures by default.
     build_brain(_context(tmp_path, embed_backend="none"))
+    assert recorded["store_raw_bodies"] is True
+
+    # an explicit False in the backend toml overrides the personal default.
+    build_brain(_context(tmp_path, embed_backend="none", capture_tool_io=False))
     assert recorded["store_raw_bodies"] is False
 
+    # an explicit True is honored.
     build_brain(_context(tmp_path, embed_backend="none", capture_tool_io=True))
     assert recorded["store_raw_bodies"] is True
 

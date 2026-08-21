@@ -35,9 +35,11 @@ from pydantic import BaseModel, Field
 
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
+from arcmemory.doc_index import DocHit
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder
 from arcmemory.retrieve import Retriever
+from arcmemory.status import SemanticStatus
 from arcmemory.stores.daily import DailyNotesStore
 from arcmemory.stores.episodic import EpisodicStore
 from arcmemory.stores.events import EventStore
@@ -50,9 +52,11 @@ from arcmemory.types import (
     Insight,
     LifeEvent,
     Procedure,
+    Provenance,
     Recall,
     Scope,
     Situation,
+    SourceMapping,
 )
 
 
@@ -250,6 +254,104 @@ class MemoryOperator:
     def get_entity(self, slug: str, *, session_id: str | None = None) -> EntityRecord | None:
         """Fetch a single entity record (None if absent)."""
         return next((e for e in self.list_entities(session_id=session_id) if e.slug == slug), None)
+
+    # -- connector-data views (SPEC-073 A1) ---------------------------------
+
+    def list_sources(self, *, session_id: str | None = None) -> list[EntityRecord]:
+        """Every registered ``source-<id>`` entity (``entity_type == 'source'``)."""
+        return [e for e in self.list_entities(session_id=session_id) if e.entity_type == "source"]
+
+    def get_source_mapping(
+        self, source_id: str, *, session_id: str | None = None
+    ) -> SourceMapping | None:
+        """The committed home routing for one source (None if never committed)."""
+        from arcmemory.mapping import load_committed_mapping
+
+        return load_committed_mapping(source_id, store=self._semantic(session_id))
+
+    def list_mappings(self, *, session_id: str | None = None) -> list[SourceMapping]:
+        """``load_committed_mapping`` for every ``mapping-<id>`` entity."""
+        from arcmemory.mapping import load_committed_mapping
+
+        store = self._semantic(session_id)
+        mappings: list[SourceMapping] = []
+        for entity in self.list_entities(session_id=session_id):
+            if entity.entity_type != "mapping" or not entity.slug.startswith("mapping-"):
+                continue
+            source_id = entity.slug[len("mapping-") :]
+            mapping = load_committed_mapping(source_id, store=store)
+            if mapping is not None:
+                mappings.append(mapping)
+        return mappings
+
+    def list_blob_folders(
+        self, source_id: str | None = None, *, session_id: str | None = None
+    ) -> list[EntityRecord]:
+        """``entity_type == 'blob_folder'``, optionally scoped to one source."""
+        folders = [
+            e for e in self.list_entities(session_id=session_id) if e.entity_type == "blob_folder"
+        ]
+        if source_id is None:
+            return folders
+        prefix = f"blob-{source_id}-"
+        return [f for f in folders if f.slug.startswith(prefix)]
+
+    def list_datastore_tables(self, *, session_id: str | None = None) -> list[EntityRecord]:
+        """The introspected ``db-table-<name>`` ontology entities."""
+        return [
+            e for e in self.list_entities(session_id=session_id) if e.entity_type == "db_table"
+        ]
+
+    async def document_search(
+        self, source_id: str, query: str, *, top_k: int = 10
+    ) -> list[DocHit]:
+        """Per-source document search, reusing the production doc-pool index."""
+        from arcmemory.doc_index import DocIndex
+
+        index = DocIndex(self._db, self._workspace, self._cfg, embedder=self._embedder)
+        return await index.document_search(
+            query, self._agent_did, source_id=source_id, top_k=top_k
+        )
+
+    def list_provenances(self, item_id: str) -> list[Provenance]:
+        """Every provenance recorded against one canonical item."""
+        from arcmemory.stores.provenance import ProvenanceStore
+
+        return ProvenanceStore(self._db).provenances(item_id)
+
+    async def index_health(self) -> SemanticStatus:
+        """Honest semantic-channel probe (never fakes "live" without an embedder)."""
+        from arcmemory.status import semantic_status
+
+        return await semantic_status([self._workspace], embedder=self._embedder)
+
+    def datastore_query(
+        self,
+        source_id: str,
+        op: str,
+        table: str,
+        args: dict[str, object],
+        *,
+        session_id: str | None = None,
+    ) -> object | None:
+        """Reopen the datastore READ-ONLY from its persisted ``datastore_path`` fact
+        and run a typed read op. ``None`` when no path was ever persisted (e.g. an
+        in-memory-only source) or datastore access is disabled -- degrade, not crash.
+        """
+        if not self._cfg.datastore_enabled:
+            return None
+        entity = self._semantic(session_id).read(f"source-{source_id}")
+        if entity is None:
+            return None
+        fact = next((f for f in entity.facts if f.predicate == "datastore_path"), None)
+        if fact is None:
+            return None
+        import sqlite3
+
+        from arcmemory.datastore import Datastore
+
+        conn = sqlite3.connect(f"file:{fact.value}?mode=ro", uri=True)
+        return Datastore(conn).query(op, table, args)
 
     def list_insights(self) -> list[Insight]:
         """Every minted insight card, sorted by id (the curated glass-box centerpiece)."""

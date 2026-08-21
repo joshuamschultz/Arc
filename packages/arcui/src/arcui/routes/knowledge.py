@@ -448,8 +448,186 @@ async def knowledge_summary(request: Request) -> JSONResponse:
     )
 
 
+# ---------------------------------------------------------------------------
+# Connector-data views (SPEC-073 A2) — offshoot of Knowledge, read-only
+# ---------------------------------------------------------------------------
+
+
+async def list_sources(request: Request) -> JSONResponse:
+    """GET .../knowledge/sources — every registered connector source."""
+    agent_id = request.path_params["agent_id"]
+    agent = _resolve_agent(request, agent_id)
+    if agent is None:
+        return _agent_not_found(agent_id)
+
+    op = _operator_for(Path(agent.workspace_path), agent.did)
+    try:
+        sources = op.list_sources()
+    except Exception as exc:
+        return _store_unreadable(exc)
+    return JSONResponse({"items": [s.model_dump(mode="json") for s in sources]})
+
+
+async def get_source_mapping(request: Request) -> JSONResponse:
+    """GET .../knowledge/sources/{source_id}/mapping — committed home routing."""
+    agent_id = request.path_params["agent_id"]
+    source_id = request.path_params["source_id"]
+    agent = _resolve_agent(request, agent_id)
+    if agent is None:
+        return _agent_not_found(agent_id)
+
+    op = _operator_for(Path(agent.workspace_path), agent.did)
+    try:
+        mapping = op.get_source_mapping(source_id)
+    except Exception as exc:
+        return _store_unreadable(exc)
+    return JSONResponse({"item": mapping.model_dump(mode="json") if mapping is not None else None})
+
+
+async def list_mappings(request: Request) -> JSONResponse:
+    """GET .../knowledge/mappings — every committed source mapping."""
+    agent_id = request.path_params["agent_id"]
+    agent = _resolve_agent(request, agent_id)
+    if agent is None:
+        return _agent_not_found(agent_id)
+
+    op = _operator_for(Path(agent.workspace_path), agent.did)
+    try:
+        mappings = op.list_mappings()
+    except Exception as exc:
+        return _store_unreadable(exc)
+    return JSONResponse({"items": [m.model_dump(mode="json") for m in mappings]})
+
+
+async def list_blob_folders(request: Request) -> JSONResponse:
+    """GET .../knowledge/blob-folders — walked blob folders, optionally ``?source=``."""
+    agent_id = request.path_params["agent_id"]
+    agent = _resolve_agent(request, agent_id)
+    if agent is None:
+        return _agent_not_found(agent_id)
+
+    op = _operator_for(Path(agent.workspace_path), agent.did)
+    source_id = request.query_params.get("source")
+    try:
+        folders = op.list_blob_folders(source_id)
+    except Exception as exc:
+        return _store_unreadable(exc)
+    return JSONResponse({"items": [f.model_dump(mode="json") for f in folders]})
+
+
+async def list_datastore_tables(request: Request) -> JSONResponse:
+    """GET .../knowledge/datastore-tables — introspected connected-datastore tables."""
+    agent_id = request.path_params["agent_id"]
+    agent = _resolve_agent(request, agent_id)
+    if agent is None:
+        return _agent_not_found(agent_id)
+
+    op = _operator_for(Path(agent.workspace_path), agent.did)
+    try:
+        tables = op.list_datastore_tables()
+    except Exception as exc:
+        return _store_unreadable(exc)
+    return JSONResponse({"items": [t.model_dump(mode="json") for t in tables]})
+
+
+async def document_search(request: Request) -> JSONResponse:
+    """GET .../knowledge/documents?source=&q= — per-source document search."""
+    agent_id = request.path_params["agent_id"]
+    agent = _resolve_agent(request, agent_id)
+    if agent is None:
+        return _agent_not_found(agent_id)
+
+    query = request.query_params.get("q")
+    if not query:
+        return JSONResponse({"items": []})
+
+    source_id = request.query_params.get("source", "")
+    op = _operator_for(Path(agent.workspace_path), agent.did)
+    try:
+        hits = await op.document_search(source_id, query)
+    except Exception as exc:
+        return _store_unreadable(exc)
+    return JSONResponse({"items": [h.model_dump(mode="json") for h in hits]})
+
+
+async def datastore_query(request: Request) -> JSONResponse:
+    """GET .../knowledge/datastore?source=&op=&table=&... — live reopened read."""
+    agent_id = request.path_params["agent_id"]
+    agent = _resolve_agent(request, agent_id)
+    if agent is None:
+        return _agent_not_found(agent_id)
+
+    params = request.query_params
+    source_id = params.get("source", "")
+    query_op = params.get("op", "")
+    table = params.get("table", "")
+    reserved = {"source", "op", "table"}
+    args: dict[str, object] = {k: v for k, v in params.items() if k not in reserved}
+
+    op = _operator_for(Path(agent.workspace_path), agent.did)
+    try:
+        result = op.datastore_query(source_id, query_op, table, args)
+    except Exception as exc:
+        return _store_unreadable(exc)
+    return JSONResponse({"result": result})
+
+
+async def list_provenances(request: Request) -> JSONResponse:
+    """GET .../knowledge/provenance/{item_id} — every recorded source for one item."""
+    agent_id = request.path_params["agent_id"]
+    item_id = request.path_params["item_id"]
+    agent = _resolve_agent(request, agent_id)
+    if agent is None:
+        return _agent_not_found(agent_id)
+
+    op = _operator_for(Path(agent.workspace_path), agent.did)
+    try:
+        provenances = op.list_provenances(item_id)
+    except Exception as exc:
+        return _store_unreadable(exc)
+    return JSONResponse({"items": [p.model_dump(mode="json") for p in provenances]})
+
+
+async def index_health(request: Request) -> JSONResponse:
+    """GET .../knowledge/index-health — honest semantic-channel probe."""
+    agent_id = request.path_params["agent_id"]
+    agent = _resolve_agent(request, agent_id)
+    if agent is None:
+        return _agent_not_found(agent_id)
+
+    op = _operator_for(Path(agent.workspace_path), agent.did)
+    try:
+        status = await op.index_health()
+    except Exception as exc:
+        return _store_unreadable(exc)
+    return JSONResponse({"item": status.model_dump(mode="json")})
+
+
 routes = [
     Route("/api/knowledge/{agent_id}", knowledge_summary, methods=["GET"]),
+    Route("/api/agents/{agent_id}/knowledge/sources", list_sources, methods=["GET"]),
+    Route(
+        "/api/agents/{agent_id}/knowledge/sources/{source_id}/mapping",
+        get_source_mapping,
+        methods=["GET"],
+    ),
+    Route("/api/agents/{agent_id}/knowledge/mappings", list_mappings, methods=["GET"]),
+    Route(
+        "/api/agents/{agent_id}/knowledge/blob-folders", list_blob_folders, methods=["GET"]
+    ),
+    Route(
+        "/api/agents/{agent_id}/knowledge/datastore-tables",
+        list_datastore_tables,
+        methods=["GET"],
+    ),
+    Route("/api/agents/{agent_id}/knowledge/documents", document_search, methods=["GET"]),
+    Route("/api/agents/{agent_id}/knowledge/datastore", datastore_query, methods=["GET"]),
+    Route(
+        "/api/agents/{agent_id}/knowledge/provenance/{item_id}",
+        list_provenances,
+        methods=["GET"],
+    ),
+    Route("/api/agents/{agent_id}/knowledge/index-health", index_health, methods=["GET"]),
     Route("/api/agents/{agent_id}/knowledge/memories", list_memories, methods=["GET"]),
     Route("/api/agents/{agent_id}/knowledge/memories/{entry_id}", get_memory, methods=["GET"]),
     Route(

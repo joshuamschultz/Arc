@@ -597,6 +597,24 @@ class ArcMemoryBrain:
         datastore.persist_ontology(store)
         self._datastores[source_id] = datastore
         self._datastore_classification[source_id] = classification
+        self._persist_reopen_path(source_id, conn, store, classification)
+
+    def _persist_reopen_path(
+        self, source_id: str, conn: sqlite3.Connection, store: SemanticStore, classification: str
+    ) -> None:
+        """Persist the sqlite main-db file path as a fact, so the operator can reopen
+        this datastore READ-ONLY later. Skipped for an in-memory connection (nothing
+        to reopen) -- degrade, not crash (SPEC-073 A1).
+        """
+        rows = conn.execute("PRAGMA database_list").fetchall()
+        main_row = next((row for row in rows if row[1] == "main"), None)
+        path = str(main_row[2]) if main_row is not None else ""
+        if not path or path == ":memory:":
+            return
+        store.write_fact(f"source-{source_id}", "datastore_path", path, entity_type="source")
+        store.write_fact(
+            f"source-{source_id}", "datastore_classification", classification, entity_type="source"
+        )
 
     async def propose_mapping(
         self,
