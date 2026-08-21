@@ -12,7 +12,6 @@ destructive overwrite (SemanticStore.write_fact).
 
 from __future__ import annotations
 
-from typing import Any
 from uuid import uuid4
 
 from arcstore.approvals import ApprovalStore, PendingApproval
@@ -22,21 +21,6 @@ from arcmemory.stores.semantic import SemanticStore
 from arcmemory.types import SourceMapping
 
 _TOOL = "memory.map_source"
-
-
-async def _ensure_backend_started(approval_store: ApprovalStore) -> None:
-    """Idempotently run the store's backend schema migration.
-
-    ``ApprovalStore`` has no public backend accessor or lifecycle hook -- a
-    caller that opens a fresh backend (``open_backend``) and wraps it
-    directly, with no lifecycle owner already having called ``start()``,
-    would otherwise hit "no such table" on first use. ``start()`` is
-    idempotent (``CREATE TABLE IF NOT EXISTS``), so this is safe on every call.
-    """
-    backend: Any = approval_store._backend  # no public accessor exists on ApprovalStore
-    start = getattr(backend, "start", None)
-    if start is not None:
-        await start()
 
 
 def mapping_call_hash(source_id: str, homes: list[str]) -> str:
@@ -56,7 +40,7 @@ async def stage_mapping_proposal(
     Ingest must not commit the mapping (:func:`commit_mapping`) until this row
     is resolved ``approved`` -- see :func:`approved_mapping`.
     """
-    await _ensure_backend_started(approval_store)
+    await approval_store.start()
     pending = PendingApproval(
         id=str(uuid4()),
         agent_did=agent_did,
@@ -78,7 +62,7 @@ async def approved_mapping(
 
     Fail-closed: pending, denied, expired, or never-staged all return False.
     """
-    await _ensure_backend_started(approval_store)
+    await approval_store.start()
     target = mapping_call_hash(source_id, homes)
     approved = await approval_store.list(status="approved")
     return any(row.call_hash == target for row in approved)

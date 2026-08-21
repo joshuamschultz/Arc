@@ -105,6 +105,19 @@ class ApprovalStore:
         self._backend = backend
         self._sink = sink
 
+    async def start(self) -> None:
+        """Ensure the backing store is initialized (idempotent).
+
+        A freshly ``open_backend``-ed backend has not run its schema migration until
+        it is started; a caller that constructs its own backend (rather than receiving
+        an already-started one) calls this before the first read/write. A backend with
+        no start step is a no-op — this is the public seam so callers never reach the
+        backend attribute directly.
+        """
+        start = getattr(self._backend, "start", None)
+        if start is not None:
+            await start()
+
     async def create(self, approval: PendingApproval) -> PendingApproval:
         approval = approval.model_copy(update={"created_at": _now()})
         await self._backend.mutable_write(

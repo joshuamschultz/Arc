@@ -171,13 +171,20 @@ class SurfaceIndex:
         """Fuse vec + bm25 + graph + recency; return the top-k boundary-ready recalls."""
         vec_ranked = await self._vec_search(text)
         degraded = vec_ranked is None
-        ranked_lists = [self._bm25_search(text), self._graph_search(text), self._recency_order()]
+        ranked_lists = [
+            await self._bm25_search(text),
+            await self._graph_search(text),
+            await self._recency_order(),
+        ]
         if vec_ranked is not None:
             ranked_lists.append(vec_ranked)
 
         fused = _ensure_curated_present(rrf_fuse(ranked_lists), top_k)
-        hydrated = (self._to_recall(cid, score) for cid, score in fused[:top_k])
-        recalls = [r for r in hydrated if r is not None]
+        recalls = [
+            recall
+            for cid, score in fused[:top_k]
+            if (recall := await self._to_recall(cid, score)) is not None
+        ]
         if degraded:
             self._emit_degraded(text)
         return SurfaceResult(recalls=recalls, degraded=degraded)
@@ -191,20 +198,14 @@ class SurfaceIndex:
             return None
         return await self._backend.vec_search(self._scope.key, vectors[0])
 
-    def _bm25_search(self, text: str) -> list[str]:
-        """FTS5/BM25 chunk ids for ``text`` (best match first)."""
+    async def _bm25_search(self, text: str) -> list[str]:
+        """FTS5/BM25 chunk ids for ``text`` (best match first), via the backend."""
         query = _fts_query(text)
         if not query:
             return []
-        conn = self._db.connect()
-        rows = conn.execute(
-            "SELECT chunk_id FROM fts_chunks "
-            "WHERE scope=? AND fts_chunks MATCH ? ORDER BY bm25(fts_chunks)",
-            (self._scope.key, query),
-        ).fetchall()
-        return [r[0] for r in rows]
+        return await self._backend.bm25_search(self._scope.key, query)
 
-    def _graph_search(self, text: str) -> list[str]:
+    async def _graph_search(self, text: str) -> list[str]:
         """Chunks whose text mentions an entity the query activates (assoc signal)."""
         vocab = self._vocabulary()
         seeds = tag_entities(text, vocab)
@@ -213,11 +214,8 @@ class SurfaceIndex:
         activation = self._graph.spreading_activation(self._scope.key, dict.fromkeys(seeds, 1.0))
         if not activation:
             return []
-        conn = self._db.connect()
         scored: list[tuple[float, str]] = []
-        for chunk_id, chunk_text in conn.execute(
-            "SELECT chunk_id, text FROM fts_chunks WHERE scope=?", (self._scope.key,)
-        ).fetchall():
+        for chunk_id, chunk_text in await self._backend.chunk_texts(self._scope.key):
             lowered = chunk_text.lower()
             hit = sum(act for node, act in activation.items() if node in lowered)
             if hit > 0.0:
@@ -225,34 +223,22 @@ class SurfaceIndex:
         scored.sort(key=lambda pair: (-pair[0], pair[1]))
         return [chunk_id for _, chunk_id in scored]
 
-    def _recency_order(self) -> list[str]:
-        """All chunk ids, newest first — the recency ranked list (R-11)."""
-        conn = self._db.connect()
-        rows = conn.execute(
-            "SELECT chunk_id FROM chunks WHERE scope=? ORDER BY COALESCE(mtime, 0) DESC, chunk_id",
-            (self._scope.key,),
-        ).fetchall()
-        return [r[0] for r in rows]
+    async def _recency_order(self) -> list[str]:
+        """All chunk ids, newest first — the recency ranked list (R-11), via the backend."""
+        return await self._backend.recency_order(self._scope.key)
 
-    def _to_recall(self, chunk_id: str, score: float) -> Recall | None:
-        """Hydrate a fused chunk id into a ``Recall`` (None if it vanished)."""
-        conn = self._db.connect()
-        meta = conn.execute(
-            "SELECT source_path, classification, mtime FROM chunks WHERE chunk_id=? AND scope=?",
-            (chunk_id, self._scope.key),
-        ).fetchone()
-        text_row = conn.execute(
-            "SELECT text FROM fts_chunks WHERE chunk_id=? AND scope=?",
-            (chunk_id, self._scope.key),
-        ).fetchone()
-        if meta is None or text_row is None:
+    async def _to_recall(self, chunk_id: str, score: float) -> Recall | None:
+        """Hydrate a fused chunk id into a ``Recall`` (None if it vanished), via the backend."""
+        meta = await self._backend.chunk_meta(self._scope.key, chunk_id)
+        text = await self._backend.chunk_text(self._scope.key, chunk_id)
+        if meta is None or text is None:
             return None
         # Stamp WHEN the memory was established only when temporal features are on; the
         # off-switch (SPEC-072) returns cards to their pre-temporal unstamped shape.
         established = _established_date(meta[2]) if self._cfg.temporal_enabled else ""
         return Recall(
             source=chunk_id,
-            content=text_row[0],
+            content=text,
             score=score,
             kind="surface",
             classification=str(meta[1]),

@@ -12,7 +12,6 @@ the raw stream is never duplicated to a glass-box file here.
 from __future__ import annotations
 
 import json
-import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -26,11 +25,10 @@ class EpisodicStore:
     def __init__(self, db: MemoryDB, workspace: Path) -> None:
         self._db = db
         self._workspace = Path(workspace)
-        self._source_updated_at_ensured = False
 
     def append(self, event: Event) -> None:
         """Persist one raw event to the stream with a per-scope monotonic seq."""
-        conn = self._connect()
+        conn = self._db.connect()
         seq = self._next_seq(event.scope)
         conn.execute(
             "INSERT OR REPLACE INTO episodic "
@@ -56,7 +54,7 @@ class EpisodicStore:
 
     def events(self, scope_key: str) -> list[Event]:
         """Return all events for a scope, in stream (seq) order."""
-        conn = self._connect()
+        conn = self._db.connect()
         rows = conn.execute(
             "SELECT event_id, ts, scope, kind, text, hash, classification, refs, "
             "salience, entities, source_updated_at FROM episodic WHERE scope = ? ORDER BY seq",
@@ -66,7 +64,7 @@ class EpisodicStore:
 
     def page(self, scope_key: str, *, limit: int, offset: int) -> list[Event]:
         """Return one page of a scope's events, newest first (for the operator view)."""
-        conn = self._connect()
+        conn = self._db.connect()
         rows = conn.execute(
             "SELECT event_id, ts, scope, kind, text, hash, classification, refs, "
             "salience, entities, source_updated_at FROM episodic WHERE scope = ? "
@@ -85,7 +83,7 @@ class EpisodicStore:
 
     def get(self, scope_key: str, event_id: str) -> Event | None:
         """Fetch a single event by id within a scope (None if absent)."""
-        conn = self._connect()
+        conn = self._db.connect()
         row = conn.execute(
             "SELECT event_id, ts, scope, kind, text, hash, classification, refs, "
             "salience, entities, source_updated_at FROM episodic "
@@ -151,23 +149,6 @@ class EpisodicStore:
         ).fetchone()
         return int(current) + 1
 
-    def _connect(self) -> sqlite3.Connection:
-        """Open the DB and self-migrate ``source_updated_at`` onto ``episodic`` (SPEC-073).
-
-        A fresh ``MemoryDB`` schema (owned elsewhere) may not yet declare this
-        column, so it is ensured here, once per store instance -- the same
-        idempotent ``PRAGMA table_info`` + ``ALTER TABLE`` seam ``MemoryDB``
-        already uses for prior columns, kept local so this store can own its
-        own migration without editing the shared schema module.
-        """
-        conn = self._db.connect()
-        if not self._source_updated_at_ensured:
-            existing = {row[1] for row in conn.execute("PRAGMA table_info(episodic)")}
-            if "source_updated_at" not in existing:
-                conn.execute("ALTER TABLE episodic ADD COLUMN source_updated_at TEXT")
-                conn.commit()
-            self._source_updated_at_ensured = True
-        return conn
 
 
 __all__ = ["EpisodicStore"]

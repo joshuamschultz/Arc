@@ -137,15 +137,21 @@ class MemoryDB:
             "event_id TEXT PRIMARY KEY, ts TEXT NOT NULL, scope TEXT NOT NULL, "
             "kind TEXT NOT NULL, text TEXT NOT NULL, hash TEXT, "
             "classification TEXT DEFAULT 'unclassified', refs TEXT, seq INTEGER, "
-            "salience REAL NOT NULL DEFAULT 0.0, entities TEXT)"
+            "salience REAL NOT NULL DEFAULT 0.0, entities TEXT, source_updated_at TEXT)"
         )
         # T-702/703 added salience/entities to a table that already existed on
         # every deployed agent — CREATE TABLE IF NOT EXISTS no-ops there, so a
         # real self-migration is required (task 37). _ensure_columns is the
         # general seam: the NEXT column added to an existing table lists here
-        # instead of repeating this bug.
+        # instead of repeating this bug. SPEC-073 added source_updated_at the same way.
         self._ensure_columns(
-            conn, "episodic", {"salience": "REAL NOT NULL DEFAULT 0.0", "entities": "TEXT"}
+            conn,
+            "episodic",
+            {
+                "salience": "REAL NOT NULL DEFAULT 0.0",
+                "entities": "TEXT",
+                "source_updated_at": "TEXT",
+            },
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_episodic_scope ON episodic(scope, seq)")
 

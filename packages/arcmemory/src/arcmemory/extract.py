@@ -31,31 +31,31 @@ class Extractor(Protocol):
     def extract(self, data: bytes, *, filename: str = "") -> str: ...
 
 
-class TextExtractor:
-    """Dependency-free: ``text/plain``, ``.txt``, ``.log``."""
-
-    mimes: tuple[str, ...] = ("text/plain",)
-
-    def extract(self, data: bytes, *, filename: str = "") -> str:
-        return data.decode("utf-8", errors="replace")
-
-
-class MarkdownExtractor:
-    """Dependency-free: ``text/markdown``, ``.md``."""
-
-    mimes: tuple[str, ...] = ("text/markdown",)
-
-    def extract(self, data: bytes, *, filename: str = "") -> str:
-        return data.decode("utf-8", errors="replace")
-
-
-class CodeExtractor:
-    """Dependency-free: source code by extension — returned as-is (text)."""
+class _Utf8Extractor:
+    """Base for the dependency-free text extractors: lenient UTF-8 decode, one place."""
 
     mimes: tuple[str, ...] = ()
 
     def extract(self, data: bytes, *, filename: str = "") -> str:
         return data.decode("utf-8", errors="replace")
+
+
+class TextExtractor(_Utf8Extractor):
+    """Dependency-free: ``text/plain``, ``.txt``, ``.log``."""
+
+    mimes: tuple[str, ...] = ("text/plain",)
+
+
+class MarkdownExtractor(_Utf8Extractor):
+    """Dependency-free: ``text/markdown``, ``.md``."""
+
+    mimes: tuple[str, ...] = ("text/markdown",)
+
+
+class CodeExtractor(_Utf8Extractor):
+    """Dependency-free: source code by extension — returned as-is (text)."""
+
+    mimes: tuple[str, ...] = ()
 
 
 class PdfExtractor:

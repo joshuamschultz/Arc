@@ -76,3 +76,33 @@ def test_open_index_backend_postgres_raises_not_implemented(memdb: MemoryDB) -> 
 def test_open_index_backend_bogus_name_raises_value_error(memdb: MemoryDB) -> None:
     with pytest.raises(ValueError):
         open_index_backend("bogus", db=memdb)
+
+
+# -- direct conformance for the methods SurfaceIndex now routes through -------
+
+
+async def test_bm25_recency_chunk_texts_and_delete_scope_round_trip(memdb: MemoryDB) -> None:
+    backend = open_index_backend("sqlite", db=memdb)
+    for i in range(2):
+        await backend.upsert_chunk(
+            scope=_SCOPE, chunk_id=f"event:e{i}", source_path="episodic", mtime=float(i),
+            classification="unclassified", content_hash=f"h{i}", text=f"launch note {i}",
+            embedding=None,
+        )
+    # bm25 finds the keyword; recency lists newest first; chunk_texts returns bodies.
+    assert set(await backend.bm25_search(_SCOPE, '"launch"')) == {"event:e0", "event:e1"}
+    assert (await backend.recency_order(_SCOPE))[0] == "event:e1"
+    assert dict(await backend.chunk_texts(_SCOPE)) == {
+        "event:e0": "launch note 0",
+        "event:e1": "launch note 1",
+    }
+    # delete_scope wipes the scope's chunks/fts.
+    await backend.delete_scope(_SCOPE)
+    assert await backend.stored_hashes(_SCOPE) == {}
+    assert await backend.bm25_search(_SCOPE, '"launch"') == []
+
+
+async def test_chunk_meta_and_text_return_none_for_a_missing_id(memdb: MemoryDB) -> None:
+    backend = open_index_backend("sqlite", db=memdb)
+    assert await backend.chunk_meta(_SCOPE, "nope") is None
+    assert await backend.chunk_text(_SCOPE, "nope") is None

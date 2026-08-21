@@ -141,3 +141,17 @@ async def test_datastore_query_gates_clearance_against_source_label(workspace: P
     )
     assert allowed is not None
     assert allowed["id"] == "001"  # type: ignore[index]
+
+
+# -- ingest.ingest_batch public zero-trust cap (independent of the brain) -----
+
+
+def test_ingest_batch_module_level_cap_raises(workspace: Path, db) -> None:
+    import pytest
+
+    from arcmemory.ingest import ingest_batch
+
+    cfg = MemoryConfig(ingest_max_batch=1)
+    records = [SourceRecord(external_id=f"r{i}", text="x") for i in range(2)]
+    with pytest.raises(ValueError):
+        ingest_batch(db, workspace, Scope(agent_did=_DID), cfg, "s", records)
