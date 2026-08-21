@@ -16,8 +16,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from arctrust.audit import AuditEvent
 from arcstore.spool import request_context
+from arctrust.audit import AuditEvent
 
 from arcmemory.brain import ArcMemoryBrain
 

@@ -52,6 +52,11 @@ local = ["arcllm[local]>=0.1"]
 # lazy-imported inside extract() so the default path stays dependency-free;
 # absence raises ExtractionUnavailable, never a crash.
 docs = ["pypdf>=4", "python-docx>=1", "openpyxl>=3"]
+# Postgres + pgvector index backend (PostgresIndexBackend, COMP-007) —
+# asyncpg/pgvector are lazy-imported inside the backend methods so the default
+# sqlite path never needs them; absence at factory time raises a clear
+# RuntimeError naming this extra, never an ImportError.
+postgres = ["asyncpg>=0.29", "pgvector>=0.3"]
 
 [project.urls]
 Homepage = "https://github.com/joshuamschultz/Arc"
@@ -90,6 +95,13 @@ ignore_missing_imports = true
 # missing imports/stubs so strict passes with or without the extra installed.
 [[tool.mypy.overrides]]
 module = ["pypdf", "pypdf.*", "docx", "docx.*", "openpyxl", "openpyxl.*"]
+ignore_missing_imports = true
+
+# asyncpg/pgvector are the optional [postgres] extra, lazy-imported inside
+# PostgresIndexBackend's methods. Ignore missing imports/stubs so strict passes
+# with or without the extra installed.
+[[tool.mypy.overrides]]
+module = ["asyncpg", "asyncpg.*", "pgvector", "pgvector.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

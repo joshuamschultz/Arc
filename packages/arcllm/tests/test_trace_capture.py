@@ -261,6 +261,30 @@ class TestBodySizeCap:
         assert events[0].request_body["truncated"] is True
         assert events[0].request_body["original_bytes"] > 100
 
+    async def test_oversized_request_preserves_the_system_prompt(self):
+        """An oversized request still carries its system messages.
+
+        A request goes oversized on a huge tool result or pasted document, never on
+        the system prompt — replacing the whole body with a byte count hid exactly the
+        assembled prompt stack an operator reads a trace to see. The marker keeps the
+        system messages (byte-bounded) and leaves the giant user content out.
+        """
+        events: list[TraceRecord] = []
+        module = TelemetryModule(
+            {"on_event": events.append, "max_body_bytes": 2000}, _make_inner()
+        )
+        system = "you are a careful agent. " * 8
+        huge = [
+            Message(role="system", content=system),
+            Message(role="user", content="x" * 50_000),
+        ]
+        await module.invoke(huge)
+        body = events[0].request_body
+        assert body["truncated"] is True
+        assert body["original_bytes"] > 2000
+        assert [m["content"] for m in body["messages"] if m["role"] == "system"] == [system]
+        assert all(m["role"] == "system" for m in body["messages"])
+
     async def test_body_under_cap_not_truncated(self, messages):
         events: list[TraceRecord] = []
         module = TelemetryModule(

@@ -194,6 +194,10 @@ module = [
     "docx.*",
     "openpyxl",
     "openpyxl.*",
+    "asyncpg",
+    "asyncpg.*",
+    "pgvector",
+    "pgvector.*",
 ]
 ignore_missing_imports = true
 

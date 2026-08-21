@@ -6,20 +6,31 @@ recency ordering, and the degrade decision; everything below that line — the r
 ``@runtime_checkable`` Protocol. ``open_index_backend`` is the factory (mirrors
 ``arcstore.backends.open_backend``): callers select a backend *by name* via
 ``MemoryConfig.index_backend``, so swapping storage is a config change, not a
-code edit. ``postgres`` is declared but deferred — a clear ``NotImplementedError``
-beats a silent sqlite fallback under a Postgres config.
+code edit. ``sqlite`` (default, per-agent file) and ``postgres`` (pgvector, a
+shared server) are the two concrete backends; an unknown name is a plain
+configuration ``ValueError``.
 
 CRITICAL FIX carried by this module: ``vec_search`` is scope-isolated via a join
 against ``chunks`` (``vec0`` itself carries no scope column). The prior inline
 implementation in ``surface.py`` scanned ``vec0`` globally, leaking one agent's
-chunk ids into another agent's vector search (LLM08).
+chunk ids into another agent's vector search (LLM08). The Postgres backend keeps
+the same isolation with a ``WHERE scope = $1`` on its single ``chunks`` table.
+
+``asyncpg``/``pgvector`` are the optional ``[postgres]`` extra, lazy-imported
+inside the Postgres methods so importing this module never needs them; absence at
+factory time raises a clear ``RuntimeError`` naming the extra, never an
+``ImportError``.
 """
 
 from __future__ import annotations
 
+import asyncio
+import importlib.util
+import os
+import re
 import sqlite3
 import struct
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from arcmemory.db import MemoryDB
 
@@ -29,9 +40,6 @@ try:  # optional [vec] extra — guarded, mirrors db.py
     _SQLITE_VEC_IMPORTABLE = True
 except ImportError:  # pragma: no cover - exercised only where the extra is absent
     _SQLITE_VEC_IMPORTABLE = False
-
-#: Backend names declared but not yet implemented — raise, never silently fall back.
-_DEFERRED = frozenset({"postgres"})
 
 
 @runtime_checkable
@@ -241,21 +249,254 @@ class SqliteIndexBackend:
         return row[0] if row is not None else None
 
 
-def open_index_backend(backend: str = "sqlite", *, db: MemoryDB) -> IndexBackend:
+# Module-level pool cache keyed by DSN, guarded by a lock: per-op backend
+# construction (open_index_backend runs on every DocIndex/SurfaceIndex build)
+# reuses one asyncpg pool + one schema-init per DSN. asyncpg publishes no stubs,
+# so the pool is typed ``Any`` at this boundary (mirrors the [postgres] mypy
+# override); every value crossing the seam is coerced to a concrete type below.
+_POOLS: dict[str, Any] = {}
+_POOL_LOCK = asyncio.Lock()
+
+#: Bound on rows returned by the ANN scan — nearest-first, then RRF-fused above.
+_VEC_SEARCH_LIMIT = 200
+
+
+class PostgresIndexBackend:
+    """``IndexBackend`` over Postgres + pgvector — a shared server for many agents.
+
+    Unlike sqlite's chunks/fts_chunks/vec0 split, everything lives in ONE
+    ``chunks`` table: ``(scope, chunk_id)`` PK, ``text``, ``embedding
+    vector(dims)``, ``tsv tsvector``, plus provenance. Every query is filtered by
+    ``scope`` (the agent DID), so one agent never sees another's rows. The pool is
+    created lazily on first use and cached module-wide keyed by DSN.
+    """
+
+    def __init__(self, dsn: str, dims: int) -> None:
+        self._dsn = dsn
+        self._dims = dims
+
+    @property
+    def vec_available(self) -> bool:
+        return True  # pgvector always provides the vector channel
+
+    async def _pool(self) -> Any:
+        """Return the cached asyncpg pool for this DSN, creating it once.
+
+        asyncpg + pgvector are imported here, not at module load, so importing
+        ``backend.py`` never requires the ``[postgres]`` extra. The pool's ``init``
+        registers the pgvector codec on every connection; schema DDL runs once,
+        under the lock, right after the pool is created.
+        """
+        import asyncpg  # lazy: only the postgres path needs the extra
+        from pgvector.asyncpg import register_vector
+
+        async with _POOL_LOCK:
+            pool = _POOLS.get(self._dsn)
+            if pool is None:
+
+                async def _init(conn: Any) -> None:
+                    await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+                    await register_vector(conn)
+
+                pool = await asyncpg.create_pool(self._dsn, init=_init)
+                await self._ensure_schema(pool)
+                _POOLS[self._dsn] = pool
+            return pool
+
+    async def _ensure_schema(self, pool: Any) -> None:
+        # ``dims`` is an int (MemoryDB.dims), never user text — safe to inline.
+        create_table = (
+            "CREATE TABLE IF NOT EXISTS chunks ("
+            "scope TEXT NOT NULL, "
+            "chunk_id TEXT NOT NULL, "
+            "text TEXT NOT NULL, "
+            f"embedding vector({self._dims}), "  # dims is a trusted int, never user text
+            "tsv tsvector, "
+            "source_path TEXT NOT NULL, "
+            "mtime DOUBLE PRECISION, "
+            "classification TEXT NOT NULL, "
+            "content_hash TEXT NOT NULL, "
+            "PRIMARY KEY (scope, chunk_id))"
+        )
+        async with pool.acquire() as conn:
+            await conn.execute(create_table)
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS chunks_embedding_hnsw "
+                "ON chunks USING hnsw (embedding vector_cosine_ops)"
+            )
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS chunks_tsv_gin ON chunks USING gin (tsv)"
+            )
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS chunks_scope_btree ON chunks (scope)"
+            )
+
+    async def upsert_chunk(
+        self,
+        *,
+        scope: str,
+        chunk_id: str,
+        source_path: str,
+        mtime: float | None,
+        classification: str,
+        content_hash: str,
+        text: str,
+        embedding: list[float] | None,
+    ) -> None:
+        pool = await self._pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO chunks "
+                "(scope, chunk_id, text, embedding, tsv, source_path, mtime, "
+                "classification, content_hash) "
+                "VALUES ($1, $2, $3, $4, to_tsvector('english', $3), $5, $6, $7, $8) "
+                "ON CONFLICT (scope, chunk_id) DO UPDATE SET "
+                "text = EXCLUDED.text, embedding = EXCLUDED.embedding, "
+                "tsv = EXCLUDED.tsv, source_path = EXCLUDED.source_path, "
+                "mtime = EXCLUDED.mtime, classification = EXCLUDED.classification, "
+                "content_hash = EXCLUDED.content_hash",
+                scope,
+                chunk_id,
+                text,
+                embedding,
+                source_path,
+                mtime,
+                classification,
+                content_hash,
+            )
+
+    async def stored_hashes(self, scope: str) -> dict[str, str]:
+        pool = await self._pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT chunk_id, content_hash FROM chunks WHERE scope=$1", scope
+            )
+        return {str(row["chunk_id"]): str(row["content_hash"]) for row in rows}
+
+    async def delete_scope(self, scope: str) -> None:
+        pool = await self._pool()
+        async with pool.acquire() as conn:
+            await conn.execute("DELETE FROM chunks WHERE scope=$1", scope)
+
+    async def vec_search(self, scope: str, query_embedding: list[float]) -> list[str]:
+        """Scope-filtered cosine ANN via the pgvector ``<=>`` operator, nearest first."""
+        pool = await self._pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT chunk_id FROM chunks "
+                "WHERE scope=$1 AND embedding IS NOT NULL "
+                "ORDER BY embedding <=> $2 LIMIT $3",
+                scope,
+                query_embedding,
+                _VEC_SEARCH_LIMIT,
+            )
+        return [str(row["chunk_id"]) for row in rows]
+
+    async def bm25_search(self, scope: str, query: str) -> list[str]:
+        """FTS via ``to_tsquery``; parses the FTS5-formatted query into OR'd tokens."""
+        tokens = _parse_fts_tokens(query)
+        if not tokens:
+            return []
+        tsquery = " | ".join(tokens)
+        pool = await self._pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT chunk_id FROM chunks "
+                "WHERE scope=$1 AND tsv @@ to_tsquery('english', $2) "
+                "ORDER BY ts_rank_cd(tsv, to_tsquery('english', $2)) DESC",
+                scope,
+                tsquery,
+            )
+        return [str(row["chunk_id"]) for row in rows]
+
+    async def chunk_texts(self, scope: str) -> list[tuple[str, str]]:
+        pool = await self._pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT chunk_id, text FROM chunks WHERE scope=$1", scope
+            )
+        return [(str(row["chunk_id"]), str(row["text"])) for row in rows]
+
+    async def recency_order(self, scope: str) -> list[str]:
+        pool = await self._pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT chunk_id FROM chunks WHERE scope=$1 "
+                "ORDER BY COALESCE(mtime, 0) DESC, chunk_id",
+                scope,
+            )
+        return [str(row["chunk_id"]) for row in rows]
+
+    async def chunk_meta(
+        self, scope: str, chunk_id: str
+    ) -> tuple[str, str, float | None] | None:
+        pool = await self._pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT source_path, classification, mtime FROM chunks "
+                "WHERE scope=$1 AND chunk_id=$2",
+                scope,
+                chunk_id,
+            )
+        if row is None:
+            return None
+        mtime = row["mtime"]
+        return (
+            str(row["source_path"]),
+            str(row["classification"]),
+            None if mtime is None else float(mtime),
+        )
+
+    async def chunk_text(self, scope: str, chunk_id: str) -> str | None:
+        pool = await self._pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT text FROM chunks WHERE scope=$1 AND chunk_id=$2",
+                scope,
+                chunk_id,
+            )
+        return None if row is None else str(row["text"])
+
+
+def _parse_fts_tokens(query: str) -> list[str]:
+    """Extract the alnum tokens from an FTS5-formatted query (``'"a" OR "b"'``).
+
+    Only the quoted lexemes are kept, and each is stripped to alnum, so the ``OR``
+    operator never leaks into ``to_tsquery`` (a stopword between ``|`` operators is
+    a tsquery syntax error) and no token can inject tsquery operators (LLM01).
+    """
+    tokens = [re.sub(r"[^A-Za-z0-9]", "", raw) for raw in re.findall(r'"([^"]+)"', query)]
+    return [token for token in tokens if token]
+
+
+def open_index_backend(
+    backend: str = "sqlite", *, db: MemoryDB, dsn: str | None = None
+) -> IndexBackend:
     """Return an ``IndexBackend`` for the named backend.
 
-    ``sqlite`` is the only concrete backend today; ``postgres`` raises
-    ``NotImplementedError`` (deferred behind the Protocol). An unknown name is a
-    ``ValueError`` at the config boundary.
+    ``sqlite`` (default) uses the per-agent ``MemoryDB``. ``postgres`` resolves its
+    DSN from ``dsn`` (arg first) else ``ARC_MEMORY_PG_DSN`` — no DSN is a
+    ``ValueError`` at the config boundary — and requires the ``[postgres]`` extra;
+    its absence is a clear ``RuntimeError``, never a leaked ``ImportError``. An
+    unknown name is a ``ValueError``.
     """
     if backend == "sqlite":
         return SqliteIndexBackend(db)
-    if backend in _DEFERRED:
-        raise NotImplementedError(
-            f"arcmemory index backend {backend!r} is deferred behind the IndexBackend "
-            "Protocol (SPEC-073 COMP-007); only 'sqlite' is implemented."
-        )
-    raise ValueError(f"Unknown arcmemory index backend: {backend!r}. Use 'sqlite'.")
+    if backend == "postgres":
+        resolved = dsn if dsn is not None else os.environ.get("ARC_MEMORY_PG_DSN")
+        if not resolved:
+            raise ValueError(
+                "postgres index backend requires a DSN (set ARC_MEMORY_PG_DSN)"
+            )
+        if importlib.util.find_spec("asyncpg") is None:
+            raise RuntimeError(
+                "postgres index backend requires asyncpg + pgvector; "
+                "install arcmemory[postgres]"
+            )
+        return PostgresIndexBackend(resolved, db.dims)
+    raise ValueError(
+        f"Unknown arcmemory index backend: {backend!r}. Use 'sqlite' or 'postgres'."
+    )
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
@@ -268,4 +509,9 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return float(dot / (norm_a * norm_b))
 
 
-__all__ = ["IndexBackend", "SqliteIndexBackend", "open_index_backend"]
+__all__ = [
+    "IndexBackend",
+    "PostgresIndexBackend",
+    "SqliteIndexBackend",
+    "open_index_backend",
+]

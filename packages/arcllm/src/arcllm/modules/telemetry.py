@@ -131,6 +131,22 @@ def _cap_str(value: str, max_len: int) -> str:
     return normalized[:max_len]
 
 
+def _truncate_strings(obj: Any, max_len: int) -> Any:
+    """Byte-cap every string inside a persisted structure, keeping its shape.
+
+    A message's ``content`` may be a plain string or a list of blocks; this walks
+    either and length-caps the leaves, so a preserved system prompt cannot itself
+    blow the stored line no matter how a provider shaped it.
+    """
+    if isinstance(obj, str):
+        return _cap_str(obj, max_len)
+    if isinstance(obj, list):
+        return [_truncate_strings(item, max_len) for item in obj]
+    if isinstance(obj, dict):
+        return {key: _truncate_strings(value, max_len) for key, value in obj.items()}
+    return obj
+
+
 def _text_len_hint(messages: list[Message]) -> int:
     """Lower-bound character count of a message list's text content (M4).
 
@@ -619,7 +635,7 @@ class TelemetryModule(BaseModule):
         """
         cheap_len = _text_len_hint(messages)
         if cheap_len > self._max_body_bytes:
-            return {"truncated": True, "original_bytes": cheap_len}
+            return self._oversized_request(messages, cheap_len)
 
         body: dict[str, Any] = {
             "messages": [m.model_dump() for m in messages],
@@ -632,7 +648,28 @@ class TelemetryModule(BaseModule):
         }
         if kwargs.get("max_tokens") is not None:
             body["max_tokens"] = kwargs["max_tokens"]
-        return self._cap_body(body, self._max_body_bytes)
+        encoded = json.dumps(body, default=str).encode("utf-8")
+        if len(encoded) <= self._max_body_bytes:
+            return body
+        return self._oversized_request(messages, len(encoded))
+
+    def _oversized_request(self, messages: list[Message], original_bytes: int) -> dict[str, Any]:
+        """A request too large to store whole — kept as a marker that still carries
+        the system prompt.
+
+        A request goes oversized on a huge tool result or a pasted document, never on
+        the system prompt; replacing the whole body with a byte count hid exactly the
+        assembled prompt stack (arcllm base, arcrun strategy, arcagent identity and
+        context, module sections) an operator opens a trace to read. So the marker
+        keeps the system messages — each string byte-capped so the record itself stays
+        bounded — and reports the true original size of everything left out.
+        """
+        system = [
+            _truncate_strings(m.model_dump(), self._max_body_bytes)
+            for m in messages
+            if m.role == "system"
+        ]
+        return {"truncated": True, "original_bytes": original_bytes, "messages": system}
 
     def _build_response_body(self, response: LLMResponse | None) -> dict[str, Any] | None:
         """Build the capped response body, or ``None`` on the error path.
