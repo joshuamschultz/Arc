@@ -1,171 +1,118 @@
-# Dropbox through the `dbxcli` binary.
+# Dropbox through this bundle's own REST adapter, on an OAuth2 refresh token.
 #
-# THE CHOICE, AND WHY (the manifest's perspective, as asked):
+# D-588 ranks a connector's options: the vendor's own CLI first, a maintained MCP
+# server second, an adapter we write only as a last resort — and a bundle taking
+# the last option has to say what it checked. This one did.
 #
-#   CLI. `dbxcli` is one Go binary with a published SHA256SUMS, so [artifact]
-#   pins exactly the bytes that will run — one digest, no runtime under it, no
-#   transitive dependency tree. It has `--output json`, which CliAttachment
-#   requires. Its verbs are separate subcommands, so `dropbox_list` is grantable
-#   without `put`, which is the D-570 property. MCP loses on every one of those:
-#   there is no maintained Dropbox MCP server on npm to pin (checked
-#   @dropbox/dropbox-mcp-server, dropbox-mcp, @modelcontextprotocol/server-dropbox
-#   — none exist), and `mcp` is not a kind `build_attachment` can construct
-#   today, so an mcp bundle would be refused at probe.
+# OPTION 1, the vendor's CLI (`dbxcli`): this bundle ran on it and it does not
+# hold. Two faults, both structural. Its verbs name the object POSITIONALLY
+# (`ls <path>`, `get <source>`, `put <dest>`), and a CliArgument renders only
+# `--flag=value`, so `dbxcli` could declare no path, no download, and no upload —
+# the connection was list-from-root-only, read-only. Worse, its ONLY unattended
+# credential is `DBXCLI_ACCESS_TOKEN`, and every token Dropbox issues today is
+# short-lived (the `sl.` prefix, ~4 hours): a pasted token worked when connected
+# and was dead by the nightly run, every night. `dbxcli login` mints a refresh
+# token, but only at a terminal, and its env token shadows it.
 #
-# THE COST, STATED PLAINLY: `dbxcli` names the object it acts on POSITIONALLY —
-# `ls <path>`, `search <query>`, `get <source>`, `revs <file>`. A CliArgument
-# renders only `--flag=value`, so none of those can be declared. What survives is
-# the three verbs below plus a root-relative recursive listing. Dropbox is the
-# connector the positional gap costs the most; see the report.
+# OPTION 2, an MCP server: there is no maintained Dropbox MCP server to pin —
+# `@dropbox/dropbox-mcp-server`, `dropbox-mcp`, `@modelcontextprotocol/server-
+# dropbox` do not exist — and `mcp` is not a kind `build_attachment` constructs.
 #
-# TWO WAYS IN, AND WHY BOTH:
+# So option 3: ~300 lines of httpx in arc_ext_dropbox/. It speaks OAuth2 the way
+# the vendor recommends for an unattended app — a durable refresh token, from
+# which Arc mints a short-lived access token on demand and caches it until it
+# expires. Connect once, and it keeps working: the refresh token does not expire,
+# and nothing on this host holds a token that does. The files API names paths in
+# the request body, so this adapter has the full read AND write surface `dbxcli`
+# could not: list, search, download, upload, create-folder, move, delete.
 #
-#   `dbxcli login` prints an OAuth URL and waits at a prompt for a code, which
-#   only a person sitting at this host can finish. That left every non-technical
-#   operator stuck, so this bundle also declares the credential dbxcli reads
-#   without any prompt at all: DBXCLI_ACCESS_TOKEN. Paste a token into Arc and
-#   the connection is done from the browser.
-#
-#   The [secrets.placement] below is the whole of Arc's knowledge of that, and it
-#   lives here rather than in Arc: if this vendor renames the variable, this file
-#   is the only file that changes.
+# The implementation is in arc_ext_dropbox/, a subdirectory, because bundle-root
+# .py files are scanned as agent capabilities and are import-policy-gated by tier.
 
 [extension]
 name = "dropbox"
 display_name = "Dropbox"
-version = "1.0.0"
-description = "Browse the files in a Dropbox account and check its storage use."
-attachment = "cli"
+version = "2.0.0"
+description = "Browse, read, and write the files in a Dropbox account."
+attachment = "native"
 tier_floor = "personal"
 
-# One digest per platform, each line taken from the release's own SHA256SUMS.
-# This bundle is why they are keyed: it used to pin only darwin/arm64 while the
-# deployment ran linux/arm64, so the pin covered a build the fleet never ran and
-# the install had to be done by hand.
-[artifact]
-package = "dropbox/dbxcli"
-version = "3.7.1"
+[config.native]
+entrypoint = "arc_ext_dropbox"
 
-[artifact.platforms."linux/arm64"]
-url = "https://github.com/dropbox/dbxcli/releases/download/v3.7.1/dbxcli_3.7.1_linux_arm64.tar.gz"
-sha256 = "a601ace683ea1b6c091da440ca6cd160b1899f32fc9e14fba3e9f656d40b8c90"
-member = "dbxcli_3.7.1_linux_arm64/dbxcli"
-
-[artifact.platforms."linux/amd64"]
-url = "https://github.com/dropbox/dbxcli/releases/download/v3.7.1/dbxcli_3.7.1_linux_amd64.tar.gz"
-sha256 = "9baf9ad3ae680a223d11db0df42461e39802c62b6eaefdb878a28906dc092bbc"
-member = "dbxcli_3.7.1_linux_amd64/dbxcli"
-
-[artifact.platforms."darwin/arm64"]
-url = "https://github.com/dropbox/dbxcli/releases/download/v3.7.1/dbxcli_3.7.1_darwin_arm64.tar.gz"
-sha256 = "243a2dbf418bc166a116ec7850529c8762fd3af1ae64e3a0274eba863a75a62a"
-member = "dbxcli_3.7.1_darwin_arm64/dbxcli"
-
-[artifact.platforms."darwin/amd64"]
-url = "https://github.com/dropbox/dbxcli/releases/download/v3.7.1/dbxcli_3.7.1_darwin_amd64.tar.gz"
-sha256 = "53525ca4810793c773cf0b3a0ca3139e1fccd4207e19f6059c9776a7c07e1110"
-member = "dbxcli_3.7.1_darwin_amd64/dbxcli"
-
-# No `token_command`: `dbxcli login` prints a Dropbox OAuth URL and waits at a
-# prompt for the code a person pastes back. Nothing can be piped in, so Arc
-# shows the command and does not pretend it can run it.
-#
-# `verify_command` is what the panel's "Signed in" actually means. It cannot be
-# the probe: `probe_argv = ["version"]` below runs happily on a dbxcli holding no
-# credential at all, and reporting that as a connected account is exactly what
-# this bundle did. `dbxcli account` returns an error from its command function,
-# which cobra turns into a non-zero exit — so no verify_pattern is needed.
-[[host_requires]]
-name = "dbxcli"
-minimum_version = "3.7.1"
-authorize_command = "dbxcli login"
-verify_command = "dbxcli account"
-instruction = """
-Install dbxcli on this host, then authorise it:
-
-  1. Download the asset for this host's platform from
-     https://github.com/dropbox/dbxcli/releases/tag/v3.7.1
-  2. Check it against that release's SHA256SUMS file. [artifact] pins the four
-     platforms Arc can install for you; take the matching line for any other.
-  3. tar xzf dbxcli_3.7.1_<platform>.tar.gz && install -m 0755 <dir>/dbxcli ~/.local/bin/dbxcli
-  4. dbxcli login
-  5. dbxcli account --output json    # confirm the account
-
-Steps 4 and 5 are only for signing in AT this host. To connect from Arc instead,
-paste an access token into the connector panel and skip them.
-
-Scope the Dropbox app to the narrowest permissions the agent needs. These verbs
-only read.
-"""
-
-# The token dbxcli reads with no prompt of any kind, which is what makes this
-# connector finishable from a browser. It is a long-lived access token, so Arc
-# holds it in the agent's own secret store (a vault above personal tier) and puts
-# it in the environment of each dbxcli run — never on the command line, and never
-# in a file on this host.
 [[secrets]]
-name = "access_token"
-prompt = "Dropbox access token. Go to dropbox.com/developers/apps, open your app (or click Create app, choose Scoped access and Full Dropbox), open the Permissions tab and tick files.metadata.read plus account_info.read, click Submit, then go back to Settings and click Generate under 'Generated access token'. Copy the long string it shows and paste it here."
+name = "app_key"
+prompt = "Your Dropbox app's App key. Go to dropbox.com/developers/apps, open your app (or Create app — Scoped access, Full Dropbox), and copy the App key shown on its Settings tab. It names the app and is safe to store in the clear."
+sensitive = false
+
+[[secrets]]
+name = "app_secret"
+prompt = "Your Dropbox app's App secret. On the same Settings tab at dropbox.com/developers/apps, click Show beside App secret and copy the value. Keep it private — Arc holds it in the secret store and never shows it again."
 format = "api_token"
 
-[secrets.placement]
-variable = "DBXCLI_ACCESS_TOKEN"
+[[secrets]]
+name = "refresh_token"
+prompt = "A Dropbox refresh token, so Arc stays connected without you signing in again. On your app's Permissions tab tick files.metadata.read, files.content.read and files.content.write and Submit, then authorize the app once with token_access_type=offline and paste the refresh token the exchange returns here."
+format = "api_token"
 
 [tools]
-allow = ["dropbox_list", "dropbox_account", "dropbox_usage"]
+allow = [
+  "dropbox_list",
+  "dropbox_search",
+  "dropbox_download",
+  "dropbox_account",
+  "dropbox_upload",
+  "dropbox_create_folder",
+  "dropbox_move",
+  "dropbox_delete",
+]
 
 [[tools.declared]]
 name = "dropbox_list"
-description = "List files and folders from the Dropbox root."
+description = "List files and folders under a Dropbox path."
+classification = "read_only"
+
+[[tools.declared]]
+name = "dropbox_search"
+description = "Search the account for files and folders matching a query."
+classification = "read_only"
+
+[[tools.declared]]
+name = "dropbox_download"
+description = "Read a file's text content by path."
 classification = "read_only"
 
 [[tools.declared]]
 name = "dropbox_account"
-description = "Read the connected Dropbox account's identity."
+description = "Read the connected account's identity and storage use."
 classification = "read_only"
 
+# The four writes each send content or a change out to the account, a destination
+# the model names, so each is tagged for the egress gate (D-580): allowed at
+# personal tier, refused at federal until an operator hardens the path.
 [[tools.declared]]
-name = "dropbox_usage"
-description = "Read the Dropbox account's storage usage."
-classification = "read_only"
+name = "dropbox_upload"
+description = "Write a text file to a Dropbox path."
+classification = "state_modifying"
+capability_tags = ["network_egress"]
+
+[[tools.declared]]
+name = "dropbox_create_folder"
+description = "Create a folder at a Dropbox path."
+classification = "state_modifying"
+capability_tags = ["network_egress"]
+
+[[tools.declared]]
+name = "dropbox_move"
+description = "Move or rename a file or folder."
+classification = "state_modifying"
+capability_tags = ["network_egress"]
+
+[[tools.declared]]
+name = "dropbox_delete"
+description = "Delete a file or folder."
+classification = "state_modifying"
+capability_tags = ["network_egress"]
 
 [approval]
 default = "outbound"
-
-[config.cli]
-binary = "dbxcli"
-probe_argv = ["version"]
-install_instruction = "See [[host_requires]] in this bundle's extension.toml."
-
-[[config.cli.commands]]
-tool = "dropbox_list"
-argv = ["ls", "--output=json", "--long"]
-description = "List files and folders from the Dropbox root. Pass recursive to walk the whole tree; there is no way to list a single subfolder directly."
-classification = "read_only"
-
-[[config.cli.commands.arguments]]
-name = "recursive"
-flag = "--recursive"
-description = "Set to true to list every subfolder as well as the root."
-
-[[config.cli.commands.arguments]]
-name = "limit"
-flag = "--limit"
-description = "Maximum number of entries to return."
-
-[[config.cli.commands.arguments]]
-name = "sort"
-flag = "--sort"
-description = "Sort by name, size, time, or type."
-
-[[config.cli.commands]]
-tool = "dropbox_account"
-argv = ["account", "--output=json"]
-description = "Read which Dropbox account this connection is authorised as."
-classification = "read_only"
-
-[[config.cli.commands]]
-tool = "dropbox_usage"
-argv = ["du", "--output=json"]
-description = "Read the account's storage usage."
-classification = "read_only"
