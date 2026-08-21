@@ -16,8 +16,6 @@ With :class:`NullBrain` active, memory is a silent no-op — capture does nothin
 recall is empty, consolidation is empty — and **no memory files are ever written**.
 """
 
-from __future__ import annotations
-
 from collections.abc import Mapping
 from typing import Protocol, runtime_checkable
 
@@ -101,6 +99,28 @@ class Brain(Protocol):
         """
         ...
 
+    async def on_moment(
+        self,
+        kind: str,
+        *,
+        cues: list[str] | None = None,
+        text: str = "",
+        clearance: str = "unclassified",
+        top_k: int = 3,
+        budget: int = 512,
+        session_id: str | None = None,
+    ) -> str:
+        """Detected-loop-moment signal; returns injectable text or ``""``.
+
+        ``kind`` names where the loop is (``task_start`` / ``entity_seen`` /
+        ``topic_shift`` / ``decision_point``); the Brain alone decides whether
+        that moment warrants an unprompted recall and, if so, returns bounded,
+        clearance-gated text ready to inject. An unfired moment, an unknown
+        ``kind``, or nothing worth surfacing all return ``""`` — never raise.
+        Primitives only, so arcmemory need not import arcagent to satisfy this.
+        """
+        ...
+
 
 class NullBrain:
     """The default no-op Brain: memory off, zero files, never errors.
@@ -146,6 +166,19 @@ class NullBrain:
         return ""
 
     async def get_procedure(self, slug: str, *, session_id: str | None = None) -> str:
+        return ""
+
+    async def on_moment(
+        self,
+        kind: str,
+        *,
+        cues: list[str] | None = None,
+        text: str = "",
+        clearance: str = "unclassified",
+        top_k: int = 3,
+        budget: int = 512,
+        session_id: str | None = None,
+    ) -> str:
         return ""
 
 

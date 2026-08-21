@@ -20,6 +20,27 @@
 
 ---
 
+## ⭐ Planned Top Features
+
+What `arcmodel` will bring to multi-tenant model management:
+
+### **Intelligent Routing**
+- **Capability-aware model selection** — Automatically picks the right model for each call (tools, vision, long context, JSON mode)
+- **Per-call eligibility rules** — "this call requires SOC2-certified hosting" → only matching models considered
+- **Cost-bounded selection** — Automatically downgrades to cheaper models when budget thresholds approached
+
+### **Multi-Tenant Management**
+- **Per-organization model catalogs** — Separate model registries with ACLs; orgs see only their approved models
+- **Tier-aware fallback** — Federal-only models for sensitive calls, open models for general use
+- **Capability discovery** — Query providers for current model lineup, prices, and context windows
+
+### **Advanced Features**
+- **Budget tracking** — Running budget counters with automatic downgrades; prevents cost overruns
+- **Model health monitoring** — Track provider availability and latency; route around degraded models
+- **Custom routing rules** — Per-organization routing policies; compliance requirements enforced
+
+---
+
 ## 🏗️ Where It Fits
 
 Reserved to sit beside `arcllm`, lifting routing and model-selection concerns out of provider configs. The dotted edge is planned, not yet wired.

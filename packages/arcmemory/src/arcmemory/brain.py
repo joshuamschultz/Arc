@@ -22,6 +22,7 @@ deployment wires arcllm-backed seams to light up semantic recall and distillatio
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -34,13 +35,28 @@ from arcmemory.capture import FastCapture
 from arcmemory.config import MemoryConfig
 from arcmemory.consolidate import Consolidator
 from arcmemory.db import MemoryDB
+from arcmemory.detectors import Decision, WindowDedup, evaluate_moment
 from arcmemory.distill import Distiller
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder, IndexRebuilder
 from arcmemory.react_adapter import ReactLoop, run_react_loop
 from arcmemory.retrieve import Retriever, attributed_cards
+from arcmemory.security import render_recalls
 from arcmemory.stores.procedural import ProceduralStore
 from arcmemory.types import ConsolidationResult, Recall, RecallCard, Scope, Situation
+
+
+@dataclass
+class _MomentSessionState:
+    """The only session state a detector reads: the prior turn's cue baseline.
+
+    A detector inspects the baseline, it never mutates it. The brain owns the
+    baseline (``_prior_cues``) and updates it deliberately — only on the
+    ``topic_shift`` path (see :meth:`ArcMemoryBrain.on_moment`) — by rebinding its
+    own dict entry, never by writing back through this carrier.
+    """
+
+    prior_cues: list[str]
 
 
 class _ScopeBundle:
@@ -105,6 +121,11 @@ class ArcMemoryBrain:
         self._db = MemoryDB(self._workspace)
         self._graph = WeightedGraph(self._db, self._cfg)
         self._bundles: dict[str, _ScopeBundle] = {}
+        # Proactive detected-moment recall (SPEC-071): one sliding-window dedup
+        # across the brain, plus the per-session prior-cue baseline the
+        # topic_shift detector compares against.
+        self._window_dedup = WindowDedup(self._cfg.proactive_dedup_window)
+        self._prior_cues: dict[str | None, list[str]] = {}
 
     # -- Brain Protocol ----------------------------------------------------
 
@@ -181,6 +202,80 @@ class ArcMemoryBrain:
             situation, clearance=clr, top_k=top_k, budget=budget
         )
 
+    async def on_moment(
+        self,
+        kind: str,
+        *,
+        cues: list[str] | None = None,
+        text: str = "",
+        clearance: str = "unclassified",
+        top_k: int = 3,
+        budget: int = 512,
+        session_id: str | None = None,
+    ) -> str:
+        """Decide, deterministically, whether a detected moment earns a recall.
+
+        arcagent detects moments (a task starting, a known entity named, the topic
+        turning) and hands each one here as primitives. A model-free detector per
+        ``kind`` gates the decision — no embedder, no LLM on this hot path — so an
+        agent's every turn can ask "is there anything worth surfacing?" cheaply. A
+        fired moment reuses the SAME gated, clearance-bounded retrieval as
+        :meth:`retrieve` (no-read-up still applies), bounds the result to
+        ``proactive_max_cards``, and drops any card already injected inside the
+        dedup window. Returns injectable ``<memory-result>`` text, or ``""`` when
+        nothing fires or nothing novel survives — the worst case is a missed
+        recall, never a blocked turn.
+
+        Only ``topic_shift`` updates the per-session cue baseline; every other kind
+        reads it read-only, so the first detector of a turn cannot clobber the
+        baseline the ``topic_shift`` detector of the same turn depends on.
+        """
+        from arcmemory.stores.semantic import SemanticStore
+
+        cue_list = list(cues or [])
+        store = SemanticStore(self._workspace, self._graph, self._scope(session_id).key)
+        session_state = _MomentSessionState(prior_cues=self._prior_cues.get(session_id, []))
+        decision = evaluate_moment(
+            kind, cues=cue_list, text=text, session_state=session_state, store=store
+        )
+        if kind == "topic_shift":
+            self._prior_cues[session_id] = cue_list
+        if not decision.fire:
+            return ""
+        return await self._proactive_recall(
+            kind, decision, text=text, clearance=clearance, top_k=top_k,
+            budget=budget, session_id=session_id,
+        )
+
+    async def _proactive_recall(
+        self,
+        kind: str,
+        decision: Decision,
+        *,
+        text: str,
+        clearance: str,
+        top_k: int,
+        budget: int,
+        session_id: str | None,
+    ) -> str:
+        """Run the gated recall for a fired moment: bound, dedup, attribute, render."""
+        bundle = self._bundle(session_id)
+        await bundle.retriever.index()
+        clr = parse_classification(clearance, strict=self._cfg.tier == "federal")
+        situation = Situation(text=text, cues=decision.query_cues)
+        effective_k = min(top_k, self._cfg.proactive_max_cards)
+        result = await bundle.retriever.retrieve(
+            situation, clearance=clr, top_k=effective_k, budget=budget
+        )
+        novel_sources = set(
+            self._window_dedup.filter_novel(session_id, [r.source for r in result.recalls])
+        )
+        novel = [r for r in result.recalls if r.source in novel_sources]
+        if not novel:
+            return ""
+        self._emit_recall_attribution(novel, trigger=kind)
+        return render_recalls(novel)
+
     async def holdings(self, *, limit: int = 200, session_id: str | None = None) -> list[str]:
         """Publishable pointers to durable knowledge this memory holds (no bodies).
 
@@ -246,7 +341,9 @@ class ArcMemoryBrain:
             seed_vocabulary=self._seed_vocab,
         ).rebuild()
 
-    def _emit_recall_attribution(self, recalls: list[Recall]) -> None:
+    def _emit_recall_attribution(
+        self, recalls: list[Recall], *, trigger: str | None = None
+    ) -> None:
         """Record WHICH cards a recall surfaced, not merely that one happened.
 
         Memory audited that a recall occurred and whether it returned anything — never
@@ -262,13 +359,16 @@ class ArcMemoryBrain:
         cards = attributed_cards(recalls)
         if not cards:
             return
+        extra: dict[str, object] = {"cards": cards}
+        if trigger is not None:
+            extra["trigger"] = trigger
         emit(
             AuditEvent(
                 actor_did=self._scope(None).agent_did,
                 action="memory.recall_attributed",
                 target="memory",
                 outcome="allow",
-                extra={"cards": cards},
+                extra=extra,
             ),
             self._audit,
         )

@@ -32,6 +32,7 @@ from arcagent.core.session_internal.capability_ledger import bind_session_id, re
 from arcagent.core.telemetry import AgentTelemetry
 from arcagent.tools._policy_fill import resolve_run_budget
 from arcagent.tools.approval_policy import narrowed_loop_controls
+from arcagent.utils.moment import moment_cues
 
 if TYPE_CHECKING:
     from arcagent.core.agent import ArcAgent
@@ -108,6 +109,22 @@ async def build_run_context(
         child_tools.append(spawn_tool)
         ctx_tools = [spawn_tool]
         strategy_sections = {**strategy_sections, "spawn_guidance": spawn_guidance}
+
+    # SPEC-071 — announce candidate user-turn moments BEFORE the prompt is
+    # assembled, so a proactive recall fired this turn lands in THIS turn's
+    # prompt (assembly runs once per run and drains the memory subscriber's
+    # buffer below). Two user-turn detectors (entity_seen + topic_shift) => two
+    # moments; in-window dedup stops any double-injection of the same card. No
+    # session id is cleanly in scope here (build_run_context takes only agent +
+    # task), so the Brain falls back to its default scope.
+    if task:
+        moment_payload: dict[str, Any] = {
+            "cues": moment_cues(task),
+            "text": task,
+            "session_id": None,
+        }
+        await bus.emit("agent:moment", {"kind": "entity_seen", **moment_payload})
+        await bus.emit("agent:moment", {"kind": "topic_shift", **moment_payload})
 
     prompt = await context.assemble_system_prompt(
         agent._workspace, extra_sections=strategy_sections, query=task

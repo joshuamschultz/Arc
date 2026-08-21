@@ -25,6 +25,37 @@ Every DM gets a per-(user, agent) session. Every session must be **explicitly pa
 
 ---
 
+## ⭐ Top Features
+
+What makes `arcgateway` uniquely secure for multi-platform agent access:
+
+### **Security & Access Control**
+- **Operator-approved pairing** — Sessions don't respond until an operator explicitly approves; eliminates unauthorized access from shared chat platforms
+- **TaskGroup isolation** — Each platform runs in its own TaskGroup; a crash in Slack doesn't affect Telegram or Mattermost connections
+- **Per-session WORM chains** — Every interaction gets a hash-chained audit trail; operators can detect tampering or gaps
+
+### **Multi-Platform Support**
+- **Telegram, Slack, Mattermost** — Native adapters with identical session semantics; same agent works across all platforms
+- **Slash-command registry** — `/commands` work identically across web, Slack, Telegram, and terminal interfaces
+- **Platform-aware routing** — Messages route correctly even when an agent appears on multiple platforms simultaneously
+
+### **Session Management**
+- **Per-(user, agent) sessions** — Each user gets an isolated conversation with each agent; no cross-contamination
+- **Session continuity** — Sessions survive platform disconnects; messages queue and replay when reconnected
+- **Graceful degradation** — If a platform is unreachable, other platforms continue unaffected
+
+### **Platform Adapters**
+- **In-tree adapters** — Telegram, Slack, Mattermost adapters live in the same package; no separate dependencies
+- **Extras for client libraries** — Each platform has optional extra for its SDK (`[telegram]`, `[slack]`, `[mattermost]`)
+- **Multi-bot support** — Run multiple bots for different agents; each with its own config block
+
+### **Configuration**
+- **TOFU pairing** — Trust-on-first-use with operator approval; sessions don't respond until paired
+- **Allowlist enforcement** — `allowed_user_ids` restricts who can message the agent
+- **Federal tier blocking** — Platforms without proper extras refused at federal tier
+
+---
+
 ## 🏗️ Where It Fits
 
 ```mermaid

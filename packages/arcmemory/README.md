@@ -38,6 +38,44 @@ Design commitments:
 
 ---
 
+## ⭐ Top Features
+
+What makes `arcmemory` fundamentally different from vector-only memory systems:
+
+### **Glass-Box Transparency**
+- **Markdown-first storage** — Every memory (entities, insights, procedures) is human-readable markdown; no opaque embeddings to debug
+- **Editable by humans** — Operators can review, edit, or delete memories directly; changes reflected immediately in recall
+- **Version-control friendly** — Memories are files that work with git; full history and diff support
+
+### **Dual-Speed Architecture**
+- **Zero-LLM capture on hot path** — Memory capture costs ~1ms and doesn't hit LLM API; reasoning happens asynchronously in sleep pass
+- **Analogical recall** — Finds patterns with zero text overlap (structural similarity); not just vector similarity
+- **Agentic sleep pass** — Dedicated agent consolidates memories offline; bounded budget prevents runaway costs
+
+### **Structural Intelligence**
+- **Structural recall** — Discovers relationships between memories based on structure, not just content similarity
+- **Non-lossy operations** — Contradictions become `| was:` trails; merges preserve both sides with aliases
+- **Classification-gated recall** — No-read-up policy enforced; sensitive memories never leak to lower-clearance queries
+
+### **Memory Types**
+- **Daily log journal** — Time-ordered entries for episodic memory; human-readable markdown format
+- **Entity graph** — Nodes and edges representing people, organizations, concepts; Hebbian-bumped on access
+- **Procedures** — Reusable workflows stored as markdown; callable from other memories
+- **Insights** — Agent-derived conclusions stored separately; build on observations
+
+### **Pluggability**
+- **Four primitive port** — `capture`, `retrieve`, `consolidate`, `rebuild_index` interface; drop-in backend replacement
+- **Model seam** — Inject any LLM for consolidation; arcmemory doesn't mandate a specific provider
+- **Embedder seam** — Local or remote embedding service; sqlite-vec by default with BM25 fallback
+- **Distiller seam** — Optional LLM call to distill raw captures into structured memories
+
+### **Failure Handling**
+- **Graceful degradation** — No embedder → BM25 + graph fallback; no LLM → deterministic pipeline
+- **Budget enforcement** — Consolidation has bounded budget; won't runaway on costs
+- **No silent failures** — Warns once per process when falling back; `arc memory status` reports mode
+
+---
+
 ## Install
 
 ```bash

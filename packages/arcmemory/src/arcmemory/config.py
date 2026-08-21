@@ -149,6 +149,16 @@ class MemoryConfig(BaseModel):
         description="event kinds distillation keeps (the conversation); all others are dropped",
     )
 
+    # Proactive detected-moment recall (SPEC-071)
+    proactive_max_cards: int = Field(
+        default=3,
+        description="max cards a proactive injection may surface (bounded prompt budget)",
+    )
+    proactive_dedup_window: int = Field(
+        default=5,
+        description="turns a proactively-injected card stays suppressed (in-window dedup)",
+    )
+
     @classmethod
     def for_tier(cls, tier: Tier) -> MemoryConfig:
         """Return the R-9 constant set for ``tier`` (federal is strictest)."""
@@ -166,6 +176,8 @@ class MemoryConfig(BaseModel):
                 consolidate_agent_max_turns=12,
                 consolidate_agent_max_tokens=14_000,
                 consolidate_agent_timeout_seconds=120.0,
+                # Federal is no laxer than personal on proactive injection surface area.
+                proactive_max_cards=2,
             )
         if tier == "enterprise":
             return cls(tier="enterprise", alpha=0.2)

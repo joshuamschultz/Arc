@@ -78,53 +78,83 @@ async def _audit(event: str, detail: dict[str, Any]) -> None:
 
 @hook(event="agent:assemble_prompt", priority=_RECALL_PRIORITY)
 async def inject_recall(ctx: Any) -> None:
-    """Query-conditioned recall into ``sections["recall"]`` (once per turn)."""
+    """Query-conditioned recall + proactive-moment drain into ``sections["recall"]``.
+
+    The query path is once-per-turn cached and ACL-gated as before. The proactive
+    buffer (staged by :func:`on_agent_moment`) is drained and merged in on every
+    assembly — including a query-less proactive-only turn (e.g. ``task_start``) —
+    then cleared whether or not it injected, so a second assembly in the same turn
+    never re-injects it.
+    """
     st = _runtime.state()
     if not st.active:
         return
     sections = ctx.data.get("sections")
     if not isinstance(sections, dict):
         return
-    query = (ctx.data.get("query") or "").strip()
-    if not query:
-        return
 
+    query = (ctx.data.get("query") or "").strip()
+    text = await _query_recall(st, ctx, query) if query else ""
+
+    # Drain the proactive buffer once, regardless of the query path — its text
+    # already passed the Brain's gate when it was buffered at on_moment time.
+    proactive = list(st.proactive_buffer)
+    st.proactive_buffer.clear()
+
+    merged = _merge_recall(text, proactive)
+    if merged:
+        sections["recall"] = merged
+
+
+async def _query_recall(st: _runtime._State, ctx: Any, query: str) -> str:
+    """Query-conditioned recall text, once-per-turn cached and ACL-gated."""
     key = hash(query)
     if key in st.recall_cache:
-        text = st.recall_cache[key]
-    else:
-        if not await _acl_allows("memory.search", st.agent_did):
-            return
-        # Reuse the turn's existing abstraction (no new LLM call — OQ-1); the Brain
-        # derives the structural cue seeds from its own entity/cue graph, so a
-        # different-domain turn can still match a stored abstraction. ``summary`` is
-        # empty unless a prior handler supplied one — a Brain that ignores it degrades
-        # to lexical-only, never errors.
-        summary = str(ctx.data.get("summary") or "")
-        started = time.monotonic()
-        text = await st.brain.retrieve(
-            query,
-            clearance="unclassified",
-            top_k=st.config.top_k,
-            budget=st.config.budget,
-            summary=summary,
-        )
-        _cache_recall(st, key, text)
-        await _audit("memory.recall", {"query_len": len(query), "hit": bool(text)})
-        # This recall is a real step that never passed through tool dispatch, so
-        # record it as one — the operator sees WHY memory was consulted, not just
-        # the reads that followed. Correlates to the turn via the ambient run id.
-        spool_auto_tool(
-            "memory_search",
-            actor_did=st.agent_did,
-            latency_ms=(time.monotonic() - started) * 1000.0,
-            args=query,
-            result=text,
-            extra={"hit": bool(text)},
-        )
+        return st.recall_cache[key]
+    if not await _acl_allows("memory.search", st.agent_did):
+        return ""
+    # Reuse the turn's existing abstraction (no new LLM call — OQ-1); the Brain
+    # derives the structural cue seeds from its own entity/cue graph, so a
+    # different-domain turn can still match a stored abstraction. ``summary`` is
+    # empty unless a prior handler supplied one — a Brain that ignores it degrades
+    # to lexical-only, never errors.
+    summary = str(ctx.data.get("summary") or "")
+    started = time.monotonic()
+    text = await st.brain.retrieve(
+        query,
+        clearance="unclassified",
+        top_k=st.config.top_k,
+        budget=st.config.budget,
+        summary=summary,
+    )
+    _cache_recall(st, key, text)
+    await _audit("memory.recall", {"query_len": len(query), "hit": bool(text)})
+    # This recall is a real step that never passed through tool dispatch, so
+    # record it as one — the operator sees WHY memory was consulted, not just
+    # the reads that followed. Correlates to the turn via the ambient run id.
+    spool_auto_tool(
+        "memory_search",
+        actor_did=st.agent_did,
+        latency_ms=(time.monotonic() - started) * 1000.0,
+        args=query,
+        result=text,
+        extra={"hit": bool(text)},
+    )
+    return text
 
-    if text:
-        sections["recall"] = text
+
+def _merge_recall(query_text: str, proactive: list[str]) -> str:
+    """Append proactive entries to the query recall text, skipping duplicates.
+
+    A proactive card whose text already appears in the accumulated recall is
+    dropped so the same card is never repeated; ordering keeps the query-driven
+    recall first, proactive entries after.
+    """
+    merged = query_text
+    for entry in proactive:
+        if entry and entry not in merged:
+            merged = f"{merged}\n{entry}" if merged else entry
+    return merged
 
 
 def _cache_recall(st: _runtime._State, key: int, text: str) -> None:
@@ -132,6 +162,51 @@ def _cache_recall(st: _runtime._State, key: int, text: str) -> None:
     if len(st.recall_cache) >= _runtime._RECALL_CACHE_CAP:
         st.recall_cache.pop(next(iter(st.recall_cache)))
     st.recall_cache[key] = text
+
+
+# -- Proactive detected-moment subscriber --------------------------------
+
+
+@hook(event="agent:moment")
+async def on_agent_moment(ctx: Any) -> None:
+    """Stage proactive recall for a detected moment into the buffer (SPEC-071).
+
+    A loop site emits ``agent:moment`` with a primitive
+    ``{"kind", "cues", "text", "session_id"}`` payload. This subscriber asks the
+    Brain's optional ``on_moment`` whether — and what — to recall, and buffers any
+    non-empty text on ``_State.proactive_buffer`` for the next prompt assembly to
+    drain. Gated on ``active`` + ``proactive_enabled`` so a disabled agent runs
+    unchanged (REQ-348), and Brain-agnostic via the ``getattr`` optional-method
+    pattern (mirrors :func:`_acl_allows`) so a backend without ``on_moment`` no-ops.
+    """
+    st = _runtime.state()
+    if not st.active or not st.config.proactive_enabled:
+        return
+    on_moment = getattr(st.brain, "on_moment", None)
+    if on_moment is None:
+        return
+
+    kind = str(ctx.data.get("kind", ""))
+    # decision_point is mid-loop pre_plan: it cannot inject same-turn (no re-assembly),
+    # so it would only ever produce an audit-only effect. Skip unless opted in (A3).
+    if kind == "decision_point" and not st.config.proactive_decision_point:
+        return
+    cues = list(ctx.data.get("cues") or [])
+    text = str(ctx.data.get("text", ""))
+    session_id = ctx.data.get("session_id")
+
+    text_out = await on_moment(
+        kind,
+        cues=cues,
+        text=text,
+        clearance="unclassified",
+        top_k=st.config.top_k,
+        budget=st.config.budget,
+        session_id=session_id,
+    )
+    if text_out:
+        st.proactive_buffer.append(text_out)
+    await _audit("memory.proactive_recall", {"kind": kind, "hit": bool(text_out)})
 
 
 @hook(event="agent:assemble_prompt", priority=_RECALL_PRIORITY)
@@ -477,4 +552,5 @@ __all__ = [
     "inject_recall",
     "memory_consolidate_loop",
     "memory_search",
+    "on_agent_moment",
 ]

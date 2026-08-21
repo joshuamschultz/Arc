@@ -81,6 +81,10 @@ class _State:
     # Once-per-turn recall cache: query-hash -> injectable text (bounds the
     # spawn double-assembly to a single retrieve).
     recall_cache: dict[int, str] = field(default_factory=dict)
+    # Proactive (detected-moment) recall text staged by the ``agent:moment``
+    # subscriber, drained + merged into ``sections["recall"]`` at the next
+    # prompt assembly. Session/turn-scoped, in-memory, rebuild-free.
+    proactive_buffer: list[str] = field(default_factory=list)
     # Whether this process already seeded the routing digest from existing
     # holdings (backfill runs once per start; the digest self-dedups, but a flag
     # spares a few hundred needless bus emits on every agent:ready).

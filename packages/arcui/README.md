@@ -33,6 +33,37 @@ it to show up.
 
 ---
 
+## ⭐ Top Features
+
+What makes `arcui` the definitive real-time agent observability dashboard:
+
+### **Read-On-Demand Architecture**
+- **No live push wire** — Agents don't push events into the dashboard; `arcui` reads on-demand from shared `arcstore` record (eliminates dangling connections from crashed agents)
+- **Warm start automatic** — Fresh dashboard starts with full history; runs `StoreIngest` over existing WORM files on every read
+- **Real-time fleet monitoring** — Watch your entire agent fleet think in near-real-time; every LLM call, tool invocation, and audit event visible
+
+### **Operator Controls**
+- **Two-token role separation** — Viewer token (read-only) and operator token (mutations); prevents unauthorized config changes
+- **In-place mutations** — Edit config, tasks, channels, files, and prompts directly from the dashboard; all changes audited
+- **HITL approvals** — Approve gated tool calls and skill installations from the UI; full context provided
+
+### **Multi-Layer Interface**
+- **Business-first navigation** — Work, Govern, Watch, Advanced, System sections (2027 control-plane redesign); technical names only in detail views
+- **15 specialized pages** — Agent detail, Tasks (Mission Control), Approvals, Audit (Security), Run River, Workflows, Knowledge, Model usage, and more
+- **React 19 + shadcn/ui** — Air-gap friendly with self-hosted fonts; no CDN dependency; built output committed for zero Node requirement
+
+### **WebSocket Support**
+- **Two live sockets** — `/ws/chat/{agent_id}` for interactive chat, `/ws/team` for team stream with `@mentions`
+- **No event push pipeline** — Removed per SPEC-026 FR-5; eliminates dangling connections from crashed agents
+- **Token-scoped access** — Both sockets require viewer/operator tokens; no anonymous access
+
+### **Terminal Integration**
+- **JSONL streaming** — `arc ui tail` outputs structured events to stdout; pipe into `jq`, `grep`, or log tools
+- **Layer filtering** — Filter by `llm`, `agent`, `run`, or `team` layer; focus on specific concerns
+- **Agent targeting** — Filter by DID or team group; monitor specific agents or teams
+
+---
+
 ## 🏗️ Where It Fits
 
 ```mermaid

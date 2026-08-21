@@ -73,6 +73,12 @@ class _State:
     # idle agent. The dispatch loop calls it to actually run an assigned task.
     # None until agent:ready fires (or in test paths that never dispatch).
     agent_run_fn: Any = None
+    # The agent's module bus (SPEC-071) — bound at ``agent:ready`` via the
+    # signature-dispatch in ``core.agent_lifecycle`` (which supplies
+    # ``agent._bus`` to any module ``configure`` that names ``bus``). Used by
+    # ``_run_task`` to emit an ``agent:moment`` kind=task_start before the model
+    # runs. None outside a fully-wired agent (bare/test construction).
+    bus: Any = None
     # The agent's per-session lethal-trifecta ledger and capability registry,
     # both bound at ``agent:ready``. The ledger is how a workflow node's fresh
     # session inherits the RUN's accumulated legs (COMP-015) instead of resetting
@@ -121,6 +127,7 @@ def configure(
     operator_signer: Any = None,
     registry: Any = None,
     messenger: Any = None,
+    bus: Any = None,
     team_root: str = "",
 ) -> None:
     """Bind module state for the CURRENT asyncio task. Called once at agent startup.
@@ -144,6 +151,7 @@ def configure(
             operator_signer=operator_signer,
             registry=registry,
             messenger=messenger,
+            bus=bus,
             team_root=team_root,
         )
     )

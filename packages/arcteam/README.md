@@ -32,6 +32,37 @@ Think of it as a tiny Slack-for-agents:
 
 ---
 
+## ⭐ Top Features
+
+What makes `arcteam` uniquely powerful for multi-agent coordination:
+
+### **Intelligent Messaging**
+- **Relevance-triaged answers** — Questions routed to the agent that actually holds the answer, not fanned to everyone (saves LLM calls and reduces noise)
+- **Entity registry** — Every agent and human registered with type, role, and DID; enables targeted messaging and permission checks
+- **Priority-based channels** — Messages carry priorities and types; critical alerts surface immediately
+
+### **Workflow Orchestration**
+- **ArcFlow workflows (SPEC-061)** — Named, signed, deterministic DAGs for complex multi-agent tasks; agents can author and run workflows on demand
+- **Gate resolution** — Workflow nodes can require operator approval or other conditions before proceeding
+- **Run history** — Full history of every workflow execution with signed audit trails
+
+### **Security & Audit**
+- **Operator-signed audit chain** — Every operation signed with operator key, not agent's own DID; prevents agents from forging their own trails
+- **Per-entity DIDs** — Each agent and human has unique identity; no shared credentials to compromise
+- **Pluggable storage** — NATS JetStream for production, in-memory for tests; same interface, different backends
+
+### **Messaging System**
+- **Six message types** — info, request, task, task_assigned, result, alert, ack; typed communication
+- **Four priority levels** — low, normal, high, critical; proper escalation handling
+- **Typed URIs** — Address recipients as `agent://`, `user://`, `channel://`, or `role://`; precise routing
+
+### **Team Memory**
+- **Entity memory index** — Per-entity memory with dirty tracking; efficient recall within team context
+- **Memory status reporting** — `arc team memory-status` shows index health and sync state
+- **Cross-entity queries** — Ask questions across all team members' memories
+
+---
+
 ## 🏗️ Where It Fits
 
 ```mermaid

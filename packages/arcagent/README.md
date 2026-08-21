@@ -35,6 +35,52 @@ It wraps the lower layers (`arcrun` for the loop, `arcllm` for the model, `arctr
 
 ---
 
+## ⭐ Top Features
+
+These are the standout capabilities that make `arcagent` best-in-class for production autonomous agents:
+
+### **Security & Identity**
+- **DID-required at construction** — Agent refuses to start without a valid `did:arc:{org}:{type}/{hash}` identity, enforcing accountability from day one
+- **Four-tier security model** — Personal, Enterprise, Federal tiers with increasing stringency; federal refuses agent-authored capabilities outright
+- **Unified capability loader** — One system discovers `@tool`, `@hook`, `@background_task`, and `@capability` decorators across four scan roots with explicit trust precedence
+
+### **Execution & Reliability**
+- **Mission Control task engine** — Self-driving execution with retry (exponential backoff), timeout, stuck-task reclaim, dependency DAGs, and auto-routing to capable agents
+- **ArcFlow workflows** — Signed, deterministic workflow DAGs that agents author and run; integrates with task system instead of duplicating execution engines
+- **Multiple strategies** — Built-in ReAct, Code, Dynamic (agent-authored Python orchestration), One-shot, and Plan-Execute strategies with auto-selection
+- **Mid-execution steering** — Inject messages, follow-up at turn boundaries, or cancel running tasks with full audit attribution
+
+### **Context & Memory**
+- **Cache-preserving context management** — Append-only turns keep provider prompt cache warm; structured compaction at boundaries prevents cache busting
+- **Extension points** — Pluggable Brain (memory), Skills adapter, and Tool systems; scaffolded agents default with `arcmemory` for dual-speed analogical memory
+
+### **Observability & Control**
+- **Hash-chained event log** — Every operation emits tamper-evident events; `verify_chain()` detects any modification
+- **Module bus architecture** — Priority-ordered event handlers (10-200) with veto power; policy at priority 10 blocks but still emits complete audit trail
+- **Hot-reload capabilities** — Reload diff reports added/replaced/removed capabilities; no restart required
+
+### **Module System**
+- **Four scan roots** — Operator-curated (`/capabilities`), agent-authored (`/.capabilities`), external modules, and hooks with explicit precedence
+- **Priority ordering** — Modules declare priority (10-200); policy at 10 blocks but still audits
+- **Live module management** — Enable/disable/upgrade modules without restart; diff reports show exactly what changed
+
+### **Session Management**
+- **Persistent JSONL transcripts** — Every conversation saved as structured JSONL; searchable, versionable, replayable
+- **Append-only turns** — Keeps provider prompt cache warm; no cache busting on compaction
+- **Session continuity** — Resume past sessions with full context; sessions survive agent restarts
+
+### **Connectors**
+- **Vendor-CLI-first** — Extensions built around vendor CLIs (AWS, GCP, GitHub, etc.)
+- **Deployment-wide connections** — Shared connectors with per-agent grants; deny-by-default
+- **Operator-gated** — All connector setup requires explicit operator approval
+
+### **Configuration**
+- **TOML-based** — Three sibling files (`arcagent.toml` / `arcllm.toml` / `arcrun.toml`); full surface area
+- **Pydantic validation** — All config validated at load time; clear error messages
+- **Tier defaults** — Personal/Enterprise/Federal tiers provide different default security settings
+
+---
+
 ## 🏗️ Where It Fits
 
 ```mermaid

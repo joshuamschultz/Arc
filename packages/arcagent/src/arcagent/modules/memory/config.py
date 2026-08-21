@@ -41,6 +41,11 @@ class MemoryConfig(ModuleConfig):
     # Recall (agent:assemble_prompt @ priority 50)
     top_k: int = 5
     budget: int = 1024
+    # Governs whether arcagent emits `agent:moment` and subscribes for proactive recall.
+    proactive_enabled: bool = True
+    # decision_point moments are opt-in: a mid-loop pre_plan cannot inject same-turn
+    # (audit-only until a mid-turn channel exists, A3), so memory ignores them by default.
+    proactive_decision_point: bool = False
 
     # Consolidation scheduling: fires on ANY of event-count / idle / interval (DC-5).
     consolidate_event_threshold: int = 20

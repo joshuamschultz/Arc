@@ -76,6 +76,44 @@ package installed before they can run.
 
 ---
 
+## ⭐ Top Features
+
+What makes Arc uniquely suited for production autonomous agent deployments:
+
+### **Security-First Architecture**
+- **DID-required identity** — Every agent must have a valid `did:arc:{org}:{type}/{hash}` identity; no anonymous operations allowed
+- **Zero vendor SDKs** — All 17 LLM providers accessed via direct HTTP; minimal dependency tree for easier auditing
+- **Deny-by-default policy** — All tool calls pass through `PolicyPipeline`; nothing executes without explicit permission
+- **Hash-chained audit trails** — Every operation emits tamper-evident events; `verify_chain()` detects any modification
+
+### **Production-Grade Reliability**
+- **2300+ tests across core packages** — 90%+ coverage on nucleus packages; battle-tested before production use
+- **Tier-aware deployment** — Personal, Enterprise, Federal tiers with increasing security strictness; same code, different enforcement
+- **Cache-preserving context** — Append-only turns keep provider prompt cache warm; saves 50-80% on token costs for long sessions
+
+### **Developer Experience**
+- **One-command install** — `pip install arcmas` gives you the full stack; CLI ready immediately
+- **Glass-box memory** — All memories stored as markdown files; inspectable, editable, git-friendly
+- **Mid-execution steering** — Inject messages, cancel tasks, or follow-up at turn boundaries with full audit trail
+
+### **The Four Pillars (Built-In)**
+- **Identity** — Ed25519 keypairs and DIDs (`did:arc:{org}:{type}/{hash}`); cryptographic proof of agent identity
+- **Sign** — Every pairing, delegation, and audit event cryptographically signed; tamper evidence
+- **Authorize** — Deny-by-default policy pipeline; all tool calls must be explicitly allowed
+- **Audit** — Structured, hash-chained events written to durable WORM store; operator-signed chains
+
+### **Tier System**
+- **Personal tier** — Local development with host-fallback sandboxing; audit warnings for relaxed security
+- **Enterprise tier** — Docker isolation, operator approval for new capabilities, signed audit chains
+- **Federal tier** — Firecracker micro-VMs, refuses unsigned code, FIPS-compliant crypto enforcement
+
+### **Multi-Agent Coordination**
+- **Relevance-triaged messaging** — Questions routed to the agent that actually holds the answer
+- **ArcFlow workflows** — Signed, deterministic DAGs for complex multi-agent tasks
+- **Operator-gated approvals** — HITL gates for tool calls, skill installs, and sensitive operations
+
+---
+
 ## 🚀 Install
 
 ### Full Stack

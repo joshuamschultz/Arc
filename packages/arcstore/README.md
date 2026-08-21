@@ -58,6 +58,32 @@ writes through `arcstore`.
 
 ---
 
+## ⭐ Top Features
+
+What makes `arcstore` the most reliable foundation for agent operations:
+
+### **Dual-Plane Architecture**
+- **Operational plane (spool + WORM)** — Insert-once tables for immutable event chains; hash-chained audit trails that detect tampering
+- **Mutable directory plane** — Row-level updates for changing records (tasks, runs, sessions); atomic operations prevent lost updates
+- **Atomic conditional writes** — `update_if` provides compare-and-swap semantics; powers single-owner task claiming without locks
+
+### **Reliability & Durability**
+- **Fail-open audit emission** — Audit events never block durable writes; AU-5 compliance built in
+- **SQLite foundation** — Single-file database with full ACID guarantees; no external database required
+- **Cross-package consistency** — Every Arc package uses the same storage layer; unified query interface across all operational data
+
+### **Task System Support**
+- **Frontier materialization** — `mutable_create_batch` builds cross-owner task frontiers atomically
+- **Reserve/settle counters** — Budget tracking via atomic increment operations; prevents double-spending
+- **Idempotent operations** — All mutable operations designed for safe retries; no duplicate rows on re-delivery
+
+### **API Design**
+- **Seven mutable operations** — write, read, query, merge, increment, create_batch, delete + update_if for CAS
+- **Atomic merge operations** — `mutable_merge` patches fields without read-modify-write race conditions
+- **Compare-and-swap primitive** — `update_if` enables single-owner task claiming without locks
+
+---
+
 ## 🗂️ The Mutable Directory Plane
 
 Alongside the insert-once operational tables (spool, WORM ingest), arcstore has a

@@ -31,6 +31,38 @@ Skills can be three things:
 
 ---
 
+## ⭐ Top Features
+
+What makes `arcskill` the most secure skill installation system available:
+
+### **8-Gate Verification Pipeline**
+- **Sigstore + Rekor integration** — Every skill bundle verified against public transparency log; cryptographic proof of origin
+- **CRL (Certificate Revocation List) checking** — Revoked skills blocked at boot; real-time security updates
+- **Static analysis scanning** — Bandit + safety checks before any code runs; catches known vulnerabilities
+- **Sandbox dry-run** — Skills execute in isolated environment before activation; proven safe before production use
+
+### **Supply Chain Security**
+- **Atomic activation** — Skills never partially installed; fail-closed on any verification error
+- **Tamper-evident lock files** — `.skill.lock` records exact versions and signatures; detects drift
+- **Tier-aware installation** — Federal tier refuses unsigned skills; enterprise requires operator approval
+
+### **Self-Improvement (Optional)**
+- **Golden-task gate** — Patches only apply if they fix failing tests and don't regress passing ones
+- **Bounded edit budgets** — Per-tier limits (8/4/2 edits for personal/enterprise/federal) prevent runaway modifications
+- **Dual authority signing** — Agent DID signs mutated bundles; operator key signs audit events (agents can't forge trails)
+
+### **Skill Lifecycle Management**
+- **Curator sweep** — Retires inactive (30-day default) or persistently-failing skills; disable + retain lineage, never delete
+- **Reversible operations** — Operators can revive retired skills; full history preserved
+- **Provider-free design** — LLM / sandbox / signing / audit all enter through injected Protocol seams
+
+### **Trust Model Integration**
+- **Tier-aware enforcement** — Personal tier allows self-improvement; enterprise/federal require operator approval
+- **Fail-closed at strict tiers** — Enterprise/federal tiers refuse unsigned skills regardless of invocation method
+- **TOFU with approval** — Trust-on-first-use requires explicit operator approval at higher tiers
+
+---
+
 ## 🧬 Optional: skill self-improvement (`arcskill.improver`)
 
 Installing `arcskill` also unlocks the optional **self-improvement supercharger** (SPEC-044).

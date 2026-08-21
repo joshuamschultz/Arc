@@ -15,6 +15,38 @@ written, and materialized read-only outside every agent's reach.
 The result an operator can point at: absence is a directory listing, not a config
 flag someone could flip.
 
+---
+
+## ⭐ Top Features
+
+What makes `arcbundle` uniquely suited for supply-chain-secure deployments:
+
+### **Supply Chain Security**
+- **Zero-trust installation** — Nothing is written before everything is verified; failed verification leaves destination byte-identical to prior state
+- **Two-signature verification** — Manifest signature proves bundle integrity; per-file `.arcsig` sidecars prove each artifact is unmodified since signing
+- **Fail-closed by design** — Any exception during verification denies; dev-signed bundles refused at enterprise/federal tiers regardless of invocation method
+
+### **Deployment Control**
+- **Module isolation** — Runtime files land as `0444` in `0555` directories outside the tool fence; agents cannot modify their own runtime code
+- **Atomic materialization** — Stage → fsync → rename ensures no partial writes; corrupted bundles never leave artifacts on disk
+- **Standalone operation** — Only depends on `arctrust` and Pydantic; can build and verify bundles on low-side staging boxes without agent stack
+
+### **Audit & Compliance**
+- **Full audit trail** — `module.bundle.verified`, `module.signature_invalid`, `module.content_hash_mismatch`, `module.installed`, `module.removed` events emitted at decision points
+- **Tier-aware verification** — Federal tier refuses modules without proper signatures; enterprise requires operator approval
+
+### **Module System**
+- **Runtime vs capability separation** — Runtime files (`_runtime.py`) land in `0444` in `0555` directories; capability files copied per-agent
+- **Capability copy normalization** — Modes normalized on copy so agent can sign in place; no permission issues
+- **Two-destination model** — Operator-writable runtime at deployment root; agent-writable capabilities in agent directory
+
+### **Two-Signature Verification**
+- **Manifest signature** — Proves bundle integrity at install time; checked once, bundle can be deleted after
+- **Per-file `.arcsig` sidecars** — Proves each artifact unchanged since signing; verified on every scan
+- **Content-hash mismatch detection** — Swapped sidecars rejected; never a new trust anchor
+
+---
+
 ## Layer
 
 **Leaf, beside `arctrust`.** Imports `arctrust` (Ed25519 + canonical JSON) and

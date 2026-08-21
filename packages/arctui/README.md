@@ -57,6 +57,37 @@ non-interactive stdin.
 
 ---
 
+## ⭐ Top Features
+
+What makes `arctui` the most capable terminal interface for agent interaction:
+
+### **Attach-or-Serve Pattern**
+- **Attach to existing gateway** — Reuse running `arc ui start` or `arc team serve` process; no duplicate agent instances
+- **Serve then attach** — Automatically spawn detached gateway if none running; seamless single-command experience
+- **No-agent mode** — Graceful degradation when no agents available; shows reason instead of crashing
+
+### **Terminal-First Experience**
+- **Textual TUI framework** — Full-screen terminal interface with split panes, streaming responses, and keyboard navigation
+- **Shift+Enter multiline** — Natural multiline input without mode switching; Tab for completion
+- **Slash-command integration** — All `arccli` slash commands work in-terminal; `/help`, `/clear`, `/connect`, `/connections`
+
+### **Production Features**
+- **Folder trust on launch** — Offers to trust project directory for served agent; persistent policy grant written to config
+- **Live transcript streaming** — Agent responses stream in real-time; delta rendering as tokens arrive
+- **Connection modals** — Connector setup via masked terminal modals; secure credential entry without routing to CLI handler
+
+### **UI Components**
+- **Split-pane layout** — Transcript view (left) + Activity panel (right) + Input composer (bottom); efficient screen use
+- **Markdown-lite rendering** — Bold, italic, code formatting in transcript; full rendering in web dashboard
+- **Tool-call activity panel** — Bounded row buffer shows recent tool invocations; live updates in attach mode
+
+### **Command System**
+- **Slash-aware autocomplete** — Tab completion for `/commands`; shows available options inline
+- **In-session history** — Up/down arrows navigate command history; persists across sessions
+- **Built-in commands** — `/help`, `/clear`, `/quit`, `/connect`, `/connections` handled locally
+
+---
+
 ## 🏗️ Where It Fits
 
 A surface / terminal-UI layer. It attaches to the gateway that owns the agent;

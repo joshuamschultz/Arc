@@ -94,6 +94,7 @@ from arcagent.modules.tasks.node_execution import (
 )
 from arcagent.tools._decorator import background_task, hook, tool
 from arcagent.utils.json_args import as_optional_object
+from arcagent.utils.moment import moment_cues
 from arcagent.utils.sanitizer import sanitize_text
 
 # A SQLite lock-timeout under shared-db contention surfaces as
@@ -783,6 +784,30 @@ async def _dispatch_tick() -> None:
     await _run_task(st, started, run_id, self_did)
 
 
+async def _announce_task_moment(st: _runtime._State, task: Task) -> None:
+    """Announce a ``task_start`` moment on the bus before the task run begins.
+
+    Best-effort (SPEC-071): a Brain (arcmemory) may fire a proactive recall off
+    this, but a moment emit must never break task dispatch — any failure is
+    logged and swallowed. No-op when the agent has no bus (bare/test paths).
+    """
+    if st.bus is None:
+        return
+    try:
+        prompt = _format_task_prompt(task)
+        await st.bus.emit(
+            "agent:moment",
+            {
+                "kind": "task_start",
+                "cues": moment_cues(prompt),
+                "text": prompt,
+                "session_id": _session_key(task.id),
+            },
+        )
+    except Exception:  # reason: fail-open — a moment emit must not break dispatch
+        _logger.exception("task_start moment emit failed for task %s", task.id)
+
+
 async def _run_task(st: _runtime._State, task: Task, run_id: str, self_did: str) -> None:
     """Drive one dispatched run under the reliability wrapper (P1).
 
@@ -794,6 +819,7 @@ async def _run_task(st: _runtime._State, task: Task, run_id: str, self_did: str)
     cancel (the watcher cancelled the run, recorded in ``st.cancelling``) is a
     terminal dead-letter — process shutdown re-raises instead.
     """
+    await _announce_task_moment(st, task)
     timeout = _resolve_timeout(task, st.config)
     node = node_from_task(task)
     run_kwargs: dict[str, Any] = {}

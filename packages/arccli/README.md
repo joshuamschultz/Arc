@@ -24,6 +24,42 @@ It's built on a **centralized slash-command registry** with lazy handler dispatc
 
 ---
 
+## ⭐ Top Features
+
+What makes `arccli` the definitive command-line interface for agent operations:
+
+### **Unified Interface**
+- **Single `arc` command** — Every Arc operation is one `arc` subcommand; no scattered CLI tools to remember
+- **Slash-command registry** — Shared registry with `arcgateway` and platform adapters; same contract across CLI, Slack, Telegram, web chat
+- **No third-party CLI frameworks** — Uses stdlib `argparse` internally; fewer dependencies in the trust path
+
+### **Operator Experience**
+- **Interactive REPL** — Multiline editor with Shift+Enter for newlines; tab-completion; `/commands` for in-chat actions
+- **`--json` on every data command** — Structured output for CI/CD pipelines; no screen-scraping required
+- **Non-interactive variants** — Every interactive command has a scripted equivalent (`arc init --tier`, `arc agent build --check`)
+
+### **Comprehensive Coverage**
+- **13 command groups** — Agent lifecycle, LLM ops, team messaging, tasks, memory, connectors, modules, blueprints, workflows, approvals, and more
+- **Soft-imported surfaces** — Optional packages (`arcui`, `arcgateway`, `arctui`) register their commands only when installed
+- **Cheat sheet built-in** — Every command documented with examples; `--help` shows tier defaults and flag combinations
+
+### **Command Architecture**
+- **Slash-command registry** — Shared registry with `arcgateway` and platform adapters; same contract across CLI, Slack, Telegram, web chat
+- **No third-party CLI frameworks** — Uses stdlib `argparse` internally; fewer dependencies in the trust path
+- **Two agent module CLIs** — `arc agent policy` / `arc agent browser` delegate to their packages' Click groups
+
+### **Interactive Features**
+- **REPL mode** — Multiline editor with Shift+Enter for newlines; tab-completion; `/commands` for in-chat actions
+- **JSON output** — `--json` flag on every data command; structured output for CI/CD pipelines
+- **Command discovery** — `/help` shows all available commands; dynamic based on installed packages
+
+### **Tier Wizard**
+- **Interactive setup** — `arc init` walks through tier selection, provider configuration, and API key setup
+- **Tier defaults** — Personal, Enterprise, Federal tiers provide different security and sandbox defaults
+- **Validation built-in** — `arc agent build --check` validates agent configuration before deployment
+
+---
+
 ## 🏗️ Where It Fits
 
 ```mermaid

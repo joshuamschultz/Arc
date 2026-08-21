@@ -28,6 +28,37 @@ It also handles the boring-but-critical stuff that every production LLM client e
 
 ---
 
+## ⭐ Top Features
+
+What makes `arcllm` the most transparent and secure LLM client available:
+
+### **Zero-SDK Architecture**
+- **17 providers via direct HTTP** — Anthropic, OpenAI, Google, Bedrock, Azure, and more via raw HTTPS calls; no vendor SDKs in the trust path
+- **Three runtime dependencies** — Only `httpx`, `pydantic`, and `opentelemetry-api`; minimal attack surface and easy auditing
+- **Fully inspectable traffic** — Every request/response visible in structured JSONL; no opaque SDK logging or hidden API calls
+
+### **Security & Compliance**
+- **PII redaction built-in** — Configurable redaction patterns; secrets and sensitive data stripped before hitting any provider
+- **Request signing** — Every request signed with Ed25519; tamper evidence from client to provider boundary
+- **Tier-aware provider selection** — Federal tier blocks certain providers; enterprise enforces operator-approved model lists
+
+### **Production Reliability**
+- **Fallback chains** — Automatic failover across providers with exponential backoff; configurable retry policies per-tier
+- **Rate limit handling** — Per-model rate limits with queue management; respects provider quotas automatically
+- **OpenTelemetry export** — Full trace context propagation; integrates with any OTel collector
+
+### **Modular Stack Architecture**
+- **12-layer decorator stack** — Otel → Queue → Telemetry → Audit → Guardrails → Injection → Security → CircuitBreaker → Retry → Fallback → RateLimit → Routing
+- **Opt-in modules** — Everything above Routing is optional; only load what you need
+- **Routing module (always on)** — Picks model per-call: explicit pin → tool continuity → phrase match → default
+
+### **Provider Coverage**
+- **17 cloud providers** — Anthropic, OpenAI, Google, Cohere, Mistral, Groq, DeepSeek, xAI, Together, Fireworks, Moonshot, HuggingFace, Azure OpenAI
+- **4 on-prem options** — Ollama, vLLM, HuggingFace TGI, LiteLLM proxy for air-gapped deployments
+- **No code changes for switching** — Same API across all providers; change one string to switch
+
+---
+
 ## 🏗️ Where It Fits
 
 ```mermaid

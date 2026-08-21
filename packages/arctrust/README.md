@@ -36,6 +36,43 @@ If you're building anything that needs to *prove* what happened, this is where y
 
 ---
 
+## ⭐ Top Features
+
+What makes `arctrust` the cryptographic foundation for accountable agents:
+
+### **The Four Pillars (Built-In)**
+- **DID-required identity** — Every agent, user, and operator has a `did:arc:{org}:{type}/{hash}` identity; no anonymous operations
+- **Deny-by-default policy** — `PolicyPipeline` blocks everything not explicitly allowed; fail-closed security
+- **Tamper-evident audit chains** — Hash-chained WORM records detect any modification; operators can verify integrity
+- **Ed25519 signing everywhere** — One `Signer` seam for all cryptographic operations; supports in-process or vault/HSM custody
+
+### **Shared Primitives**
+- **PII/secret redaction** — Built-in patterns for sanitizing sensitive data; prevents credential leakage to LLMs
+- **Canonical JSON** — Deterministic serialization for signing; prevents signature malleability attacks
+- **FIPS gating** — Automatic detection of FIPS-compliant environments; enforces cryptographic standards
+
+### **Tier-Aware Security**
+- **Per-tier policy enforcement** — Personal, Enterprise, Federal tiers with increasing strictness; federal refuses unsigned code
+- **Operator audit key** — Separate signing authority for audit events; agents cannot forge their own trails
+- **TOFU with approval** — Trust-on-first-use requires operator approval at enterprise/federal tiers
+
+### **Cryptographic Primitives**
+- **Ed25519 DIDs** — `did:arc:{org}:{type}/{hash}` identity format; cryptographically verifiable
+- **ECDSA-P256 + FIPS probe** — FIPS-compliant signatures when required; automatic detection
+- **Canonical JSON serialization** — Deterministic encoding for signing; prevents signature malleability
+
+### **Policy Engine**
+- **Deny-by-default** — `PolicyPipeline` blocks everything not explicitly allowed
+- **Fail-closed** — Security failures block operations; never degrade to insecure state
+- **Classification labels** — Tag data with sensitivity levels; enforce no-read-up policy
+
+### **Audit Infrastructure**
+- **WORM sink** — Write-once-read-many audit log; tamper evidence built in
+- **Hash-chained events** — Every event includes previous hash; detect any modification
+- **Operator-signed chains** — Audit events signed by operator key, not agent's DID
+
+---
+
 ## 🏗️ Where It Fits
 
 ```mermaid

@@ -20,6 +20,32 @@ It closes the last observability blind spot: traces, policy, config, skills, and
 
 ---
 
+## ⭐ Top Features
+
+What makes `arcprompt` uniquely suited for auditable prompt management:
+
+### **Signed Overlay System**
+- **Ed25519 signature verification** — Every prompt overlay must be signed; unsigned or wrong-key overlays fail closed
+- **Two-layer resolution** — Overlay prompts override stock prompts with first-match-wins semantics; snapshot at run start for consistency
+- **No silent fallbacks** — Broken overlays raise errors; never silently replaced by stock prompts
+
+### **Provenance & Audit**
+- **Per-run prompt provenance events** — One audit event per run enumerates every prompt's source, hash, and signer DID
+- **Version identity via sha256** — Content-derived hashes, not authored version fields; prevents version confusion attacks
+- **Policy-gated writes** — `prompt:write` actions go through `arctrust.policy.PolicyPipeline`; deny-by-default enforcement
+
+### **Prompt Discovery**
+- **PromptCatalog** — Discovers every stock prompt across installed packages automatically
+- **Frontmatter metadata** — `{name, description, tunable}` in YAML; self-documenting prompts
+- **Package-relative loading** — `load_stock()` for packages to load their own shipped prompts
+
+### **Overlay Management**
+- **Two-layer resolution** — Overlay prompts override stock prompts with first-match-wins semantics
+- **Snapshot at run start** — Every turn sees identical prompt bytes; no mid-run changes
+- **Signature sidecars** — `<name>.md.arcsig` Ed25519 signature files; tamper evidence
+
+---
+
 ## 🧩 Core API
 
 ```python

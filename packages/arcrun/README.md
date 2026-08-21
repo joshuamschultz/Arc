@@ -27,6 +27,44 @@ It's deliberately small. **No agent state.** No persistent identity. No skill di
 
 ---
 
+## ⭐ Top Features
+
+What makes `arcrun` the most robust and observable agent loop:
+
+### **Execution Control**
+- **Synchronous pre-await guard** — Prevents race conditions in session routing; guarantees deterministic tool sandbox isolation per run
+- **Parallel tool dispatch** — Multiple safe tools run concurrently; conflicting tools serialized automatically
+- **Hash-chained event log** — Every action emits tamper-evident events; `verify_chain()` detects any modification
+
+### **Operator Control**
+- **Steerable mid-execution** — Inject messages, follow-up at turn boundaries, or cancel running tasks with full audit attribution
+- **Multiple strategies** — Built-in ReAct, Code, Dynamic, One-shot, and Plan-Execute strategies with auto-selection based on task type
+- **Streamable API** — Real-time event streaming for UIs; `run_stream()` yields `StreamEvent`s as they happen
+
+### **Security & Isolation**
+- **Sandboxed tools** — Tools execute in isolated context; path restrictions, deny-by-default policy enforcement
+- **Tool conflict resolution** — Automatic serialization of conflicting tools; no manual coordination needed
+- **Single-writer WORM lock** — Prevents concurrent modification of audit trails; ensures integrity
+
+### **Five Execution Strategies**
+- **ReAct** — Reason + Act loop; the default fallback for most tasks
+- **Code** — Code-first generation; writes Python scripts to solve problems
+- **Dynamic** — Model authors restricted-Python orchestration; self-modifying workflows
+- **One-shot** — Single model call, no loop; cheapest possible execution
+- **Plan-Execute** — Runs flat list of independent items concurrently; parallel task processing
+
+### **Sandbox Backends**
+- **Tier-aware isolation** — Federal tier uses VM (Firecracker), enterprise Docker, personal local
+- **Fail-closed security** — No VM support at federal tier refuses execution; no silent fallback to insecure
+- **Typed exceptions** — `SandboxError`, `SandboxOOMError`, `SandboxRuntimeError`, `SandboxTimeoutError` for precise error handling
+
+### **Streaming & Events**
+- **Real-time streaming** — `run_stream()` yields `TokenEvent`, `ToolStartEvent`, `ToolEndEvent`, `TurnEndEvent`
+- **Hash-chained events** — Every event includes previous hash; `verify_chain()` detects tampering
+- **Run checkpoints** — Serializable per-turn state; resume interrupted runs from last checkpoint
+
+---
+
 ## 🏗️ Where It Fits
 
 ```mermaid
