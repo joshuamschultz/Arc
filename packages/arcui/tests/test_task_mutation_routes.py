@@ -551,6 +551,71 @@ class TestReviewGateRoutes:
         assert resp.json()["status"] == "done"
 
 
+class _StubGatePlane:
+    """Records the gate decision a route relayed, and answers a plain success."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    async def resolve_gate(
+        self, task_id: str, *, decision: str, notes: str, actor: Any
+    ) -> Any:
+        from arcui.routes.workflows import ControlPlaneResult
+
+        self.calls.append((task_id, decision))
+        return ControlPlaneResult(value={"id": task_id, "status": "failed"})
+
+
+class TestWorkflowGateTerminates:
+    """A workflow gate task must resolve through the gate plane, never the generic
+    review flip that bounces it back to ``todo`` for endless re-dispatch."""
+
+    def _gate_app(self, tmp_path: Path) -> tuple[Starlette, AuthConfig, _StubGatePlane]:
+        app, auth = _make_app(tmp_path)
+        plane = _StubGatePlane()
+        app.state.gate_control_plane = plane
+        return app, auth, plane
+
+    def test_rejecting_a_gate_task_fails_the_run_and_never_re_dispatches(
+        self, tmp_path: Path
+    ) -> None:
+        tid = "wf/run-7ad5f11d97e1/approve/0"
+        asyncio.run(
+            _seed(
+                tmp_path,
+                [_task(tid, owner_did="did:arc:x/a", status="review",
+                       metadata={"node_kind": "gate"})],
+            )
+        )
+        app, auth, plane = self._gate_app(tmp_path)
+        client = TestClient(app)
+
+        resp = client.post(f"/api/tasks/{tid}/reject", headers=_operator(auth))
+
+        assert resp.status_code == 200, resp.text
+        assert plane.calls == [(tid, "fail_run")]
+        # the generic review flip never ran: the task was not pushed to todo.
+        store = asyncio.run(_seed_store(tmp_path))
+        assert asyncio.run(store.get(tid)).status != "todo"
+
+    def test_approving_a_gate_task_delegates_approve(self, tmp_path: Path) -> None:
+        tid = "wf/run-abc/approve/0"
+        asyncio.run(
+            _seed(
+                tmp_path,
+                [_task(tid, owner_did="did:arc:x/a", status="review",
+                       metadata={"node_kind": "gate"})],
+            )
+        )
+        app, auth, plane = self._gate_app(tmp_path)
+        client = TestClient(app)
+
+        resp = client.post(f"/api/tasks/{tid}/approve", headers=_operator(auth))
+
+        assert resp.status_code == 200, resp.text
+        assert plane.calls == [(tid, "approve")]
+
+
 class TestHandoffReassign:
     def test_operator_reassigns_owner_via_patch(self, tmp_path: Path) -> None:
         """Handoff: PATCH owner_did moves an at-rest task to a new owner, who

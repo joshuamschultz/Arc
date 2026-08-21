@@ -290,8 +290,19 @@ async def _review_decision(request: Request, *, approve: bool) -> Response:
         return _error("operator_role_required", 403)
 
     store = request.app.state.task_store
-    if await store.get(task_id) is None:
+    task = await store.get(task_id)
+    if task is None:
         return _error("not found", 404)
+
+    # A workflow gate wears the ``review`` status but is not an ordinary review
+    # task: rejecting it must fail the whole run (the runner acts on that
+    # decision), never bounce it to ``todo`` where the dispatcher re-runs it and
+    # it lands back in review — the loop an operator sees as "reject does
+    # nothing". Gate resolution belongs to the runner's control plane, so it is
+    # relayed there rather than flipped in the task store here.
+    if str(task.metadata.get("node_kind", "")) == "gate":
+        return await _resolve_gate(request, task_id, approve=approve, target=target)
+
     updated = (
         await store.approve_review(task_id, actor_did=_CREATOR)
         if approve
@@ -305,6 +316,28 @@ async def _review_decision(request: Request, *, approve: bool) -> Response:
 
     emit_mutation_audit(request, target=target, operation=operation, outcome="applied")
     return JSONResponse(updated.model_dump(mode="json"))
+
+
+async def _resolve_gate(
+    request: Request, task_id: str, *, approve: bool, target: str
+) -> Response:
+    """Relay a gate task's approve/reject to the runner's gate control plane.
+
+    Approve continues the run; reject fails it and records the rejection the
+    runner acts on — the terminal outcome the generic review flip could not
+    produce. When no runner is embedded the plane is absent and the operator is
+    told so (503) rather than silently falling back to the looping path.
+    """
+    from arcui.routes.workflows import _actor, _gate_plane, _relay
+
+    plane = _gate_plane(request)
+    if plane is None:
+        return _error("gate_control_plane_unavailable", 503)
+    decision = "approve" if approve else "fail_run"
+    result = await plane.resolve_gate(
+        task_id, decision=decision, notes="", actor=_actor(request)
+    )
+    return _relay(request, result, target=target, operation="gate.resolve", ok_status=200)
 
 
 async def approve_task(request: Request) -> Response:
