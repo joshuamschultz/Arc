@@ -160,6 +160,30 @@ class TestTrackRuns:
         total = sum(len(line) for line in st.transcript)
         assert total <= 1000 + len(big)  # bounded; last line may straddle the cap
 
+    async def test_a_single_oversized_message_cannot_defeat_the_budget(
+        self, tmp_path: Path
+    ) -> None:
+        """One giant turn (a coding agent's file/tool dump) must still be bounded.
+
+        Dropping oldest lines leaves the last line whole, so a lone over-budget
+        message sailed straight into the workpad rewrite — the path that made a
+        few-thousand-char budget resend a ~190k-token transcript every run.
+        """
+        from arcagent.modules.workpad.capabilities import track_runs
+
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        _runtime.configure(
+            workspace=ws,
+            agent_name="t",
+            agent_did="did:arc:test-workpad",
+            config={"every_n_runs": 100, "max_transcript_chars": 1000},
+        )
+        await track_runs(_post_respond("go", "z" * 200_000))
+        st = _runtime.state()
+        total = sum(len(line) for line in st.transcript)
+        assert total <= 1000 + 100, total
+
 
 @pytest.mark.asyncio
 class TestPerformMaintenance:

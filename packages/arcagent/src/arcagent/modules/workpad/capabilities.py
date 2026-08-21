@@ -146,10 +146,21 @@ def _accumulate(st: _runtime._State, messages: list[Any]) -> None:
 
 
 def _trim_transcript(st: _runtime._State) -> None:
-    """Drop oldest lines while the accumulated transcript exceeds its budget."""
+    """Bound the accumulated transcript to its budget.
+
+    Drop oldest lines first; then, if a single remaining line is itself over
+    budget — a coding agent's turn can carry one enormous file or tool dump —
+    truncate it. Without that last step a lone over-budget message passed
+    straight through, which is what let a few-thousand-char budget resend a
+    ~190k-token transcript to the workpad rewrite every run.
+    """
+    budget = st.config.max_transcript_chars
     total = sum(len(line) for line in st.transcript)
-    while len(st.transcript) > 1 and total > st.config.max_transcript_chars:
+    while len(st.transcript) > 1 and total > budget:
         total -= len(st.transcript.pop(0))
+    if st.transcript and len(st.transcript[-1]) > budget:
+        line = st.transcript[-1]
+        st.transcript[-1] = f"{line[:budget]}…[+{len(line) - budget} chars truncated]"
 
 
 def _drain_transcript(st: _runtime._State) -> str:
