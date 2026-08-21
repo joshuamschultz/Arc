@@ -12,9 +12,9 @@ import { LoadingRows, EmptyState } from '@/components/states'
 import { StatusText } from '@/components/status-badge'
 import { TraceDrawer } from '@/components/trace-drawer'
 import { mergeTimeline, type Item, type ToolItem } from '@/lib/run-timeline'
-import { useRunTimeline } from '@/lib/queries'
+import { useRunRecalls, useRunTimeline } from '@/lib/queries'
 import { fmtLatency, fmtNumber, fmtTime, shortId } from '@/lib/format'
-import type { RunSummary, Trace } from '@/lib/types'
+import type { AuditEvent, RunSummary, Trace } from '@/lib/types'
 
 /** Render a tool payload readably: strings as text, objects as formatted JSON. */
 function PayloadView({ value }: { value: unknown }) {
@@ -158,6 +158,50 @@ function TimelineItem({ item, onOpenTrace }: { item: Item; onOpenTrace: (traceId
   )
 }
 
+/** The memory cards this run recalled, from its `memory.recall_attributed` audit
+ *  events (correlated by run_id). Each event's `extra.cards` are `"<kind>/<slug>"`
+ *  chips; `extra.trigger` (when present) names the detected moment that fired the
+ *  proactive recall. Renders nothing when the run recalled nothing. */
+function RunRecalls({ runId }: { runId: string | null }) {
+  const { data } = useRunRecalls(runId)
+  const events: AuditEvent[] = data?.events ?? []
+  const cards: { card: string; trigger: string }[] = []
+  const seen = new Set<string>()
+  for (const e of events) {
+    const extra = (e.extra ?? {}) as Record<string, unknown>
+    const trigger = typeof extra.trigger === 'string' ? extra.trigger : ''
+    const list = Array.isArray(extra.cards) ? extra.cards.map(String) : []
+    for (const card of list) {
+      if (seen.has(card)) continue
+      seen.add(card)
+      cards.push({ card, trigger })
+    }
+  }
+  if (cards.length === 0) return null
+  return (
+    <div className="mb-1 space-y-2 rounded-lg border border-border bg-muted/20 p-3">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+        Recalled cards
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {cards.map(({ card, trigger }) => (
+          <span
+            key={card}
+            className="inline-flex items-center gap-1 rounded-sm border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-foreground"
+          >
+            {card}
+            {trigger && (
+              <span className="rounded-sm bg-muted/70 px-1 text-[10px] text-muted-foreground">
+                {trigger}
+              </span>
+            )}
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 /** Per-run timeline in a side drawer: tools (with in/out), code, llm, lifecycle. */
 export function RunDetailDrawer({
   run,
@@ -189,6 +233,7 @@ export function RunDetailDrawer({
             </SheetDescription>
           </SheetHeader>
           <div className="flex-1 space-y-1.5 overflow-auto p-4">
+            <RunRecalls runId={open ? run?.run_id ?? null : null} />
             {isLoading && <LoadingRows rows={6} />}
             {!isLoading && !items.length && <EmptyState title="No steps recorded for this run" />}
             {items.map((item, i) => (

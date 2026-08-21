@@ -6,6 +6,7 @@ request→response read from ``app.state.observe`` (the arcstore mirror).
 
 - ``GET /api/runs`` — list of real runs (one per request_id), newest first.
 - ``GET /api/runs/{run_id}/timeline`` — merged tool/code/llm/run timeline.
+- ``GET /api/runs/{run_id}/recalls`` — memory recall-attribution events for a run.
 - ``GET /api/spawn-tree?root=<did>`` — parent→child lineage tree.
 - ``GET /api/stats/by-identity?window=<w>`` — per-identity LLM cost (parent vs child).
 """
@@ -47,6 +48,15 @@ async def get_run_timeline(request: Request) -> JSONResponse:
     return JSONResponse({"run_id": run_id, "timeline": timeline})
 
 
+async def get_run_recalls(request: Request) -> JSONResponse:
+    """GET /api/runs/{run_id}/recalls — recall cards attributed to this run."""
+    run_id = request.path_params["run_id"]
+    if not _VALID_ID_RE.match(run_id):
+        return _invalid("Invalid run_id format")
+    events = await request.app.state.observe.run_recalls(run_id)
+    return JSONResponse({"events": events})
+
+
 async def get_spawn_tree(request: Request) -> JSONResponse:
     """GET /api/spawn-tree?root=<did> — parent→child lineage tree."""
     root = request.query_params.get("root")
@@ -67,6 +77,7 @@ async def get_stats_by_identity(request: Request) -> JSONResponse:
 routes = [
     Route("/api/runs", get_runs),
     Route("/api/runs/{run_id}/timeline", get_run_timeline),
+    Route("/api/runs/{run_id}/recalls", get_run_recalls, methods=["GET"]),
     Route("/api/spawn-tree", get_spawn_tree),
     Route("/api/stats/by-identity", get_stats_by_identity),
 ]

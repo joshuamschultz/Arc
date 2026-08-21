@@ -358,4 +358,8 @@ def _worm_row(record: dict[str, Any], verified: bool) -> dict[str, Any]:
         "prev_hash": record.get("prev_hash"),
         "signature": record.get("signature"),
         "verified": verified,
+        # SPEC-073 Phase D2 — run correlation (request_id) + attribution payload
+        # (extra.cards/trigger) for memory.recall_attributed events.
+        "request_id": event.get("request_id"),
+        "extra": event.get("extra"),
     }

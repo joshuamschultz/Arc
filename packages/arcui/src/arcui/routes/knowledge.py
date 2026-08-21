@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from arcmemory.operator import MemoryOperator, MutationResult, MutationStatus
+from arcmemory.provider import build_embedder
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
@@ -46,9 +47,34 @@ def _resolve_agent(request: Request, agent_id: str) -> Any | None:
     return None
 
 
+def _memory_embedder(agent_root: Path, agent_did: str) -> Any | None:
+    """Build the agent's configured embedder from ``[modules.memory]`` in arcagent.toml.
+
+    Mirrors ``_context_budget``'s tomllib read: absent/unreadable config or an
+    explicit ``embed_backend = "none"`` degrades to no embedder rather than
+    raising — this is a read route and must never crash on bad/missing config.
+    """
+    try:
+        data = tomllib.loads((agent_root / "arcagent.toml").read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    memory_config = data.get("modules", {}).get("memory", {})
+    embed_backend = str(memory_config.get("embed_backend", "local"))
+    if embed_backend == "none":
+        return None
+    embed_model = str(memory_config.get("embed_model", ""))
+    embed_base_url = str(memory_config.get("embed_base_url", ""))
+    try:
+        return build_embedder(agent_did, embed_backend, embed_model, base_url=embed_base_url)
+    except Exception:
+        logger.warning("knowledge route: failed to build memory embedder for %s", agent_did)
+        return None
+
+
 def _operator_for(agent_root: Path, agent_did: str) -> MemoryOperator:
     """Build a MemoryOperator over ``<agent_root>/workspace/memory``."""
-    return MemoryOperator(agent_root / "workspace", agent_did)
+    embedder = _memory_embedder(agent_root, agent_did)
+    return MemoryOperator(agent_root / "workspace", agent_did, embedder=embedder)
 
 
 def _agent_not_found(agent_id: str) -> JSONResponse:

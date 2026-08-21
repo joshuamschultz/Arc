@@ -224,6 +224,21 @@ class Observe:
             "audit_chain", where=where or None, order_by="seq DESC", limit=limit
         )
 
+    async def run_recalls(self, run_id: str) -> list[dict[str, Any]]:
+        """Recall-attribution events correlated to one run (SPEC-073 Phase D2).
+
+        Filters the durable ``audit_chain`` mirror to ``memory.recall_attributed``
+        events stamped with this run's ``request_id`` — the cards/trigger the
+        memory brain surfaced during this run, for the run drawer.
+        """
+        await self._ensure()
+        return await self._backend.query(
+            "audit_chain",
+            where={"request_id": run_id, "action": "memory.recall_attributed"},
+            order_by="seq DESC",
+            limit=50,
+        )
+
     async def tasks(
         self, *, owner_did: str | None = None, status: str | None = None
     ) -> list[dict[str, Any]]:

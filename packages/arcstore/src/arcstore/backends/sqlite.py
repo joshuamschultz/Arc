@@ -80,6 +80,11 @@ _AUDIT_COLUMNS = (
     "prev_hash",
     "signature",
     "verified",
+    # SPEC-073 Phase D2 — run-correlated recall attribution (memory.recall_attributed
+    # events carry request_id + extra.cards/trigger); self-healed onto pre-existing
+    # DBs by _reconcile_columns.
+    "request_id",
+    "extra",
 )
 # The arcskill candidate-store mirror (SPEC-054 REQ-120). ``body_hash`` NULL
 # marks a pending/pruned body (manifest-present, file-absent).

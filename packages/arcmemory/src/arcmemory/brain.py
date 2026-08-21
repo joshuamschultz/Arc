@@ -28,6 +28,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from arcstore.approvals import ApprovalStore
+from arcstore.spool import current_request_id
 from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
 from arctrust.classification import dominates, parse_classification
 from arctrust.identity import AgentIdentity
@@ -427,6 +428,7 @@ class ArcMemoryBrain:
                 action="memory.recall_attributed",
                 target="memory",
                 outcome="allow",
+                request_id=current_request_id(),
                 extra=extra,
             ),
             self._audit,

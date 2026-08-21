@@ -749,6 +749,13 @@ export const useRunTimeline = (runId: string | null) =>
     refetchInterval: 4000,
   })
 
+export const useRunRecalls = (runId: string | null) =>
+  useQuery<AuditEventsResponse>({
+    queryKey: ['run', runId, 'recalls'],
+    queryFn: ({ signal }) => apiGet(`/api/runs/${encodeURIComponent(runId!)}/recalls`, signal),
+    enabled: !!runId,
+  })
+
 export const useSpawnTree = (root: string | null) =>
   useApiQuery<SpawnTreeResponse>(
     ['spawn-tree', root],
