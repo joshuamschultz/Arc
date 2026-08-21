@@ -1,0 +1,20 @@
+{
+  "feature": "arcmemory-datasource-ingestion",
+  "brainstorm_path": null,
+  "current_category": null,
+  "current_decision": 0,
+  "decisions": {},
+  "auto_applied": [],
+  "locked_decisions": [],
+  "open_questions": [],
+  "notes": [],
+  "meta": {
+    "last_updated": "2026-08-21",
+    "sessions": 1
+  },
+  "status": "complete",
+  "id_range": "D-683 to D-705",
+  "decisions_user": 15,
+  "decisions_auto": 8,
+  "next": "deepen"
+}

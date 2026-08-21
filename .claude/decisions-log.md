@@ -7101,3 +7101,203 @@ _(none)_
 ### Related Solutions
 _(none)_
 
+
+---
+
+
+---
+
+## Arcmemory Datasource Ingestion & Routing — Build Decisions (2026-08-21)
+
+**Phase**: build | **Status**: complete | **Total decisions**: 23 (15 user, 8 auto-applied)
+**ID range**: D-683 to D-705
+**Priority framework**: simplicity → modularity → security → scalability
+
+### Summary
+Connect data sources and route their content to three homes through arcmemory as the routing brain: memory (events/outcomes/procedures), hybrid document-search over blob storage, and a structured datastore for exact lookup. Agent proposes a source-to-home mapping on connect; operator approves once. Distinct source-scoped retrieval tools; living connections (bounded backfill + incremental sync). Builds on the 2026-08-04 connector-extensions work (auth/transport) and the shipped SPEC-041/071/072 memory. First proof is a triad, one connector per axis: Slack (memory), Dropbox (doc-search), SQLite (datastore).
+
+### Auto-Applied (Compliance Mandates)
+| ID | Category | Decision | Mandated Answer | Citation |
+|---|---|---|---|---|
+| D-692 | Security | Identity on ingest + retrieval | Every ingest batch and every retrieval/query dispatch carries caller_did; sources scoped per agent DID (shared-nothing isolation, LLM08). | fedramp/nist (NIST IA) — CLAUDE.md Four Pillars |
+| D-693 | Audit & Compliance | Audit chokepoint | arctrust.audit.emit fires on every ingest batch, mapping proposal/approval, and each retrieval/query — the single emission point, sinks fan out. | fedramp/nist (NIST AU) — CLAUDE.md Four Pillars |
+| D-694 | Security | Authorization on retrieval tools | The 5-layer PolicyPipeline gates memory_recall, document_search, and datastore_query; first-DENY-wins, fail-closed on exceptions. | fedramp/nist (NIST AC) — arctrust.policy.PolicyPipeline |
+| D-695 | Audit & Compliance | Classification no-read-up | Every indexed chunk, db result, and memory card carries its source's classification; recall/search/query gate via arctrust dominates (reuse security.gate_no_read_up). Federal strict fails closed on an unlabeled item. | fedramp/nist (ADR-019) — LLM02/ASI03 |
+| D-696 | Security | Untrusted ingested content | Ingested bodies run security.sanitize (NFKC, invisibles strip, injection-pattern drop) + secret redaction at ingest, and every retrieval result is boundary_mark-framed as inert DATA before it reaches the model. Never execute or trust ingested content. | OWASP LLM01 (prompt injection) / ASI06 (memory poisoning) |
+| D-697 | Security | Secrets + transport | Connectors hold source credentials (vault-backed, short-lived; never on the filesystem); this ingestion layer never sees a raw secret. TLS in transit on every source fetch. | OWASP baseline + LLM07 — Arc standing rule |
+| D-698 | Audit & Compliance | Signed connector supply chain | Connectors are signed, verified extensions (Sigstore + Rekor, per the 2026-08-04 connector-extensions work); pip-audit CI gate; remote connector code and content treated as untrusted at the boundary. | fedramp/CMMC supply chain — OWASP LLM03/ASI04 |
+| D-699 | Observability | Telemetry on ingest + retrieval | OpenTelemetry spans + structured logs on every ingest batch and each retrieval/query, correlated to the run — reuse arcmemory telemetry. | fedramp/nist — CLAUDE.md Observability |
+
+### Architecture
+
+#### D-683: Ingestion pipeline shape
+**Decision**: Adapter -> Router -> 3 sinks: each source type gets a thin arcmemory source adapter that normalizes its stream into typed records + a shape hint; one Router applies the approved mapping and dispatches each record to the memory sink, the doc-search indexer, or the datastore registrar. The Router is fan-out capable (one record may go to more than one home).
+**Priority**: Simplicity + Modularity
+**Alternatives**: Per-home ingesters (routing scatters across homes); connector pushes directly to homes (reverses the boundary, vendor logic leaks into homes).
+**Rationale**: One pipeline and one routing brain keeps the memory/doc/db decision in exactly one place; adapters stay pluggable per source. Fan-out matches the supermemory pipeline where one document feeds both searchable-memory and document-search.
+
+#### D-684: Connector -> arcmemory ingest seam
+**Decision**: Brain-port push (batched): arcmemory adds ingestion entrypoints to its structural Brain port (register_source / propose_mapping / ingest_batch), speaking primitives like capture()/on_moment(). arcagent's connector orchestration fetches and pushes batches; the connector owns its fetch cursor (resumable), arcmemory ingests idempotently (dedup by content hash).
+**Priority**: Simplicity
+**Alternatives**: Injected SourceReader Protocol (arcmemory pulls, must know each source's paging); arcstore spool handoff (fully decoupled + durable backfill, more moving parts).
+**Rationale**: arcmemory sits below arcagent and cannot import connectors; a push seam mirrors the existing capture/on_moment ports and keeps the DAG intact. Connector-owned cursor + idempotent ingest gives resumability without a spool for v1; a spool can layer in later for very large backfills.
+
+#### D-686: Index engine + per-source pools
+**Decision**: Reuse the existing hybrid SurfaceIndex machinery (FTS5/BM25 + vectors + graph + recency, RRF-fused) for doc-search, but keep each connected source's blob chunks in its OWN index namespace/container so doc-search and memory-recall never drown each other.
+**Priority**: Simplicity + Modularity
+**Alternatives**: Reuse the index as-is into the same memory pool (blob chunks flood memory recall); a new dedicated document engine (max isolation, a second engine to maintain).
+**Rationale**: DRY on the tested fusion engine while isolated per-source containers prevent cross-contamination and give per-source lifecycle (disconnect drops a container). Reinforces the distinct-tools boundary.
+
+#### D-688: Re-index strategy + sync by mutability
+**Decision**: Always re-index every source into its own arcmemory container (extract -> chunk -> embed -> hybrid index), so one uniform search applies and our no-read-up gate + audit cover every result. Sync strategy is set per source by mutability: immutable sources (email, past messages) are append-only (backfill once, cursor forward, no reconciliation); mutable sources (files, pages) reconcile (webhook/etag diffing, update + delete propagation).
+**Priority**: Simplicity + Security
+**Alternatives**: Per-source re-index OR federate to native search (avoids re-indexing searchable sources but native results bypass our classification gate); federate-first (least storage, uneven quality, gate bypass).
+**Rationale**: Re-indexing keeps retrieval quality uniform and, critically, keeps our classification-gate + audit over every result (fedramp/nist) rather than trusting a source's native search. Federation is a flagged fast-follow once classification-passthrough is solved (open question).
+
+### Data Model
+
+#### D-685: Doc-search persistence
+**Decision**: Derived chunk index + pointer: at ingest, extract text, chunk, embed; persist chunks (text for BM25) + vectors + a pointer (source URI, classification, metadata) in arcmemory's DISPOSABLE index. Never persist the raw file body as a durable artifact. Retrieval returns the best chunk + pointer; the agent fetches the full doc via the connector on demand.
+**Priority**: Simplicity
+**Alternatives**: Metadata/ontology-only (no semantic search over contents); full mirror of bodies (violates 'never the bytes', duplicates source of truth).
+**Rationale**: True hybrid semantic+keyword search needs the body chunked/embedded, but the index stays derived/rebuildable (matches arcmemory's disposable-index ethos) and points back to the source rather than owning the bytes.
+
+#### D-687: Index storage backend
+**Decision**: Pluggable index backend seam, SQLite+sqlite-vec as the zero-config default, Postgres+pgvector as an opt-in backend for scale/SaaS. Build the abstraction now; the first-proof runs on either. Coordinate the seam with the arcstore Postgres/Supabase roadmap so a future spec migrates the memory index onto the same backend rather than a throwaway.
+**Priority**: Modularity (balanced against Simplicity)
+**Alternatives**: Postgres/pgvector primary now (required external service breaks run-anywhere/cold-start/air-gapped-federal, splits storage); SQLite-only, defer Postgres to an arcstore spec (simplest now, risks a rewrite, doesn't start the roadmap).
+**Rationale**: Doc-search is the natural high-volume first customer for a real vector backend, so it is the right place to start the Postgres path — but a required Postgres would break arcmemory's run-anywhere property, so SQLite stays the default and Postgres is opt-in behind a seam. Tension named: upfront seam design cost vs a later rewrite.
+
+### API Design
+
+#### D-690: Retrieval tool surface
+**Decision**: Three generic, source-scoped tools registered in arcagent's registry (logic in arcmemory, arcrun just invokes): memory_recall (exists), document_search(query, source?, filters?) — hybrid over the doc index — and datastore_query (the typed lookup ops). Each returns typed results carrying provenance (home + source + pointer). Source is a filter argument, not a new tool per source.
+**Priority**: Simplicity + Modularity + Security + Scalability
+**Alternatives**: Per-source tools generated at connect (very legible but tool-count explodes, registry churns, per-tool allowlist churn); two tools with a unified similarity search (re-opens the rejected memory+doc merger).
+**Rationale**: Distinct tools keep result shapes and provenance legible and each dispatch independently auditable/allowlisted; a stable bounded tool set governs cleanly at federal and does not multiply with sources. Legibility of per-source tools is the tradeoff given up.
+
+### Security
+
+#### D-689: Datastore query surface
+**Decision**: Schema -> typed lookup tools: at mapping, arcmemory reads the schema and generates a bounded set of typed operations (get_record(table,key), find(table,filters,limit), list(...)); the agent calls these, never writes SQL. The layer compiles to parameterized, read-only, row/time-capped queries on a read-only connection. No general SQL console.
+**Priority**: Security + Simplicity
+**Alternatives**: Agent-authored SQL, validated + read-only (most expressive, large validation surface, LLM05 risk at federal); NL -> safe-query compile (nice UX, an LLM compile step to secure on the query path).
+**Rationale**: Typed generated operations give zero injection surface, bounded cost, and clean audit — matching the 'not a SQL console, exact lookup' scope. Expressiveness limits (joins/aggregates only if mapped) are acceptable for the 'what is invoice 001' goal and richer shapes can be added as mapped operations.
+
+#### D-691: Mapping proposal + approval
+**Decision**: Reuse the SPEC-035 mechanical operator-approval subsystem: on connect, arcmemory emits the agent's proposed source->home mapping as a pending approval row in arcstore; the operator reviews/edits and runs `arc approve`, which signs a grant pinned to the operator DID. The mapping becomes a signed, audited artifact.
+**Priority**: Simplicity + Security
+**Alternatives**: Editable config file (glass-box, git-able, but no signing/approval chain unless added); arcui visual approval (best UX, bakes a UI dependency into connect — scoped out).
+**Rationale**: Reuses proven approval + audit machinery, keeps the human step a bounded CLI step, and gives the routing decision a signed operator-DID provenance — matching 'install once, CLI + one approval'.
+
+### Integration
+
+#### D-703: Sync infrastructure ownership
+**Decision**: Sync scheduling and webhook receipt are the connector-extensions' responsibility (the 2026-08-04 project owns auth/transport/sync plumbing); this ingestion layer exposes ingest_batch plus a resync trigger and stays unaware of vendor sync wires. Incremental sync reuses Arc's existing scheduler for poll cadence; webhooks land via the gateway/connector and drive ingest_batch.
+**Priority**: Modularity
+**Alternatives**: Own the webhook receiver + poll scheduler inside arcmemory (rebuilds connector plumbing, crosses the boundary).
+**Rationale**: Keeps the transport/sync concern in the connector layer and the routing/index concern in arcmemory. Exact split of webhook-receiver vs poll-scheduler reuse is an open question for /deepen.
+
+### Performance
+
+#### D-704: Backfill bounds
+**Decision**: Backfill is windowed and size-capped per source (defaults to be set in /deepen, operator-overridable at approval) so a huge bucket or inbox cannot melt ingest. Incremental sync is bounded per tick. SQLite brute-force vec is acceptable at first-proof volume; Postgres+pgvector (D-687) is the scale path.
+**Priority**: Scalability
+**Alternatives**: Unbounded backfill (LLM10 unbounded consumption risk).
+**Rationale**: Bounded, resumable ingestion protects the box and matches the connector-owned-cursor model; the concrete caps are research for /deepen.
+
+### Extensibility
+
+#### D-700: Optional per-source capabilities + degrade
+**Decision**: Doc-search and datastore are optional capabilities active per connected source; nothing is required when no source is connected. Every new path degrades rather than crashes: no embedder -> BM25 + graph; a source offline -> serve what is already indexed; no timestamp/metadata -> unstamped. Each capability has a config off-switch.
+**Priority**: Simplicity + Scalability
+**Alternatives**: Always-on subsystems (cost when unused); hard-fail on a missing dependency (breaks run-anywhere).
+**Rationale**: Matches arcmemory's optional-extra, degrade-don't-crash ethos and keeps the personal/federal/air-gapped tiers whole.
+
+### Testing
+
+#### D-701: Triad real-path E2E
+**Decision**: The first proof is an end-to-end real-path test triad, one connector per axis — Slack (memory), Dropbox (doc-search), SQLite (datastore) — exercising connect -> propose-map -> approve -> ingest -> ontology -> retrieve -> keeps-updated, with only the connector wire faked. Each axis is falsifiable by disabling its capability. Plus unit tests per component (adapter, router, indexer, typed-query generator, sync).
+**Priority**: Security + Simplicity
+**Alternatives**: Component tests only (the producers-unwired trap — green units, dead wiring).
+**Rationale**: Demand end-to-end-through-real-path proof for each axis (feedback_producers_unwired_pattern); the triad is exactly that.
+
+### Deployment
+
+#### D-702: Backend migration path
+**Decision**: SQLite+sqlite-vec ships in every deployment (default); Postgres+pgvector is opt-in for SaaS/scale via the D-687 seam. The seam is the migration path — a future arcstore-wide spec moves the memory index onto the same backend. No forced infra for personal/federal/air-gapped.
+**Priority**: Simplicity
+**Alternatives**: Require Postgres everywhere (breaks run-anywhere).
+**Rationale**: Ships value everywhere while starting the Postgres roadmap; migration is a seam swap, not a rewrite.
+
+### UI/UX
+
+#### D-705: Connect + approval surface
+**Decision**: Not applicable as a new UI surface: connect is a CLI step and the mapping approval is the SPEC-035 CLI arc approve flow. An arcui visual approval is explicitly deferred (brainstorm scoped UI out beyond CLI + approval).
+**Priority**: Simplicity
+**Alternatives**: arcui dashboard for connect/approve (deferred).
+**Rationale**: Keeps the human step a bounded CLI paste + approve; no UI dependency in the connect path.
+
+
+### Open Questions
+- Ontology representation per home: what shape is the blob ontology (folder/type/tag graph over pointers) and the datastore ontology (schema -> typed operations + entity map)? Memory cues/entities already exist. (/deepen)
+- Doc-search index mechanics: text extraction per file type (PDF/office/markdown/images-OCR), chunking strategy, optional cross-encoder rerank, and how a remote object's classification is discovered and enforced at ingest.
+- Cross-home dedup + provenance: the same artifact reachable via Slack AND Dropbox — how is it reconciled, and how does a retrieval cite which home/source answered?
+- Sync-infra split with the connector-extensions work: which side owns the webhook receiver vs the poll scheduler, and how the resync trigger is wired.
+- Where the pluggable index-backend seam lives: arcmemory-owned vs coordinated with the arcstore Postgres/Supabase roadmap so it is not a throwaway abstraction.
+- Per-source backfill window/size caps and their operator-overridable defaults.
+- Federation-to-native-search as a fast-follow: the classification-passthrough contract a source's native search must satisfy before we trust its results.
+- Whether the three tools need a cheap 'where should I look?' router hint, or the agent's tool-selection is enough.
+
+### Related Solutions
+- .claude/brainstorms/2026-08-21-arcmemory-datasource-ingestion.md — the vision this build refines.
+- .claude/brainstorms/2026-08-04-connector-extensions.md — the connectors (auth/transport) this layer consumes; that project owns sync plumbing.
+- project_arcmemory_architecture (SPEC-041) — dual-speed, four-store, disposable-index memory the routing brain extends.
+- project_arcmemory_best_in_class_direction + SPEC-071/072 (shipped) — proactive + temporal recall; doc-search and datastore are the next retrieval axes.
+- project_mechanical_approval_subsystem (SPEC-035) — the pending-row + `arc approve` operator-DID grant reused for mapping approval (D-691).
+- project_connectors_vendor_cli_rule (D-588) — connections deployment-wide, grants per-agent; inherited boundary.
+- feedback_producers_unwired_pattern — demand real-path E2E per axis (D-701).
+
+### Research Insights (2026-08-21, /deepen)
+
+Five parallel read-only research passes, each grounded in the real code + external best practice. Findings annotate the decisions (they do not change them — decision changes are a follow-up `/build`). Every finding is ranked Simplicity → Modularity → Security → Scalability, with scalability ceiling / security posture / module-boundary called out.
+
+**KEY NEW RISKS surfaced (read first):**
+- **`vec0` has no scope column → global brute-force scan (pre-existing).** `SurfaceIndex._vec_search` (surface.py:230) `SELECT chunk_id, embedding FROM vec0` scans EVERY vector in Python cosine, filtering by scope only at hydration. Pouring a Dropbox/S3 corpus into the shared `vec0` degrades **every** agent's memory-recall latency, not just doc-search — defeating D-686's isolation intent on the vec channel alone. Load-bearing for D-686/D-687: the seam work is as much **extracting** the inline SQL out of `surface.py` into a `SqliteIndexBackend` as adding Postgres. Fix v1 = add a `chunks.scope` join-filter to `_vec_search` + mint each source as its own `Scope.key` (`<did>:doc:<source_id>`).
+- **`sanitize()` silently drops injection matches = AU-2 audit gap.** On the document path, an injection-pattern hit must emit an `ingest.injection_suspected` AuditEvent, not vanish. And `sanitize` (max_length 2000, single-line regexes) is necessary-not-sufficient for multi-KB document bodies — treat prompt-injection as risk-reduction, not prevention (LLM01).
+- **Dedup gating must be per-provenance, not item-max.** A canonical item present in a public Slack channel (CUI) and a locked Dropbox folder (SECRET) must be gated against the **provenance actually surfaced**, else a CUI-cleared caller is wrongly denied the Slack-sourced fact. Keep item-level `dominating_classification` distinct from retrieval-level per-provenance gating.
+
+#### Architecture / seam (D-683/D-684/D-703) + Sync
+- **Best practices:** Hybrid sync is the norm — webhook (near-real-time) + a **4h poll fallback** (matches supermemory), not competing primaries. Webhook leases renew at **50% of TTL** (Gmail `users.watch` = 7-day lease, expires *silently* → daily renewal cron). Reuse arcagent's shipped scheduler via `ScheduleEntry(type="interval", action="workflow_run", no prompt)` — the model validator forbids prose on a `workflow_run` (LLM01: no unsigned instruction on a signed, data-moving trigger); its circuit breaker gives free backoff-and-disable. Poll fallback 4h (webhook sources) / 15–30 min (poll-only), floor 60s.
+- **Idempotency (fills D-684):** derive a **deterministic** `event_id = sha256(source_id + external_id)` (or `content_hash(text)`) **at the arcmemory `ingest_batch` boundary** (not the connector) — `EpisodicStore.append` already does `INSERT OR REPLACE ... event_id=?`, giving row-level idempotency for free once the id is deterministic (today `capture()` uses `uuid4()`; the ingest path must not). Add `source_updated_at` to `Event` for last-writer-wins on out-of-order/retried batches; deletes are idempotent tombstones (never hard-delete — AU-2). The current 128-entry windowed `Deduper` is insufficient for a retry hours/days later.
+- **Split:** connector owns auth/token-refresh, webhook HMAC/Pub-Sub verify + receipt, and the fetch cursor; **arcagent's scheduler** owns poll timing; **arcmemory** owns `register_source`/`propose_mapping`/`ingest_batch`, index, ontology, and `event_id` derivation. arcmemory never imports scheduler/connectors — Brain port + primitives only (arch-test guarded).
+- **Module boundary:** the whole poll-trigger path (cron → signed `workflow_run` → connector sync → `ingest_batch`) never passes through a model — deterministic + auditable.
+
+#### Doc-search index mechanics (D-685/D-686/D-688)
+- **Extraction — SIMPLEST *unsafe* path is an all-in-one converter.** `markitdown`/`unstructured`/Docling are attractive (one call, every format) but are an RCE/deserialization surface on untrusted files (Docling CVE-2026-24009 PyYAML RCE; markitdown documents "does not operate in a sandbox"). Use narrow, pure-Python, single-purpose libraries behind an `Extractor` Protocol (mirrors the `Embedder`/`Reranker` seam): `pypdf` text-layer only (≥6.7.1, CVE-2026-27025), `python-docx`/`openpyxl` (read XML, never run VBA — never LibreOffice-headless/win32com), Tesseract OCR **in a resource-capped subprocess**. Run every extractor **out-of-process, CPU/time/mem-capped**, then `security.sanitize` before chunking (LLM03/ASI05).
+- **Chunking — whole-file today won't work.** `iter_source_chunks` yields 1 chunk/file; blob bodies need a new `Chunker` Protocol emitting the same `SourceChunk` shape. Defaults: **recursive-character 512 tokens / 10% overlap** (a NAACL-2025 study found fixed ~200-word ≥ semantic chunking — semantic chunking not worth the cost). Per-type: **code → AST/tree-sitter node chunking** (fixed-width breaks functions mid-body — the one place fixed splitting is wrong); tables → row-group; OCR → plain text but flag lower-confidence. Overlap matters more for BM25 than vectors; diminishing returns past ~20%. New `doc_chunk_tokens`/`doc_chunk_overlap`/`doc_rerank_margin` belong on `MemoryConfig`, tier-overridable.
+- **Rerank — clone structural.py's pattern, don't invent.** RRF is the cheap merge; a cross-encoder rerank on the **already-fused small top-K** adds ~+33–40% accuracy for ~+120ms. Reuse the existing `Reranker` Protocol + `_should_rerank` gate (enterprise/federal always; personal only on close top1/top2 margin), bounded to top 20–50. Local CPU cross-encoder (BGE-reranker/MiniLM) keeps run-anywhere/federal (no external API on classified content). Rerank is reorder-only, off the hot path, after the no-read-up gate.
+- **Separate pool (D-686):** `document_search(query, source?, filters?)` resolves `source → Scope.key` → **N `SurfaceIndex` instances (one per source), not one shared with a filter**; the router (D-683) owns source→scope resolution, `SurfaceIndex` needs no doc-awareness. Option B (one SQLite file per source pool) makes "disconnect = `rm`" literal and sidesteps the vec0-scope gap; Postgres namespace-per-source is the scale tier.
+
+#### Storage backend seam (D-687/D-702)
+- **Mirror `arcstore.backends`.** Define an arcmemory-owned `IndexBackend` Protocol (async, `@runtime_checkable`, transactions OFF the contract — arcstore's own rationale) + `open_index_backend(backend="sqlite")` factory with `_DEFERRED={"postgres"}` raising `NotImplementedError` (never silent fallback), `arcmemory[postgres]` optional extra (lazy import only inside the Postgres backend). The Protocol lives in **arcmemory** (arcstore's `db.py` DC-1: it is a "closed 5-kind operational spool," cannot host the memory index) but is a deliberate sibling of `StorageBackend` so a future arcstore-wide move is a swap, not a reinvention. Share one Postgres connection-secret seam with `arcllm/vault.py::VaultResolver` (allowlisted backend prefixes, TTL cache) so `arc[postgres]` + one `DATABASE_URL` configures both.
+- **Load-bearing refactor:** extract the inline `sqlite_vec`/FTS SQL out of `surface.py`/`db.py` into `SqliteIndexBackend`; `rrf_fuse` + graph + recency + degrade stay **above** the Protocol (they operate on `(chunk_id, score)` lists) — proof the seam is drawn right.
+- **Scale ceilings:** sqlite-vec brute-force comfortable to low tens-of-thousands (surface.py docstring) → low millions; SQLite single-writer breaks ~2–3 concurrent writers (shared-nothing per workspace masks it). pgvector **HNSW** for <~1M vectors/index (2–5× RAM, incremental), **IVFFlat** only pays off at 50M+ static. Supabase = generic Postgres+pgvector target; treat its auth/RLS/storage as a *separate optional* layer, never baked into `IndexBackend`. Multi-tenant = RLS on `tenant_id` + plain HNSW on the vector col (not composite), namespace-per-source preferred over shared-index metadata filtering.
+
+#### Ontology representation (D-689 + open Q)
+- **Both ontologies are Entity+Fact projections reusing `SemanticStore`/`types.py` verbatim** — new `entity_type` (`blob_folder`/`blob_container`, `db_table`) + a small fact vocabulary; no new graph engine, no second serialization (markdown glass-box truth + disposable SQLite index, the existing two-surface pattern).
+- **Blob ontology = coarse folder/type/tag summary** (data-catalog shape — DCAT2/OpenMetadata, NOT RDF/SHACL/knowledge-graph, which is cross-system-interop overkill). O(folders/types) — **bounded by directory cardinality, not object count** — so it stays cheap for a million-object bucket; per-file pointer/classification detail stays in `chunks`. Folder/type names feed `tagging.entity_vocabulary` so graph spreading-activation connects "invoice" → the Finance/ folder → chunks.
+- **Datastore ontology = one Entity per table** (Facts: PK, row_count, searchable_columns, `fk: a.col -> b.col` as a fact) + an entity-map (`invoice -> table:invoices`). Generate the D-689 typed ops from schema introspection (SQLAlchemy `reflect()`) FK-derived (PostgREST/Hasura pattern), joins = **1-hop FK-follow only**. O(tables) not O(rows). Current text-to-SQL literature agrees schema-linking + safe execution is the hard part — reinforces D-689's no-raw-SQL, no-NL→SQL choice.
+- **Mapping artifact:** store the source→home mapping as **Facts on a `mapping` Entity per source** — the existing additive `| was:` contradiction trail gives "re-propose when the source changes shape" for free; the SPEC-035 signed operator-DID grant (D-691) is the approval artifact.
+
+#### Ingest security (D-692/695/696/698 + open Q)
+- **Classification discovery precedence:** (1) source-native label (S3 tag / Drive DLP / M365 sensitivity) — trust, don't downgrade; (2) operator-set container label at connector-install; (3) **fail-closed default** (federal `strict=True` → reject/flag, never silent UNCLASSIFIED). New `ingest.classify_remote_object` reusing `arctrust.classification` only. Content scan (`arctrust.redaction.RegexPiiDetector`) runs async slow-path and only **raises** via `dominating_classification` (never lowers) — an SSN in a public channel bumps to CUI.
+- **Document injection:** add `document_sanitize()` beside `sanitize()` (chunked, stronger prose pattern set, **audit-emit-on-match**), extend `_defang` to other framing tokens (`<system>`, provider role tags), distill large docs rather than inject raw, and **never place ingested text in a system-role position** (an arcllm call-site contract) — plus capability restriction: content the model *reads* never gains tool authority.
+- **Dedup/provenance:** canonical `content_hash → item_id` (persisted table in `MemoryDB`, not the 128-entry ring) + an **additive provenance list** (mirrors `was:` trail); effective classification = `dominating(provenances)` for the item, but **gate per-provenance at retrieval**; `Recall.source` cites the home that actually answered. Semantic near-dup dedup = slow/consolidation path only (extend `SemanticStore.merge_into`), never the zero-LLM fast path.
+- **Federation contract (fast-follow):** a `FederatedRecallAdapter` returns arcmemory's own `Recall` type **pre-labeled** (connector applies the discovery chain + fail-closed); **conjunct** source-native ACL AND arctrust clearance (never substitute); audit parity on the WORM chain; per-query cost → cache labels with a TTL.
+
+#### References
+- Skills to load in `/implement`: `coding-workflow:python-patterns` (all code), `coding-workflow:postgres-patterns` (the pgvector opt-in backend). No FastAPI/React surface.
+- Key code seams to reuse: `security.py` (sanitize/Deduper/gate_no_read_up/boundary_mark/dominating_classification), `stores/semantic.py` (Entity/Fact + `was:` trail + `merge_into`), `index/{surface,structural,fusion,rebuild}.py` (RRF, Embedder/Reranker Protocols), `stores/episodic.py` (`INSERT OR REPLACE` idempotency), `db.py` (MemoryDB), `arcstore/backends/*` (Protocol/factory/optional-extra pattern to mirror), `arcllm/vault.py` (secret seam), arcagent `modules/scheduler` (`workflow_run` triggers), `arctrust/{classification,redaction,audit}.py`.
+- External: pgvector HNSW/IVFFlat selection; sqlite-vec vs pgvector scale; Elastic S3 connector (10MB/file cap); supermemory connectors (webhook + 4h poll); OWASP LLM01/LLM03/LLM10/ASI05/ASI06; NAACL-2025 chunking study; cAST code chunking; Docling CVE-2026-24009 / pypdf CVE-2026-27025; PostgREST/Hasura schema→API; Supabase RLS multi-tenant pgvector.
+
