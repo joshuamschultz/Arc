@@ -22,21 +22,30 @@ import type {
   AgentCapabilityInventory,
   AgentsListResponse,
   AuditEventsResponse,
+  BlobFoldersResponse,
   ChannelsResponse,
   GatewaysResponse,
   ConfigResponse,
   DailyNoteDetail,
   DailyNotesResponse,
+  DatastoreQueryResponse,
+  DatastoreTablesResponse,
   Dict,
+  DocumentsResponse,
   EntitiesResponse,
   FileReadResponse,
   FilesTreeResponse,
   IdentityCostResponse,
+  IndexHealthResponse,
   InsightsResponse,
   LinksResponse,
+  MappingResponse,
+  MappingsResponse,
   MemoryPage,
   MemorySearchResponse,
   ProceduresResponse,
+  ProvenanceResponse,
+  SourcesResponse,
   EventsResponse,
   PromptDetail,
   PromptListResponse,
@@ -337,6 +346,101 @@ export const useEntityLinks = (agentId: string | null, slug: string | null) =>
     queryFn: ({ signal }) =>
       apiGet(`/api/agents/${agentId}/knowledge/entities/${slug}/links`, signal),
     enabled: !!agentId && !!slug,
+  })
+
+// --- Connections data views (SPEC-073 — connected-source projections) -------
+//
+// Read-only offshoot of the Knowledge browser. Every hook is keyed under the
+// same `['agent', agentId, 'knowledge', <slice>, ...]` prefix as the other
+// knowledge reads, so an agent switch or a knowledge invalidation clears them
+// together.
+
+export const useSources = (agentId: string | null) =>
+  useQuery<SourcesResponse>({
+    queryKey: ['agent', agentId, 'knowledge', 'sources'],
+    queryFn: ({ signal }) => apiGet(`/api/agents/${agentId}/knowledge/sources`, signal),
+    enabled: !!agentId,
+  })
+
+export const useSourceMapping = (agentId: string | null, sourceId: string | null) =>
+  useQuery<MappingResponse>({
+    queryKey: ['agent', agentId, 'knowledge', 'sources', sourceId, 'mapping'],
+    queryFn: ({ signal }) =>
+      apiGet(
+        `/api/agents/${agentId}/knowledge/sources/${encodeURIComponent(sourceId!)}/mapping`,
+        signal,
+      ),
+    enabled: !!agentId && !!sourceId,
+  })
+
+export const useMappings = (agentId: string | null) =>
+  useQuery<MappingsResponse>({
+    queryKey: ['agent', agentId, 'knowledge', 'mappings'],
+    queryFn: ({ signal }) => apiGet(`/api/agents/${agentId}/knowledge/mappings`, signal),
+    enabled: !!agentId,
+  })
+
+export const useBlobFolders = (agentId: string | null, source?: string) =>
+  useQuery<BlobFoldersResponse>({
+    queryKey: ['agent', agentId, 'knowledge', 'blob-folders', source ?? null],
+    queryFn: ({ signal }) =>
+      apiGet(
+        `/api/agents/${agentId}/knowledge/blob-folders${source ? `?source=${encodeURIComponent(source)}` : ''}`,
+        signal,
+      ),
+    enabled: !!agentId,
+  })
+
+export const useDatastoreTables = (agentId: string | null) =>
+  useQuery<DatastoreTablesResponse>({
+    queryKey: ['agent', agentId, 'knowledge', 'datastore-tables'],
+    queryFn: ({ signal }) => apiGet(`/api/agents/${agentId}/knowledge/datastore-tables`, signal),
+    enabled: !!agentId,
+  })
+
+export const useDocuments = (agentId: string | null, source: string, q: string) =>
+  useQuery<DocumentsResponse>({
+    queryKey: ['agent', agentId, 'knowledge', 'documents', source, q],
+    queryFn: ({ signal }) =>
+      apiGet(
+        `/api/agents/${agentId}/knowledge/documents?source=${encodeURIComponent(source)}&q=${encodeURIComponent(q)}`,
+        signal,
+      ),
+    enabled: !!agentId && !!source && q.trim().length > 0,
+  })
+
+export const useDatastoreQuery = (
+  agentId: string | null,
+  source: string,
+  op: string,
+  table: string,
+  args: Record<string, string>,
+) =>
+  useQuery<DatastoreQueryResponse>({
+    queryKey: ['agent', agentId, 'knowledge', 'datastore', source, op, table, args],
+    queryFn: ({ signal }) => {
+      const qs = new URLSearchParams({ source, op, table, ...args }).toString()
+      return apiGet(`/api/agents/${agentId}/knowledge/datastore?${qs}`, signal)
+    },
+    enabled: !!agentId && !!source && !!table,
+  })
+
+export const useProvenance = (agentId: string | null, itemId: string | null) =>
+  useQuery<ProvenanceResponse>({
+    queryKey: ['agent', agentId, 'knowledge', 'provenance', itemId],
+    queryFn: ({ signal }) =>
+      apiGet(
+        `/api/agents/${agentId}/knowledge/provenance/${encodeURIComponent(itemId!)}`,
+        signal,
+      ),
+    enabled: !!agentId && !!itemId,
+  })
+
+export const useIndexHealth = (agentId: string | null) =>
+  useQuery<IndexHealthResponse>({
+    queryKey: ['agent', agentId, 'knowledge', 'index-health'],
+    queryFn: ({ signal }) => apiGet(`/api/agents/${agentId}/knowledge/index-health`, signal),
+    enabled: !!agentId,
   })
 
 // --- Curated memory layer (U3/U4 — insights, procedures, daily notes) -------

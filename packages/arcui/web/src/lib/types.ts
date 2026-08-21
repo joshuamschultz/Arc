@@ -980,3 +980,95 @@ export function asUnsatisfiedHost(body?: Record<string, unknown>): HostRequireme
   const raw = body?.unsatisfied_host
   return Array.isArray(raw) ? (raw as HostRequirement[]) : []
 }
+
+// --- Connections data views (SPEC-073) --------------------------------------
+//
+// Read-only projections of an agent's connected data sources, surfaced as an
+// offshoot of the Knowledge view. Sources, blob folders, and datastore tables
+// are all `EntityRecord`s in the semantic store (typed by `entity_type`), so
+// those responses reuse that existing shape rather than inventing a new one.
+
+/** The operator-approved routing of a source to one-or-more homes
+ *  (mirror of `arcmemory.types.SourceMapping`). */
+export interface SourceMappingItem {
+  source_id: string
+  homes: string[]
+}
+
+export interface SourcesResponse {
+  items: EntityRecord[]
+}
+
+export interface MappingsResponse {
+  items: SourceMappingItem[]
+}
+
+export interface MappingResponse {
+  item: SourceMappingItem | null
+}
+
+export interface BlobFoldersResponse {
+  items: EntityRecord[]
+}
+
+export interface DatastoreTablesResponse {
+  items: EntityRecord[]
+}
+
+/** One document-search result: chunk text + a pointer back to the original
+ *  object, never file bytes (mirror of `arcmemory.doc_index.DocHit`). */
+export interface DocHitItem {
+  chunk_id: string
+  text: string
+  pointer: string
+  source_id: string
+  score: number
+  classification: string
+  provenance: string[]
+}
+
+export interface DocumentsResponse {
+  items: DocHitItem[]
+}
+
+/** A live datastore read. `result` is the raw connector payload (a row, a list
+ *  of rows, or null) — shape is source-defined, so it stays `unknown`. */
+export interface DatastoreQueryResponse {
+  result: unknown
+}
+
+/** One source's claim on a canonical item (mirror of `arcmemory.types.Provenance`). */
+export interface ProvenanceItem {
+  source: string
+  external_id: string
+  classification: string
+}
+
+export interface ProvenanceResponse {
+  items: ProvenanceItem[]
+}
+
+/** Per-workspace index coverage — chunks indexed vs actually embedded
+ *  (mirror of `arcmemory.status.WorkspaceVectors`). */
+export interface WorkspaceVectorsItem {
+  workspace: string
+  indexed_chunks: number
+  embedded_chunks: number
+  insight_triggers: number
+}
+
+/** The honest semantic-channel probe (mirror of `arcmemory.status.SemanticStatus`). */
+export interface IndexHealthItem {
+  live: boolean
+  vec_extension: boolean
+  embedder_backend: string
+  embedder_live: boolean
+  embedder_dims: number | null
+  detail: string
+  degraded_reasons: string[]
+  workspaces: WorkspaceVectorsItem[]
+}
+
+export interface IndexHealthResponse {
+  item: IndexHealthItem
+}

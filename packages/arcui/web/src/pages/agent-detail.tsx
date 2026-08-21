@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { motion } from 'motion/react'
 import { ArrowLeft, Plus, FileText, Pencil, Mail } from 'lucide-react'
@@ -809,7 +809,7 @@ function TasksTab({ agentId }: { agentId: string }) {
   const [tagFilter, setTagFilter] = useState('all')
   const [searchParams, setSearchParams] = useSearchParams()
 
-  const tasks = q.data?.tasks ?? []
+  const tasks = useMemo(() => q.data?.tasks ?? [], [q.data])
 
   // Deep link from the overview: `?open=<task-id>` opens that task's drawer,
   // then the param is consumed so closing the drawer does not reopen it.
@@ -817,6 +817,9 @@ function TasksTab({ agentId }: { agentId: string }) {
     const openId = searchParams.get('open')
     if (!openId || tasks.length === 0) return
     const match = tasks.find((t) => t.id === openId)
+    // One-time transfer of the `?open=` deep link into drawer state, then the
+    // param is consumed below — a legitimate URL→state sync, not a render loop.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (match) setSelected(match)
     searchParams.delete('open')
     setSearchParams(searchParams, { replace: true })
@@ -1001,7 +1004,7 @@ const scheduleColumns: ColumnDef<Dict, unknown>[] = [
 
 function SchedulesTab({ agentId }: { agentId: string }) {
   const q = useAgentSchedules(agentId)
-  const rows = (q.data?.schedules ?? []) as Dict[]
+  const rows = useMemo(() => (q.data?.schedules ?? []) as Dict[], [q.data])
   const [selected, setSelected] = useState<Dict | null>(null)
   const [operatorMode] = useOperatorMode()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -1012,6 +1015,9 @@ function SchedulesTab({ agentId }: { agentId: string }) {
     const openId = searchParams.get('open')
     if (!openId || rows.length === 0) return
     const match = rows.find((r) => String(r.id) === openId)
+    // One-time transfer of the `?open=` deep link into drawer state, then the
+    // param is consumed below — a legitimate URL→state sync, not a render loop.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (match) setSelected(match)
     searchParams.delete('open')
     setSearchParams(searchParams, { replace: true })

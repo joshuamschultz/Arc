@@ -10,6 +10,7 @@ import { InsightBrowser } from '@/components/knowledge-insights'
 import { ProcedureBrowser } from '@/components/knowledge-procedures'
 import { EventBrowser } from '@/components/knowledge-events'
 import { DailyNotesBrowser } from '@/components/knowledge-daily-notes'
+import { ConnectionsBrowser } from '@/components/knowledge-connections'
 import {
   Select,
   SelectContent,
@@ -27,6 +28,7 @@ const TABS = [
   { value: 'entities', label: 'Entities' },
   { value: 'events', label: 'Events' },
   { value: 'daily-notes', label: 'Daily Notes' },
+  { value: 'connections', label: 'Connections' },
   { value: 'memories', label: 'Raw stream' },
 ]
 
@@ -119,6 +121,10 @@ export function KnowledgePage() {
 
           <TabsContent value="daily-notes" className="flex-1 overflow-auto p-6">
             <DailyNotesBrowser agentId={agentId} />
+          </TabsContent>
+
+          <TabsContent value="connections" className="flex-1 overflow-auto p-6">
+            <ConnectionsBrowser agentId={agentId} />
           </TabsContent>
 
           <TabsContent value="memories" className="flex-1 overflow-auto p-6">
