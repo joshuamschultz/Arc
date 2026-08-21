@@ -430,6 +430,100 @@ erDiagram
     PROCEDURE ||--o{ STEP : has
 ```
 
+## Proactive recall: detected moments, working set, and time
+
+*(SPEC-071 foundation; working set, mid-loop decision recall, and temporal
+reasoning are SPEC-072.)*
+
+Everything above is *pull* recall: the agent asks `memory_search`, memory answers.
+There is a second, *push* path — arcagent detects a moment worth checking and
+memory decides, deterministically, whether to say anything unprompted.
+
+**The foundation (SPEC-071).** A loop site fires `agent:moment` with a primitive
+`{kind, cues, text, session_id}` payload — `task_start`, `entity_seen`,
+`topic_shift`, and (SPEC-072) `decision_point`. The memory module's subscriber
+(`on_agent_moment`,
+`packages/arcagent/src/arcagent/modules/memory/capabilities.py:210`) hands it to
+the Brain's optional `on_moment()` — `getattr`-guarded, so a backend without it
+just no-ops. `ArcMemoryBrain.on_moment()`
+(`packages/arcmemory/src/arcmemory/brain.py:227`) runs a **model-free detector**
+per `kind` (`detectors.py`'s `evaluate_moment`/`DETECTORS`) to decide `fire` or
+not — no embedder, no LLM on this hot path. A fired moment reuses the *same*
+gated, clearance-bounded `retrieve()` pass as an explicit query, bounds the
+result to `proactive_max_cards`, and drops anything already surfaced inside the
+`WindowDedup` dedup window. The worst case is a missed recall, never a blocked
+turn — `on_moment` returns `""` on a miss and an injectable `<memory-result>`
+block on a hit.
+
+SPEC-072 adds three capabilities on top of that same `on_moment` path — no new
+recall mechanism, no new store.
+
+**1. Working-set recall (COMP-001).** The SPEC-071 detectors only saw the
+*current* turn's cues, so an entity named a turn or two ago and not repeated in
+the latest message never fired a recall for it. `WorkingSet`
+(`packages/arcmemory/src/arcmemory/detectors.py:269`) is a bounded, decaying,
+salience-filtered per-session accumulator: each `on_moment` call merges the
+turn's cues in, drops any cue not refreshed within `working_set_decay_turns`
+turns, and caps the set at `working_set_max` (newest kept) — pure and
+model-free, never touched by an embedder or LLM. The active working set is
+passed to the detectors read-only alongside the prior-turn cue baseline
+(`_MomentSessionState`), and `_augment_query()` folds any working-set cue
+missing from the literal message into the search text so the text-driven
+surface channel can still find it — a SPEC-071 moment, whose cues are already
+in the text, is left byte-for-byte unchanged. The existing `WindowDedup`
+dedup keeps the proactive block **additive**: a card already surfaced this
+window is dropped rather than repeated. Off-switch: `working_set_enabled`
+(default `true`) — `false` returns `on_moment` to its exact SPEC-071 behavior.
+
+**2. Mid-loop decision recall (COMP-003/004/005).** A detected-moment recall
+that fires *between* prompt assemblies has nowhere to inject — the prompt is
+already built. `decision_point` moments solve that by riding a channel that
+sits between loop steps instead: `decision_point_moment()`
+(`packages/arcagent/src/arcagent/core/model_manager.py:129`) turns arcrun's
+`turn.start` (the default, cheaper `pre_plan` site — no situation text, cues
+come from the working set already held) and `tool.start` (the finer, opt-in
+`pre_tool` site — the tool name as a cue, `tool(args)` as text) into
+`agent:moment` events, emitted unconditionally by the arcrun bridge. The memory
+subscriber owns the actual gate: `proactive_decision_point` (default `false`)
+must be on for `decision_point` to be honored at all, and `decision_point_pre_tool`
+(default `false`) is a further opt-in on top for the pricier per-tool-call site.
+A hit is staged via `midloop_recall.stage()` rather than the normal
+`proactive_buffer`, and drained by `ContextManager.transform_context`
+(`packages/arcagent/src/arcagent/core/session_internal/context.py:528`) —
+arcrun's existing **append-only** context-transform hook (the same one
+compaction already uses), so no new arcrun mechanism was added and arcrun stays
+completely unaware memory exists.
+
+**3. Temporal reasoning (COMP-006/007/008/009).** Every `Recall`/`RecallCard`
+already carries `established` (the `YYYY-MM-DD` the underlying memory was
+written); `render_recalls`/`boundary_mark` now surface it in-band as an
+`established="..."` attribute on the `<memory-result>` block
+(`packages/arcmemory/src/arcmemory/security.py:250`), so the model can weigh
+recency itself. A contradicted fact is never overwritten in place — it already
+folded the prior value into a `was_value` trail (see "Distill" above);
+`superseded_view()` (`packages/arcmemory/src/arcmemory/stores/semantic.py:49`)
+renders that trail as one explicit line per fact, `predicate: value (current,
+DATE) | superseded: old-value` — mark, never delete. `Retriever`'s top-level RRF
+fuse (`_rrf_fuse`, `packages/arcmemory/src/arcmemory/retrieve.py:187`) breaks
+same-score ties by `established` date, most-recent first, so a real relevance
+gap is never masked by a coin-flip on tied scores; an optional `TimeWindow`
+(`start`/`end`, inclusive) restricts a retrieval pass to a date range
+(`_within_window`). A new read-only view, `read_timeline()`
+(`packages/arcmemory/src/arcmemory/timeline.py:35`), answers "what changed over
+a period" by reading the **already-existing** event and daily-notes stores in
+chronological order — no new store engine — gated by the same no-read-up
+predicate recall uses. Off-switch: `temporal_enabled` (default `true`) —
+`false` restores pre-temporal RRF tie-break order and stops the `established`
+attribute weighing into ranking (the field itself is still shown; only the
+ranking effect turns off).
+
+All three capabilities preserve the same invariants as the rest of arcmemory:
+deterministic (no LLM/embedder anywhere on the trigger/rank path), classification-gated
+(no-read-up applies to `on_moment` exactly as it does to `retrieve`), bounded
+(`proactive_max_cards`, `working_set_max`), and audited
+(`memory.proactive_recall` fires for every moment, hit or miss). Config knobs
+are documented in full in [Config Reference](../reference/config.md).
+
 ## Security & isolation
 
 **Cross-agent isolation — the DID guard.** A single process runs many agents
@@ -535,7 +629,12 @@ knowing before you read that table: `brain` picks the implementation
 | `packages/arcagent/src/arcagent/brain/select.py` | config-driven Brain selection (`select_brain`) |
 | `packages/arcagent/src/arcagent/modules/memory/` | the *only* memory code in arcagent: hooks, one tool, DID-isolated runtime state |
 | `packages/arcmemory/src/arcmemory/provider.py` | the `build_brain(context)` factory arcagent calls |
-| `packages/arcmemory/src/arcmemory/brain.py` | `ArcMemoryBrain` — wires capture/retrieve/consolidate over the stores |
+| `packages/arcmemory/src/arcmemory/brain.py` | `ArcMemoryBrain` — wires capture/retrieve/consolidate, plus `on_moment()` (proactive recall) |
+| `packages/arcmemory/src/arcmemory/detectors.py` | model-free moment detectors (`task_start`/`entity_seen`/`topic_shift`/`decision_point`) + `WorkingSet` + `WindowDedup` |
+| `packages/arcmemory/src/arcmemory/timeline.py` | `read_timeline()` — chronological "what changed" view over the events + daily stores (SPEC-072) |
+| `packages/arcagent/src/arcagent/modules/memory/capabilities.py` | `on_agent_moment` subscriber — the arcagent side of proactive recall |
+| `packages/arcagent/src/arcagent/core/model_manager.py` | `decision_point_moment()` — turns `turn.start`/`tool.start` into `decision_point` moments |
+| `packages/arcagent/src/arcagent/core/midloop_recall.py` | stage/drain buffer `decision_point` recall rides into `transform_context` |
 | `packages/arcmemory/src/arcmemory/capture.py` | fast path: sanitize → tag → Hebbian-bump → append |
 | `packages/arcmemory/src/arcmemory/curate.py` | the conversation-only filter that runs before any LLM call |
 | `packages/arcmemory/src/arcmemory/distill.py` | the `Distiller` Protocol + fact/insight/procedure extraction logic |

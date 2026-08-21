@@ -68,6 +68,9 @@ scheduling. (The FERNme dynamics constants below live in the arcmemory Brain, no
 | `consolidate_event_threshold` | `20` | Consolidate after this many pending events |
 | `consolidate_idle_seconds` | `900.0` | Consolidate after this idle gap |
 | `top_k` / `budget` | `5` / `1024` | Recall depth + token budget |
+| `working_set_enabled` | `true` | Forward the per-session working-set toggle to the backend (folded into `backend.dynamics`) — see arcmemory `MemoryConfig.working_set_enabled` below |
+| `proactive_decision_point` | `false` | **Opt-in** (SPEC-072): honor `decision_point` moments at all — a recall staged mid-loop for the next model call via `transform_context`, not at prompt assembly |
+| `decision_point_pre_tool` | `false` | **Opt-in**, on top of `proactive_decision_point`: also fire the finer, costlier `pre_tool` decision point (tool name + args on every tool call), not just the default `pre_plan` site |
 
 ## arcmemory `MemoryConfig` — dynamics + curation
 
@@ -83,6 +86,10 @@ input-curation knobs). These govern *what* gets consolidated and *how fast* memo
 | `curate_min_substantive_chars` | `200` | A tool result at/above this length is kept as real content |
 | `curate_tool_requires_entity` | `true` | Drop a tool event that clears none of the keep gates (no entity ref, not a keep-tool, sub-threshold length/salience) |
 | `curate_tool_keep_salience` | `0.0` | Keep a tool event at/above this salience; `0` disables the salience escape |
+| `working_set_enabled` | `true` | Accumulate a bounded, decaying, per-session working set of cues so `on_moment` detectors key off an entity named a prior turn, not only the latest message (SPEC-072). `false` returns proactive recall to its exact SPEC-071 behavior |
+| `working_set_max` | `32` | Max salient cues retained in the working set (newest kept) |
+| `working_set_decay_turns` | `5` | Turns a cue survives in the working set without being refreshed |
+| `temporal_enabled` | `true` | Surface `established` (WHEN a memory was written) on recall cards, break same-score RRF ties by recency, and weigh `TimeWindow`/timeline reads. `false` restores pre-temporal ranking order (SPEC-072) |
 
 Tiered dynamics (`alpha`, `lambda_fast`, `gamma`, `entity_merge_threshold`, …) vary by tier via
 `MemoryConfig.for_tier(...)` — federal writes slower, decays slower, demands more corroboration.

@@ -12,6 +12,30 @@ versioning.
   current source tree (agentic consolidation, confirm-gated dedup, events store, degrade
   visibility). No code change.
 
+## [0.8.0] — 2026-08-21
+
+SPEC-072 extends the shipped SPEC-071 detected-moment recall through the same
+`Brain.on_moment` path with a per-session working set, mid-loop decision recall, and
+temporal reasoning over recall cards.
+
+### Added
+
+- **Working-set recall.** A bounded, decaying, salience-filtered per-session set of
+  entities "in play" feeds the detectors, so recall surfaces a card for an entity named
+  on a **prior** turn even when the latest message omits it. Net-new per-card dedup keeps
+  the proactive block additive.
+- **Mid-loop decision recall.** At a decision point (pre-plan default, pre-tool opt-in) a
+  relevant past decision reaches the model BETWEEN loop steps via arcrun's append-only
+  `transform_context` hook — arcrun stays unaware of arcmemory, which is never imported
+  upward.
+- **Temporal reasoning.** Recall cards now carry WHEN the memory was established;
+  conflicting facts show current + superseded (mark-not-delete, no erasure); an optional
+  `TimeWindow` filters recall; recency breaks exact ties; a "what changed" timeline reads
+  the existing events + daily stores (no new store added).
+- All new paths are deterministic (no LLM/embedder on the trigger/rank path),
+  classification-gated (no-read-up), bounded, audited, and behind config off-switches
+  that restore exact prior behavior.
+
 ## [0.7.0] — 2026-08-19
 
 Consolidation grows up: the "sleep" pass becomes a bounded reasoning **agent** with signed

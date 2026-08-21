@@ -562,7 +562,11 @@ self-modification. Different kinds of learning use different stores and gates:
   a slower "sleep" pass curates noise, corroborates facts, merges duplicates, mints
   reusable insights and procedures, decays weak associations, and rebuilds derived
   indexes without discarding the source record. Recall is clearly bounded as data,
-  not allowed to become instructions. [Memory lifecycle deep dive](docs/walkthrough/07-memory-lifecycle.md)
+  not allowed to become instructions. Recall can also be proactive and time-aware: a
+  bounded, decaying working set surfaces an entity named earlier in the session even
+  when the latest turn omits it, a relevant past decision can reach the model
+  mid-loop, and cards carry when a fact was established so a superseded value is
+  shown, never deleted. [Memory lifecycle deep dive](docs/walkthrough/07-memory-lifecycle.md)
 - **The workpad keeps context current.** A background maintainer refreshes
   `context.md` so open loops survive long sessions, while immutable identity and
   goal-lock files remain outside the agent's control.

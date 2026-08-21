@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 2026-08-21 — arcmemory 0.8.0 / arcagent 0.18.0
+
+SPEC-072: context-aware and time-aware proactive recall, extending the shipped SPEC-071
+detected-moment recall through the same `Brain.on_moment` path.
+
+### Package versions
+
+| Package | Change |
+|---------|--------|
+| arcmemory | 0.7.0 → 0.8.0 |
+| arcagent | 0.17.0 → 0.18.0 |
+
+### Added
+
+- **arcmemory: context-aware and time-aware proactive recall (SPEC-072)** — a bounded,
+  decaying, salience-filtered per-session working set so recall surfaces a card for an
+  entity named on a prior turn even without a fresh mention; mid-loop decision recall
+  that reaches the model between loop steps via arcrun's append-only `transform_context`
+  hook (arcrun stays unaware, arcmemory is never imported upward); and temporal
+  reasoning — recall cards carry when a memory was established, conflicting facts show
+  current + superseded, an optional time window filters recall, and a "what changed"
+  timeline reads the existing events + daily stores. Deterministic, classification-gated,
+  bounded, audited, and behind config off-switches that restore prior behavior.
+
 ## [0.3.0] - 2026-08-19
 
 The runtime hardens into a governed control plane: signed module bundles, signed workflow DAGs,

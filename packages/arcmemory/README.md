@@ -74,6 +74,23 @@ What makes `arcmemory` fundamentally different from vector-only memory systems:
 - **Budget enforcement** — Consolidation has bounded budget; won't runaway on costs
 - **No silent failures** — Warns once per process when falling back; `arc memory status` reports mode
 
+### **Proactive & Time-Aware Recall** (SPEC-072)
+- **Working-set recall** — a bounded, decaying, salience-filtered per-session set of
+  entities "in play" feeds the detectors, so recall surfaces a card for an entity named
+  a *prior* turn even when the latest message omits it; net-new dedup keeps the
+  proactive block additive, never duplicated
+- **Mid-loop decision recall** — at a decision point (pre-plan by default, pre-tool
+  opt-in), a relevant past decision reaches the model *between* loop steps via
+  arcrun's append-only `transform_context` hook — not just at the start of a turn
+- **Temporal reasoning** — recall cards carry *when* a memory was established;
+  conflicting facts show current vs. superseded (never deleted); an optional time
+  window filters recall; recency breaks exact ties; a "what changed" timeline reads
+  the existing events + daily stores with no new store engine
+- **All through one path** — every capability above flows through the single
+  `Brain.on_moment` recall path (SPEC-071's detected-moment recall, extended), stays
+  deterministic (no LLM/embedder on the trigger/rank path), classification-gated, and
+  audited
+
 ---
 
 ## Install
@@ -350,11 +367,20 @@ write); `lambda_fast` / `beta` / `forget_floor` (decay); `gamma` / `known_thresh
 `consolidate_agent_max_turns` / `consolidate_agent_max_tokens` /
 `consolidate_agent_timeout_seconds`.
 
+**Proactive & temporal recall (SPEC-072), all default-safe off-switches:**
+`working_set_enabled` (default `True`) gates the per-session working set feeding the
+proactive detectors; `working_set_max` (`32`) bounds it and `working_set_decay_turns`
+(`5`) ages entries out; `temporal_enabled` (default `True`) gates when-established /
+supersession / time-window / recency-tiebreak behavior on recall cards.
+
 When driven through Arc, the host exposes a thin `[modules.memory]` block — `brain`
 (`none` / `arcmemory` / `auto` / a BYO `module:Class`), `tier`, `embed_backend` /
 `embed_model`, `distill_provider` / `distill_model`, `top_k` / `budget`, and the
 consolidation triggers (`consolidate_event_threshold`, `consolidate_idle_seconds`,
-`consolidate_interval_seconds`).
+`consolidate_interval_seconds`). The same host-side block adds `working_set_enabled`
+(default `True`) plus two decision-point off-switches, both default `False`:
+`proactive_decision_point` (arm mid-loop recall at all) and `decision_point_pre_tool`
+(extend it to the pre-tool site; pre-plan is the default site when armed).
 
 ---
 

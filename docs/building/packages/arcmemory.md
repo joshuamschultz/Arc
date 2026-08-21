@@ -234,6 +234,50 @@ results = await memory.search(
 
 ---
 
+## Proactive Recall
+
+Besides the pull-based `search()` above, the brain can also decide — on its
+own, deterministically — whether a detected moment in the conversation is
+worth surfacing unprompted. No embedder or LLM sits on this path; a model-free
+detector per moment `kind` decides whether to fire, then reuses the same
+gated recall as `search()`.
+
+```python
+# arcagent hands memory a detected moment: a task starting, a known entity
+# named, the topic shifting, or (SPEC-072) a decision point mid-loop.
+text = await memory.on_moment(
+    "entity_seen",
+    cues=["acme-corp"],
+    text="Let's revisit the Acme contract",
+    clearance="unclassified",
+    top_k=3,
+    budget=512,
+    session_id="sess_123",
+)
+if text:
+    # an injectable <memory-result> block — inject into the prompt/context
+    print(text)
+```
+
+- `kind` — `task_start`, `entity_seen`, `topic_shift`, or `decision_point`.
+- Returns `""` when nothing fires or nothing novel survives dedup — a missed
+  recall, never a blocked turn.
+- **Working set (SPEC-072):** a bounded, decaying, per-session set of entities
+  "in play" feeds the detectors, so a moment can fire on an entity named a
+  prior turn even when the latest message omits it. Off-switch:
+  `MemoryConfig.working_set_enabled` (default on).
+- **Temporal reasoning (SPEC-072):** every recall carries `established`
+  (WHEN it was written); a superseded fact shows current vs. prior rather
+  than being overwritten; recency breaks ranking ties. Off-switch:
+  `MemoryConfig.temporal_enabled` (default on).
+- **Mid-loop decision recall (SPEC-072):** a `decision_point` moment
+  (opt-in — `pre_plan` default site, `pre_tool` also opt-in) reaches the model
+  between loop steps rather than at prompt assembly.
+
+Full mechanics: [Memory Lifecycle](../../walkthrough/07-memory-lifecycle.md#proactive-recall-detected-moments-working-set-and-time).
+
+---
+
 ## Memory Configuration
 
 ```toml
