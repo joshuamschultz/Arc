@@ -180,6 +180,7 @@ const ACTION_LABELS: Record<string, string> = {
   'task.complete': 'Completed a task',
   'policy.allow': 'Policy allowed an action',
   'policy.deny': 'Policy denied an action',
+  'memory.recall_attributed': 'Recalled memory cards',
   'policy.evaluate': 'Evaluated a policy',
   'skill.verified': 'Verified a skill',
   'session.start': 'Started a session',
@@ -306,6 +307,8 @@ function AuditDetail({ event }: { event: AuditEvent }) {
         </p>
       </div>
 
+      <RecalledCards event={event} />
+
       <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-xs">
         <Field label="Time">{fmtTime(auditField(event, 'ts', 'timestamp'))}</Field>
         {agent && (
@@ -331,6 +334,39 @@ function AuditDetail({ event }: { event: AuditEvent }) {
           <HashRow label="Signature" value={auditField(event, 'signature')} />
         </div>
       )}
+    </div>
+  )
+}
+
+/** The memory cards a recall surfaced, from a `memory.recall_attributed` event's
+ *  `extra.cards` (each `"<kind>/<slug>"`), with the optional detected-moment
+ *  `trigger`. Renders nothing for any other event. This is where an operator sees
+ *  WHICH cards were injected, not merely that a recall happened. */
+function RecalledCards({ event }: { event: AuditEvent }) {
+  const extra = (event.extra ?? {}) as Record<string, unknown>
+  const cards = Array.isArray(extra.cards) ? extra.cards.map(String) : []
+  const trigger = typeof extra.trigger === 'string' ? extra.trigger : ''
+  if (cards.length === 0) return null
+  return (
+    <div className="space-y-2 rounded-lg border border-border bg-muted/20 p-3">
+      <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+        Recalled cards
+        {trigger && (
+          <span className="rounded-sm border border-border bg-muted/60 px-1.5 py-0.5 font-mono text-[10px] normal-case tracking-normal text-foreground">
+            {trigger}
+          </span>
+        )}
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {cards.map((c) => (
+          <span
+            key={c}
+            className="rounded-sm border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-foreground"
+          >
+            {c}
+          </span>
+        ))}
+      </div>
     </div>
   )
 }
