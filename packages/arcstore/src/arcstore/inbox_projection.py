@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Iterable
+from typing import Protocol, runtime_checkable
 
 from arcstore.inbox import (
     Handoff,
+    HandoffStatus,
     Inbox,
     InboxRepository,
     Message,
@@ -16,6 +18,23 @@ from arcstore.inbox import (
     Thread,
     TraceMetadata,
 )
+from arcstore.inbox_spool import InboxProjectionSpool, ProjectionEvent
+
+
+@runtime_checkable
+class InboxDeliveryPort(Protocol):
+    """Explicit application-owned delivery seam for durable inbox effects.
+
+    The port receives deterministic ids.  Implementations must therefore make
+    their own external sends idempotent (a retry may arrive after a crash).
+    ArcStore never imports a gateway or the team bus.
+    """
+
+    async def deliver_reply(self, message: Message) -> None: ...
+
+    async def wake_handoff(self, handoff: Handoff) -> None: ...
+
+    async def deliver_handoff_resolution(self, handoff: Handoff) -> None: ...
 
 
 def _stable_id(prefix: str, *parts: str) -> str:
@@ -31,8 +50,16 @@ def participant(identifier: str, *, role: ParticipantRole = ParticipantRole.AGEN
 class DurableInboxService:
     """Project one canonical message event into every participant's inbox."""
 
-    def __init__(self, repository: InboxRepository) -> None:
+    def __init__(
+        self,
+        repository: InboxRepository,
+        *,
+        delivery_port: InboxDeliveryPort | None = None,
+        projection_spool: InboxProjectionSpool | None = None,
+    ) -> None:
         self._repository = repository
+        self._delivery_port = delivery_port
+        self._projection_spool = projection_spool
 
     async def inbox_for(
         self, owner: Participant, *, classification: str = "UNCLASSIFIED"
@@ -57,9 +84,46 @@ class DurableInboxService:
         trace: TraceMetadata | None = None,
     ) -> tuple[Message, ...]:
         """Persist inbound or outbound delivery copies idempotently."""
+        event = ProjectionEvent(
+            event_id=event_id,
+            sender=sender,
+            recipients=tuple(recipients),
+            body=body,
+            external_thread_id=external_thread_id,
+            subject=subject,
+            reply_to_event_id=reply_to_event_id,
+            trace=trace,
+        )
+        if self._projection_spool is not None:
+            self._projection_spool.enqueue(event)
+        copies = await self._record_projection(event)
+        if self._projection_spool is not None:
+            self._projection_spool.acknowledge(event.event_id)
+        return copies
+
+    async def retry_pending_projections(self) -> tuple[str, ...]:
+        """Replay all persisted but unacknowledged projections after an outage/restart."""
+        if self._projection_spool is None:
+            return ()
+        completed: list[str] = []
+        for event in self._projection_spool.pending():
+            await self._record_projection(event)
+            self._projection_spool.acknowledge(event.event_id)
+            completed.append(event.event_id)
+        return tuple(completed)
+
+    async def _record_projection(self, event: ProjectionEvent) -> tuple[Message, ...]:
+        """Apply one already-durable projection input to the repository."""
+        event_id = event.event_id
+        sender = event.sender
+        recipient_list = event.recipients
+        body = event.body
+        external_thread_id = event.external_thread_id
+        subject = event.subject
+        reply_to_event_id = event.reply_to_event_id
+        trace = event.trace
         if not event_id:
             raise ValueError("event_id is required")
-        recipient_list = tuple(recipients)
         if not recipient_list:
             raise ValueError("at least one recipient is required")
         all_participants = _unique((sender, *recipient_list))
@@ -137,13 +201,19 @@ class DurableInboxService:
         sender: Participant,
         body: str,
         reply_to_id: str | None = None,
+        idempotency_key: str,
         classification_max: str = "UNCLASSIFIED",
     ) -> Message:
         """Append an authorized reply from one thread participant.
 
-        A reply stays in the durable communication record.  Transport adapters
-        remain responsible for delivering it to an external platform.
+        The durable write happens before the explicit recipient dispatch.  If
+        dispatch fails, retrying with the same key returns the same stored
+        message and asks the port to send that same deterministic delivery.
         """
+        if not idempotency_key:
+            raise ValueError("idempotency_key is required")
+        if self._delivery_port is None:
+            raise RuntimeError("inbox delivery port is unavailable")
         thread = await self._repository.get_thread(
             thread_id,
             reader_id=sender.participant_id,
@@ -154,14 +224,17 @@ class DurableInboxService:
         )
         if not recipients:
             raise ValueError("a reply requires at least one other thread participant")
-        return await self._repository.append_message(
+        message = await self._repository.append_message(
             thread_id,
             sender=sender,
             recipients=recipients,
             body=body,
             reply_to_id=reply_to_id,
             trace=TraceMetadata(classification=thread.classification),
+            message_id=_stable_id("message", thread_id, sender.participant_id, idempotency_key),
         )
+        await self._delivery_port.deliver_reply(message)
+        return message
 
     async def create_handoff(
         self,
@@ -171,14 +244,40 @@ class DurableInboxService:
         recipients: Iterable[Participant],
         source_message_id: str | None,
         trace: TraceMetadata,
+        idempotency_key: str,
     ) -> Handoff:
-        return await self._repository.create_handoff(
+        if not idempotency_key:
+            raise ValueError("idempotency_key is required")
+        if self._delivery_port is None:
+            raise RuntimeError("inbox delivery port is unavailable")
+        handoff = await self._repository.create_handoff(
             thread_id,
             from_participant=sender,
             to_participants=tuple(recipients),
             source_message_id=source_message_id,
             trace=trace,
+            handoff_id=_stable_id("handoff", thread_id, sender.participant_id, idempotency_key),
         )
+        await self._delivery_port.wake_handoff(handoff)
+        return handoff
+
+    async def resolve_handoff(
+        self,
+        handoff_id: str,
+        *,
+        recipient: Participant,
+        status: HandoffStatus,
+    ) -> Handoff:
+        """Allow only an addressed recipient to accept or decline a pending handoff."""
+        if status is HandoffStatus.PENDING:
+            raise ValueError("a handoff must be accepted or declined")
+        if self._delivery_port is None:
+            raise RuntimeError("inbox delivery port is unavailable")
+        handoff = await self._repository.resolve_handoff(
+            handoff_id, recipient=recipient, status=status
+        )
+        await self._delivery_port.deliver_handoff_resolution(handoff)
+        return handoff
 
     async def list_handoffs(
         self,
@@ -201,4 +300,4 @@ def _unique(items: Iterable[Participant]) -> tuple[Participant, ...]:
     return tuple(unique.values())
 
 
-__all__ = ["DurableInboxService", "participant"]
+__all__ = ["DurableInboxService", "InboxDeliveryPort", "participant"]

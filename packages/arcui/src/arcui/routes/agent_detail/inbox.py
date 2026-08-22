@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from arcstore.inbox import ParticipantRole, TraceMetadata
+from arcstore.inbox import HandoffStatus, ParticipantRole, TraceMetadata
 from arcstore.inbox_projection import participant
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -31,6 +31,11 @@ def _limit(request: Request) -> int:
         return min(100, max(1, int(request.query_params.get("limit", "50"))))
     except ValueError:
         return 50
+
+
+def _idempotency_key(request: Request) -> str | None:
+    key = request.headers.get("Idempotency-Key")
+    return key if key and key.strip() else None
 
 
 async def get_inbox_threads(request: Request) -> JSONResponse:
@@ -134,14 +139,23 @@ async def post_inbox_reply(request: Request) -> JSONResponse:
         return JSONResponse({"error": "body must be a non-empty string"}, status_code=400)
     if reply_to_id is not None and (not isinstance(reply_to_id, str) or not reply_to_id):
         return JSONResponse({"error": "reply_to_id must be a non-empty string"}, status_code=400)
+    idempotency_key = _idempotency_key(request)
+    if idempotency_key is None:
+        return JSONResponse({"error": "Idempotency-Key header is required"}, status_code=400)
     try:
         message = await service.reply(
             thread_id,
             sender=reader,
             body=body,
             reply_to_id=reply_to_id,
+            idempotency_key=idempotency_key,
             classification_max=_clearance(request),
         )
+    except RuntimeError as exc:
+        emit_mutation_audit(
+            request, target=target, operation="inbox.reply", outcome="deferred", detail=str(exc)
+        )
+        return JSONResponse({"error": str(exc)}, status_code=503)
     except (KeyError, PermissionError, ValueError) as exc:
         emit_mutation_audit(
             request,
@@ -173,6 +187,9 @@ async def post_inbox_handoff(request: Request) -> JSONResponse:
         isinstance(item, str) and item for item in targets
     ):
         return JSONResponse({"error": "to must be a non-empty participant list"}, status_code=400)
+    idempotency_key = _idempotency_key(request)
+    if idempotency_key is None:
+        return JSONResponse({"error": "Idempotency-Key header is required"}, status_code=400)
     try:
         handoff = await service.create_handoff(
             request.path_params["thread_id"],
@@ -184,7 +201,68 @@ async def post_inbox_handoff(request: Request) -> JSONResponse:
                 source_session_id=body.get("source_session_id"),
                 classification=_clearance(request),
             ),
+            idempotency_key=idempotency_key,
         )
+    except RuntimeError as exc:
+        emit_mutation_audit(
+            request,
+            target=f"inbox:{request.path_params['thread_id']}",
+            operation="inbox.handoff",
+            outcome="deferred",
+            detail=str(exc),
+        )
+        return JSONResponse({"error": str(exc)}, status_code=503)
     except (KeyError, PermissionError, ValueError) as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
+    emit_mutation_audit(
+        request,
+        target=f"inbox:{request.path_params['thread_id']}",
+        operation="inbox.handoff",
+        outcome="applied",
+    )
     return JSONResponse({"handoff": handoff.model_dump(mode="json")}, status_code=201)
+
+
+async def post_inbox_handoff_resolution(request: Request) -> JSONResponse:
+    """Accept or decline an addressed handoff, with an immutable audit event."""
+    handoff_id = request.path_params["handoff_id"]
+    target = f"inbox:handoff:{handoff_id}"
+    if getattr(request.state, "role", None) != "operator":
+        emit_mutation_audit(
+            request, target=target, operation="inbox.handoff.resolve", outcome="denied"
+        )
+        return JSONResponse({"error": "operator_role_required"}, status_code=403)
+    service, reader = _service(request), _reader(request)
+    if service is None:
+        return JSONResponse({"error": "durable_inbox_unavailable"}, status_code=503)
+    if reader is None:
+        return JSONResponse({"error": "agent_not_found"}, status_code=404)
+    try:
+        payload = await request.json()
+        status = HandoffStatus(payload["status"])
+    except (KeyError, TypeError, ValueError):
+        return JSONResponse({"error": "status must be accepted or declined"}, status_code=400)
+    try:
+        handoff = await service.resolve_handoff(handoff_id, recipient=reader, status=status)
+    except RuntimeError as exc:
+        emit_mutation_audit(
+            request,
+            target=target,
+            operation="inbox.handoff.resolve",
+            outcome="deferred",
+            detail=str(exc),
+        )
+        return JSONResponse({"error": str(exc)}, status_code=503)
+    except (KeyError, PermissionError, ValueError) as exc:
+        emit_mutation_audit(
+            request,
+            target=target,
+            operation="inbox.handoff.resolve",
+            outcome="denied",
+            detail=str(exc),
+        )
+        return JSONResponse({"error": str(exc)}, status_code=403)
+    emit_mutation_audit(
+        request, target=target, operation="inbox.handoff.resolve", outcome="applied", detail=status
+    )
+    return JSONResponse({"handoff": handoff.model_dump(mode="json")})

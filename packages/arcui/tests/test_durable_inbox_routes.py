@@ -6,7 +6,7 @@ import asyncio
 from pathlib import Path
 
 from arcgateway.team_roster import RosterEntry
-from arcstore.inbox import ParticipantRole
+from arcstore.inbox import Handoff, Message, ParticipantRole
 from arcstore.inbox_projection import DurableInboxService, participant
 from packages.arcstore.tests.unit.inbox_fake import FakeInboxRepository
 from starlette.applications import Starlette
@@ -20,9 +20,17 @@ _AGENT_DID = "did:arc:test:agent"
 _HUMAN_DID = "did:arc:test:human"
 
 
+class _DeliveryPort:
+    async def deliver_reply(self, _message: Message) -> None: pass
+
+    async def wake_handoff(self, _handoff: Handoff) -> None: pass
+
+    async def deliver_handoff_resolution(self, _handoff: Handoff) -> None: pass
+
+
 def _app() -> tuple[Starlette, AuthConfig, DurableInboxService]:
     auth = AuthConfig({"viewer_token": "viewer", "operator_token": "operator"})
-    service = DurableInboxService(FakeInboxRepository())
+    service = DurableInboxService(FakeInboxRepository(), delivery_port=_DeliveryPort())
     app = Starlette(routes=routes)
     app.add_middleware(AuthMiddleware, auth_config=auth)
     app.state.auth_config = auth
@@ -94,7 +102,7 @@ def test_inbox_routes_authenticate_and_support_thread_reply_read_and_handoff() -
     reply = client.post(
         reply_path,
         json={"body": "Reviewed.", "reply_to_id": message_id},
-        headers=_headers(auth, "operator"),
+        headers={**_headers(auth, "operator"), "Idempotency-Key": "reply-1"},
     )
     assert reply.status_code == 201
     assert reply.json()["message"]["reply_to_id"] == message_id
@@ -104,7 +112,7 @@ def test_inbox_routes_authenticate_and_support_thread_reply_read_and_handoff() -
     handoff = client.post(
         f"{base}/{thread_id}/handoffs",
         json={"to": [_HUMAN_DID], "source_message_id": message_id},
-        headers=_headers(auth, "operator"),
+        headers={**_headers(auth, "operator"), "Idempotency-Key": "handoff-1"},
     )
     assert handoff.status_code == 201
     updated = client.get(f"{base}/{thread_id}", headers=_headers(auth, "viewer"))

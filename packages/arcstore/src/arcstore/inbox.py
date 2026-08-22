@@ -39,6 +39,14 @@ class ReadState(StrEnum):
     READ = "read"
 
 
+class HandoffStatus(StrEnum):
+    """The closed lifecycle of a recipient-owned handoff."""
+
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+    DECLINED = "declined"
+
+
 class _Contract(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
@@ -158,7 +166,9 @@ class Handoff(_Contract):
     source_message_id: str | None = None
     trace: TraceMetadata
     created_at: datetime = Field(default_factory=_now)
-    status: Literal["pending", "accepted", "declined"] = "pending"
+    status: HandoffStatus = HandoffStatus.PENDING
+    resolved_by: Participant | None = None
+    resolved_at: datetime | None = None
 
     @model_validator(mode="after")
     def _validate(self) -> Self:
@@ -166,6 +176,11 @@ class Handoff(_Contract):
             self.to_participants
         ):
             raise ValueError("handoff recipients must have unique IDs")
+        if self.status is HandoffStatus.PENDING:
+            if self.resolved_by is not None or self.resolved_at is not None:
+                raise ValueError("a pending handoff cannot have a resolution")
+        elif self.resolved_by is None or self.resolved_at is None:
+            raise ValueError("a resolved handoff requires actor and timestamp")
         return self
 
 
@@ -265,6 +280,15 @@ class InboxRepository(Protocol):
         to_participants: tuple[Participant, ...],
         source_message_id: str | None,
         trace: TraceMetadata,
+        handoff_id: str | None = None,
+    ) -> Handoff: ...
+
+    async def resolve_handoff(
+        self,
+        handoff_id: str,
+        *,
+        recipient: Participant,
+        status: HandoffStatus,
     ) -> Handoff: ...
 
     async def list_handoffs(
@@ -274,6 +298,7 @@ class InboxRepository(Protocol):
 
 __all__ = [
     "Handoff",
+    "HandoffStatus",
     "Inbox",
     "InboxRepository",
     "Message",

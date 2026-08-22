@@ -28,6 +28,7 @@ from arcstore.approval_dispatcher import (
 from arcstore.config import ArcStoreConfig, resolve_data_dir
 from arcstore.inbox import (
     Handoff,
+    HandoffStatus,
     Inbox,
     InboxRepository,
     Message,
@@ -41,7 +42,8 @@ from arcstore.inbox import (
     ThreadPage,
     TraceMetadata,
 )
-from arcstore.inbox_projection import DurableInboxService
+from arcstore.inbox_projection import DurableInboxService, InboxDeliveryPort
+from arcstore.inbox_spool import InboxProjectionSpool, ProjectionEvent
 from arcstore.records import SpoolRecord
 from arcstore.spool import read, record, spool_path
 
@@ -52,6 +54,9 @@ __all__ = [
     "ArcStoreConfig",
     "DurableInboxService",
     "Handoff",
+    "HandoffStatus",
+    "InboxProjectionSpool",
+    "InboxDeliveryPort",
     "Inbox",
     "InboxRepository",
     "Message",
@@ -59,6 +64,7 @@ __all__ = [
     "PageInfo",
     "Participant",
     "ParticipantRole",
+    "ProjectionEvent",
     "ReadReceipt",
     "ReadState",
     "SpoolRecord",

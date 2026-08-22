@@ -12,6 +12,7 @@ from arctrust.classification import Classification, dominates, parse_classificat
 
 from arcstore.inbox import (
     Handoff,
+    HandoffStatus,
     Inbox,
     InboxRepository,
     Message,
@@ -257,6 +258,7 @@ class FakeInboxRepository:
         to_participants: tuple[Participant, ...],
         source_message_id: str | None,
         trace: TraceMetadata,
+        handoff_id: str | None = None,
     ) -> Handoff:
         thread = self._thread(thread_id)
         participants = {item.participant_id for item in thread.participants}
@@ -271,15 +273,46 @@ class FakeInboxRepository:
             raise ValueError("source_message_id must reference a message in this thread")
         if trace.classification != thread.classification:
             raise ValueError("handoff classification must match thread classification")
-        handoff = Handoff(
-            thread_id=thread_id,
-            from_participant=from_participant,
-            to_participants=to_participants,
-            source_message_id=source_message_id,
-            trace=trace,
+        if handoff_id is not None and handoff_id in self.handoffs:
+            return self.handoffs[handoff_id]
+        fields = {
+            "thread_id": thread_id,
+            "from_participant": from_participant,
+            "to_participants": to_participants,
+            "source_message_id": source_message_id,
+            "trace": trace,
+        }
+        handoff = (
+            Handoff(handoff_id=handoff_id, **fields)
+            if handoff_id is not None
+            else Handoff(**fields)
         )
         self.handoffs[handoff.handoff_id] = handoff
         return handoff
+
+    async def resolve_handoff(
+        self,
+        handoff_id: str,
+        *,
+        recipient: Participant,
+        status: HandoffStatus,
+    ) -> Handoff:
+        handoff = self.handoffs[handoff_id]
+        if recipient.participant_id not in {
+            item.participant_id for item in handoff.to_participants
+        }:
+            raise PermissionError("only an addressed recipient can resolve a handoff")
+        if handoff.status is not HandoffStatus.PENDING:
+            if handoff.status is status and handoff.resolved_by == recipient:
+                return handoff
+            raise ValueError("handoff is already resolved")
+        if status is HandoffStatus.PENDING:
+            raise ValueError("handoff must be accepted or declined")
+        updated = handoff.model_copy(
+            update={"status": status, "resolved_by": recipient, "resolved_at": _now()}
+        )
+        self.handoffs[handoff_id] = updated
+        return updated
 
     async def list_handoffs(
         self, thread_id: str, *, reader_id: str, classification_max: str = "UNCLASSIFIED"

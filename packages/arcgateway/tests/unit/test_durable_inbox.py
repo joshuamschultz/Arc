@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import pytest
 from packages.arcstore.tests.unit.inbox_fake import FakeInboxRepository
@@ -11,6 +12,7 @@ from packages.arcstore.tests.unit.inbox_fake import FakeInboxRepository
 from arcgateway.executor import Delta, InboundEvent
 from arcgateway.inbox import DurableInboxService, participant
 from arcgateway.session import SessionRouter
+from arcstore.inbox_spool import InboxProjectionSpool
 
 
 @pytest.mark.asyncio
@@ -45,6 +47,11 @@ class _ReplyingExecutor:
         return stream()
 
 
+class _FailingRepository(FakeInboxRepository):
+    async def create_inbox(self, *args: object, **kwargs: object):  # type: ignore[no-untyped-def]
+        raise ConnectionError("inbox backend down")
+
+
 @pytest.mark.asyncio
 async def test_gateway_projects_inbound_and_outbound_once_per_transport_event() -> None:
     repository = FakeInboxRepository()
@@ -66,4 +73,28 @@ async def test_gateway_projects_inbound_and_outbound_once_per_transport_event() 
     _, threads, _ = await DurableInboxService(repository).list_threads(agent)
     page = await DurableInboxService(repository).list_messages(threads[0].thread_id, reader=agent)
     assert [message.body for message in page.items] == ["Please review this.", "Reviewed."]
+    assert len(repository.messages) == 4
+
+
+@pytest.mark.asyncio
+async def test_gateway_projection_outage_is_durable_and_retries_after_restart(
+    tmp_path: Path,
+) -> None:
+    spool = InboxProjectionSpool(tmp_path / "gateway-inbox.jsonl")
+    service = DurableInboxService(_FailingRepository(), projection_spool=spool)
+    router = SessionRouter(_ReplyingExecutor(), inbox_service=service)
+    event = InboundEvent(
+        platform="web",
+        chat_id="chat-1",
+        user_did="did:arc:human:alice",
+        agent_did="did:arc:agent:bot",
+        message="Please review this.",
+    )
+    await router.handle(event)
+    await asyncio.gather(*list(router._pending_tasks))
+    assert len(spool.pending()) == 2
+
+    repository = FakeInboxRepository()
+    restarted = DurableInboxService(repository, projection_spool=spool)
+    assert len(await restarted.retry_pending_projections()) == 2
     assert len(repository.messages) == 4

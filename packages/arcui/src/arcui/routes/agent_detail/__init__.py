@@ -51,6 +51,7 @@ from arcui.routes.agent_detail.inbox import (
     get_inbox_messages,
     get_inbox_threads,
     post_inbox_handoff,
+    post_inbox_handoff_resolution,
     post_inbox_read,
     post_inbox_reply,
 )
@@ -124,6 +125,11 @@ routes = [
     Route("/api/agents/{id}/sessions", get_sessions, methods=["GET"]),
     Route("/api/agents/{id}/sessions/{sid}", get_session_replay, methods=["GET"]),
     Route("/api/agents/{id}/inbox", get_inbox_threads, methods=["GET"]),
+    Route(
+        "/api/agents/{id}/inbox/handoffs/{handoff_id}/resolution",
+        post_inbox_handoff_resolution,
+        methods=["POST"],
+    ),
     Route("/api/agents/{id}/inbox/{thread_id}", get_inbox_messages, methods=["GET"]),
     Route(
         "/api/agents/{id}/inbox/messages/{message_id}/read",

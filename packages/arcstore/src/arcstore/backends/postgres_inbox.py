@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from arcstore.backends.postgres import PostgresBackend, _as_dict, _json
 from arcstore.inbox import (
     Handoff,
+    HandoffStatus,
     Inbox,
     Message,
     MessagePage,
@@ -309,6 +310,7 @@ class PostgresInboxRepository:
         to_participants: tuple[Participant, ...],
         source_message_id: str | None,
         trace: TraceMetadata,
+        handoff_id: str | None = None,
     ) -> Handoff:
         async with self._pool.acquire() as connection:
             async with connection.transaction():
@@ -327,21 +329,54 @@ class PostgresInboxRepository:
                 if trace.classification != thread.classification:
                     raise ValueError("handoff classification must match thread classification")
                 handoff = Handoff(
+                    handoff_id=handoff_id or _id("handoff"),
                     thread_id=thread_id,
                     from_participant=from_participant,
                     to_participants=to_participants,
                     source_message_id=source_message_id,
                     trace=trace,
                 )
-                await connection.execute(
+                result = await connection.execute(
                     "INSERT INTO inbox_handoffs(handoff_id, thread_id, payload, created_at) "
-                    "VALUES ($1, $2, $3::jsonb, $4)",
+                    "VALUES ($1, $2, $3::jsonb, $4) ON CONFLICT(handoff_id) DO NOTHING",
                     handoff.handoff_id,
                     thread_id,
                     _model_json(handoff),
                     handoff.created_at,
                 )
+                if not str(result).endswith("1"):
+                    return await self._get_handoff(connection, handoff.handoff_id)
         return handoff
+
+    async def resolve_handoff(
+        self,
+        handoff_id: str,
+        *,
+        recipient: Participant,
+        status: HandoffStatus,
+    ) -> Handoff:
+        if status is HandoffStatus.PENDING:
+            raise ValueError("handoff must be accepted or declined")
+        async with self._pool.acquire() as connection:
+            async with connection.transaction():
+                handoff = await self._get_handoff(connection, handoff_id, for_update=True)
+                if recipient.participant_id not in {
+                    item.participant_id for item in handoff.to_participants
+                }:
+                    raise PermissionError("only an addressed recipient can resolve a handoff")
+                if handoff.status is not HandoffStatus.PENDING:
+                    if handoff.status is status and handoff.resolved_by == recipient:
+                        return handoff
+                    raise ValueError("handoff is already resolved")
+                updated = handoff.model_copy(
+                    update={"status": status, "resolved_by": recipient, "resolved_at": _now()}
+                )
+                await connection.execute(
+                    "UPDATE inbox_handoffs SET payload=$1::jsonb WHERE handoff_id=$2",
+                    _model_json(updated),
+                    handoff_id,
+                )
+        return updated
 
     async def list_handoffs(
         self, thread_id: str, *, reader_id: str, classification_max: str = "UNCLASSIFIED"
@@ -390,6 +425,17 @@ class PostgresInboxRepository:
         if row is None:
             raise KeyError(f"unknown message: {message_id}")
         return _model_from(row, Message)
+
+    async def _get_handoff(
+        self, connection: Any, handoff_id: str, *, for_update: bool = False
+    ) -> Handoff:
+        statement = "SELECT payload FROM inbox_handoffs WHERE handoff_id=$1"
+        if for_update:
+            statement += " FOR UPDATE"
+        row = await connection.fetchrow(statement, handoff_id)
+        if row is None:
+            raise KeyError(f"unknown handoff: {handoff_id}")
+        return _model_from(row, Handoff)
 
     async def _unread_count(self, connection: Any, thread_id: str, reader_id: str) -> int:
         rows = await connection.fetch(

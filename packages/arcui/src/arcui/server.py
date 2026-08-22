@@ -30,6 +30,7 @@ from arcstore.backends import PostgresBackend, PostgresInboxRepository, open_bac
 from arcstore.cancellations import CancelStore
 from arcstore.config import ArcStoreConfig, resolve_data_dir
 from arcstore.inbox_projection import DurableInboxService
+from arcstore.inbox_spool import InboxProjectionSpool
 from arcstore.tasks import TaskStore
 from pydantic import SecretStr
 from starlette.applications import Starlette
@@ -190,6 +191,7 @@ def create_app(
     arcstore_secret: SecretStr | None = None,
     arcstore_backend: Any | None = None,
     inbox_service: DurableInboxService | None = None,
+    inbox_delivery_port: Any | None = None,
     inbox_clearance: str = "UNCLASSIFIED",
 ) -> Starlette:
     """Build a Starlette application with all ArcUI routes.
@@ -367,9 +369,15 @@ def create_app(
             task_store_backend, PostgresBackend
         ):
             try:
+                inbox_data_dir = data_dir if data_dir is not None else resolve_data_dir()
                 starlette_app.state.inbox_service = DurableInboxService(
-                    PostgresInboxRepository(task_store_backend)
+                    PostgresInboxRepository(task_store_backend),
+                    delivery_port=inbox_delivery_port,
+                    projection_spool=InboxProjectionSpool(
+                        inbox_data_dir / "inbox-projection.jsonl"
+                    ),
                 )
+                await starlette_app.state.inbox_service.retry_pending_projections()
             except Exception:  # reason: inbox routes report explicit unavailability
                 logger.exception("lifespan: durable inbox composition failed")
         approval_dispatcher = None
