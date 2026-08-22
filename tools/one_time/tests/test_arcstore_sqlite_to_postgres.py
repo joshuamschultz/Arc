@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 from collections.abc import Sequence
@@ -24,7 +25,7 @@ from tools.one_time.arcstore_sqlite_to_postgres import (
 )
 
 
-def _source_db(path: Path, *, unknown: bool = False) -> None:
+def _source_db(path: Path, *, suffix: str = "", unknown: bool = False) -> dict[str, str]:
     connection = sqlite3.connect(path)
     connection.executescript(
         """
@@ -46,71 +47,104 @@ def _source_db(path: Path, *, unknown: bool = False) -> None:
         """
     )
     stamp = "2026-08-22T00:00:00+00:00"
-    owner = '{"participant_id":"did:arc:human:owner","role":"human","display_name":"Owner"}'
-    inbox = (
-        '{"inbox_id":"inbox-1","owner":'
-        + owner
-        + ',"classification":"CUI","created_at":"'
-        + stamp
-        + '"}'
+    token = f"-{suffix}" if suffix else ""
+    identifiers = {
+        "owner": f"did:arc:human:owner{token}",
+        "call": f"call{token or '-1'}",
+        "task": f"task{token or '-1'}",
+        "cursor": f"spool:one{token}",
+        "inbox": f"inbox{token or '-1'}",
+        "thread": f"thread{token or '-1'}",
+        "message": f"message{token or '-1'}",
+        "handoff": f"handoff{token or '-1'}",
+        "event": f"event{token or '-1'}",
+        "approval": f"approval{token or '-1'}",
+    }
+    owner = {
+        "participant_id": identifiers["owner"],
+        "role": "human",
+        "display_name": "Owner",
+    }
+    inbox = json.dumps(
+        {
+            "inbox_id": identifiers["inbox"],
+            "owner": owner,
+            "classification": "CUI",
+            "created_at": stamp,
+        }
     )
-    participant = owner
-    thread = (
-        '{"thread_id":"thread-1","inbox_id":"inbox-1","participants":['
-        + participant
-        + '],"subject":"migration","classification":"CUI","status":"open",'
-        + '"created_at":"'
-        + stamp
-        + '","updated_at":"'
-        + stamp
-        + '","last_message_id":null,"unread_count":0}'
+    thread = json.dumps(
+        {
+            "thread_id": identifiers["thread"],
+            "inbox_id": identifiers["inbox"],
+            "participants": [owner],
+            "subject": "migration",
+            "classification": "CUI",
+            "status": "open",
+            "created_at": stamp,
+            "updated_at": stamp,
+            "last_message_id": None,
+            "unread_count": 0,
+        }
     )
-    message = (
-        '{"message_id":"message-1","thread_id":"thread-1","sender":'
-        + participant
-        + ',"recipients":['
-        + participant
-        + '],"body":"hello","reply_to_id":null,"trace":{"classification":"CUI"},'
-        + '"created_at":"'
-        + stamp
-        + '","read_receipts":[]}'
+    message = json.dumps(
+        {
+            "message_id": identifiers["message"],
+            "thread_id": identifiers["thread"],
+            "sender": owner,
+            "recipients": [owner],
+            "body": "hello",
+            "reply_to_id": None,
+            "trace": {"classification": "CUI"},
+            "created_at": stamp,
+            "read_receipts": [],
+        }
     )
-    handoff = (
-        '{"handoff_id":"handoff-1","thread_id":"thread-1","from_participant":'
-        + participant
-        + ',"to_participants":['
-        + participant
-        + '],"source_message_id":"message-1","trace":{"classification":"CUI"},'
-        + '"created_at":"'
-        + stamp
-        + '","status":"pending"}'
+    handoff = json.dumps(
+        {
+            "handoff_id": identifiers["handoff"],
+            "thread_id": identifiers["thread"],
+            "from_participant": owner,
+            "to_participants": [owner],
+            "source_message_id": identifiers["message"],
+            "trace": {"classification": "CUI"},
+            "created_at": stamp,
+            "status": "pending",
+        }
     )
     connection.execute(
         "INSERT INTO llm_calls VALUES (?, ?, ?)",
-        ("call-1", '{"kind":"llm_call","actor_did":"did:arc:test"}', stamp),
+        (
+            identifiers["call"],
+            json.dumps({"kind": "llm_call", "actor_did": identifiers["owner"]}),
+            stamp,
+        ),
     )
     connection.execute(
         "INSERT INTO mutable_records VALUES (?, ?, ?, ?)",
-        ("tasks", "task-1", '{"state":"ready"}', stamp),
+        ("tasks", identifiers["task"], '{"state":"ready"}', stamp),
     )
-    connection.execute("INSERT INTO sync_state VALUES (?, ?)", ("spool:one", 42))
-    connection.execute("INSERT INTO inboxes VALUES (?, ?, ?)", ("inbox-1", inbox, stamp))
+    connection.execute("INSERT INTO sync_state VALUES (?, ?)", (identifiers["cursor"], 42))
     connection.execute(
-        "INSERT INTO inbox_threads VALUES (?, ?, ?, ?)", ("thread-1", "inbox-1", thread, stamp)
+        "INSERT INTO inboxes VALUES (?, ?, ?)", (identifiers["inbox"], inbox, stamp)
+    )
+    connection.execute(
+        "INSERT INTO inbox_threads VALUES (?, ?, ?, ?)",
+        (identifiers["thread"], identifiers["inbox"], thread, stamp),
     )
     connection.execute(
         "INSERT INTO inbox_messages VALUES (?, ?, ?, ?)",
-        ("message-1", "thread-1", message, stamp),
+        (identifiers["message"], identifiers["thread"], message, stamp),
     )
     connection.execute(
         "INSERT INTO inbox_handoffs VALUES (?, ?, ?, ?)",
-        ("handoff-1", "thread-1", handoff, stamp),
+        (identifiers["handoff"], identifiers["thread"], handoff, stamp),
     )
     connection.execute(
         "INSERT INTO approval_outbox VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
-            "event-1",
-            "approval-1",
+            identifiers["event"],
+            identifiers["approval"],
             '{"status":"pending"}',
             "pending",
             0,
@@ -125,6 +159,7 @@ def _source_db(path: Path, *, unknown: bool = False) -> None:
         connection.execute("CREATE TABLE unrecognized_legacy_table(value TEXT)")
     connection.commit()
     connection.close()
+    return identifiers
 
 
 @pytest.mark.asyncio
@@ -253,7 +288,7 @@ async def test_actual_postgres_migration_and_inbox_repository_readback(tmp_path:
     if not dsn:
         pytest.skip("ARCSTORE_TEST_DATABASE_URL is required for real PostgreSQL migration test")
     source = tmp_path / "legacy.db"
-    _source_db(source)
+    identifiers = _source_db(source, suffix=uuid4().hex)
     connection = sqlite3.connect(source)
     connection.execute(f"PRAGMA user_version = {int(uuid4().int % 2_000_000_000)}")
     connection.commit()
@@ -285,17 +320,17 @@ async def test_actual_postgres_migration_and_inbox_repository_readback(tmp_path:
         report = await migrate(source, destination, batch_size=1, resume=True)
         repository = PostgresInboxRepository(backend)
         thread = await repository.get_thread(
-            "thread-1", reader_id="did:arc:human:owner", classification_max="CUI"
+            identifiers["thread"], reader_id=identifiers["owner"], classification_max="CUI"
         )
         messages = await repository.list_messages(
-            thread.thread_id, reader_id="did:arc:human:owner", classification_max="CUI"
+            thread.thread_id, reader_id=identifiers["owner"], classification_max="CUI"
         )
         assert report.tables["inbox_messages"]["destination_count"] == 1
-        assert thread.inbox_id == "inbox-1"
-        assert [message.message_id for message in messages.items] == ["message-1"]
-        mutable = await backend.mutable_read("tasks", "task-1")
+        assert thread.inbox_id == identifiers["inbox"]
+        assert [message.message_id for message in messages.items] == [identifiers["message"]]
+        mutable = await backend.mutable_read("tasks", identifiers["task"])
         assert mutable is not None and mutable["state"] == "ready"
-        assert await backend.get_cursor("spool:one") == 42
+        assert await backend.get_cursor(identifiers["cursor"]) == 42
     finally:
         await interrupted.close()
         if destination is not None:
