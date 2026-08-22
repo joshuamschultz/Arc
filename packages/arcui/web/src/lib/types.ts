@@ -908,6 +908,10 @@ export interface ConnectorAuthorizationResponse {
   credentials: ConnectorSecret[]
   reachable: boolean
   detail: string
+  /** True when this connector is finished by an OAuth code exchange. */
+  oauth?: boolean
+  /** The provider consent URL to open (empty until the app key/secret are supplied). */
+  authorize_url?: string
 }
 
 export interface ConnectorAuthResponse {

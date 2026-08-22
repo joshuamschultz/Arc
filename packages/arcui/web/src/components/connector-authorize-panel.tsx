@@ -1,10 +1,15 @@
 import { useState } from 'react'
-import { CheckCircle2, HelpCircle, KeyRound, LogIn } from 'lucide-react'
+import { CheckCircle2, ExternalLink, HelpCircle, KeyRound, LogIn } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { InstructionBlock } from '@/components/instruction-block'
 import { ApiError } from '@/lib/api'
-import { useAuthorizeConnector, useConnectorAuthStatus } from '@/lib/queries'
+import {
+  useAuthorizeConnector,
+  useCompleteOauth,
+  useConnectorAuthorization,
+  useConnectorAuthStatus,
+} from '@/lib/queries'
 
 /**
  * Sign-in for a connector that declares no secrets — the host binary holds its
@@ -23,8 +28,72 @@ export function ConnectorAuthorizePanel({
 }) {
   const status = useConnectorAuthStatus(instance, true)
   const authorize = useAuthorizeConnector(instance)
+  const authz = useConnectorAuthorization(instance, true)
+  const completeOauth = useCompleteOauth(instance)
   const [token, setToken] = useState('')
+  const [code, setCode] = useState('')
   const [showToken, setShowToken] = useState(false)
+
+  // A native OAuth connector is finished by a one-time code, not a typed token or
+  // a host command: open the provider URL, paste the code, Arc exchanges it for a
+  // durable refresh token. This whole flow lives in the harness (no CLI, no curl).
+  if (authz.data?.oauth) {
+    const done = completeOauth.data ?? authz.data
+    // Reachable after storing the refresh token = the connection answers = connected.
+    const connected = done.reachable
+    return (
+      <div className="space-y-3 rounded-md border border-border bg-muted/20 p-3 text-xs">
+        <p className="font-medium text-foreground">
+          {extension} connects with a one-time code — you never paste a token.
+        </p>
+        {!operatorMode ? (
+          <p className="italic text-muted-foreground">Turn on operator mode to connect from here.</p>
+        ) : !authz.data.authorize_url ? (
+          <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-amber-800 dark:text-amber-300">
+            Add the app key and secret first (Replace credentials above), then return here to authorize.
+          </p>
+        ) : connected ? (
+          <p className="flex items-start gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-2 text-emerald-700 dark:text-emerald-400">
+            <CheckCircle2 className="mt-0.5 size-4 shrink-0" />
+            <span>Connected — a durable refresh token is stored.</span>
+          </p>
+        ) : (
+          <div className="space-y-2">
+            <a
+              href={authz.data.authorize_url}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5 font-medium text-foreground hover:bg-muted"
+            >
+              <ExternalLink className="size-3.5" /> Open {extension} to allow access, then copy the code
+            </a>
+            <Input
+              id={`connector-oauth-code-${instance}`}
+              autoComplete="off"
+              spellCheck={false}
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="Paste the code here"
+            />
+            <Button
+              size="sm"
+              disabled={completeOauth.isPending || !code.trim()}
+              onClick={() => completeOauth.mutate({ code: code.trim() })}
+            >
+              <LogIn /> {completeOauth.isPending ? 'Connecting…' : 'Complete connection'}
+            </Button>
+            {completeOauth.isError && (
+              <p className="rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-2 text-destructive">
+                {completeOauth.error instanceof ApiError
+                  ? completeOauth.error.message
+                  : 'Could not complete the connection.'}
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+    )
+  }
 
   const live = authorize.data ?? status.data
   // The server's authorisation CHECK, never its probe: a program that starts is
