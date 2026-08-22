@@ -184,6 +184,19 @@ async def test_malformed_row_is_durably_rejected() -> None:
     assert backend.rejects == [""]
 
 
+@pytest.mark.asyncio
+async def test_validation_poison_is_rejected_not_retried() -> None:
+    backend = FakeOutbox([_row(status="not-a-status")])
+    worker = ApprovalNotificationDispatcher(
+        backend,
+        lambda _event: asyncio.sleep(0),
+        ApprovalDispatcherConfig(worker_id="worker-a"),
+    )
+    await worker.dispatch_once()
+    assert backend.rejects == ["event-1"]
+    assert backend.nacks == []
+
+
 async def _record(target: list[str], event: ApprovalNotification) -> None:
     target.append(event.event_id)
 

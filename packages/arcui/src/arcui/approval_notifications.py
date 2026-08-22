@@ -40,8 +40,13 @@ class ApprovalNotificationHub:
         if max_events < 1:
             raise ValueError("max_events must be positive")
         self._events: deque[BrowserApprovalNotification] = deque(maxlen=max_events)
+        self._event_ids: set[str] = set()
 
     async def __call__(self, notification: ApprovalNotification) -> None:
+        if notification.event_id in self._event_ids:
+            return
+        if len(self._events) == self._events.maxlen:
+            self._event_ids.discard(self._events[0].event_id)
         self._events.append(
             BrowserApprovalNotification(
                 event_id=notification.event_id,
@@ -52,6 +57,7 @@ class ApprovalNotificationHub:
                 classification=notification.classification,
             )
         )
+        self._event_ids.add(notification.event_id)
 
     def recent(self) -> list[dict[str, object]]:
         return [event.as_event() for event in self._events]

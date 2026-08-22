@@ -160,11 +160,12 @@ class ApprovalNotificationDispatcher:
                 continue
             try:
                 notification = _notification(row)
-                await self._sink(notification)
             except (ValidationError, TypeError, ValueError) as exc:
-                await self._nack(row, event_id, "invalid_notification")
-                _logger.warning("rejected approval notification %s: %s", event_id, exc)
+                await self._reject(row, event_id, "invalid_notification")
+                _logger.warning("quarantined approval notification %s: %s", event_id, exc)
                 continue
+            try:
+                await self._sink(notification)
             except asyncio.CancelledError:
                 raise
             except Exception:
