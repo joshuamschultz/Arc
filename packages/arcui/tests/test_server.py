@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+from arcstore.backends.memory import FakeBackend
 from starlette.testclient import TestClient
 
 from arcui.server import create_app
 
 
+def _app(**kwargs):
+    return create_app(arcstore_backend=FakeBackend(), **kwargs)
+
+
 def test_app_state_has_agent_registry():
     """create_app() should store an AgentRegistry on app.state."""
-    app = create_app()
+    app = _app()
     assert hasattr(app.state, "agent_registry")
     from arcui.registry import AgentRegistry
 
@@ -18,7 +23,7 @@ def test_app_state_has_agent_registry():
 
 def test_app_state_has_observe():
     """create_app() should store an Observe instance on app.state (SPEC-026 FR-5)."""
-    app = create_app()
+    app = _app()
     assert hasattr(app.state, "observe")
     from arcui.observe import Observe
 
@@ -27,21 +32,21 @@ def test_app_state_has_observe():
 
 def test_app_state_has_circuit_breakers_list():
     """create_app() should store an empty circuit_breakers list on app.state."""
-    app = create_app()
+    app = _app()
     assert hasattr(app.state, "circuit_breakers")
     assert isinstance(app.state.circuit_breakers, list)
 
 
 def test_max_agents_parameter():
     """create_app(max_agents=50) should configure registry capacity."""
-    app = create_app(max_agents=50)
+    app = _app(max_agents=50)
     registry = app.state.agent_registry
     assert registry.max_agents == 50
 
 
 def test_agent_routes_registered():
     """Agent REST routes should be present in the app (SPEC-026 FR-5: /api/agent/connect WS deleted)."""
-    app = create_app()
+    app = _app()
     paths = [r.path for r in app.routes if hasattr(r, "path")]
     assert "/api/agents" in paths
     assert "/api/agents/{id}" in paths
@@ -52,20 +57,20 @@ def test_agent_routes_registered():
 
 def test_app_state_team_root_default_none():
     """team_root defaults to None when not provided."""
-    app = create_app()
+    app = _app()
     assert hasattr(app.state, "team_root")
     assert app.state.team_root is None
 
 
 def test_app_state_team_root_passed_through(tmp_path):
     """create_app(team_root=...) stores the path on app.state."""
-    app = create_app(team_root=tmp_path)
+    app = _app(team_root=tmp_path)
     assert app.state.team_root == tmp_path
 
 
 def test_app_state_roster_provider_returns_empty_when_no_team_root():
     """roster_provider returns [] when team_root is None — keeps routes pure."""
-    app = create_app()
+    app = _app()
     assert callable(app.state.roster_provider)
     assert app.state.roster_provider() == []
 
@@ -90,7 +95,7 @@ def test_app_state_roster_provider_overlays_online_status(tmp_path):
         encoding="utf-8",
     )
 
-    app = create_app(team_root=tmp_path)
+    app = _app(team_root=tmp_path)
 
     # Register only alpha as online
     reg = AgentRegistration(
@@ -110,7 +115,7 @@ def test_app_state_roster_provider_overlays_online_status(tmp_path):
 
 def test_roster_provider_overridable_by_tests():
     """app.state.roster_provider can be replaced by tests for in-memory fixtures."""
-    app = create_app()
+    app = _app()
 
     sentinel = object()
 
@@ -130,7 +135,7 @@ def _client() -> TestClient:
     from arcui.auth import AuthConfig
 
     auth = AuthConfig({"viewer_token": "viewer", "operator_token": "operator"})
-    app = create_app(auth_config=auth)
+    app = _app(auth_config=auth)
     app.state.auth_config = auth
     return TestClient(app)
 

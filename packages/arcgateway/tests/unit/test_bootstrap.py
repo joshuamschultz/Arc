@@ -13,12 +13,14 @@ from pathlib import Path
 
 import pytest
 
+from arcgateway.attachment_scanner import CleanScanner, ScanStatus
 from arcgateway.bootstrap import (
     EmbeddedGateway,
     build_for_embedded,
 )
 from arcgateway.config import GatewayConfig
 from arcgateway.executor import AsyncioExecutor
+from arcgateway.media_store import AttachmentValidationError
 
 
 @pytest.fixture
@@ -76,6 +78,83 @@ tier = "federal"
     )
     bundle = await build_for_embedded(empty_team_root, cfg)
     assert type(bundle.executor).__name__ == "SubprocessExecutor"
+
+
+@pytest.mark.asyncio
+async def test_federal_gateway_requires_an_injected_attachment_scanner(
+    empty_team_root: Path,
+) -> None:
+    cfg = _config(
+        """
+[gateway]
+tier = "federal"
+
+[platforms.web]
+enabled = true
+"""
+    )
+    with pytest.raises(RuntimeError, match="federal.*attachment scanner"):
+        await build_for_embedded(empty_team_root, cfg)
+
+
+@pytest.mark.asyncio
+async def test_federal_gateway_rejects_clean_scanner_factory(
+    empty_team_root: Path,
+) -> None:
+    cfg = _config('[gateway]\ntier = "federal"\n\n[platforms.web]\nenabled = true\n')
+    with pytest.raises(RuntimeError, match="CleanScanner"):
+        await build_for_embedded(empty_team_root, cfg, attachment_scanner_factory=CleanScanner())
+
+
+@pytest.mark.asyncio
+async def test_composed_attachment_store_rejects_infected_file(
+    empty_team_root: Path,
+) -> None:
+    class RejectingScanner:
+        async def scan(self, path: Path, *, mime: str, sha256: str) -> ScanStatus:
+            del path, mime, sha256
+            return ScanStatus.REJECTED
+
+    empty_team_root.mkdir()
+    agent_dir = empty_team_root / "default_agent"
+    agent_dir.mkdir()
+    (agent_dir / "arcagent.toml").write_text(
+        '[identity]\ndid = "did:arc:agent:default"\n', encoding="utf-8"
+    )
+    cfg = _config('[platforms.web]\nenabled = true\n')
+    bundle = await build_for_embedded(
+        empty_team_root,
+        cfg,
+        attachment_scanner_factory=lambda _: RejectingScanner(),
+    )
+    media_store_for = bundle.session_router._custodian._media_store_for
+    assert media_store_for is not None
+    store = media_store_for("did:arc:agent:default")
+    assert store is not None
+    with pytest.raises(AttachmentValidationError, match="attachment scan failed"):
+        await store.store_stream(
+            stream=_Bytes([b"\x89PNG\r\n\x1a\n" + b"payload"]),
+            declared_name="payload.png",
+            declared_mime="image/png",
+            kind="image",
+            owner_did="did:arc:user:operator",
+            agent_did="did:arc:agent:default",
+            session_key="session-1",
+        )
+
+
+class _Bytes:
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._chunks = iter(chunks)
+
+    def __aiter__(self) -> _Bytes:
+        return self
+
+    async def __anext__(self) -> bytes:
+        try:
+            return next(self._chunks)
+        except StopIteration as exc:
+            raise StopAsyncIteration from exc
 
 
 @pytest.mark.asyncio

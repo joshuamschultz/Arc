@@ -2,26 +2,32 @@
 
 from unittest.mock import MagicMock
 
+from arcstore.backends.memory import FakeBackend
+
 from arcui.auth import AuthConfig
 from arcui.server import attach_llm, create_app
+
+
+def _app(**kwargs):
+    return create_app(arcstore_backend=FakeBackend(), **kwargs)
 
 
 class TestCreateApp:
     def test_creates_starlette_app(self):
         # SPEC-026 FR-5: push pipeline deleted. Verify surviving state attributes.
-        app = create_app()
+        app = _app()
         assert hasattr(app.state, "observe")
         assert hasattr(app.state, "agent_registry")
         assert hasattr(app.state, "circuit_breakers")
 
     def test_creates_with_auth_config(self):
         auth = AuthConfig({"viewer_token": "v", "operator_token": "o"})
-        app = create_app(auth_config=auth)
+        app = _app(auth_config=auth)
         assert app.state.auth_config.viewer_token == "v"
 
     def test_creates_with_config_controller(self):
         ctrl = MagicMock()
-        app = create_app(config_controller=ctrl)
+        app = _app(config_controller=ctrl)
         assert app.state.config_controller is ctrl
 
     def test_creates_with_agent_info(self):
@@ -30,11 +36,11 @@ class TestCreateApp:
             "did": "did:arc:local:executor/abc123",
             "model": "anthropic/claude-sonnet-4-6",
         }
-        app = create_app(agent_info=info)
+        app = _app(agent_info=info)
         assert app.state.agent_info == info
 
     def test_agent_info_defaults_to_empty_dict(self):
-        app = create_app()
+        app = _app()
         assert app.state.agent_info == {}
 
 
@@ -42,7 +48,7 @@ class TestAttachLLM:
     def test_attaches_without_error(self):
         # SPEC-026 FR-5: attach_llm only walks the module stack for circuit breakers,
         # telemetry and queue modules. No event callbacks or push wiring.
-        app = create_app()
+        app = _app()
         instance = MagicMock()
         instance._inner = None  # No module stack
 
@@ -55,7 +61,7 @@ class TestAttachLLM:
         from arcllm.modules.circuit_breaker import CircuitBreakerModule
         from arcllm.modules.telemetry import TelemetryModule
 
-        app = create_app()
+        app = _app()
 
         # Simulate module stack: outer._inner = cb, cb._inner = adapter
         adapter = MagicMock()
@@ -76,7 +82,7 @@ class TestAttachLLM:
         # SPEC-026 FR-5: attach_llm discovers TelemetryModule in the stack.
         from arcllm.modules.telemetry import TelemetryModule
 
-        app = create_app()
+        app = _app()
 
         adapter = MagicMock()
         adapter._inner = None

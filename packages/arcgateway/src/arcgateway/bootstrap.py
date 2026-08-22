@@ -22,6 +22,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast
 
+from arcgateway.attachment_scanner import AttachmentScanner, CleanScanner
 from arcgateway.broker_bootstrap import BrokerHandle, start_broker
 from arcgateway.commands import build_default_registry
 from arcgateway.executor import AsyncioExecutor, Executor
@@ -45,6 +46,8 @@ _logger = logging.getLogger("arcgateway.bootstrap")
 # could never fetch. Not yet operator-configurable — the spec leaves retention
 # and sizing open, and one honest constant beats a config key nothing reads.
 _MEDIA_CEILING_BYTES = 20 * 1024 * 1024
+
+AttachmentScannerFactory = Callable[[Path], AttachmentScanner]
 
 
 class EmbeddedGateway(NamedTuple):
@@ -274,6 +277,7 @@ async def build_for_embedded(
     gateway_config: GatewayConfig,
     *,
     inbox_service: Any | None = None,
+    attachment_scanner_factory: AttachmentScannerFactory | AttachmentScanner | None = None,
 ) -> EmbeddedGateway:
     """Compose the in-process gateway runtime for arcui.
 
@@ -309,6 +313,7 @@ async def build_for_embedded(
             gateway_config,
             broker,
             inbox_service=inbox_service,
+            attachment_scanner_factory=attachment_scanner_factory,
         )
     except BaseException:
         # A broker started moments ago and abandoned here would outlive the
@@ -324,6 +329,7 @@ async def _compose_embedded(
     broker: BrokerHandle,
     *,
     inbox_service: Any | None = None,
+    attachment_scanner_factory: AttachmentScannerFactory | AttachmentScanner | None = None,
 ) -> EmbeddedGateway:
     """Wire the components onto an already-ensured broker (see build_for_embedded)."""
     # Late-bound holder: the factory needs a per-agent deliver fn that closes
@@ -381,6 +387,37 @@ async def _compose_embedded(
 
     command_registry.set_workflow_provider(GatewayWorkflowProvider())
 
+    attachments_enabled = gateway_config.platforms.web.enabled or bool(
+        gateway_config.platforms.remote_blocks()
+    )
+
+    def _scanner_for(agent_dir: Path) -> AttachmentScanner:
+        if attachment_scanner_factory is None:
+            scanner: AttachmentScanner = CleanScanner()
+        elif isinstance(attachment_scanner_factory, AttachmentScanner):
+            scanner = attachment_scanner_factory
+        else:
+            scanner = attachment_scanner_factory(agent_dir)
+        if gateway_config.gateway.tier == "federal" and isinstance(scanner, CleanScanner):
+            raise RuntimeError(
+                "federal gateway requires an injected attachment scanner; CleanScanner is "
+                "only valid for personal/test deployments"
+            )
+        return scanner
+
+    if gateway_config.gateway.tier == "federal" and attachments_enabled:
+        if attachment_scanner_factory is None:
+            raise RuntimeError(
+                "federal gateway requires an injected attachment scanner when messaging "
+                "attachments are enabled"
+            )
+        if isinstance(attachment_scanner_factory, CleanScanner):
+            raise RuntimeError(
+                "federal gateway rejects CleanScanner; inject a real attachment scanner"
+            )
+        for agent_dir in _load_did_index(team_root).values():
+            _scanner_for(agent_dir)
+
     def _media_store_for(agent_did: str) -> MediaStore | None:
         """Resolve the addressed agent's own artefact store (SPEC-065 COMP-002).
 
@@ -394,7 +431,11 @@ async def _compose_embedded(
         agent_dir = _resolve_agent_dir(team_root, agent_did)
         if agent_dir is None:
             return None
-        return MediaStore(workspace=agent_dir / "workspace", max_bytes=_MEDIA_CEILING_BYTES)
+        return MediaStore(
+            workspace=agent_dir / "workspace",
+            max_bytes=_MEDIA_CEILING_BYTES,
+            scanner=_scanner_for(agent_dir),
+        )
 
     session_router = SessionRouter(
         executor=executor,

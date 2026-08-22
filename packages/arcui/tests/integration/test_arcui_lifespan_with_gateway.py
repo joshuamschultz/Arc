@@ -14,6 +14,7 @@ import pytest
 from arcgateway.adapters.web import WebPlatformAdapter
 from arcgateway.config import GatewayConfig
 from arcgateway.session import SessionRouter
+from arcstore.backends.memory import FakeBackend
 from starlette.testclient import TestClient
 
 from arcui.server import create_app
@@ -39,7 +40,11 @@ agent_did = "did:arc:agent:default"
 enabled = true
 """
     )
-    app = create_app(team_root=team_root, gateway_config=gateway_config)
+    app = create_app(
+        team_root=team_root,
+        gateway_config=gateway_config,
+        arcstore_backend=FakeBackend(),
+    )
     with TestClient(app) as client:
         # Lifespan startup completes when TestClient enters its context.
         assert client.get("/api/health").status_code == 200
@@ -50,7 +55,7 @@ enabled = true
 
 def test_lifespan_no_gateway_config_keeps_state_unset(team_root: Path) -> None:
     """Without gateway_config the embedded runtime is not built."""
-    app = create_app(team_root=team_root)
+    app = create_app(team_root=team_root, arcstore_backend=FakeBackend())
     with TestClient(app) as client:
         assert client.get("/api/health").status_code == 200
         assert getattr(app.state, "web_adapter", None) is None
@@ -65,7 +70,11 @@ def test_lifespan_disconnects_adapters_on_shutdown(team_root: Path) -> None:
 enabled = true
 """
     )
-    app = create_app(team_root=team_root, gateway_config=gateway_config)
+    app = create_app(
+        team_root=team_root,
+        gateway_config=gateway_config,
+        arcstore_backend=FakeBackend(),
+    )
     captured: dict[str, WebPlatformAdapter | None] = {"adapter": None}
     with TestClient(app) as client:
         assert client.get("/api/health").status_code == 200
@@ -75,3 +84,23 @@ enabled = true
     adapter = captured["adapter"]
     assert adapter is not None
     assert adapter._socket_meta == {}
+
+
+def test_federal_lifespan_rejects_missing_attachment_scanner(team_root: Path) -> None:
+    gateway_config = GatewayConfig.from_toml_str(
+        """
+[gateway]
+tier = "federal"
+
+[platforms.web]
+enabled = true
+"""
+    )
+    app = create_app(
+        team_root=team_root,
+        gateway_config=gateway_config,
+        arcstore_backend=FakeBackend(),
+    )
+    with pytest.raises(RuntimeError, match=r"federal.*attachment scanner"):
+        with TestClient(app):
+            pass

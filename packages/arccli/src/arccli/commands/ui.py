@@ -25,6 +25,7 @@ from arctrust.paths import ui_token_file
 from arcui._constants import BOOTSTRAP_HASH_KEY, LOOPBACK_HOSTS
 
 from arccli.commands._shared import dispatch
+from arccli.commands._shared import err as _err
 from arccli.commands._shared import write as _write
 
 # Valid layer values — enforced at parse time.
@@ -130,6 +131,22 @@ def _maybe_build_gateway_config(args: argparse.Namespace, team_root: Path | None
     )
 
 
+def _require_arcstore_backend() -> None:
+    """Refuse to construct ArcUI until the mandatory PostgreSQL backend is configured."""
+    from arcstore import ArcStoreConfig
+    from arcstore.config import ArcStoreConfigurationError
+
+    try:
+        ArcStoreConfig().postgres_settings()
+    except ArcStoreConfigurationError as exc:
+        _err(
+            "arc ui start: ArcStore PostgreSQL is not configured or provisioned — "
+            "set ARCSTORE_DATABASE_URL after running scripts/deploy-node.sh "
+            f"(details: {exc})"
+        )
+        raise SystemExit(1) from exc
+
+
 class BrowserLauncher(Protocol):
     """How `arc ui start` opens the dashboard.
 
@@ -229,6 +246,7 @@ def _start(args: argparse.Namespace) -> None:
     # Load the deployment's .env (cwd + ${ARC_CONFIG_DIR:-~/.arc} + ~) BEFORE
     # building agents, so their provider keys resolve without a manual export.
     _load_env()
+    _require_arcstore_backend()
 
     port: int = getattr(args, "port", 8420)
     host: str = getattr(args, "host", "127.0.0.1")

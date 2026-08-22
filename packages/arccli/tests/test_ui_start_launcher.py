@@ -87,6 +87,25 @@ def _make_args(**kw: object) -> argparse.Namespace:
     return argparse.Namespace(**base)
 
 
+@pytest.fixture(autouse=True)
+def _configured_arcstore(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Launcher happy-path tests provide the production DSN explicitly."""
+    monkeypatch.setenv("ARCSTORE_DATABASE_URL", "postgresql://arc:test@127.0.0.1/arc")
+
+
+def test_start_refuses_before_create_app_without_arcstore_backend(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("ARCSTORE_DATABASE_URL", raising=False)
+    with patch("arcui.create_app") as create_app:
+        with pytest.raises(SystemExit) as exit_info:
+            _start(_make_args())
+
+    assert exit_info.value.code == 1
+    create_app.assert_not_called()
+    assert "ARCSTORE_DATABASE_URL" in capsys.readouterr().err
+
+
 class TestStartLoopback:
     """Loopback `arc ui start` opens browser via on_startup, marks bootstrap."""
 

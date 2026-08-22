@@ -185,6 +185,7 @@ def create_app(
     workflow_control_plane: Any | None = None,
     gate_control_plane: Any | None = None,
     approval_operator_target: Any | None = None,
+    attachment_scanner_factory: Any | None = None,
     arcstore_config: ArcStoreConfig | None = None,
     arcstore_secret: SecretStr | None = None,
     arcstore_backend: Any | None = None,
@@ -232,6 +233,9 @@ def create_app(
         gate_control_plane: SPEC-061 COMP-018 implementation satisfying
             ``arcui.routes.workflows.GateControlPlane``. ``None`` (default)
             degrades the gate-resolution route to 503.
+        attachment_scanner_factory: Attachment scanner or factory passed to
+            embedded gateway composition. Federal deployments must provide a
+            real scanner when messaging attachments are enabled.
 
     Returns:
         Configured Starlette app, ready for uvicorn.
@@ -385,6 +389,7 @@ def create_app(
                 team_root,
                 gateway_config,
                 inbox_service=starlette_app.state.inbox_service,
+                attachment_scanner_factory=attachment_scanner_factory,
             )
             starlette_app.state.embedded_gateway = embedded_gateway
             starlette_app.state.executor = embedded_gateway.executor
