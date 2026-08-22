@@ -1,14 +1,14 @@
 """BaseModule — transparent wrapper foundation for all modules."""
 
 import contextlib
-from collections.abc import Generator
+from collections.abc import AsyncIterator, Generator
 from typing import Any
 
 from opentelemetry import trace
 from opentelemetry.trace import StatusCode
 
 from arcllm.exceptions import ArcLLMConfigError
-from arcllm.types import LLMProvider, LLMResponse, Message, Tool
+from arcllm.types import Delta, LLMProvider, LLMResponse, Message, Tool
 
 
 def validate_config_keys(
@@ -106,6 +106,16 @@ class BaseModule(LLMProvider):
         **kwargs: Any,
     ) -> LLMResponse:
         return await self._inner.invoke(messages, tools, **kwargs)
+
+    async def invoke_stream(
+        self,
+        messages: list[Message],
+        tools: list[Tool] | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[Delta]:
+        """Forward native provider deltas without falling back to ``invoke``."""
+        async for delta in self._inner.invoke_stream(messages, tools, **kwargs):
+            yield delta
 
     def validate_config(self) -> bool:
         return self._inner.validate_config()

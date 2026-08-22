@@ -1,10 +1,14 @@
 """Core ArcLLM types — the contract everything builds on."""
 
+import json
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal, TypedDict
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+from arcllm.exceptions import ArcLLMStreamProtocolError
 
 # ---------------------------------------------------------------------------
 # ContentBlock variants (discriminated on `type` field)
@@ -129,6 +133,8 @@ class Delta(BaseModel):
     ``LLMProvider.invoke_stream``).
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     text: str | None = None
     tool_call: ToolCallDelta | None = None
     usage: Usage | None = None
@@ -159,7 +165,7 @@ class ResponseFormat(TypedDict, total=False):
 
 class LLMResponse(BaseModel):
     content: str | None = None
-    tool_calls: list[ToolCall] = []
+    tool_calls: list[ToolCall] = Field(default_factory=list)
     usage: Usage
     model: str
     stop_reason: StopReason
@@ -171,6 +177,93 @@ class LLMResponse(BaseModel):
     # and the response parsed as a JSON object matching the schema. Pure
     # convenience — callers can still json.loads(content) themselves.
     parsed_content: dict[str, Any] | None = None
+
+
+@dataclass
+class _ToolCallParts:
+    """One provider tool call reconstructed from its wire fragments."""
+
+    id: str | None = None
+    name: str | None = None
+    arguments: list[str] = field(default_factory=list)
+
+
+class StreamAccumulator:
+    """Materialize normalized :class:`LLMResponse` data from ``Delta`` frames.
+
+    Provider adapters own wire parsing and yield provider-neutral deltas. This
+    accumulator owns only normalized data reconstruction, so a loop can consume
+    native deltas while still receiving the same complete response shape as a
+    blocking invocation. It deliberately has no reasoning channel.
+    """
+
+    def __init__(self, *, model: str) -> None:
+        self._model = model
+        self._text: list[str] = []
+        self._tools: dict[int, _ToolCallParts] = {}
+        self._usage: Usage | None = None
+        self._stop_reason: StopReason | None = None
+        self._error: str | None = None
+
+    def add(self, delta: Delta) -> None:
+        """Accept one normalized frame without exposing its raw payload."""
+        if delta.text is not None:
+            self._text.append(delta.text)
+        if delta.tool_call is not None:
+            self._add_tool_call(delta.tool_call)
+        if delta.usage is not None:
+            self._usage = delta.usage
+        if delta.stop_reason is not None:
+            self._stop_reason = delta.stop_reason
+
+    def build(self) -> LLMResponse:
+        """Return a validated response or a sanitized protocol error."""
+        if self._error is not None:
+            raise ArcLLMStreamProtocolError(self._error)
+        tool_calls = [
+            self._build_tool_call(index, self._tools[index]) for index in sorted(self._tools)
+        ]
+        return LLMResponse(
+            content="".join(self._text) or None,
+            tool_calls=tool_calls,
+            usage=self._usage or Usage(input_tokens=0, output_tokens=0, total_tokens=0),
+            model=self._model,
+            stop_reason=self._stop_reason or "end_turn",
+        )
+
+    def _add_tool_call(self, delta: ToolCallDelta) -> None:
+        parts = self._tools.setdefault(delta.index, _ToolCallParts())
+        self._set_field(parts, "id", delta.id, "conflicting tool call id")
+        self._set_field(parts, "name", delta.name, "conflicting tool call name")
+        if delta.arguments is not None:
+            parts.arguments.append(delta.arguments)
+
+    def _set_field(
+        self,
+        parts: _ToolCallParts,
+        field_name: Literal["id", "name"],
+        value: str | None,
+        conflict: str,
+    ) -> None:
+        if value is None:
+            return
+        previous = getattr(parts, field_name)
+        if previous is not None and previous != value:
+            self._error = conflict
+            return
+        setattr(parts, field_name, value)
+
+    def _build_tool_call(self, index: int, parts: _ToolCallParts) -> ToolCall:
+        if parts.id is None or parts.name is None:
+            raise ArcLLMStreamProtocolError("streamed tool call is incomplete")
+        raw_arguments = "".join(parts.arguments)
+        try:
+            arguments = json.loads(raw_arguments)
+        except json.JSONDecodeError as exc:
+            raise ArcLLMStreamProtocolError("streamed tool call arguments are malformed") from exc
+        if not isinstance(arguments, dict):
+            raise ArcLLMStreamProtocolError("streamed tool call arguments must be an object")
+        return ToolCall(id=parts.id, name=parts.name, arguments=arguments)
 
 
 # ---------------------------------------------------------------------------

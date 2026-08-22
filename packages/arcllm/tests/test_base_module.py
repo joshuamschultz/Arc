@@ -7,7 +7,7 @@ from opentelemetry import trace
 from opentelemetry.trace import StatusCode
 
 from arcllm.modules.base import BaseModule
-from arcllm.types import LLMResponse, Message, Usage
+from arcllm.types import Delta, LLMResponse, Message, Usage
 
 
 def _make_inner() -> MagicMock:
@@ -160,3 +160,26 @@ class TestBaseModuleInvokeUnchanged:
         response = await module.invoke(messages)
         inner.invoke.assert_awaited_once_with(messages, None)
         assert response.content == "hello"
+
+
+class TestBaseModuleStreamForwarding:
+    """Default wrappers must preserve their inner provider's native cadence."""
+
+    @pytest.mark.asyncio
+    async def test_invoke_stream_forwards_every_native_delta_and_kwargs(self):
+        inner = _make_inner()
+
+        async def native_stream(*args, **kwargs):
+            assert args == ([Message(role="user", content="hi")], None)
+            assert kwargs == {"temperature": 0.2}
+            yield Delta(text="one ")
+            yield Delta(text="two", stop_reason="end_turn")
+
+        inner.invoke_stream.side_effect = native_stream
+        module = BaseModule({}, inner)
+        messages = [Message(role="user", content="hi")]
+
+        observed = [delta async for delta in module.invoke_stream(messages, temperature=0.2)]
+
+        assert [delta.text for delta in observed] == ["one ", "two"]
+        inner.invoke.assert_not_awaited()
