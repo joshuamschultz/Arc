@@ -351,8 +351,14 @@ class RunStoreLike(Protocol):
     ) -> None: ...
 
     async def record_spend(
-        self, run_id: str, *, tokens: int, cost_usd: float, actor_did: str
-    ) -> None: ...
+        self,
+        run_id: str,
+        *,
+        tokens: int,
+        cost_usd: float,
+        actor_did: str,
+        settlement_key: str | None = None,
+    ) -> bool: ...
 
     async def active_runs(self) -> Sequence[RunRecord]:
         """Every non-terminal run, for the tick to advance."""
@@ -390,6 +396,15 @@ class WorkflowTaskStoreLike(Protocol):
 
     async def update(
         self, task_id: str, patch: dict[str, Any], *, actor_did: str
+    ) -> Task | None: ...
+
+    async def update_if(
+        self,
+        task_id: str,
+        patch: dict[str, Any],
+        *,
+        where: dict[str, Any],
+        actor_did: str,
     ) -> Task | None: ...
 
     async def request_cancel(self, task_id: str, *, actor_did: str) -> Task | None: ...

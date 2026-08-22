@@ -306,6 +306,57 @@ class PostgresBackend:
         )
         return incremented
 
+    async def update_if_increment(
+        self,
+        collection: str,
+        key: str,
+        patch: dict[str, Any],
+        deltas: dict[str, int | float],
+        where: dict[str, Any],
+        *,
+        actor_did: str,
+        sink: Any | None = None,
+    ) -> bool:
+        """Conditionally patch and increment one JSON row in one transaction."""
+        if not deltas:
+            return await self.update_if(
+                collection,
+                key,
+                patch,
+                where,
+                actor_did=actor_did,
+                sink=sink,
+            )
+        params: list[Any] = [_json(patch), collection, key]
+        expression = "value || $1::jsonb"
+        for path, delta in deltas.items():
+            params.extend([path.split("."), delta])
+            path_ref = len(params) - 1
+            delta_ref = len(params)
+            expression = (
+                f"jsonb_set({expression}, ${path_ref}::text[], "
+                f"to_jsonb(COALESCE(({expression} #>> ${path_ref}::text[])::numeric, 0) "
+                f"+ ${delta_ref}), true)"
+            )
+        params.append(_json(where))
+        where_ref = len(params)
+        statement = (
+            f"UPDATE mutable_records SET value={expression}, updated_at=now() "  # noqa: S608
+            f"WHERE collection=$2 AND key=$3 AND value @> ${where_ref}::jsonb"
+        )
+        async with self._require_pool().acquire() as connection:
+            result = await connection.execute(statement, *params)
+        won = str(result).endswith("1")
+        _emit(
+            "mutable.update_if_increment",
+            collection,
+            key,
+            actor_did,
+            sink,
+            "applied" if won else "no-op",
+        )
+        return won
+
     async def update_if_with_outbox(
         self,
         collection: str,

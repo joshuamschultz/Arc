@@ -1109,9 +1109,16 @@ class WorkflowRunner:
                 cost = float(instance.task.metadata.get("cost_usd", 0.0) or 0.0)
                 if not tokens and not cost:
                     continue
-                await self._runs.record_spend(
-                    run.run_id, tokens=tokens, cost_usd=cost, actor_did=self._runner_did
+                applied = await self._runs.record_spend(
+                    run.run_id,
+                    tokens=tokens,
+                    cost_usd=cost,
+                    actor_did=self._runner_did,
+                    settlement_key=f"{instance.node_id}:{instance.iteration}",
                 )
+                if not applied:
+                    state.settled.add(key)
+                    continue
                 await self._append(
                     run.run_id,
                     {

@@ -317,11 +317,24 @@ class WorkflowControlPlane:
         # ``failed`` only for the outcome that really does fail the run; the
         # other two settle the gate and let the runner take it from there.
         status = "failed" if recorded == "rejected" else "done"
-        await tasks.update(
+        updated = await tasks.update_if(
             task_id,
             {"status": status, "metadata": metadata, "resolution": notes or recorded},
+            where={"status": "review"},
             actor_did=actor_did,
         )
+        if updated is None:
+            current = await tasks.get(task_id)
+            if current is None or current.metadata.get("gate_decision") != recorded:
+                self._emit(
+                    _Operation("workflow.gate.resolved", task_id, "conflict"), actor_did
+                )
+                return ControlPlaneResult(
+                    ok=False,
+                    errors=(OperationIssue(None, "status", "gate was resolved concurrently"),),
+                )
+            # An identical retry is idempotent: the first resolver already owns
+            # the decision and this call may safely observe its advancement.
         self._emit(
             _Operation(
                 "workflow.gate.resolved",

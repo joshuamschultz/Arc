@@ -258,6 +258,7 @@ class FlowRunStore:
 
     def __init__(self, backend: FakeBackend) -> None:
         self._backend = backend
+        self._settled: set[tuple[str, str]] = set()
 
     async def create_run(
         self,
@@ -352,11 +353,22 @@ class FlowRunStore:
         )
 
     async def record_spend(
-        self, run_id: str, *, tokens: int, cost_usd: float, actor_did: str
-    ) -> None:
+        self,
+        run_id: str,
+        *,
+        tokens: int,
+        cost_usd: float,
+        actor_did: str,
+        settlement_key: str | None = None,
+    ) -> bool:
+        if settlement_key is not None:
+            marker = (run_id, settlement_key)
+            if marker in self._settled:
+                return False
+            self._settled.add(marker)
         current = await self.get(run_id)
         if current is None:
-            return
+            return False
         await self._backend.mutable_merge(
             self._COLLECTION,
             run_id,
@@ -366,6 +378,7 @@ class FlowRunStore:
             },
             actor_did=actor_did,
         )
+        return True
 
 
 class FlowTaskStore:
@@ -409,6 +422,19 @@ class FlowTaskStore:
 
     async def update(self, task_id: str, patch: dict[str, Any], *, actor_did: str) -> Task | None:
         return await self._tasks.update(task_id, patch, actor_did=actor_did)
+
+    async def update_if(
+        self,
+        task_id: str,
+        patch: dict[str, Any],
+        *,
+        where: dict[str, Any],
+        actor_did: str,
+    ) -> Task | None:
+        won = await self._backend.update_if(
+            "tasks", task_id, patch, where=where, actor_did=actor_did
+        )
+        return await self.get(task_id) if won else None
 
     async def request_cancel(self, task_id: str, *, actor_did: str) -> Task | None:
         if self.observe_run_status is not None:

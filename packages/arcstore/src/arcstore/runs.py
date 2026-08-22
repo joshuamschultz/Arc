@@ -12,6 +12,7 @@ the same run, and an optional audit sink.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from typing import Any, ClassVar, Literal, Protocol
 
@@ -89,6 +90,8 @@ class Run(BaseModel):
     budget: RunBudget = Field(default_factory=RunBudget)
     path_taken: list[PathEntry] = Field(default_factory=list)
     path_len: int = 0
+    settled: list[str] = Field(default_factory=list)
+    settled_len: int = 0
     last_error: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
@@ -138,6 +141,18 @@ class MutableRunBackend(Protocol):
         collection: str,
         key: str,
         deltas: dict[str, int | float],
+        *,
+        actor_did: str,
+        sink: Any | None = None,
+    ) -> bool: ...
+
+    async def update_if_increment(
+        self,
+        collection: str,
+        key: str,
+        patch: dict[str, Any],
+        deltas: dict[str, int | float],
+        where: dict[str, Any],
         *,
         actor_did: str,
         sink: Any | None = None,
@@ -298,6 +313,46 @@ class RunStore:
             self._COLLECTION, run_id, deltas, actor_did=actor_did, sink=self._sink
         )
         return await self.get(run_id) if won else None
+
+    async def settle_budget_once(
+        self,
+        run_id: str,
+        *,
+        settlement_key: str,
+        tokens: int = 0,
+        wall_clock_seconds: float = 0.0,
+        actor_did: str,
+    ) -> bool:
+        """Atomically claim a settlement key and apply its budget deltas."""
+        deltas: dict[str, int | float] = {}
+        if tokens:
+            deltas["budget.tokens_spent"] = tokens
+            deltas["budget.tokens_reserved"] = -tokens
+        if wall_clock_seconds:
+            deltas["budget.wall_clock_seconds_spent"] = wall_clock_seconds
+            deltas["budget.wall_clock_seconds_reserved"] = -wall_clock_seconds
+        for _ in range(32):
+            current = await self.get(run_id)
+            if current is None:
+                return False
+            if settlement_key in current.settled:
+                return False
+            won = await self._backend.update_if_increment(
+                self._COLLECTION,
+                run_id,
+                {
+                    "settled": [*current.settled, settlement_key],
+                    "settled_len": current.settled_len + 1,
+                },
+                deltas,
+                where={"settled_len": current.settled_len},
+                actor_did=actor_did,
+                sink=self._sink,
+            )
+            if won:
+                return True
+            await asyncio.sleep(0)
+        raise RuntimeError(f"run {run_id} settlement claim lost its CAS race repeatedly")
 
 
 __all__ = [

@@ -220,6 +220,38 @@ class FakeBackend:
         )
         return incremented
 
+    async def update_if_increment(
+        self,
+        collection: str,
+        key: str,
+        patch: dict[str, Any],
+        deltas: dict[str, int | float],
+        where: dict[str, Any],
+        *,
+        actor_did: str,
+        sink: Any | None = None,
+    ) -> bool:
+        async with self._lock:
+            item = self._mutable.get((collection, key))
+            if item is None or not _matches(item[0], where):
+                won = False
+            else:
+                value, _ = item
+                value.update(copy.deepcopy(patch))
+                for path, delta in deltas.items():
+                    _increment(value, path, delta)
+                self._mutable[(collection, key)] = (value, _now())
+                won = True
+        _emit(
+            "mutable.update_if_increment",
+            collection,
+            key,
+            actor_did,
+            sink,
+            "applied" if won else "no-op",
+        )
+        return won
+
     async def update_if_with_outbox(
         self,
         collection: str,

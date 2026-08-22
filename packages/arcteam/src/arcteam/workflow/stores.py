@@ -23,6 +23,8 @@ read from their task rows; the Run's trace carries what the task rows cannot.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -44,6 +46,7 @@ class RunStateMissingError(RuntimeError):
 
 _STATE_COLLECTION = "workflow_run_state"
 _TASK_COLLECTION = "tasks"
+_CAS_RETRIES = 32
 
 # Path-entry kinds that describe something no task row can show.
 _TRACEABLE_OUTCOMES: dict[str, str] = {"skipped": "skipped", "gate": "done"}
@@ -123,6 +126,7 @@ class WorkflowRunStore:
                 "budget_cost_usd": budget_cost_usd,
                 "budget_wall_clock_s": budget_wall_clock_s,
                 "path": [],
+                "path_len": 0,
                 "resolution": None,
             },
             actor_did=initiator_did,
@@ -213,41 +217,87 @@ class WorkflowRunStore:
         return True
 
     async def append_path(self, run_id: str, entry: Mapping[str, Any], *, actor_did: str) -> None:
-        """Journal the entry, and mirror it onto the Run when it is a real outcome."""
-        state = await self._backend.mutable_read(_STATE_COLLECTION, run_id)
-        if state is None:
-            # Not a trace line that can be shrugged off: this row carries the
-            # settled/skipped/route bookkeeping, so dropping an entry silently
-            # double-counts spend and re-decides branches on the next tick.
-            # Raise and let the tick fail THIS run loudly rather than mis-account it.
-            raise RunStateMissingError(
-                f"run {run_id} has no workflow state row; its journal cannot be appended to"
-            )
-        path = [*(state.get("path") or []), dict(entry)]
-        await self._backend.mutable_merge(
-            _STATE_COLLECTION, run_id, {"path": path}, actor_did=actor_did, sink=self._sink
-        )
+        """Journal an entry with CAS retries, then mirror real outcomes on the Run."""
+        await self._append_state_path(run_id, entry, actor_did=actor_did)
         outcome = _TRACEABLE_OUTCOMES.get(str(entry.get("kind")))
         if outcome is None:
             return
         # A skipped branch has no task row anywhere, so this is the only place
         # the fact it was considered and not taken is ever recorded.
-        await self._runs.append_path_entry(
-            run_id,
-            PathEntry(
-                node_id=str(entry.get("node_id", "")),
-                kind=str(entry.get("node_kind", "agent")),  # type: ignore[arg-type]
-                outcome=outcome,  # type: ignore[arg-type]
-                router_choice=entry.get("chosen"),
-                loop_iteration=entry.get("iteration"),
-            ),
-            actor_did=actor_did,
+        path_entry = PathEntry(
+            node_id=str(entry.get("node_id", "")),
+            kind=str(entry.get("node_kind", "agent")),  # type: ignore[arg-type]
+            outcome=outcome,  # type: ignore[arg-type]
+            router_choice=entry.get("chosen"),
+            loop_iteration=entry.get("iteration"),
         )
+        for _ in range(_CAS_RETRIES):
+            current = await self._runs.get(run_id)
+            if current is None:
+                return
+            if any(_same_path_entry(existing, path_entry) for existing in current.path_taken):
+                return
+            appended = await self._runs.append_path_entry(
+                run_id, path_entry, actor_did=actor_did
+            )
+            if appended is not None:
+                return
+            await asyncio.sleep(0)
+        raise RuntimeError(f"run {run_id} path append lost its CAS race repeatedly")
+
+    async def _append_state_path(
+        self, run_id: str, entry: Mapping[str, Any], *, actor_did: str
+    ) -> None:
+        """Append one companion journal event without a read/merge lost update."""
+        candidate = dict(entry)
+        for _ in range(_CAS_RETRIES):
+            state = await self._backend.mutable_read(_STATE_COLLECTION, run_id)
+            if state is None:
+                # Not a trace line that can be shrugged off: this row carries the
+                # settled/skipped/route bookkeeping, so dropping an entry silently
+                # double-counts spend and re-decides branches on the next tick.
+                raise RunStateMissingError(
+                    f"run {run_id} has no workflow state row; its journal cannot be appended to"
+                )
+            path = list(state.get("path") or [])
+            if any(_same_mapping(existing, candidate) for existing in path):
+                return
+            path_len = int(state.get("path_len", len(path)))
+            if path_len != len(path):
+                raise RuntimeError(f"run {run_id} workflow journal length is inconsistent")
+            won = await self._backend.update_if(
+                _STATE_COLLECTION,
+                run_id,
+                {"path": [*path, candidate], "path_len": path_len + 1},
+                where={"path_len": path_len},
+                actor_did=actor_did,
+                sink=self._sink,
+            )
+            if won:
+                return
+            await asyncio.sleep(0)
+        raise RuntimeError(f"run {run_id} workflow journal append lost its CAS race repeatedly")
 
     async def record_spend(
-        self, run_id: str, *, tokens: int, cost_usd: float, actor_did: str
-    ) -> None:
-        await self._runs.settle_budget(run_id, tokens=tokens, actor_did=actor_did)
+        self,
+        run_id: str,
+        *,
+        tokens: int,
+        cost_usd: float,
+        actor_did: str,
+        settlement_key: str | None = None,
+    ) -> bool:
+        """Settle a node's usage once, even when ticks retry concurrently."""
+        if settlement_key is None:
+            return (
+                await self._runs.settle_budget(run_id, tokens=tokens, actor_did=actor_did)
+            ) is not None
+        return await self._runs.settle_budget_once(
+            run_id,
+            settlement_key=settlement_key,
+            tokens=tokens,
+            actor_did=actor_did,
+        )
 
 
 class WorkflowTaskStore:
@@ -257,6 +307,7 @@ class WorkflowTaskStore:
         self._backend = backend
         self._tasks = TaskStore(backend, sink=sink)
         self._actor_did = actor_did
+        self._sink = sink
 
     async def create_batch(self, tasks: Sequence[Task], *, actor_did: str) -> Sequence[Task]:
         return await self._tasks.create_batch(tasks, actor_did=actor_did)
@@ -277,6 +328,25 @@ class WorkflowTaskStore:
 
     async def update(self, task_id: str, patch: dict[str, Any], *, actor_did: str) -> Task | None:
         return await self._tasks.update(task_id, patch, actor_did=actor_did)
+
+    async def update_if(
+        self,
+        task_id: str,
+        patch: dict[str, Any],
+        *,
+        where: dict[str, Any],
+        actor_did: str,
+    ) -> Task | None:
+        """Conditionally update one task, preserving a concurrent gate decision."""
+        won = await self._backend.update_if(
+            _TASK_COLLECTION,
+            task_id,
+            patch,
+            where=where,
+            actor_did=actor_did,
+            sink=self._sink,
+        )
+        return await self.get(task_id) if won else None
 
     async def request_cancel(self, task_id: str, *, actor_did: str) -> Task | None:
         return await self._tasks.request_cancel(task_id, actor_did=actor_did)
@@ -358,6 +428,24 @@ def _channel_admitter(registry: Any, messenger: Any, identity: Any) -> Any:
             await messenger.join_channel(channel_name, identity.did)
 
     return admit
+
+
+def _same_mapping(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
+    """Compare JSON-shaped entries independently of dictionary key order."""
+    return json.dumps(left, sort_keys=True, separators=(",", ":")) == json.dumps(
+        right, sort_keys=True, separators=(",", ":")
+    )
+
+
+def _same_path_entry(left: PathEntry, right: PathEntry) -> bool:
+    """Compare canonical path entries without considering recording timestamps."""
+    return (
+        left.node_id == right.node_id
+        and left.kind == right.kind
+        and left.outcome == right.outcome
+        and left.router_choice == right.router_choice
+        and left.loop_iteration == right.loop_iteration
+    )
 
 
 __all__ = [

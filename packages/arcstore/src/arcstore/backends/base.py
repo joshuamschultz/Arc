@@ -169,6 +169,18 @@ class ArcStoreBackend(Protocol):
         sink: Any | None = None,
     ) -> bool: ...
 
+    async def update_if_increment(
+        self,
+        collection: str,
+        key: str,
+        patch: dict[str, Any],
+        deltas: dict[str, int | float],
+        where: dict[str, Any],
+        *,
+        actor_did: str,
+        sink: Any | None = None,
+    ) -> bool: ...
+
     async def update_if_with_outbox(
         self,
         collection: str,

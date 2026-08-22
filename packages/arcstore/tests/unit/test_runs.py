@@ -558,6 +558,44 @@ class TestRunStoreBudget:
         finally:
             await be.stop()
 
+    async def test_concurrent_settlement_key_is_atomic_and_idempotent(
+        self, tmp_path: Path
+    ) -> None:
+        import asyncio
+
+        from arcstore.runs import Run, RunStore
+
+        be = await _backend(tmp_path)
+        try:
+            store = RunStore(be)
+            run = await store.create(
+                Run(
+                    id=_new_id(),
+                    workflow_id=_WORKFLOW,
+                    workflow_version=1,
+                    content_hash="sha256:x",
+                    initiator_did=_INITIATOR,
+                )
+            )
+            outcomes = await asyncio.gather(
+                *(
+                    store.settle_budget_once(
+                        run.id,
+                        settlement_key="node-a:0",
+                        tokens=30,
+                        actor_did=_RUNNER,
+                    )
+                    for _ in range(8)
+                )
+            )
+            final = await store.get(run.id)
+            assert final is not None
+            assert outcomes.count(True) == 1
+            assert final.budget.tokens_spent == 30
+            assert final.settled == ["node-a:0"]
+        finally:
+            await be.stop()
+
     async def test_run_store_emits_audit_event_on_create(self, tmp_path: Path) -> None:
         from arcstore.runs import Run, RunStore
 
