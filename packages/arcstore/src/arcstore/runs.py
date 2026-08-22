@@ -19,6 +19,7 @@ from typing import Any, ClassVar, Literal, Protocol
 from arctrust.audit import AuditSink
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from arcstore.mutation_fence import RunnerFence
 from arcstore.tasks import _validate_free_text
 
 RunStatus = Literal["pending", "running", "waiting_gate", "done", "failed", "cancelled"]
@@ -116,6 +117,7 @@ class MutableRunBackend(Protocol):
         *,
         actor_did: str,
         sink: Any | None = None,
+        fence: RunnerFence | None = None,
     ) -> None: ...
 
     async def mutable_read(self, collection: str, key: str) -> dict[str, Any] | None: ...
@@ -134,6 +136,7 @@ class MutableRunBackend(Protocol):
         actor_did: str,
         sink: Any | None = None,
         absent_where: dict[str, Any] | None = None,
+        fence: RunnerFence | None = None,
     ) -> bool: ...
 
     async def mutable_increment(
@@ -144,6 +147,7 @@ class MutableRunBackend(Protocol):
         *,
         actor_did: str,
         sink: Any | None = None,
+        fence: RunnerFence | None = None,
     ) -> bool: ...
 
     async def update_if_increment(
@@ -156,6 +160,7 @@ class MutableRunBackend(Protocol):
         *,
         actor_did: str,
         sink: Any | None = None,
+        fence: RunnerFence | None = None,
     ) -> bool: ...
 
     async def append_if_absent(
@@ -168,6 +173,7 @@ class MutableRunBackend(Protocol):
         length_field: str | None = None,
         actor_did: str,
         sink: Any | None = None,
+        fence: RunnerFence | None = None,
     ) -> bool: ...
 
 
@@ -183,7 +189,7 @@ class RunStore:
     def _load(self, row: dict[str, Any]) -> Run:
         return Run.model_validate(row)
 
-    async def create(self, run: Run) -> Run:
+    async def create(self, run: Run, *, fence: RunnerFence | None = None) -> Run:
         now = _now()
         run = run.model_copy(update={"created_at": now, "updated_at": now})
         await self._backend.mutable_write(
@@ -192,6 +198,7 @@ class RunStore:
             run.model_dump(mode="json"),
             actor_did=run.initiator_did,
             sink=self._sink,
+            fence=fence,
         )
         return run
 
@@ -217,6 +224,7 @@ class RunStore:
         *,
         actor_did: str,
         expected_status: RunStatus,
+        fence: RunnerFence | None = None,
     ) -> tuple[Run | None, str]:
         """Advance a run's status, conditional on its current status (REQ-228).
 
@@ -240,6 +248,7 @@ class RunStore:
             where={"status": expected_status},
             actor_did=actor_did,
             sink=self._sink,
+            fence=fence,
         )
         if not won:
             current = await self.get(run_id)
@@ -247,7 +256,7 @@ class RunStore:
         return await self.get(run_id), "applied"
 
     async def append_path_entry(
-        self, run_id: str, entry: PathEntry, *, actor_did: str
+        self, run_id: str, entry: PathEntry, *, actor_did: str, fence: RunnerFence | None = None
     ) -> Run | None:
         """Append one entry onto ``path_taken`` (REQ-228/REQ-229).
 
@@ -267,6 +276,7 @@ class RunStore:
             length_field="path_len",
             actor_did=actor_did,
             sink=self._sink,
+            fence=fence,
         )
         if won:
             current = await self.get(run_id)
@@ -287,6 +297,7 @@ class RunStore:
         tokens: int = 0,
         wall_clock_seconds: float = 0.0,
         actor_did: str,
+        fence: RunnerFence | None = None,
     ) -> Run | None:
         """Reserve budget against the run before a node dispatches (REQ-236)."""
         deltas: dict[str, int | float] = {}
@@ -297,7 +308,7 @@ class RunStore:
         if not deltas:
             return await self.get(run_id)
         won = await self._backend.mutable_increment(
-            self._COLLECTION, run_id, deltas, actor_did=actor_did, sink=self._sink
+            self._COLLECTION, run_id, deltas, actor_did=actor_did, sink=self._sink, fence=fence
         )
         return await self.get(run_id) if won else None
 
@@ -308,6 +319,7 @@ class RunStore:
         tokens: int = 0,
         wall_clock_seconds: float = 0.0,
         actor_did: str,
+        fence: RunnerFence | None = None,
     ) -> Run | None:
         """Settle actual usage: move it from reserved into spent (REQ-236).
 
@@ -325,7 +337,7 @@ class RunStore:
         if not deltas:
             return await self.get(run_id)
         won = await self._backend.mutable_increment(
-            self._COLLECTION, run_id, deltas, actor_did=actor_did, sink=self._sink
+            self._COLLECTION, run_id, deltas, actor_did=actor_did, sink=self._sink, fence=fence
         )
         return await self.get(run_id) if won else None
 
@@ -337,6 +349,7 @@ class RunStore:
         tokens: int = 0,
         wall_clock_seconds: float = 0.0,
         actor_did: str,
+        fence: RunnerFence | None = None,
     ) -> bool:
         """Atomically claim a settlement key and apply its budget deltas."""
         deltas: dict[str, int | float] = {}
@@ -363,6 +376,7 @@ class RunStore:
                 where={"settled_len": current.settled_len},
                 actor_did=actor_did,
                 sink=self._sink,
+                fence=fence,
             )
             if won:
                 return True

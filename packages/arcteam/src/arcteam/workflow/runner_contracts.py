@@ -21,6 +21,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal, Protocol
 
+from arcstore.mutation_fence import RunnerFence
 from arcstore.tasks import Task
 
 Tier = Literal["personal", "enterprise", "federal"]
@@ -330,6 +331,7 @@ class RunStoreLike(Protocol):
         budget_tokens: int | None,
         budget_cost_usd: float | None,
         budget_wall_clock_s: float | None,
+        fence: RunnerFence | None = None,
     ) -> RunRecord: ...
 
     async def get(self, run_id: str) -> RunRecord | None: ...
@@ -342,12 +344,18 @@ class RunStoreLike(Protocol):
         actor_did: str,
         expected_status: RunStatus | None = None,
         resolution: str | None = None,
+        fence: RunnerFence | None = None,
     ) -> bool:
         """Conditional transition. ``False`` means another writer won the race."""
         ...
 
     async def append_path(
-        self, run_id: str, entry: Mapping[str, Any], *, actor_did: str
+        self,
+        run_id: str,
+        entry: Mapping[str, Any],
+        *,
+        actor_did: str,
+        fence: RunnerFence | None = None,
     ) -> None: ...
 
     async def record_spend(
@@ -358,6 +366,7 @@ class RunStoreLike(Protocol):
         cost_usd: float,
         actor_did: str,
         settlement_key: str | None = None,
+        fence: RunnerFence | None = None,
     ) -> bool: ...
 
     async def active_runs(self) -> Sequence[RunRecord]:
@@ -381,7 +390,9 @@ class WorkflowTaskStoreLike(Protocol):
     filters in Python — the tick cost must not grow with the board.
     """
 
-    async def create_batch(self, tasks: Sequence[Task], *, actor_did: str) -> Sequence[Task]:
+    async def create_batch(
+        self, tasks: Sequence[Task], *, actor_did: str, fence: RunnerFence | None = None
+    ) -> Sequence[Task]:
         """Create rows atomically, returning the EXISTING row for any id present.
 
         Idempotent on each task's own id, which is why the runner derives that
@@ -395,7 +406,12 @@ class WorkflowTaskStoreLike(Protocol):
     async def get(self, task_id: str) -> Task | None: ...
 
     async def update(
-        self, task_id: str, patch: dict[str, Any], *, actor_did: str
+        self,
+        task_id: str,
+        patch: dict[str, Any],
+        *,
+        actor_did: str,
+        fence: RunnerFence | None = None,
     ) -> Task | None: ...
 
     async def update_if(
@@ -405,6 +421,7 @@ class WorkflowTaskStoreLike(Protocol):
         *,
         where: dict[str, Any],
         actor_did: str,
+        fence: RunnerFence | None = None,
     ) -> Task | None: ...
 
     async def request_cancel(self, task_id: str, *, actor_did: str) -> Task | None: ...

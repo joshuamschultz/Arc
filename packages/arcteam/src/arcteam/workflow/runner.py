@@ -40,7 +40,7 @@ from typing import Any, Literal, cast
 from uuid import uuid4
 
 from arcstore.tasks import Task
-from arcstore.workflow_lease import WorkflowRunnerLease
+from arcstore.workflow_lease import RunnerFence, WorkflowRunnerLease
 from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
 
 from .narrator import RunNarrator, assert_channel_binding
@@ -275,6 +275,7 @@ class WorkflowRunner:
             budget_tokens=None if budget is None else budget.tokens,
             budget_cost_usd=None,
             budget_wall_clock_s=None if budget is None else budget.wall_clock_s,
+            fence=self._mutation_fence(),
         )
         self._open_run_workspace(run_id)
         self._audit(
@@ -513,7 +514,13 @@ class WorkflowRunner:
             except Exception:  # reason: one bad row must not strand the others
                 logger.warning("cancel sweep failed for task %s", task.id, exc_info=True)
 
-        await self._append(run_id, {"kind": "outcome", "status": "cancelled", "detail": reason})
+        # Cancellation is an operator control-plane action, not runner progress:
+        # it intentionally bypasses the runner lease fence.
+        await self._runs.append_path(
+            run_id,
+            {"kind": "outcome", "status": "cancelled", "detail": reason},
+            actor_did=actor_did,
+        )
         self._audit(
             "workflow.run.cancelled",
             target=f"{run.workflow_id}/{run_id}",
@@ -664,7 +671,9 @@ class WorkflowRunner:
             )
         if not rows:
             return False
-        created = await self._tasks.create_batch(rows, actor_did=self._runner_did)
+        created = await self._tasks.create_batch(
+            rows, actor_did=self._runner_did, fence=self._mutation_fence()
+        )
         changed = False
         for task in created:
             changed |= await self._record_materialization(run, state, task)
@@ -1074,6 +1083,7 @@ class WorkflowRunner:
                 instance.task.id,
                 {"status": "failed", "last_error": reason},
                 actor_did=self._runner_did,
+                fence=self._mutation_fence(),
             )
         self._audit(
             "workflow.node.failed",
@@ -1107,6 +1117,7 @@ class WorkflowRunner:
                     desired,
                     actor_did=self._runner_did,
                     expected_status=run.status,
+                    fence=self._mutation_fence(),
                 )
                 return await self._require_run(run.run_id)
             return run
@@ -1127,7 +1138,11 @@ class WorkflowRunner:
         if prev_state is not None and self._terminal_states_moved(prev_state, state, definition):
             if run.status != "running":
                 await self._runs.set_status(
-                    run.run_id, "running", actor_did=self._runner_did, expected_status=run.status
+                    run.run_id,
+                    "running",
+                    actor_did=self._runner_did,
+                    expected_status=run.status,
+                    fence=self._mutation_fence(),
                 )
                 return await self._require_run(run.run_id)
             return run
@@ -1164,6 +1179,7 @@ class WorkflowRunner:
             actor_did=self._runner_did,
             expected_status=run.status,
             resolution=resolution,
+            fence=self._mutation_fence(),
         )
         if not flipped:
             return await self._require_run(run_id)
@@ -1218,6 +1234,7 @@ class WorkflowRunner:
                     cost_usd=cost,
                     actor_did=self._runner_did,
                     settlement_key=f"{instance.node_id}:{instance.iteration}",
+                    fence=self._mutation_fence(),
                 )
                 if not applied:
                     state.settled.add(key)
@@ -1312,7 +1329,13 @@ class WorkflowRunner:
         return run
 
     async def _append(self, run_id: str, entry: Mapping[str, Any]) -> None:
-        await self._runs.append_path(run_id, entry, actor_did=self._runner_did)
+        await self._runs.append_path(
+            run_id, entry, actor_did=self._runner_did, fence=self._mutation_fence()
+        )
+
+    def _mutation_fence(self) -> RunnerFence | None:
+        """The token that protected this tick; operator actions pass no token."""
+        return None if self._lease is None else self._lease.fence
 
     def _audit(
         self,

@@ -49,8 +49,10 @@ async def test_restart_mid_materialization_re_derives_instead_of_duplicating(
     runner = build(stores, registry, FANOUT)
     original = flow_tasks.create_batch
 
-    async def crash_after_first(tasks: list[Task], *, actor_did: str) -> list[Task]:
-        await original(tasks[:1], actor_did=actor_did)
+    async def crash_after_first(
+        tasks: list[Task], *, actor_did: str, fence: Any | None = None
+    ) -> list[Task]:
+        await original(tasks[:1], actor_did=actor_did, fence=fence)
         raise RuntimeError("crashed mid-materialization")
 
     flow_tasks.create_batch = crash_after_first  # type: ignore[method-assign]
@@ -222,23 +224,26 @@ async def test_a_terminating_tick_loses_a_race_with_a_cancel(stores: Any, regist
         run_id: str,
         status: str,
         *,
-        actor_did: str,
-        expected_status: str | None = None,
-        resolution: str | None = None,
+            actor_did: str,
+            expected_status: str | None = None,
+            resolution: str | None = None,
+            fence: Any | None = None,
     ) -> bool:
         if status == "done":
             await original(
                 run_id,
                 "cancelled",
-                actor_did="did:arc:local:user/9",
-                resolution="operator stop",
+                    actor_did="did:arc:local:user/9",
+                    resolution="operator stop",
+                    fence=None,
             )
         return await original(
             run_id,
             status,
             actor_did=actor_did,
-            expected_status=expected_status,
-            resolution=resolution,
+                expected_status=expected_status,
+                resolution=resolution,
+                fence=fence,
         )
 
     runs.set_status = operator_cancels_first  # type: ignore[method-assign]

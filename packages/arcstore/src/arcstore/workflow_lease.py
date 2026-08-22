@@ -8,25 +8,16 @@ former owner distinguishable from the current owner.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
 from arcstore.backends.base import ArcStoreBackend
+from arcstore.mutation_fence import RUNNER_LEASE_COLLECTION, RUNNER_LEASE_KEY, RunnerFence
 
-_COLLECTION = "workflow_runner_leases"
-_KEY = "default"
+_COLLECTION = RUNNER_LEASE_COLLECTION
+_KEY = RUNNER_LEASE_KEY
 _SYSTEM_ACTOR = "did:arc:system:workflow-runner"
-
-
-@dataclass(frozen=True)
-class RunnerFence:
-    """The authority returned to one lease holder."""
-
-    owner_id: str
-    token: int
-    expires_at: datetime
 
 
 class WorkflowRunnerLease:

@@ -20,6 +20,8 @@ from typing import Any, ClassVar, Literal, Protocol
 from arctrust.audit import AuditSink
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
+from arcstore.mutation_fence import RunnerFence
+
 TaskStatus = Literal["backlog", "todo", "in_progress", "review", "done", "failed"]
 # Columns an operator may move a task INTO from the board. `in_progress` is absent:
 # only the dispatch claim (start_task) enters it, so a board move can never fake a run.
@@ -177,6 +179,7 @@ class MutableTaskBackend(Protocol):
         *,
         actor_did: str,
         sink: Any | None = None,
+        fence: RunnerFence | None = None,
     ) -> None: ...
 
     async def mutable_read(self, collection: str, key: str) -> dict[str, Any] | None: ...
@@ -202,6 +205,7 @@ class MutableTaskBackend(Protocol):
         *,
         actor_did: str,
         sink: Any | None = None,
+        fence: RunnerFence | None = None,
     ) -> bool: ...
 
     async def update_if(
@@ -214,6 +218,7 @@ class MutableTaskBackend(Protocol):
         actor_did: str,
         sink: Any | None = None,
         absent_where: dict[str, Any] | None = None,
+        fence: RunnerFence | None = None,
     ) -> bool: ...
 
     async def mutable_create_batch(
@@ -223,6 +228,7 @@ class MutableTaskBackend(Protocol):
         *,
         actor_did: str,
         sink: Any | None = None,
+        fence: RunnerFence | None = None,
     ) -> list[dict[str, Any]]: ...
 
 
@@ -258,7 +264,7 @@ class TaskStore:
     def _load(self, row: dict[str, Any]) -> Task:
         return Task.model_validate(row, context=self._READ_CONTEXT)
 
-    async def create(self, task: Task) -> Task:
+    async def create(self, task: Task, *, fence: RunnerFence | None = None) -> Task:
         # A caller that didn't set status explicitly gets the SDD §4 default
         # (owned -> todo, unowned -> backlog); an explicit status is never
         # second-guessed. ``model_fields_set`` is how Pydantic distinguishes
@@ -274,10 +280,13 @@ class TaskStore:
             task.model_dump(mode="json"),
             actor_did=task.creator_did,
             sink=self._sink,
+            fence=fence,
         )
         return task
 
-    async def create_batch(self, tasks: Sequence[Task], *, actor_did: str) -> list[Task]:
+    async def create_batch(
+        self, tasks: Sequence[Task], *, actor_did: str, fence: RunnerFence | None = None
+    ) -> list[Task]:
         """Create many task rows across owners in one backend transaction.
 
         SPEC-061 COMP-007 — frontier materialization writes one task per
@@ -302,7 +311,7 @@ class TaskStore:
             prepared.append(t)
         entries = [(t.id, t.model_dump(mode="json")) for t in prepared]
         rows = await self._backend.mutable_create_batch(
-            self._COLLECTION, entries, actor_did=actor_did, sink=self._sink
+            self._COLLECTION, entries, actor_did=actor_did, sink=self._sink, fence=fence
         )
         return [self._load(row) for row in rows]
 
@@ -319,13 +328,25 @@ class TaskStore:
         rows = await self._backend.mutable_query(self._COLLECTION, where=where)
         return [self._load(row) for row in rows]
 
-    async def update(self, task_id: str, patch: dict[str, Any], *, actor_did: str) -> Task | None:
+    async def update(
+        self,
+        task_id: str,
+        patch: dict[str, Any],
+        *,
+        actor_did: str,
+        fence: RunnerFence | None = None,
+    ) -> Task | None:
         # Atomic server-side merge (REL-F2): a read-merge-write here lets two
         # concurrent updates of disjoint fields clobber each other (last-writer
         # drops the loser's field). mutable_merge applies the patch inside one
         # SQLite step, so both land. False means the row is gone.
         merged = await self._backend.mutable_merge(
-            self._COLLECTION, task_id, patch, actor_did=actor_did, sink=self._sink
+            self._COLLECTION,
+            task_id,
+            patch,
+            actor_did=actor_did,
+            sink=self._sink,
+            fence=fence,
         )
         if not merged:
             return None

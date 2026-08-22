@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any, Protocol, runtime_checkable
 
+from arcstore.mutation_fence import RunnerFence
+
 # Operational tables — one per SpoolRecord.kind, all sharing the flat columns.
 OPERATIONAL_TABLES: tuple[str, ...] = (
     "llm_calls",
@@ -108,6 +110,7 @@ class ArcStoreBackend(Protocol):
         *,
         actor_did: str,
         sink: Any | None = None,
+        fence: RunnerFence | None = None,
     ) -> None: ...
 
     async def mutable_read(self, collection: str, key: str) -> dict[str, Any] | None: ...
@@ -136,6 +139,7 @@ class ArcStoreBackend(Protocol):
         *,
         actor_did: str,
         sink: Any | None = None,
+        fence: RunnerFence | None = None,
     ) -> bool: ...
 
     async def update_if(
@@ -148,6 +152,7 @@ class ArcStoreBackend(Protocol):
         actor_did: str,
         sink: Any | None = None,
         absent_where: dict[str, Any] | None = None,
+        fence: RunnerFence | None = None,
     ) -> bool: ...
 
     async def mutable_create_batch(
@@ -157,6 +162,7 @@ class ArcStoreBackend(Protocol):
         *,
         actor_did: str,
         sink: Any | None = None,
+        fence: RunnerFence | None = None,
     ) -> list[dict[str, Any]]: ...
 
     async def mutable_increment(
@@ -167,6 +173,7 @@ class ArcStoreBackend(Protocol):
         *,
         actor_did: str,
         sink: Any | None = None,
+        fence: RunnerFence | None = None,
     ) -> bool: ...
 
     async def update_if_increment(
@@ -179,6 +186,7 @@ class ArcStoreBackend(Protocol):
         *,
         actor_did: str,
         sink: Any | None = None,
+        fence: RunnerFence | None = None,
     ) -> bool: ...
 
     async def append_if_absent(
@@ -191,6 +199,7 @@ class ArcStoreBackend(Protocol):
         length_field: str | None = None,
         actor_did: str,
         sink: Any | None = None,
+        fence: RunnerFence | None = None,
     ) -> bool: ...
 
     async def update_if_with_outbox(

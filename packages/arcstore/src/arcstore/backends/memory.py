@@ -11,6 +11,12 @@ from typing import Any
 from arctrust.audit import AuditEvent, emit
 
 from arcstore.backends.base import APPROVAL_OUTBOX_TABLE
+from arcstore.mutation_fence import (
+    RUNNER_LEASE_COLLECTION,
+    RUNNER_LEASE_KEY,
+    MutationFenceRejectedError,
+    RunnerFence,
+)
 
 
 def _now() -> str:
@@ -65,6 +71,26 @@ class FakeBackend:
     async def stop(self) -> None:
         return None
 
+    def _assert_fence_locked(self, fence: RunnerFence | None) -> None:
+        """Validate an ArcFlow fence while the mutation lock is held."""
+        if fence is None:
+            return
+        lease = self._mutable.get((RUNNER_LEASE_COLLECTION, RUNNER_LEASE_KEY))
+        if lease is None:
+            raise MutationFenceRejectedError("workflow runner lease is absent")
+        value = lease[0]
+        try:
+            expires_at = datetime.fromisoformat(str(value["expires_at"]).replace("Z", "+00:00"))
+            current = (
+                value.get("owner_id") == fence.owner_id
+                and int(value.get("fencing_token", -1)) == fence.token
+                and expires_at > datetime.now(UTC)
+            )
+        except (KeyError, TypeError, ValueError):
+            current = False
+        if not current:
+            raise MutationFenceRejectedError("workflow runner fence is no longer current")
+
     async def upsert(self, table: str, key: str, row: dict[str, Any]) -> None:
         await self.upsert_many(table, [(key, row)])
 
@@ -114,8 +140,10 @@ class FakeBackend:
         *,
         actor_did: str,
         sink: Any | None = None,
+        fence: RunnerFence | None = None,
     ) -> None:
         async with self._lock:
+            self._assert_fence_locked(fence)
             self._mutable[(collection, key)] = (copy.deepcopy(value), _now())
         _emit("mutable.write", collection, key, actor_did, sink)
 
@@ -159,8 +187,10 @@ class FakeBackend:
         *,
         actor_did: str,
         sink: Any | None = None,
+        fence: RunnerFence | None = None,
     ) -> bool:
         async with self._lock:
+            self._assert_fence_locked(fence)
             item = self._mutable.get((collection, key))
             if item is None:
                 merged = False
@@ -182,8 +212,10 @@ class FakeBackend:
         actor_did: str,
         sink: Any | None = None,
         absent_where: dict[str, Any] | None = None,
+        fence: RunnerFence | None = None,
     ) -> bool:
         async with self._lock:
+            self._assert_fence_locked(fence)
             won = self._update_if_locked(collection, key, patch, where, absent_where)
         _emit("mutable.update_if", collection, key, actor_did, sink, "applied" if won else "no-op")
         return won
@@ -195,8 +227,10 @@ class FakeBackend:
         *,
         actor_did: str,
         sink: Any | None = None,
+        fence: RunnerFence | None = None,
     ) -> list[dict[str, Any]]:
         async with self._lock:
+            self._assert_fence_locked(fence)
             now = _now()
             for key, value in entries:
                 self._mutable.setdefault((collection, key), (copy.deepcopy(value), now))
@@ -212,8 +246,10 @@ class FakeBackend:
         *,
         actor_did: str,
         sink: Any | None = None,
+        fence: RunnerFence | None = None,
     ) -> bool:
         async with self._lock:
+            self._assert_fence_locked(fence)
             item = self._mutable.get((collection, key))
             if item is None:
                 incremented = False
@@ -243,8 +279,10 @@ class FakeBackend:
         *,
         actor_did: str,
         sink: Any | None = None,
+        fence: RunnerFence | None = None,
     ) -> bool:
         async with self._lock:
+            self._assert_fence_locked(fence)
             item = self._mutable.get((collection, key))
             if item is None or not _matches(item[0], where):
                 won = False
@@ -275,8 +313,10 @@ class FakeBackend:
         length_field: str | None = None,
         actor_did: str,
         sink: Any | None = None,
+        fence: RunnerFence | None = None,
     ) -> bool:
         async with self._lock:
+            self._assert_fence_locked(fence)
             stored = self._mutable.get((collection, key))
             if stored is None:
                 won = False

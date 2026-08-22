@@ -273,6 +273,7 @@ class FlowRunStore:
         budget_tokens: int | None,
         budget_cost_usd: float | None,
         budget_wall_clock_s: float | None,
+        fence: Any | None = None,
     ) -> RunRow:
         row = RunRow(
             run_id=run_id,
@@ -327,6 +328,7 @@ class FlowRunStore:
         actor_did: str,
         expected_status: str | None = None,
         resolution: str | None = None,
+        fence: Any | None = None,
     ) -> bool:
         patch: dict[str, Any] = {"status": status}
         if resolution is not None:
@@ -343,7 +345,9 @@ class FlowRunStore:
             actor_did=actor_did,
         )
 
-    async def append_path(self, run_id: str, entry: Mapping[str, Any], *, actor_did: str) -> None:
+    async def append_path(
+        self, run_id: str, entry: Mapping[str, Any], *, actor_did: str, fence: Any | None = None
+    ) -> None:
         current = await self.get(run_id)
         if current is None:
             return
@@ -360,6 +364,7 @@ class FlowRunStore:
         cost_usd: float,
         actor_did: str,
         settlement_key: str | None = None,
+        fence: Any | None = None,
     ) -> bool:
         if settlement_key is not None:
             marker = (run_id, settlement_key)
@@ -398,7 +403,9 @@ class FlowTaskStore:
         self.run_status_at_cancel: list[str | None] = []
         self.observe_run_status: Any = None
 
-    async def create_batch(self, tasks: Sequence[Task], *, actor_did: str) -> Sequence[Task]:
+    async def create_batch(
+        self, tasks: Sequence[Task], *, actor_did: str, fence: Any | None = None
+    ) -> Sequence[Task]:
         out: list[Task] = []
         self.requested_keys.extend(task.id for task in tasks)
         for task in tasks:
@@ -420,7 +427,9 @@ class FlowTaskStore:
     async def get(self, task_id: str) -> Task | None:
         return await self._tasks.get(task_id)
 
-    async def update(self, task_id: str, patch: dict[str, Any], *, actor_did: str) -> Task | None:
+    async def update(
+        self, task_id: str, patch: dict[str, Any], *, actor_did: str, fence: Any | None = None
+    ) -> Task | None:
         return await self._tasks.update(task_id, patch, actor_did=actor_did)
 
     async def update_if(
@@ -430,6 +439,7 @@ class FlowTaskStore:
         *,
         where: dict[str, Any],
         actor_did: str,
+        fence: Any | None = None,
     ) -> Task | None:
         won = await self._backend.update_if(
             "tasks", task_id, patch, where=where, actor_did=actor_did

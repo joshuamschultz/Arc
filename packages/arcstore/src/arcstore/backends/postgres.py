@@ -13,6 +13,12 @@ from arctrust.audit import AuditEvent, emit
 from arcstore.backends.base import STORE_TABLES
 from arcstore.config import ArcStoreConfig, PostgresSettings
 from arcstore.migrations import migrate
+from arcstore.mutation_fence import (
+    RUNNER_LEASE_COLLECTION,
+    RUNNER_LEASE_KEY,
+    MutationFenceRejectedError,
+    RunnerFence,
+)
 
 _logger = logging.getLogger("arcstore.backends.postgres")
 _ORDER_BY = frozenset({"ts", "ts ASC", "ts DESC"})
@@ -139,16 +145,31 @@ class PostgresBackend:
         *,
         actor_did: str,
         sink: Any | None = None,
+        fence: RunnerFence | None = None,
     ) -> None:
         async with self._require_pool().acquire() as connection:
-            await connection.execute(
-                "INSERT INTO mutable_records(collection, key, value) VALUES ($1, $2, $3::jsonb) "
-                "ON CONFLICT(collection, key) DO UPDATE SET "
-                "value=EXCLUDED.value, updated_at=now()",
-                collection,
-                key,
-                _json(value),
-            )
+            if fence is None:
+                await connection.execute(
+                    "INSERT INTO mutable_records(collection, key, value) "
+                    "VALUES ($1, $2, $3::jsonb) "
+                    "ON CONFLICT(collection, key) DO UPDATE SET "
+                    "value=EXCLUDED.value, updated_at=now()",
+                    collection,
+                    key,
+                    _json(value),
+                )
+            else:
+                async with connection.transaction():
+                    await self._assert_fence_current(connection, fence)
+                    await connection.execute(
+                        "INSERT INTO mutable_records(collection, key, value) "
+                        "VALUES ($1, $2, $3::jsonb) "
+                        "ON CONFLICT(collection, key) DO UPDATE SET "
+                        "value=EXCLUDED.value, updated_at=now()",
+                        collection,
+                        key,
+                        _json(value),
+                    )
         _emit("mutable.write", collection, key, actor_did, sink)
 
     async def mutable_read(self, collection: str, key: str) -> dict[str, Any] | None:
@@ -200,15 +221,27 @@ class PostgresBackend:
         *,
         actor_did: str,
         sink: Any | None = None,
+        fence: RunnerFence | None = None,
     ) -> bool:
         async with self._require_pool().acquire() as connection:
-            result = await connection.execute(
-                "UPDATE mutable_records SET value=value || $1::jsonb, updated_at=now() "
-                "WHERE collection=$2 AND key=$3",
-                _json(patch),
-                collection,
-                key,
-            )
+            if fence is None:
+                result = await connection.execute(
+                    "UPDATE mutable_records SET value=value || $1::jsonb, updated_at=now() "
+                    "WHERE collection=$2 AND key=$3",
+                    _json(patch),
+                    collection,
+                    key,
+                )
+            else:
+                async with connection.transaction():
+                    await self._assert_fence_current(connection, fence)
+                    result = await connection.execute(
+                        "UPDATE mutable_records SET value=value || $1::jsonb, updated_at=now() "
+                        "WHERE collection=$2 AND key=$3",
+                        _json(patch),
+                        collection,
+                        key,
+                    )
         merged = str(result).endswith("1")
         _emit("mutable.merge", collection, key, actor_did, sink, "applied" if merged else "no-op")
         return merged
@@ -223,9 +256,12 @@ class PostgresBackend:
         actor_did: str,
         sink: Any | None = None,
         absent_where: dict[str, Any] | None = None,
+        fence: RunnerFence | None = None,
     ) -> bool:
         async with self._require_pool().acquire() as connection:
             async with connection.transaction():
+                if fence is not None:
+                    await self._assert_fence_current(connection, fence)
                 won = await self._update_if(
                     connection, collection, key, patch, where, absent_where
                 )
@@ -239,9 +275,12 @@ class PostgresBackend:
         *,
         actor_did: str,
         sink: Any | None = None,
+        fence: RunnerFence | None = None,
     ) -> list[dict[str, Any]]:
         async with self._require_pool().acquire() as connection:
             async with connection.transaction():
+                if fence is not None:
+                    await self._assert_fence_current(connection, fence)
                 for key, value in entries:
                     await connection.execute(
                         "INSERT INTO mutable_records(collection, key, value) "
@@ -273,6 +312,7 @@ class PostgresBackend:
         *,
         actor_did: str,
         sink: Any | None = None,
+        fence: RunnerFence | None = None,
     ) -> bool:
         if not deltas:
             return False
@@ -293,7 +333,12 @@ class PostgresBackend:
             f"WHERE collection=${len(params) - 1} AND key=${len(params)}"
         )
         async with self._require_pool().acquire() as connection:
-            result = await connection.execute(statement, *params)
+            if fence is None:
+                result = await connection.execute(statement, *params)
+            else:
+                async with connection.transaction():
+                    await self._assert_fence_current(connection, fence)
+                    result = await connection.execute(statement, *params)
         incremented = str(result).endswith("1")
         _emit(
             "mutable.increment",
@@ -315,6 +360,7 @@ class PostgresBackend:
         *,
         actor_did: str,
         sink: Any | None = None,
+        fence: RunnerFence | None = None,
     ) -> bool:
         """Conditionally patch and increment one JSON row in one transaction."""
         if not deltas:
@@ -325,6 +371,7 @@ class PostgresBackend:
                 where,
                 actor_did=actor_did,
                 sink=sink,
+                fence=fence,
             )
         params: list[Any] = [_json(patch), collection, key]
         expression = "value || $1::jsonb"
@@ -342,7 +389,12 @@ class PostgresBackend:
             "WHERE collection=$2 AND key=$3 AND " + " AND ".join(_where_clauses(where, params))
         )
         async with self._require_pool().acquire() as connection:
-            result = await connection.execute(statement, *params)
+            if fence is None:
+                result = await connection.execute(statement, *params)
+            else:
+                async with connection.transaction():
+                    await self._assert_fence_current(connection, fence)
+                    result = await connection.execute(statement, *params)
         won = str(result).endswith("1")
         _emit(
             "mutable.update_if_increment",
@@ -364,6 +416,7 @@ class PostgresBackend:
         length_field: str | None = None,
         actor_did: str,
         sink: Any | None = None,
+        fence: RunnerFence | None = None,
     ) -> bool:
         """Append one JSON object only if the array does not already contain it."""
         path = field.split(".")
@@ -386,7 +439,12 @@ class PostgresBackend:
             "AND NOT COALESCE((value #> $1::text[]) @> jsonb_build_array($2::jsonb), false)"
         )
         async with self._require_pool().acquire() as connection:
-            result = await connection.execute(statement, *params)
+            if fence is None:
+                result = await connection.execute(statement, *params)
+            else:
+                async with connection.transaction():
+                    await self._assert_fence_current(connection, fence)
+                    result = await connection.execute(statement, *params)
         won = str(result).endswith("1")
         _emit(
             "mutable.append_if_absent",
@@ -562,6 +620,28 @@ class PostgresBackend:
             )
         result = await connection.execute(statement, *params)
         return str(result).endswith("1")
+
+    async def _assert_fence_current(self, connection: Any, fence: RunnerFence) -> None:
+        """Lock and validate the runner lease inside the caller's transaction.
+
+        ``FOR UPDATE`` is intentionally on the lease row, not a preflight
+        read.  A replacement acquisition updates that same row, so it cannot
+        slip between this check and the protected mutable-record write.
+        """
+        row = await connection.fetchrow(
+            "SELECT 1 FROM mutable_records "
+            "WHERE collection=$1 AND key=$2 "
+            "AND value->>'owner_id'=$3 "
+            "AND (value->>'fencing_token')::bigint=$4 "
+            "AND (value->>'expires_at')::timestamptz > now() "
+            "FOR UPDATE",
+            RUNNER_LEASE_COLLECTION,
+            RUNNER_LEASE_KEY,
+            fence.owner_id,
+            fence.token,
+        )
+        if row is None:
+            raise MutationFenceRejectedError("workflow runner fence is no longer current")
 
     def _require_pool(self) -> Any:
         if self._pool is None:

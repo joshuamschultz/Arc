@@ -30,6 +30,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from arcstore.mutation_fence import RunnerFence
 from arcstore.runs import PathEntry, Run, RunStore
 from arcstore.tasks import Task, TaskStore
 from arctrust.audit import AuditSink
@@ -104,6 +105,7 @@ class WorkflowRunStore:
         budget_tokens: int | None,
         budget_cost_usd: float | None,
         budget_wall_clock_s: float | None,
+        fence: RunnerFence | None = None,
     ) -> FlowRun:
         await self._runs.create(
             Run(
@@ -113,7 +115,8 @@ class WorkflowRunStore:
                 content_hash=content_hash,
                 status="running",
                 initiator_did=initiator_did,
-            )
+            ),
+            fence=fence,
         )
         await self._backend.mutable_write(
             _STATE_COLLECTION,
@@ -131,6 +134,7 @@ class WorkflowRunStore:
             },
             actor_did=initiator_did,
             sink=self._sink,
+            fence=fence,
         )
         loaded = await self.get(run_id)
         if loaded is None:  # pragma: no cover — the row was just written
@@ -196,13 +200,14 @@ class WorkflowRunStore:
         actor_did: str,
         expected_status: RunStatus | None = None,
         resolution: str | None = None,
+        fence: RunnerFence | None = None,
     ) -> bool:
         current = await self._runs.get(run_id)
         if current is None:
             return False
         expected = expected_status or current.status
         _, outcome = await self._runs.transition(
-            run_id, status, actor_did=actor_did, expected_status=expected
+            run_id, status, actor_did=actor_did, expected_status=expected, fence=fence
         )
         if outcome != "applied":
             return False
@@ -213,12 +218,20 @@ class WorkflowRunStore:
                 {"resolution": resolution},
                 actor_did=actor_did,
                 sink=self._sink,
+                fence=fence,
             )
         return True
 
-    async def append_path(self, run_id: str, entry: Mapping[str, Any], *, actor_did: str) -> None:
+    async def append_path(
+        self,
+        run_id: str,
+        entry: Mapping[str, Any],
+        *,
+        actor_did: str,
+        fence: RunnerFence | None = None,
+    ) -> None:
         """Journal an entry with CAS retries, then mirror real outcomes on the Run."""
-        await self._append_state_path(run_id, entry, actor_did=actor_did)
+        await self._append_state_path(run_id, entry, actor_did=actor_did, fence=fence)
         outcome = _TRACEABLE_OUTCOMES.get(str(entry.get("kind")))
         if outcome is None:
             return
@@ -237,14 +250,21 @@ class WorkflowRunStore:
                 return
             if any(_same_path_entry(existing, path_entry) for existing in current.path_taken):
                 return
-            appended = await self._runs.append_path_entry(run_id, path_entry, actor_did=actor_did)
+            appended = await self._runs.append_path_entry(
+                run_id, path_entry, actor_did=actor_did, fence=fence
+            )
             if appended is not None:
                 return
             await asyncio.sleep(0)
         raise RuntimeError(f"run {run_id} path append lost its CAS race repeatedly")
 
     async def _append_state_path(
-        self, run_id: str, entry: Mapping[str, Any], *, actor_did: str
+        self,
+        run_id: str,
+        entry: Mapping[str, Any],
+        *,
+        actor_did: str,
+        fence: RunnerFence | None = None,
     ) -> None:
         """Append one companion journal event without a read/merge lost update."""
         candidate = dict(entry)
@@ -270,6 +290,7 @@ class WorkflowRunStore:
                 where={"path_len": path_len},
                 actor_did=actor_did,
                 sink=self._sink,
+                fence=fence,
             )
             if won:
                 return
@@ -284,17 +305,21 @@ class WorkflowRunStore:
         cost_usd: float,
         actor_did: str,
         settlement_key: str | None = None,
+        fence: RunnerFence | None = None,
     ) -> bool:
         """Settle a node's usage once, even when ticks retry concurrently."""
         if settlement_key is None:
             return (
-                await self._runs.settle_budget(run_id, tokens=tokens, actor_did=actor_did)
+                await self._runs.settle_budget(
+                    run_id, tokens=tokens, actor_did=actor_did, fence=fence
+                )
             ) is not None
         return await self._runs.settle_budget_once(
             run_id,
             settlement_key=settlement_key,
             tokens=tokens,
             actor_did=actor_did,
+            fence=fence,
         )
 
 
@@ -307,8 +332,10 @@ class WorkflowTaskStore:
         self._actor_did = actor_did
         self._sink = sink
 
-    async def create_batch(self, tasks: Sequence[Task], *, actor_did: str) -> Sequence[Task]:
-        return await self._tasks.create_batch(tasks, actor_did=actor_did)
+    async def create_batch(
+        self, tasks: Sequence[Task], *, actor_did: str, fence: RunnerFence | None = None
+    ) -> Sequence[Task]:
+        return await self._tasks.create_batch(tasks, actor_did=actor_did, fence=fence)
 
     async def query_by_flow_run(self, flow_run_id: str) -> Sequence[Task]:
         """Scoped read on the run's own rows — never list-then-filter.
@@ -324,8 +351,15 @@ class WorkflowTaskStore:
     async def get(self, task_id: str) -> Task | None:
         return await self._tasks.get(task_id)
 
-    async def update(self, task_id: str, patch: dict[str, Any], *, actor_did: str) -> Task | None:
-        return await self._tasks.update(task_id, patch, actor_did=actor_did)
+    async def update(
+        self,
+        task_id: str,
+        patch: dict[str, Any],
+        *,
+        actor_did: str,
+        fence: RunnerFence | None = None,
+    ) -> Task | None:
+        return await self._tasks.update(task_id, patch, actor_did=actor_did, fence=fence)
 
     async def update_if(
         self,
@@ -334,6 +368,7 @@ class WorkflowTaskStore:
         *,
         where: dict[str, Any],
         actor_did: str,
+        fence: RunnerFence | None = None,
     ) -> Task | None:
         """Conditionally update one task, preserving a concurrent gate decision."""
         won = await self._backend.update_if(
@@ -343,6 +378,7 @@ class WorkflowTaskStore:
             where=where,
             actor_did=actor_did,
             sink=self._sink,
+            fence=fence,
         )
         return await self.get(task_id) if won else None
 
