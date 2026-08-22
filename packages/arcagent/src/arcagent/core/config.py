@@ -35,6 +35,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+import arcstore as arcstore_package
 from arctrust import ValidatorsConfig
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -254,18 +255,6 @@ class ModuleEntry(BaseModel):
     enabled: bool = True
     priority: int = 100
     config: dict[str, Any] = {}
-
-
-class ArcStoreConnectionConfig(BaseModel):
-    """Non-secret ArcStore composition settings.
-
-    The credential is a vault coordinate only; the resolved value never enters
-    agent configuration or module tool arguments.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    database_credential_ref: str = ""
 
 
 class TelemetryConfig(BaseModel):
@@ -687,7 +676,9 @@ class ArcAgentConfig(BaseModel):
     ui: UIConfig = UIConfig()
     budget: BudgetConfig = BudgetConfig()
     arcrun: ArcRunConfig = ArcRunConfig()
-    arcstore: ArcStoreConnectionConfig = Field(default_factory=ArcStoreConnectionConfig)
+    arcstore: arcstore_package.ArcStoreConfig = Field(
+        default_factory=arcstore_package.ArcStoreConfig
+    )
 
     @model_validator(mode="after")
     def _resolve_tier_capture_tool_io(self) -> ArcAgentConfig:
