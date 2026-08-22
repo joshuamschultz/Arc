@@ -716,10 +716,11 @@ COMMAND_REGISTRY: list[CommandDef] = [
         name="capability-import",
         description=(
             "Review and operator-promote staged capability ZIPs — "
-            "list, show, edit, promote, revoke"
+            "import, list, show, edit, promote, revoke"
         ),
         category="Tools & Skills",
         args_hint="<subcommand>",
+        aliases=("capability",),
         cli_only=True,
         handler=_capability_import_handler,
     ),

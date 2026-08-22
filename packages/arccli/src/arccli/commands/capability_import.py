@@ -8,7 +8,9 @@ staged source is never executed by this command.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 import arcagent
@@ -18,6 +20,8 @@ from arctrust.policy import OperatorApprovalAuthority
 
 from arccli.commands._shared import audit_chain, dispatch, print_table, write
 from arccli.commands.trust import _resolve_agent
+
+_ARCHIVE_CHUNK_SIZE = 64 * 1024
 
 
 def _err(message: str) -> None:
@@ -48,9 +52,111 @@ def _resolve_target(agent_arg: str | None) -> tuple[str, Path, str]:
     return agent_id, agent_root, str(entry.did)
 
 
+def _copy_stdin_archive(limits: arcagent.CapabilityImportLimits) -> Path:
+    """Spool standard input into a bounded, private ZIP file.
+
+    ``CapabilityImportService`` deliberately receives a path: its archive
+    preflight owns the ZIP validation and its intake owns quarantine/staging.
+    The CLI only supplies a regular, size-bounded file when the operator pipes
+    bytes in; it never inspects or extracts the archive itself.
+    """
+    descriptor, raw_path = tempfile.mkstemp(prefix="arc-capability-import-", suffix=".zip")
+    temporary = Path(raw_path)
+    try:
+        total = 0
+        with os.fdopen(descriptor, "wb") as output:
+            while chunk := sys.stdin.buffer.read(_ARCHIVE_CHUNK_SIZE):
+                total += len(chunk)
+                if total > limits.max_compressed_bytes:
+                    raise arcagent.CapabilityImportError(
+                        "uploaded archive exceeds configured limit"
+                    )
+                output.write(chunk)
+            output.flush()
+            os.fsync(output.fileno())
+        temporary.chmod(0o600)
+        return temporary
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def _archive_source(archive: Path, limits: arcagent.CapabilityImportLimits) -> tuple[Path, bool]:
+    """Return the archive path and whether this command must remove it.
+
+    Local sources remain in place and are subject to the same ArcAgent
+    preflight as a web upload. ``-`` is the conventional stdin spelling and
+    is bounded before that preflight runs.
+    """
+    if str(archive) == "-":
+        return _copy_stdin_archive(limits), True
+    if archive.suffix.casefold() != ".zip":
+        raise ValueError("capability imports must be ZIP archives (use '-' for stdin)")
+    return archive, False
+
+
+def _review_payload(review: arcagent.CapabilityImportReview, agent_id: str) -> dict[str, object]:
+    """Return the JSON-safe CLI contract without exposing quarantined bytes."""
+    payload = review.model_dump(mode="json")
+    payload["agent_id"] = agent_id
+    return payload
+
+
+def _print_review(review: arcagent.CapabilityImportReview, agent_id: str) -> None:
+    """Render a compact table for a newly staged review."""
+    print_table(
+        ["Agent", "Import", "Status", "Tools", "Skills", "Review digest", "Activation"],
+        [
+            [
+                agent_id,
+                review.import_id,
+                review.status.value,
+                ", ".join(review.tools) or "-",
+                ", ".join(review.skills) or "-",
+                review.review_digest,
+                review.activation,
+            ]
+        ],
+    )
+
+
+def _import(args: argparse.Namespace) -> None:
+    """Stage one archive for review; this intentionally cannot activate it."""
+    agent_id, agent_root, target_did = _resolve_target(args.agent)
+    limits = arcagent.CapabilityImportLimits()
+    source, remove_source = _archive_source(args.archive, limits)
+    try:
+        capabilities_root = agent_root / "capabilities"
+        service = arcagent.CapabilityImportService(capabilities_root)
+        intake = arcagent.intake_capability_archive(source, capabilities_root, limits=limits)
+        manifest = service.review(intake, target_agent_did=target_did, limits=limits)
+        review = service.review_summary(manifest)
+    finally:
+        if remove_source:
+            source.unlink(missing_ok=True)
+
+    if args.json:
+        from arccli.commands._shared import print_json
+
+        print_json(_review_payload(review, agent_id))
+        return
+    _print_review(review, agent_id)
+    write(
+        "Staged for review only; inspect with `arc capability-import show`, then edit and "
+        "operator-promote explicitly."
+    )
+
+
 def _list(args: argparse.Namespace) -> None:
-    _, agent_root, _ = _resolve_target(args.agent)
+    agent_id, agent_root, _ = _resolve_target(args.agent)
     rows = arcagent.CapabilityImportService(agent_root / "capabilities").list_reviews()
+    if args.json:
+        from arccli.commands._shared import print_json
+
+        print_json(
+            {"agent_id": agent_id, "imports": [row.model_dump(mode="json") for row in rows]}
+        )
+        return
     if not rows:
         write("No capability-import reviews.")
         return
@@ -148,6 +254,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="arc capability-import")
     subs = parser.add_subparsers(dest="subcmd", required=True)
     commands = (
+        ("import", "Stage one ZIP for static review; it remains inactive."),
         ("list", "List staged reviews."),
         ("show", "Print one reviewed file."),
         ("edit", "Edit one staged file and regenerate evidence."),
@@ -157,7 +264,14 @@ def _build_parser() -> argparse.ArgumentParser:
     for name, help_text in commands:
         sub = subs.add_parser(name, help=help_text)
         sub.add_argument("--agent", default=None, help="Agent id under team/.")
-        if name != "list":
+        if name == "import":
+            sub.add_argument(
+                "archive", type=Path, help="ZIP path, or '-' to read a ZIP from stdin."
+            )
+            sub.add_argument("--json", action="store_true", help="Print review metadata as JSON.")
+        if name == "list":
+            sub.add_argument("--json", action="store_true", help="Print review metadata as JSON.")
+        if name not in {"import", "list"}:
             sub.add_argument("import_id")
         if name in {"show", "edit"}:
             sub.add_argument("path")
@@ -167,6 +281,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 _SUBCOMMAND_MAP = {
+    "import": _import,
     "list": _list,
     "show": _show,
     "edit": _edit,
@@ -178,7 +293,7 @@ _SUBCOMMAND_MAP = {
 def capability_import_handler(args: list[str]) -> None:
     try:
         dispatch(_build_parser(), _SUBCOMMAND_MAP, args)
-    except (OSError, ValueError) as exc:
+    except (arcagent.CapabilityImportError, OSError, ValueError) as exc:
         _err(f"arc capability-import: {exc}")
         raise SystemExit(1) from exc
 
