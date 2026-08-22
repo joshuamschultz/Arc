@@ -63,6 +63,7 @@ from arcagent.modules.tasks.capabilities import (
     start_task,
 )
 from arcagent.modules.tasks.store import open_store
+from arcstore.backends.memory import FakeBackend
 from arcteam.audit import AuditLogger
 from arcteam.registry import EntityRegistry
 from arcteam.storage import MemoryBackend
@@ -114,6 +115,7 @@ async def _agent_state(
     data_dir: str,
     registry: EntityRegistry,
     messenger: Any = None,
+    arcstore_opener: Any = None,
 ) -> _runtime._State:
     """Boot one agent's tasks runtime against the shared db/registry and
     finish its lazy async wiring, exactly like a real agent's dispatcher
@@ -122,12 +124,13 @@ async def _agent_state(
     ``_runtime.bind()`` back into this agent whenever it needs to act.
     """
     _runtime.configure(
-        config={"enabled": True, "data_dir": data_dir},
+        config={"enabled": True},
         telemetry=MagicMock(),
         workspace=Path(data_dir),
         identity=identity,
         registry=registry,
         messenger=messenger,
+        arcstore_opener=arcstore_opener,
     )
     await _runtime.ensure_store()
     return _runtime.state()
@@ -140,6 +143,11 @@ async def test_spec056_multi_agent_task_flow_e2e(
     # cleared so every agent's `data_dir` (pointed at tmp_path) actually wins.
     monkeypatch.delenv("ARCSTORE_DATA_DIR", raising=False)
     data_dir = str(tmp_path)
+    backend = FakeBackend()
+    await backend.start()
+
+    async def open_test_backend() -> FakeBackend:
+        return backend
 
     registry = _make_registry()
     messenger = _SharedMessenger()
@@ -155,10 +163,24 @@ async def test_spec056_multi_agent_task_flow_e2e(
         # Only alice ever calls assign_task in this scenario, so only her
         # runtime is given the shared messenger — bob/carol never notify.
         alice_state = await _agent_state(
-            alice_identity, data_dir=data_dir, registry=registry, messenger=messenger
+            alice_identity,
+            data_dir=data_dir,
+            registry=registry,
+            messenger=messenger,
+            arcstore_opener=open_test_backend,
         )
-        bob_state = await _agent_state(bob_identity, data_dir=data_dir, registry=registry)
-        carol_state = await _agent_state(carol_identity, data_dir=data_dir, registry=registry)
+        bob_state = await _agent_state(
+            bob_identity,
+            data_dir=data_dir,
+            registry=registry,
+            arcstore_opener=open_test_backend,
+        )
+        carol_state = await _agent_state(
+            carol_identity,
+            data_dir=data_dir,
+            registry=registry,
+            arcstore_opener=open_test_backend,
+        )
 
         # 1. alice creates an unowned team-backlog task.
         _runtime.bind(alice_state)
@@ -224,7 +246,7 @@ async def test_spec056_multi_agent_task_flow_e2e(
         # 6. Read the final board back the way arcui's Observe.tasks does —
         # a fresh TaskStore over the shared db, independent of any agent's
         # runtime state.
-        board_store = await open_store(data_dir)
+        board_store, _ = await open_store(opener=open_test_backend)
         board = {task.id: task for task in await board_store.list()}
 
         assert board[backlog_task["id"]].owner_did == bob_identity.did

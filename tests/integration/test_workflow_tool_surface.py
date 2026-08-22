@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from arcstore.backends.memory import FakeBackend
 from arctrust import AgentIdentity, OperatorKey
 
 
@@ -30,6 +31,10 @@ def agent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
     monkeypatch.setenv("ARCSTORE_DATA_DIR", str(tmp_path / "data"))
     key_path = tmp_path / "config" / "operator" / "operator.key"
     OperatorKey.generate().save(key_path)
+    backend = FakeBackend()
+
+    async def open_test_backend() -> FakeBackend:
+        return backend
 
     _runtime.reset()
     _runtime.configure(
@@ -37,6 +42,7 @@ def agent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
         workspace=tmp_path / "workspace",
         identity=AgentIdentity.generate(org="local", agent_type="agent"),
         operator_signer=OperatorKey.load(key_path, generate_if_absent=False).into_signer(),
+        arcstore_opener=open_test_backend,
     )
     yield _runtime.state()
     _runtime.reset()
@@ -237,8 +243,6 @@ async def test_the_signature_request_reaches_the_approvals_queue(agent: Any) -> 
         workflow_request_signature,
     )
     from arcstore.approvals import ApprovalStore
-    from arcstore.backends.sqlite import SqliteBackend
-    from arcstore.config import store_db_path
 
     _ok(
         await workflow_create(
@@ -249,12 +253,8 @@ async def test_the_signature_request_reaches_the_approvals_queue(agent: Any) -> 
     asked = json.loads(await workflow_request_signature(workflow_id="to-sign"))
     assert asked["status"] == "pending_operator_approval"
 
-    backend = SqliteBackend(store_db_path(None))
-    await backend.start()
-    try:
-        pending = await ApprovalStore(backend).list(status="pending")
-    finally:
-        await backend.stop()
+    backend = await agent.arcstore_opener()
+    pending = await ApprovalStore(backend).list(status="pending")
     assert [a.arguments.get("workflow_id") for a in pending] == ["to-sign"]
     # Bound to the content hash, so approving cannot sign a later edit.
     assert pending[0].call_hash

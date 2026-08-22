@@ -7,12 +7,12 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
+from arcstore.inbox_spool import InboxProjectionSpool
 from packages.arcstore.tests.unit.inbox_fake import FakeInboxRepository
 
 from arcgateway.executor import Delta, InboundEvent
 from arcgateway.inbox import DurableInboxService, participant
 from arcgateway.session import SessionRouter
-from arcstore.inbox_spool import InboxProjectionSpool
 
 
 @pytest.mark.asyncio
