@@ -611,6 +611,8 @@ class WorkflowRunner:
             "strategy": list(node.strategy),
             "output_schema": node.output_schema,
             "artifacts": list(node.artifacts),
+            "timeout_s": node.timeout_s,
+            "max_attempts": node.max_attempts or 3,
             # Where the node's prompt and schema files actually live. The
             # runner knows; the executing agent would otherwise have to guess,
             # and a guess that lands in its own workspace makes every declared
@@ -636,7 +638,9 @@ class WorkflowRunner:
             except Exception as exc:
                 raise NodeDecisionError(node.id, f"unresolvable args: {exc}") from exc
         if node.kind == "router":
-            metadata["routes"] = [route.to for route in cast(RouterNodeSpec, node).routes]
+            router_node = cast(RouterNodeSpec, node)
+            metadata["routes"] = [route.to for route in router_node.routes]
+            metadata["router_mode"] = router_node.mode
         return Task(
             id=task_id,
             title=f"{definition.id}: {node.id}",

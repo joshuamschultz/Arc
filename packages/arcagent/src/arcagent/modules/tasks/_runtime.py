@@ -87,6 +87,10 @@ class _State:
     # None outside a fully-wired agent (bare/test construction).
     capability_ledger: Any = None
     skill_registry: Any = None
+    # The agent's governed tool registry. Workflow tool nodes use its public
+    # ArcRun projection so policy, approval, audit, and timeout wrapping remain
+    # the same as an ordinary agent-requested tool call.
+    tool_registry: Any = None
     # The shared team root. A workflow run's declared artifacts are relative to
     # ``<team_root>/shared/runs/<run_id>/`` (D-539), which is what makes artifact
     # containment structural rather than a rule. Empty for a solo agent, which
@@ -128,6 +132,7 @@ def configure(
     registry: Any = None,
     messenger: Any = None,
     bus: Any = None,
+    tool_registry: Any = None,
     team_root: str = "",
 ) -> None:
     """Bind module state for the CURRENT asyncio task. Called once at agent startup.
@@ -152,6 +157,7 @@ def configure(
             registry=registry,
             messenger=messenger,
             bus=bus,
+            tool_registry=tool_registry,
             team_root=team_root,
         )
     )

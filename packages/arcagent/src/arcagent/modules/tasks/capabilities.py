@@ -46,6 +46,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import arcrun
 from arcteam.registry import resolve
 from arcteam.types import Entity, EntityStatus, EntityType, Message, MsgType
 
@@ -536,6 +537,8 @@ def _node_completion_refusal(
     violation = validate_output(node, output, schema)
     if violation is not None:
         return violation
+    if node.kind == "router" and (output is None or output.get("route") not in node.routes):
+        return f"router output.route must be one of: {', '.join(node.routes)}"
     if not check_artifacts:
         return None
     # Confinement first: an escaping path is an attack, not an incomplete node,
@@ -633,6 +636,50 @@ def _parse_script_output(raw: str) -> dict[str, Any] | None:
     if isinstance(value, dict):
         return value
     return {"result": value}
+
+
+def _parse_tool_output(raw: str) -> dict[str, Any]:
+    """Normalize the governed tool result into the task output boundary."""
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        return {"result": raw}
+    return value if isinstance(value, dict) else {"result": value}
+
+
+async def _run_tool_node(
+    st: _runtime._State, task: Task, node: WorkflowNode, self_did: str
+) -> None:
+    """Execute one declared tool through the agent's governed tool projection."""
+    registry = st.tool_registry
+    if registry is None or node.tool is None:
+        await _fail_node_attempt(st, task, "tool node has no governed tool registry")
+        return
+    declared = next((item for item in registry.to_arcrun_tools() if item.name == node.tool), None)
+    if declared is None:
+        await _fail_node_attempt(st, task, f"declared tool {node.tool!r} is unavailable")
+        return
+    context = arcrun.ToolContext(
+        run_id=node.run_id,
+        tool_call_id=node.idempotency_key,
+        turn_number=node.attempt,
+        event_bus=None,
+        cancelled=asyncio.Event(),
+    )
+    try:
+        output = _parse_tool_output(await declared.execute(node.args, context))
+    except Exception as exc:
+        await _fail_node_attempt(st, task, f"tool {node.tool!r} failed: {exc}")
+        return
+    refusal = _node_completion_refusal(st, task, output)
+    if refusal is not None:
+        await _fail_node_attempt(st, task, refusal)
+        return
+    await _seal_run_legs(st, task)
+    await st.store.finish(
+        task.id, status="done", resolution="tool executed", output=output, actor_did=self_did
+    )
+    await _notify_operator(st, f"done: {task.title}", task.classification)
 
 
 async def _run_script_node(
@@ -837,6 +884,9 @@ async def _run_task(st: _runtime._State, task: Task, run_id: str, self_did: str)
             # rides the same reliability wrapper, cancel path, and leg carrier.
             is_script = True
             run = asyncio.ensure_future(_run_script_node(st, task, node, self_did))
+        elif node is not None and node.kind == "tool":
+            is_script = True
+            run = asyncio.ensure_future(_run_tool_node(st, task, node, self_did))
         else:
             is_script = False
             run = asyncio.ensure_future(
@@ -1229,8 +1279,7 @@ async def inject_team_handoff_section(ctx: Any) -> None:
             "- Hand off when the job belongs to someone else or needs their skill.",
             "- Give an at-rest task to a teammate: "
             '`assign_task(id, to_handle="@handle")`. They pick it up and run it.',
-            "- Make new work owned by a teammate: "
-            '`create_task(title=..., owner="@handle")`.',
+            '- Make new work owned by a teammate: `create_task(title=..., owner="@handle")`.',
             "- Use the same `@handle` you would tag in a channel; it resolves to that agent.",
             "- After you hand off, let them run it. Ask in the channel if you need a status.",
         ]

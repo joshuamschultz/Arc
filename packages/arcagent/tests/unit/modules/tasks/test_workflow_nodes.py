@@ -183,6 +183,27 @@ class TestOutputSchemaFiresOnCompletion:
 
 
 @pytest.mark.asyncio
+async def test_router_rejects_an_undeclared_route(node_state: Any) -> None:
+    """The agent-side completion gate matches the runner's route contract."""
+    from arcagent.modules.tasks.capabilities import complete_task
+
+    await _make_node_task(
+        node_state,
+        node_kind="router",
+        routes=["approved", "rejected"],
+        router_mode="llm",
+        output_schema=None,
+    )
+
+    result = json.loads(
+        await complete_task(id="task_node_1", resolution="selected", output={"route": "invented"})
+    )
+
+    assert result["retryable"] is True
+    assert "router output.route" in result["error"]
+
+
+@pytest.mark.asyncio
 class TestArtifactEnforcement:
     """REQ-238 — declared artifacts must exist, and the retry names the producer."""
 
@@ -321,6 +342,40 @@ class TestMetadataShapeMatchesTheRunner:
         node = node_from_task(MagicMock(metadata=_node_block()))
         assert node is not None, "the adapter does not recognise the runner's own shape"
 
+    def test_tool_and_router_contracts_survive_the_task_handoff(self) -> None:
+        """Executable workflow data must not degrade into an agent prompt."""
+        from arcagent.modules.tasks.node_execution import node_from_task
+
+        tool = node_from_task(
+            MagicMock(
+                metadata=_node_block(
+                    node_kind="tool",
+                    tool="lookup_customer",
+                    args={"customer_id": 42},
+                    timeout_s=17,
+                    max_attempts=4,
+                )
+            )
+        )
+        router = node_from_task(
+            MagicMock(
+                metadata=_node_block(
+                    node_kind="router",
+                    routes=["approved", "rejected"],
+                    router_mode="llm",
+                )
+            )
+        )
+
+        assert tool is not None
+        assert tool.tool == "lookup_customer"
+        assert tool.args == {"customer_id": 42}
+        assert tool.timeout_s == 17
+        assert tool.max_attempts == 4
+        assert router is not None
+        assert router.routes == ["approved", "rejected"]
+        assert router.router_mode == "llm"
+
     def test_a_nested_block_is_not_mistaken_for_a_node(self) -> None:
         """The shape this adapter originally assumed must not half-work."""
         from arcagent.modules.tasks.node_execution import node_from_task
@@ -363,6 +418,24 @@ class TestPromptSectionSeam:
         section = render_node_section(node, None, "Do the thing.")
         assert "Do the thing." in section
         assert "Required output shape" in section
+
+    def test_router_prompt_exposes_only_declared_route_ids(self) -> None:
+        from arcagent.modules.tasks.node_execution import WorkflowNode, render_node_section
+
+        section = render_node_section(
+            WorkflowNode(
+                workflow_id="w",
+                run_id="r",
+                node_id="route",
+                kind="router",
+                routes=["approved", "rejected"],
+                router_mode="llm",
+            )
+        )
+
+        assert "approved" in section
+        assert "rejected" in section
+        assert "only one of the declared route IDs" in section
 
     @pytest.mark.asyncio
     async def test_hook_writes_only_when_a_node_is_bound(self, node_state: Any) -> None:
@@ -818,7 +891,9 @@ class TestScriptNodeExecution:
         from arcagent.modules.tasks.capabilities import _run_script_node, _state
         from arcagent.modules.tasks.node_execution import node_from_task
 
-        bundle = _script_bundle(tmp_path / "bundle", '#!/usr/bin/env bash\necho boom >&2\nexit 3\n')
+        bundle = _script_bundle(
+            tmp_path / "bundle", "#!/usr/bin/env bash\necho boom >&2\nexit 3\n"
+        )
         task = await _make_node_task(
             node_state,
             node_id="runscript",
@@ -865,3 +940,50 @@ class TestScriptNodeExecution:
         assert stored is not None
         assert stored.status != "done"
         assert stored.output is None
+
+
+@pytest.mark.asyncio
+async def test_tool_node_uses_the_governed_tool_projection(node_state: Any) -> None:
+    """A declared tool must run directly, never through a model prompt."""
+    import arcrun
+
+    from arcagent.modules.tasks.capabilities import _run_tool_node, _state
+    from arcagent.modules.tasks.node_execution import node_from_task
+
+    calls: list[tuple[dict[str, Any], arcrun.ToolContext]] = []
+
+    async def execute(args: dict[str, Any], context: arcrun.ToolContext) -> str:
+        calls.append((args, context))
+        return '{"customer": "acme"}'
+
+    class GovernedTools:
+        def to_arcrun_tools(self) -> list[arcrun.Tool]:
+            return [
+                arcrun.Tool(
+                    name="lookup_customer",
+                    description="test tool",
+                    input_schema={"type": "object"},
+                    execute=execute,
+                )
+            ]
+
+    task = await _make_node_task(
+        node_state,
+        node_kind="tool",
+        tool="lookup_customer",
+        args={"customer_id": 42},
+        output_schema=None,
+    )
+    st = await _state()
+    st.tool_registry = GovernedTools()
+    node = node_from_task(task)
+    assert node is not None
+
+    await _run_tool_node(st, task, node, st.identity.did)
+
+    stored = await st.store.get(task.id)
+    assert stored is not None
+    assert stored.status == "done"
+    assert stored.output == {"customer": "acme"}
+    assert calls[0][0] == {"customer_id": 42}
+    assert calls[0][1].tool_call_id == node.idempotency_key

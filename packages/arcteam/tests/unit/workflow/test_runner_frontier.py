@@ -220,6 +220,8 @@ async def test_tool_node_args_resolve_by_value_from_upstream_output(
     verify = rows["verify"]
     assert verify.metadata["tool"] == "crm_lookup"
     assert verify.metadata["args"] == {"domain": "acme.example"}
+    assert verify.metadata["timeout_s"] is None
+    assert verify.metadata["max_attempts"] == 3
 
 
 async def test_llm_router_records_only_a_declared_choice(stores: Any, registry: Any) -> None:
@@ -245,6 +247,8 @@ async def test_llm_router_records_only_a_declared_choice(stores: Any, registry: 
 
     rows = await flow_tasks.query_by_flow_run(run.run_id)
     assert [r.metadata["node_id"] for r in rows] == ["pick"], "an llm router runs as a node"
+    assert rows[0].metadata["routes"] == ["fast", "slow"]
+    assert rows[0].metadata["router_mode"] == "llm"
 
     await complete_node(tasks, task_id(run.run_id, "pick", 0), SALES_DID, {"route": "fast"})
     await runner.advance(run.run_id)

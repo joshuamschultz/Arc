@@ -77,6 +77,12 @@ class WorkflowNode(BaseModel):
     # the executor runs it as a subprocess — the node is deterministic code, not
     # a model turn, so this is the whole instruction (there is no prompt).
     script: str | None = None
+    tool: str | None = None
+    args: dict[str, Any] = Field(default_factory=dict)
+    routes: list[str] = Field(default_factory=list)
+    router_mode: str | None = None
+    timeout_s: int | None = None
+    max_attempts: int | None = None
     strategy: list[str] = Field(default_factory=list)
     # Either the resolved schema object or the bundle-relative path to it. The
     # runner currently stamps the path; accepting both means the gate fires
@@ -176,6 +182,12 @@ def node_from_task(task: Any) -> WorkflowNode | None:
             prompt_ref=metadata.get("prompt"),
             skill=metadata.get("skill"),
             script=metadata.get("script"),
+            tool=metadata.get("tool"),
+            args=dict(metadata.get("args") or {}),
+            routes=list(metadata.get("routes") or ()),
+            router_mode=metadata.get("router_mode"),
+            timeout_s=metadata.get("timeout_s"),
+            max_attempts=metadata.get("max_attempts"),
             strategy=list(metadata.get("strategy") or ()),
             output_schema=metadata.get("output_schema"),
             artifacts=list(metadata.get("artifacts") or ()),
@@ -227,6 +239,16 @@ def render_node_section(
     lines = [f"## Workflow node `{node.node_id}` (run {node.run_id}, attempt {node.attempt})"]
     if instructions:
         lines.extend(["", "### Instructions", instructions])
+    if node.kind == "router":
+        routes = ", ".join(f"`{route}`" for route in node.routes)
+        lines.extend(
+            [
+                "",
+                "### Route selection",
+                "Call `complete_task` with `output.route` equal to only one of the "
+                f"declared route IDs: {routes}.",
+            ]
+        )
     if node.upstream:
         lines.extend(["", "### Upstream outputs (typed, validated)"])
         for upstream_id, value in sorted(node.upstream.items()):
