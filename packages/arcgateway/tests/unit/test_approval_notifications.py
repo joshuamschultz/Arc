@@ -1,5 +1,6 @@
-from arcgateway.approval_notifications import ApprovalNotificationFanout, compose_approval_message
 from arcstore.approval_dispatcher import ApprovalNotification
+
+from arcgateway.approval_notifications import ApprovalNotificationFanout, compose_approval_message
 
 
 class _Sink:

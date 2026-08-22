@@ -95,16 +95,8 @@ def _operator(auth: AuthConfig) -> dict[str, str]:
     return {"Authorization": f"Bearer {auth.operator_token}"}
 
 
-def _read(tmp_path: Path) -> Any:
-    async def _run() -> Any:
-        backend = FakeBackend()
-        await backend.start()
-        try:
-            return await ApprovalStore(backend).get("req1")
-        finally:
-            await backend.stop()
-
-    return asyncio.run(_run())
+def _read(app: Starlette) -> Any:
+    return asyncio.run(app.state.approval_store.get("req1"))
 
 
 def test_list_pending_visible_to_viewer(tmp_path: Path) -> None:
@@ -136,7 +128,7 @@ def test_viewer_cannot_approve(tmp_path: Path) -> None:
     client = TestClient(app)
     resp = client.post("/api/approvals/req1/approve", headers=_viewer(auth))
     assert resp.status_code == 403
-    assert _read(tmp_path).status == "pending"
+    assert _read(app).status == "pending"
 
 
 def test_operator_approve_mints_verifiable_pinned_grant(tmp_path: Path) -> None:
@@ -149,7 +141,7 @@ def test_operator_approve_mints_verifiable_pinned_grant(tmp_path: Path) -> None:
     resp = client.post("/api/approvals/req1/approve", headers=_operator(auth))
     assert resp.status_code == 200, resp.text
 
-    row = _read(tmp_path)
+    row = _read(app)
     assert row.status == "approved"
     grant = grant_from_wire(row.grant)
     assert verify_approval(call, grant) is True
@@ -162,6 +154,6 @@ def test_operator_deny(tmp_path: Path) -> None:
     client = TestClient(app)
     resp = client.post("/api/approvals/req1/deny", headers=_operator(auth))
     assert resp.status_code == 200
-    row = _read(tmp_path)
+    row = _read(app)
     assert row.status == "denied"
     assert row.grant is None
