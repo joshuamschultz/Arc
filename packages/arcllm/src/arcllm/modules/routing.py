@@ -200,6 +200,8 @@ class Decision:
     reason: str
     score: float | None = None
     runner_up: str | None = None
+    request_hash: str | None = None
+    policy_version: str | None = None
 
 
 @dataclass(frozen=True)
@@ -645,7 +647,12 @@ class RoutingModule(LLMProvider):
         )
         if result.route not in eligible:
             raise ArcLLMConfigError(f"Policy selected unauthorized route {result.route!r}")
-        return Decision(route=result.route, reason=result.reason)
+        return Decision(
+            route=result.route,
+            reason=result.reason,
+            request_hash=result.request_hash,
+            policy_version=result.policy_version,
+        )
 
     def _annotate(self, span: trace.Span, decision: Decision, route: Route) -> None:
         """Put the whole decision on the span — including why, and what lost."""
@@ -658,6 +665,10 @@ class RoutingModule(LLMProvider):
             span.set_attribute("arcllm.routing.score", decision.score)
         if decision.runner_up is not None:
             span.set_attribute("arcllm.routing.runner_up", decision.runner_up)
+        if decision.request_hash is not None:
+            span.set_attribute("arcllm.routing.request_hash", decision.request_hash)
+        if decision.policy_version is not None:
+            span.set_attribute("arcllm.routing.policy_version", decision.policy_version)
 
     @staticmethod
     def _stamp(response: LLMResponse, decision: Decision, route: Route) -> None:
@@ -672,6 +683,10 @@ class RoutingModule(LLMProvider):
         metadata["arcllm_route"] = decision.route
         metadata["arcllm_route_model"] = route.label
         metadata["arcllm_route_reason"] = decision.reason
+        if decision.request_hash is not None:
+            metadata["arcllm_route_request_hash"] = decision.request_hash
+        if decision.policy_version is not None:
+            metadata["arcllm_route_policy_version"] = decision.policy_version
         response.metadata = metadata
 
     # -- dispatch ----------------------------------------------------------

@@ -3,7 +3,7 @@ import asyncio
 import pytest
 
 from arcllm.exceptions import ArcLLMConfigError
-from arcllm.modules.routing import Route, RoutingModule
+from arcllm.modules.routing import Route, RoutingDecision, RoutingModule
 from arcllm.types import Delta, LLMResponse, Message, Tool, Usage
 
 _USAGE = Usage(input_tokens=1, output_tokens=1, total_tokens=2)
@@ -39,6 +39,38 @@ def build_router(**config):
     return RoutingModule(
         {"default_route": "default", **config}, routes, lambda r: providers[r.name]
     ), providers
+
+
+class ProvenancePolicy:
+    async def decide(self, request, targets):
+        return RoutingDecision(
+            route="strong",
+            reason="switchyard-policy",
+            request_hash="sha256:opaque",
+            policy_version="switchyard-2026-08",
+        )
+
+
+@pytest.mark.asyncio
+async def test_policy_provenance_survives_the_routing_seam():
+    providers = {"default": Provider("p", "cheap"), "strong": Provider("p", "strong")}
+    routes = [Route("default", "p", "cheap"), Route("strong", "p", "strong")]
+    router = RoutingModule(
+        {"default_route": "default"},
+        routes,
+        lambda route: providers[route.name],
+        policy=ProvenancePolicy(),
+    )
+
+    response = await router.invoke([Message(role="user", content="route this")])
+
+    assert response.metadata == {
+        "arcllm_route": "strong",
+        "arcllm_route_model": "p/strong",
+        "arcllm_route_reason": "switchyard-policy",
+        "arcllm_route_request_hash": "sha256:opaque",
+        "arcllm_route_policy_version": "switchyard-2026-08",
+    }
 
 
 @pytest.mark.asyncio
