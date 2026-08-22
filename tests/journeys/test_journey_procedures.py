@@ -33,7 +33,7 @@ def seed_procedures(deployment: Deployment) -> Path:
     cards = deployment.agent_dir / "workspace" / "memory" / "procedures"
     cards.mkdir(parents=True, exist_ok=True)
     (cards / "quote-a-customer.md").write_text(
-        "---\nslug: quote-a-customer\ntitle: Quote a customer\n"
+        "---\ntype: ArcMemoryProcedure\nslug: quote-a-customer\ntitle: Quote a customer\n"
         "when_to_use: A customer asks for pricing on a configured system\n"
         "use_count: 0\nrevisions: 2\nclassification: unclassified\n---\n\n"
         "# Quote a customer\n\n## Steps\n"
@@ -43,7 +43,7 @@ def seed_procedures(deployment: Deployment) -> Path:
         encoding="utf-8",
     )
     (cards / "onboard-a-logo.md").write_text(
-        "---\nslug: onboard-a-logo\ntitle: Onboard a new logo\n"
+        "---\ntype: ArcMemoryProcedure\nslug: onboard-a-logo\ntitle: Onboard a new logo\n"
         "when_to_use: A new customer signs\nuse_count: 0\nrevisions: 1\n"
         "classification: unclassified\n---\n\n"
         "# Onboard a new logo\n\n## Steps\n1. Create the account record\n",

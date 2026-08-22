@@ -33,6 +33,7 @@ def _seed_workspace(workspace: Path) -> None:
     _write(
         ents / "Custom ERP.md",
         "---\n"
+        "type: ArcMemoryEntity\n"
         "entity_type: system\n"
         "entity_id: custom-erp\n"
         "name: Custom ERP\n"
@@ -47,6 +48,7 @@ def _seed_workspace(workspace: Path) -> None:
     _write(
         ents / "custom-erp.md",
         "---\n"
+        "type: ArcMemoryEntity\n"
         "entity_type: unknown\n"
         "entity_id: custom-erp\n"
         "name: ''\n"
@@ -63,6 +65,7 @@ def _seed_workspace(workspace: Path) -> None:
     _write(
         procs / "Deploy Agent.md",
         "---\n"
+        "type: ArcMemoryProcedure\n"
         "slug: deploy-agent\n"
         "title: Deploy Agent\n"
         "when_to_use: when deploying\n"
@@ -74,6 +77,7 @@ def _seed_workspace(workspace: Path) -> None:
     _write(
         procs / "deploy-agent.md",
         "---\n"
+        "type: ArcMemoryProcedure\n"
         "slug: deploy-agent\n"
         "title: Deploy Agent\n"
         "when_to_use: when deploying\n"
@@ -87,6 +91,7 @@ def _seed_workspace(workspace: Path) -> None:
     _write(
         ins / "Big Idea.md",
         "---\n"
+        "type: ArcMemoryInsight\n"
         "id: big-idea\n"
         "trigger: some trigger\n"
         "cues: [b, c]\n"
@@ -102,6 +107,7 @@ def _seed_workspace(workspace: Path) -> None:
     _write(
         ins / "big-idea.md",
         "---\n"
+        "type: ArcMemoryInsight\n"
         "id: big-idea\n"
         "trigger: some trigger\n"
         "cues: [a, b]\n"
