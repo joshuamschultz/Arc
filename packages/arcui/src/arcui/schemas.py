@@ -880,6 +880,13 @@ class ConnectorAuthorizationResponse(BaseModel):
     hosts: list[ConnectorHostAuthorization]
     reachable: bool
     detail: str
+    #: True when this connector is finished by an OAuth code exchange — the panel
+    #: shows the authorize URL and a code field, not a token form or a host command.
+    oauth: bool = False
+    #: The provider consent URL to open (empty until the app key/secret are supplied,
+    #: or for a non-OAuth connector). Safe to render: it names only the public client
+    #: id, never a secret.
+    authorize_url: str = ""
 
 
 class ConnectorProbeResponse(BaseModel):

@@ -211,8 +211,18 @@ def _submitted_agents(body: dict[str, Any]) -> list[str]:
 
 
 def _missing_secrets(plan: ConnectorPlan, supplied: dict[str, str]) -> list[str]:
-    """Declared credentials the operator did not fill in. Names only."""
-    return [declared.name for declared in plan.secrets if not supplied.get(declared.name)]
+    """Declared credentials the operator did not fill in. Names only.
+
+    An OAuth connector's refresh token is obtained by the authorize flow AFTER
+    install, never typed here, so it is not a missing credential to refuse the
+    install over — the operator supplies only the app key/secret.
+    """
+    managed = plan.manifest.oauth.refresh_token_secret if plan.manifest.oauth else None
+    return [
+        declared.name
+        for declared in plan.secrets
+        if declared.name != managed and not supplied.get(declared.name)
+    ]
 
 
 def _unknown_agents(request: Request, agents: Sequence[str]) -> list[str]:
@@ -612,6 +622,8 @@ async def get_connector_auth(request: Request) -> JSONResponse:
             ],
             reachable=auth.reachable,
             detail=auth.detail,
+            oauth=auth.oauth,
+            authorize_url=auth.authorize_url,
         ).model_dump(mode="json")
     )
 
@@ -756,6 +768,46 @@ async def post_connector_authorize(request: Request) -> JSONResponse:
     return _auth_status(auth)
 
 
+async def post_connector_oauth(request: Request) -> JSONResponse:
+    """POST /api/connections/{instance}/oauth — finish a native OAuth connection.
+
+    Operator only. ``code`` is the one-time authorization code the provider showed;
+    Arc exchanges it for a DURABLE refresh token, stores it, and probes. The code is
+    a short-lived credential: it goes to the provider's token endpoint and to
+    nothing else, and appears in no response, log line, or audit event this route
+    produces (LLM02, LLM07). A dead code refuses with the provider's reason so the
+    operator authorizes again rather than staring at a silent failure.
+    """
+    if not _is_operator(request):
+        return _error("Operator role required", 403)
+
+    try:
+        body = await read_json_object(request)
+    except BodyTooLargeError:
+        return _error("Request body too large", 413)
+    if body is None:
+        return _error("Body must be a JSON object", 400)
+
+    instance = request.path_params["instance"]
+    code = body.get("code")
+    if not isinstance(code, str) or not code.strip():
+        return _error("A one-time authorization code is required", 400)
+
+    try:
+        auth = await _connections(request).complete_oauth(instance, code=code)
+    except ExtensionError as exc:
+        return _refused(exc)
+
+    emit_mutation_audit(
+        request,
+        target=f"connector:{instance}",
+        operation="connector.oauth",
+        outcome="applied" if auth.working else "denied",
+        detail=auth.extension,
+    )
+    return _auth_status(auth)
+
+
 async def post_connector_host_setup(request: Request) -> JSONResponse:
     """POST /api/connections/{extension}/host-setup — install what it needs.
 
@@ -891,6 +943,7 @@ routes = [
     Route("/api/connections/{instance}/auth", put_connector_auth, methods=["PUT"]),
     Route("/api/connections/{instance}/auth-status", get_connector_auth_status, methods=["GET"]),
     Route("/api/connections/{instance}/authorize", post_connector_authorize, methods=["POST"]),
+    Route("/api/connections/{instance}/oauth", post_connector_oauth, methods=["POST"]),
     Route("/api/connections/{instance}/host-setup", post_connector_host_setup, methods=["POST"]),
     Route("/api/connections/{instance}/probe", post_connector_probe, methods=["POST"]),
     Route("/api/connections/{instance}/doctor", get_connector_doctor, methods=["GET"]),
@@ -912,6 +965,7 @@ __all__ = [
     "post_connector_approve",
     "post_connector_authorize",
     "post_connector_host_setup",
+    "post_connector_oauth",
     "post_connector_probe",
     "put_connector_auth",
     "routes",
