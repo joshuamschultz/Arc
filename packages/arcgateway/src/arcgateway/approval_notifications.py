@@ -63,4 +63,8 @@ class ApprovalNotificationFanout:
             await sink(notification)  # type: ignore[operator]
 
 
-__all__ = ["ApprovalNotificationFanout", "GatewayApprovalNotificationSink", "compose_approval_message"]
+__all__ = [
+    "ApprovalNotificationFanout",
+    "GatewayApprovalNotificationSink",
+    "compose_approval_message",
+]

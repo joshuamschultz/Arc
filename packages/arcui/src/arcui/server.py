@@ -20,9 +20,12 @@ from pathlib import Path
 from typing import Any
 
 from arcgateway import team_roster
-from arcgateway.approval_notifications import ApprovalNotificationFanout, GatewayApprovalNotificationSink
-from arcstore.approvals import ApprovalStore
+from arcgateway.approval_notifications import (
+    ApprovalNotificationFanout,
+    GatewayApprovalNotificationSink,
+)
 from arcstore.approval_dispatcher import ApprovalDispatcherConfig, ApprovalNotificationDispatcher
+from arcstore.approvals import ApprovalStore
 from arcstore.backends import PostgresInboxRepository, open_backend
 from arcstore.cancellations import CancelStore
 from arcstore.config import ArcStoreConfig, resolve_data_dir
@@ -35,6 +38,7 @@ from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
+from arcui.approval_notifications import ApprovalNotificationHub
 from arcui.audit import UIAuditLogger, build_mutation_worm_writer
 from arcui.auth import AuthConfig, AuthMiddleware, SessionTracker
 from arcui.observe import Observe
@@ -67,7 +71,6 @@ from arcui.routes import trust as trust_routes
 from arcui.routes import workflows as workflows_routes
 from arcui.routes.auth_routes import ROUTES as _AUTH_ROUTES
 from arcui.team_stream import TeamBusObserver, TeamStreamHub
-from arcui.approval_notifications import ApprovalNotificationHub
 
 logger = logging.getLogger(__name__)
 
@@ -364,7 +367,9 @@ def create_app(
             except Exception:  # reason: inbox routes report explicit unavailability
                 logger.exception("lifespan: durable inbox composition failed")
         approval_dispatcher = None
-        approval_fanout = ApprovalNotificationFanout([starlette_app.state.approval_notification_hub])
+        approval_fanout = ApprovalNotificationFanout(
+            [starlette_app.state.approval_notification_hub]
+        )
         if all(
             hasattr(task_store_backend, name)
             for name in ("claim_outbox", "ack_outbox", "nack_outbox")
