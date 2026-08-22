@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import stat
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import mkdtemp
@@ -225,6 +226,7 @@ class CapabilityImportService:
         if self._root.is_symlink():
             raise ValueError("capability root may not be a symlink")
         validators_before = load_validators(config_path)
+        row_before = dict(row)
         temporary = Path(mkdtemp(prefix=f"promotion-{manifest.import_id}-", dir=self._root))
         targets = self._target_paths(manifest, temporary)
         moved: list[Path] = []
@@ -238,10 +240,11 @@ class CapabilityImportService:
             for temporary_path, final_path in zip(targets, final_targets, strict=True):
                 final_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
                 os.replace(temporary_path, final_path)
+                moved.append(final_path)
                 sidecar = temporary_path.with_name(temporary_path.name + ".arcsig")
                 final_sidecar = final_path.with_name(final_path.name + ".arcsig")
                 os.replace(sidecar, final_sidecar)
-                moved.extend((final_path, final_sidecar))
+                moved.append(final_sidecar)
             pin_key(config_path, public_key=signer.public_key)
             for path in final_targets:
                 approve(
@@ -251,22 +254,32 @@ class CapabilityImportService:
                     approver=operator_did,
                     timestamp=datetime.now(UTC).isoformat(),
                 )
+            self._ledger.set(
+                manifest.import_id,
+                CapabilityImportStatus.PROMOTED,
+                target_agent_did=target_agent_did,
+                promoted_paths=[path.relative_to(self._root).as_posix() for path in final_targets],
+            )
         except Exception:
+            rollback_error: Exception | None = None
             try:
                 persist_validators(config_path, validators_before)
+            except Exception as error:
+                rollback_error = error
             finally:
                 for path in reversed(moved):
                     path.unlink(missing_ok=True)
+                    _remove_empty_parents(path, self._root)
+            try:
+                self._ledger.restore(manifest.import_id, row_before)
+            except Exception as error:
+                rollback_error = rollback_error or error
+            if rollback_error is not None:
+                raise RuntimeError("capability promotion rollback failed") from rollback_error
             raise
         finally:
             shutil.rmtree(temporary, ignore_errors=True)
 
-        self._ledger.set(
-            manifest.import_id,
-            CapabilityImportStatus.PROMOTED,
-            target_agent_did=target_agent_did,
-            promoted_paths=[path.relative_to(self._root).as_posix() for path in final_targets],
-        )
         self._emit(
             manifest.import_id,
             "capability_import.promoted",
@@ -294,23 +307,43 @@ class CapabilityImportService:
             raise ValueError("capability promotion ledger is malformed")
         paths = [self._root / item for item in raw_paths]
         for path in paths:
-            if not _is_under(path, self._root) or path.suffix == ".arcsig":
+            if not _is_under(path, self._root) or path.suffix == ".arcsig" or path.is_symlink():
                 raise ValueError("capability promotion ledger contains an unsafe path")
-            revoke_capability(
-                path,
-                config_path=config_path,
-                operator_did=operator_did,
-                audit_sink=audit_sink,
-            )
-            path.unlink(missing_ok=True)
-            parent = path.parent
-            while parent != self._root and _is_under(parent, self._root):
-                try:
-                    parent.rmdir()
-                except OSError:
-                    break
-                parent = parent.parent
-        self._ledger.set(manifest.import_id, CapabilityImportStatus.REVOKED)
+            _reject_symlinked_parents(path, self._root)
+            if any(candidate.is_symlink() for candidate in _with_sidecar(path)):
+                raise ValueError("capability promotion ledger contains a symlink")
+        validators_before = load_validators(config_path)
+        row_before = dict(row)
+        snapshots = [_snapshot(path) for path in paths for path in _with_sidecar(path)]
+        try:
+            for path in paths:
+                revoke_capability(
+                    path,
+                    config_path=config_path,
+                    operator_did=operator_did,
+                    audit_sink=None,
+                )
+                path.unlink(missing_ok=True)
+                _remove_empty_parents(path, self._root)
+            self._ledger.set(manifest.import_id, CapabilityImportStatus.REVOKED)
+        except Exception:
+            rollback_error: Exception | None = None
+            try:
+                persist_validators(config_path, validators_before)
+            except Exception as error:
+                rollback_error = error
+            try:
+                for path, content, mode in snapshots:
+                    _restore(path, content, mode)
+            except Exception as error:
+                rollback_error = rollback_error or error
+            try:
+                self._ledger.restore(manifest.import_id, row_before)
+            except Exception as error:
+                rollback_error = rollback_error or error
+            if rollback_error is not None:
+                raise RuntimeError("capability revocation rollback failed") from rollback_error
+            raise
         self._emit(manifest.import_id, "capability_import.revoked", operator_did, None, audit_sink)
 
     def _manifest_from_staging(self, staging_dir: Path) -> CapabilityImportManifest:
@@ -418,3 +451,33 @@ def _reject_symlinked_parents(path: Path, root: Path) -> None:
         current /= part
         if current.is_symlink():
             raise ValueError("capability target parent may not be a symlink")
+
+
+def _with_sidecar(path: Path) -> tuple[Path, Path]:
+    return path, path.with_name(path.name + ".arcsig")
+
+
+def _snapshot(path: Path) -> tuple[Path, bytes | None, int | None]:
+    if not path.exists():
+        return path, None, None
+    return path, path.read_bytes(), stat.S_IMODE(path.stat().st_mode)
+
+
+def _restore(path: Path, content: bytes | None, mode: int | None) -> None:
+    if content is None:
+        path.unlink(missing_ok=True)
+        return
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path.write_bytes(content)
+    if mode is not None:
+        path.chmod(mode)
+
+
+def _remove_empty_parents(path: Path, root: Path) -> None:
+    parent = path.parent
+    while parent != root and _is_under(parent, root):
+        try:
+            parent.rmdir()
+        except OSError:
+            break
+        parent = parent.parent

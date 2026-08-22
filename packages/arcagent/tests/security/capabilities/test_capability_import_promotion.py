@@ -101,12 +101,16 @@ def test_promotion_requires_reviewed_unchanged_staging_and_signs_agent_files(
         audit_sink=sink,
     )
 
-    assert {path.relative_to(tmp_path / "agent" / "capabilities").as_posix() for path in promoted} == {
+    assert {
+        path.relative_to(tmp_path / "agent" / "capabilities").as_posix() for path in promoted
+    } == {
         "imported_tool.py",
         "skills/imported_skill/SKILL.md",
     }
     assert (tmp_path / "agent" / "capabilities" / "imported_tool.py.arcsig").is_file()
-    assert (tmp_path / "agent" / "capabilities" / "skills/imported_skill/SKILL.md.arcsig").is_file()
+    assert (
+        tmp_path / "agent" / "capabilities" / "skills/imported_skill/SKILL.md.arcsig"
+    ).is_file()
     assert service.status(manifest, staging) is CapabilityImportStatus.PROMOTED
     assert sink.events[-1].action == "capability_import.promoted"
     assert key.public_key.hex() in config.read_text(encoding="utf-8")
@@ -231,3 +235,75 @@ def test_promotion_rejects_symlinked_capability_parent(tmp_path: Path) -> None:
             config_path=config,
         )
     assert not (outside / "imported_skill" / "SKILL.md").exists()
+
+
+def test_promotion_restores_review_row_when_promoted_ledger_write_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config, staging, service, manifest = _setup(tmp_path)
+    original_set = service._ledger.set
+
+    def fail_promoted(import_id, status, **data):
+        row = original_set(import_id, status, **data)
+        if status is CapabilityImportStatus.PROMOTED:
+            raise OSError("simulated ledger failure")
+        return row
+
+    monkeypatch.setattr(service._ledger, "set", fail_promoted)
+    with pytest.raises(OSError, match="ledger"):
+        service.promote(
+            staging,
+            target_agent_did=manifest.target_agent_did,
+            operator_did=_DID,
+            signer=InProcessSigner(generate_keypair().private_key),
+            config_path=config,
+        )
+
+    capabilities = tmp_path / "agent" / "capabilities"
+    assert not (capabilities / "imported_tool.py").exists()
+    assert load_validators(config).approved == ()
+    assert service._ledger.get(manifest.import_id) == {
+        "status": CapabilityImportStatus.REVIEW_READY.value,
+        "review_digest": manifest.review_digest,
+        "target_agent_did": manifest.target_agent_did,
+    }
+
+
+def test_revoke_restores_exact_state_when_second_artifact_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config, staging, service, manifest = _setup(tmp_path)
+    key = generate_keypair()
+    promoted = service.promote(
+        staging,
+        target_agent_did=manifest.target_agent_did,
+        operator_did=_DID,
+        signer=InProcessSigner(key.private_key),
+        config_path=config,
+    )
+    config_before = config.read_text(encoding="utf-8")
+    original_revoke = capability_service.revoke_capability
+    calls = 0
+
+    def fail_second(*args: object, **kwargs: object) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("simulated revoke failure")
+        original_revoke(*args, **kwargs)
+
+    monkeypatch.setattr(capability_service, "revoke_capability", fail_second)
+    with pytest.raises(OSError, match="revoke"):
+        service.revoke(staging, operator_did=_DID, config_path=config)
+
+    for path in promoted:
+        assert path.is_file()
+        assert path.with_name(path.name + ".arcsig").is_file()
+    assert config.read_text(encoding="utf-8") == config_before
+    assert service._ledger.get(manifest.import_id) == {
+        "status": CapabilityImportStatus.PROMOTED.value,
+        "target_agent_did": manifest.target_agent_did,
+        "promoted_paths": [
+            path.relative_to(tmp_path / "agent" / "capabilities").as_posix() for path in promoted
+        ],
+    }

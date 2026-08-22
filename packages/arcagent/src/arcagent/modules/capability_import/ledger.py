@@ -36,6 +36,13 @@ class ImportLedger:
         self._emit(import_id, status)
         return row
 
+    def restore(self, import_id: str, row: dict[str, Any]) -> None:
+        """Restore a previously committed row during a failed composition."""
+        with self._locked():
+            ledger = self._read()
+            ledger[import_id] = dict(row)
+            self._write(ledger)
+
     def _read(self) -> dict[str, dict[str, Any]]:
         if not self._path.is_file():
             return {}
