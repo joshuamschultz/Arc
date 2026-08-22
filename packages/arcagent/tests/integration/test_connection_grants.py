@@ -152,6 +152,12 @@ class _Deployment:
         await connections.install(plan, {_FIELD: _TOKEN}, agents=agents)
 
     async def start_agent(self, agent: str, *, sink: _RecordingSink | None = None) -> ToolRegistry:
+        registry, _ = await self.start_running_agent(agent, sink=sink)
+        return registry
+
+    async def start_running_agent(
+        self, agent: str, *, sink: _RecordingSink | None = None
+    ) -> tuple[ToolRegistry, Connectors]:
         """Start one agent's connectors capability exactly as the agent starts it."""
         registry = ToolRegistry(
             config=ToolsConfig(policy=ToolConfig()),
@@ -173,8 +179,9 @@ class _Deployment:
             tier="personal",
             human_gate=_gate(self.did(agent)),
         )
-        await Connectors().setup(None)
-        return registry
+        capability = Connectors()
+        await capability.setup(None)
+        return registry, capability
 
     def registry_file(self) -> ConnectionRegistry:
         return ConnectionRegistry(self.arc_dir)
@@ -327,6 +334,45 @@ async def test_revoking_takes_the_tools_from_one_agent_and_leaves_the_other(
     after_revoke = await deployment.start_agent(revoked)
     assert not any(tool in after_revoke.tools for tool in _SERVED)
     assert _SERVED[0] in (await deployment.start_agent(kept)).tools
+
+
+async def test_running_agent_reconciles_grants_and_revocations_without_a_restart(
+    deployment: _Deployment,
+) -> None:
+    """The live module replaces its owned snapshot before the next turn."""
+    await deployment.connect(agents=())
+    registry, capability = await deployment.start_running_agent(_GRANTED[0])
+    assert not any(tool in registry.tools for tool in _SERVED)
+
+    deployment.connections().grant(_CONNECTION, [_GRANTED[0]])
+    granted = await capability.reconcile()
+    assert granted.status == "applied"
+    assert set(granted.tools) == set(_SERVED)
+    assert set(registry.tools) >= set(_SERVED)
+
+    repeated = await capability.reconcile()
+    assert repeated.status == "applied"
+    assert repeated.tools == granted.tools
+    assert len([name for name in registry.tools if name in _SERVED]) == len(_SERVED)
+
+    deployment.connections().revoke(_CONNECTION, [_GRANTED[0]])
+    revoked = await capability.reconcile()
+    assert revoked.status == "applied"
+    assert not any(tool in registry.tools for tool in _SERVED)
+
+    deployment.connections().grant(_CONNECTION, [_GRANTED[0]])
+    assert set((await capability.reconcile()).tools) == set(_SERVED)
+    await deployment.connections().remove(_CONNECTION)
+    removed = await capability.reconcile()
+    assert removed.status == "applied"
+    assert not any(tool in registry.tools for tool in _SERVED)
+
+
+async def test_unstarted_connector_module_reports_activation_pending() -> None:
+    pending = await Connectors().reconcile()
+
+    assert pending.status == "activation_pending"
+    assert pending.tools == ()
 
 
 async def test_revoking_leaves_the_credential_for_the_agents_that_keep_it(

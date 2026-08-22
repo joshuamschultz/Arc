@@ -52,7 +52,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
 
@@ -86,6 +86,27 @@ _logger = logging.getLogger("arcagent.modules.connectors.capabilities")
 _SPAWNED_KIND = "cli"
 
 
+@dataclass(frozen=True)
+class ConnectorReconcileResult:
+    """The result of replacing this agent's connector tool snapshot."""
+
+    status: Literal["applied", "activation_pending"]
+    revision: int
+    tools: tuple[str, ...] = ()
+    detail: str = ""
+
+
+class _PreparedRegistry:
+    """Capture bridge output before it is atomically committed to the live registry."""
+
+    def __init__(self, registry: ToolRegistry) -> None:
+        self.tools: dict[str, Any] = {}
+        self.policy = registry.policy
+
+    def register(self, tool: Any) -> None:
+        self.tools[tool.name] = tool
+
+
 @capability(name="connectors")
 class Connectors:
     """Lifecycle-bound holder for the connector module's attached connections."""
@@ -94,12 +115,14 @@ class Connectors:
         self._registry: ToolRegistry | None = None
         self._registered: tuple[str, ...] = ()
         self._state_store: ConnectionStateStore | None = None
+        self._revision = 0
 
     async def setup(self, ctx: Any) -> None:
         del ctx  # Loader passes None; state lives in _runtime.
         state = _runtime.state()  # fails closed if configure() was never called
         self._registry = state.tool_registry
-        self._registered = await self._attach(state)
+        result = await self.reconcile()
+        self._registered = result.tools
         _logger.info(
             "Connectors capability started (%d tool(s) from configured connections)",
             len(self._registered),
@@ -116,9 +139,35 @@ class Connectors:
         self._state_store = None
         _logger.info("Connectors capability stopped")
 
+    async def reconcile(self) -> ConnectorReconcileResult:
+        """Atomically replace connector tools from the deployment's current grants.
+
+        This is agent-local control only. A management surface without this live
+        capability must report ``activation_pending`` rather than claim a tool is
+        callable before the agent next starts.
+        """
+        registry = self._registry
+        if registry is None:
+            return ConnectorReconcileResult(
+                status="activation_pending",
+                revision=self._revision,
+                detail="connector module is not running in this process",
+            )
+        state = _runtime.state()
+        prepared = _PreparedRegistry(registry)
+        await self._attach(state, prepared)
+        accepted = registry.replace_owned(set(self._registered), list(prepared.tools.values()))
+        self._registered = tuple(sorted(accepted))
+        self._revision += 1
+        return ConnectorReconcileResult(
+            status="applied", revision=self._revision, tools=self._registered
+        )
+
     # --- attaching ----------------------------------------------------------
 
-    async def _attach(self, state: _runtime._State) -> tuple[str, ...]:
+    async def _attach(
+        self, state: _runtime._State, registry: ToolRegistry | _PreparedRegistry
+    ) -> tuple[str, ...]:
         """Attach every configured connection, containing the failure of any one."""
         sink = _audit_sink(state.telemetry)
         if state.tool_registry is None or state.human_gate is None:
@@ -145,7 +194,7 @@ class Connectors:
         context = _AttachContext(
             state=state,
             sink=sink,
-            registry=state.tool_registry,
+            registry=registry,
             store=self._state_store,
             secrets=_secret_store(state, sink),
         )
@@ -164,7 +213,7 @@ class _AttachContext:
 
     state: _runtime._State
     sink: AuditSink
-    registry: ToolRegistry
+    registry: ToolRegistry | _PreparedRegistry
     store: ConnectionStateStore
     secrets: SecretStore | None
 
@@ -222,7 +271,7 @@ async def _attach_one(
         return ()
 
     report = CapabilityBridge(
-        registry=ctx.registry,
+        registry=cast(ToolRegistry, ctx.registry),
         attachment=attachment,
         transport=_transport(loaded.manifest.extension.attachment),
         source=f"extension:{loaded.name}",
