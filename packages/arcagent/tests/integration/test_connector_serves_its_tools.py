@@ -45,6 +45,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from arcstore.backends.memory import FakeBackend
 from arctrust.audit import AuditEvent
 from arctrust.signer import InProcessSigner
 from nacl.signing import SigningKey
@@ -103,6 +104,10 @@ class _RecordingSink:
         self.events.append(event)
 
 
+async def _open_fake(backend: FakeBackend) -> FakeBackend:
+    return backend
+
+
 @pytest.fixture(autouse=True)
 def _reset_runtime() -> Iterator[None]:
     _runtime.reset()
@@ -151,6 +156,7 @@ class _World:
         self.bundle = bundle
         self.data_dir = tmp_path / "data"
         self.sink = _RecordingSink()
+        self.backend = FakeBackend()
 
     def connections(self) -> Connections:
         """The façade every surface drives, pointed entirely inside the test's tree."""
@@ -159,6 +165,7 @@ class _World:
             data_dir=self.data_dir,
             extensions_root=self.root,
             audit=AuditChain.held(self.sink),
+            state_opener=lambda: _open_fake(self.backend),
         )
 
     def registry(self) -> ConnectionRegistry:
@@ -171,7 +178,7 @@ class _World:
         await connections.install(plan, {_FIELD: _TOKEN} if plan.secrets else {}, agents=[_AGENT])
 
     async def state(self) -> ConnectionStateStore:
-        return await open_connection_state(str(self.data_dir))
+        return await open_connection_state(opener=lambda: _open_fake(self.backend))
 
     async def start_agent(self) -> ToolRegistry:
         """Start the connectors capability the way a running agent starts it."""
@@ -188,6 +195,7 @@ class _World:
                 "arc_dir": str(self.arc_dir),
             },
             telemetry=None,
+            arcstore_opener=lambda: _open_fake(self.backend),
             workspace=self.agent_dir / "workspace",
             identity=_identity(),
             config_path=self.agent_dir / "arcagent.toml",

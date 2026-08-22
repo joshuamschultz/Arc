@@ -34,9 +34,11 @@ from __future__ import annotations
 
 import hashlib
 import shutil
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
+from arcstore.backends.memory import FakeBackend
 from arctrust.audit import AuditEvent
 
 from arcagent.connections import AuditChain, Connections
@@ -98,6 +100,12 @@ class _RecordingSink:
         self.events.append(event)
 
 
+@pytest.fixture
+def backend() -> FakeBackend:
+    """Keep every surface in one test on one in-memory operational plane."""
+    return FakeBackend()
+
+
 def _bundle_root(tmp_path: Path) -> Path:
     """Copy the reference bundle into an extensions root, as an install would."""
     root = tmp_path / "extensions"
@@ -128,9 +136,13 @@ def _plan(root: Path) -> ConnectorPlan:
     )
 
 
-async def _state(tmp_path: Path) -> ConnectionStateStore:
-    """The connection directory an install registers into — this test's own, never the machine's."""
-    return await open_connection_state(str(tmp_path / "data"))
+async def _open_fake(backend: FakeBackend) -> FakeBackend:
+    return backend
+
+
+async def _state(backend: FakeBackend) -> ConnectionStateStore:
+    """The connection directory an install registers into — this test's own backend."""
+    return await open_connection_state(opener=lambda: _open_fake(backend))
 
 
 async def _stored(arc_dir: Path, value: str = _TOKEN) -> SecretStore:
@@ -140,13 +152,16 @@ async def _stored(arc_dir: Path, value: str = _TOKEN) -> SecretStore:
     return store
 
 
-def _connections(tmp_path: Path, root: Path, sink: _RecordingSink) -> Connections:
+def _connections(
+    tmp_path: Path, root: Path, sink: _RecordingSink, backend: FakeBackend
+) -> Connections:
     """The façade every surface drives, pointed entirely inside the test's own tree."""
     return Connections.for_deployment(
         arc_dir=_arc_dir(tmp_path),
         data_dir=tmp_path / "data",
         extensions_root=root,
         audit=AuditChain.held(sink),
+        state_opener=lambda: _open_fake(backend),
     )
 
 
@@ -154,7 +169,7 @@ def _connections(tmp_path: Path, root: Path, sink: _RecordingSink) -> Connection
 
 
 async def test_a_native_attachment_receives_its_declared_secrets_from_the_store(
-    tmp_path: Path,
+    tmp_path: Path, backend: FakeBackend
 ) -> None:
     """The defect, inverted: the extension's own code must hold what the store holds.
 
@@ -184,7 +199,7 @@ async def test_a_native_attachment_receives_its_declared_secrets_from_the_store(
 
 
 async def test_the_install_path_hands_the_stored_credential_to_the_attachment_it_probes(
-    tmp_path: Path,
+    tmp_path: Path, backend: FakeBackend
 ) -> None:
     """``arc connector add`` must probe a CONFIGURED connection, not a blank one.
 
@@ -198,7 +213,7 @@ async def test_the_install_path_hands_the_stored_credential_to_the_attachment_it
     handed: list[dict[str, str]] = []
 
     def _recording(
-        manifest: ExtensionManifest, bundle: Path, secrets: dict[str, Secret]
+        manifest: ExtensionManifest, bundle: Path, secrets: Mapping[str, Secret]
     ) -> ExtensionAttachment:
         handed.append({name: secret.reveal() for name, secret in secrets.items()})
         return build_attachment(manifest, bundle, secrets)
@@ -210,7 +225,7 @@ async def test_the_install_path_hands_the_stored_credential_to_the_attachment_it
         secret_values={_FIELD: _TOKEN},
         store=_store(arc_dir),
         caller_did=_CALLER,
-        state=await _state(tmp_path),
+        state=await _state(backend),
         attachment_factory=_recording,
     )
 
@@ -220,7 +235,7 @@ async def test_the_install_path_hands_the_stored_credential_to_the_attachment_it
 
 
 async def test_the_facade_probes_a_connection_that_holds_its_credential(
-    tmp_path: Path,
+    tmp_path: Path, backend: FakeBackend
 ) -> None:
     """Site one: every read verb a surface offers builds a CONFIGURED attachment.
 
@@ -239,10 +254,10 @@ async def test_the_facade_probes_a_connection_that_holds_its_credential(
         secret_values={_FIELD: _TOKEN},
         store=_store(arc_dir),
         caller_did=_CALLER,
-        state=await _state(tmp_path),
+        state=await _state(backend),
     )
 
-    result = await _connections(tmp_path, root, sink).probe(_INSTANCE)
+    result = await _connections(tmp_path, root, sink, backend).probe(_INSTANCE)
 
     assert result.reachable
     assert "authenticated" in result.detail
@@ -253,7 +268,7 @@ async def test_the_facade_probes_a_connection_that_holds_its_credential(
 
 
 async def test_a_revealed_credential_never_reaches_a_rendered_string(
-    tmp_path: Path,
+    tmp_path: Path, backend: FakeBackend
 ) -> None:
     """LLM02/LLM07 — a ``Secret`` is unwrapped at the factory boundary and nowhere else.
 
@@ -273,10 +288,10 @@ async def test_a_revealed_credential_never_reaches_a_rendered_string(
         secret_values={_FIELD: _TOKEN},
         store=_store(arc_dir, sink),
         caller_did=_CALLER,
-        state=await _state(tmp_path),
+        state=await _state(backend),
         audit_sink=sink,
     )
-    connections = _connections(tmp_path, root, sink)
+    connections = _connections(tmp_path, root, sink, backend)
 
     specs = await connections.tools(_INSTANCE)
     checks = await connections.doctor(_INSTANCE)
