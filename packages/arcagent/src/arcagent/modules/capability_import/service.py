@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import Any
 
 from arcagent.modules.capability_import.ledger import ImportLedger
 from arcagent.modules.capability_import.manifest import (
@@ -24,6 +26,34 @@ class CapabilityImportService:
     def __init__(self, capabilities_root: Path) -> None:
         self._root = Path(capabilities_root)
         self._ledger = ImportLedger(self._root)
+
+    def list_reviews(self) -> list[dict[str, Any]]:
+        """Return metadata-only review rows for this agent's staged imports.
+
+        Staging content is executable code and remains quarantined. The UI gets
+        only the signed review metadata and lifecycle state; it cannot turn a
+        listing request into a source read or an activation.
+        """
+        staging_root = self._root / "imports" / ".staging"
+        if not staging_root.is_dir():
+            return []
+        rows: list[dict[str, Any]] = []
+        for import_dir in sorted(staging_root.iterdir()):
+            manifest_path = import_dir / "import.json"
+            if not import_dir.is_dir() or not manifest_path.is_file():
+                continue
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                continue
+            if not isinstance(manifest, dict):
+                continue
+            row = dict(manifest)
+            row["import_id"] = import_dir.name
+            ledger = self._ledger.get(import_dir.name)
+            row["status"] = str(ledger.get("status", "quarantined")) if ledger else "quarantined"
+            rows.append(row)
+        return rows
 
     def review(
         self,

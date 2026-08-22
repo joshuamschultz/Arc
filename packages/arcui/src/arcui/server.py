@@ -42,6 +42,7 @@ from arcui.routes import approvals as approvals_routes
 from arcui.routes import arcllm_config as arcllm_config_routes
 from arcui.routes import attachments as attachments_routes
 from arcui.routes import cancellations as cancellations_routes
+from arcui.routes import capability_imports as capability_imports_routes
 from arcui.routes import chat_ws as chat_ws_routes
 from arcui.routes import config as config_routes
 from arcui.routes import connectors as connectors_routes
@@ -261,6 +262,7 @@ def create_app(
         *tasks_routes.routes,
         *approvals_routes.routes,
         *cancellations_routes.routes,
+        *capability_imports_routes.routes,
         *trust_routes.routes,
         *workflows_routes.routes,
     ]

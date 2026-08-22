@@ -68,9 +68,24 @@ from arcagent.core.prompt_context import build_prompt_resolver
 from arcagent.extension.inspect import inspect_extensions
 from arcagent.keys import KeyStatus, KeyStore, default_env_file
 from arcagent.knowledge import (
-    KnowledgeAccess, KnowledgeDocument, KnowledgeDraft, KnowledgeHit, KnowledgeRef,
-    PersonalKnowledgePort, PromotionSource, SharedKnowledgePort,
+    KnowledgeAccess,
+    KnowledgeDocument,
+    KnowledgeDraft,
+    KnowledgeHit,
+    KnowledgeRef,
+    PersonalKnowledgePort,
+    PromotionSource,
+    SharedKnowledgePort,
 )
+from arcagent.modules.capability_import.archive import intake as intake_capability_archive
+from arcagent.modules.capability_import.manifest import manifest_dict
+from arcagent.modules.capability_import.models import (
+    CapabilityImportLimits,
+    CapabilityImportManifest,
+    CapabilityImportResult,
+    CapabilityImportStatus,
+)
+from arcagent.modules.capability_import.service import CapabilityImportService
 from arcagent.modules.scheduler.models import ScheduleEntry, ScheduleMetadata, generate_schedule_id
 from arcagent.modules.scheduler.store import ScheduleStore
 from arcagent.modules.session.identity_graph import IdentityGraph
@@ -135,6 +150,11 @@ __all__ = [
     "AttachmentFactory",
     "AuditChain",
     "Authorization",
+    "CapabilityImportLimits",
+    "CapabilityImportManifest",
+    "CapabilityImportResult",
+    "CapabilityImportService",
+    "CapabilityImportStatus",
     "CapabilityLoader",
     "CapabilityRegistry",
     "CatalogEntry",
@@ -187,12 +207,14 @@ __all__ = [
     "generate_schedule_id",
     "global_capabilities_root",
     "inspect_extensions",
+    "intake_capability_archive",
     "iter_model_modules",
     "list_gated",
     "load_config",
     "load_signature",
     "make_backend",
     "make_spawn_tool",
+    "manifest_dict",
     "model_config_path",
     "module_root",
     "modules_path",

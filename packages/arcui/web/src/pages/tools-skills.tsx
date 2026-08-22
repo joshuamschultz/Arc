@@ -6,6 +6,7 @@ import { DataTable } from '@/components/data-table'
 import { StatCard } from '@/components/stat-card'
 import { QueryState, EmptyState } from '@/components/states'
 import { CapabilityTable } from '@/components/capability-table'
+import { CapabilityImportPanel } from '@/components/capability-import-panel'
 import { ClassificationBadge } from '@/components/tools-table'
 import { useTeamToolsSkills } from '@/lib/queries'
 import type { CapabilityInventoryItem, Dict } from '@/lib/types'
@@ -68,6 +69,7 @@ export function ToolsSkillsPage() {
     <div className="flex h-full flex-col">
       <PageHeader title="Tools & Skills" description="Fleet capability matrix and skill directory." />
       <div className="flex-1 space-y-6 overflow-auto p-6">
+        <CapabilityImportPanel />
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <StatCard label="Tools" value={tools.length} icon={<Wrench className="size-4" />} />
           <StatCard label="Skills" value={skills.length} icon={<Sparkles className="size-4" />} />
