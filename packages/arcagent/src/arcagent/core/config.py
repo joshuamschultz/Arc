@@ -33,9 +33,8 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import arcstore as arcstore_package
 from arctrust import ValidatorsConfig
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -49,6 +48,28 @@ from arcagent.core.config_loading import (
     deep_merge as deep_merge,
 )
 from arcagent.core.errors import ConfigError
+
+if TYPE_CHECKING:
+    import arcstore
+
+    ArcStoreConfigType = arcstore.ArcStoreConfig
+else:
+
+    def _arcstore_config_type() -> type[BaseModel]:
+        try:
+            import arcstore
+        except ModuleNotFoundError:
+
+            class StandaloneArcStoreConfig(BaseModel):
+                """Credential coordinate retained when ArcStore is not installed."""
+
+                model_config = ConfigDict(extra="forbid")
+                database_credential_ref: str = ""
+
+            return StandaloneArcStoreConfig
+        return arcstore.ArcStoreConfig
+
+    ArcStoreConfigType = _arcstore_config_type()
 from arcagent.tiers import SECURITY_CONFIG_KNOBS, resolve_tier_floor
 
 _logger = logging.getLogger("arcagent.config")
@@ -676,9 +697,7 @@ class ArcAgentConfig(BaseModel):
     ui: UIConfig = UIConfig()
     budget: BudgetConfig = BudgetConfig()
     arcrun: ArcRunConfig = ArcRunConfig()
-    arcstore: arcstore_package.ArcStoreConfig = Field(
-        default_factory=arcstore_package.ArcStoreConfig
-    )
+    arcstore: ArcStoreConfigType = Field(default_factory=ArcStoreConfigType)
 
     @model_validator(mode="after")
     def _resolve_tier_capture_tool_io(self) -> ArcAgentConfig:
