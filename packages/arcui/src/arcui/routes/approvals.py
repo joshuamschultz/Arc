@@ -103,6 +103,14 @@ async def list_approvals(request: Request) -> JSONResponse:
     return JSONResponse({"approvals": [a.model_dump(mode="json") for a in pending]})
 
 
+async def list_notifications(request: Request) -> JSONResponse:
+    """Return sanitized approval events to an authenticated operator browser."""
+    if not _is_operator(request):
+        return _error("operator_role_required", 403)
+    hub = getattr(request.app.state, "approval_notification_hub", None)
+    return JSONResponse({"events": hub.recent() if hub is not None else []})
+
+
 async def approve_request(request: Request) -> JSONResponse:
     """POST /api/approvals/{id}/approve — mint + attach an operator grant."""
     approval_id = request.path_params["id"]
@@ -197,8 +205,9 @@ async def deny_request(request: Request) -> JSONResponse:
 
 routes = [
     Route("/api/approvals", list_approvals, methods=["GET"]),
+    Route("/api/approvals/notifications", list_notifications, methods=["GET"]),
     Route("/api/approvals/{id}/approve", approve_request, methods=["POST"]),
     Route("/api/approvals/{id}/deny", deny_request, methods=["POST"]),
 ]
 
-__all__ = ["approve_request", "deny_request", "list_approvals", "routes"]
+__all__ = ["approve_request", "deny_request", "list_approvals", "list_notifications", "routes"]

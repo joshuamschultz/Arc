@@ -8,6 +8,7 @@ deployments can use Telegram/Slack/etc. without reversing package seams.
 from __future__ import annotations
 
 from arcstore.approval_dispatcher import ApprovalNotification
+from collections.abc import Iterable
 
 from arcgateway.delivery import DeliveryTarget
 from arcgateway.session import SessionRouter
@@ -47,4 +48,15 @@ class GatewayApprovalNotificationSink:
         )
 
 
-__all__ = ["GatewayApprovalNotificationSink", "compose_approval_message"]
+class ApprovalNotificationFanout:
+    """Deliver one typed event to browser and configured operator sinks."""
+
+    def __init__(self, sinks: Iterable[object]) -> None:
+        self._sinks = tuple(sinks)
+
+    async def __call__(self, notification: ApprovalNotification) -> None:
+        for sink in self._sinks:
+            await sink(notification)  # type: ignore[operator]
+
+
+__all__ = ["ApprovalNotificationFanout", "GatewayApprovalNotificationSink", "compose_approval_message"]
