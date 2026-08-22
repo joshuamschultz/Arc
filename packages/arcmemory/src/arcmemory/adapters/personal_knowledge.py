@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-import yaml
+from arcokf import Document, OKFValidationError, parse, render
 from arctrust.classification import dominates, parse_classification
 
 from arcmemory.mdfile import atomic_write_text
@@ -80,6 +80,8 @@ class PersonalKnowledgeAdapter:
             raise ValueError("OKF title is required")
         if not draft.content.strip():
             raise ValueError("OKF content is required")
+        if not draft.document_type.strip():
+            raise ValueError("OKF type is required")
         if "[[" in draft.content or "]]" in draft.content:
             raise ValueError("OKF requires standard Markdown links")
         parse_classification(draft.classification, strict=True)
@@ -102,10 +104,16 @@ class PersonalKnowledgeAdapter:
             "arc_owner_did": self._agent_did,
             "arc_content_sha256": f"sha256:{digest}",
         }
+        document = Document(metadata, draft.content)
+        try:
+            encoded = render(document)
+            parse(encoded)
+        except OKFValidationError as error:
+            raise ValueError("invalid OKF knowledge document") from error
         self._root.mkdir(parents=True, exist_ok=True)
         atomic_write_text(
             self._path(identifier),
-            f"---\n{yaml.safe_dump(metadata, sort_keys=True)}---\n\n{draft.content}\n",
+            encoded + "\n",
         )
         return _Reference("personal", identifier, f"sha256:{digest}")
 
@@ -116,27 +124,31 @@ class PersonalKnowledgeAdapter:
     def _read(self, reference: str, access: _Access) -> _Document:
         path = self._path(reference)
         try:
-            raw = path.read_text()
-            _, front, content = raw.split("---", 2)
-            metadata = yaml.safe_load(front)
-        except (KeyError, OSError, TypeError, ValueError, yaml.YAMLError) as error:
+            raw = path.read_bytes()
+            document = parse(raw, path=path.as_posix())
+        except (OSError, OKFValidationError) as error:
             raise ValueError("malformed personal knowledge document") from error
-        if not isinstance(metadata, dict):
-            raise ValueError("malformed personal knowledge frontmatter")
-        classification = str(metadata["arc_classification"])
-        if metadata.get("arc_owner_did") != self._agent_did:
-            raise ValueError("personal knowledge ownership was tampered")
-        self._authorize(access, classification)
-        digest = hashlib.sha256(content.strip().encode()).hexdigest()
-        if metadata.get("arc_content_sha256") != f"sha256:{digest}":
-            raise ValueError("personal knowledge content digest was tampered")
-        return _Document(
-            _Reference("personal", reference, f"sha256:{digest}"),
-            str(metadata["title"]),
-            content.strip(),
-            classification,
-            tuple(metadata["tags"]),
-        )
+        metadata = document.metadata
+        content = document.body
+        try:
+            classification = str(metadata["arc_classification"])
+            if metadata.get("arc_owner_did") != self._agent_did:
+                raise ValueError("personal knowledge ownership was tampered")
+            self._authorize(access, classification)
+            digest = hashlib.sha256(content.strip().encode()).hexdigest()
+            if metadata.get("arc_content_sha256") != f"sha256:{digest}":
+                raise ValueError("personal knowledge content digest was tampered")
+            return _Document(
+                _Reference("personal", reference, f"sha256:{digest}"),
+                str(metadata["title"]),
+                content.strip(),
+                classification,
+                tuple(metadata["tags"]),
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            if "tampered" in str(error) or "different agent" in str(error):
+                raise
+            raise ValueError("malformed personal knowledge frontmatter") from error
 
     async def read(self, reference: str, access: _Access) -> _Document:
         """Read and integrity-check through a worker thread."""

@@ -29,6 +29,7 @@ dependencies = [
     "arcprompt>=0.1",
     "arcstore>=0.1",
     "arcrun>=0.1",
+    "arcokf>=0.1",
     "pydantic>=2.0,<3",
     "pyyaml>=6.0",
     # In-process vector index (surface + structural channels) — shipped by
