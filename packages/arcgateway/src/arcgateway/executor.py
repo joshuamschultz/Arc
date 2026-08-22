@@ -38,6 +38,7 @@ import uuid
 from collections.abc import AsyncIterator, Callable
 from typing import Any, Literal, Protocol, runtime_checkable
 
+import arcagent
 from pydantic import BaseModel, Field, model_validator
 
 from arcgateway.parts import Part, TextPart, flatten_text
@@ -148,6 +149,7 @@ class Delta(BaseModel):
         turn_id: Run-level turn identifier for idempotency keys.
         sequence: Monotonic event number within ``turn_id`` when supplied by
             the ArcRun streaming facade. Zero is reserved for legacy executors.
+        status: Terminal outcome. Meaningful only for ``kind="done"``.
     """
 
     kind: Literal["token", "tool_call", "done"]
@@ -155,6 +157,7 @@ class Delta(BaseModel):
     is_final: bool = False
     turn_id: str = ""
     sequence: int = 0
+    status: Literal["completed", "cancelled", "failed"] = "completed"
 
 
 # ---------------------------------------------------------------------------
@@ -358,12 +361,11 @@ class AsyncioExecutor:
                 extra: dict[str, Any] = {}
                 if any(part.kind != "text" for part in event.parts):
                     extra["parts"] = [part.model_dump() for part in event.parts]
-                stream_delivery = getattr(agent, "stream_delivered_message", None)
-                if callable(stream_delivery):
+                if isinstance(agent, arcagent.DeliveryStreamSource):
                     live_key = (event.agent_did, event.session_key)
                     self._live_agents[live_key] = agent
                     try:
-                        async for stream_event in stream_delivery(
+                        async for stream_event in agent.stream_delivered_message(
                             caller_did=event.user_did,
                             message=event.message,
                             session_key=event.session_key,
@@ -371,35 +373,30 @@ class AsyncioExecutor:
                             reply_label=_reply_label(event),
                             **extra,
                         ):
-                            stream_name = type(stream_event).__name__
-                            run_id = str(getattr(stream_event, "run_id", "")) or turn_id
-                            sequence = int(getattr(stream_event, "sequence", 0))
-                            if stream_name == "TokenEvent":
-                                text = str(getattr(stream_event, "text", ""))
-                                if text:
+                            match stream_event:
+                                case arcagent.DeliveryTextEvent(text=text):
                                     yield Delta(
                                         kind="token",
                                         content=text,
-                                        turn_id=run_id,
-                                        sequence=sequence,
+                                        turn_id=stream_event.run_id or turn_id,
+                                        sequence=stream_event.sequence,
                                     )
-                            elif stream_name == "ToolStartEvent":
-                                tool_name = str(getattr(stream_event, "name", ""))
-                                if tool_name:
+                                case arcagent.DeliveryToolEvent(name=name):
                                     yield Delta(
                                         kind="tool_call",
-                                        content=tool_name,
-                                        turn_id=run_id,
-                                        sequence=sequence,
+                                        content=name,
+                                        turn_id=stream_event.run_id or turn_id,
+                                        sequence=stream_event.sequence,
                                     )
-                            elif stream_name == "TurnEndEvent":
-                                yield Delta(
-                                    kind="done",
-                                    is_final=True,
-                                    turn_id=run_id,
-                                    sequence=sequence,
-                                )
-                                return
+                                case arcagent.DeliveryTerminalEvent(status=status):
+                                    yield Delta(
+                                        kind="done",
+                                        is_final=True,
+                                        turn_id=stream_event.run_id or turn_id,
+                                        sequence=stream_event.sequence,
+                                        status=status,
+                                    )
+                                    return
                     finally:
                         self._live_agents.pop(live_key, None)
                     yield Delta(kind="done", is_final=True, turn_id=turn_id)

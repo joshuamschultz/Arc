@@ -8,6 +8,7 @@ chat() (user + assistant turns land in the session's SessionManager).
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -247,6 +248,45 @@ async def test_run_collected_forwards_tool_choice(
             await agent.shutdown()
 
     assert captured.get("tool_choice") == {"type": "required"}
+
+
+@pytest.mark.asyncio
+@patch("arcagent.core.model_manager.load_eval_model")
+async def test_delivery_stream_backpressures_and_cancellation_releases_pump(
+    mock_load_model: MagicMock,
+    agent_config: ArcAgentConfig,
+) -> None:
+    """A slow transport consumer cannot grow the delivery queue without bound."""
+    mock_load_model.return_value = MagicMock(close=AsyncMock())
+    agent = ArcAgent(config=agent_config)
+    producer_finished = asyncio.Event()
+
+    async def slow_stream(*_: Any, **kwargs: Any) -> AsyncIterator[StreamEvent]:
+        kwargs["on_handle"](MagicMock())
+        yield TokenEvent(text="one", run_id="run-1", sequence=1)
+        yield TokenEvent(text="two", run_id="run-1", sequence=2)
+        yield TurnEndEvent(final_text="onetwo", run_id="run-1", sequence=3)
+        producer_finished.set()
+
+    with (
+        patch("arcagent.core.agent.dispatch_stream", side_effect=slow_stream),
+        patch("arcagent.core.agent._DELIVERY_STREAM_QUEUE_MAXSIZE", 1),
+    ):
+        await agent.startup()
+        try:
+            stream = agent.stream_delivered_message(
+                caller_did="did:arc:user:test", message="hi", session_key="unit:slow"
+            )
+            first = await anext(stream)
+            await asyncio.sleep(0)
+            assert first.text == "one"
+            assert not producer_finished.is_set()
+            assert agent._delivery_stream_tasks
+            await stream.aclose()
+            await asyncio.sleep(0)
+            assert not agent._delivery_stream_tasks
+        finally:
+            await agent.shutdown()
 
 
 @pytest.mark.asyncio

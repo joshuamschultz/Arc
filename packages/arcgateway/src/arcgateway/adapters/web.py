@@ -476,6 +476,7 @@ class WebPlatformAdapter:
             if not delta.is_final or not delta.turn_id or terminal_seen:
                 return
             payload = self._stream_payload(delta, event="end")
+            payload["status"] = delta.status
         elif delta.kind == "tool_call":
             tool_name = delta.content.split(maxsplit=1)[0]
             if not tool_name:

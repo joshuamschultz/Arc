@@ -13,9 +13,11 @@ executor that ever passed a run decision across this seam would raise
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
+import arcagent
 import pytest
 
 from arcgateway.executor import AsyncioExecutor, InboundEvent
@@ -66,6 +68,18 @@ class _LiveAgent:
     def active_run(self, session_key: str) -> _CancellableHandle:
         assert session_key == "sess-1"
         return self._handle
+
+
+class _StreamingDeliveryAgent:
+    """Implements the public typed delivery-stream facade."""
+
+    async def stream_delivered_message(
+        self, **_: Any
+    ) -> AsyncIterator[arcagent.DeliveryStreamEvent]:
+        yield arcagent.DeliveryTextEvent(run_id="run-1", sequence=1, text="hel")
+        yield arcagent.DeliveryToolEvent(run_id="run-1", sequence=2, name="safe_tool")
+        yield arcagent.DeliveryTextEvent(run_id="run-1", sequence=3, text="lo")
+        yield arcagent.DeliveryTerminalEvent(run_id="run-1", sequence=4, status="cancelled")
 
 
 @dataclass
@@ -185,3 +199,22 @@ async def test_cancel_session_routes_browser_disconnect_to_live_agent_handle() -
     await executor.cancel_session("did:arc:agent:y", "sess-1")
 
     assert handle.calls == [("did:arc:gateway", "browser disconnected")]
+
+
+@pytest.mark.asyncio
+async def test_public_delivery_events_map_without_reflection_or_duplicate_terminal() -> None:
+    """The typed facade keeps ArcRun internals out of the gateway contract."""
+    agent = _StreamingDeliveryAgent()
+
+    async def factory(_agent_did: str) -> _StreamingDeliveryAgent:
+        return agent
+
+    deltas = [delta async for delta in await AsyncioExecutor(agent_factory=factory).run(_event())]
+
+    assert [(delta.kind, delta.content, delta.sequence) for delta in deltas] == [
+        ("token", "hel", 1),
+        ("tool_call", "safe_tool", 2),
+        ("token", "lo", 3),
+        ("done", "", 4),
+    ]
+    assert deltas[-1].status == "cancelled"

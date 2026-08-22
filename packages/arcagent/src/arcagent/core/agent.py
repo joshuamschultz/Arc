@@ -29,7 +29,7 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import arcrun
 from arctrust import (
@@ -67,6 +67,12 @@ from arcagent.core.telemetry import AgentTelemetry
 from arcagent.core.tool_policy import build_pipeline
 from arcagent.core.tool_registry import RegisteredTool, ToolRegistry
 from arcagent.core.vault_resolver import _validate_vault_backend, create_vault_resolver
+from arcagent.streaming import (
+    DeliveryStreamEvent,
+    DeliveryTerminalEvent,
+    DeliveryTextEvent,
+    DeliveryToolEvent,
+)
 from arcagent.tools._policy_fill import resolve_provider_limits
 from arcagent.tools.human_gate import ApprovalChannel, HumanGate, HumanGateConfig
 
@@ -80,6 +86,22 @@ _logger = logging.getLogger("arcagent.agent")
 # (mirrors arctrust.operator's vault operator id). SPEC-037 REQ-006.
 _OPERATOR_KEY_REF = "operator"
 _SHUTDOWN_STEP_TIMEOUT_SECONDS = 5.0
+_DELIVERY_STREAM_QUEUE_MAXSIZE = 32
+
+
+def _delivery_projection(event: arcrun.StreamEvent) -> DeliveryStreamEvent | None:
+    """Project ArcRun events onto the public, transport-safe event contract."""
+    if isinstance(event, arcrun.TokenEvent):
+        return DeliveryTextEvent(run_id=event.run_id, sequence=event.sequence, text=event.text)
+    if isinstance(event, arcrun.ToolStartEvent):
+        return DeliveryToolEvent(run_id=event.run_id, sequence=event.sequence, name=event.name)
+    if isinstance(event, arcrun.TurnEndEvent):
+        status: Literal["completed", "cancelled"] = "completed"
+        payload = event.completion_payload
+        if isinstance(payload, dict) and payload.get("status") == "cancelled":
+            status = "cancelled"
+        return DeliveryTerminalEvent(run_id=event.run_id, sequence=event.sequence, status=status)
+    return None
 
 
 class _LifecycleState(Enum):
@@ -165,6 +187,7 @@ class ArcAgent:
         # Registration and identity-safe removal go through the coordinator.
         self._active_runs = self._run_coordinator.active_runs
         self._run_finalizers: set[asyncio.Task[None]] = set()
+        self._delivery_stream_tasks: set[asyncio.Task[None]] = set()
         self._background_tasks = BackgroundTaskSupervisor(logger=_logger)
         # Channel-delivery callback ("platform:chat_id", text) -> None. Injected
         # by the embedded gateway (which owns channels) before startup(); None
@@ -714,8 +737,8 @@ class ArcAgent:
         reply_target: str | None = None,
         reply_label: str | None = None,
         parts: Sequence[Mapping[str, Any]] | None = None,
-    ) -> AsyncIterator[arcrun.StreamEvent]:
-        """Deliver an interactive message and yield its public ArcRun events.
+    ) -> AsyncIterator[DeliveryStreamEvent]:
+        """Deliver an interactive message and yield transport-safe events.
 
         This is the gateway-facing streaming facade. It preserves the normal
         delivery decision: a message joining an existing interactive run is
@@ -726,10 +749,15 @@ class ArcAgent:
         content = self._compose_from_parts(parts) if parts else None
         if content is not None:
             message = _flatten_blocks(content)
-        queue: asyncio.Queue[arcrun.StreamEvent | BaseException | None] = asyncio.Queue()
+        queue: asyncio.Queue[DeliveryStreamEvent | None] = asyncio.Queue(
+            maxsize=_DELIVERY_STREAM_QUEUE_MAXSIZE
+        )
         started = asyncio.Event()
+        terminal_sent = False
 
         async def pump() -> None:
+            nonlocal terminal_sent
+            cancelled = False
             try:
                 session = await self.session(session_key)
                 async for event in dispatch_stream(
@@ -741,12 +769,29 @@ class ArcAgent:
                     interactive=True,
                     on_handle=lambda _handle: started.set(),
                 ):
-                    await queue.put(event)
-            except BaseException as exc:
-                await queue.put(exc)
+                    projection = _delivery_projection(event)
+                    if projection is None:
+                        continue
+                    await queue.put(projection)
+                    if isinstance(projection, DeliveryTerminalEvent):
+                        terminal_sent = True
+                        return
+            except asyncio.CancelledError:
+                cancelled = True
+                raise
+            except Exception:
+                _logger.exception("Interactive delivery stream failed for session %s", session_key)
+                if not terminal_sent:
+                    await queue.put(DeliveryTerminalEvent(run_id="", sequence=0, status="failed"))
+                    terminal_sent = True
             finally:
                 started.set()
-                await queue.put(None)
+                if not cancelled:
+                    if not terminal_sent:
+                        await queue.put(
+                            DeliveryTerminalEvent(run_id="", sequence=0, status="cancelled")
+                        )
+                    await queue.put(None)
 
         async with self._run_coordinator.delivery(session_key):
             handle = self._run_coordinator.injection_target(session_key)
@@ -757,12 +802,12 @@ class ArcAgent:
                 await handle.follow_up(caller_did, injected)
                 return
             task = asyncio.create_task(pump(), name=f"delivery_stream:{session_key}")
+            self._delivery_stream_tasks.add(task)
+            task.add_done_callback(self._delivery_stream_tasks.discard)
             await started.wait()
 
         try:
             while item := await queue.get():
-                if isinstance(item, BaseException):
-                    raise item
                 yield item
         finally:
             if not task.done():
@@ -1142,6 +1187,14 @@ class ArcAgent:
                         "awaiting tracked-run finalizers",
                         asyncio.gather(*finalizers, return_exceptions=True),
                     )
+                delivery_streams = list(self._delivery_stream_tasks)
+                for task in delivery_streams:
+                    task.cancel()
+                if delivery_streams:
+                    await bounded(
+                        "awaiting delivery streams",
+                        asyncio.gather(*delivery_streams, return_exceptions=True),
+                    )
 
                 loader = self._capability_loader
                 if loader is not None:
@@ -1168,6 +1221,7 @@ class ArcAgent:
                 self._runtime_bindings.clear()
                 self._run_coordinator.clear()
                 self._run_finalizers.clear()
+                self._delivery_stream_tasks.clear()
                 self._sessions.clear()
                 self._lifecycle_state = _LifecycleState.STOPPED
                 _logger.info("Agent %s shut down", self._config.agent.name)

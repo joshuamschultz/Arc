@@ -93,6 +93,13 @@ from arcagent.modules.scheduler.store import ScheduleStore
 from arcagent.modules.session.identity_graph import IdentityGraph
 from arcagent.orchestration.spawn import make_spawn_tool
 from arcagent.orchestration.token_budget import RootTokenBudget
+from arcagent.streaming import (
+    DeliveryStreamEvent,
+    DeliveryStreamSource,
+    DeliveryTerminalEvent,
+    DeliveryTextEvent,
+    DeliveryToolEvent,
+)
 from arcagent.tiers import (
     SECURITY_CONFIG_KNOBS,
     audit_tier_relaxations,
@@ -169,6 +176,11 @@ __all__ = [
     "Connections",
     "ConnectorPlan",
     "ContextError",
+    "DeliveryStreamEvent",
+    "DeliveryStreamSource",
+    "DeliveryTerminalEvent",
+    "DeliveryTextEvent",
+    "DeliveryToolEvent",
     "ExtensionError",
     "GatedItem",
     "HostPrerequisiteDirector",
