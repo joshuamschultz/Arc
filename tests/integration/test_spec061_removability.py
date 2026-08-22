@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from arcstore.backends.memory import FakeBackend
 from arctrust.paths import workflows_dir
 
 _ONE_NODE = """
@@ -102,6 +103,21 @@ def _isolated_arc(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
+def arcstore_backend(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeBackend]:
+    """Bind every CLI/control-plane call in a test to one explicit backend.
+
+    Production ArcStore is PostgreSQL-only on this branch. These tests exercise
+    the workflow surfaces, so a contract fake keeps the test focused while the
+    same instance lets CLI writes and read-backs observe one durable store.
+    """
+    from arccli.commands import workflow as workflow_command
+
+    backend = FakeBackend()
+    monkeypatch.setattr(workflow_command, "_backend_factory", lambda: backend)
+    yield backend
+
+
+@pytest.fixture
 def arc_dir(tmp_path: Path) -> Path:
     """The Arc home with a bootstrapped operator key, as first run leaves it."""
     from arccli.commands.operator import load_operator_key
@@ -126,7 +142,10 @@ def test_the_dashboard_really_is_uninstalled() -> None:
 
 
 def test_the_whole_operator_lifecycle_runs_from_the_command_line(
-    arc_dir: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    arc_dir: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    arcstore_backend: FakeBackend,
 ) -> None:
     """create, view, edit, archive, unarchive, sign, run, cancel, purge — headless."""
     from arccli.commands.workflow import workflow_handler
@@ -172,7 +191,7 @@ def test_the_whole_operator_lifecycle_runs_from_the_command_line(
     started = capsys.readouterr().out
     assert "Started run" in started
     run_id = started.split("Started run ")[1].split(" ")[0]
-    assert _run_row(run_id)["workflow_id"] == "onboarding"
+    assert _run_row(run_id, arcstore_backend)["workflow_id"] == "onboarding"
 
     workflow_handler(["cancel", run_id, "--dir", str(arc_dir)])
     assert "Cancelled" in capsys.readouterr().out
@@ -182,14 +201,11 @@ def test_the_whole_operator_lifecycle_runs_from_the_command_line(
     assert not bundle.exists()
 
 
-def _run_row(run_id: str) -> dict[str, Any]:
+def _run_row(run_id: str, backend: FakeBackend) -> dict[str, Any]:
     """Read the durable Run the CLI just wrote — proof it reached the real engine."""
-    from arcstore import store_db_path
-    from arcstore.backends.sqlite import SqliteBackend
     from arcstore.runs import RunStore
 
     async def _read() -> dict[str, Any]:
-        backend = SqliteBackend(store_db_path(None))
         await backend.start()
         try:
             run = await RunStore(backend).get(run_id)
@@ -201,7 +217,9 @@ def _run_row(run_id: str) -> dict[str, Any]:
     return asyncio.run(_read())
 
 
-def test_the_command_line_runner_can_resolve_node_owners(arc_dir: Path) -> None:
+def test_the_command_line_runner_can_resolve_node_owners(
+    arc_dir: Path, arcstore_backend: FakeBackend
+) -> None:
     """A CLI-started run must reach a runner wired to the team registry.
 
     Without this binding ``arc workflow run`` prints "Started run …" and the run
@@ -225,7 +243,9 @@ def test_the_command_line_runner_can_resolve_node_owners(arc_dir: Path) -> None:
     assert isinstance(resolver, RegistryOwnerResolver)
 
 
-def test_the_authoring_lifecycle_runs_from_the_agent_tools(arc_dir: Path) -> None:
+def test_the_authoring_lifecycle_runs_from_the_agent_tools(
+    arc_dir: Path, arcstore_backend: FakeBackend
+) -> None:
     """An agent authors, extends, lists, and inspects a workflow with no dashboard."""
     from arcagent.modules.workflows import _runtime
     from arcagent.modules.workflows.capabilities import (
@@ -240,12 +260,13 @@ def test_the_authoring_lifecycle_runs_from_the_agent_tools(arc_dir: Path) -> Non
     async def _drive() -> None:
         _runtime.reset()
         _runtime.configure(
-            config={"data_dir": str(arc_dir / "data")},
+            config={},
             workspace=arc_dir,
             identity=AgentIdentity.generate(org="local", agent_type="agent"),
             operator_signer=OperatorKey.load(
                 operator_key_path(arc_dir), generate_if_absent=False
             ).into_signer(),
+            arcstore_opener=lambda: _open_backend(arcstore_backend),
         )
         try:
             created = json.loads(
@@ -280,13 +301,19 @@ def test_the_authoring_lifecycle_runs_from_the_agent_tools(arc_dir: Path) -> Non
     asyncio.run(_drive())
 
 
-def test_a_run_completes_end_to_end_with_no_dashboard(arc_dir: Path) -> None:
+async def _open_backend(backend: FakeBackend) -> FakeBackend:
+    """Return the shared contract fake through the async runtime seam."""
+    return backend
+
+
+def test_a_run_completes_end_to_end_with_no_dashboard(
+    arc_dir: Path, arcstore_backend: FakeBackend
+) -> None:
     """The execution half: a real runner drives a real two-node run to done.
 
     The dashboard renders runs; nothing about progressing one may depend on it.
     """
     from arccli.commands.operator import operator_key_path
-    from arcstore.backends.sqlite import SqliteBackend
     from arcstore.tasks import TaskStore
     from arcteam.workflow.runner import build_workflow_runner
 
@@ -303,7 +330,7 @@ def test_a_run_completes_end_to_end_with_no_dashboard(arc_dir: Path) -> None:
             return None if did is None else type("Entity", (), {"did": did})()
 
     async def _drive() -> str:
-        backend = SqliteBackend(arc_dir / "runner.db")
+        backend = arcstore_backend
         await backend.start()
         try:
             runner = build_workflow_runner(

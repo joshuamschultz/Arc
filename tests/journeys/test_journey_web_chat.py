@@ -22,6 +22,7 @@ from typing import Any
 
 import pytest
 from arcgateway.config import GatewayConfig
+from arcstore.backends.memory import FakeBackend
 from starlette.testclient import TestClient
 
 from .conftest import OPERATOR_TOKEN, VIEWER_TOKEN, Deployment, ScriptedLLM, ScriptedTurn
@@ -42,6 +43,7 @@ def client(deployment: Deployment, scripted_llm: ScriptedLLM) -> Iterator[TestCl
         team_root=deployment.team_root,
         auth_config=AuthConfig({"viewer_token": VIEWER_TOKEN, "operator_token": OPERATOR_TOKEN}),
         gateway_config=GatewayConfig.from_toml_str("[platforms.web]\nenabled = true\n"),
+        arcstore_backend=FakeBackend(),
     )
     with TestClient(app) as test_client:
         yield test_client
@@ -87,13 +89,15 @@ def _open_chat(client: TestClient, agent_id: str) -> Any:
 
 
 def _reply_text(ws: Any) -> str:
-    """Read frames until the agent's message arrives; fail loudly with what came.
+    """Read the agent's incremental stream and return its complete text.
 
     An ``agent-error`` frame is reported as the failure rather than silently
     consumed — it is precisely the frame the live deployment was returning while
     every other signal read healthy.
     """
     seen: list[Any] = []
+    chunks: list[str] = []
+    run_id: str | None = None
     deadline = time.monotonic() + _TURN_DEADLINE
     while time.monotonic() < deadline:
         frame = _receive(ws, timeout=max(1.0, deadline - time.monotonic()))
@@ -101,9 +105,20 @@ def _reply_text(ws: Any) -> str:
         text = str(frame.get("text", ""))
         if "[agent-error]" in text:
             raise AssertionError(f"the agent failed the turn: {text}")
-        if frame.get("type") == "message" and frame.get("from") == "agent":
-            return text
-    raise AssertionError(f"no agent message within {_TURN_DEADLINE}s; frames seen: {seen}")
+        if frame.get("type") != "stream":
+            continue
+        if run_id is None:
+            run_id = frame.get("run_id")
+        elif frame.get("run_id") != run_id:
+            raise AssertionError(f"mixed stream runs: {run_id!r}, {frame.get('run_id')!r}")
+        event = frame.get("event")
+        if event == "text":
+            chunks.append(text)
+        elif event == "end":
+            return "".join(chunks)
+    raise AssertionError(
+        f"no completed agent stream within {_TURN_DEADLINE}s; frames seen: {seen}"
+    )
 
 
 def test_a_user_message_gets_an_agent_reply(client: TestClient, scripted_llm: ScriptedLLM) -> None:
