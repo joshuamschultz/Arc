@@ -56,6 +56,9 @@ IGNORED_SOURCE_TABLES = frozenset({"schema_version", "arcstore_schema"})
 KNOWN_SOURCE_TABLES = DESTINATION_TABLES | frozenset(SOURCE_ALIASES) | IGNORED_SOURCE_TABLES
 _SAFE_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 _DSN_SECRET = re.compile(r"(?i)(postgres(?:ql)?://[^:/\s]+:)[^@/\s]+(@)")
+_TIMESTAMP_FIELDS = frozenset(
+    {"ts", "created_at", "updated_at", "read_at", "available_at", "lease_until", "delivered_at"}
+)
 
 
 class MigrationError(RuntimeError):
@@ -116,8 +119,27 @@ def canonical_json(value: Any) -> str:
     )
 
 
+def _semantic_production_value(value: Any, *, field: str = "") -> Any:
+    """Normalize only timestamp representations before digest comparison."""
+    if isinstance(value, Mapping):
+        return {
+            str(name): _semantic_production_value(item, field=str(name))
+            for name, item in value.items()
+        }
+    if isinstance(value, list | tuple):
+        return [_semantic_production_value(item) for item in value]
+    if isinstance(value, str) and field in _TIMESTAMP_FIELDS:
+        try:
+            return _timestamp(value, field=field)
+        except MigrationError:
+            return value
+    return value
+
+
 def digest(value: Any) -> str:
-    return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
+    return hashlib.sha256(
+        canonical_json(_semantic_production_value(value)).encode("utf-8")
+    ).hexdigest()
 
 
 def _digest_rows(rows: Sequence[MappedRow]) -> str:

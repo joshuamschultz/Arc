@@ -17,6 +17,7 @@ from tools.one_time.arcstore_sqlite_to_postgres import (
     MappedRow,
     MigrationError,
     PostgresDestination,
+    digest,
     migrate,
 )
 
@@ -217,6 +218,25 @@ async def test_deleted_sqlite_backend_flat_operational_shapes_are_canonicalized(
         "payload": {"body": "body", "record_id": "body-flat"},
         "ts": None,
     }
+
+
+def test_digest_normalizes_equivalent_postgres_and_model_utc_timestamps() -> None:
+    model_payload = {
+        "inbox_id": "inbox-1",
+        "created_at": "2026-08-22T00:00:00Z",
+        "owner": {"participant_id": "did:arc:owner"},
+    }
+    planned = {
+        "inbox_id": "inbox-1",
+        "payload": model_payload,
+        "created_at": "2026-08-22T00:00:00Z",
+    }
+    readback = {
+        "inbox_id": "inbox-1",
+        "payload": model_payload,
+        "created_at": "2026-08-22T00:00:00+00:00",
+    }
+    assert digest(planned) == digest(readback)
 
 
 @pytest.mark.asyncio
