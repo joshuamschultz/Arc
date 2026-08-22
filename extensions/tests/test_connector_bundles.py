@@ -42,7 +42,7 @@ from arcagent.extension.host_login import authorization_verdict
 from arcagent.extension.manifest import ExtensionManifest, load_manifest
 from arcagent.extension.platforms import ANY_PLATFORM
 from arcagent.extension.secrets import LocalFileSecretBackend, SecretStore
-from arcagent.extension.state import open_connection_state
+from arcagent.extension.state import ConnectionStateStore, open_connection_state
 from arcagent.modules.connectors.install import (
     ConnectorPlan,
     build_attachment,
@@ -61,6 +61,18 @@ _CALLER = "did:arc:testorg:executor/bundles"
 #: digest for each, or ``host-setup`` refuses on that host — correctly, and
 #: uselessly.
 _DEPLOYED_PLATFORMS = ("linux/arm64", "linux/amd64", "darwin/arm64", "darwin/amd64")
+
+
+async def _connection_state() -> ConnectionStateStore:
+    """Open test state through the current backend opener seam."""
+    from arcstore.backends.memory import FakeBackend
+
+    backend = FakeBackend()
+
+    async def opener() -> FakeBackend:
+        return backend
+
+    return await open_connection_state(opener=opener)
 
 
 def _bundles() -> list[Path]:
@@ -779,7 +791,7 @@ async def test_an_egress_bundle_is_refused_at_federal_before_anything_is_written
             secret_values=_placeholders(manifest),
             store=store,
             caller_did=_CALLER,
-            state=await open_connection_state(str(tmp_path / "data")),
+            state=await _connection_state(),
         )
 
     error = raised.value
@@ -816,7 +828,7 @@ async def test_the_same_bundle_passes_the_gate_at_personal(path: Path, tmp_path:
             secret_values=_placeholders(manifest),
             store=store,
             caller_did=_CALLER,
-            state=await open_connection_state(str(tmp_path / "data")),
+            state=await _connection_state(),
         )
     except ExtensionError as refused:
         assert refused.details["step"] != "manifest"
@@ -842,7 +854,7 @@ async def test_a_read_only_bundle_clears_the_federal_egress_gate(
             secret_values=_placeholders(manifest),
             store=store,
             caller_did=_CALLER,
-            state=await open_connection_state(str(tmp_path / "data")),
+            state=await _connection_state(),
         )
     except ExtensionError as refused:
         assert refused.details["step"] != "manifest"

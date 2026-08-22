@@ -56,7 +56,7 @@ from arcagent.extension.secrets import (
     SecretRef,
     SecretStore,
 )
-from arcagent.extension.state import open_connection_state
+from arcagent.extension.state import ConnectionStateStore, open_connection_state
 from arcagent.modules.connectors.install import (
     AttachmentFactory,
     ConnectorPlan,
@@ -88,6 +88,18 @@ _PROBE_PATHS: dict[str, tuple[str, dict[str, Any]]] = {
 }
 
 BUNDLE_IDS = sorted(_PROBE_PATHS)
+
+
+async def _connection_state() -> ConnectionStateStore:
+    """Open test state through the current backend opener seam."""
+    from arcstore.backends.memory import FakeBackend
+
+    backend = FakeBackend()
+
+    async def opener() -> FakeBackend:
+        return backend
+
+    return await open_connection_state(opener=opener)
 
 
 # --- a stand-in Atlassian ------------------------------------------------------
@@ -298,7 +310,7 @@ async def test_a_credential_pasted_with_invisible_whitespace_still_authenticates
             },
             store=store,
             caller_did=_CALLER,
-            state=await open_connection_state(str(tmp_path / "data")),
+            state=await _connection_state(),
             attachment_factory=_redirected(base_url),
         )
 
