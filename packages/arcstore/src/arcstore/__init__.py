@@ -20,6 +20,11 @@ resolve_data_dir — env > default Arc data dir resolution (shared by all entry 
 
 from __future__ import annotations
 
+from arcstore.approval_dispatcher import (
+    ApprovalDispatcherConfig,
+    ApprovalNotification,
+    ApprovalNotificationDispatcher,
+)
 from arcstore.config import ArcStoreConfig, resolve_data_dir
 from arcstore.inbox import (
     Handoff,
@@ -41,6 +46,9 @@ from arcstore.records import SpoolRecord
 from arcstore.spool import read, record, spool_path
 
 __all__ = [
+    "ApprovalDispatcherConfig",
+    "ApprovalNotification",
+    "ApprovalNotificationDispatcher",
     "ArcStoreConfig",
     "DurableInboxService",
     "Handoff",
