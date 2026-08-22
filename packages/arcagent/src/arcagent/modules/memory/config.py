@@ -46,6 +46,11 @@ class MemoryConfig(ModuleConfig):
     # Recall (agent:assemble_prompt @ priority 50)
     top_k: int = 5
     budget: int = 1024
+    # Curated document bodies are independently capped before they reach a model.
+    # ``None`` reuses the ordinary recall token budget; a separate value lets an
+    # operator allow a little more room for a known runbook without exposing the
+    # OKF storage ceiling to prompt assembly.
+    knowledge_budget: int | None = Field(default=None, gt=0, le=16_384)
     # Governs whether arcagent emits `agent:moment` and subscribes for proactive recall.
     proactive_enabled: bool = True
     # decision_point moments are opt-in: memory ignores them unless a mid-loop channel

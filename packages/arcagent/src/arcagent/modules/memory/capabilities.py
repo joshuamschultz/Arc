@@ -529,16 +529,60 @@ async def knowledge_promote(reference: str) -> str:
 )
 async def knowledge_retrieve(scope: KnowledgeScope, reference: str) -> str:
     """Return a boundary-marked, clearance-checked document."""
+    st = _runtime.state()
     try:
         port, access = _knowledge_port(scope)
         document = await port.read(reference, access)
     except (FileNotFoundError, PermissionError, RuntimeError, ValueError) as error:
         return f"Knowledge retrieval refused: {error}"
-    return (
+    rendered, truncated, defanged = _render_knowledge_document(st, scope, document)
+    await _audit(
+        "memory.knowledge_retrieve",
+        {
+            "scope": scope,
+            "reference": document.reference.identifier,
+            "content_chars": len(document.content),
+            "rendered_chars": len(rendered),
+            "truncated": truncated,
+            "boundary_markers_defanged": defanged,
+        },
+    )
+    return rendered
+
+
+_MAX_KNOWLEDGE_BUDGET = 16_384
+
+
+def _render_knowledge_document(
+    st: _runtime._State, scope: KnowledgeScope, document: Any
+) -> tuple[str, bool, bool]:
+    """Sanitize and bound one document for prompt presentation only.
+
+    Curated OKF content is integrity-checked by its adapter before this function is
+    called.  The sanitizer therefore applies only to this rendered copy: the exact
+    stored body remains available to the adapter and its digest check.  ``budget`` is
+    a deterministic token estimate (~4 characters/token), matching arcmemory's
+    general-memory retrieval budget.
+    """
+    prefix = (
         f'<knowledge-document scope="{scope}" '
         f'reference="{escape(document.reference.identifier)}">\n'
-        f"# {escape(document.title)}\n\n{document.content}\n</knowledge-document>"
+        f"# {escape(document.title)}\n\n"
     )
+    suffix = "\n</knowledge-document>"
+    requested_budget = st.config.knowledge_budget or st.config.budget
+    budget = min(max(requested_budget, 1), _MAX_KNOWLEDGE_BUDGET)
+    # Reserve the wrapper before applying the character cap so the complete output
+    # stays below the same approximate token budget used by general memory recall.
+    body_chars = max(0, (budget * 4) - len(prefix) - len(suffix))
+    try:
+        from arcmemory.security import document_sanitize
+    except ImportError:  # pragma: no cover - curated ports require arcmemory
+        clean = document.content[:body_chars]
+    else:
+        clean = document_sanitize(document.content, max_length=body_chars)
+    rendered = f"{prefix}{clean}{suffix}"
+    return rendered, len(clean) < len(document.content), clean != document.content
 
 
 @tool(
