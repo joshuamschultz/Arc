@@ -21,12 +21,19 @@ big, and where it landed. Never the bytes.
 
 from __future__ import annotations
 
+import hashlib
+import os
 import re
+import uuid
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Protocol
 
+from arctrust.classification import dominates, parse_classification
 from pydantic import BaseModel, ConfigDict
 
+from arcgateway.attachment_scanner import AttachmentScanner, CleanScanner, ScanStatus
 from arcgateway.audit import emit_event
 
 # POSIX NAME_MAX: a single path component may not exceed 255 bytes. Every
@@ -108,6 +115,49 @@ class StoredMedia(BaseModel):
     """Bytes written."""
 
 
+class AttachmentManifest(BaseModel):
+    """Durable, reference-only metadata for a quarantined or promoted file."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    attachment_id: str
+    agent_did: str
+    owner_did: str
+    session_key: str
+    workspace_ref: str
+    declared_name: str
+    detected_mime: str
+    kind: str
+    size_bytes: int
+    sha256: str
+    classification: str
+    scan_status: ScanStatus
+    created_at: datetime
+    expires_at: datetime | None = None
+
+
+class AttachmentError(Exception):
+    """Base class for fail-closed attachment errors."""
+
+
+class AttachmentValidationError(AttachmentError):
+    """The bytes or metadata failed validation."""
+
+
+class AttachmentClaimError(AttachmentError):
+    """The caller cannot claim the attachment."""
+
+
+class AttachmentQuotaError(AttachmentError):
+    """The file or workspace quota would be exceeded."""
+
+
+class AttachmentByteStream(Protocol):
+    """Async byte source consumed incrementally by :meth:`store_stream`."""
+
+    def __aiter__(self) -> AsyncIterator[bytes]: ...
+
+
 def _sanitise(raw: str) -> str:
     """Collapse untrusted text to a single safe path-component fragment.
 
@@ -154,15 +204,242 @@ class MediaStore:
             is accepted.
     """
 
-    def __init__(self, *, workspace: Path, max_bytes: int) -> None:
+    def __init__(
+        self,
+        *,
+        workspace: Path,
+        max_bytes: int,
+        scanner: AttachmentScanner | None = None,
+        max_files: int | None = None,
+        max_total_bytes: int | None = None,
+        clearance: str = "UNCLASSIFIED",
+    ) -> None:
         self._workspace = workspace
         self._inbox = workspace / "inbox"
+        self._attachments = workspace / "attachments"
+        self._quarantine = self._attachments / "quarantine"
+        self._objects = self._attachments / "objects"
         self._max_bytes = max_bytes
+        self._scanner = scanner or CleanScanner()
+        self._max_files = max_files
+        self._max_total_bytes = max_total_bytes
+        self._clearance = parse_classification(clearance, strict=False)
+
+    def _assert_workspace_dir(self, path: Path) -> None:
+        """Reject a pre-existing symlinked storage root before opening files."""
+        root = self._workspace.resolve()
+        resolved = path.resolve()
+        if root not in resolved.parents and resolved != root:
+            raise AttachmentValidationError("attachment storage escaped workspace")
 
     @property
     def max_bytes(self) -> int:
         """The ceiling, readable so a caller can refuse before spending bytes."""
         return self._max_bytes
+
+    async def store_stream(
+        self,
+        *,
+        stream: AttachmentByteStream,
+        declared_name: str,
+        declared_mime: str | None,
+        kind: str,
+        owner_did: str,
+        agent_did: str,
+        classification: str = "UNCLASSIFIED",
+        expires_at: datetime | None = None,
+        **identity: str,
+    ) -> AttachmentManifest:
+        """Stream an upload into quarantine, validate it, then promote atomically.
+
+        The stream is never collected into a ``bytes`` object. A failed or
+        rejected upload is removed from quarantine and is never claimable.
+        """
+        if self._max_files is not None and self._count_manifests() >= self._max_files:
+            raise AttachmentQuotaError("attachment file quota exceeded")
+        resource_class = parse_classification(classification, strict=False)
+        if not dominates(self._clearance, resource_class):
+            raise AttachmentClaimError("attachment classification exceeds workspace clearance")
+
+        if self._attachments.is_symlink():
+            raise AttachmentValidationError("attachment storage root is a symlink")
+        self._attachments.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self._assert_workspace_dir(self._attachments)
+        self._quarantine.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self._objects.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self._assert_workspace_dir(self._quarantine)
+        self._assert_workspace_dir(self._objects)
+        self._attachments.chmod(0o700)
+        self._quarantine.chmod(0o700)
+        self._objects.chmod(0o700)
+        attachment_id = f"att_{uuid.uuid4().hex}"
+        temporary = self._quarantine / f".{attachment_id}.upload"
+        digest = hashlib.sha256()
+        size = 0
+        try:
+            descriptor = os.open(
+                temporary,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+            with os.fdopen(descriptor, "wb") as handle:
+                async for chunk in stream:
+                    if not isinstance(chunk, bytes):
+                        raise AttachmentValidationError("attachment stream yielded non-bytes")
+                    size += len(chunk)
+                    if size > self._max_bytes:
+                        raise MediaTooLargeError(
+                            channel="arcui",
+                            declared_name=declared_name,
+                            size_bytes=size,
+                            limit_bytes=self._max_bytes,
+                        )
+                    if (
+                        self._max_total_bytes is not None
+                        and self._stored_total_bytes() + size > self._max_total_bytes
+                    ):
+                        raise AttachmentQuotaError("attachment byte quota exceeded")
+                    digest.update(chunk)
+                    handle.write(chunk)
+                handle.flush()
+                os.fsync(handle.fileno())
+
+            detected_mime = _detect_mime(temporary)
+            if not _mime_matches(declared_mime, detected_mime):
+                raise AttachmentValidationError(
+                    f"declared MIME {declared_mime!r} does not match {detected_mime!r}"
+                )
+            sha256 = f"sha256:{digest.hexdigest()}"
+            emit_event(
+                "attachment.validated",
+                attachment_id,
+                "allow",
+                actor_did=owner_did,
+                extra={"agent_did": agent_did, "mime": detected_mime, "sha256": sha256},
+            )
+            verdict = await self._scanner.scan(temporary, mime=detected_mime, sha256=sha256)
+            if verdict is not ScanStatus.CLEAN:
+                raise AttachmentValidationError(f"attachment scan failed: {verdict.value}")
+
+            object_dir = self._objects / digest.hexdigest()[:2]
+            object_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+            self._assert_workspace_dir(object_dir)
+            object_dir.chmod(0o700)
+            target = object_dir / digest.hexdigest()
+            if target.is_symlink():
+                raise AttachmentValidationError("attachment object is a symlink")
+            if target.exists():
+                temporary.unlink()
+            else:
+                temporary.replace(target)
+                target.chmod(0o600)
+            ref = target.relative_to(self._workspace).as_posix()
+            manifest = AttachmentManifest(
+                attachment_id=attachment_id,
+                agent_did=agent_did,
+                owner_did=owner_did,
+                session_key=identity["session_key"],
+                workspace_ref=ref,
+                declared_name=declared_name,
+                detected_mime=detected_mime,
+                kind=kind,
+                size_bytes=size,
+                sha256=sha256,
+                classification=resource_class.name,
+                scan_status=verdict,
+                created_at=datetime.now(UTC),
+                expires_at=expires_at,
+            )
+            self._write_manifest(manifest)
+            emit_event(
+                "attachment.received",
+                attachment_id,
+                "allow",
+                actor_did=owner_did,
+                extra={"agent_did": agent_did, "sha256": sha256, "size_bytes": size},
+            )
+            return manifest
+        except BaseException as exc:
+            temporary.unlink(missing_ok=True)
+            emit_event(
+                "attachment.rejected",
+                attachment_id,
+                "deny",
+                actor_did=owner_did,
+                extra={"agent_did": agent_did, "reason": type(exc).__name__},
+            )
+            raise
+
+    def claim(
+        self,
+        *,
+        attachment_id: str,
+        owner_did: str,
+        agent_did: str,
+        session_key: str,
+        clearance: str | None = None,
+    ) -> StoredMedia:
+        """Return a clean attachment only to its bound identity and session."""
+        manifest = self._read_manifest(attachment_id)
+        if manifest is None:
+            raise AttachmentClaimError("attachment not found")
+        if manifest.scan_status is not ScanStatus.CLEAN:
+            raise AttachmentClaimError("attachment is not clean")
+        if manifest.owner_did != owner_did or manifest.agent_did != agent_did:
+            raise AttachmentClaimError("attachment identity mismatch")
+        if manifest.session_key != session_key:
+            raise AttachmentClaimError("attachment session mismatch")
+        subject = parse_classification(clearance or self._clearance.name, strict=False)
+        resource = parse_classification(manifest.classification, strict=True)
+        if not dominates(subject, resource):
+            raise AttachmentClaimError("attachment classification denied")
+        path = (self._workspace / manifest.workspace_ref).resolve()
+        if self._workspace.resolve() not in path.parents or not path.is_file():
+            raise AttachmentClaimError("attachment reference escaped workspace")
+        emit_event(
+            "attachment.claimed",
+            attachment_id,
+            "allow",
+            actor_did=owner_did,
+            extra={"agent_did": agent_did, "session_key": session_key},
+        )
+        return StoredMedia(
+            path=path,
+            ref=manifest.workspace_ref,
+            declared_name=manifest.declared_name,
+            kind=manifest.kind,
+            mime=manifest.detected_mime,
+            size_bytes=manifest.size_bytes,
+        )
+
+    def _manifest_path(self, attachment_id: str) -> Path:
+        if not re.fullmatch(r"att_[0-9a-f]{32}", attachment_id):
+            raise AttachmentClaimError("invalid attachment ID")
+        return self._attachments / "manifests" / f"{attachment_id}.json"
+
+    def _write_manifest(self, manifest: AttachmentManifest) -> None:
+        directory = self._attachments / "manifests"
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        path = self._manifest_path(manifest.attachment_id)
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(manifest.model_dump_json(), encoding="utf-8")
+        temporary.chmod(0o600)
+        temporary.replace(path)
+
+    def _read_manifest(self, attachment_id: str) -> AttachmentManifest | None:
+        path = self._manifest_path(attachment_id)
+        if not path.is_file():
+            return None
+        return AttachmentManifest.model_validate_json(path.read_text(encoding="utf-8"))
+
+    def _count_manifests(self) -> int:
+        directory = self._attachments / "manifests"
+        return len(list(directory.glob("att_*.json"))) if directory.exists() else 0
+
+    def _stored_total_bytes(self) -> int:
+        if not self._objects.exists():
+            return 0
+        return sum(path.stat().st_size for path in self._objects.rglob("*") if path.is_file())
 
     def store(
         self,
@@ -312,3 +589,46 @@ def _compose_name(*, clock: str, sender: str, stem: str, ext: str, ordinal: int)
     prefix = f"{clock}-{sender}-"
     budget = _NAME_MAX - len(prefix) - len(tag) - len(suffix)
     return f"{prefix}{stem[:budget]}{tag}{suffix}"
+
+
+_MAGIC_MIMES: tuple[tuple[bytes, str], ...] = (
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
+    (b"%PDF-", "application/pdf"),
+    (b"RIFF", "audio/wav"),
+    (b"ID3", "audio/mpeg"),
+)
+
+
+def _detect_mime(path: Path) -> str:
+    """Detect the small allowlisted set without invoking a document parser."""
+    with path.open("rb") as handle:
+        prefix = handle.read(16)
+    for magic, mime in _MAGIC_MIMES:
+        if prefix.startswith(magic):
+            return mime
+    return "application/octet-stream"
+
+
+def _mime_matches(declared: str | None, detected: str) -> bool:
+    """Allow omitted declarations, but reject a supplied spoofed declaration."""
+    return (
+        declared is None
+        or declared == detected
+        or (declared == "image/jpg" and detected == "image/jpeg")
+    )
+
+
+__all__ = [
+    "AttachmentByteStream",
+    "AttachmentClaimError",
+    "AttachmentError",
+    "AttachmentManifest",
+    "AttachmentQuotaError",
+    "AttachmentValidationError",
+    "MediaStore",
+    "MediaTooLargeError",
+    "StoredMedia",
+]

@@ -18,13 +18,25 @@ registered separately and not exported here yet.
 
 from arcgateway.delivery import DeliveryTarget
 from arcgateway.executor import AsyncioExecutor, Delta, Executor, InboundEvent
-from arcgateway.media_store import MediaStore, MediaTooLargeError, StoredMedia
+from arcgateway.media_store import (
+    AttachmentClaimError,
+    AttachmentManifest,
+    AttachmentQuotaError,
+    AttachmentValidationError,
+    MediaStore,
+    MediaTooLargeError,
+    StoredMedia,
+)
 from arcgateway.parts import MediaPart, Part, TextPart, flatten_text
 from arcgateway.runner import GatewayRunner
 from arcgateway.session import SessionRouter, build_session_key
 
 __all__ = [
     "AsyncioExecutor",
+    "AttachmentClaimError",
+    "AttachmentManifest",
+    "AttachmentQuotaError",
+    "AttachmentValidationError",
     "DeliveryTarget",
     "Delta",
     "Executor",
