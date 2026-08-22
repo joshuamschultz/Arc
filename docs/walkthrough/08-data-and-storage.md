@@ -13,7 +13,7 @@ that must hold up as legal/compliance evidence — "who did what, signed and
 chained so nobody can quietly edit history" — goes into a **WORM audit
 chain** owned by `arctrust`. Anything that is routine telemetry — token
 counts, run timing, tool calls — goes into an always-on **spool** file that
-gets mirrored into a queryable **SQLite database** for the dashboard.
+gets ingested into the PostgreSQL operational store for the dashboard.
 Anything the agent needs to remember about the world — people, facts,
 procedures — goes into **markdown files plus a small SQLite index** owned by
 `arcmemory`. Every one of these is a plain file on disk under `~/.arc` (or
@@ -34,14 +34,9 @@ the same path.
  `arcagent.toml` / `gateway.toml` layer.
 - **`resolve_data_dir()`** (`packages/arcstore/src/arcstore/config.py:26`) —
  the arcstore *data* root: `${ARCSTORE_DATA_DIR:-<[arcstore].data_dir>:-~/.arc/store}`.
- Holds the spool, the WORM mirror source, and the SQLite mirrors. Its
- default literally lands one level inside `arc_home()`, at `~/.arc/state/store` —
- and the SQLite mirrors then nest one further `store/` segment inside that
- (`store_db_path()`, `packages/arcstore/src/arcstore/config.py:42`), so the
- fully-resolved default for a mirror DB is `~/.arc/state/store/store/arcui.db`.
- This is a real, verified path shape (three independent call sites agree:
- `arcstore/config.py`, `arcui/observe.py:158`, `arcagent/core/agent.py:203`),
- not a typo in this document.
+ Holds the spool and WORM source files. The PostgreSQL connection is configured
+ separately through `ARCSTORE_DATABASE_URL` or a vault-backed
+ `database_credential_ref`; local PostgreSQL and Supabase use the same backend.
 
 ```text
 ~/.arc/                                  # arc_home() — user-wide config root
@@ -63,9 +58,7 @@ the same path.
     ├── worm/
     │   ├── audit-chain-<agent>.jsonl    # per-agent WORM chain (WormSink, single-writer flock)
     │   └── audit-chain-<agent>.<seq>.jsonl  # rotated segments (100k records / 50MB)
-    └── store/
-        ├── arcui.db                     # arcui's own SQLite mirror (WAL)
-        └── arcstore.db                  # the agent process's own SQLite mirror (WAL)
+    └── (PostgreSQL operational store is external to this file tree)
 
 <agent-root>/                            # e.g. ~/arc/team/<agent>/ or <team-root>/<agent>/
 ├── arcagent.toml                        # per-agent config (merges over the shared layer)
@@ -117,13 +110,11 @@ flowchart LR
     AGENT -->|"spool.record()"| SPOOL
     MEM["arcmemory — capture/consolidate"] --> MDFILES[("memory/*.md + index.db")]
 
-    SPOOL -->|"StoreIngest tail"| MIRROR1[("store/arcstore.db")]
+    SPOOL -->|"StoreIngest backfill + tail"| MIRROR1[("PostgreSQL operational store")]
     WORM -->|"StoreIngest tail + verify_chain"| MIRROR1
-    SPOOL -->|"StoreIngest tail"| MIRROR2[("store/arcui.db")]
-    WORM -->|"StoreIngest tail + verify_chain"| MIRROR2
 
-    MIRROR2 -->|"read-only query"| UI["arcui dashboard"]
-    MIRROR1 -->|"read-only query"| CLI["arccli (arc store / arc task)"]
+    MIRROR1 -->|"query"| UI["arcui dashboard"]
+    MIRROR1 -->|"query + mutations"| CLI["arccli (arc store / arc task)"]
 
     class LLM,RUN llm
     class AGENT agent
@@ -221,7 +212,7 @@ earlier two-sink split — an unchained `JsonlSink` and an in-memory-only
 the current code: `arcui`'s own comments describe it only as historical
 context, and ADR-022 records the decision to delete it (see
 `.claude/architecture/decisions/ADR-022-storage-split-arctrust-worm-arcstore-operational.md`).
-The dashboard reads the durable SQLite mirror instead of receiving a push.
+The dashboard reads the PostgreSQL operational store instead of receiving a push.
 
 Each `write()` appends one JSON line:
 
@@ -287,23 +278,16 @@ flowchart TD
     class H1,H2,S1,S2,R1,R2,V found
 ```
 
-### The SQLite mirror — the queryable read plane
+### The PostgreSQL operational store — the queryable read plane
 
-`arcstore` mirrors both durable files into SQLite; it owns no live wire and
-is never itself an `emit()` sink (`ingest.py:1-13`). `SqliteBackend`
-(`packages/arcstore/src/arcstore/backends/sqlite.py`) opens WAL mode,
-`busy_timeout=5000`, and `journal_size_limit=64MB` per connection. Writes go
-through `INSERT OR IGNORE` keyed on the content-derived `record_id`, so
-at-least-once ingest (backfill from a persisted byte cursor, then tail) can
-never duplicate a row.
-
-**Each process instance owns its own DB file** (`sqlite.py:10-11` —
-`SQLITE_BUSY` storms above ~2-3 concurrent writers on one file): the agent's
-own `StoreIngest` writes `store/arcstore.db`
-(`packages/arccli/src/arccli/commands/agent/_store_lifecycle.py:93`); arcui
-runs a second, independent `StoreIngest` into its own `store/arcui.db`
-(`packages/arcui/src/arcui/observe.py:158-166`). Both tail the *same*
-spool + WORM files; neither reads the other's mirror.
+`arcstore` ingests both durable files into PostgreSQL; it owns no live wire and
+is never itself an `emit()` sink (`ingest.py:1-13`). `PostgresBackend`
+(`packages/arcstore/src/arcstore/backends/postgres.py`) uses a bounded async
+connection pool and idempotent, content-keyed upserts, so at-least-once ingest
+(backfill from a persisted cursor, then tail) cannot duplicate a row. The same
+shared operational store serves agents, arcui, and the CLI. Supabase direct
+connections use normal session pooling; its transaction pooler (port 6543)
+disables prepared-statement caching.
 
 ```mermaid
 erDiagram
@@ -418,7 +402,7 @@ sequenceDiagram
     participant LLM as arcllm call
     participant Spool as spool/operational-*.jsonl
     participant Ingest as StoreIngest (backfill + tail)
-    participant DB as store/arcstore.db (SQLite)
+    participant DB as PostgreSQL operational store
     participant UI as arcui dashboard
 
     LLM->>Spool: os.write() one JSONL line (fail-open)
@@ -561,7 +545,7 @@ spool/mirror — those stay append-only and unredacted.
 |---|---|---|
 | "This tool call happened, here's proof, don't argue with me later" | WORM (`arctrust.emit()`) | Signed, hash-chained, single system of record for compliance |
 | "This LLM call cost $X and took Yms" | Spool (`arcstore.spool.record()`) | Routine telemetry; always-on, no server dependency |
-| "Show me this in the dashboard, joined/filtered/sorted" | arcstore SQLite tables | Query surface over the two durable files, never a source of truth itself |
+| "Show me this in the dashboard, joined/filtered/sorted" | arcstore PostgreSQL tables | Query surface over the two durable files, never a source of truth itself |
 | "A task/approval/cancellation exists and its state changes" | `mutable_records` (Task/Approval/Cancel stores) | Overwritten-in-place directory state, not an append log |
 | "The agent should recall this fact/procedure/lesson later" | `arcmemory` (markdown + `index.db`) | Per-agent, shared-nothing, degrades gracefully without an embedder |
 | Anything else | **Never** a new parallel channel | Every producer routes through one of the above four; a fifth channel is exactly the bug ADR-022 closed |
@@ -571,11 +555,11 @@ spool/mirror — those stay append-only and unredacted.
 | Path | What lives there |
 |---|---|
 | `packages/arctrust/src/arctrust/paths.py` | `arc_home()` — the config-root resolver every package shares |
-| `packages/arcstore/src/arcstore/config.py` | `resolve_data_dir()`, `store_db_path()`, `ArcStoreConfig` |
+| `packages/arcstore/src/arcstore/config.py` | `resolve_data_dir()`, PostgreSQL URL/pool settings, `ArcStoreConfig` |
 | `packages/arcstore/src/arcstore/spool.py` | The always-on JSONL recorder, `request_context()` correlation |
 | `packages/arcstore/src/arcstore/records.py` | `SpoolRecord` — the five telemetry kinds, `record_id` derivation |
-| `packages/arcstore/src/arcstore/ingest.py` | `StoreIngest` — backfill + tail spool/WORM/skill-candidates into SQLite |
-| `packages/arcstore/src/arcstore/backends/sqlite.py` | `SqliteBackend` — WAL, idempotent upsert, mutable-plane primitives |
+| `packages/arcstore/src/arcstore/ingest.py` | `StoreIngest` — backfill + tail spool/WORM/skill-candidates into PostgreSQL |
+| `packages/arcstore/src/arcstore/backends/postgres.py` | `PostgresBackend` — pooled, idempotent upsert, mutable-plane primitives |
 | `packages/arcstore/src/arcstore/backends/base.py` | `StorageBackend` Protocol, table name constants |
 | `packages/arcstore/src/arcstore/query.py` | Read API arcui/arctui call — never a raw backend driver |
 | `packages/arcstore/src/arcstore/tasks.py` | `Task` model + `TaskStore` (Mission Control) |

@@ -379,9 +379,9 @@ classDiagram
         +get_cursor() str
         +set_cursor(pos) None
     }
-    class SqliteBackend { +start opens DB +stop closes +upsert writes +query reads }
+    class PostgresBackend { +start opens pool +stop closes +upsert writes +query reads }
     class FakeBackend { +in-memory for testing }
-    StorageBackend <|.. SqliteBackend
+    StorageBackend <|.. PostgresBackend
     StorageBackend <|.. FakeBackend
 ```
 

@@ -656,7 +656,10 @@ The fleet's placement is what makes "drop a fresh tree into `~/.arc`" — or
 memory, identity, tools, skills, or workspace is anywhere underneath it.
 
 `resolve_data_dir()` — `${ARCSTORE_DATA_DIR}` or `store_dir()` — is arcstore's
-data root (spool, WORM mirror, SQLite mirrors) and lives under `state/`.
+file root (spool and WORM source files) and lives under `state/`. The
+PostgreSQL operational store is configured separately through
+`ARCSTORE_DATABASE_URL` or a vault credential reference; Supabase is a
+supported PostgreSQL deployment.
 
 ```text
 ~/.arc/                                  # arc_home()
@@ -691,9 +694,7 @@ data root (spool, WORM mirror, SQLite mirrors) and lives under `state/`.
 │       ├── worm/
 │       │   ├── audit-chain-<agent>.jsonl    # per-agent WORM chain (single-writer flock)
 │       │   └── audit-chain-<agent>.<seq>.jsonl  # rotated segments (100k records / 50MB)
-│       └── store/
-│           ├── arcui.db                 # arcui's SQLite mirror (WAL)
-│           └── arcstore.db              # agent process's SQLite mirror (WAL)
+│       └── (PostgreSQL operational store is external to this file tree)
 └── team/                                # arc_team() — NEVER touched by an update
     └── <agent>/                         # one dir per agent — see agent-root tree below
 
@@ -744,12 +745,11 @@ this layout once, by moving rather than copying, and rolls back on failure.
 - Rotation: at 100,000 records or 50MB
 - Signature: Ed25519 (personal/enterprise) or ECDSA-P256 (FIPS/federal), by operator key
 
-### The SQLite Mirror — Queryable Read Plane
+### The PostgreSQL Operational Store — Queryable Read Plane
 
-- WAL mode, `busy_timeout=5000`, `journal_size_limit=64MB`
-- `INSERT OR IGNORE` keyed on content-derived `record_id` (idempotent ingest)
-- Each process owns its own DB file (`arcstore.db` vs `arcui.db`)
-- Mirrors both spool and WORM files
+- Bounded async connection pool with idempotent, content-keyed upserts
+- Shared by agents, arcui, and the CLI; local PostgreSQL and Supabase are supported
+- Mirrors both spool and WORM files, while those append-only files remain durable sources
 
 **Mutable Records:** Tasks, Approvals, Cancellations — overwritten in place, not append logs
 

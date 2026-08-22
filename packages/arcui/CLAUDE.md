@@ -4,7 +4,7 @@
 
 ## Goal
 
-Multi-agent dashboard that **observes and operates** the fleet: a Starlette server reading the shared `arcstore` Observe plane (read-on-demand REST) plus operator-gated mutations, served with a React 19 SPA (2027 control-plane design language — graphite + emerald). Two-token auth (viewer / operator). Backs `arc ui start`, which also embeds a gateway (web chat + optional Slack/Telegram) and the workflow runner. `arcagent` must run headless without it.
+Multi-agent dashboard that **observes and operates** the fleet: a Starlette server reading the shared PostgreSQL-backed `arcstore` Observe plane (read-on-demand REST) plus operator-gated mutations, served with a React 19 SPA (2027 control-plane design language — graphite + emerald). Two-token auth (viewer / operator). Backs `arc ui start`, which also embeds a gateway (web chat + optional Slack/Telegram) and the workflow runner. `arcagent` must run headless without it.
 
 ## Layer
 
@@ -42,6 +42,7 @@ web/                       # React 19 + Vite + shadcn/Tailwind v4
 ## Package rules
 
 - SPEC-026: **read-on-demand** from arcstore — do not reintroduce agent live-push `/ws` telemetry.
+- ArcStore is PostgreSQL in production (including Supabase); the append-only spool and arctrust WORM files remain the durable write-ahead sources that the Observe plane queries through ArcStore.
 - Use `import arcagent` and its public facade; never make ArcAgent depend on this dashboard.
 - Two tokens only (viewer / operator); process-memory — no on-disk token file.
 - SPEC-022: **zero** direct `team/` filesystem / `watchfiles` in arcui — only via `arcgateway.fs_reader` (`tests/test_arcui_no_team_imports.py`).

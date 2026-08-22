@@ -32,7 +32,7 @@ placeholders — flagged below, not glossed over.
 | **arcllm** | `packages/arcllm/src/arcllm/` | Provider-agnostic LLM calls (16 providers), telemetry, budgets, circuit breakers | `arcstore` (spool) | Be called by anything except `arcrun` — the sole sanctioned exception is the deliberate out-of-agent `arc llm` CLI caller |
 | **arcrun** | `packages/arcrun/src/arcrun/` | The execution loop — the *only* runtime path to `arcllm` | `arcllm`, `arctrust`, `arcstore` | Import `arcagent`; couple to ArcLLM's internal module layout; own tool/skill/memory logic; hold per-agent state in a module-level global |
 | **arcagent** | `packages/arcagent/src/arcagent/` | The headless agent: identity + tools + skills + memory-as-tools + extensions. Uses `arcrun` to execute | `arcrun`, `arctrust`, `arcprompt`, `mcp` | Import `arcllm`, `arcgateway`, or `arcui`; make LLM calls or run a loop itself |
-| **arcstore** | `packages/arcstore/src/arcstore/` | Operational/observability storage: always-on append-only spool + `StorageBackend` query layer (SQLite) | `arctrust` | Import `arcagent`, `arcui`, `arccli`, `arcrun`, or `arcgateway` |
+| **arcstore** | `packages/arcstore/src/arcstore/` | Operational/observability storage: always-on append-only spool + PostgreSQL `StorageBackend` query/mutation layer (local PostgreSQL or Supabase) | `arctrust` | Import `arcagent`, `arcui`, `arccli`, `arcrun`, or `arcgateway` |
 | **arcgateway** | `packages/arcgateway/src/arcgateway/` | How you reach an agent from outside: channel sessions, the executor, the `web` adapter; owns the agent data-plane reads (`fs_reader`, `fs_watcher`) | `arcagent` (as `arc-agent`), transitively `arctrust` | Import `arcui`; import a platform extension package directly; ship a platform adapter module (`telegram.py`, `slack.py`, …) in its own core |
 | **arcgateway-mattermost** | `packages/arcgateway-mattermost/src/arcgateway_mattermost/` | Mattermost platform adapter plugin (air-gapped DOE/lab chat surface) | `arcgateway` | Be imported by `arcgateway` core |
 | **arcgateway-slack** | `packages/arcgateway-slack/src/arcgateway_slack/` | Slack (Socket Mode) platform adapter plugin | `arcgateway` | Be imported by `arcgateway` core |
@@ -79,7 +79,7 @@ flowchart TB
     SKILL["arcskill — signed skill hub"]
     MEMORY["arcmemory — analogical memory"]
     TEAM["arcteam — multi-agent bus"]
-    STORE["arcstore — spool plus SQLite mirror"]
+    STORE["arcstore — spool plus PostgreSQL operational store"]
     TRUST["arctrust — identity, sign, policy, WORM"]
 
     CLI --> AGENT
@@ -280,7 +280,7 @@ flowchart TB
     SPOOL["spool/ operational-YYYY-MM-DD.jsonl<br/>append-only · 0600 · fail-open"]:::record
     WORM["worm/ signed audit chain"]:::record
     INGEST["arcstore StoreIngest<br/>backfill from offset, then tail"]:::record
-    DB["SqliteBackend — per-instance mirror (WAL)"]:::record
+    DB["PostgresBackend — shared operational store"]:::record
     OBS["arcui.Observe → REST /api/traces …"]:::surface
     WEB["arcui web — the dashboard"]:::surface
 
@@ -327,7 +327,7 @@ sequenceDiagram
     participant L as arcllm
     participant S as spool file
     participant I as arcstore StoreIngest
-    participant DB as SQLite mirror
+    participant DB as PostgreSQL operational store
     participant UI as arcui
 
     U->>L: t0 — arc llm "…"
@@ -382,7 +382,7 @@ flowchart LR
     subgraph OBSERVE["Observe — read path, no push"]
         direction TB
         W["arcrun / arctrust write durable files"] --> ING["arcstore StoreIngest — backfill plus tail"]
-        ING --> SQL["SqliteBackend mirror"]
+        ING --> SQL["PostgresBackend operational store"]
         SQL --> REST["arcui REST — reads on demand"]
     end
 
@@ -401,8 +401,8 @@ flowchart LR
 `arcllm.record()` and `arcrun` run-events go to the append-only spool
 (`<data_dir>/spool/`, `0600`, single `os.write`, fail-open); `arctrust.emit()`
 goes to the signed WORM chain (`<data_dir>/worm/`). `arcstore`'s
-`StoreIngest` backfills those files into a SQLite mirror on startup, then
-tails for new appends. `arcui` reads that mirror through REST endpoints —
+`StoreIngest` backfills those files into the PostgreSQL operational store on
+startup, then tails for new appends. `arcui` reads that store through REST endpoints —
 `/api/traces`, `/api/stats`, `/api/cost-efficiency`, … — on demand, no
 polling, no subscription. Killing and restarting `arcui` loses no history: it
 just re-reads the durable files. There is no `EventBuffer`, no broadcaster, no
@@ -547,7 +547,7 @@ flowchart TD
 | `packages/arcagent/src/arcagent/core/` | `agent.py` (orchestrator), `tool_registry.py`, `module_bus.py`, `session_internal/` | The agent nucleus — budget-tracked, keep it lean |
 | `packages/arcagent/src/arcagent/capabilities/` | `capability_loader.py`, `capability_registry.py`, `inventory.py` (the one seam `arcui` may import) | How tools/skills/memory get discovered and trusted |
 | `packages/arcagent/src/arcagent/modules/` | `tasks/`, `runcontrol/`, `session/`, `browser/`, … | A new opt-in agent module |
-| `packages/arcstore/src/arcstore/` | Spool writer, `StoreIngest`, `SqliteBackend` | Durable-record format, ingest, the mirror schema |
+| `packages/arcstore/src/arcstore/` | Spool writer, `StoreIngest`, `PostgresBackend` | Durable-record format, ingest, the operational-store schema |
 | `packages/arcgateway/src/arcgateway/` | `runner.py`, `session.py`, `executor.py`, `fs_reader.py`, `adapters/base.py`, `adapters/web.py` | Session handling, the data-plane read API, the built-in web adapter |
 | `packages/arcgateway-{telegram,slack,mattermost}/` | One platform adapter each | A new remote chat surface — copy one of these, don't touch `arcgateway/adapters/` |
 | `packages/arcui/src/arcui/routes/` | REST endpoints, `chat_ws.py`, `team_ws.py` | Dashboard API surface, either live socket |

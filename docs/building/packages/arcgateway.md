@@ -50,7 +50,7 @@ flowchart LR
     subgraph OBSERVE["Observe — read path, no push"]
         direction TB
         W["arcrun / arctrust write durable files"] --> ING["arcstore StoreIngest — backfill plus tail"]
-        ING --> SQL["SqliteBackend mirror"]
+        ING --> SQL["PostgresBackend operational store"]
         SQL --> REST["arcui REST — reads on demand"]
     end
 
@@ -531,4 +531,3 @@ def verify_mattermost(post: dict, signing_secret: str) -> bool: ...
 | Function | Signature |
 |---|---|
 | `build_session_key` | `(agent_did: 'str', user_did: 'str', *, generation: 'int' = 0) -> 'str'` |
-

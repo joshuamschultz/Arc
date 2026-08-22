@@ -8,17 +8,19 @@
 
 ## Overview
 
-`arcstore` provides unified storage interfaces for all Arc data:
-- **Sessions** - Conversation transcripts with JSONL format
-- **Memory** - Episodic, entity, and daily storage
-- **Tasks** - Durable task coordination state
-- **Audit** - Security event logs
+`arcstore` provides the operational data plane for Arc:
+- **Spool** - Always-on append-only JSONL telemetry, written fail-open
+- **WORM projection** - Signed audit-chain records owned by `arctrust`
+- **PostgreSQL store** - Shared query and mutable-record plane for tasks, runs, approvals, and cancellations
+
+Local PostgreSQL and Supabase use the same `PostgresBackend`; configure the
+connection with `ARCSTORE_DATABASE_URL` or a vault-backed credential reference.
 
 Storage is designed for:
-- **Durability** - Atomic writes, never partial state
-- **Replayability** - Session transcripts can be replayed
-- **Audit trail** - Every change is traceable
-- **Multi-process** - Safe concurrent access
+- **Durability** - The spool and WORM files remain write-ahead sources
+- **Replayability** - `StoreIngest` backfills and tails those files
+- **Audit trail** - WORM signatures and hashes remain authoritative
+- **Multi-process** - PostgreSQL pooling and transactions coordinate readers and writers
 
 ```mermaid
 flowchart TB
@@ -454,4 +456,3 @@ class Task(TypedDict):
 | `resolve_data_dir` | `(configured: 'str \| Path \| None' = None) -> 'Path'` |
 | `spool_path` | `(*, data_dir: 'Path \| None' = None) -> 'Path'` |
 | `store_db_path` | `(data_dir: 'str \| Path \| None' = None) -> 'Path'` |
-

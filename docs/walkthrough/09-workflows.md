@@ -536,9 +536,9 @@ Full detail on how skills are loaded and structured:
 
 **Trigger:** none — arcui's own `StoreIngest` is always tailing, whether or
 not arcui was running when the record was written. **Actors:** `StoreIngest`
-(`arcstore`), arcui's SQLite mirror, the React dashboard over REST.
-**Durable artifacts:** an arcui-owned SQLite database (``: shared-nothing
-from every writer). **Failure/retry:** a torn tail (a record still being
+(`arcstore`), the shared PostgreSQL operational store, the React dashboard
+over REST. **Durable artifacts:** append-only spool and signed WORM files,
+plus their PostgreSQL projection. **Failure/retry:** a torn tail (a record still being
 written) is left unconsumed and picked up on the next tail cycle.
 
 Every layer that does anything durable — `arcllm` on every model call,
@@ -549,15 +549,15 @@ log, synchronously, in-process, with **no dependency on arcui or any server
 being up**. This is what makes the UC-1 guarantee true: run
 `arc llm "..."` from a cold shell with nothing else running, and the call is
 still fully durable — arcui, started later, backfills and tails those files
-into its own mirror and the call becomes visible in the dashboard exactly as
+into the PostgreSQL operational store and the call becomes visible in the dashboard exactly as
 if arcui had been running the whole time.
 
 `StoreIngest` (`packages/arcstore/src/arcstore/ingest.py:51`) is a pure file
 tailer: `backfill()` does one full pass over the spool, WORM chains, and
 skill-candidate directories on startup, then `start()` hands off to a
 managed `_tail_loop` background task that continues reading from each
-file's last offset. arcui runs its own `StoreIngest` instance
-(`packages/arcui/src/arcui/observe.py:1`) into its own SQLite file — arcui
+file's last offset. arcui uses the shared `StoreIngest` instance
+(`packages/arcui/src/arcui/observe.py:1`) and PostgreSQL operational store — arcui
 never receives a live push from any writer; it is a pure reader of the
 durable record (that teardown tore out every prior push wire except
 `/ws/chat`, which carries a live turn's tokens, not history). The REST layer
@@ -579,7 +579,7 @@ flowchart LR
 
     W1["arcllm / arcrun / arcagent\nwrite synchronously"] --> S["Spool (JSONL) + WORM chain"]
     S --> I["StoreIngest\nbackfill + tail"]
-    I --> DB["arcui SQLite mirror"]
+    I --> DB["PostgreSQL operational store"]
     DB --> R["arcui REST\n(computed on read)"]
     R --> UI["React dashboard"]
 
@@ -629,6 +629,6 @@ Full detail on every durable format: [`docs/08-data-and-storage.md`](08-data-and
 | Team messaging | `arc team register`; `messaging_send` tool | `[modules.messaging].enabled`, `[team].root` | NATS JetStream streams (or in-memory bus) |
 | Operator approval | a blocked trifecta call; `arc approve <id>` or the arcui Approvals panel | `[tools.human_gate]` | arcstore `approvals` collection |
 | Skill improvement | automatic (turn-outcome hooks) | `[modules.skills].adapter = "arcskill"` | `<skill>/candidates/`, `evals/`, Pareto manifest |
-| Observe / read path | `arc ui start` (always tailing) | none — always-on | arcui's own SQLite mirror |
+| Observe / read path | `arc ui start` (always tailing) | none — always-on | shared PostgreSQL operational store |
 
 Full config precedence and every key above: [`docs/12-configuration.md`](12-configuration.md).

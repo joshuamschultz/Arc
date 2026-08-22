@@ -61,7 +61,7 @@ flowchart TB
     SKILL["arcskill\nsigned skills"]
     MEMORY["arcmemory\nanalogical memory"]
     TEAM["arcteam\nmulti-agent bus"]
-    STORE["arcstore\nspool + SQLite mirror"]
+    STORE["arcstore\nspool + PostgreSQL operational store"]
     TRUST["arctrust\nidentity, sign, policy, audit"]
     BUNDLE["arcbundle\nsigned module bundles"]
 
@@ -128,7 +128,7 @@ flowchart LR
     subgraph OBSERVE["Observe — read path, no push"]
         direction TB
         W["arcrun / arctrust\nwrite durable files"] --> ING["arcstore StoreIngest\nbackfill + tail"]
-        ING --> SQL["SqliteBackend mirror"]
+        ING --> SQL["PostgresBackend query store"]
         SQL --> REST["arcui REST\nreads on demand"]
     end
 
@@ -143,7 +143,7 @@ flowchart LR
     class REST,CHAT,TEAMWS surface
 ```
 
-**Observe:** Every write lands in durable files instantly. `arcstore`'s `StoreIngest` backfills into SQLite on startup, then tails for new appends. `arcui` reads on demand via REST — no polling, no subscription.
+**Observe:** Every write lands in the append-only spool or signed WORM files instantly. `arcstore`'s `StoreIngest` backfills and tails those files into PostgreSQL; `arcui` reads the operational store on demand via REST — no polling, no subscription. A local PostgreSQL instance and Supabase are equivalent deployment choices.
 
 **Interact:** Two bidirectional WebSockets:
 - `/ws/chat/{agent_id}` — turn stream, handled by `arcgateway`'s `WebPlatformAdapter`
@@ -339,7 +339,7 @@ Unified storage interface for sessions, memory, tasks, and audit logs.
 | `TaskStore` | Task storage |
 | `AuditStore` | Audit log storage |
 | `StorageBackend` | Protocol for storage engines |
-| `SqliteBackend` | SQLite implementation |
+| `PostgresBackend` | PostgreSQL implementation (local PostgreSQL or Supabase) |
 
 #### Storage Layout
 
@@ -766,7 +766,7 @@ pytest tests/architecture/ packages/*/tests/architecture/
 | `packages/arcagent/src/arcagent/core/` | Agent nucleus (budget-tracked) |
 | `packages/arcagent/src/arcagent/capabilities/` | Capability discovery and trust |
 | `packages/arcagent/src/arcagent/modules/` | Opt-in agent modules |
-| `packages/arcstore/src/arcstore/` | Spool, ingest, SQLite mirror |
+| `packages/arcstore/src/arcstore/` | Spool, ingest, PostgreSQL operational store |
 | `packages/arcgateway/src/arcgateway/` | Sessions, data-plane reads, web adapter |
 | `packages/arcui/src/arcui/` | Dashboard API, live sockets |
 | `packages/arccli/src/arccli/commands/` | CLI command registry |

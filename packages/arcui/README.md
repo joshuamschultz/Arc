@@ -18,10 +18,10 @@
 
 `arcui` is the dashboard. Run it once. Point it at your team directory. Watch your fleet work — and steer it.
 
-It's a Starlette server, backed by `arcstore`'s durable spool + WORM record (the **Observe
-plane**), that renders a UI for LLM calls, tool invocations, costs, runs, tasks, and audit
+It's a Starlette server, backed by `arcstore`'s PostgreSQL operational store plus its durable
+spool + WORM record (the **Observe plane**), that renders a UI for LLM calls, tool invocations, costs, runs, tasks, and audit
 events read back on demand — agents don't need an opt-in reporter module to show up. It both
-**observes** (read-on-demand REST from the arcstore mirror) and **operates** (operator-gated
+**observes** (read-on-demand REST from the PostgreSQL-backed arcstore operational store) and **operates** (operator-gated
 mutations: edit config, tasks, channels, files, prompts; approve gated calls; chat with a
 running agent). It backs `arc ui start`, which also embeds a gateway (web-chat WS + optional
 Slack/Telegram) and the workflow runner.
@@ -29,7 +29,7 @@ Slack/Telegram) and the workflow runner.
 `arcagent` runs fully headless **without** `arcui` — the dashboard is optional; nothing imports
 it to show up.
 
-> 📡 **Reads on demand from the shared arcstore record. Only `/ws/chat` and `/ws/team` are live sockets. Two-token auth (viewer/operator).**
+> 📡 **Reads on demand from the shared PostgreSQL-backed arcstore record. Only `/ws/chat` and `/ws/team` are live sockets. Two-token auth (viewer/operator).**
 
 ---
 
@@ -75,7 +75,7 @@ flowchart TB
     classDef other fill:#E9EAEB,stroke:#7F7F7F,color:#0B1220
 
     arcagent[arcagent]:::agent -->|writes| arcstore[arcstore<br/>durable spool + WORM]:::found
-    arcstore -.->|Observe plane, read on demand| arcui
+    arcstore -.->|PostgreSQL Observe plane, read on demand| arcui
     arcllm[arcllm<br/>JSONLTraceStore]:::llm -->|attach_llm| arcui
     arcgateway[arcgateway<br/>fs / roster data plane]:::surface -->|in-process read| arcui
     arcui[arcui<br/>Starlette · WebSocket · UI]:::surface --> Browser[🖥 Browser]:::other
@@ -83,7 +83,7 @@ flowchart TB
 ```
 
 Depends on `arcllm` (for `JSONLTraceStore`), `arcgateway` (the read-only fs / roster data
-plane), and `arcstore` (the Observe-plane mirror it reads from). Nothing needs to import
+plane), and `arcstore` (the PostgreSQL Observe-plane store it reads from). Nothing needs to import
 `arcui` to show up in it — `arcagent` writes through `arcstore` like everything else; `arccli`
 depends on `arcui` only for the `arc ui` commands.
 
@@ -167,7 +167,7 @@ arc ui start \
 
 > ⚠️ `arc ui tail` requires `--viewer-token` explicitly.
 
-Agents don't push events into the dashboard over a token-authenticated channel at all (SPEC-026 FR-5): `arcui` is a pure **reader** of the durable record. It runs its own `StoreIngest` over the shared `arcstore` spool + WORM files (everything `arcllm`/`arcrun`/`arcagent` already wrote, whether or not `arcui` was running) into its own SQLite mirror, then serves read-on-demand REST from that mirror. There is no live push wire, so there's nothing for a compromised or crashed agent to leave dangling.
+Agents don't push events into the dashboard over a token-authenticated channel at all (SPEC-026 FR-5): `arcui` is a pure **reader** of the durable record. It runs `StoreIngest` over the shared `arcstore` spool + WORM files (everything `arcllm`/`arcrun`/`arcagent` already wrote, whether or not `arcui` was running) into the shared PostgreSQL operational store, then serves read-on-demand REST from that store. There is no live push wire, so there's nothing for a compromised or crashed agent to leave dangling.
 
 ---
 
@@ -218,7 +218,7 @@ from arcui import (
 
 There is no live push wire from the agent process (SPEC-026 FR-5 tore it out — see
 **Two-Token Auth** above). `arcui` runs its own `StoreIngest` over the shared `arcstore`
-spool + WORM files and serves everything read-on-demand from its own SQLite mirror, so any
+spool + WORM files and serves everything read-on-demand from the shared PostgreSQL operational store, so any
 agent that already wrote to the shared store shows up whether or not `arcui` was running when
 it did. `arc ui start --team-root <dir>` just points `arcui` at the right `arcstore` data
 dir / team directory to read from — nothing is registered or authenticated from the agent
@@ -266,7 +266,7 @@ The dashboard is a React single-page app with path-based routing. Bookmark a rou
 
 There is **no** `/ws` event-push / `subscribe:agent` feed — SPEC-026 FR-5 removed the live push
 pipeline (EventBuffer, SubscriptionManager, the per-agent `file_change` bridge), and the REST
-views read the `arcstore` mirror on demand instead. Two WebSockets remain:
+views read the PostgreSQL-backed `arcstore` operational store on demand instead. Two WebSockets remain:
 
 | Socket | Direction | Purpose |
 |--------|-----------|---------|
@@ -309,7 +309,7 @@ Both tokens are generated fresh in the running process on every `arc ui start` (
 
 ### Warm Start Is Automatic
 
-There's no explicit "replay" flag: `arcui` runs its own `StoreIngest` over the shared `arcstore` spool + WORM files into its own SQLite mirror on every read, so a freshly-started dashboard already has the full durable history — including everything written while `arcui` wasn't running — without any live agents needing to backfill state.
+There's no explicit "replay" flag: `arcui` uses `StoreIngest` over the shared `arcstore` spool + WORM files and PostgreSQL operational store on every read, so a freshly-started dashboard already has the full durable history — including everything written while `arcui` wasn't running — without any live agents needing to backfill state.
 
 ---
 

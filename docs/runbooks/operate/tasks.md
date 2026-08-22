@@ -276,7 +276,7 @@ Loaded from `[modules.tasks.config]`. All fields have safe defaults; `extra="for
 | `routing` | `true` | Auto-route ownerless tasks to the least-loaded, capability-matched agent. No-op without a live registry |
 | `notify` | `true` | Operator alerts on done/needs-review/fail/dead-letter/stuck, and assignee notify on assign/route |
 | `nats_url` | `""` | JetStream url for the shared arcteam registry + messenger. Empty = no live registry (`@handle` resolution + notify degrade with a clear error) |
-| `data_dir` | `""` | Forwarded to `arcstore.config.resolve_data_dir`; empty defers to env > default so the module and arcui agree on the SQLite file |
+| `data_dir` | `""` | Forwarded to `arcstore.config.resolve_data_dir`; empty defers to env > default for the shared spool/WORM file root; the operational store uses PostgreSQL |
 
 ---
 

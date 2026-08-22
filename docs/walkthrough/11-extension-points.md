@@ -327,20 +327,16 @@ implementation.
 
 `packages/arcstore/src/arcstore/backends/base.py` defines `StorageBackend` —
 async `start`/`stop`/`upsert`/`upsert_many`/`query`/`get_cursor`/`set_cursor`
-(`base.py:56-104`). `SqliteBackend` is the shipped default; `FakeBackend` is
-an in-memory conformance double proving no SQLite type leaks through the
-Protocol. `packages/arcstore/src/arcstore/backends/__init__.py:29-43`'s
-`open_backend(name, path)` factory is how callers select a backend *by
-name*; `postgres`/`cloud` are declared but raise `NotImplementedError` —
-deferred behind the Protocol rather than silently falling back to SQLite.
+(`base.py:56-104`). `PostgresBackend` is the shipped production backend;
+`FakeBackend` is an in-memory conformance double. The backend factory resolves
+the PostgreSQL DSN from `ARCSTORE_DATABASE_URL` or a vault credential
+reference. Local PostgreSQL and Supabase are supported; there is no SQLite
+production fallback.
 
 `arcui`'s Observe read path goes through this factory
-(`packages/arcui/src/arcui/observe.py:21,158`) rather than importing
-`SqliteBackend` directly — "swap storage is a config change." One honest
-exception: the newer Task/Approval write path in
-`packages/arcui/src/arcui/server.py:23,180` imports `SqliteBackend`
-concretely, because `TaskStore`/`ApprovalStore` need mutable-record methods
-that are not (yet) on the shared read-only `StorageBackend` Protocol.
+(`packages/arcui/src/arcui/observe.py`) and uses the same PostgreSQL
+operational store for reads and mutable task/approval records. The append-only
+spool and signed WORM files remain the durable write-ahead sources.
 
 ### 11.11 Audit sinks
 

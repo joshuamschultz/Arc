@@ -49,7 +49,7 @@ Owned by the arcagent `tasks` module. `[modules.tasks] enabled = true` loads the
 | `routing` | `true` | Auto-route ownerless tasks to the least-loaded, capability-matched agent. No-op without a live registry |
 | `notify` | `true` | Operator alerts on done/needs-review/fail/dead-letter/stuck; assignee notify on assign/route |
 | `nats_url` | `""` | JetStream url for the shared arcteam registry + messenger (`@handle` resolve + notify). Empty = no live registry |
-| `data_dir` | `""` | Forwarded to `resolve_data_dir()`; empty defers to env > default so agent + arcui share the SQLite file |
+| `data_dir` | `""` | Root for the append-only spool and WORM source files; empty defers to `resolve_data_dir()` |
 
 See `docs/tasks-module.md` for the lifecycle and reliability engine.
 
@@ -156,4 +156,3 @@ scheduler reloads the schedule store each tick, so an edit takes effect on the n
 restart. The dashboard renders each schedule **human-readable** rather than as a raw cron string —
 e.g. `40 10 * * *` → "Daily at 10:40", intervals → "Every N minutes/hours", `once` → "Once,
 &lt;datetime&gt;" — and titles a schedule by the first line of its prompt, never the `sched_…` id.
-
