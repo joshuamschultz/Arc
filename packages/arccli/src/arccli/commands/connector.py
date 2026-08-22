@@ -156,7 +156,8 @@ def _grant(args: argparse.Namespace) -> None:
         mutation = asyncio.run(connections.grant_and_reconcile(args.instance, agents))
     except arcagent.ExtensionError as exc:
         _fail(exc.message)
-    _out(f"'{args.instance}' is now granted to: {', '.join(mutation.connection.agents) or '(nobody)'}")
+    granted = ", ".join(mutation.connection.agents) or "(nobody)"
+    _out(f"'{args.instance}' is now granted to: {granted}")
     _print_activations(mutation.activations)
 
 
@@ -167,7 +168,8 @@ def _revoke(args: argparse.Namespace) -> None:
         mutation = asyncio.run(connections.revoke_and_reconcile(args.instance, _agents(args)))
     except arcagent.ExtensionError as exc:
         _fail(exc.message)
-    _out(f"'{args.instance}' is now granted to: {', '.join(mutation.connection.agents) or '(nobody)'}")
+    granted = ", ".join(mutation.connection.agents) or "(nobody)"
+    _out(f"'{args.instance}' is now granted to: {granted}")
     _print_activations(mutation.activations)
 
 

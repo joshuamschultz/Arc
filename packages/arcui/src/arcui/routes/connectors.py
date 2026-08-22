@@ -50,8 +50,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from arcui.audit import emit_mutation_audit, operator_audit_sink
-from arcui.routes.agent_detail._common import _agent_did
-from arcui.routes.agent_detail._common import _agent_root
+from arcui.routes.agent_detail._common import _agent_did, _agent_root
 from arcui.routes.agent_detail.config_files import (
     BodyTooLargeError,
     _error,
@@ -156,7 +155,9 @@ def _connector_control(request: Request) -> arcagent.ConnectorControl:
     return injected if injected is not None else _InProcessConnectorControl(request)
 
 
-def _activation_payload(results: Sequence[arcagent.ConnectorReconcileResult]) -> list[dict[str, Any]]:
+def _activation_payload(
+    results: Sequence[arcagent.ConnectorReconcileResult],
+) -> list[dict[str, Any]]:
     """Safe, operator-facing activation truth; tools/coordinates only."""
     return [
         {
@@ -613,7 +614,9 @@ async def _change_grant(request: Request, *, granting: bool) -> JSONResponse:
         outcome="applied",
         detail=",".join(agents),
     )
-    body = _row(instance, mutation.connection, _labels(_connections(request))).model_dump(mode="json")
+    body = _row(instance, mutation.connection, _labels(_connections(request))).model_dump(
+        mode="json"
+    )
     body["activations"] = _activation_payload(mutation.activations)
     return JSONResponse(body)
 

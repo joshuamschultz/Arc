@@ -1082,9 +1082,7 @@ class Connections:
             self._record(sink, "connector.revoke", instance, agents)
         return remaining
 
-    async def grant_and_reconcile(
-        self, instance: str, agents: Sequence[str]
-    ) -> ConnectorMutation:
+    async def grant_and_reconcile(self, instance: str, agents: Sequence[str]) -> ConnectorMutation:
         """Persist a grant then refresh each affected in-process agent."""
         connection = self.grant(instance, agents)
         return ConnectorMutation(
@@ -1197,7 +1195,9 @@ class Connections:
         removal = await self.remove(instance)
         return ConnectorMutation(removal=removal, activations=await self._reconcile_agents(agents))
 
-    async def _reconcile_agents(self, agents: Sequence[str]) -> tuple[ConnectorReconcileResult, ...]:
+    async def _reconcile_agents(
+        self, agents: Sequence[str]
+    ) -> tuple[ConnectorReconcileResult, ...]:
         """Project durable state into this process's live agents when present."""
         outcomes: list[ConnectorReconcileResult] = []
         for agent in dict.fromkeys(agents):
@@ -1475,13 +1475,13 @@ __all__ = [
     "CatalogEntry",
     "ClosableSink",
     "Connection",
-    "ConnectorControl",
-    "ConnectorMutation",
-    "ConnectorReconcileResult",
     "ConnectionRegistry",
     "ConnectionWorld",
     "Connections",
+    "ConnectorControl",
+    "ConnectorMutation",
     "ConnectorPlan",
+    "ConnectorReconcileResult",
     "DeclaredTool",
     "DoctorCheck",
     "ExtensionError",
