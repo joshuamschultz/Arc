@@ -326,6 +326,15 @@ def _refused(status: int) -> str:
     app is not permitted the scope a verb needs — the account signed in, but the
     app was not granted files access on its Permissions tab.
     """
+    if status == 400:
+        # Dropbox's OAuth2 token endpoint answers 400 invalid_grant for a bad,
+        # expired, malformed, or truncated refresh token — the actual failure an
+        # operator hits, and the one the generic message below hid.
+        return (
+            "Dropbox rejected the refresh token (invalid_grant): it is malformed, expired, "
+            "or revoked. Re-authorize the app (token_access_type=offline) and paste the new "
+            "refresh token — a valid one is ~64 characters."
+        )
     if status == 401:
         return (
             "Dropbox refused to mint an access token. The refresh token may be revoked, "

@@ -93,6 +93,36 @@ async def test_probe_mints_a_token_then_reads_the_account(recorder: _Recorder) -
     assert recorder.token_mints == 1
 
 
+async def test_a_malformed_refresh_token_is_named_not_hidden_behind_a_generic_400(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dropbox's token endpoint answers 400 ``invalid_grant`` for a bad/malformed
+    refresh token — the exact real failure. The probe must tell the operator to
+    re-authorize, not surface the useless "answered 400, could not be checked".
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == "https://api.dropbox.com/oauth2/token":
+            return httpx.Response(
+                400,
+                json={"error": "invalid_grant", "error_description": "refresh token is malformed"},
+            )
+        return httpx.Response(500, json={"error": "token mint should have failed first"})
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda *a, **k: real(*a, **{**k, "transport": httpx.MockTransport(handler)}),
+    )
+
+    result = await _attachment().probe()
+
+    assert not result.reachable
+    detail = result.detail.lower()
+    assert "refresh token" in detail and "authorize" in detail, result.detail
+
+
 async def test_the_access_token_is_cached_across_calls(recorder: _Recorder) -> None:
     attachment = _attachment()
 
