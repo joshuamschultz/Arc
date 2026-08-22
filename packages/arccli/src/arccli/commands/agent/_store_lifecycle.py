@@ -27,7 +27,7 @@ _logger = logging.getLogger("arccli.agent.store")
 def load_arcstore_config(agent_dir: Path) -> ArcStoreConfig:
     """Build ``ArcStoreConfig`` from the agent's ``[arcstore]`` TOML block.
 
-    Missing block → defaults (enabled, sqlite). A malformed block is logged and
+    Missing block → PostgreSQL defaults. A malformed block is logged and
     falls back to defaults — config trouble must never stop the agent serving.
     """
     toml_path = agent_dir / "arcagent.toml"

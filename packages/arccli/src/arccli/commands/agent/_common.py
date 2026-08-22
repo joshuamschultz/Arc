@@ -578,7 +578,11 @@ capture_tool_io = true
 [arcstore]
 enabled = true              # single on/off gate for spool/ingest recording
 data_dir = ""               # empty → resolve_data_dir (env > this > ~/.arc/store)
-backend = "sqlite"          # store backend
+database_credential_ref = "" # vault coordinate; runtime DSN comes from the vault/env
+pool_min_size = 1
+pool_max_size = 10
+command_timeout = 30.0
+connect_timeout = 10.0
 store_raw_bodies = false    # persist raw request/response bodies
 rotation = "daily"          # store file rotation
 retention = ""              # retention window (empty = keep all)

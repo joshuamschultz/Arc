@@ -23,7 +23,7 @@ src/arcstore/
   cancellations.py  # Operator kill-switch / stale-cancel age-out
   ingest.py         # StoreIngest — crash-safe spool + WORM tailer
   query.py          # Read API over the ingested backend
-  backends/         # StorageBackend + MutableTaskBackend impls: sqlite (default), memory
+  backends/         # ArcStoreBackend implementations: PostgreSQL and in-memory test fake
 ```
 
 ## Entry points

@@ -3,7 +3,7 @@
 SPEC-026 FR-5 (full push teardown): arcui is a pure reader of the durable
 record. It runs its own ``StoreIngest`` over the shared spool + WORM files
 (everything arcllm/arcrun/arcagent wrote, whether or not arcui was running) into
-its own SQLite mirror (shared-nothing, NFR-8), then serves read-on-demand REST
+its own PostgreSQL-backed operational view (shared-nothing, NFR-8), then serves read-on-demand REST
 from that mirror. No live push wire, nothing to drop.
 
 Stats are computed directly from the store on read (one pass over the window) —
