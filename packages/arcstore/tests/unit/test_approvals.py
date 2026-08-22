@@ -49,6 +49,28 @@ class TestApprovalStore:
         finally:
             await be.stop()
 
+    async def test_create_enqueues_idempotent_pending_notification(self, tmp_path: Path) -> None:
+        be = await _backend(tmp_path)
+        try:
+            store = ApprovalStore(be)
+            await store.create(_pending())
+            events = await be.claim_outbox("test-worker")
+            assert events == [
+                {
+                    "event_id": "approval-created:req1",
+                    "approval_id": "req1",
+                    "event": {
+                        "approval_id": "req1",
+                        "agent_did": _AGENT,
+                        "status": "pending",
+                        "tool": "send_message",
+                    },
+                    "attempts": 1,
+                }
+            ]
+        finally:
+            await be.stop()
+
     async def test_enrichment_fields_roundtrip(self, tmp_path: Path) -> None:
         # SPEC-035 approval enrichment — session_id, redacted arguments preview,
         # and leg provenance survive create → get unchanged.

@@ -79,6 +79,18 @@ class MutableApprovalBackend(Protocol):
 
     async def mutable_read(self, collection: str, key: str) -> dict[str, Any] | None: ...
 
+    async def mutable_write_with_outbox(
+        self,
+        collection: str,
+        key: str,
+        value: dict[str, Any],
+        *,
+        event_id: str,
+        event: dict[str, Any],
+        actor_did: str,
+        sink: Any | None = None,
+    ) -> None: ...
+
     async def mutable_query(
         self, collection: str, *, where: dict[str, Any] | None = None
     ) -> list[dict[str, Any]]: ...
@@ -120,10 +132,18 @@ class ApprovalStore:
 
     async def create(self, approval: PendingApproval) -> PendingApproval:
         approval = approval.model_copy(update={"created_at": _now()})
-        await self._backend.mutable_write(
+        event = {
+            "approval_id": approval.id,
+            "agent_did": approval.agent_did,
+            "status": approval.status,
+            "tool": approval.tool,
+        }
+        await self._backend.mutable_write_with_outbox(
             self._COLLECTION,
             approval.id,
             approval.model_dump(mode="json"),
+            event_id=f"approval-created:{approval.id}",
+            event=event,
             actor_did=approval.agent_did,
             sink=self._sink,
         )
