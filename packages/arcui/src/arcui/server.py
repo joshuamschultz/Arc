@@ -40,6 +40,7 @@ from arcui.routes import agent_sessions as agent_sessions_routes
 from arcui.routes import agents as agents_routes
 from arcui.routes import approvals as approvals_routes
 from arcui.routes import arcllm_config as arcllm_config_routes
+from arcui.routes import attachments as attachments_routes
 from arcui.routes import cancellations as cancellations_routes
 from arcui.routes import chat_ws as chat_ws_routes
 from arcui.routes import config as config_routes
@@ -245,6 +246,7 @@ def create_app(
         *export_routes.routes,
         *cost_efficiency_routes.routes,
         *chat_ws_routes.routes,
+        *attachments_routes.routes,
         *knowledge_routes.routes,
         *agents_routes.routes,
         *agent_sessions_routes.routes,
