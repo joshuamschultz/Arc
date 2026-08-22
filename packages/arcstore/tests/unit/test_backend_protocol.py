@@ -1,14 +1,8 @@
-"""StorageBackend Protocol conformance — proven on both FakeBackend and SqliteBackend.
-
-Running the same suite against an in-memory fake and the real SQLite backend
-proves the Protocol is the only seam: no SQLite type leaks into the contract
-(FR-3 AC-3.4 / 3.10). The Protocol is async with no ``begin()`` (research §11.3).
-"""
+"""The fake remains a complete driver-neutral ArcStore contract implementation."""
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from pathlib import Path
 
 import pytest
 
@@ -18,7 +12,6 @@ from arcstore.backends.base import (
     table_for_kind,
 )
 from arcstore.backends.memory import FakeBackend
-from arcstore.backends.sqlite import SqliteBackend
 
 
 def test_new_kinds_mapped() -> None:
@@ -29,18 +22,12 @@ def test_new_kinds_mapped() -> None:
     assert "spawn_events" in OPERATIONAL_TABLES
 
 
-@pytest.fixture(params=["memory", "sqlite"])
-async def backend(request: pytest.FixtureRequest, tmp_path: Path) -> AsyncIterator[StorageBackend]:
-    if request.param == "memory":
-        be: StorageBackend = FakeBackend()
-        await be.start()
-        yield be
-        await be.stop()
-    else:
-        be = SqliteBackend(tmp_path / "store.db")
-        await be.start()
-        yield be
-        await be.stop()
+@pytest.fixture
+async def backend() -> AsyncIterator[StorageBackend]:
+    be: StorageBackend = FakeBackend()
+    await be.start()
+    yield be
+    await be.stop()
 
 
 def _row(
@@ -67,15 +54,15 @@ class TestProtocolConformance:
     def test_fake_backend_conforms(self) -> None:
         assert isinstance(FakeBackend(), StorageBackend)
 
-    def test_sqlite_backend_conforms(self, tmp_path: Path) -> None:
-        assert isinstance(SqliteBackend(tmp_path / "s.db"), StorageBackend)
+    def test_fake_backend_conforms_to_complete_contract(self) -> None:
+        assert isinstance(FakeBackend(), StorageBackend)
 
     def test_async_protocol_has_no_begin(self) -> None:
         # The transaction is an implementation detail of the backend, never the
         # Protocol surface (research §11.3 supersedes SDD §5.1 begin()).
         assert not hasattr(StorageBackend, "begin")
 
-    async def test_query_runs_on_fake_and_sqlite(self, backend: StorageBackend) -> None:
+    async def test_query_runs_on_fake(self, backend: StorageBackend) -> None:
         await backend.upsert("llm_calls", "r1", _row("r1", model="opus"))
         await backend.upsert("llm_calls", "r2", _row("r2", model="haiku"))
         rows = await backend.query("llm_calls", order_by="ts")

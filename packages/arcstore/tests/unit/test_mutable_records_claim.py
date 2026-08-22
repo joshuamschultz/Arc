@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from arcstore.backends.sqlite import SqliteBackend
+from arcstore.backends.memory import FakeBackend
 
 _SYSTEM = "did:arc:test:system"
 _ACTOR_A = "did:arc:test:exec/aaaaaaaa"
@@ -30,7 +30,7 @@ _N_RUNS = 100
 
 class TestUpdateIfConditionalCorrectness:
     async def test_matching_where_applies_patch_and_returns_true(self, tmp_path: Path) -> None:
-        be = SqliteBackend(tmp_path / "store.db")
+        be = FakeBackend()
         await be.start()
         try:
             await be.mutable_write("tasks", "t1", {"owner": None}, actor_did=_SYSTEM)
@@ -47,7 +47,7 @@ class TestUpdateIfConditionalCorrectness:
     async def test_non_matching_where_returns_false_and_leaves_row_unchanged(
         self, tmp_path: Path
     ) -> None:
-        be = SqliteBackend(tmp_path / "store.db")
+        be = FakeBackend()
         await be.start()
         try:
             await be.mutable_write("tasks", "t1", {"owner": _ACTOR_A}, actor_did=_SYSTEM)
@@ -62,7 +62,7 @@ class TestUpdateIfConditionalCorrectness:
             await be.stop()
 
     async def test_missing_key_returns_false(self, tmp_path: Path) -> None:
-        be = SqliteBackend(tmp_path / "store.db")
+        be = FakeBackend()
         await be.start()
         try:
             won = await be.update_if(
@@ -77,7 +77,7 @@ class TestUpdateIfConditionalCorrectness:
             await be.stop()
 
     async def test_patch_is_a_partial_merge_not_a_replace(self, tmp_path: Path) -> None:
-        be = SqliteBackend(tmp_path / "store.db")
+        be = FakeBackend()
         await be.start()
         try:
             await be.mutable_write(
@@ -99,7 +99,7 @@ class TestUpdateIfSingleOwnerClaim:
     """G3/NFR-2 — two concurrent claimers on one key, exactly one wins."""
 
     async def test_two_concurrent_claimers_exactly_one_wins(self, tmp_path: Path) -> None:
-        be = SqliteBackend(tmp_path / "store.db")
+        be = FakeBackend()
         await be.start()
         try:
             await be.mutable_write("tasks", "t1", {"owner": None}, actor_did=_SYSTEM)
@@ -131,7 +131,7 @@ class TestUpdateIfSingleOwnerClaimStress:
     """
 
     async def test_single_winner_holds_across_100_runs(self, tmp_path: Path) -> None:
-        be = SqliteBackend(tmp_path / "store.db")
+        be = FakeBackend()
         await be.start()
         try:
             failures: list[int] = []

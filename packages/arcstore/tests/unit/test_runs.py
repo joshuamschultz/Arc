@@ -24,7 +24,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from arcstore.backends.sqlite import SqliteBackend
+from arcstore.backends.memory import FakeBackend
 
 _INITIATOR = "did:arc:test:human/operator"
 _RUNNER = "did:arc:test:exec/runner00"
@@ -45,8 +45,8 @@ def _new_id() -> str:
     return f"run-{uuid.uuid4().hex[:8]}"
 
 
-async def _backend(tmp_path: Path) -> SqliteBackend:
-    be = SqliteBackend(tmp_path / "store.db")
+async def _backend(tmp_path: Path) -> FakeBackend:
+    be = FakeBackend()
     await be.start()
     return be
 

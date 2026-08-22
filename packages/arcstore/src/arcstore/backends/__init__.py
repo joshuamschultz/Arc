@@ -1,53 +1,37 @@
-"""Storage backends for the arcstore query layer.
+"""The one asynchronous PostgreSQL ArcStore backend and its test fake."""
 
-``StorageBackend`` is the seam (base.py). ``SqliteBackend`` is the default
-(sqlite.py). ``FakeBackend`` is the in-memory test double (memory.py) that
-proves no SQLite type leaks into the Protocol.
+from __future__ import annotations
 
-``open_backend`` is the factory: callers (arcui, ingest, the CLI) select a
-backend *by name* and receive a ``StorageBackend``, so the UI read path depends
-on the Protocol + this factory rather than a concrete class. Swapping storage is
-a config change, not a code edit (SPEC-026 D-009/D-011).
-"""
-
-from pathlib import Path
+from pydantic import SecretStr
 
 from arcstore.backends.base import (
+    APPROVAL_OUTBOX_TABLE,
     AUDIT_TABLE,
     OPERATIONAL_TABLES,
+    ArcStoreBackend,
     StorageBackend,
     table_for_kind,
 )
 from arcstore.backends.memory import FakeBackend
-from arcstore.backends.sqlite import SqliteBackend
-
-# Backends not yet implemented are deferred behind the Protocol (D-009): a clear
-# error beats silently falling back to SQLite under a Postgres config.
-_DEFERRED = frozenset({"postgres", "cloud"})
+from arcstore.backends.postgres import PostgresBackend
+from arcstore.config import ArcStoreConfig
 
 
-def open_backend(backend: str = "sqlite", db_path: Path | str = "") -> StorageBackend:
-    """Return a ``StorageBackend`` for the named backend.
-
-    ``sqlite`` is the only concrete backend today; ``postgres``/``cloud`` raise
-    ``NotImplementedError`` (deferred behind the Protocol). An unknown name is a
-    ``ValueError`` at the config boundary.
-    """
-    if backend == "sqlite":
-        return SqliteBackend(Path(db_path))
-    if backend in _DEFERRED:
-        raise NotImplementedError(
-            f"arcstore backend {backend!r} is deferred behind the StorageBackend "
-            "Protocol (SPEC-026 D-009); only 'sqlite' is implemented."
-        )
-    raise ValueError(f"Unknown arcstore backend: {backend!r}. Use 'sqlite'.")
+def open_backend(
+    *, config: ArcStoreConfig | None = None, secret: SecretStr | None = None
+) -> ArcStoreBackend:
+    """Create the production backend from an environment or vault-injected secret."""
+    config = ArcStoreConfig() if config is None else config
+    return PostgresBackend(config.postgres_settings(secret))
 
 
 __all__ = [
+    "APPROVAL_OUTBOX_TABLE",
     "AUDIT_TABLE",
     "OPERATIONAL_TABLES",
+    "ArcStoreBackend",
     "FakeBackend",
-    "SqliteBackend",
+    "PostgresBackend",
     "StorageBackend",
     "open_backend",
     "table_for_kind",

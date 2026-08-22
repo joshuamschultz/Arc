@@ -11,7 +11,7 @@ import asyncio
 from pathlib import Path
 
 from arcstore import query
-from arcstore.backends.sqlite import SqliteBackend
+from arcstore.backends.memory import FakeBackend
 from arcstore.ingest import StoreIngest
 from arcstore.records import SpoolRecord
 from arcstore.spool import record as spool_record
@@ -40,10 +40,10 @@ def _write_call(path: Path, rid: str, outcome: str = "ok") -> None:
     )
 
 
-async def _make_ingest(tmp_path: Path) -> tuple[StoreIngest, SqliteBackend, Path]:
+async def _make_ingest(tmp_path: Path) -> tuple[StoreIngest, FakeBackend, Path]:
     data_dir = tmp_path / "data"
     spool = _spool_dir(data_dir)
-    backend = SqliteBackend(data_dir / "store" / "inst.db")
+    backend = FakeBackend()
     await backend.start()
     ingest = StoreIngest(backend, spool_dir=spool, worm_dir=data_dir / "worm")
     return ingest, backend, spool
@@ -96,7 +96,7 @@ class TestTail:
 
         # A fresh store over the same DB + files resumes from the persisted
         # offset and does NOT re-ingest already-consumed lines.
-        backend2 = SqliteBackend(tmp_path / "data" / "store" / "inst.db")
+        backend2 = FakeBackend()
         await backend2.start()
         ingest2 = StoreIngest(backend2, spool_dir=spool, worm_dir=tmp_path / "data" / "worm")
         try:
@@ -228,7 +228,7 @@ class TestWormIngest:
             )
         sink.close()
 
-        backend = SqliteBackend(data_dir / "store" / "inst.db")
+        backend = FakeBackend()
         await backend.start()
         ingest = StoreIngest(
             backend,
@@ -251,7 +251,7 @@ class TestWormIngest:
             text[1] = json.dumps(rec)
             worm_path.write_text("\n".join(text) + "\n")
 
-            backend2 = SqliteBackend(tmp_path / "store2.db")
+            backend2 = FakeBackend()
             await backend2.start()
             ingest2 = StoreIngest(
                 backend2,
@@ -292,7 +292,7 @@ class TestWormIngest:
         sink.close()
         assert not (worm_dir / "audit-chain.jsonl").exists()
 
-        backend = SqliteBackend(data_dir / "store" / "inst.db")
+        backend = FakeBackend()
         await backend.start()
         ingest = StoreIngest(
             backend, spool_dir=data_dir / "spool", worm_dir=worm_dir, worm_public_key=kp.public_key

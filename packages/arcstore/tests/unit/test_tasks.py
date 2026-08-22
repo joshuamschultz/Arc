@@ -26,7 +26,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from arcstore.backends.sqlite import SqliteBackend
+from arcstore.backends.memory import FakeBackend
 
 _CREATOR = "did:arc:test:exec/creator0"
 _AGENT_A = "did:arc:test:exec/aaaaaaaa"
@@ -48,8 +48,8 @@ def _new_id() -> str:
     return f"task-{uuid.uuid4().hex[:8]}"
 
 
-async def _backend(tmp_path: Path) -> SqliteBackend:
-    be = SqliteBackend(tmp_path / "store.db")
+async def _backend(tmp_path: Path) -> FakeBackend:
+    be = FakeBackend()
     await be.start()
     return be
 
@@ -834,7 +834,7 @@ class TestAudit:
             await be.stop()
 
 
-class _ReadBarrierBackend(SqliteBackend):
+class _ReadBarrierBackend(FakeBackend):
     """Forces two concurrent ``update()`` callers to both read stale, then write.
 
     A non-atomic read-merge-write drops whichever field the loser didn't touch.
@@ -845,8 +845,8 @@ class _ReadBarrierBackend(SqliteBackend):
     deadlock waiting for a second party that never comes.
     """
 
-    def __init__(self, db_path: Any, barrier: Any) -> None:
-        super().__init__(db_path)
+    def __init__(self, barrier: Any) -> None:
+        super().__init__()
         self._barrier = barrier
         self.armed = False
 
@@ -866,7 +866,7 @@ class TestUpdateAtomicity:
         from arcstore.tasks import Task, TaskStore
 
         barrier = asyncio.Barrier(2)
-        be = _ReadBarrierBackend(tmp_path / "store.db", barrier)
+        be = _ReadBarrierBackend(barrier)
         await be.start()
         try:
             store = TaskStore(be)
@@ -892,7 +892,7 @@ class TestUpdateAtomicity:
             await be.stop()
 
 
-class _ClaimBarrierBackend(SqliteBackend):
+class _ClaimBarrierBackend(FakeBackend):
     """Holds every claimer at its FIRST conditional write until all have arrived.
 
     Guarantees both ``claim_next`` callers finish their active-task check before
@@ -901,8 +901,8 @@ class _ClaimBarrierBackend(SqliteBackend):
     multi-candidate claim loop doesn't re-enter the (reusable) barrier and hang.
     """
 
-    def __init__(self, db_path: Any, barrier: Any) -> None:
-        super().__init__(db_path)
+    def __init__(self, barrier: Any) -> None:
+        super().__init__()
         self._barrier = barrier
         self._waited: set[Any] = set()
 
@@ -955,7 +955,7 @@ class TestClaimCapConcurrency:
         from arcstore.tasks import Task, TaskStore
 
         barrier = asyncio.Barrier(2)
-        be = _ClaimBarrierBackend(tmp_path / "store.db", barrier)
+        be = _ClaimBarrierBackend(barrier)
         await be.start()
         try:
             store = TaskStore(be)
@@ -979,7 +979,7 @@ class TestClaimCapConcurrency:
         from arcstore.tasks import Task, TaskStore
 
         barrier = asyncio.Barrier(2)
-        be = _ClaimBarrierBackend(tmp_path / "store.db", barrier)
+        be = _ClaimBarrierBackend(barrier)
         await be.start()
         try:
             store = TaskStore(be)
@@ -1009,7 +1009,7 @@ class TestClaimCapConcurrencyStress:
         failures: list[int] = []
         for i in range(100):
             barrier = asyncio.Barrier(2)
-            be = _ClaimBarrierBackend(tmp_path / f"store-{i}.db", barrier)
+            be = _ClaimBarrierBackend(barrier)
             await be.start()
             try:
                 store = TaskStore(be)

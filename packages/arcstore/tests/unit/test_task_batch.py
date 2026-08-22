@@ -15,7 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from arcstore.backends.sqlite import SqliteBackend
+from arcstore.backends.memory import FakeBackend
 
 _CREATOR = "did:arc:test:exec/runner00"
 _AGENT_A = "did:arc:test:exec/aaaaaaaa"
@@ -24,8 +24,8 @@ _AGENT_C = "did:arc:test:exec/cccccccc"
 _RUN_ID = "run-frontier-01"
 
 
-async def _backend(tmp_path: Path) -> SqliteBackend:
-    be = SqliteBackend(tmp_path / "store.db")
+async def _backend(tmp_path: Path) -> FakeBackend:
+    be = FakeBackend()
     await be.start()
     return be
 

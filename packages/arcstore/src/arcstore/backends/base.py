@@ -1,17 +1,8 @@
-"""StorageBackend Protocol — the one seam between the store and its backend.
-
-Async, ``@runtime_checkable``, matching the ``arcteam.storage`` house style
-(research §11.3). The transaction is an *implementation detail* of the backend
-(the SQLite ingest commits a batch + cursor in one ``BEGIN IMMEDIATE``); it is
-deliberately **not** on the Protocol — exposing ``begin()`` would force the
-in-memory fake to fake it (research §11.3 supersedes the SDD §5.1 ``begin()``).
-
-A second, in-memory implementation (``FakeBackend``) runs the same conformance
-suite, proving no SQLite type leaks into this contract (FR-3 AC-3.4).
-"""
+"""ArcStore's complete asynchronous persistence contract."""
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any, Protocol, runtime_checkable
 
 # Operational tables — one per SpoolRecord.kind, all sharing the flat columns.
@@ -35,6 +26,17 @@ SKILL_BODIES_TABLE = "skill_candidate_bodies"
 # OPERATIONAL_TABLES (insert-once spool), rows here are overwritten in place —
 # one collection per directory entity (tasks, entities, teams, channels, ...).
 MUTABLE_RECORDS_TABLE = "mutable_records"
+APPROVAL_OUTBOX_TABLE = "approval_outbox"
+
+STORE_TABLES = frozenset(
+    (
+        *OPERATIONAL_TABLES,
+        AUDIT_TABLE,
+        SKILL_CANDIDATES_TABLE,
+        SKILL_BODIES_TABLE,
+        APPROVAL_OUTBOX_TABLE,
+    )
+)
 
 _KIND_TABLE = {
     "llm_call": "llm_calls",
@@ -54,13 +56,8 @@ def table_for_kind(kind: str) -> str:
 
 
 @runtime_checkable
-class StorageBackend(Protocol):
-    """Swappable storage abstraction for operational + audit data.
-
-    All methods are async so a single contract spans the stdlib-``sqlite3``
-    default (bridged via ``asyncio.to_thread``) and future network backends
-    (Postgres/cloud) without changing producer or UI-read code.
-    """
+class ArcStoreBackend(Protocol):
+    """One driver-neutral contract for ArcStore's PostgreSQL data plane."""
 
     async def start(self) -> None:
         """Open resources / create schema. Idempotent."""
@@ -102,3 +99,114 @@ class StorageBackend(Protocol):
     async def set_cursor(self, name: str, value: int) -> None:
         """Persist the byte offset consumed for a source file."""
         ...
+
+    async def mutable_write(
+        self,
+        collection: str,
+        key: str,
+        value: dict[str, Any],
+        *,
+        actor_did: str,
+        sink: Any | None = None,
+    ) -> None: ...
+
+    async def mutable_read(self, collection: str, key: str) -> dict[str, Any] | None: ...
+
+    async def mutable_delete(
+        self,
+        collection: str,
+        key: str,
+        *,
+        actor_did: str,
+        sink: Any | None = None,
+    ) -> bool: ...
+
+    async def mutable_query(
+        self,
+        collection: str,
+        *,
+        where: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    async def mutable_merge(
+        self,
+        collection: str,
+        key: str,
+        patch: dict[str, Any],
+        *,
+        actor_did: str,
+        sink: Any | None = None,
+    ) -> bool: ...
+
+    async def update_if(
+        self,
+        collection: str,
+        key: str,
+        patch: dict[str, Any],
+        where: dict[str, Any],
+        *,
+        actor_did: str,
+        sink: Any | None = None,
+        absent_where: dict[str, Any] | None = None,
+    ) -> bool: ...
+
+    async def mutable_create_batch(
+        self,
+        collection: str,
+        entries: Sequence[tuple[str, dict[str, Any]]],
+        *,
+        actor_did: str,
+        sink: Any | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    async def mutable_increment(
+        self,
+        collection: str,
+        key: str,
+        deltas: dict[str, int | float],
+        *,
+        actor_did: str,
+        sink: Any | None = None,
+    ) -> bool: ...
+
+    async def update_if_with_outbox(
+        self,
+        collection: str,
+        key: str,
+        patch: dict[str, Any],
+        where: dict[str, Any],
+        *,
+        event_id: str,
+        event: dict[str, Any],
+        actor_did: str,
+        sink: Any | None = None,
+    ) -> bool: ...
+
+    async def mutable_write_with_outbox(
+        self,
+        collection: str,
+        key: str,
+        value: dict[str, Any],
+        *,
+        event_id: str,
+        event: dict[str, Any],
+        actor_did: str,
+        sink: Any | None = None,
+    ) -> None: ...
+
+    async def claim_outbox(
+        self, consumer_id: str, *, limit: int = 100
+    ) -> list[dict[str, Any]]: ...
+
+    async def ack_outbox(self, consumer_id: str, event_ids: Sequence[str]) -> None: ...
+
+    async def nack_outbox(
+        self,
+        consumer_id: str,
+        event_id: str,
+        *,
+        retry_after_seconds: float,
+    ) -> bool: ...
+
+
+StorageBackend = ArcStoreBackend

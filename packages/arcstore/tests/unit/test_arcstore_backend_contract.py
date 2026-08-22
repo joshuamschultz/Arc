@@ -15,14 +15,13 @@ import pytest
 
 from arcstore.approvals import ApprovalStore, PendingApproval
 from arcstore.backends.base import (
-    AUDIT_TABLE,
     APPROVAL_OUTBOX_TABLE,
+    AUDIT_TABLE,
     SKILL_BODIES_TABLE,
     SKILL_CANDIDATES_TABLE,
     ArcStoreBackend,
 )
 from arcstore.backends.memory import FakeBackend
-
 
 _ACTOR = "did:arc:agent:test"
 
@@ -100,9 +99,7 @@ async def test_audit_and_skill_tables_round_trip_structured_rows(
     await arcstore_backend.upsert(SKILL_BODIES_TABLE, "body-1", body)
 
     assert (await arcstore_backend.query(AUDIT_TABLE))[0]["extra"] == {"source": "test"}
-    assert (await arcstore_backend.query(SKILL_CANDIDATES_TABLE))[0]["scores"] == {
-        "quality": 0.9
-    }
+    assert (await arcstore_backend.query(SKILL_CANDIDATES_TABLE))[0]["scores"] == {"quality": 0.9}
     assert (await arcstore_backend.query(SKILL_BODIES_TABLE))[0]["body"] == "body text"
 
 

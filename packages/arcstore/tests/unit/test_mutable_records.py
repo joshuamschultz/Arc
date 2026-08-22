@@ -13,58 +13,15 @@ not an import/syntax error.
 from __future__ import annotations
 
 import asyncio
-import sqlite3
-from pathlib import Path
 
-from arcstore.backends.sqlite import SqliteBackend
+from arcstore.backends.memory import FakeBackend
 
 _ACTOR = "did:arc:test:exec/aabbccdd"
 
 
-class TestMutableRecordsSchema:
-    async def test_table_exists_with_collection_key_pk(self, tmp_path: Path) -> None:
-        db = tmp_path / "store.db"
-        be = SqliteBackend(db)
-        await be.start()
-        try:
-            conn = sqlite3.connect(str(db))
-            try:
-                names = {
-                    r[0]
-                    for r in conn.execute(
-                        "SELECT name FROM sqlite_master WHERE type='table'"
-                    ).fetchall()
-                }
-                assert "mutable_records" in names
-                cols = {r[1]: r[5] for r in conn.execute("PRAGMA table_info(mutable_records)")}
-                assert set(cols) >= {"collection", "key", "value", "updated_at"}
-                # composite PK — both collection and key carry a nonzero pk ordinal
-                assert cols["collection"] > 0
-                assert cols["key"] > 0
-            finally:
-                conn.close()
-        finally:
-            await be.stop()
-
-    async def test_wal_and_busy_timeout_applied(self, tmp_path: Path) -> None:
-        db = tmp_path / "store.db"
-        be = SqliteBackend(db)
-        await be.start()
-        try:
-            await be.mutable_write("tasks", "t1", {"title": "x"}, actor_did=_ACTOR)
-        finally:
-            await be.stop()
-        conn = sqlite3.connect(str(db))
-        try:
-            assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
-            assert conn.execute("PRAGMA busy_timeout").fetchone()[0] >= 1000
-        finally:
-            conn.close()
-
-
 class TestMutableRecordsRoundtrip:
-    async def test_write_then_read_roundtrip(self, tmp_path: Path) -> None:
-        be = SqliteBackend(tmp_path / "store.db")
+    async def test_write_then_read_roundtrip(self) -> None:
+        be = FakeBackend()
         await be.start()
         try:
             await be.mutable_write(
@@ -79,17 +36,17 @@ class TestMutableRecordsRoundtrip:
         finally:
             await be.stop()
 
-    async def test_read_missing_key_returns_none(self, tmp_path: Path) -> None:
-        be = SqliteBackend(tmp_path / "store.db")
+    async def test_read_missing_key_returns_none(self) -> None:
+        be = FakeBackend()
         await be.start()
         try:
             assert await be.mutable_read("tasks", "does-not-exist") is None
         finally:
             await be.stop()
 
-    async def test_write_overwrites_existing_value(self, tmp_path: Path) -> None:
+    async def test_write_overwrites_existing_value(self) -> None:
         """Unlike the insert-once spool plane, a repeated key mutates in place."""
-        be = SqliteBackend(tmp_path / "store.db")
+        be = FakeBackend()
         await be.start()
         try:
             await be.mutable_write("tasks", "t1", {"status": "todo"}, actor_did=_ACTOR)
@@ -101,8 +58,8 @@ class TestMutableRecordsRoundtrip:
         finally:
             await be.stop()
 
-    async def test_write_bumps_updated_at(self, tmp_path: Path) -> None:
-        be = SqliteBackend(tmp_path / "store.db")
+    async def test_write_bumps_updated_at(self) -> None:
+        be = FakeBackend()
         await be.start()
         try:
             await be.mutable_write("tasks", "t1", {"status": "todo"}, actor_did=_ACTOR)
@@ -114,8 +71,8 @@ class TestMutableRecordsRoundtrip:
         finally:
             await be.stop()
 
-    async def test_delete_removes_row(self, tmp_path: Path) -> None:
-        be = SqliteBackend(tmp_path / "store.db")
+    async def test_delete_removes_row(self) -> None:
+        be = FakeBackend()
         await be.start()
         try:
             await be.mutable_write("tasks", "t1", {"status": "todo"}, actor_did=_ACTOR)
@@ -125,8 +82,8 @@ class TestMutableRecordsRoundtrip:
         finally:
             await be.stop()
 
-    async def test_delete_missing_key_returns_false(self, tmp_path: Path) -> None:
-        be = SqliteBackend(tmp_path / "store.db")
+    async def test_delete_missing_key_returns_false(self) -> None:
+        be = FakeBackend()
         await be.start()
         try:
             assert await be.mutable_delete("tasks", "does-not-exist", actor_did=_ACTOR) is False
@@ -135,9 +92,9 @@ class TestMutableRecordsRoundtrip:
 
 
 class TestMutableRecordsQuery:
-    async def test_query_scoped_to_collection(self, tmp_path: Path) -> None:
+    async def test_query_scoped_to_collection(self) -> None:
         """Two collections sharing a key never leak into each other's query."""
-        be = SqliteBackend(tmp_path / "store.db")
+        be = FakeBackend()
         await be.start()
         try:
             await be.mutable_write("tasks", "t1", {"status": "todo"}, actor_did=_ACTOR)
@@ -148,8 +105,8 @@ class TestMutableRecordsQuery:
         finally:
             await be.stop()
 
-    async def test_query_filters_by_where(self, tmp_path: Path) -> None:
-        be = SqliteBackend(tmp_path / "store.db")
+    async def test_query_filters_by_where(self) -> None:
+        be = FakeBackend()
         await be.start()
         try:
             await be.mutable_write("tasks", "t1", {"status": "todo"}, actor_did=_ACTOR)
@@ -160,8 +117,8 @@ class TestMutableRecordsQuery:
         finally:
             await be.stop()
 
-    async def test_query_empty_collection_returns_empty_list(self, tmp_path: Path) -> None:
-        be = SqliteBackend(tmp_path / "store.db")
+    async def test_query_empty_collection_returns_empty_list(self) -> None:
+        be = FakeBackend()
         await be.start()
         try:
             assert await be.mutable_query("tasks") == []

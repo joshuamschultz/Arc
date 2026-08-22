@@ -11,14 +11,14 @@ import asyncio
 from pathlib import Path
 
 from arcstore.approvals import ApprovalStore, PendingApproval
-from arcstore.backends.sqlite import SqliteBackend
+from arcstore.backends.memory import FakeBackend
 
 _AGENT = "did:arc:test:exec/aaaaaaaa"
 _OPERATOR = "did:arc:test:human/operator"
 
 
-async def _backend(tmp_path: Path) -> SqliteBackend:
-    be = SqliteBackend(tmp_path / "store.db")
+async def _backend(tmp_path: Path) -> FakeBackend:
+    be = FakeBackend()
     await be.start()
     return be
 

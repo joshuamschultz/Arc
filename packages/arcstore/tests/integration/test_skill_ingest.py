@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from arcstore import query
-from arcstore.backends.sqlite import SqliteBackend
+from arcstore.backends.memory import FakeBackend
 from arcstore.ingest import StoreIngest
 
 SKILL = "myskill"
@@ -48,11 +48,11 @@ def _manifest(candidates: dict[str, Any], active: str | None = None) -> dict[str
     }
 
 
-async def _make_ingest(tmp_path: Path) -> tuple[StoreIngest, SqliteBackend, Path]:
+async def _make_ingest(tmp_path: Path) -> tuple[StoreIngest, FakeBackend, Path]:
     data_dir = tmp_path / "data"
     workspace = tmp_path / "agent" / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    backend = SqliteBackend(data_dir / "store" / "inst.db")
+    backend = FakeBackend()
     await backend.start()
     ingest = StoreIngest(
         backend,
@@ -244,7 +244,7 @@ class TestCandidateIngest:
     async def test_no_workspace_configured_is_noop(self, tmp_path: Path) -> None:
         """Without workspace_dir the candidate scan is off — existing callers unaffected."""
         data_dir = tmp_path / "data"
-        backend = SqliteBackend(data_dir / "store" / "inst.db")
+        backend = FakeBackend()
         await backend.start()
         ingest = StoreIngest(backend, spool_dir=data_dir / "spool", worm_dir=data_dir / "worm")
         try:
@@ -280,7 +280,7 @@ class TestSkillsWormIngest:
             )
         sink.close()
 
-        backend = SqliteBackend(data_dir / "store" / "inst.db")
+        backend = FakeBackend()
         await backend.start()
         ingest = StoreIngest(
             backend,

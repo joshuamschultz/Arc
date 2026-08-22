@@ -15,7 +15,7 @@ from pathlib import Path
 
 from arctrust.audit import AuditEvent
 
-from arcstore.backends.sqlite import SqliteBackend
+from arcstore.backends.memory import FakeBackend
 
 _ACTOR = "did:arc:test:exec/aabbccdd"
 
@@ -32,7 +32,7 @@ class _RecordingSink:
 
 class TestMutableWriteAudit:
     async def test_write_emits_audit_event_with_actor_did(self, tmp_path: Path) -> None:
-        be = SqliteBackend(tmp_path / "store.db")
+        be = FakeBackend()
         await be.start()
         sink = _RecordingSink()
         try:
@@ -43,7 +43,7 @@ class TestMutableWriteAudit:
             await be.stop()
 
     async def test_delete_emits_audit_event_with_actor_did(self, tmp_path: Path) -> None:
-        be = SqliteBackend(tmp_path / "store.db")
+        be = FakeBackend()
         await be.start()
         sink = _RecordingSink()
         try:
@@ -55,7 +55,7 @@ class TestMutableWriteAudit:
             await be.stop()
 
     async def test_update_if_emits_audit_event_with_actor_did(self, tmp_path: Path) -> None:
-        be = SqliteBackend(tmp_path / "store.db")
+        be = FakeBackend()
         await be.start()
         sink = _RecordingSink()
         try:
@@ -80,7 +80,7 @@ class TestMutableWriteAudit:
         rowcount is 0. Auditing ``applied`` on a no-op is a false compliance
         record — the outcome must reflect that nothing was written.
         """
-        be = SqliteBackend(tmp_path / "store.db")
+        be = FakeBackend()
         await be.start()
         sink = _RecordingSink()
         try:
@@ -102,7 +102,7 @@ class TestMutableWriteAudit:
             await be.stop()
 
     async def test_winning_update_if_still_audits_applied(self, tmp_path: Path) -> None:
-        be = SqliteBackend(tmp_path / "store.db")
+        be = FakeBackend()
         await be.start()
         sink = _RecordingSink()
         try:
@@ -122,7 +122,7 @@ class TestMutableWriteAudit:
 
     async def test_no_sink_means_no_audit_attempt(self, tmp_path: Path) -> None:
         """A None/omitted sink must not raise — audit is opt-in per call site."""
-        be = SqliteBackend(tmp_path / "store.db")
+        be = FakeBackend()
         await be.start()
         try:
             await be.mutable_write("tasks", "t1", {"title": "x"}, actor_did=_ACTOR)
@@ -130,7 +130,7 @@ class TestMutableWriteAudit:
             await be.stop()
 
     async def test_write_emits_action_naming_the_write(self, tmp_path: Path) -> None:
-        be = SqliteBackend(tmp_path / "store.db")
+        be = FakeBackend()
         await be.start()
         sink = _RecordingSink()
         try:
