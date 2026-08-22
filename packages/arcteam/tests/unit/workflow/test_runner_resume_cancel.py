@@ -224,26 +224,26 @@ async def test_a_terminating_tick_loses_a_race_with_a_cancel(stores: Any, regist
         run_id: str,
         status: str,
         *,
-            actor_did: str,
-            expected_status: str | None = None,
-            resolution: str | None = None,
-            fence: Any | None = None,
+        actor_did: str,
+        expected_status: str | None = None,
+        resolution: str | None = None,
+        fence: Any | None = None,
     ) -> bool:
         if status == "done":
             await original(
                 run_id,
                 "cancelled",
-                    actor_did="did:arc:local:user/9",
-                    resolution="operator stop",
-                    fence=None,
+                actor_did="did:arc:local:user/9",
+                resolution="operator stop",
+                fence=None,
             )
         return await original(
             run_id,
             status,
             actor_did=actor_did,
-                expected_status=expected_status,
-                resolution=resolution,
-                fence=fence,
+            expected_status=expected_status,
+            resolution=resolution,
+            fence=fence,
         )
 
     runs.set_status = operator_cancels_first  # type: ignore[method-assign]

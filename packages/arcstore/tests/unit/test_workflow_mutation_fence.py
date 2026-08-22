@@ -58,16 +58,25 @@ async def test_stale_runner_fence_rejects_every_runner_owned_mutation() -> None:
             fence=old_fence,
         )
     with pytest.raises(MutationFenceRejectedError):
-        await tasks.update("existing", {"title": "stale update"}, actor_did=_ACTOR, fence=old_fence)
+        await tasks.update(
+            "existing", {"title": "stale update"}, actor_did=_ACTOR, fence=old_fence
+        )
     with pytest.raises(MutationFenceRejectedError):
         await runs.set_status(
             "fenced-run", "done", actor_did=_ACTOR, expected_status="running", fence=old_fence
         )
     with pytest.raises(MutationFenceRejectedError):
-        await runs.append_path("fenced-run", {"kind": "skipped", "node_id": "a"}, actor_did=_ACTOR, fence=old_fence)
+        await runs.append_path(
+            "fenced-run", {"kind": "skipped", "node_id": "a"}, actor_did=_ACTOR, fence=old_fence
+        )
     with pytest.raises(MutationFenceRejectedError):
         await runs.record_spend(
-            "fenced-run", tokens=3, cost_usd=0.0, settlement_key="a:0", actor_did=_ACTOR, fence=old_fence
+            "fenced-run",
+            tokens=3,
+            cost_usd=0.0,
+            settlement_key="a:0",
+            actor_did=_ACTOR,
+            fence=old_fence,
         )
 
     assert await tasks.get("stale-create") is None
