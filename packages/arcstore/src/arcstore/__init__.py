@@ -25,7 +25,6 @@ from arcstore.inbox import (
     Handoff,
     Inbox,
     InboxRepository,
-    InMemoryInboxRepository,
     Message,
     MessagePage,
     PageInfo,
@@ -43,7 +42,6 @@ from arcstore.spool import read, record, spool_path
 __all__ = [
     "ArcStoreConfig",
     "Handoff",
-    "InMemoryInboxRepository",
     "Inbox",
     "InboxRepository",
     "Message",

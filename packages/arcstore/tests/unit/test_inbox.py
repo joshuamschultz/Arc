@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import pytest
+from packages.arcstore.tests.unit.inbox_fake import FakeInboxRepository
 
 from arcstore.inbox import (
     Handoff,
     Inbox,
     InboxRepository,
-    InMemoryInboxRepository,
     Message,
     Participant,
     ReadState,
@@ -49,6 +49,19 @@ def test_classification_metadata_is_closed_and_normalized() -> None:
         TraceMetadata(classification="private")
 
 
+def test_participant_and_recipient_ids_are_unique() -> None:
+    owner = _participant("did:arc:human:operator", "human")
+    with pytest.raises(ValueError, match="participants"):
+        Thread(inbox_id="inbox-1", participants=(owner, owner))
+    with pytest.raises(ValueError, match="recipients"):
+        Message(
+            thread_id="thread-1",
+            sender=owner,
+            recipients=(owner, owner),
+            body="duplicate recipient",
+        )
+
+
 def test_handoff_contains_trace_links_without_free_form_metadata() -> None:
     handoff = Handoff(
         thread_id="thread-1",
@@ -64,7 +77,7 @@ def test_handoff_contains_trace_links_without_free_form_metadata() -> None:
 
 @pytest.mark.asyncio
 async def test_inbox_repository_tracks_explicit_read_state_and_reply_chain() -> None:
-    repository: InboxRepository = InMemoryInboxRepository()
+    repository: InboxRepository = FakeInboxRepository()
     owner = _participant("did:arc:human:operator", "human")
     agent = _participant("did:arc:agent:terra")
     inbox = await repository.create_inbox(owner, classification="CUI")
@@ -90,11 +103,20 @@ async def test_inbox_repository_tracks_explicit_read_state_and_reply_chain() -> 
     assert (
         await repository.get_thread(thread.thread_id, reader_id=owner.participant_id)
     ).unread_count == 0
+    visible = await repository.list_messages(
+        thread.thread_id,
+        reader_id=owner.participant_id,
+        classification_max="CUI",
+    )
+    assert {message.message_id for message in visible.items} == {
+        first.message_id,
+        reply.message_id,
+    }
 
 
 @pytest.mark.asyncio
 async def test_cursor_pagination_is_stable_and_opaque() -> None:
-    repository = InMemoryInboxRepository()
+    repository = FakeInboxRepository()
     owner = _participant("did:arc:human:operator", "human")
     inbox = await repository.create_inbox(owner)
     for subject in ("one", "two", "three"):
@@ -121,11 +143,19 @@ async def test_cursor_pagination_is_stable_and_opaque() -> None:
         )
         == second
     )
+    repository.threads.pop(first.items[-1].thread_id)
+    with pytest.raises(ValueError, match="no longer references"):
+        await repository.list_threads(
+            inbox.inbox_id,
+            reader_id=owner.participant_id,
+            limit=2,
+            cursor=first.page_info.next_cursor,
+        )
 
 
 @pytest.mark.asyncio
 async def test_repository_filters_up_classification_fail_closed() -> None:
-    repository = InMemoryInboxRepository()
+    repository = FakeInboxRepository()
     owner = _participant("did:arc:human:operator", "human")
     inbox = await repository.create_inbox(owner, classification="SECRET")
     await repository.create_thread(
@@ -147,7 +177,7 @@ async def test_repository_filters_up_classification_fail_closed() -> None:
 
 @pytest.mark.asyncio
 async def test_thread_reads_require_participation_and_clearance() -> None:
-    repository = InMemoryInboxRepository()
+    repository = FakeInboxRepository()
     owner = _participant("did:arc:human:operator", "human")
     outsider = _participant("did:arc:human:outsider", "human")
     inbox = await repository.create_inbox(owner, classification="SECRET")
@@ -158,15 +188,35 @@ async def test_thread_reads_require_participation_and_clearance() -> None:
         )
     with pytest.raises(PermissionError, match="clearance"):
         await repository.get_thread(thread.thread_id, reader_id=owner.participant_id)
+    with pytest.raises(PermissionError, match="own the inbox"):
+        await repository.list_threads(
+            inbox.inbox_id,
+            reader_id=outsider.participant_id,
+            classification_max="SECRET",
+        )
+    with pytest.raises(PermissionError, match="participate"):
+        await repository.list_messages(
+            thread.thread_id,
+            reader_id=outsider.participant_id,
+            classification_max="SECRET",
+        )
 
 
 @pytest.mark.asyncio
 async def test_repository_contract_is_storage_neutral() -> None:
     assert not hasattr(InboxRepository, "sqlite")
-    repository = InMemoryInboxRepository()
+    repository = FakeInboxRepository()
     owner = _participant("did:arc:human:operator", "human")
     inbox = await repository.create_inbox(owner, classification="CUI")
     thread = await repository.create_thread(inbox.inbox_id, (owner,), classification="CUI")
+    with pytest.raises(ValueError, match="match thread"):
+        await repository.append_message(
+            thread.thread_id,
+            sender=owner,
+            recipients=(owner,),
+            body="mismatched classification",
+            trace=TraceMetadata(classification="SECRET"),
+        )
     await repository.create_handoff(
         thread.thread_id,
         from_participant=owner,

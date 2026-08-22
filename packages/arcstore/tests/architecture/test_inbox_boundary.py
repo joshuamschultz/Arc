@@ -31,3 +31,4 @@ def test_inbox_domain_contains_no_session_projection_or_untyped_metadata() -> No
     assert "SessionIndex" not in source
     assert "session_age" not in source
     assert "metadata: dict" not in source
+    assert "InMemoryInboxRepository" not in source
