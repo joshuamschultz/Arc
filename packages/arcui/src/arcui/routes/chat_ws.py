@@ -195,11 +195,17 @@ async def chat_ws_endpoint(ws: WebSocket) -> None:
                 continue
 
             try:
+                attachment_ids = frame.get("attachment_ids", [])
+                if not isinstance(attachment_ids, list) or not all(
+                    isinstance(item, str) and item.startswith("att_") for item in attachment_ids
+                ):
+                    raise ValueError("attachment_ids must be opaque IDs")
                 await web_adapter.ingest(
                     chat_id,
                     frame.get("text", ""),
                     client_seq=frame.get("client_seq"),
                     ws=ws,
+                    attachment_ids=attachment_ids,
                 )
             except ValueError as exc:
                 await ws.send_json({"type": "error", "code": "malformed", "message": str(exc)})

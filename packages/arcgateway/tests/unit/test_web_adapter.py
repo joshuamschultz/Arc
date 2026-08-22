@@ -18,8 +18,29 @@ import pytest
 from arcgateway.adapters.web import WebAdapterFull, WebPlatformAdapter
 from arcgateway.delivery import DeliveryTarget
 from arcgateway.executor import Delta, InboundEvent
+from arcgateway.parts import MediaPart
 
 pytestmark = pytest.mark.asyncio
+
+
+async def test_ingest_claims_ordered_attachment_ids_as_reference_parts() -> None:
+    events: list[InboundEvent] = []
+    claimed: list[list[str]] = []
+
+    async def on_message(event: InboundEvent) -> None:
+        events.append(event)
+
+    def claim(user: str, agent: str, session: str, chat: str, ids: list[str]) -> list[MediaPart]:
+        claimed.append(ids)
+        return [MediaPart(kind="file", mime="image/png", declared_name=i, ref=f"attachments/{i}") for i in ids]
+
+    adapter = WebPlatformAdapter(on_message=on_message, claim_attachments=claim)
+    ws = FakeWebSocket()
+    adapter.register_socket(ws, "did:arc:agent:a", "did:arc:user:u", "chat")
+    await adapter.ingest("chat", "", ws=ws, attachment_ids=["att_a", "att_b"])
+    assert claimed == [["att_a", "att_b"]]
+    assert [part.ref for part in events[0].parts] == ["attachments/att_a", "attachments/att_b"]
+    assert not hasattr(events[0].parts[0], "bytes")
 
 
 # ── Fakes ─────────────────────────────────────────────────────────────────────

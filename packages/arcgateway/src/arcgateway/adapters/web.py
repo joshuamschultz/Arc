@@ -42,7 +42,7 @@ from typing import Any, Protocol, runtime_checkable
 from arcgateway.adapters.base import DraftPart, Outbound, as_parts
 from arcgateway.delivery import DeliveryTarget
 from arcgateway.executor import Delta, InboundEvent
-from arcgateway.parts import TextPart, flatten_text
+from arcgateway.parts import Part, TextPart, flatten_text
 from arcgateway.session import build_session_key
 
 _logger = logging.getLogger("arcgateway.adapters.web")
@@ -117,6 +117,7 @@ class WebPlatformAdapter:
         *,
         on_message: Callable[[InboundEvent], Awaitable[None]],
         agent_did: str = "",
+        claim_attachments: Callable[[str, str, str, str, list[str]], list[Part]] | None = None,
         max_connections: int = _DEFAULT_MAX_CONNECTIONS,
         idle_timeout_seconds: int = _DEFAULT_IDLE_TIMEOUT_SECONDS,
         max_frame_bytes: int = _DEFAULT_MAX_FRAME_BYTES,
@@ -124,6 +125,7 @@ class WebPlatformAdapter:
         audit_emitter: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> None:
         self._on_message = on_message
+        self._claim_attachments = claim_attachments
         self._default_agent_did = agent_did
         # One web adapter serves every agent (routing is per-socket by chat_id),
         # so it registers under (web, "") and the single-platform fallback in
@@ -353,6 +355,7 @@ class WebPlatformAdapter:
         text: str,
         client_seq: int | None = None,
         ws: WebSocketLike | None = None,
+        attachment_ids: list[str] | None = None,
     ) -> None:
         """Build an InboundEvent from a browser frame and forward it.
 
@@ -366,7 +369,7 @@ class WebPlatformAdapter:
         When ``ws`` is None the guard falls back to per-``chat_id`` keying
         (legacy / test contract).
         """
-        if not text:
+        if not text and not attachment_ids:
             msg = "empty text"
             raise ValueError(msg)
         if len(text.encode("utf-8")) > self.max_frame_bytes:
@@ -387,6 +390,17 @@ class WebPlatformAdapter:
         agent_did, user_did = meta
 
         raw_payload: dict[str, Any] = {"client_seq": client_seq} if client_seq is not None else {}
+        parts: list[Part] = []
+        if attachment_ids:
+            if self._claim_attachments is None:
+                raise ValueError("attachments unavailable")
+            parts = self._claim_attachments(
+                user_did,
+                agent_did,
+                build_session_key(agent_did, user_did),
+                chat_id,
+                attachment_ids,
+            )
         event = InboundEvent(
             platform="web",
             chat_id=chat_id,
@@ -396,6 +410,7 @@ class WebPlatformAdapter:
             session_key=build_session_key(agent_did, user_did),
             message=text,
             raw_payload=raw_payload,
+            parts=parts,
         )
         await self._on_message(event)
 
