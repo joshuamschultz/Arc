@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from arcstore.backends.memory import FakeBackend
+from packages.arcstore.tests.unit.inbox_fake import FakeInboxRepository
 
 from arccli.commands.team import (
     TeamSupervisor,
@@ -221,8 +223,38 @@ def _create_agent(tmp_path: Path, name: str) -> str:
 
 
 class TestSendSigned:
+    @pytest.fixture
+    def durable_inbox(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> FakeInboxRepository:
+        """Inject the durable inbox opener without weakening production wiring.
+
+        ``arc team`` composes ``PostgresInboxRepository`` over the production
+        ``PostgresBackend``.  These tests still exercise the real send/read/
+        thread handlers, but replace that composition with the storage-neutral
+        repository contract and a ``FakeBackend`` lifecycle object.
+        """
+        backend = FakeBackend()
+        repository = FakeInboxRepository()
+
+        def _open_backend(**_kwargs: object) -> FakeBackend:
+            return backend
+
+        def _open_inbox_repository(_backend: object) -> FakeInboxRepository:
+            return repository
+
+        monkeypatch.setattr("arcstore.backends.open_backend", _open_backend)
+        monkeypatch.setattr(
+            "arcstore.backends.PostgresInboxRepository", _open_inbox_repository
+        )
+        return repository
+
     def test_send_signs_outgoing_message(
-        self, tmp_path: Path, team_backend: Any, monkeypatch: pytest.MonkeyPatch
+        self,
+        tmp_path: Path,
+        team_backend: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        durable_inbox: FakeInboxRepository,
     ) -> None:
         monkeypatch.setenv("HOME", str(tmp_path))
         sender_did = _create_agent(tmp_path, "sender")
@@ -251,9 +283,15 @@ class TestSendSigned:
         # REQ-030: the message is signed by the sender's arctrust identity.
         assert stored[0]["sig"] != ""
         assert stored[0]["signer_did"] == sender_did
+        assert len(durable_inbox.messages) == 2  # sender + receiver inbox copies
 
     def test_read_and_thread_return_message(
-        self, tmp_path: Path, team_backend: Any, monkeypatch: pytest.MonkeyPatch
+        self,
+        tmp_path: Path,
+        team_backend: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        durable_inbox: FakeInboxRepository,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         monkeypatch.setenv("HOME", str(tmp_path))
         _create_agent(tmp_path, "sender")
@@ -272,8 +310,17 @@ class TestSendSigned:
                 thread_id=None,
             )
         )
-        stored = _stream(team_backend, "arc.agent.receiver")
-        thread_id = stored[0]["thread_id"]
+        receiver_inbox = next(
+            inbox
+            for inbox in durable_inbox.inboxes.values()
+            if inbox.owner.participant_id == "agent://receiver"
+        )
+        receiver_thread = next(
+            thread
+            for thread in durable_inbox.threads.values()
+            if thread.inbox_id == receiver_inbox.inbox_id
+        )
+        thread_id = receiver_thread.thread_id
 
         # read --dm receiver
         _read(
@@ -286,15 +333,17 @@ class TestSendSigned:
                 use_json=False,
             )
         )
+        assert "ping" in capsys.readouterr().out
         # thread by id
         _thread(
             argparse.Namespace(
                 root=None,
                 thread_id=thread_id,
-                stream="arc.agent.receiver",
+                sender="agent://receiver",
                 use_json=False,
             )
         )
+        assert "ping" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------
