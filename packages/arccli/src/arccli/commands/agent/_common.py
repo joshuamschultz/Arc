@@ -397,7 +397,7 @@ priority = 100
 # Mission Control (SPEC-056): a per-agent task list plus a shared team board.
 # nats_url mirrors messaging so assign_task can resolve @handles; data_dir empty
 # defers to arcstore.resolve_data_dir so this module and arcui share the store.
-dispatch = false             # autonomous execution toggle (off = list-only)
+dispatch = true              # execute assigned tasks so workflow nodes progress by default
 data_dir = ""                # empty defers to arcstore.resolve_data_dir
 nats_url = "nats://127.0.0.1:4222"  # shared arcteam registry url (@handle resolution)
 default_max_attempts = 3     # retry ceiling (1 disables retry)

@@ -28,6 +28,7 @@ def test_default_config_declares_tasks_module_enabled() -> None:
     parsed = tomllib.loads(render_agent_config(name="scaffold-agent"))
     tasks = parsed["modules"]["tasks"]
     assert tasks["enabled"] is True
+    assert tasks["config"]["dispatch"] is True
     # nats_url mirrors messaging so assign_task can resolve @handles over the bus.
     assert tasks["config"]["nats_url"] == "nats://127.0.0.1:4222"
 

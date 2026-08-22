@@ -653,13 +653,60 @@ def _run_workflow(args: argparse.Namespace) -> None:
     if args.input:
         run_input = json.loads(Path(args.input).expanduser().read_text(encoding="utf-8"))
 
-    async def _run(plane: WorkflowControlPlane, actor_did: str) -> None:
-        result = _ok_or_exit(await plane.run(args.id, input=run_input, actor_did=actor_did))
-        record = result.run
-        assert record is not None  # noqa: S101 — ok=True always carries the run
-        write(f"Started run {record.run_id} for {args.id} (status={record.status})")
+    from arcteam.workflow.service import WorkflowRunnerService
 
-    _with_plane(args, _run)
+    arc_dir = _arc_dir(args)
+
+    async def _run() -> None:
+        actor_did = _actor_did(arc_dir)
+        plane, aclose = await _resolve_control_plane(arc_dir, tier=_deployment_tier(arc_dir))
+        service = WorkflowRunnerService(plane._runner, interval=args.interval)
+        try:
+            if not args.detach:
+                await service.start()
+            result = _ok_or_exit(await plane.run(args.id, input=run_input, actor_did=actor_did))
+            record = result.run
+            assert record is not None  # noqa: S101 — ok=True always carries the run
+            write(f"Started run {record.run_id} for {args.id} (status={record.status})")
+            if args.detach:
+                return
+            try:
+                terminal = await service.wait_for_terminal(record.run_id)
+            except asyncio.CancelledError:
+                await plane.cancel(
+                    record.run_id,
+                    actor_did=actor_did,
+                    reason="operator interrupted attached workflow run",
+                )
+                raise
+            write(f"Run {record.run_id} finished (status={terminal.status})")
+        finally:
+            if not args.detach:
+                await service.stop()
+            await aclose()
+
+    _run_or_report(_run)
+
+
+def _serve(args: argparse.Namespace) -> None:
+    """Own a headless workflow runner until the operator stops this process."""
+    from arcteam.workflow.service import WorkflowRunnerService
+
+    arc_dir = _arc_dir(args)
+
+    async def _run() -> None:
+        _actor_did(arc_dir)
+        plane, aclose = await _resolve_control_plane(arc_dir, tier=_deployment_tier(arc_dir))
+        service = WorkflowRunnerService(plane._runner, interval=args.interval)
+        await service.start()
+        write("Workflow runner serving. Press Ctrl-C to stop.")
+        try:
+            await asyncio.Event().wait()
+        finally:
+            await service.stop()
+            await aclose()
+
+    _run_or_report(_run)
 
 
 def _cancel(args: argparse.Namespace) -> None:
@@ -743,6 +790,26 @@ def _build_parser() -> argparse.ArgumentParser:
     p = subs.add_parser("run", help="Start a run.")
     p.add_argument("id")
     p.add_argument("--input", default=None, help="Path to a JSON file with the run's typed input.")
+    p.add_argument(
+        "--detach",
+        action="store_true",
+        help="Create the run without owning its runner; requires `arc workflow serve`.",
+    )
+    p.add_argument(
+        "--interval",
+        type=float,
+        default=1.0,
+        help="Attached runner tick interval in seconds (default: 1.0).",
+    )
+    _add_dir_arg(p)
+
+    p = subs.add_parser("serve", help="Run ArcFlow headlessly until interrupted.")
+    p.add_argument(
+        "--interval",
+        type=float,
+        default=1.0,
+        help="Runner tick interval in seconds (default: 1.0).",
+    )
     _add_dir_arg(p)
 
     p = subs.add_parser("cancel", help="Cancel a run.")
@@ -772,6 +839,7 @@ _SUBCOMMAND_MAP: dict[str, Callable[[argparse.Namespace], None]] = {
     "unarchive": _unarchive,
     "purge": _purge,
     "run": _run_workflow,
+    "serve": _serve,
     "cancel": _cancel,
     "sign": _sign,
     "verify": _verify,

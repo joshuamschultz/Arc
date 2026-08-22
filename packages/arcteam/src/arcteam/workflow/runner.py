@@ -192,6 +192,8 @@ class WorkflowRunner:
         self._max_capability_legs = max_capability_legs
         self._consecutive_tick_failures = 0
         self._last_known_channels: list[str] = []
+        self._state_condition = asyncio.Condition()
+        self._state_version = 0
 
     # -- public surface ----------------------------------------------------
 
@@ -355,16 +357,41 @@ class WorkflowRunner:
 
     async def tick(self) -> int:
         """Advance every active run once. Returns how many were advanced."""
-        advanced = 0
-        runs = await self._runs.active_runs()
-        self._last_known_channels = sorted({r.channel for r in runs if r.channel is not None})
-        for run in runs:
-            try:
-                await self.advance(run.run_id)
-            except Exception:  # reason: one poisoned run must not stall the rest
-                logger.exception("advancing run %s failed", run.run_id)
-            advanced += 1
-        return advanced
+        try:
+            advanced = 0
+            runs = await self._runs.active_runs()
+            self._last_known_channels = sorted({r.channel for r in runs if r.channel is not None})
+            for run in runs:
+                try:
+                    await self.advance(run.run_id)
+                except Exception:  # reason: one poisoned run must not stall the rest
+                    logger.exception("advancing run %s failed", run.run_id)
+                advanced += 1
+            return advanced
+        finally:
+            async with self._state_condition:
+                self._state_version += 1
+                self._state_condition.notify_all()
+
+    async def wait_for_terminal(self, run_id: str) -> RunRecord:
+        """Wait for the service-owned tick loop to settle one run.
+
+        This observes the runner's own tick notifications; it never drives the
+        frontier itself. A CLI caller therefore cannot accidentally turn a
+        one-shot process into a competing runner.
+        """
+        while True:
+            run = await self._require_run(run_id)
+            if run.status in TERMINAL_RUN_STATUSES:
+                return run
+            async with self._state_condition:
+                observed = self._state_version
+                run = await self._require_run(run_id)
+                if run.status in TERMINAL_RUN_STATUSES:
+                    return run
+                if self._state_version != observed:
+                    continue
+                await self._state_condition.wait()
 
     async def _on_tick_failure(self, exc: Exception) -> None:
         """Count a whole-tick failure; escalate at the threshold and every

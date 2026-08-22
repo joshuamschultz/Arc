@@ -34,6 +34,19 @@ kind = "agent"
 agent = "@sales"
 """
 
+_SKIPPED_DEFINITION = """
+[workflow]
+id = "skipped"
+version = 1
+owner = "@sales"
+
+[[node]]
+id = "never-runs"
+kind = "agent"
+agent = "@sales"
+when = "false"
+"""
+
 
 @pytest.fixture(autouse=True)
 def _isolated_arc(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -55,6 +68,13 @@ def _write_bundle(root: Path, wid: str = "onboarding") -> Path:
     bundle = root / wid
     bundle.mkdir(parents=True, exist_ok=True)
     (bundle / "workflow.toml").write_text(_DEFINITION.format(wid=wid), encoding="utf-8")
+    return bundle
+
+
+def _write_skipped_bundle(root: Path) -> Path:
+    bundle = root / "skipped"
+    bundle.mkdir(parents=True, exist_ok=True)
+    (bundle / "workflow.toml").write_text(_SKIPPED_DEFINITION, encoding="utf-8")
     return bundle
 
 
@@ -434,6 +454,19 @@ def test_run_refuses_an_unknown_workflow_cleanly(
     assert capsys.readouterr().err.strip() != ""
 
 
+def test_attached_cli_run_owns_a_headless_runner_through_terminal_state(
+    arc_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A terminal workflow must complete without an ArcUI or gateway process."""
+    _write_skipped_bundle(workflows_dir(arc_dir))
+
+    workflow_handler(["run", "skipped", "--interval", "0.01", "--dir", str(arc_dir)])
+
+    output = capsys.readouterr().out
+    assert "Started run" in output
+    assert "finished (status=done)" in output
+
+
 def test_signed_definition_round_trips_from_create_through_sign(
     arc_dir: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -560,6 +593,7 @@ def test_every_subcommand_is_reachable() -> None:
         "unarchive",
         "purge",
         "run",
+        "serve",
         "cancel",
         "sign",
         "verify",

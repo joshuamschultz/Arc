@@ -168,7 +168,7 @@ def test_the_whole_operator_lifecycle_runs_from_the_command_line(
     workflow_handler(["sign", str(bundle), "--dir", str(arc_dir)])
     assert "Signed workflow.toml" in capsys.readouterr().out
 
-    workflow_handler(["run", "onboarding", "--dir", str(arc_dir)])
+    workflow_handler(["run", "onboarding", "--detach", "--dir", str(arc_dir)])
     started = capsys.readouterr().out
     assert "Started run" in started
     run_id = started.split("Started run ")[1].split(" ")[0]
