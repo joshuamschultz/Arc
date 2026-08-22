@@ -21,12 +21,42 @@ resolve_data_dir — env > default Arc data dir resolution (shared by all entry 
 from __future__ import annotations
 
 from arcstore.config import ArcStoreConfig, resolve_data_dir, store_db_path
+from arcstore.inbox import (
+    Handoff,
+    Inbox,
+    InboxRepository,
+    InMemoryInboxRepository,
+    Message,
+    MessagePage,
+    PageInfo,
+    Participant,
+    ParticipantRole,
+    ReadReceipt,
+    ReadState,
+    Thread,
+    ThreadPage,
+    TraceMetadata,
+)
 from arcstore.records import SpoolRecord
 from arcstore.spool import read, record, spool_path
 
 __all__ = [
     "ArcStoreConfig",
+    "Handoff",
+    "InMemoryInboxRepository",
+    "Inbox",
+    "InboxRepository",
+    "Message",
+    "MessagePage",
+    "PageInfo",
+    "Participant",
+    "ParticipantRole",
+    "ReadReceipt",
+    "ReadState",
     "SpoolRecord",
+    "Thread",
+    "ThreadPage",
+    "TraceMetadata",
     "read",
     "record",
     "resolve_data_dir",
