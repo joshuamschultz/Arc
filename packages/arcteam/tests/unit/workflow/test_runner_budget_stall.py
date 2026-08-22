@@ -162,7 +162,7 @@ async def test_a_stalled_run_is_escalated_rather_than_sitting_silent(
     runner = build(stores, registry, CHAIN)
     run = await runner.start_run("budgeted", input={}, initiator_did="did:arc:x/1")
 
-    async def swallow(tasks_: Any, *, actor_did: str) -> list[Any]:
+    async def swallow(tasks_: Any, *, actor_did: str, fence: Any = None) -> list[Any]:
         return []
 
     await complete_node(tasks, task_id(run.run_id, "first", 0), SALES_DID, {"ok": True})
