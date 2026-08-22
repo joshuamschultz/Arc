@@ -42,7 +42,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import arcagent
 from starlette.requests import Request
@@ -146,7 +146,7 @@ class _InProcessConnectorControl:
         live_agent = cache.get(did) if cache is not None and did is not None else None
         if live_agent is None:
             return None
-        return await live_agent.reconcile_connectors()
+        return cast(arcagent.ConnectorReconcileResult, await live_agent.reconcile_connectors())
 
 
 def _connector_control(request: Request) -> arcagent.ConnectorControl:
@@ -614,7 +614,10 @@ async def _change_grant(request: Request, *, granting: bool) -> JSONResponse:
         outcome="applied",
         detail=",".join(agents),
     )
-    body = _row(instance, mutation.connection, _labels(_connections(request))).model_dump(
+    connection = mutation.connection
+    if connection is None:
+        return _error("connector grant did not produce a connection", 500)
+    body = _row(instance, connection, _labels(_connections(request))).model_dump(
         mode="json"
     )
     body["activations"] = _activation_payload(mutation.activations)
@@ -964,17 +967,21 @@ async def delete_connection(request: Request) -> JSONResponse:
     except ExtensionError as exc:
         return _error(exc.message, 400)
 
+    removal = mutation.removal
+    if removal is None:
+        return _error("connector removal did not produce a report", 500)
+
     emit_mutation_audit(
         request,
         target=f"connector:{instance}",
         operation="connector.remove",
-        outcome="applied" if mutation.removal.removed_config else "denied",
+        outcome="applied" if removal.removed_config else "denied",
     )
     body = ConnectorRemoveResponse(
-        instance=mutation.removal.instance,
-        removed_secrets=list(mutation.removal.removed_secrets),
-        removed_config=mutation.removal.removed_config,
-        removed_state=mutation.removal.removed_state,
+        instance=removal.instance,
+        removed_secrets=list(removal.removed_secrets),
+        removed_config=removal.removed_config,
+        removed_state=removal.removed_state,
     ).model_dump(mode="json")
     body["activations"] = _activation_payload(mutation.activations)
     return JSONResponse(body)

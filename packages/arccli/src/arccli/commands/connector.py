@@ -156,7 +156,10 @@ def _grant(args: argparse.Namespace) -> None:
         mutation = asyncio.run(connections.grant_and_reconcile(args.instance, agents))
     except arcagent.ExtensionError as exc:
         _fail(exc.message)
-    granted = ", ".join(mutation.connection.agents) or "(nobody)"
+    connection = mutation.connection
+    if connection is None:
+        _fail("connector grant did not produce a connection")
+    granted = ", ".join(connection.agents) or "(nobody)"
     _out(f"'{args.instance}' is now granted to: {granted}")
     _print_activations(mutation.activations)
 
@@ -168,7 +171,10 @@ def _revoke(args: argparse.Namespace) -> None:
         mutation = asyncio.run(connections.revoke_and_reconcile(args.instance, _agents(args)))
     except arcagent.ExtensionError as exc:
         _fail(exc.message)
-    granted = ", ".join(mutation.connection.agents) or "(nobody)"
+    connection = mutation.connection
+    if connection is None:
+        _fail("connector revoke did not produce a connection")
+    granted = ", ".join(connection.agents) or "(nobody)"
     _out(f"'{args.instance}' is now granted to: {granted}")
     _print_activations(mutation.activations)
 
@@ -434,6 +440,8 @@ def _remove(args: argparse.Namespace) -> None:
     except arcagent.ExtensionError as exc:
         _fail(exc.message)
     report = mutation.removal
+    if report is None:
+        _fail("connector removal did not produce a report")
     _out(f"Disconnected '{report.instance}'.")
     _out(f"  credentials dropped : {', '.join(report.removed_secrets) or '(none)'}")
     _out(f"  connection removed  : {'yes' if report.removed_config else 'no'}")

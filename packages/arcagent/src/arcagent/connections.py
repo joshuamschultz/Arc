@@ -1224,11 +1224,11 @@ class Connections:
             if result is None:
                 outcomes.append(
                     ConnectorReconcileResult(
-                    status="activation_pending",
-                    agent=agent,
-                    revision=command.revision,
-                    detail="agent is not running in this process",
-                )
+                        status="activation_pending",
+                        agent=agent,
+                        revision=command.revision,
+                        detail="agent is not running in this process",
+                    )
                 )
                 continue
             outcome = replace(result, agent=agent, revision=command.revision)
