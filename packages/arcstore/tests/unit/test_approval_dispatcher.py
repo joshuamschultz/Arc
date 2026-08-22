@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 from arcstore.approval_dispatcher import (
+    ApprovalDeliveryResult,
     ApprovalDispatcherConfig,
     ApprovalNotification,
     ApprovalNotificationDispatcher,
@@ -152,6 +153,25 @@ async def test_sink_failure_nacks_with_deterministic_backoff() -> None:
     await worker.dispatch_once()
     assert backend.acks == []
     assert backend.nacks == [("event-1", 8)]
+
+
+@pytest.mark.asyncio
+async def test_inflight_duplicate_requests_retry_without_acknowledging_outbox() -> None:
+    backend = FakeOutbox([_row()])
+
+    async def sink(_notification: ApprovalNotification) -> ApprovalDeliveryResult:
+        return ApprovalDeliveryResult.RETRY
+
+    worker = ApprovalNotificationDispatcher(
+        backend,
+        sink,
+        ApprovalDispatcherConfig(worker_id="worker-a", retry_base_seconds=2),
+    )
+
+    await worker.dispatch_once()
+
+    assert backend.acks == []
+    assert backend.nacks == [("event-1", 2)]
 
 
 @pytest.mark.asyncio

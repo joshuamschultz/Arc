@@ -11,6 +11,7 @@ import asyncio
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any, Literal, Protocol
 
 from arctrust.audit import AuditEvent, AuditSink, emit
@@ -18,6 +19,14 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 ApprovalStatus = Literal["pending", "approved", "denied", "expired"]
 _logger = logging.getLogger("arcstore.approval_dispatcher")
+
+
+class ApprovalDeliveryResult(StrEnum):
+    """The durable completion state a notification sink reports to the outbox."""
+
+    DELIVERED = "delivered"
+    DUPLICATE_COMPLETE = "duplicate_complete"
+    RETRY = "retry"
 
 
 class ApprovalNotification(BaseModel):
@@ -42,7 +51,9 @@ class ApprovalNotificationSink(Protocol):
     Implementations must durably deduplicate by ``event_id``.
     """
 
-    async def __call__(self, notification: ApprovalNotification) -> None: ...
+    async def __call__(
+        self, notification: ApprovalNotification
+    ) -> ApprovalDeliveryResult | None: ...
 
 
 class ApprovalOutboxBackend(Protocol):
@@ -165,19 +176,32 @@ class ApprovalNotificationDispatcher:
                 _logger.warning("quarantined approval notification %s: %s", event_id, exc)
                 continue
             try:
-                await self._sink(notification)
+                result = await self._sink(notification)
             except asyncio.CancelledError:
                 raise
             except Exception:
                 await self._nack(row, event_id, "sink_failure")
                 _logger.exception("approval notification sink failed for %s", event_id)
                 continue
+            if result is ApprovalDeliveryResult.RETRY:
+                await self._nack(row, event_id, "sink_retry")
+                continue
+            if result not in (
+                None,
+                ApprovalDeliveryResult.DELIVERED,
+                ApprovalDeliveryResult.DUPLICATE_COMPLETE,
+            ):
+                await self._nack(row, event_id, "invalid_sink_result")
+                _logger.warning(
+                    "invalid approval notification result for %s: %r", event_id, result
+                )
+                continue
             acknowledged.append(event_id)
             _safe_audit(
                 self._audit_sink,
                 action="approval.notification.delivered",
                 target=notification.approval_id,
-                outcome="delivered",
+                outcome=(result or ApprovalDeliveryResult.DELIVERED).value,
             )
         if acknowledged:
             try:
@@ -289,6 +313,7 @@ class ApprovalNotificationDispatcher:
 
 
 __all__ = [
+    "ApprovalDeliveryResult",
     "ApprovalDispatcherConfig",
     "ApprovalNotification",
     "ApprovalNotificationDispatcher",

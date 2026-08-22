@@ -12,7 +12,7 @@ from collections.abc import Iterable
 from typing import Any
 
 from arcstore.approval_delivery import DurableApprovalDelivery
-from arcstore.approval_dispatcher import ApprovalNotification
+from arcstore.approval_dispatcher import ApprovalDeliveryResult, ApprovalNotification
 
 from arcgateway.delivery import DeliveryTarget
 from arcgateway.session import SessionRouter
@@ -58,12 +58,14 @@ class GatewayApprovalNotificationSink:
         # Production composition always supplies the shared backend above.
         self._seen: set[str] = set()
 
-    async def __call__(self, notification: ApprovalNotification) -> None:
+    async def __call__(self, notification: ApprovalNotification) -> ApprovalDeliveryResult:
+        lease = None
         if self._delivery is not None:
-            if not await self._delivery.claim(notification):
-                return
+            lease = await self._delivery.claim(notification)
+            if lease.owner_token is None:
+                return lease.result or ApprovalDeliveryResult.RETRY
         elif notification.event_id in self._seen:
-            return
+            return ApprovalDeliveryResult.DUPLICATE_COMPLETE
         try:
             await self._session_router.send(
                 self._target,
@@ -71,13 +73,13 @@ class GatewayApprovalNotificationSink:
                 agent_did=self._agent_did,
             )
         except BaseException:
-            if self._delivery is not None:
-                await self._delivery.release(notification)
+            if self._delivery is not None and lease is not None:
+                await self._delivery.release(notification, lease)
             raise
-        if self._delivery is not None:
-            await self._delivery.complete(notification)
-        else:
-            self._seen.add(notification.event_id)
+        if self._delivery is not None and lease is not None:
+            return await self._delivery.complete(notification, lease)
+        self._seen.add(notification.event_id)
+        return ApprovalDeliveryResult.DELIVERED
 
 
 class ApprovalNotificationFanout:
@@ -89,11 +91,13 @@ class ApprovalNotificationFanout:
     def add(self, sink: object) -> None:
         self._sinks.append(sink)
 
-    async def __call__(self, notification: ApprovalNotification) -> None:
+    async def __call__(self, notification: ApprovalNotification) -> ApprovalDeliveryResult:
         failures: list[BaseException] = []
+        results: list[ApprovalDeliveryResult] = []
         for sink in self._sinks:
             try:
-                await sink(notification)  # type: ignore[operator]
+                result = await sink(notification)  # type: ignore[operator]
+                results.append(result or ApprovalDeliveryResult.DELIVERED)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -102,6 +106,13 @@ class ApprovalNotificationFanout:
                 failures.append(exc)
         if failures:
             raise failures[0]
+        if ApprovalDeliveryResult.RETRY in results:
+            return ApprovalDeliveryResult.RETRY
+        if results and all(
+            result is ApprovalDeliveryResult.DUPLICATE_COMPLETE for result in results
+        ):
+            return ApprovalDeliveryResult.DUPLICATE_COMPLETE
+        return ApprovalDeliveryResult.DELIVERED
 
 
 __all__ = [
