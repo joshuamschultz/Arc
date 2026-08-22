@@ -1,11 +1,12 @@
 """FallbackModule — provider chain switching on failure."""
 
 import logging
+from collections.abc import AsyncIterator
 from typing import Any
 
 from arcllm.exceptions import ArcLLMConfigError
 from arcllm.modules.base import BaseModule
-from arcllm.types import LLMProvider, LLMResponse, Message, Tool
+from arcllm.types import Delta, LLMProvider, LLMResponse, Message, ResponseFormat, Tool
 
 logger = logging.getLogger(__name__)
 
@@ -81,3 +82,33 @@ class FallbackModule(BaseModule):
                     len(self._chain),
                 )
                 raise primary_error
+
+    async def invoke_stream(
+        self,
+        messages: list[Message],
+        tools: list[Tool] | None = None,
+        *,
+        response_format: ResponseFormat | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[Delta]:
+        """Fail over only before the first visible delta."""
+        providers: list[LLMProvider] = [self._inner]
+        try:
+            for provider_name in self._chain:
+                providers.append(_load_fallback_model(provider_name))
+            for index, provider in enumerate(providers):
+                try:
+                    seen = False
+                    async for delta in provider.invoke_stream(
+                        messages, tools, response_format=response_format, **kwargs
+                    ):
+                        seen = True
+                        yield delta
+                    return
+                except Exception:
+                    if seen or index == len(providers) - 1:
+                        raise
+                    logger.warning("Streaming provider failed before output; trying fallback")
+        finally:
+            for provider in providers[1:]:
+                await provider.close()

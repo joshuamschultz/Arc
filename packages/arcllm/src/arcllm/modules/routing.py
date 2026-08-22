@@ -33,7 +33,7 @@ import logging
 import re
 import threading
 from collections import OrderedDict
-from collections.abc import AsyncIterator, Callable, Iterable, Sequence
+from collections.abc import AsyncIterator, Callable, Iterable, Protocol, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -75,6 +75,20 @@ VALID_CONFIG_KEYS = {
     "embedding_base_url",
     "on_embedder_error",
     "lock_capacity",
+    "classification",
+    "residency",
+    "allowed_routes",
+    "required_capabilities",
+    "remaining_budget_usd",
+    "policy_version",
+}
+
+_CLASSIFICATION_RANK = {
+    "unclassified": 0,
+    "cui": 1,
+    "confidential": 2,
+    "secret": 3,
+    "top_secret": 4,
 }
 
 
@@ -91,6 +105,11 @@ class Route:
     provider: str
     model: str | None = None
     phrases: tuple[str, ...] = ()
+    classification_max: str = "top_secret"
+    residency: str | None = None
+    capabilities: tuple[str, ...] = ("tools", "streaming")
+    cost_per_1k: float = 0.0
+    latency_ms: float = 0.0
 
     def __post_init__(self) -> None:
         if not _ROUTE_NAME_RE.match(self.name):
@@ -100,6 +119,8 @@ class Route:
             )
         if not self.provider:
             raise ArcLLMConfigError(f"Route {self.name!r} is missing 'provider'")
+        if self.cost_per_1k < 0 or self.latency_ms < 0:
+            raise ArcLLMConfigError("route cost_per_1k and latency_ms must be non-negative")
 
     @property
     def label(self) -> str:
@@ -151,6 +172,11 @@ def parse_routes(
                 provider=provider,
                 model=model or None,
                 phrases=tuple(phrases),
+                classification_max=str(settings.get("classification_max", "top_secret")),
+                residency=settings.get("residency"),
+                capabilities=tuple(settings.get("capabilities", ("tools", "streaming"))),
+                cost_per_1k=float(settings.get("cost_per_1k", 0.0)),
+                latency_ms=float(settings.get("latency_ms", 0.0)),
             )
         )
 
@@ -170,6 +196,35 @@ class Decision:
     reason: str
     score: float | None = None
     runner_up: str | None = None
+
+
+@dataclass(frozen=True)
+class RoutingRequest:
+    """Non-sensitive routing facts supplied to a policy."""
+
+    classification: str = "unclassified"
+    residency: str | None = None
+    allowed_routes: frozenset[str] | None = None
+    required_capabilities: frozenset[str] = frozenset()
+    remaining_budget_usd: float | None = None
+    session_id: str | None = None
+
+
+@dataclass(frozen=True)
+class RoutingDecision:
+    """A policy result containing labels and hashes, never prompt content."""
+
+    route: str
+    reason: str
+    request_hash: str | None = None
+    policy_version: str = "native-v1"
+
+
+class RoutingPolicy(Protocol):
+    """Selects a route; provider invocation remains owned by RoutingModule."""
+
+    async def decide(self, request: RoutingRequest, targets: Sequence[Route]) -> RoutingDecision:
+        ...
 
 
 @dataclass
@@ -254,6 +309,7 @@ class RoutingModule(LLMProvider):
         config: dict[str, Any],
         routes: Sequence[Route],
         build_adapter: Callable[[Route], LLMProvider],
+        policy: RoutingPolicy | None = None,
     ) -> None:
         validate_config_keys(config, VALID_CONFIG_KEYS, "RoutingModule")
         if not routes:
@@ -266,6 +322,14 @@ class RoutingModule(LLMProvider):
 
         self._routes: dict[str, Route] = {r.name: r for r in routes}
         self._build_adapter = build_adapter
+        self._policy = policy
+        self._classification = str(config.get("classification", "unclassified")).lower()
+        self._residency = config.get("residency")
+        self._allowed_routes = (
+            frozenset(config["allowed_routes"]) if config.get("allowed_routes") else None
+        )
+        self._required_capabilities = frozenset(config.get("required_capabilities", ()))
+        self._remaining_budget = config.get("remaining_budget_usd")
         self._enforcement = resolve_enforcement(config)
 
         self._default = config.get("default_route") or names[0]
@@ -293,7 +357,7 @@ class RoutingModule(LLMProvider):
             )
 
         self._lock_capacity = int(config.get("lock_capacity", _DEFAULT_LOCK_CAPACITY))
-        self._tool_routes: OrderedDict[str, str] = OrderedDict()
+        self._tool_routes: OrderedDict[tuple[str, str] | str, str] = OrderedDict()
         self._tool_lock = threading.Lock()
 
         self._adapters: dict[str, LLMProvider] = {}
@@ -363,23 +427,26 @@ class RoutingModule(LLMProvider):
 
     # -- continuity lock ---------------------------------------------------
 
-    def _remember_tool_calls(self, ids: Iterable[str], route: str) -> None:
+    def _remember_tool_calls(self, ids: Iterable[str], route: str, session_id: str = "default") -> None:
         """Record that ``route`` asked for these tool calls."""
         with self._tool_lock:
             for tool_id in ids:
-                self._tool_routes[tool_id] = route
-                self._tool_routes.move_to_end(tool_id)
+                key: tuple[str, str] | str = tool_id if session_id == "default" else (session_id, tool_id)
+                self._tool_routes[key] = route
+                self._tool_routes.move_to_end(key)
             while len(self._tool_routes) > self._lock_capacity:
                 self._tool_routes.popitem(last=False)
 
-    def _locked_route(self, messages: Sequence[Message]) -> str | None:
+    def _locked_route(self, messages: Sequence[Message], session_id: str = "default") -> str | None:
         """The route owed this call's tool results, or None if no cycle is open."""
         answered = _trailing_tool_result_ids(messages)
         if not answered:
             return None
         with self._tool_lock:
             for tool_id in answered:
-                route = self._tool_routes.get(tool_id)
+                route = self._tool_routes.get(
+                    tool_id if session_id == "default" else (session_id, tool_id)
+                )
                 if route is not None and route in self._routes:
                     return route
         return None
@@ -516,6 +583,49 @@ class RoutingModule(LLMProvider):
 
         return Decision(route=self._default, reason="default")
 
+    def _eligible(self, tools: list[Tool] | None) -> set[str]:
+        """Apply fail-closed authorization, classification, residency and capability gates."""
+        level = _CLASSIFICATION_RANK.get(self._classification)
+        if level is None:
+            raise ArcLLMConfigError(f"Unknown classification {self._classification!r}")
+        eligible: set[str] = set()
+        for name, route in self._routes.items():
+            if self._allowed_routes is not None and name not in self._allowed_routes:
+                continue
+            if _CLASSIFICATION_RANK.get(route.classification_max, -1) < level:
+                continue
+            if route.residency is not None and self._residency not in (None, route.residency):
+                continue
+            required = set(self._required_capabilities)
+            if tools:
+                required.add("tools")
+            if not required.issubset(route.capabilities):
+                continue
+            if self._remaining_budget is not None and route.cost_per_1k > self._remaining_budget:
+                continue
+            eligible.add(name)
+        if not eligible:
+            raise ArcLLMConfigError("No route satisfies classification, residency, capability, or budget policy")
+        return eligible
+
+    async def _policy_decision(self, eligible: set[str], session_id: str) -> Decision | None:
+        if self._policy is None:
+            return None
+        request = RoutingRequest(
+            classification=self._classification,
+            residency=self._residency,
+            allowed_routes=frozenset(eligible),
+            required_capabilities=self._required_capabilities,
+            remaining_budget_usd=self._remaining_budget,
+            session_id=session_id,
+        )
+        result = await self._policy.decide(
+            request, tuple(route for name, route in self._routes.items() if name in eligible)
+        )
+        if result.route not in eligible:
+            raise ArcLLMConfigError(f"Policy selected unauthorized route {result.route!r}")
+        return Decision(route=result.route, reason=result.reason)
+
     def _annotate(self, span: trace.Span, decision: Decision, route: Route) -> None:
         """Put the whole decision on the span — including why, and what lost."""
         span.set_attribute("arcllm.routing.route", decision.route)
@@ -555,12 +665,36 @@ class RoutingModule(LLMProvider):
     ) -> LLMResponse:
         """Select a route and dispatch, then record the tool calls it made."""
         pin = kwargs.pop("route", None)
-        if self._single is not None and pin is None:
+        session_id = str(kwargs.pop("session_id", "default"))
+        self._classification = str(kwargs.pop("classification", self._classification)).lower()
+        self._residency = kwargs.pop("residency", self._residency)
+        self._allowed_routes = (
+            frozenset(kwargs.pop("allowed_routes")) if "allowed_routes" in kwargs else self._allowed_routes
+        )
+        self._required_capabilities = frozenset(kwargs.pop("required_capabilities", self._required_capabilities))
+        eligible = self._eligible(tools)
+        locked = self._locked_route(messages, session_id)
+        if locked is not None:
+            pin = None
+            forced = locked
+        else:
+            forced = None
+        if self._single is not None and pin is None and forced is None:
+            if self._single not in eligible:
+                raise ArcLLMConfigError(f"Selected route {self._single!r} is not permitted by policy")
             return await self.adapter_for(self._single).invoke(
                 messages, tools, response_format=response_format, **kwargs
             )
         with self._tracer.start_as_current_span("arcllm.routing") as span:
-            decision = await self._select(messages, pin)
+            decision = (
+                Decision(route=forced, reason="tool_continuity")
+                if forced
+                else await self._policy_decision(eligible, session_id)
+            )
+            if decision is None:
+                decision = await self._select(messages, pin)
+            if decision.route not in eligible:
+                raise ArcLLMConfigError(f"Selected route {decision.route!r} is not permitted by policy")
             route = self._routes[decision.route]
             self._annotate(span, decision, route)
 
@@ -568,7 +702,7 @@ class RoutingModule(LLMProvider):
                 messages, tools, response_format=response_format, **kwargs
             )
             if response.tool_calls:
-                self._remember_tool_calls([tc.id for tc in response.tool_calls], decision.route)
+                self._remember_tool_calls([tc.id for tc in response.tool_calls], decision.route, session_id)
             self._stamp(response, decision, route)
             return response
 
@@ -587,14 +721,30 @@ class RoutingModule(LLMProvider):
         would silently cost every routed deployment its token-by-token output.
         """
         pin = kwargs.pop("route", None)
-        if self._single is not None and pin is None:
+        session_id = str(kwargs.pop("session_id", "default"))
+        self._classification = str(kwargs.pop("classification", self._classification)).lower()
+        eligible = self._eligible(tools)
+        locked = self._locked_route(messages, session_id)
+        if locked is not None:
+            pin = None
+        if self._single is not None and pin is None and locked is None:
+            if self._single not in eligible:
+                raise ArcLLMConfigError(f"Selected route {self._single!r} is not permitted by policy")
             async for delta in self.adapter_for(self._single).invoke_stream(
                 messages, tools, response_format=response_format, **kwargs
             ):
                 yield delta
             return
         with self._tracer.start_as_current_span("arcllm.routing") as span:
-            decision = await self._select(messages, pin)
+            decision = (
+                Decision(route=locked, reason="tool_continuity")
+                if locked
+                else await self._policy_decision(eligible, session_id)
+            )
+            if decision is None:
+                decision = await self._select(messages, pin)
+            if decision.route not in eligible:
+                raise ArcLLMConfigError(f"Selected route {decision.route!r} is not permitted by policy")
             route = self._routes[decision.route]
             self._annotate(span, decision, route)
 
@@ -606,7 +756,7 @@ class RoutingModule(LLMProvider):
                     seen.append(delta.tool_call.id)
                 yield delta
             if seen:
-                self._remember_tool_calls(seen, decision.route)
+                self._remember_tool_calls(seen, decision.route, session_id)
 
     # -- lifecycle ---------------------------------------------------------
 
