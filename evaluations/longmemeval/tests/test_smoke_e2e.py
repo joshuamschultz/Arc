@@ -155,7 +155,7 @@ requires_git = pytest.mark.skipif(GIT is None, reason="git is not on PATH")
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def isolated_arc_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Point HOME, the Arc config root and arcstore at throwaway directories.
 

@@ -43,7 +43,7 @@ def run_dir(tmp_path: Path) -> Path:
     return path
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def isolated_arc_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Point HOME and the Arc config root at throwaway dirs.
 

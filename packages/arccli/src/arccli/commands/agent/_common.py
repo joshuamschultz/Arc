@@ -395,10 +395,8 @@ priority = 100
 
 [modules.tasks.config]
 # Mission Control (SPEC-056): a per-agent task list plus a shared team board.
-# nats_url mirrors messaging so assign_task can resolve @handles; data_dir empty
-# defers to arcstore.resolve_data_dir so this module and arcui share the store.
+# nats_url mirrors messaging so assign_task can resolve @handles.
 dispatch = true              # execute assigned tasks so workflow nodes progress by default
-data_dir = ""                # empty defers to arcstore.resolve_data_dir
 nats_url = "nats://127.0.0.1:4222"  # shared arcteam registry url (@handle resolution)
 default_max_attempts = 3     # retry ceiling (1 disables retry)
 retry_backoff_seconds = 30.0  # base exponential backoff
@@ -417,7 +415,6 @@ priority = 100
 # dead fleet-wide — the builder tools never register and nothing says why.
 workflows_dir = "workflows"  # bundle root, relative to the deployment config dir
 nats_url = "nats://127.0.0.1:4222"  # team bus; gives authoring a real agent roster
-data_dir = ""                # empty defers to arcstore.resolve_data_dir (shared store)
 max_workflows = 50           # quota, checked before any validation work (LLM10)
 max_nodes = 200              # per-definition node ceiling
 max_inline_text_length = 2000  # ceiling on inline free text a builder tool accepts
