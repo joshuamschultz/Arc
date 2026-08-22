@@ -54,6 +54,8 @@ class CapabilityImportStatus(StrEnum):
     REVIEW_READY = "review_ready"
     REJECTED = "rejected"
     MODIFIED = "modified"
+    PROMOTED = "promoted"
+    REVOKED = "revoked"
 
 
 @dataclass(frozen=True)
