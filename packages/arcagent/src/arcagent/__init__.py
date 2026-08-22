@@ -67,6 +67,10 @@ from arcagent.core.module_discovery import discover_modules, module_root
 from arcagent.core.prompt_context import build_prompt_resolver
 from arcagent.extension.inspect import inspect_extensions
 from arcagent.keys import KeyStatus, KeyStore, default_env_file
+from arcagent.knowledge import (
+    KnowledgeAccess, KnowledgeDocument, KnowledgeDraft, KnowledgeHit, KnowledgeRef,
+    PersonalKnowledgePort, PromotionSource, SharedKnowledgePort,
+)
 from arcagent.modules.scheduler.models import ScheduleEntry, ScheduleMetadata, generate_schedule_id
 from arcagent.modules.scheduler.store import ScheduleStore
 from arcagent.modules.session.identity_graph import IdentityGraph
@@ -150,12 +154,20 @@ __all__ = [
     "InstallReport",
     "KeyStatus",
     "KeyStore",
+    "KnowledgeAccess",
+    "KnowledgeDocument",
+    "KnowledgeDraft",
+    "KnowledgeHit",
+    "KnowledgeRef",
     "ModuleBusError",
+    "PersonalKnowledgePort",
+    "PromotionSource",
     "RootTokenBudget",
     "ScheduleEntry",
     "ScheduleMetadata",
     "ScheduleStore",
     "SecurityConfig",
+    "SharedKnowledgePort",
     "Tier",
     "ToolError",
     "ToolSpec",
