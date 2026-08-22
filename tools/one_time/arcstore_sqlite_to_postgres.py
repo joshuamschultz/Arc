@@ -353,6 +353,7 @@ def _map_row(source_table: str, raw: Mapping[str, Any]) -> MappedRow:
             "collection": collection,
             "key": key,
             "value": _json_object(raw.get("value"), field="value"),
+            "updated_at": _timestamp(raw.get("updated_at"), field="updated_at"),
         }
         return MappedRow(table, _mutable_row_key(collection, key), values, digest(values))
     if table == "inboxes":
@@ -638,11 +639,12 @@ class PostgresDestination:
             )
         elif table == "mutable_records":
             await connection.execute(
-                "INSERT INTO mutable_records(collection,key,value) "
-                "VALUES($1,$2,$3::jsonb) ON CONFLICT(collection,key) DO NOTHING",
+                "INSERT INTO mutable_records(collection,key,value,updated_at) "
+                "VALUES($1,$2,$3::jsonb,$4::timestamptz) ON CONFLICT(collection,key) DO NOTHING",
                 values["collection"],
                 values["key"],
                 canonical_json(values["value"]),
+                _database_timestamp(values["updated_at"], field="updated_at"),
             )
         elif table == "inboxes":
             await connection.execute(
@@ -731,7 +733,7 @@ class PostgresDestination:
         elif table == "mutable_records":
             collection, record_key = _parse_mutable_row_key(key)
             row = await connection.fetchrow(
-                "SELECT collection,key,value::text FROM mutable_records "
+                "SELECT collection,key,value::text,updated_at FROM mutable_records "
                 "WHERE collection=$1 AND key=$2",
                 collection,
                 record_key,
@@ -743,6 +745,7 @@ class PostgresDestination:
                     "collection": row["collection"],
                     "key": row["key"],
                     "value": json.loads(row["value"]),
+                    "updated_at": row["updated_at"].astimezone(UTC).isoformat(),
                 }
             )
         elif table in INBOX_TABLES:

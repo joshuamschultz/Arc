@@ -187,8 +187,7 @@ class PostgresBackend:
         params: list[Any] = [collection]
         statement = "SELECT value, updated_at FROM mutable_records WHERE collection=$1"
         if where:
-            params.append(_json(where))
-            statement += f" AND value @> ${len(params)}::jsonb"
+            statement += " AND " + " AND ".join(_where_clauses(where, params))
         async with self._require_pool().acquire() as connection:
             rows = await connection.fetch(statement, *params)
         return [_mutable_row(row) for row in rows]
@@ -338,11 +337,9 @@ class PostgresBackend:
                 f"to_jsonb(COALESCE(({expression} #>> ${path_ref}::text[])::numeric, 0) "
                 f"+ ${delta_ref}), true)"
             )
-        params.append(_json(where))
-        where_ref = len(params)
         statement = (
             f"UPDATE mutable_records SET value={expression}, updated_at=now() "  # noqa: S608
-            f"WHERE collection=$2 AND key=$3 AND value @> ${where_ref}::jsonb"
+            "WHERE collection=$2 AND key=$3 AND " + " AND ".join(_where_clauses(where, params))
         )
         async with self._require_pool().acquire() as connection:
             result = await connection.execute(statement, *params)
@@ -550,17 +547,18 @@ class PostgresBackend:
                 "SELECT pg_advisory_xact_lock(hashtext($1))",
                 collection + ":" + _json(absent_where),
             )
-        statement = (
-            "UPDATE mutable_records SET value=value || $1::jsonb, updated_at=now() "
-            "WHERE collection=$2 AND key=$3 AND value @> $4::jsonb"
+        statement = "UPDATE mutable_records SET value=value || $1::jsonb, updated_at=now() "
+        params: list[Any] = [_json(patch), collection, key]
+        statement += "WHERE collection=$2 AND key=$3 AND " + " AND ".join(
+            _where_clauses(where, params)
         )
-        params: list[Any] = [_json(patch), collection, key, _json(where)]
         if absent_where:
-            params.append(_json(absent_where))
             statement += (
-                f" AND NOT EXISTS (SELECT 1 FROM mutable_records m2 "  # noqa: S608
-                f"WHERE m2.collection=$2 "
-                f"AND m2.key<>$3 AND m2.value @> ${len(params)}::jsonb)"
+                " AND NOT EXISTS (SELECT 1 FROM mutable_records m2 "  # noqa: S608
+                "WHERE m2.collection=$2 "
+                "AND m2.key<>$3 AND "
+                + " AND ".join(_where_clauses(absent_where, params, value_column="m2.value"))
+                + ")"
             )
         result = await connection.execute(statement, *params)
         return str(result).endswith("1")
@@ -576,7 +574,21 @@ class PostgresBackend:
             raise ValueError(f"unknown ArcStore table: {table!r}")
 
 
-def _json(value: dict[str, Any]) -> str:
+def _where_clauses(
+    where: Mapping[str, Any], params: list[Any], *, value_column: str = "value"
+) -> list[str]:
+    """Compile FakeBackend-compatible dotted JSON equality predicates safely."""
+    clauses: list[str] = []
+    for path, expected in where.items():
+        params.extend([path.split("."), _json(expected)])
+        clauses.append(
+            f"{value_column} #> ${len(params) - 1}::text[] "
+            f"IS NOT DISTINCT FROM ${len(params)}::jsonb"
+        )
+    return clauses
+
+
+def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=True, separators=(",", ":"))
 
 

@@ -95,16 +95,17 @@ class MutableApprovalBackend(Protocol):
         self, collection: str, *, where: dict[str, Any] | None = None
     ) -> list[dict[str, Any]]: ...
 
-    async def update_if(
+    async def update_if_with_outbox(
         self,
         collection: str,
         key: str,
         patch: dict[str, Any],
         where: dict[str, Any],
         *,
+        event_id: str,
+        event: dict[str, Any],
         actor_did: str,
         sink: Any | None = None,
-        absent_where: dict[str, Any] | None = None,
     ) -> bool: ...
 
 
@@ -179,6 +180,9 @@ class ApprovalStore:
         request — the loser no-ops and returns None. ``grant`` (wire form) is set
         only on ``approved``.
         """
+        current = await self.get(approval_id)
+        if current is None:
+            return None
         patch: dict[str, Any] = {
             "status": status,
             "resolved_at": _now(),
@@ -187,11 +191,18 @@ class ApprovalStore:
         }
         if grant is not None:
             patch["grant"] = grant
-        won = await self._backend.update_if(
+        won = await self._backend.update_if_with_outbox(
             self._COLLECTION,
             approval_id,
             patch,
             where={"status": "pending"},
+            event_id=f"approval-resolved:{approval_id}:{status}",
+            event={
+                "approval_id": approval_id,
+                "agent_did": current.agent_did,
+                "status": status,
+                "tool": current.tool,
+            },
             actor_did=actor_did,
             sink=self._sink,
         )

@@ -140,3 +140,32 @@ async def test_concurrent_gate_resolution_has_one_winner(
     final = await tasks.get(task_id)
     assert final is not None
     assert final.metadata["gate_decision"] in {"approved", "rejected"}
+
+
+@pytest.mark.asyncio
+async def test_workflow_task_store_queries_by_nested_flow_run_id(
+    postgres_backend: ArcStoreBackend,
+) -> None:
+    tasks = WorkflowTaskStore(postgres_backend, actor_did=_ACTOR)
+    flow_run_id = f"workflow-query-{uuid4().hex}"
+    await tasks.create_batch(
+        [
+            Task(
+                id=f"matching-{uuid4().hex}",
+                title="matching workflow task",
+                creator_did=_ACTOR,
+                metadata={"flow_run_id": flow_run_id},
+            ),
+            Task(
+                id=f"other-{uuid4().hex}",
+                title="other workflow task",
+                creator_did=_ACTOR,
+                metadata={"flow_run_id": f"other-{uuid4().hex}"},
+            ),
+        ],
+        actor_did=_ACTOR,
+    )
+
+    rows = await tasks.query_by_flow_run(flow_run_id)
+
+    assert [item.metadata["flow_run_id"] for item in rows] == [flow_run_id]

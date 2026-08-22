@@ -12,6 +12,7 @@ from packages.arcstore.tests.inbox_conformance import (
     participant,
 )
 
+from arcstore.approvals import ApprovalStore, PendingApproval
 from arcstore.backends.base import ArcStoreBackend
 from arcstore.backends.postgres import PostgresBackend
 from arcstore.backends.postgres_inbox import PostgresInboxRepository
@@ -66,6 +67,73 @@ async def test_postgres_cas_serializes_cross_row_claim_guard(
 
     first, second = await asyncio.gather(claim("one"), claim("two"))
     assert first != second
+
+
+async def test_postgres_mutable_dotted_predicates_match_backend_contract(
+    postgres_backend: ArcStoreBackend,
+) -> None:
+    collection = f"dotted-{uuid4().hex}"
+    await postgres_backend.mutable_write(
+        collection,
+        "matching",
+        {"metadata": {"flow_run_id": "run-1", "owner": None}, "attempts": 0},
+        actor_did=_ACTOR,
+    )
+    await postgres_backend.mutable_write(
+        collection,
+        "other",
+        {"metadata": {"flow_run_id": "run-2", "owner": _ACTOR}, "attempts": 0},
+        actor_did=_ACTOR,
+    )
+
+    rows = await postgres_backend.mutable_query(
+        collection, where={"metadata.flow_run_id": "run-1", "metadata.owner": None}
+    )
+    assert [row["metadata"]["flow_run_id"] for row in rows] == ["run-1"]
+    assert await postgres_backend.update_if(
+        collection,
+        "matching",
+        {"status": "done"},
+        {"metadata.flow_run_id": "run-1"},
+        actor_did=_ACTOR,
+    )
+    assert await postgres_backend.update_if_increment(
+        collection,
+        "matching",
+        {"status": "settled"},
+        {"attempts": 1},
+        {"metadata.flow_run_id": "run-1", "status": "done"},
+        actor_did=_ACTOR,
+    )
+    assert not await postgres_backend.update_if(
+        collection,
+        "matching",
+        {"metadata": {"owner": _ACTOR}},
+        {"metadata.owner": None},
+        absent_where={"metadata.owner": _ACTOR},
+        actor_did=_ACTOR,
+    )
+
+
+async def test_postgres_approval_resolution_winner_enqueues_one_terminal_event(
+    postgres_backend: ArcStoreBackend,
+) -> None:
+    approval_id = f"approval-{uuid4().hex}"
+    store = ApprovalStore(postgres_backend)
+    await store.create(
+        PendingApproval(id=approval_id, agent_did=_ACTOR, tool="send", call_hash="hash")
+    )
+
+    approved, denied = await asyncio.gather(
+        store.resolve(approval_id, status="approved", actor_did="did:arc:human:one"),
+        store.resolve(approval_id, status="denied", actor_did="did:arc:human:two"),
+    )
+
+    winner = next(item for item in (approved, denied) if item is not None)
+    events = await postgres_backend.claim_outbox(f"approval-terminal-{uuid4().hex}")
+    terminal = [item for item in events if item["event_id"].startswith(f"approval-resolved:{approval_id}:")]
+    assert len(terminal) == 1
+    assert terminal[0]["event"]["status"] == winner.status
 
 
 async def test_postgres_outbox_create_claim_ack_and_retry(

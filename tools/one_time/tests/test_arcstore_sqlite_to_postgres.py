@@ -192,7 +192,7 @@ async def test_dry_run_is_read_only_and_reports_canonical_destination_tables(
 @pytest.mark.asyncio
 async def test_resume_and_digest_verification_are_idempotent(tmp_path: Path) -> None:
     source = tmp_path / "legacy.db"
-    _source_db(source)
+    identifiers = _source_db(source)
     destination = FakeDestination()
     first = await migrate(source, destination, batch_size=1)
     second = await migrate(source, destination, batch_size=1, resume=True)
@@ -200,7 +200,31 @@ async def test_resume_and_digest_verification_are_idempotent(tmp_path: Path) -> 
         first.tables["inbox_messages"]["destination_digest"]
         == first.tables["inbox_messages"]["source_digest"]
     )
+    assert (
+        first.tables["mutable_records"]["destination_digest"]
+        == first.tables["mutable_records"]["source_digest"]
+    )
     assert second.tables["llm_calls"]["migrated_count"] == 0
+    migrated = destination.rows["mutable_records"][
+        _mutable_row_key("tasks", identifiers["task"])
+    ]
+    assert migrated.values["updated_at"] == "2026-08-22T00:00:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_invalid_mutable_updated_at_fails_before_destination_write(tmp_path: Path) -> None:
+    source = tmp_path / "invalid-updated-at.db"
+    _source_db(source)
+    connection = sqlite3.connect(source)
+    connection.execute("UPDATE mutable_records SET updated_at='not-a-timestamp'")
+    connection.commit()
+    connection.close()
+    destination = FakeDestination()
+
+    with pytest.raises(MigrationError, match="updated_at must be an ISO-8601 timestamp"):
+        await migrate(source, destination)
+
+    assert destination.writes == 0
 
 
 @pytest.mark.asyncio
@@ -330,6 +354,7 @@ async def test_actual_postgres_migration_and_inbox_repository_readback(tmp_path:
         assert [message.message_id for message in messages.items] == [identifiers["message"]]
         mutable = await backend.mutable_read("tasks", identifiers["task"])
         assert mutable is not None and mutable["state"] == "ready"
+        assert mutable["updated_at"] == "2026-08-22T00:00:00+00:00"
         assert await backend.get_cursor(identifiers["cursor"]) == 42
     finally:
         await interrupted.close()

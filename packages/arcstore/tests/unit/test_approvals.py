@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import Literal
+
+import pytest
 
 from arcstore.approvals import ApprovalStore, PendingApproval
 from arcstore.backends.memory import FakeBackend
@@ -134,6 +137,47 @@ class TestApprovalStore:
         finally:
             await be.stop()
 
+    @pytest.mark.parametrize("status", ("approved", "denied", "expired"))
+    async def test_resolve_enqueues_one_terminal_notification(
+        self, tmp_path: Path, status: Literal["approved", "denied", "expired"]
+    ) -> None:
+        be = await _backend(tmp_path)
+        try:
+            store = ApprovalStore(be)
+            approval_id = f"req-{status}"
+            await store.create(_pending(approval_id))
+            await be.claim_outbox("created-worker")
+
+            resolved = await store.resolve(
+                approval_id, status=status, actor_did=_OPERATOR, resolved_by=_OPERATOR
+            )
+
+            assert resolved is not None
+            assert await be.claim_outbox("resolved-worker") == [
+                {
+                    "event_id": f"approval-resolved:{approval_id}:{status}",
+                    "approval_id": approval_id,
+                    "event": {
+                        "approval_id": approval_id,
+                        "agent_did": _AGENT,
+                        "status": status,
+                        "tool": "send_message",
+                    },
+                    "attempts": 1,
+                }
+            ]
+            assert (
+                await store.resolve(
+                    approval_id,
+                    status=status,
+                    actor_did=_OPERATOR,
+                    resolved_by=_OPERATOR,
+                )
+                is None
+            )
+        finally:
+            await be.stop()
+
     async def test_resolve_missing_returns_none(self, tmp_path: Path) -> None:
         be = await _backend(tmp_path)
         try:
@@ -165,5 +209,9 @@ class TestApprovalStore:
             assert len(winners) == 1
             final = await store.get("req1")
             assert final is not None and final.status in ("approved", "denied")
+            events = await be.claim_outbox("terminal-worker")
+            terminal = [event for event in events if event["event_id"].startswith("approval-resolved:")]
+            assert len(terminal) == 1
+            assert terminal[0]["event"]["status"] == final.status
         finally:
             await be.stop()
