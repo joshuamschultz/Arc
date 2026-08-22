@@ -32,6 +32,7 @@ async def test_postgres_runner_lease_has_one_winner_and_fences_stale_owner(
     # Replaying an old process's release must not clear the new holder's lease.
     assert not await winner.release(fence=first_fence)
     assert await loser.is_current(next_fence)
+    assert await loser.release()
 
 
 async def test_postgres_runner_lease_can_be_taken_after_expiry(
