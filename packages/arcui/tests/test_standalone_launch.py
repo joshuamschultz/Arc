@@ -26,6 +26,7 @@ What this test is NOT
 from __future__ import annotations
 
 import json
+import os
 import signal
 import socket
 import subprocess
@@ -81,6 +82,9 @@ def test_arc_ui_start_smoke() -> None:
     Single subprocess. Single test. Multiple assertions in lock-step so
     the boot cost is paid once.
     """
+    database_url = os.environ.get("ARCSTORE_TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("ARCSTORE_TEST_DATABASE_URL is required for the production launcher smoke")
     if _port_busy(_PORT):
         pytest.skip(
             f"port {_PORT} already in use — kill the running `arc ui start` "
@@ -101,6 +105,7 @@ def test_arc_ui_start_smoke() -> None:
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        env={**os.environ, "ARCSTORE_DATABASE_URL": database_url},
     )
     try:
         # 1. Port opens within the boot budget.
