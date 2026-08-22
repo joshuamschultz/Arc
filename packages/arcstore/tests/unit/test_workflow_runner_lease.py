@@ -38,9 +38,7 @@ async def test_expired_lease_can_be_taken_but_old_fence_is_invalid() -> None:
     old_fence = await old.acquire_or_renew()
     assert old_fence is not None
 
-    new = WorkflowRunnerLease(
-        backend, owner_id="new", clock=lambda: now + timedelta(seconds=61)
-    )
+    new = WorkflowRunnerLease(backend, owner_id="new", clock=lambda: now + timedelta(seconds=61))
     new_fence = await new.acquire_or_renew()
     assert new_fence is not None
     assert new_fence.token > old_fence.token

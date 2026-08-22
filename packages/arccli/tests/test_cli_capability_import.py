@@ -115,7 +115,9 @@ def test_import_stages_tool_and_skill_for_exact_agent_without_activation(
     assert payload["tools"] == ["imported_tool"]
     assert payload["skills"] == ["imported"]
     assert (ada / "capabilities/imports/.staging" / import_id / "tools/imported_tool.py").is_file()
-    assert (ada / "capabilities/imports/.staging" / import_id / "skills/imported/SKILL.md").is_file()
+    assert (
+        ada / "capabilities/imports/.staging" / import_id / "skills/imported/SKILL.md"
+    ).is_file()
     assert not (ada / "capabilities/tools/imported_tool.py").exists()
     assert not (bea / "capabilities/imports/.staging").exists()
 
@@ -130,7 +132,9 @@ def test_capability_alias_accepts_a_bounded_zip_from_stdin(
         "_resolve_target",
         lambda _agent: ("ada", agent_root, "did:arc:agent:ada"),
     )
-    monkeypatch.setattr(command.sys, "stdin", type("Input", (), {"buffer": BytesIO(archive.read_bytes())})())
+    monkeypatch.setattr(
+        command.sys, "stdin", type("Input", (), {"buffer": BytesIO(archive.read_bytes())})()
+    )
 
     resolved, args = resolve_command_and_args(["capability", "import", "-", "--json"])
     assert resolved is not None

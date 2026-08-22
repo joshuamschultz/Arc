@@ -17,7 +17,9 @@ async def test_postgres_runner_lease_has_one_winner_and_fences_stale_owner(
     first = WorkflowRunnerLease(postgres_backend, owner_id="gateway-a", clock=lambda: now)
     second = WorkflowRunnerLease(postgres_backend, owner_id="cli-b", clock=lambda: now)
 
-    won_first, won_second = await asyncio.gather(first.acquire_or_renew(), second.acquire_or_renew())
+    won_first, won_second = await asyncio.gather(
+        first.acquire_or_renew(), second.acquire_or_renew()
+    )
     assert (won_first is None) != (won_second is None)
     winner = first if won_first is not None else second
     loser = second if won_first is not None else first

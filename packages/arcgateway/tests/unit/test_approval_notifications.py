@@ -161,12 +161,13 @@ async def test_concurrent_delivery_non_owner_requests_outbox_retry_not_ack() -> 
     first = DurableApprovalDelivery(backend, sink_id="gateway-test")
     second = DurableApprovalDelivery(backend, sink_id="gateway-test")
 
-    first_lease, second_lease = await asyncio.gather(
-        first.claim(event), second.claim(event)
-    )
+    first_lease, second_lease = await asyncio.gather(first.claim(event), second.claim(event))
 
     assert sum(lease.owner_token is not None for lease in (first_lease, second_lease)) == 1
-    assert sum(lease.result is ApprovalDeliveryResult.RETRY for lease in (first_lease, second_lease)) == 1
+    assert (
+        sum(lease.result is ApprovalDeliveryResult.RETRY for lease in (first_lease, second_lease))
+        == 1
+    )
     duplicate = next(lease for lease in (first_lease, second_lease) if lease.owner_token is None)
     assert await first.complete(event, duplicate) is ApprovalDeliveryResult.RETRY
     assert (await first.records())[0]["state"] == "inflight"

@@ -233,9 +233,10 @@ async def test_streaming_batch_size_does_not_change_migration_digests(tmp_path: 
     one = await migrate(source, FakeDestination(), batch_size=1, dry_run=True)
     many = await migrate(source, FakeDestination(), batch_size=17, dry_run=True)
     assert one.destination["migration_id"] == many.destination["migration_id"]
-    assert one.tables["mutable_records"]["source_digest"] == many.tables["mutable_records"][
-        "source_digest"
-    ]
+    assert (
+        one.tables["mutable_records"]["source_digest"]
+        == many.tables["mutable_records"]["source_digest"]
+    )
 
 
 @pytest.mark.asyncio

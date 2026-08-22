@@ -124,13 +124,15 @@ class ApprovalNotificationHub:
                 maxlen=self._events.maxlen,
             )
             return True
-        return bool(await self._backend.update_if(
-            self._COLLECTION,
-            self._key(event_id),
-            {"state": "acked"},
-            {"sink_id": self._SINK_ID, "state": "unacked"},
-            actor_did="did:arc:ui:operator",
-        ))
+        return bool(
+            await self._backend.update_if(
+                self._COLLECTION,
+                self._key(event_id),
+                {"state": "acked"},
+                {"sink_id": self._SINK_ID, "state": "unacked"},
+                actor_did="did:arc:ui:operator",
+            )
+        )
 
     @classmethod
     def _key(cls, event_id: str) -> str:

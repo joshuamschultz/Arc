@@ -85,9 +85,7 @@ class StreamBridge:
             callable(getattr(type(adapter), "send_delta", None))
             or "send_delta" in getattr(adapter, "__dict__", {})
         )
-        incremental_sender = cast(
-            "Callable[[DeliveryTarget, Delta], Awaitable[None]]", send_delta
-        )
+        incremental_sender = cast("Callable[[DeliveryTarget, Delta], Awaitable[None]]", send_delta)
         if supports_edit:
             await self._maybe_send_typing(adapter, target)
             message_id = await self._send_placeholder(adapter, target)

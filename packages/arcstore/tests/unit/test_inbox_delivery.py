@@ -118,7 +118,10 @@ async def test_handoff_is_woken_then_only_recipient_can_resolve_idempotently() -
     )
     assert accepted.status is HandoffStatus.ACCEPTED
     assert accepted.resolved_by == recipient
-    assert await service.resolve_handoff(
-        handoff.handoff_id, recipient=recipient, status=HandoffStatus.ACCEPTED
-    ) == accepted
+    assert (
+        await service.resolve_handoff(
+            handoff.handoff_id, recipient=recipient, status=HandoffStatus.ACCEPTED
+        )
+        == accepted
+    )
     assert port.resolutions == [accepted, accepted]

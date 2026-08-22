@@ -21,11 +21,14 @@ _HUMAN_DID = "did:arc:test:human"
 
 
 class _DeliveryPort:
-    async def deliver_reply(self, _message: Message) -> None: pass
+    async def deliver_reply(self, _message: Message) -> None:
+        pass
 
-    async def wake_handoff(self, _handoff: Handoff) -> None: pass
+    async def wake_handoff(self, _handoff: Handoff) -> None:
+        pass
 
-    async def deliver_handoff_resolution(self, _handoff: Handoff) -> None: pass
+    async def deliver_handoff_resolution(self, _handoff: Handoff) -> None:
+        pass
 
 
 def _app() -> tuple[Starlette, AuthConfig, DurableInboxService]:

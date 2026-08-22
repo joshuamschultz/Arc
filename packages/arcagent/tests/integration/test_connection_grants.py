@@ -408,6 +408,7 @@ async def test_live_control_applies_grant_revoke_and_remove_to_a_running_agent(
     assert removed.activations[0].status == "applied"
     assert not any(tool in registry.tools for tool in _SERVED)
 
+
 async def test_unstarted_connector_module_reports_activation_pending() -> None:
     pending = await Connectors().reconcile()
 
