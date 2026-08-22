@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -292,6 +293,8 @@ async def react_loop(
             if state.stream_event is not None
             else await model.invoke(messages, tools=tools, **invoke_kwargs)
         )
+        if response is None:
+            return _halt_on_cancel(state)
         latency_ms = (time.time() - call_start) * 1000
 
         accumulate_usage(state, response)
@@ -441,7 +444,7 @@ async def _stream_model_call(
     tools: list[Any],
     state: RunState,
     invoke_kwargs: dict[str, Any],
-) -> arcllm.LLMResponse:
+) -> arcllm.LLMResponse | None:
     """Collect one provider stream while publishing only visible text fragments."""
     accumulator = arcllm.StreamAccumulator(
         model=str(getattr(model, "model_name", type(model).__name__))
@@ -449,8 +452,30 @@ async def _stream_model_call(
     if not hasattr(model, "invoke_stream"):
         return cast(arcllm.LLMResponse, await model.invoke(messages, tools=tools, **invoke_kwargs))
     accepted = False
+    iterator = model.invoke_stream(messages, tools=tools, **invoke_kwargs).__aiter__()
     try:
-        async for delta in model.invoke_stream(messages, tools=tools, **invoke_kwargs):
+        while True:
+            next_delta = asyncio.create_task(anext(iterator))
+            cancelled = asyncio.create_task(state.cancel_event.wait())
+            done, _ = await asyncio.wait(
+                {next_delta, cancelled}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if cancelled in done:
+                next_delta.cancel()
+                try:
+                    await next_delta
+                except asyncio.CancelledError:
+                    pass
+                return None
+            cancelled.cancel()
+            try:
+                await cancelled
+            except asyncio.CancelledError:
+                pass
+            try:
+                delta = next_delta.result()
+            except StopAsyncIteration:
+                break
             accepted = True
             accumulator.add(delta)
             if delta.text and state.stream_event is not None:
@@ -459,6 +484,8 @@ async def _stream_model_call(
         if accepted:
             raise
         return cast(arcllm.LLMResponse, await model.invoke(messages, tools=tools, **invoke_kwargs))
+    finally:
+        await iterator.aclose()
     return accumulator.build()
 
 

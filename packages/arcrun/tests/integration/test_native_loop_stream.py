@@ -78,6 +78,32 @@ class _ToolStreamModel(_NativeModel):
         yield arcllm.Delta(stop_reason="end_turn")
 
 
+class _BlockedStreamModel(_NativeModel):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = asyncio.Event()
+        self.closed = asyncio.Event()
+
+    async def invoke_stream(self, _messages: list[Any], **_kwargs: Any) -> AsyncIterator[arcllm.Delta]:
+        self.started.set()
+        try:
+            await asyncio.Event().wait()
+            yield arcllm.Delta(text="unreachable")
+        finally:
+            self.closed.set()
+
+
+class _TextThenBlockedModel(_BlockedStreamModel):
+    async def invoke_stream(self, _messages: list[Any], **_kwargs: Any) -> AsyncIterator[arcllm.Delta]:
+        try:
+            yield arcllm.Delta(text="visible")
+            self.started.set()
+            await asyncio.Event().wait()
+            yield arcllm.Delta(tool_call=arcllm.ToolCallDelta(index=0, id="late", name="echo"))
+        finally:
+            self.closed.set()
+
+
 @pytest.mark.asyncio
 async def test_native_text_arrives_before_provider_completion_and_is_monotonic() -> None:
     release = asyncio.Event()
@@ -126,3 +152,68 @@ async def test_collect_stream_matches_blocking_result_without_duplicate_stream_c
     assert streamed.content == blocking.content == "native text"
     assert streamed_model.stream_calls == 1
     assert streamed_model.invoke_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_cancel_closes_a_blocked_provider_before_its_first_delta() -> None:
+    model = _BlockedStreamModel()
+    counter = {"calls": 0}
+    handles: list[Any] = []
+    stream = await run_stream(
+        model=model,
+        capabilities=StaticProvider([_tool(counter)]),
+        system_prompt="sys",
+        task="task",
+        on_handle=handles.append,
+    )
+    drain = asyncio.create_task(collect(stream))
+    await asyncio.wait_for(model.started.wait(), timeout=1)
+    await handles[0].cancel("did:arc:operator", reason="stop")
+    result = await asyncio.wait_for(drain, timeout=1)
+    await asyncio.wait_for(model.closed.wait(), timeout=1)
+    assert result.completion_payload is not None
+    assert result.completion_payload["error"] == "cancelled"
+    assert counter["calls"] == 0
+
+
+@pytest.mark.asyncio
+async def test_cancel_after_text_closes_stream_before_tool_fragment_dispatch() -> None:
+    model = _TextThenBlockedModel()
+    counter = {"calls": 0}
+    handles: list[Any] = []
+    stream = await run_stream(
+        model=model,
+        capabilities=StaticProvider([_tool(counter)]),
+        system_prompt="sys",
+        task="task",
+        on_handle=handles.append,
+    )
+    iterator = stream.__aiter__()
+    first = await asyncio.wait_for(anext(iterator), timeout=1)
+    assert isinstance(first, TokenEvent)
+    await asyncio.wait_for(model.started.wait(), timeout=1)
+    await handles[0].cancel("did:arc:operator", reason="stop")
+    rest = [event async for event in iterator]
+    await asyncio.wait_for(model.closed.wait(), timeout=1)
+    assert counter["calls"] == 0
+    assert sum(isinstance(event, TurnEndEvent) for event in rest) == 1
+    assert isinstance(rest[-1], TurnEndEvent)
+
+
+@pytest.mark.asyncio
+async def test_cancelling_after_terminal_is_idempotent() -> None:
+    handles: list[Any] = []
+    counter = {"calls": 0}
+    events = [
+        event
+        async for event in await run_stream(
+            model=_NativeModel(),
+            capabilities=StaticProvider([_tool(counter)]),
+            system_prompt="sys",
+            task="task",
+            on_handle=handles.append,
+        )
+    ]
+    await handles[0].cancel("did:arc:operator")
+    await handles[0].cancel("did:arc:operator")
+    assert sum(isinstance(event, TurnEndEvent) for event in events) == 1
