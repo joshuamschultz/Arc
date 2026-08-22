@@ -13,6 +13,7 @@ from arcgateway.media_store import (
     MediaStore,
     MediaTooLargeError,
 )
+from arcgateway.session import build_session_key
 from starlette.datastructures import UploadFile
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -54,6 +55,8 @@ async def upload_attachment(request: Request) -> JSONResponse:
         )
     if not agent_did:
         return JSONResponse({"error": "agent not found"}, status_code=404)
+    owner_did = derive_viewer_did(token)
+    session_key = build_session_key(agent_did, owner_did)
     store_for = getattr(request.app.state, "attachment_store_for", None)
     store: MediaStore | None = store_for(agent_did) if store_for else None
     if store is None:
@@ -71,9 +74,9 @@ async def upload_attachment(request: Request) -> JSONResponse:
             declared_name=str(upload.filename),
             declared_mime=str(upload.content_type or "application/octet-stream"),
             kind="file",
-            owner_did=derive_viewer_did(token),
+            owner_did=owner_did,
             agent_did=agent_did,
-            session_key=request.headers.get("x-session-key", ""),
+            session_key=session_key,
         )
     except MediaTooLargeError as exc:
         return JSONResponse({"error": str(exc)}, status_code=413)

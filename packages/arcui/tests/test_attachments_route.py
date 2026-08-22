@@ -4,6 +4,7 @@ from pathlib import Path
 
 from arcgateway.attachment_scanner import ScanStatus
 from arcgateway.media_store import MediaStore
+from arcgateway.session import build_session_key
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
@@ -38,6 +39,8 @@ def test_upload_returns_opaque_manifest_and_derives_identity(tmp_path: Path) -> 
     assert body["owner_did"].startswith("did:")
     assert "/" not in body["attachment_id"]
     assert str(tmp_path) not in response.text
+    assert body["session_key"] == build_session_key(Entry.did, body["owner_did"])
+    assert body["session_key"] != "session-1"
 
 
 def test_upload_requires_auth_and_roster(tmp_path: Path) -> None:
