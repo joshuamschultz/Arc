@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import json
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -121,6 +122,54 @@ def test_upload_rejects_unsafe_archive_without_creating_staging(tmp_path: Path) 
     assert response.status_code == 422
     assert "unsafe" in response.json()["error"].lower()
     assert not (workspace / "capabilities" / "imports" / ".staging").exists()
+
+
+def test_list_skips_malformed_or_oversized_review_metadata(tmp_path: Path) -> None:
+    client, workspace, _ = _client(tmp_path)
+    response = client.post(
+        "/api/agents/ada/capability-imports",
+        headers={"Authorization": "Bearer viewer"},
+        files={
+            "file": (
+                "portable.zip",
+                _archive(("skills/imported/SKILL.md", _SKILL)),
+                "application/zip",
+            )
+        },
+    )
+    assert response.status_code == 201
+    import_id = response.json()["import_id"]
+    manifest_path = workspace / "capabilities" / "imports" / ".staging" / import_id / "import.json"
+
+    malformed = json.loads(manifest_path.read_text(encoding="utf-8"))
+    malformed["supplier_metadata"] = "do-not-return-this"
+    manifest_path.write_text(json.dumps(malformed), encoding="utf-8")
+    listed = client.get(
+        "/api/agents/ada/capability-imports",
+        headers={"Authorization": "Bearer viewer"},
+    )
+    assert listed.status_code == 200
+    assert listed.json() == {"imports": []}
+    assert "do-not-return-this" not in listed.text
+
+    malformed["supplier_metadata"] = {}
+    malformed["unexpected"] = "do-not-return-this"
+    manifest_path.write_text(json.dumps(malformed), encoding="utf-8")
+    listed = client.get(
+        "/api/agents/ada/capability-imports",
+        headers={"Authorization": "Bearer viewer"},
+    )
+    assert listed.status_code == 200
+    assert listed.json() == {"imports": []}
+    assert "do-not-return-this" not in listed.text
+
+    manifest_path.write_bytes(b"{" + (b"x" * (1024 * 1024 + 1)))
+    listed = client.get(
+        "/api/agents/ada/capability-imports",
+        headers={"Authorization": "Bearer viewer"},
+    )
+    assert listed.status_code == 200
+    assert listed.json() == {"imports": []}
 
 
 def test_upload_requires_existing_agent(tmp_path: Path) -> None:

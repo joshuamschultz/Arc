@@ -9,13 +9,12 @@ Returning a fake success here would turn review into an un-audited install.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import tempfile
 from pathlib import Path
-from typing import Any
 
 import arcagent
-from arcagent.modules.capability_import.errors import CapabilityImportError
 from starlette.datastructures import UploadFile
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -43,51 +42,32 @@ def _agent(request: Request, agent_id: str) -> tuple[Path, str] | None:
     return None
 
 
-def _safe_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
-    """Remove supplier metadata values before executable-review data leaves Arc."""
-    supplier = manifest.get("supplier_metadata")
-    public = dict(manifest)
-    public.pop("supplier_metadata", None)
-    public["supplier_metadata_keys"] = sorted(supplier) if isinstance(supplier, dict) else []
-    public["activation"] = "review_only"
-    return public
-
-
-def _safe_review_row(row: dict[str, Any]) -> dict[str, Any]:
-    return _safe_manifest(row)
-
-
-def _write_upload(upload: UploadFile) -> Path:
-    """Copy a multipart body to an OS temporary file with a hard byte cap."""
+async def _write_upload(upload: UploadFile) -> Path:
+    """Copy a multipart body to a temporary file without blocking the loop."""
     descriptor, raw_path = tempfile.mkstemp(prefix="arc-capability-import-", suffix=".zip")
     path = Path(raw_path)
+    target = None
     try:
         total = 0
-        with os.fdopen(descriptor, "wb") as target:
-            while True:
-                chunk = upload.file.read(_CHUNK_SIZE)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > _MAX_UPLOAD_BYTES:
-                    raise CapabilityImportError("uploaded archive exceeds configured limit")
-                target.write(chunk)
-            target.flush()
-            os.fsync(target.fileno())
-        path.chmod(0o600)
+        target = os.fdopen(descriptor, "wb")
+        descriptor = -1
+        while chunk := await upload.read(_CHUNK_SIZE):
+            total += len(chunk)
+            if total > _MAX_UPLOAD_BYTES:
+                raise arcagent.CapabilityImportError("uploaded archive exceeds configured limit")
+            await asyncio.to_thread(target.write, chunk)
+        await asyncio.to_thread(target.flush)
+        await asyncio.to_thread(os.fsync, target.fileno())
+        await asyncio.to_thread(path.chmod, 0o600)
         return path
     except Exception:
-        os.close(descriptor) if not _descriptor_closed(descriptor) else None
-        path.unlink(missing_ok=True)
+        await asyncio.to_thread(path.unlink, missing_ok=True)
         raise
-
-
-def _descriptor_closed(descriptor: int) -> bool:
-    try:
-        os.fstat(descriptor)
-    except OSError:
-        return True
-    return False
+    finally:
+        if target is not None:
+            await asyncio.to_thread(target.close)
+        elif descriptor >= 0:
+            await asyncio.to_thread(os.close, descriptor)
 
 
 async def list_imports(request: Request) -> JSONResponse:
@@ -97,8 +77,9 @@ async def list_imports(request: Request) -> JSONResponse:
     if resolved is None:
         return _error("agent_not_found", 404)
     workspace, _ = resolved
-    rows = arcagent.CapabilityImportService(workspace / "capabilities").list_reviews()
-    return JSONResponse({"imports": [_safe_review_row(row) for row in rows]})
+    service = arcagent.CapabilityImportService(workspace / "capabilities")
+    rows = await asyncio.to_thread(service.list_reviews)
+    return JSONResponse({"imports": [row.model_dump(mode="json") for row in rows]})
 
 
 async def upload_import(request: Request) -> JSONResponse:
@@ -122,18 +103,22 @@ async def upload_import(request: Request) -> JSONResponse:
     target = f"capability_import:{agent_id}"
     temporary: Path | None = None
     try:
-        temporary = _write_upload(upload)
+        temporary = await _write_upload(upload)
         limits = arcagent.CapabilityImportLimits()
-        intake = arcagent.intake_capability_archive(
-            temporary, workspace / "capabilities", limits=limits
+        capabilities_root = workspace / "capabilities"
+        service = arcagent.CapabilityImportService(capabilities_root)
+        intake = await asyncio.to_thread(
+            arcagent.intake_capability_archive,
+            temporary,
+            capabilities_root,
+            limits=limits,
         )
-        manifest = arcagent.CapabilityImportService(workspace / "capabilities").review(
-            intake, target_agent_did=target_did, limits=limits
+        manifest = await asyncio.to_thread(
+            service.review, intake, target_agent_did=target_did, limits=limits
         )
-        payload = _safe_manifest(arcagent.manifest_dict(manifest))
-        payload["status"] = "review_ready"
-        payload["import_id"] = manifest.import_id
-    except CapabilityImportError as exc:
+        review = await asyncio.to_thread(service.review_summary, manifest)
+        payload = review.model_dump(mode="json")
+    except arcagent.CapabilityImportError as exc:
         emit_mutation_audit(
             request,
             target=target,
@@ -153,7 +138,7 @@ async def upload_import(request: Request) -> JSONResponse:
         return _error("capability import unavailable", 503)
     finally:
         if temporary is not None:
-            temporary.unlink(missing_ok=True)
+            await asyncio.to_thread(temporary.unlink, missing_ok=True)
 
     emit_mutation_audit(
         request,

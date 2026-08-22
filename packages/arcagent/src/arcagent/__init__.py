@@ -78,11 +78,13 @@ from arcagent.knowledge import (
     SharedKnowledgePort,
 )
 from arcagent.modules.capability_import.archive import intake as intake_capability_archive
+from arcagent.modules.capability_import.errors import CapabilityImportError
 from arcagent.modules.capability_import.manifest import manifest_dict
 from arcagent.modules.capability_import.models import (
     CapabilityImportLimits,
     CapabilityImportManifest,
     CapabilityImportResult,
+    CapabilityImportReview,
     CapabilityImportStatus,
 )
 from arcagent.modules.capability_import.service import CapabilityImportService
@@ -150,9 +152,11 @@ __all__ = [
     "AttachmentFactory",
     "AuditChain",
     "Authorization",
+    "CapabilityImportError",
     "CapabilityImportLimits",
     "CapabilityImportManifest",
     "CapabilityImportResult",
+    "CapabilityImportReview",
     "CapabilityImportService",
     "CapabilityImportStatus",
     "CapabilityLoader",
