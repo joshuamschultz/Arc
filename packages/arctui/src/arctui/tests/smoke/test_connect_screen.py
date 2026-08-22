@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from arcstore.backends.memory import FakeBackend
 from arctrust.paths import config_file
 from textual.widgets import Button, Input, Label, OptionList
 
@@ -170,6 +171,27 @@ def agent_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return agent
 
 
+@pytest.fixture
+def state_backend() -> FakeBackend:
+    """One backend per test, shared by every connector verb in that test."""
+    return FakeBackend()
+
+
+async def _open_state_backend(backend: FakeBackend) -> FakeBackend:
+    """Return the test's captured state backend without using configured storage."""
+    return backend
+
+
+def _app(agent_dir: Path, backend: FakeBackend) -> ArcTUI:
+    """Build a TUI whose connector verbs share this test's state backend."""
+    return ArcTUI(
+        transport=None,
+        agent_label="acme_agent",
+        agent_dir=agent_dir,
+        state_opener=lambda: _open_state_backend(backend),
+    )
+
+
 def _arc_dir(agent_dir: Path) -> Path:
     """The deployment root — where connections, credentials and bundles live."""
     return agent_dir.parent.parent
@@ -278,7 +300,9 @@ async def test_connect_is_handled_inside_the_tui(
         assert consulted == []
 
 
-async def test_the_flow_installs_through_the_real_install_path(agent_dir: Path) -> None:
+async def test_the_flow_installs_through_the_real_install_path(
+    agent_dir: Path, state_backend: FakeBackend
+) -> None:
     """The modal reaches ``install_connector``, and the connection lands granted.
 
     The grant is the assertion that matters. A connection defined but handed to
@@ -288,7 +312,7 @@ async def test_the_flow_installs_through_the_real_install_path(agent_dir: Path) 
     """
     _write_bundle(agent_dir)
 
-    app = ArcTUI(transport=None, agent_label="acme_agent", agent_dir=agent_dir)
+    app = _app(agent_dir, state_backend)
     async with app.run_test() as pilot:
         screen = await _open_connect(pilot)
         await _fill_and_install(pilot, screen, plan_check=True)
@@ -302,11 +326,13 @@ async def test_the_flow_installs_through_the_real_install_path(agent_dir: Path) 
     assert _SENTINEL in env, "the credential belongs in the owner-only env file"
 
 
-async def test_the_credential_never_reaches_the_transcript(agent_dir: Path) -> None:
+async def test_the_credential_never_reaches_the_transcript(
+    agent_dir: Path, state_backend: FakeBackend
+) -> None:
     """A value typed into the masked field is absent from what the operator can read."""
     _write_bundle(agent_dir)
 
-    app = ArcTUI(transport=None, agent_label="acme_agent", agent_dir=agent_dir)
+    app = _app(agent_dir, state_backend)
     async with app.run_test() as pilot:
         transcript = pilot.app.query_one("#transcript", TranscriptView)
         screen = await _open_connect(pilot)
@@ -342,7 +368,9 @@ async def test_an_unmet_host_prerequisite_ends_the_flow_and_installs_nothing(
     assert not _env_file(agent_dir).exists()
 
 
-async def test_connections_lists_what_the_agent_already_has(agent_dir: Path) -> None:
+async def test_connections_lists_what_the_agent_already_has(
+    agent_dir: Path, state_backend: FakeBackend
+) -> None:
     """``/connections`` shows the deployment's accounts and who holds each one.
 
     The operator needs to see state, not only create it — and under deny-by-default
@@ -350,7 +378,7 @@ async def test_connections_lists_what_the_agent_already_has(agent_dir: Path) -> 
     """
     _write_bundle(agent_dir)
 
-    app = ArcTUI(transport=None, agent_label="acme_agent", agent_dir=agent_dir)
+    app = _app(agent_dir, state_backend)
     async with app.run_test() as pilot:
         screen = await _open_connect(pilot)
         await _fill_and_install(pilot, screen)

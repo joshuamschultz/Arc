@@ -20,13 +20,16 @@ and appear in no return value, no log line, and no exception message raised here
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
+from typing import Any
 
 import arcagent
 
 
-def open_connections() -> arcagent.Connections:
+def open_connections(
+    *, state_opener: Callable[[], Awaitable[Any]] | None = None
+) -> arcagent.Connections:
     """Resolve this deployment's connector world and bind it to the audit chain.
 
     There is no agent here: a connected account belongs to the deployment, and the
@@ -42,7 +45,9 @@ def open_connections() -> arcagent.Connections:
     """
     world = arcagent.resolve_deployment()
     return arcagent.Connections(
-        world, audit=arcagent.AuditChain.opened_by(lambda: _worm_sink(world))
+        world,
+        audit=arcagent.AuditChain.opened_by(lambda: _worm_sink(world)),
+        state_opener=state_opener,
     )
 
 

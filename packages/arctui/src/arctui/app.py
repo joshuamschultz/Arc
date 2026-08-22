@@ -38,6 +38,7 @@ Streaming:
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -74,6 +75,10 @@ class ArcTUI(App[None]):
         already resolved. Its NAME is who ``/connect`` grants a new connection
         to; nothing is written inside it. Without one the TUI has no agent to
         hand a connection to and says so.
+    state_opener:
+        Optional opener for the connection state backend. Production leaves this
+        unset and ``Connections`` opens the configured ArcStore backend; callers
+        that already own a backend can provide its async opener.
     """
 
     CSS = build_tcss()
@@ -94,6 +99,7 @@ class ArcTUI(App[None]):
         agent_label: str | None = None,
         gateway_label: str | None = None,
         agent_dir: Path | None = None,
+        state_opener: Callable[[], Awaitable[Any]] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -102,6 +108,7 @@ class ArcTUI(App[None]):
         self._agent_label = agent_label
         self._gateway_label = gateway_label
         self._agent_dir = agent_dir
+        self._state_opener = state_opener
         self._turns = 0
         self._transcript: TranscriptView | None = None
         self._activity: ActivityView | None = None
@@ -358,7 +365,7 @@ class ArcTUI(App[None]):
             )
             return None
         try:
-            return open_connections()
+            return open_connections(state_opener=self._state_opener)
         except arcagent.ExtensionError as exc:
             self._say(MessageRole.ERROR, exc.message)
             return None
