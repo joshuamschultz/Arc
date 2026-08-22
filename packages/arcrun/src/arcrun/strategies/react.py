@@ -7,7 +7,9 @@ import json
 import logging
 import os
 import time
-from typing import Any
+from typing import Any, cast
+
+import arcllm
 
 from arcrun._messages import (
     TextBlock,
@@ -285,7 +287,11 @@ async def react_loop(
         if state.turn_count == 0 and state.tool_choice is not None:
             invoke_kwargs["tool_choice"] = state.tool_choice
         call_start = time.time()
-        response = await model.invoke(messages, tools=tools, **invoke_kwargs)
+        response = (
+            await _stream_model_call(model, messages, tools, state, invoke_kwargs)
+            if state.stream_event is not None
+            else await model.invoke(messages, tools=tools, **invoke_kwargs)
+        )
         latency_ms = (time.time() - call_start) * 1000
 
         accumulate_usage(state, response)
@@ -427,6 +433,33 @@ def _extract_completion_payload(
             if isinstance(args, dict):
                 return dict(args), tc.name
     return None
+
+
+async def _stream_model_call(
+    model: Any,
+    messages: list[Any],
+    tools: list[Any],
+    state: RunState,
+    invoke_kwargs: dict[str, Any],
+) -> arcllm.LLMResponse:
+    """Collect one provider stream while publishing only visible text fragments."""
+    accumulator = arcllm.StreamAccumulator(
+        model=str(getattr(model, "model_name", type(model).__name__))
+    )
+    if not hasattr(model, "invoke_stream"):
+        return cast(arcllm.LLMResponse, await model.invoke(messages, tools=tools, **invoke_kwargs))
+    accepted = False
+    try:
+        async for delta in model.invoke_stream(messages, tools=tools, **invoke_kwargs):
+            accepted = True
+            accumulator.add(delta)
+            if delta.text and state.stream_event is not None:
+                state.stream_event("text", {"text": delta.text})
+    except AttributeError:
+        if accepted:
+            raise
+        return cast(arcllm.LLMResponse, await model.invoke(messages, tools=tools, **invoke_kwargs))
+    return accumulator.build()
 
 
 def accumulate_usage(state: RunState, response: Any) -> None:

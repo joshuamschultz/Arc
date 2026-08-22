@@ -145,3 +145,4 @@ class RunState:
     runaway_signature: str | None = None
     runaway_count: int = 0
     consecutive_tool_errors: int = 0
+    stream_event: Callable[[str, dict[str, Any]], None] | None = None

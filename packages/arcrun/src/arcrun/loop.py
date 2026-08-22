@@ -55,6 +55,7 @@ def _build_state(
     run_id: str | None = None,
     work_dir: Path | None = None,
     seal: RunSeal | None = None,
+    stream_event: Callable[[str, dict[str, Any]], None] | None = None,
 ) -> tuple[RunState, Sandbox]:
     """Shared setup for run() and run_async()."""
     # A caller (e.g. the task dispatcher) may pin the run id so it can link the
@@ -103,6 +104,7 @@ def _build_state(
         max_parallel=max_parallel,
         max_repeat=max_repeat,
         max_consecutive_errors=max_consecutive_errors,
+        stream_event=stream_event,
     )
 
     # SPEC-043 REQ-003/004 — deterministic resume. The registry is rebuilt from
@@ -160,6 +162,7 @@ async def run(
     work_dir: Path | None = None,
     seal: RunSeal | None = None,
     on_handle: Callable[[RunHandle], None] | None = None,
+    stream_event: Callable[[str, dict[str, Any]], None] | None = None,
 ) -> LoopResult:
     """Blocking entry point. Runs until task complete, a breaker trip, or resume.
 
@@ -198,6 +201,7 @@ async def run(
         run_id=run_id,
         work_dir=work_dir,
         seal=seal,
+        stream_event=stream_event,
     )
     if on_handle is not None:
         on_handle(handle)
@@ -318,6 +322,7 @@ async def run_async(
     run_id: str | None = None,
     work_dir: Path | None = None,
     seal: RunSeal | None = None,
+    stream_event: Callable[[str, dict[str, Any]], None] | None = None,
 ) -> RunHandle:
     """Non-blocking entry point. Returns handle for steering."""
     state, sandbox_obj = _build_state(
@@ -347,6 +352,7 @@ async def run_async(
         run_id=run_id,
         work_dir=work_dir,
         seal=seal,
+        stream_event=stream_event,
     )
 
     # ``create_task`` snapshots the current context, so binding the correlation

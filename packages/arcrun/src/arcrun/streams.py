@@ -47,6 +47,9 @@ if TYPE_CHECKING:
 class StreamEvent:
     """Base class for all stream events."""
 
+    sequence: int = field(default=0, kw_only=True)
+    run_id: str = field(default="", kw_only=True)
+
 
 @dataclass
 class TokenEvent(StreamEvent):
@@ -69,7 +72,6 @@ class ToolStartEvent(StreamEvent):
     """
 
     name: str
-    args: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -80,7 +82,8 @@ class ToolEndEvent(StreamEvent):
         result: The tool's return value.
     """
 
-    result: str = ""
+    name: str = ""
+    status: str = "completed"
 
 
 @dataclass
@@ -281,6 +284,10 @@ async def run_stream(
     # Queue bridges the synchronous EventBus callbacks into the async iterator
     queue: asyncio.Queue[StreamEvent | None] = asyncio.Queue()
 
+    def _on_stream_event(kind: str, data: dict[str, Any]) -> None:
+        if kind == "text":
+            queue.put_nowait(TokenEvent(text=str(data["text"])))
+
     def _on_event(event: Event) -> None:
         """Bridge EventBus events to stream queue.
 
@@ -291,22 +298,21 @@ async def run_stream(
             on_event(event)
         if event.type == "tool.start":
             name = str(event.data.get("name", ""))
-            args = dict(event.data.get("arguments", {}))
-            queue.put_nowait(ToolStartEvent(name=name, args=args))
+            queue.put_nowait(ToolStartEvent(name=name))
             # Emit tool_start UI event for observability
             _emit_ui_run_event(
                 reporter=ui_reporter,
                 event_type="tool_start",
-                data={"name": name, "args": args},
+                data={"name": name},
             )
         elif event.type == "tool.end":
-            result = str(event.data.get("result", ""))
-            queue.put_nowait(ToolEndEvent(result=result))
+            name = str(event.data.get("name", ""))
+            queue.put_nowait(ToolEndEvent(name=name))
             # Emit tool_end UI event for observability
             _emit_ui_run_event(
                 reporter=ui_reporter,
                 event_type="tool_end",
-                data={"result": result},
+                data={"name": name},
             )
 
     # Import here to avoid circular import at module load time
@@ -348,6 +354,7 @@ async def run_stream(
                 work_dir=work_dir,
                 seal=seal,
                 on_handle=on_handle,
+                stream_event=_on_stream_event,
             )
             loop_future.set_result(result)
         except Exception as exc:  # reason: fail-open — continue
@@ -376,10 +383,16 @@ async def _stream_generator(
     ui_reporter: Any | None,
 ) -> AsyncIterator[StreamEvent]:
     """Yield StreamEvents from the queue until None sentinel, then TurnEndEvent."""
+    sequence = 0
+    saw_token = False
     while True:
         item = await queue.get()
         if item is None:
             break
+        sequence += 1
+        item.sequence = sequence
+        item.run_id = stream_run_id
+        saw_token = saw_token or isinstance(item, TokenEvent)
         yield item
 
     # Await the background task to surface any exceptions
@@ -388,21 +401,24 @@ async def _stream_generator(
     loop_result = loop_future.result()
     content = loop_result.content or ""
 
-    # SPEC-043 §3.5 — streaming CUT. The prior synthetic word-split fabricated
+    # A strategy that does not reach the model streaming seam still exposes its
+    # final content as one correct fallback event.
     # per-word TokenEvents from already-complete content (fake progressive
     # tokens). For an agentic harness the deliverable is the output, not a typing
     # effect, so we emit the real final content as ONE block. The structured
     # events (tool start/end, turn end) and collect()/RunResult contract are
     # unchanged — one-shot consumers keep working. Real per-token streaming
     # stays only in ``stream_llm_response`` (out of loop, touches no gate).
-    if content:
-        yield TokenEvent(text=content)
+    if content and not saw_token:
+        sequence += 1
+        yield TokenEvent(text=content, sequence=sequence, run_id=stream_run_id)
         _emit_ui_run_event(
             reporter=ui_reporter,
             event_type="stream_token",
             data={"text": content, "stream_run_id": stream_run_id},
         )
 
+    sequence += 1
     turn_end = TurnEndEvent(
         final_text=content,
         turns=loop_result.turns,
@@ -411,6 +427,8 @@ async def _stream_generator(
         tokens_used=dict(loop_result.tokens_used),
         completion_payload=loop_result.completion_payload,
         completion_tool=loop_result.completion_tool,
+        sequence=sequence,
+        run_id=stream_run_id,
     )
     yield turn_end
 
