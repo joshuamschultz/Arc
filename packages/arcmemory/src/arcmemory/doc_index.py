@@ -1,6 +1,6 @@
 """Per-source hybrid document index + ``document_search`` (SPEC-073 COMP-006).
 
-A connected data source (Dropbox, a wiki, ...) gets its own **document pool** —
+A connected data source gets its own **document pool** —
 a scope isolated from the agent's memory-recall scope — so a search bounded to
 one source can never surface another source's chunks (LLM08). Indexing stores
 only the chunk's text + a pointer back to the original object; the raw file

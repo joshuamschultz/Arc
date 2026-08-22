@@ -457,7 +457,7 @@ async def memory_search(query: str, top_k: int = 5) -> str:
 
 @tool(
     name="document_search",
-    description="Search for text inside a connected document source (e.g. Dropbox).",
+    description="Search for text inside a connected document source.",
     classification="read_only",
     when_to_use=(
         "Find text inside a connected document source; pass source to scope the "

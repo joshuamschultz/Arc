@@ -426,7 +426,7 @@ class SourceMapping(BaseModel):
 class Provenance(BaseModel):
     """One source's claim on a canonical item (SPEC-073 COMP-011).
 
-    The same bytes arriving from two sources (Slack, Dropbox, ...) dedup into
+    The same bytes arriving from two sources dedup into
     ONE canonical item, but each source keeps its own ``classification`` --
     retrieval gates per-provenance, never on the item's highest label, so a
     stricter copy from one source cannot suppress a looser copy from another.

@@ -3,7 +3,7 @@
 A coarse folder/type catalog written as Entity+Fact — ``O(folders)`` writes,
 never ``O(objects)``. Per-file detail belongs in chunks (COMP-006); this is
 only the discovery-time map an agent uses to orient inside a blob source
-(Dropbox, S3, a file share, ...) before it goes looking for anything.
+(an object store, file share, or similar source) before it goes looking for anything.
 """
 
 from __future__ import annotations

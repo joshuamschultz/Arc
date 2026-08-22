@@ -1,6 +1,6 @@
 """Canonical item dedup + per-provenance classification gate (SPEC-073 COMP-011).
 
-Same bytes arriving from two sources (Slack, Dropbox, ...) dedup into ONE
+Same bytes arriving from two sources dedup into ONE
 canonical item keyed by content hash, but each source's provenance carries
 its own classification. Retrieval must gate PER-PROVENANCE, never on the
 item's highest label, so a stricter copy from one source can never suppress
