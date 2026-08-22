@@ -130,6 +130,10 @@ class TestBasePlatformAdapterContract:
         adapter, _, _ = _make_adapter()
         assert callable(getattr(adapter, "send_with_id", None))
 
+    def test_has_edit_message_method(self) -> None:
+        adapter, _, _ = _make_adapter()
+        assert callable(getattr(adapter, "edit_message", None))
+
 
 # ---------------------------------------------------------------------------
 # Token no-leak (mirroring test_slack_token_no_leak.py)

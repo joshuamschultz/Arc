@@ -22,7 +22,8 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
+from typing import cast
 
 from arcgateway.adapters._text import split_for_platform
 from arcgateway.delivery import DeliveryTarget
@@ -70,13 +71,23 @@ class StreamBridge:
         flood_disabled: bool = False
         message_id: str | None = None
         edit_count: int = 0
+        terminal = Delta(kind="done", is_final=True)
 
         # Progressive in-place editing is only possible when the adapter exposes
-        # edit_message (Telegram, Slack). Send-only transports (web, in-process)
-        # skip the placeholder and receive a single final message — sending a
-        # placeholder we can never edit would leave a dangling "thinking…" bubble
-        # beside the real reply (the duplicate-message bug).
+        # edit_message (Telegram, Slack, Mattermost). Send-only transports may
+        # expose the optional send_delta() capability; those receive ordered
+        # token and terminal frames instead of a placeholder/final duplicate.
         supports_edit = hasattr(adapter, "edit_message")
+        send_delta = getattr(adapter, "send_delta", None)
+        # ``MagicMock`` manufactures arbitrary attributes on getattr; only
+        # treat a declared/attached method as a real transport capability.
+        supports_incremental = callable(send_delta) and (
+            callable(getattr(type(adapter), "send_delta", None))
+            or "send_delta" in getattr(adapter, "__dict__", {})
+        )
+        incremental_sender = cast(
+            "Callable[[DeliveryTarget, Delta], Awaitable[None]]", send_delta
+        )
         if supports_edit:
             await self._maybe_send_typing(adapter, target)
             message_id = await self._send_placeholder(adapter, target)
@@ -84,6 +95,7 @@ class StreamBridge:
 
         async for delta in deltas:
             if delta.is_final:
+                terminal = delta
                 break
 
             if delta.kind != "token":
@@ -92,6 +104,13 @@ class StreamBridge:
 
             buffer.append(delta.content)
             accumulated_parts.append(delta.content)
+
+            if supports_incremental:
+                # The adapter owns its bounded queue/backpressure policy. Do
+                # not catch errors here: cancellation and queue pressure must
+                # reach the session runner rather than silently losing a token.
+                await incremental_sender(target, delta)
+                continue
 
             if not can_edit or flood_disabled or message_id is None:
                 continue
@@ -135,6 +154,17 @@ class StreamBridge:
                     "flood_disabled": flood_disabled,
                 },
             )
+
+        if supports_incremental:
+            # The executor's done sentinel is consumed above. Re-emit exactly
+            # one terminal frame through the send-only projection so consumers
+            # can close their stream without inventing a second final message.
+            await incremental_sender(target, terminal)
+            _audit(
+                "gateway.message.final_sent",
+                {"target": str(target), "text_len": len(accumulated)},
+            )
+            return
 
         await self._deliver_final(
             adapter,

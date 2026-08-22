@@ -31,6 +31,7 @@ CHECKS = (
             "-m",
             "pytest",
             "packages/arccli/tests/test_agent_streaming.py",
+            "packages/arccli/tests/test_agent_run_serve_chat.py",
             "packages/arccli/tests/test_agent_run_session_id.py",
         ),
     ),
@@ -43,7 +44,28 @@ CHECKS = (
             "packages/arcgateway/tests/integration/test_stream_flood_control.py",
             "packages/arcgateway/tests/platform/telegram/test_telegram_streaming.py",
             "packages/arcgateway/tests/platform/slack/test_dual_adapter_chat.py",
+            "packages/arcgateway/tests/platform/mattermost/test_mattermost_adapter.py",
+            "packages/arcgateway/tests/unit/test_in_process_adapter.py",
             "packages/arcgateway/tests/unit/test_web_adapter.py",
+        ),
+    ),
+    Check(
+        "tui-streaming",
+        (
+            "-m",
+            "pytest",
+            "packages/arctui/src/arctui/tests/smoke/test_arctui_streaming.py",
+            "packages/arctui/src/arctui/tests/unit/test_transcript.py",
+        ),
+    ),
+    Check(
+        "provider-routing-streaming",
+        (
+            "-m",
+            "pytest",
+            "packages/arcllm/tests/test_routing_policy_alpha.py",
+            "packages/arcllm/tests/test_stream_accumulator.py",
+            "packages/arcllm/tests/test_types.py",
         ),
     ),
     Check(
@@ -55,6 +77,9 @@ CHECKS = (
             "packages/arccli/src/arccli/commands/agent/run.py",
             "packages/arccli/src/arccli/commands/agent/chat.py",
             "packages/arcgateway/src/arcgateway/stream_bridge.py",
+            "packages/arcgateway/src/arcgateway/adapters/in_process.py",
+            "packages/arcgateway/src/arcgateway/adapters/mattermost/adapter.py",
+            "packages/arctui/src/arctui/app.py",
         ),
     ),
 )

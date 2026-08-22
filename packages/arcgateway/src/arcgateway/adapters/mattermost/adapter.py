@@ -320,8 +320,37 @@ class MattermostAdapter:
                 self._enqueue(target.chat_id, queue, chunk)
 
     async def send_with_id(self, target: DeliveryTarget, message: str) -> str | None:
-        await self.send(target, message)
-        return None
+        """Post immediately and return Mattermost's stable post id.
+
+        The regular ``send`` path remains queued so ordinary notifications
+        retain bounded backpressure. Streaming needs the id before the first
+        delta, therefore this opt-in capability performs one bounded REST
+        request and lets ``edit_message`` update that same post in place.
+        """
+        if not self._connected:
+            self._audit_drop(target.chat_id, "not_connected")
+            return None
+        return await self._post_message(target.chat_id, message, require_id=True)
+
+    async def edit_message(self, target: DeliveryTarget, message_id: str, text: str) -> None:
+        """Replace a streamed post through Mattermost's update endpoint."""
+        url = f"{self._server_url}/api/v4/posts/{message_id}"
+        headers = {
+            "Authorization": f"Bearer {self._bot_token}",
+            "Content-Type": "application/json",
+        }
+        body = {"id": message_id, "channel_id": target.chat_id, "message": text}
+        session = await self._ensure_http_session()
+        async with session.put(url, json=body, headers=headers) as resp:
+            if resp.status not in (200, 201):
+                _logger.warning(
+                    "MattermostAdapter: PUT /api/v4/posts/%s failed channel=%r status=%d",
+                    message_id,
+                    target.chat_id,
+                    resp.status,
+                )
+                self._audit_drop(target.chat_id, f"edit_http_{resp.status}")
+                raise RuntimeError(f"Mattermost post edit failed with HTTP {resp.status}")
 
     # Internal helpers
 
@@ -401,7 +430,13 @@ class MattermostAdapter:
             )
         return self._http_session
 
-    async def _post_message(self, channel_id: str, message: str) -> None:
+    async def _post_message(
+        self,
+        channel_id: str,
+        message: str,
+        *,
+        require_id: bool = False,
+    ) -> str | None:
         """POST message to Mattermost REST API; emit audit on result.
 
         Logs only response-status metadata on failure — the response body
@@ -418,6 +453,14 @@ class MattermostAdapter:
             session = await self._ensure_http_session()
             async with session.post(url, json=body, headers=headers) as resp:
                 if resp.status in (200, 201):
+                    post_id: str | None = None
+                    if require_id:
+                        payload = await resp.json()
+                        raw_id = payload.get("id") if isinstance(payload, dict) else None
+                        if isinstance(raw_id, str) and raw_id:
+                            post_id = raw_id
+                        else:
+                            raise RuntimeError("Mattermost post response did not include an id")
                     self._audit(
                         "gateway.message.delivered",
                         {
@@ -430,6 +473,7 @@ class MattermostAdapter:
                             },
                         },
                     )
+                    return post_id
                 else:
                     # NOTE: body deliberately NOT logged — see L-3 above.
                     _logger.warning(
@@ -438,6 +482,8 @@ class MattermostAdapter:
                         resp.status,
                     )
                     self._audit_drop(channel_id, f"http_{resp.status}")
+                    if require_id:
+                        raise RuntimeError(f"Mattermost post failed with HTTP {resp.status}")
         except Exception as exc:  # reason: fail-open — log + continue
             _logger.warning(
                 "MattermostAdapter: _post_message error channel=%r: %s",
@@ -445,6 +491,9 @@ class MattermostAdapter:
                 exc,
             )
             self._audit_drop(channel_id, "post_exception")
+            if require_id:
+                raise
+        return None
 
     async def _ws_loop(self) -> None:
         """Connect, read events, reconnect with 800ms -> x1.7 -> 15s backoff."""

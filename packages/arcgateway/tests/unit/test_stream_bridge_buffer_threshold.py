@@ -108,6 +108,19 @@ class _SendOnlyAdapter:
         return None
 
 
+class _IncrementalAdapter:
+    """Send-only transport that exposes ordered delta delivery."""
+
+    def __init__(self) -> None:
+        self.deltas: list[Delta] = []
+
+    async def send(self, target, message, *, reply_to=None) -> None:  # type: ignore[no-untyped-def]
+        raise AssertionError("incremental transport must not receive final send")
+
+    async def send_delta(self, target, delta: Delta) -> None:  # type: ignore[no-untyped-def]
+        self.deltas.append(delta)
+
+
 @pytest.mark.asyncio
 async def test_send_only_adapter_skips_placeholder_single_message() -> None:
     """Send-only adapters get exactly one message and no dangling placeholder."""
@@ -120,6 +133,20 @@ async def test_send_only_adapter_skips_placeholder_single_message() -> None:
     assert adapter.events == [("send", "hello!")], (
         f"expected a single final send and no placeholder; got {adapter.events}"
     )
+
+
+@pytest.mark.asyncio
+async def test_incremental_send_only_adapter_receives_ordered_tokens_and_terminal() -> None:
+    """Send-only adapters can opt into progressive ordered delta delivery."""
+    bridge = StreamBridge()
+    adapter = _IncrementalAdapter()
+    target = DeliveryTarget(platform="python", chat_id="abc", thread_id=None)
+
+    await bridge.consume(_stream(["he", "llo", "!"]), target, adapter)
+
+    assert [delta.content for delta in adapter.deltas] == ["he", "llo", "!", ""]
+    assert [delta.kind for delta in adapter.deltas] == ["token", "token", "token", "done"]
+    assert adapter.deltas[-1].is_final is True
 
 
 class _SplittingAdapter:

@@ -153,14 +153,32 @@ class PythonAdapter:
                 target.chat_id,
             )
             return
-        queue.put_nowait(
+        await self.send_delta(
+            target,
             Delta(
                 kind="token",
                 content=flatten_text(as_parts(parts)),
                 is_final=False,
                 turn_id=target.chat_id,
-            )
+            ),
         )
+
+    async def send_delta(self, target: DeliveryTarget, delta: Delta) -> None:
+        """Publish one ordered executor delta to the in-process caller.
+
+        ``StreamBridge`` uses this optional capability for send-only
+        transports. Awaiting the bounded queue preserves backpressure and
+        allows cancellation to interrupt a blocked producer; a token is never
+        silently discarded because the caller is slow.
+        """
+        queue = self._streams.get(target.chat_id)
+        if queue is None:
+            _logger.debug(
+                "PythonAdapter.send_delta: no stream for chat_id=%s (already closed?)",
+                target.chat_id,
+            )
+            return
+        await queue.put(delta)
 
     async def send_with_id(self, target: DeliveryTarget, message: str) -> str | None:
         await self.send(target, message)

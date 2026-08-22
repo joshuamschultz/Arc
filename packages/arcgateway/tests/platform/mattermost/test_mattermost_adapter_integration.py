@@ -76,10 +76,12 @@ class FakeMattermostServer:
         self._app = aiohttp.web.Application()
         self._app.router.add_route("GET", "/api/v4/websocket", self._ws_handler)
         self._app.router.add_route("POST", "/api/v4/posts", self._posts_handler)
+        self._app.router.add_route("PUT", "/api/v4/posts/{post_id}", self._edit_handler)
         self._runner: aiohttp.web.AppRunner | None = None
         self._site: aiohttp.web.TCPSite | None = None
         self._ws_clients: list[aiohttp.web.WebSocketResponse] = []
         self.recorded_posts: list[dict[str, Any]] = []
+        self.recorded_edits: list[dict[str, Any]] = []
         self.port: int = 0
 
     async def start(self) -> None:
@@ -144,6 +146,12 @@ class FakeMattermostServer:
         self.recorded_posts.append(body)
         fake_post = {"id": f"srv-post-{len(self.recorded_posts)}", **body}
         return aiohttp.web.json_response(fake_post, status=201)
+
+    async def _edit_handler(self, request: aiohttp.web.Request) -> aiohttp.web.Response:
+        body = await request.json()
+        body["id"] = request.match_info["post_id"]
+        self.recorded_edits.append(body)
+        return aiohttp.web.json_response(body, status=200)
 
 
 # ---------------------------------------------------------------------------
@@ -302,6 +310,30 @@ async def test_send_posts_to_rest_api(
     post = fake_mm_server.recorded_posts[0]
     assert post["channel_id"] == "ch-rest"
     assert post["message"] == "rest api test"
+
+
+async def test_streaming_post_returns_id_and_edits_in_place(
+    fake_mm_server: FakeMattermostServer,
+) -> None:
+    """Mattermost's post id makes progressive edits stable and duplicate-free."""
+    adapter, _, _ = _make_adapter_for_server(fake_mm_server)
+    await adapter.connect()
+    for _ in range(20):
+        if adapter._connected:
+            break
+        await asyncio.sleep(0.05)
+    assert adapter._connected
+
+    target = DeliveryTarget.parse("mattermost:ch-stream")
+    post_id = await adapter.send_with_id(target, "...")
+    assert post_id == "srv-post-1"
+    await adapter.edit_message(target, post_id, "hello")
+    await adapter.disconnect()
+
+    assert fake_mm_server.recorded_posts == [{"channel_id": "ch-stream", "message": "..."}]
+    assert fake_mm_server.recorded_edits == [
+        {"id": "srv-post-1", "channel_id": "ch-stream", "message": "hello"}
+    ]
 
 
 async def test_reconnect_on_transient_ws_close(

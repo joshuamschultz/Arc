@@ -97,6 +97,23 @@ async def test_send_pushes_token_delta_into_queue() -> None:
 
 
 @pytest.mark.asyncio
+async def test_send_delta_preserves_incremental_order_and_terminal() -> None:
+    """The optional streaming surface forwards deltas in arrival order."""
+    from arcgateway.delivery import DeliveryTarget
+
+    adapter = PythonAdapter()
+    queue: asyncio.Queue[Delta] = asyncio.Queue(maxsize=4)
+    adapter._streams["chat-1"] = queue
+    target = DeliveryTarget(platform="python", chat_id="chat-1", thread_id=None)
+
+    await adapter.send_delta(target, Delta(kind="token", content="a", turn_id="t"))
+    await adapter.send_delta(target, Delta(kind="token", content="b", turn_id="t"))
+    await adapter.send_delta(target, Delta(kind="done", is_final=True, turn_id="t"))
+
+    assert [queue.get_nowait().content for _ in range(3)] == ["a", "b", ""]
+
+
+@pytest.mark.asyncio
 async def test_send_to_unknown_chat_id_is_noop() -> None:
     """If no dispatch is in flight for the chat_id, send drops silently."""
     from arcgateway.delivery import DeliveryTarget
