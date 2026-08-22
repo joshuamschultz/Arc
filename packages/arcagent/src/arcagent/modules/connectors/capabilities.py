@@ -136,6 +136,8 @@ class Connectors:
                 registry.unregister(name)
         self._registered = ()
         self._registry = None
+        if self._state_store is not None:
+            await self._state_store.close()
         self._state_store = None
         _logger.info("Connectors capability stopped")
 
@@ -373,7 +375,7 @@ async def _open_state_store(
     and a suspension that cannot be read is a suspension that is not enforced.
     """
     try:
-        return await open_connection_state(state.config.data_dir)
+        return await open_connection_state(opener=state.arcstore_opener)
     except Exception as exc:  # reason: no baseline, no defence — attach nothing
         _refused(sink, state, "no_connection_state", f"{type(exc).__name__}: {exc}")
         return None

@@ -39,6 +39,7 @@ class RuntimeDependencies:
     egress_proxy: EgressProxy | None
     human_gate: Any
     agent_run_fn: Callable[..., Awaitable[Any]]
+    arcstore_opener: Callable[[], Awaitable[Any]] | None = None
 
     def select_for(
         self, configure: Callable[..., None], module_config: dict[str, Any]
@@ -86,6 +87,7 @@ class DependencyKey(Enum):
     HUMAN_GATE = "human_gate"
     OPERATOR_SIGNER = "operator_signer"
     AGENT_RUN_FN = "agent_run_fn"
+    ARCSTORE_OPENER = "arcstore_opener"
 
 
 class RuntimeModule(Protocol):

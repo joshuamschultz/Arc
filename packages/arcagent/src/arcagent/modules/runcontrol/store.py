@@ -8,16 +8,20 @@ the agent watcher and the operator surfaces always agree on cancel state.
 
 from __future__ import annotations
 
-from arcstore.backends.sqlite import SqliteBackend
+from collections.abc import Awaitable, Callable
+
+from arcstore.backends import ArcStoreBackend, open_backend
 from arcstore.cancellations import CancelStore
-from arcstore.config import store_db_path
 
 
-async def open_store(data_dir: str) -> CancelStore:
-    """Open the arcstore ``cancellations`` collection against the shared arcui.db."""
-    backend = SqliteBackend(store_db_path(data_dir or None))
-    await backend.start()
-    return CancelStore(backend)
+async def open_store(
+    *, opener: Callable[[], Awaitable[ArcStoreBackend]] | None = None
+) -> tuple[CancelStore, ArcStoreBackend]:
+    """Open the configured cancellations collection and return its owner."""
+    backend = await opener() if opener is not None else open_backend()
+    if opener is None:
+        await backend.start()
+    return CancelStore(backend), backend
 
 
 __all__ = ["open_store"]

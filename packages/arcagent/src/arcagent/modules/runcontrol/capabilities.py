@@ -156,4 +156,10 @@ async def runcontrol_watcher(_ctx: Any) -> None:
     await PeriodicRunner().run(_watch_tick, interval=_WATCH_TICK, on_error=on_error)
 
 
-__all__ = ["runcontrol_bind_agent", "runcontrol_watcher"]
+@hook(event="agent:shutdown", priority=100)
+async def runcontrol_shutdown(_ctx: Any) -> None:
+    """Close the module-owned ArcStore backend after cancellation drains."""
+    await _runtime.close_store()
+
+
+__all__ = ["runcontrol_bind_agent", "runcontrol_shutdown", "runcontrol_watcher"]

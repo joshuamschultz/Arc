@@ -1110,7 +1110,7 @@ class Connections:
         the same directory every surface resolves — a second spelling of the data
         dir would mean the agent reads a store no surface ever wrote to.
         """
-        return await open_connection_state(str(self._world.data_dir))
+        return await open_connection_state()
 
     def _plan(
         self, extension: str, instance: str, sink: AuditSink, *, tier: Tier | None = None

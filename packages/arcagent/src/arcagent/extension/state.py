@@ -35,7 +35,7 @@ Two invariants earn their own code:
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any, ClassVar, Literal, Protocol
 
@@ -132,6 +132,12 @@ class ConnectionStateStore:
     ) -> None:
         self._backend = backend
         self._sink = sink
+
+    async def close(self) -> None:
+        """Release the backend owned by this state-store instance."""
+        stop = getattr(self._backend, "stop", None)
+        if stop is not None:
+            await stop()
 
     async def create(self, record: ConnectionRecord, *, actor_did: str) -> ConnectionRecord:
         """Register a connection, returning the stored record.
@@ -274,7 +280,9 @@ class ConnectionStateStore:
             ) from exc
 
 
-async def open_connection_state(data_dir: str) -> ConnectionStateStore:
+async def open_connection_state(
+    *, opener: Callable[[], Awaitable[Any]] | None = None
+) -> ConnectionStateStore:
     """Open the ``connections`` collection against the shared operational db.
 
     arcstore is imported here rather than at module scope: it is an optional
@@ -282,11 +290,13 @@ async def open_connection_state(data_dir: str) -> ConnectionStateStore:
     class stays importable — and unit-testable against any conforming plane —
     on a machine where the data plane is not installed.
     """
-    from arcstore.backends.sqlite import SqliteBackend
-    from arcstore.config import store_db_path
+    if opener is not None:
+        backend = await opener()
+    else:
+        from arcstore.backends import open_backend
 
-    backend = SqliteBackend(store_db_path(data_dir or None))
-    await backend.start()
+        backend = open_backend()
+        await backend.start()
     return ConnectionStateStore(backend)
 
 

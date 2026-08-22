@@ -1406,6 +1406,12 @@ async def tasks_reliability_watcher(_ctx: Any) -> None:
         await asyncio.sleep(_RELIABILITY_TICK)
 
 
+@hook(event="agent:shutdown", priority=100)
+async def tasks_shutdown(_ctx: Any) -> None:
+    """Close the module-owned ArcStore backend after task work drains."""
+    await _runtime.close_store()
+
+
 __all__ = [
     "assign_task",
     "claim_task",
@@ -1420,5 +1426,6 @@ __all__ = [
     "tasks_bind_run_fn",
     "tasks_dispatch_loop",
     "tasks_reliability_watcher",
+    "tasks_shutdown",
     "update_task",
 ]

@@ -50,11 +50,6 @@ def _ensure_layout(data_dir: Path) -> dict[str, Path]:
     return layout
 
 
-def _db_path(data_dir: Path) -> Path:
-    """Per-instance SQLite file under the store dir (shared-nothing, NFR-8)."""
-    return data_dir / "store" / "arcstore.db"
-
-
 # ---------------------------------------------------------------------------
 # subcommands
 # ---------------------------------------------------------------------------
@@ -72,25 +67,22 @@ def _status(args: argparse.Namespace) -> None:
     data_dir = _resolve_dir(args)
     cfg = ArcStoreConfig()
     layout = _layout(data_dir)
-    db = _db_path(data_dir)
-    degraded = not db.exists()
+    degraded = False
     info = {
         "data_dir": str(data_dir),
-        "backend": cfg.backend,
+        "backend": "postgres",
         "enabled": cfg.enabled,
         "spool": str(layout["spool"]),
         "worm": str(layout["worm"]),
-        "store_db": str(db),
         "degraded": degraded,
     }
     if getattr(args, "json", False):
         _out(json.dumps(info, indent=2))
         return
     _out(f"arcstore status — data_dir: {data_dir}")
-    _out(f"  backend:  {cfg.backend}")
+    _out("  backend:  postgres")
     _out(f"  spool:    {layout['spool']}")
     _out(f"  worm:     {layout['worm']}")
-    _out(f"  store db: {db}")
     _out(f"  degraded: {degraded}")
 
 
@@ -158,7 +150,7 @@ async def _run_backfill(data_dir: Path, worm_pubkey: bytes | None) -> dict[str, 
     from arcstore.ingest import StoreIngest
 
     layout = _ensure_layout(data_dir)
-    backend = open_backend("sqlite", _db_path(data_dir))
+    backend = open_backend()
     await backend.start()
     try:
         ingest = StoreIngest(
@@ -191,7 +183,7 @@ async def _run_up(data_dir: Path, worm_pubkey: bytes | None) -> None:
     from arcstore.ingest import StoreIngest
 
     layout = _ensure_layout(data_dir)
-    backend = open_backend("sqlite", _db_path(data_dir))
+    backend = open_backend()
     await backend.start()
     ingest = StoreIngest(
         backend,

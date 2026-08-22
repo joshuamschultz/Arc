@@ -34,11 +34,10 @@ def _err(msg: str) -> None:
 
 
 async def _open_store() -> tuple[CancelStore, Any]:
-    """Open the shared arcstore ``cancellations`` directory (same arcui.db agents use)."""
-    from arcstore import store_db_path
-    from arcstore.backends.sqlite import SqliteBackend
+    """Open the configured arcstore cancellations directory."""
+    from arcstore.backends import open_backend
 
-    backend = SqliteBackend(store_db_path(None))
+    backend = open_backend()
     await backend.start()
     return CancelStore(backend), backend
 

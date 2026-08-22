@@ -256,6 +256,18 @@ class ModuleEntry(BaseModel):
     config: dict[str, Any] = {}
 
 
+class ArcStoreConnectionConfig(BaseModel):
+    """Non-secret ArcStore composition settings.
+
+    The credential is a vault coordinate only; the resolved value never enters
+    agent configuration or module tool arguments.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    database_credential_ref: str = ""
+
+
 class TelemetryConfig(BaseModel):
     """OpenTelemetry and logging configuration."""
 
@@ -675,6 +687,7 @@ class ArcAgentConfig(BaseModel):
     ui: UIConfig = UIConfig()
     budget: BudgetConfig = BudgetConfig()
     arcrun: ArcRunConfig = ArcRunConfig()
+    arcstore: ArcStoreConnectionConfig = Field(default_factory=ArcStoreConnectionConfig)
 
     @model_validator(mode="after")
     def _resolve_tier_capture_tool_io(self) -> ArcAgentConfig:

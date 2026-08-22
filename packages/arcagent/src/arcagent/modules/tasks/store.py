@@ -9,16 +9,20 @@ so the agent and the dashboard always agree on task state.
 
 from __future__ import annotations
 
-from arcstore.backends.sqlite import SqliteBackend
-from arcstore.config import store_db_path
+from collections.abc import Awaitable, Callable
+
+from arcstore.backends import ArcStoreBackend, open_backend
 from arcstore.tasks import TaskStore
 
 
-async def open_store(data_dir: str) -> TaskStore:
-    """Open the arcstore ``tasks`` collection against the shared arcui.db."""
-    backend = SqliteBackend(store_db_path(data_dir or None))
-    await backend.start()
-    return TaskStore(backend)
+async def open_store(
+    *, opener: Callable[[], Awaitable[ArcStoreBackend]] | None = None
+) -> tuple[TaskStore, ArcStoreBackend]:
+    """Open the configured tasks collection and return its backend owner."""
+    backend = await opener() if opener is not None else open_backend()
+    if opener is None:
+        await backend.start()
+    return TaskStore(backend), backend
 
 
 __all__ = ["open_store"]

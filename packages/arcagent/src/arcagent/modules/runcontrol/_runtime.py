@@ -35,6 +35,7 @@ class _State:
     workspace: Path
     telemetry: Any
     identity: AgentIdentity
+    arcstore_opener: Any = None
     # The live agent, captured from the ``agent:ready`` payload's bound ``run_fn``
     # (``run_fn.__self__``). The watcher reads the agent's tracked-run map to
     # resolve a cancel request to its live handle — arcagent exposes no public
@@ -44,6 +45,7 @@ class _State:
     # Built lazily by ensure_store() on first watcher tick (mirrors tasks). None
     # means "not built yet".
     store: Any = None
+    store_backend: Any = None
     # Serialises the lazy first-use build so two watcher ticks can't both open the
     # backend (check-then-act race → one orphaned connection).
     init_lock: asyncio.Lock = None  # type: ignore[assignment]  # reason: set in __post_init__
@@ -62,6 +64,7 @@ _state_var: contextvars.ContextVar[_State | None] = contextvars.ContextVar(
 def configure(
     *,
     config: dict[str, Any] | RuncontrolConfig | None = None,
+    arcstore_opener: Any = None,
     telemetry: Any = None,
     workspace: Path = Path("."),
     identity: AgentIdentity,
@@ -74,6 +77,7 @@ def configure(
     _state_var.set(
         _State(
             config=cfg,
+            arcstore_opener=arcstore_opener,
             workspace=workspace.resolve(),
             telemetry=telemetry,
             identity=identity,
@@ -94,7 +98,16 @@ async def ensure_store() -> None:
     async with st.init_lock:
         if st.store is not None:
             return
-        st.store = await open_store(st.config.data_dir)
+        st.store, st.store_backend = await open_store(opener=st.arcstore_opener)
+
+
+async def close_store() -> None:
+    """Release the module-owned ArcStore backend, if it was opened."""
+    st = state()
+    backend, st.store_backend = st.store_backend, None
+    st.store = None
+    if backend is not None:
+        await backend.stop()
 
 
 def state() -> _State:
@@ -123,4 +136,4 @@ def reset() -> None:
     _state_var.set(None)
 
 
-__all__ = ["bind", "configure", "ensure_store", "reset", "state"]
+__all__ = ["bind", "close_store", "configure", "ensure_store", "reset", "state"]

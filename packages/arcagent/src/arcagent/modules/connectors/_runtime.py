@@ -54,6 +54,7 @@ class _State:
     workspace: Path
     telemetry: Any
     identity: AgentIdentity
+    arcstore_opener: Any = None
     config_path: Path = Path("arcagent.toml")
     tool_registry: ToolRegistry | None = None
     operator_signer: Any = None
@@ -91,6 +92,7 @@ _state_var: contextvars.ContextVar[_State | None] = contextvars.ContextVar(
 def configure(
     *,
     config: dict[str, Any] | ConnectorsConfig | None = None,
+    arcstore_opener: Any = None,
     telemetry: Any = None,
     workspace: Path = Path("."),
     identity: AgentIdentity,
@@ -106,6 +108,7 @@ def configure(
     _state_var.set(
         _State(
             config=cfg,
+            arcstore_opener=arcstore_opener,
             workspace=workspace.resolve(),
             telemetry=telemetry,
             identity=identity,

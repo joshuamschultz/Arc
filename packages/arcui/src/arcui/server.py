@@ -21,10 +21,11 @@ from typing import Any
 
 from arcgateway import team_roster
 from arcstore.approvals import ApprovalStore
-from arcstore.backends.sqlite import SqliteBackend
+from arcstore.backends import open_backend
 from arcstore.cancellations import CancelStore
-from arcstore.config import resolve_data_dir
+from arcstore.config import ArcStoreConfig, resolve_data_dir
 from arcstore.tasks import TaskStore
+from pydantic import SecretStr
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
@@ -176,6 +177,8 @@ def create_app(
     allow_external_task_refs: bool = False,
     workflow_control_plane: Any | None = None,
     gate_control_plane: Any | None = None,
+    arcstore_config: ArcStoreConfig | None = None,
+    arcstore_secret: SecretStr | None = None,
 ) -> Starlette:
     """Build a Starlette application with all ArcUI routes.
 
@@ -224,12 +227,9 @@ def create_app(
     """
     auth = auth_config or AuthConfig()
 
-    # TaskStore writer (SPEC-056 Phase D, FR-7): a separate SqliteBackend
-    # instance pointed at the SAME `store/arcui.db` file `app.state.observe`
-    # reads — mutation routes never go through the read-side Observe plane.
-    task_store_backend = SqliteBackend(
-        (data_dir if data_dir is not None else resolve_data_dir()) / "store" / "arcui.db"
-    )
+    # TaskStore writer (SPEC-056 Phase D, FR-7): one configured backend shared
+    # by the mutation stores and the read-side Observe plane.
+    task_store_backend = open_backend(config=arcstore_config, secret=arcstore_secret)
 
     routes = [
         Route("/", _index),
@@ -519,7 +519,13 @@ def create_app(
     app.state.auth_config = auth
     # Observe plane (SPEC-026 FR-5): arcui's read-only mirror of the durable
     # operational record. Reads come from here, not a live push wire.
-    app.state.observe = Observe(data_dir=data_dir, workspace_dir=workspace_dir)
+    app.state.observe = Observe(
+        data_dir=data_dir,
+        workspace_dir=workspace_dir,
+        backend=task_store_backend,
+        arcstore_config=arcstore_config,
+        arcstore_secret=arcstore_secret,
+    )
     # TaskStore writer (SPEC-056 Phase D) — see `task_store_backend` above.
     app.state.task_store = TaskStore(task_store_backend)
     # Mechanical HITL approvals (SPEC-035) — same shared backend, "approvals"

@@ -8,16 +8,27 @@ agent, the dashboard, and the CLI always agree on which requests are pending.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+
 from arcstore.approvals import ApprovalStore
-from arcstore.backends.sqlite import SqliteBackend
-from arcstore.config import store_db_path
+from arcstore.backends import ArcStoreBackend, open_backend
+from arcstore.config import ArcStoreConfig
+from pydantic import SecretStr
 
 
-async def open_approval_store(data_dir: str = "") -> ApprovalStore:
-    """Open the arcstore ``approvals`` collection against the shared arcui.db."""
-    backend = SqliteBackend(store_db_path(data_dir or None))
-    await backend.start()
-    return ApprovalStore(backend)
+async def open_approval_store(
+    *,
+    opener: Callable[[], Awaitable[ArcStoreBackend]] | None = None,
+    config: ArcStoreConfig | None = None,
+    secret: SecretStr | str | None = None,
+) -> tuple[ApprovalStore, ArcStoreBackend]:
+    """Open the configured approvals collection and return its owner."""
+    backend = await opener() if opener is not None else open_backend(
+        config=config, secret=SecretStr(secret) if isinstance(secret, str) else secret
+    )
+    if opener is None:
+        await backend.start()
+    return ApprovalStore(backend), backend
 
 
 __all__ = ["open_approval_store"]

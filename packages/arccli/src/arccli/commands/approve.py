@@ -33,11 +33,10 @@ def _err(msg: str) -> None:
 
 
 async def _open_store() -> tuple[ApprovalStore, Any]:
-    """Open the shared arcstore ``approvals`` directory (same arcui.db agents use)."""
-    from arcstore import store_db_path
-    from arcstore.backends.sqlite import SqliteBackend
+    """Open the configured arcstore approvals directory."""
+    from arcstore.backends import open_backend
 
-    backend = SqliteBackend(store_db_path(None))
+    backend = open_backend()
     await backend.start()
     return ApprovalStore(backend), backend
 

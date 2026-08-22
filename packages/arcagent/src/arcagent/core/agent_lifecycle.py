@@ -313,6 +313,7 @@ def configure_module_runtimes(
         egress_proxy=egress_proxy,
         human_gate=agent._human_gate,
         agent_run_fn=agent.run_collected,
+        arcstore_opener=agent._arcstore_opener,
     )
     # Kept so a module enabled later in the session is configured from the same
     # menu as one enabled at startup (set_module_enabled).

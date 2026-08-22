@@ -42,6 +42,7 @@ class _State:
     config: WorkflowsConfig
     workspace: Path
     identity: AgentIdentity
+    arcstore_opener: Any = None
     telemetry: Any = None
     # arcteam's ``WorkflowControlPlane`` (COMP-021) — the ONE shared operation
     # set that the command line and the dashboard also call, so the three
@@ -50,6 +51,8 @@ class _State:
     # arcteam package. Injectable for tests; otherwise built lazily by
     # :func:`ensure_control_plane`. None means "not built yet".
     control_plane: Any = None
+    run_store_backend: Any = None
+    run_read_backends: list[Any] = field(default_factory=list)
     # arcteam's ``DefinitionStore`` — the read half. The control plane owns every
     # MUTATION; reads (list, inspect, version history) go straight to the store
     # because routing a read through a mutation surface buys nothing.
@@ -126,6 +129,7 @@ _hosted = _HostedRunner()
 def configure(
     *,
     config: dict[str, Any] | WorkflowsConfig | None = None,
+    arcstore_opener: Any = None,
     telemetry: Any = None,
     workspace: Path = Path("."),
     identity: AgentIdentity,
@@ -147,6 +151,7 @@ def configure(
     _state_var.set(
         _State(
             config=cfg,
+            arcstore_opener=arcstore_opener,
             workspace=workspace.resolve(),
             identity=identity,
             telemetry=telemetry,
@@ -185,8 +190,25 @@ async def ensure_control_plane() -> None:
         # sync configure().
         from arcagent.modules.workflows.run_store import open_run_store
 
-        runs = await open_run_store(str(st.config.data_dir or ""))
-        _build_control_plane(st, runs)
+        runs, backend = await open_run_store(opener=st.arcstore_opener)
+        try:
+            _build_control_plane(st, runs)
+        except Exception:
+            await backend.stop()
+            raise
+        st.run_store_backend = backend
+
+
+async def close_control_plane() -> None:
+    """Release the module-owned ArcStore backend, if it was opened."""
+    st = state()
+    backend, st.run_store_backend = getattr(st, "run_store_backend", None), None
+    st.control_plane = None
+    if backend is not None:
+        await backend.stop()
+    for read_backend in st.run_read_backends:
+        await read_backend.stop()
+    st.run_read_backends.clear()
 
 
 async def refresh_roster(nats_url: str = "") -> None:
@@ -402,6 +424,7 @@ def reset() -> None:
 
 __all__ = [
     "bind",
+    "close_control_plane",
     "configure",
     "ensure_control_plane",
     "refresh_roster",

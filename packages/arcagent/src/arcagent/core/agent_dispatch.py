@@ -20,7 +20,6 @@ from collections.abc import AsyncIterator, Callable
 from typing import TYPE_CHECKING, Any
 
 import arcrun
-from arcstore.spool import request_context
 
 from arcagent.capabilities.capability_registry import CapabilityRegistry
 from arcagent.capabilities.provider import WORKSPACE_ROOT, AgentCapabilityProvider, _Skill
@@ -368,6 +367,8 @@ async def _dispatch_stream_locked(
     # run's trace as the reads that follow it. arcrun reuses this id when handed in,
     # so the two halves share one timeline instead of assembly falling outside it.
     run_id = run_id or str(uuid.uuid4())
+    from arcstore.spool import request_context
+
     with request_context(run_id):
         run_ctx = await build_run_context(agent, input_text)
         telemetry, bus, model, provider, prompt, bridge = run_ctx

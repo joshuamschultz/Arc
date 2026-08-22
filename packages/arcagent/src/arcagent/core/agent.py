@@ -28,6 +28,7 @@ import logging
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from enum import Enum
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -174,6 +175,7 @@ class ArcAgent:
         self._capability_registry: Any = None
         self._capability_loader: Any = None
         self._vault_resolver: Any = None
+        self._arcstore_opener: Callable[[], Awaitable[Any]] | None = None
         # Overlay-aware prompt resolver, built once at capability setup and pinned
         # to the operator key (editable-system-prompts COMP-006). None until setup.
         self._prompt_resolver: Any = None
@@ -201,6 +203,7 @@ class ArcAgent:
         # SPEC-035 — per-session lethal-trifecta ledger + human-approval gate.
         self._capability_ledger: SessionCapabilityLedger | None = None
         self._human_gate: HumanGate | None = None
+        self._approval_channel: Any = None
         # Durable WORM sink for policy-decision audit records (SPEC-034). Holds
         # an exclusive lock for its lifetime; closed in shutdown().
         self._policy_worm: WormSink | None = None
@@ -393,6 +396,7 @@ class ArcAgent:
         # 1. Vault resolver (optional)
         if self._config.vault.backend:
             self._vault_resolver = create_vault_resolver(self._config)
+        self._arcstore_opener = self._make_arcstore_opener()
 
         # 2. Telemetry (uses placeholder DID until identity is ready)
         self._telemetry = AgentTelemetry(
@@ -466,6 +470,8 @@ class ArcAgent:
         # operator surface resolve — never agent chat, which could be forged.
         self._capability_ledger = SessionCapabilityLedger()
         gate_cfg = self._config.tools.human_gate
+        approval_channel = self._build_approval_channel(gate_cfg.timeout_seconds)
+        self._approval_channel = approval_channel
         human_gate = HumanGate(
             operator_signer=self._operator_signer,
             agent_did=self._identity.did,
@@ -476,7 +482,7 @@ class ArcAgent:
                 auto_approve_tools=frozenset(gate_cfg.auto_approve_tools),
             ),
             audit_sink=policy_sink,
-            channel=self._build_approval_channel(gate_cfg.timeout_seconds),
+            channel=approval_channel,
         )
         self._human_gate = human_gate
         self._tool_registry = ToolRegistry(
@@ -541,6 +547,29 @@ class ArcAgent:
             self._identity.did,
         )
 
+    def _make_arcstore_opener(self) -> Callable[[], Awaitable[Any]]:
+        """Compose the optional ArcStore backend without importing it in core."""
+        credential_ref = self._config.arcstore.database_credential_ref
+        resolver = self._vault_resolver
+        cached_secret: Any = None
+        secret_loaded = False
+
+        async def open_backend() -> Any:
+            nonlocal cached_secret, secret_loaded
+            from arcstore.backends import open_backend as factory
+            from arcstore.config import ArcStoreConfig
+            from pydantic import SecretStr
+
+            if not secret_loaded and credential_ref and resolver is not None:
+                value = await resolver.get_secret(credential_ref)
+                cached_secret = SecretStr(value) if value else None
+                secret_loaded = True
+            backend = factory(config=ArcStoreConfig(), secret=cached_secret)
+            await backend.start()
+            return backend
+
+        return open_backend
+
     def _build_approval_channel(self, ttl_seconds: float) -> ApprovalChannel | None:
         """Mechanical operator handoff for the human-approval gate (SPEC-035).
 
@@ -555,7 +584,10 @@ class ArcAgent:
             return None
         label = self._config.ui.display_name or self._config.agent.name
         return ArcStoreApprovalChannel(
-            store_opener=open_approval_store,
+            store_opener=partial(
+                open_approval_store,
+                opener=self._arcstore_opener,
+            ),
             id_factory=lambda: uuid.uuid4().hex[:16],
             agent_label=label,
             ttl_seconds=ttl_seconds,
@@ -1187,6 +1219,10 @@ class ArcAgent:
                         "awaiting tracked-run finalizers",
                         asyncio.gather(*finalizers, return_exceptions=True),
                     )
+                approval_channel = self._approval_channel
+                if approval_channel is not None:
+                    await bounded("closing approval store", approval_channel.close())
+                    self._approval_channel = None
                 delivery_streams = list(self._delivery_stream_tasks)
                 for task in delivery_streams:
                     task.cancel()

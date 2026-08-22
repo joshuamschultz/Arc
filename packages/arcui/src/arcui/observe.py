@@ -18,10 +18,11 @@ from pathlib import Path
 from typing import Any, cast
 
 from arcstore import query as store_query
-from arcstore.backends import open_backend
-from arcstore.config import resolve_data_dir
+from arcstore.backends import ArcStoreBackend, open_backend
+from arcstore.config import ArcStoreConfig, resolve_data_dir
 from arcstore.ingest import StoreIngest
 from arcstore.tasks import MutableTaskBackend, TaskStore
+from pydantic import SecretStr
 
 from arcui.observe_stats import (
     compute_cost_efficiency,
@@ -138,7 +139,7 @@ def _build_spawn_tree(edges: list[dict[str, Any]], root_did: str | None) -> dict
 class Observe:
     """arcui's read-only view of the durable operational record.
 
-    Owns a per-instance SQLite mirror and the ingest task that keeps it current
+    Owns a per-instance ArcStore mirror and the ingest task that keeps it current
     by tailing the shared spool + WORM files. Lifecycle is managed by the server
     lifespan (``start``/``stop``); all reads are synchronous request/response.
     """
@@ -147,7 +148,9 @@ class Observe:
         self,
         *,
         data_dir: Path | None = None,
-        backend: str = "sqlite",
+        backend: ArcStoreBackend | None = None,
+        arcstore_config: ArcStoreConfig | None = None,
+        arcstore_secret: SecretStr | None = None,
         workspace_dir: Path | None = None,
     ) -> None:
         base = data_dir if data_dir is not None else resolve_data_dir()
@@ -155,7 +158,8 @@ class Observe:
         # Backend selected by name via the factory — Observe only ever depends on
         # the StorageBackend Protocol, so switching storage (Phase 5 config) does
         # not touch this read plane.
-        self._backend = open_backend(backend, base / "store" / "arcui.db")
+        self._owns_backend = backend is None
+        self._backend = backend or open_backend(config=arcstore_config, secret=arcstore_secret)
         # workspace_dir enables the arcskill candidate-store + skills-WORM scan
         # (SPEC-054 REQ-120); None keeps the ingest on spool + audit WORM only.
         self._ingest = StoreIngest(
@@ -184,7 +188,8 @@ class Observe:
     async def stop(self) -> None:
         """Stop tailing and release the mirror."""
         await self._ingest.stop()
-        await self._backend.stop()
+        if self._owns_backend:
+            await self._backend.stop()
 
     async def refresh(self) -> None:
         """Force a one-shot ingest scan (used by tests / on-demand reads)."""
@@ -248,8 +253,7 @@ class Observe:
         mutable-plane methods aren't on the shared ``StorageBackend`` Protocol
         yet (SPEC-032 migration — see ``arcstore.tasks`` docstring), so the
         backend is cast to the narrow ``MutableTaskBackend`` Protocol
-        ``TaskStore`` actually needs; at runtime it's the same ``SqliteBackend``
-        that implements both.
+        ``TaskStore`` actually needs; the configured backend implements both.
         """
         await self._ensure()
         store = TaskStore(cast(MutableTaskBackend, self._backend))

@@ -582,26 +582,31 @@ async def workflow_request_signature(workflow_id: str = "", reason: str = "") ->
         return _errors(issue(field="workflow_id", error=f"workflow '{workflow_id}' not found"))
     try:
         from arcstore.approvals import ApprovalStore, PendingApproval
-        from arcstore.backends.sqlite import SqliteBackend
-        from arcstore.config import store_db_path
+        from arcstore.backends import open_backend
 
-        backend = SqliteBackend(store_db_path(st.config.data_dir or None))
-        await backend.start()
-        approval = await ApprovalStore(backend).create(
-            PendingApproval(
-                id=f"wfsign_{uuid.uuid4().hex[:12]}",
-                agent_did=st.identity.did,
-                agent_label=workflow_id,
-                tool="workflow_sign",
-                legs=[],
-                call_hash=bundle.content_hash,
-                arguments={
-                    "workflow_id": workflow_id,
-                    "version": str(bundle.definition.version),
-                    "reason": _text(reason, "reason")[:200],
-                },
+        if st.arcstore_opener is not None:
+            backend = await st.arcstore_opener()
+        else:
+            backend = open_backend()
+            await backend.start()
+        try:
+            approval = await ApprovalStore(backend).create(
+                PendingApproval(
+                    id=f"wfsign_{uuid.uuid4().hex[:12]}",
+                    agent_did=st.identity.did,
+                    agent_label=workflow_id,
+                    tool="workflow_sign",
+                    legs=[],
+                    call_hash=bundle.content_hash,
+                    arguments={
+                        "workflow_id": workflow_id,
+                        "version": str(bundle.definition.version),
+                        "reason": _text(reason, "reason")[:200],
+                    },
+                )
             )
-        )
+        finally:
+            await backend.stop()
     except _TOOL_ERRORS as exc:
         return _errors(issue(field="workflow_id", error=f"could not raise the request: {exc}"))
     return json.dumps(
@@ -755,7 +760,9 @@ async def _run_store(st: _runtime._State) -> Any:
     from arcagent.modules.workflows.run_store import open_run_store
 
     try:
-        return await open_run_store(str(st.config.data_dir or ""))
+        store, _backend = await open_run_store(opener=st.arcstore_opener)
+        st.run_read_backends.append(_backend)
+        return store
     except Exception:  # reason: a read tool reports absence, never crashes
         _logger.warning("workflow run store unavailable", exc_info=True)
         return None
@@ -944,6 +951,12 @@ async def workflows_capture_tool_tags(ctx: Any) -> None:
         _tool_tags_map[name] = tuple(getattr(entry, "capability_tags", ()) or ())
 
 
+@hook(event="agent:shutdown", priority=100)
+async def workflows_shutdown(_ctx: Any) -> None:
+    """Close the module-owned ArcStore backend after workflow work drains."""
+    await _runtime.close_control_plane()
+
+
 __all__ = [
     "workflow_add_node",
     "workflow_cancel_run",
@@ -958,4 +971,5 @@ __all__ = [
     "workflow_set_channel",
     "workflow_set_trigger",
     "workflows_capture_tool_tags",
+    "workflows_shutdown",
 ]

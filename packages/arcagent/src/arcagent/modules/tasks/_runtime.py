@@ -47,6 +47,7 @@ class _State:
     workspace: Path
     telemetry: Any
     identity: AgentIdentity
+    arcstore_opener: Any = None
     # The config-resolved OPERATOR signer (audit authority) — signs the live
     # messenger's ``message.sent`` WORM audit chain (SEC-F1), never the agent
     # DID seed, never an ephemeral key. None only in test paths that inject a
@@ -62,6 +63,7 @@ class _State:
     # crash or silently build a useless, disconnected in-memory registry).
     registry: Any = None
     store: Any = None
+    store_backend: Any = None
     # arcteam ``MessagingService`` used by ``assign_task`` to notify the
     # assignee (SDD §5, Phase C) — injectable for tests, otherwise built
     # lazily by ensure_store() over the same shared backend as ``registry``.
@@ -125,6 +127,7 @@ _state_var: contextvars.ContextVar[_State | None] = contextvars.ContextVar(
 def configure(
     *,
     config: dict[str, Any] | TasksConfig | None = None,
+    arcstore_opener: Any = None,
     telemetry: Any = None,
     workspace: Path = Path("."),
     identity: AgentIdentity,
@@ -150,6 +153,7 @@ def configure(
     _state_var.set(
         _State(
             config=cfg,
+            arcstore_opener=arcstore_opener,
             workspace=ws,
             telemetry=telemetry,
             identity=identity,
@@ -179,7 +183,7 @@ async def ensure_store() -> None:
     async with st.init_lock:
         if st.store is not None:
             return
-        store = await open_store(st.config.data_dir)
+        store, backend = await open_store(opener=st.arcstore_opener)
         if st.registry is None and st.config.nats_url:
             if st.operator_signer is None:
                 raise RuntimeError(
@@ -194,6 +198,16 @@ async def ensure_store() -> None:
         # Publish the store last: no tool observes a set ``store`` until the
         # live services (when built) are also in place.
         st.store = store
+        st.store_backend = backend
+
+
+async def close_store() -> None:
+    """Release the module-owned ArcStore backend, if it was opened."""
+    st = state()
+    backend, st.store_backend = st.store_backend, None
+    st.store = None
+    if backend is not None:
+        await backend.stop()
 
 
 async def _build_live_services(
@@ -252,4 +266,4 @@ def reset() -> None:
     _state_var.set(None)
 
 
-__all__ = ["bind", "configure", "ensure_store", "reset", "state"]
+__all__ = ["bind", "close_store", "configure", "ensure_store", "reset", "state"]

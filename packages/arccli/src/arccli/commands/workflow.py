@@ -256,12 +256,11 @@ async def _resolve_control_plane(
         The plane and an ``aclose`` coroutine factory that releases the sqlite
         backend; a CLI process must not leak the handle between subcommands.
     """
-    from arcstore import store_db_path
-    from arcstore.backends.sqlite import SqliteBackend
+    from arcstore.backends import open_backend
     from arcteam.workflow.runner import build_workflow_runner
     from arcteam.workflow.stores import WorkflowRunStore
 
-    backend = SqliteBackend(store_db_path(None))
+    backend = open_backend()
     await backend.start()
     sink = _audit_sink()
     owners, narrator = await _team_bindings(arc_dir)

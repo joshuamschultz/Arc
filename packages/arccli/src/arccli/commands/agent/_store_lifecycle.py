@@ -88,9 +88,8 @@ async def _try_start_ingest(
         from arcstore.backends import open_backend
         from arcstore.ingest import StoreIngest
 
-        (data_dir / "store").mkdir(parents=True, exist_ok=True)
         (data_dir / "worm").mkdir(parents=True, exist_ok=True)
-        backend = open_backend(config.backend, data_dir / "store" / "arcstore.db")
+        backend = open_backend(config=config)
         await backend.start()
         ingest = StoreIngest(
             backend,

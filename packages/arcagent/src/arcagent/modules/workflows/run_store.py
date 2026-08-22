@@ -14,16 +14,20 @@ refusing every call and the run-history tools reporting no runner.
 
 from __future__ import annotations
 
-from arcstore.backends.sqlite import SqliteBackend
-from arcstore.config import store_db_path
+from collections.abc import Awaitable, Callable
+
+from arcstore.backends import ArcStoreBackend, open_backend
 from arcteam.workflow.stores import WorkflowRunStore
 
 
-async def open_run_store(data_dir: str) -> WorkflowRunStore:
-    """Open the workflow run plane against the shared arcui.db."""
-    backend = SqliteBackend(store_db_path(data_dir or None))
-    await backend.start()
-    return WorkflowRunStore(backend)
+async def open_run_store(
+    *, opener: Callable[[], Awaitable[ArcStoreBackend]] | None = None
+) -> tuple[WorkflowRunStore, ArcStoreBackend]:
+    """Open the configured workflow run plane and return its owner."""
+    backend = await opener() if opener is not None else open_backend()
+    if opener is None:
+        await backend.start()
+    return WorkflowRunStore(backend), backend
 
 
 __all__ = ["open_run_store"]

@@ -20,6 +20,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 
 from arcstore.approvals import ApprovalStore, PendingApproval
+from arcstore.backends import ArcStoreBackend
 from arctrust.policy import ApprovalGrant, grant_from_wire
 
 from arcagent.tools.human_gate import ApprovalRequest
@@ -54,7 +55,7 @@ class ArcStoreApprovalChannel:
         self,
         store: ApprovalStore | None = None,
         *,
-        store_opener: Callable[[], Awaitable[ApprovalStore]] | None = None,
+        store_opener: Callable[[], Awaitable[tuple[ApprovalStore, ArcStoreBackend]]] | None = None,
         id_factory: Callable[[], str],
         agent_label: str = "",
         poll_interval_seconds: float = 1.0,
@@ -63,6 +64,7 @@ class ArcStoreApprovalChannel:
         if (store is None) == (store_opener is None):
             raise ValueError("provide exactly one of store or store_opener")
         self._store = store
+        self._backend: ArcStoreBackend | None = None
         self._store_opener = store_opener
         self._open_lock = asyncio.Lock()
         self._id_factory = id_factory
@@ -79,8 +81,15 @@ class ArcStoreApprovalChannel:
             raise RuntimeError("approval channel has neither store nor opener")
         async with self._open_lock:
             if self._store is None:
-                self._store = await opener()
+                self._store, self._backend = await opener()
         return self._store
+
+    async def close(self) -> None:
+        """Release the lazily opened backend after active approvals finish."""
+        backend, self._backend = self._backend, None
+        self._store = None
+        if backend is not None:
+            await backend.stop()
 
     async def __call__(self, request: ApprovalRequest) -> ApprovalGrant | None:
         store = await self._ensure_store()

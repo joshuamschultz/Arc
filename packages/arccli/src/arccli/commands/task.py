@@ -33,7 +33,7 @@ from arccli.commands._shared import print_table as _print_table
 from arccli.commands._shared import write as _out
 
 if TYPE_CHECKING:
-    from arcstore.backends.sqlite import SqliteBackend
+    from arcstore.backends import ArcStoreBackend
     from arcstore.tasks import Task, TaskStore
 
 _PRIORITIES = ("low", "medium", "high", "critical")
@@ -86,20 +86,16 @@ def _audit_sink(data_dir: Path) -> Any:
     )
 
 
-async def _open_store(data_dir: Path, *, mutable: bool) -> tuple[TaskStore, SqliteBackend]:
+async def _open_store(data_dir: Path, *, mutable: bool) -> tuple[TaskStore, ArcStoreBackend]:
     """Open the shared arcstore TaskStore seam. ``mutable`` wires the audit sink.
 
-    ``store_db_path`` is the single locator (ARCH-2) for the SAME tasks db the
-    agents' ``tasks`` module and arcui read/write — NOT
-    ``arccli.commands.store._db_path`` (``store/arcstore.db``), the unrelated
-    ``arc store`` command's file — so a task created here is immediately
-    visible to agents and the arcui kanban.
+    The configured backend is the same one the agents' ``tasks`` module and
+    arcui read/write, so a task created here is immediately visible to both.
     """
-    from arcstore import store_db_path
-    from arcstore.backends.sqlite import SqliteBackend
+    from arcstore.backends import open_backend
     from arcstore.tasks import TaskStore
 
-    backend = SqliteBackend(store_db_path(data_dir))
+    backend = open_backend()
     await backend.start()
     sink = _audit_sink(data_dir) if mutable else None
     return TaskStore(backend, sink=sink), backend

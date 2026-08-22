@@ -181,10 +181,9 @@ async def _default_runner_factory(*, tier: str, key_path: Path) -> WorkflowRunne
             "arcteam API."
         )
 
-    from arcstore.backends.sqlite import SqliteBackend
-    from arcstore.config import store_db_path
+    from arcstore.backends import open_backend
 
-    backend = SqliteBackend(store_db_path(None))
+    backend = open_backend()
     await backend.start()
     owners, narrator = await _team_bindings(key_path)
     runner = build_workflow_runner(
