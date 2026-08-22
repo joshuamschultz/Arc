@@ -91,6 +91,13 @@ def manifest_dict(manifest: CapabilityImportManifest) -> dict[str, Any]:
     ) | {"review_digest": manifest.review_digest}
 
 
+def review_digest(manifest: CapabilityImportManifest) -> str:
+    """Recompute the digest over reviewed metadata, excluding the digest field."""
+    payload = manifest_dict(manifest)
+    payload.pop("review_digest", None)
+    return hashlib.sha256(canonical_json(payload)).hexdigest()
+
+
 def cyclonedx_bom(manifest: CapabilityImportManifest) -> dict[str, Any]:
     """Generate a minimal CycloneDX BOM that inventories every staged file."""
     return {

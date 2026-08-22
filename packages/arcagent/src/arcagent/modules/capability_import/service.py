@@ -9,7 +9,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import mkdtemp
 
-from arctrust import AuditEvent, AuditSink, Signer, approve, emit, pin_key
+from arctrust import (
+    AuditEvent,
+    AuditSink,
+    Signer,
+    approve,
+    emit,
+    load_validators,
+    persist_validators,
+    pin_key,
+)
 from pydantic import ValidationError
 
 from arcagent.capabilities.artifact_signing import write_signature_with_signer
@@ -18,6 +27,7 @@ from arcagent.capabilities.capability_signing import revoke as revoke_capability
 from arcagent.modules.capability_import.ledger import ImportLedger
 from arcagent.modules.capability_import.manifest import (
     build_manifest,
+    review_digest,
     verify_manifest,
     write_evidence,
 )
@@ -49,7 +59,7 @@ _MANIFEST_FIELDS = frozenset(
 
 
 class CapabilityImportService:
-    """Create review evidence and track drift without signing or activation."""
+    """Create review evidence, promote signed capabilities, and track drift."""
 
     def __init__(self, capabilities_root: Path, *, audit_sink: AuditSink | None = None) -> None:
         self._root = Path(capabilities_root)
@@ -200,16 +210,26 @@ class CapabilityImportService:
         row = self._ledger.get(manifest.import_id)
         if row is None or row.get("status") != CapabilityImportStatus.REVIEW_READY.value:
             raise ValueError("capability import is not review-ready")
+        if (
+            row.get("review_digest") != manifest.review_digest
+            or review_digest(manifest) != manifest.review_digest
+        ):
+            raise ValueError("capability import manifest no longer matches review")
         if not verify_manifest(manifest, staging_dir):
             self._ledger.set(manifest.import_id, CapabilityImportStatus.MODIFIED)
             raise ValueError("capability import changed after review")
 
+        final_targets = self._target_paths(manifest, self._root)
+        for path in final_targets:
+            _reject_symlinked_parents(path, self._root)
+        if self._root.is_symlink():
+            raise ValueError("capability root may not be a symlink")
+        validators_before = load_validators(config_path)
         temporary = Path(mkdtemp(prefix=f"promotion-{manifest.import_id}-", dir=self._root))
         targets = self._target_paths(manifest, temporary)
         moved: list[Path] = []
         try:
             self._stage_signed_files(manifest, staging_dir, temporary, signer, operator_did)
-            final_targets = self._target_paths(manifest, self._root)
             if any(
                 path.exists() or path.with_name(path.name + ".arcsig").exists()
                 for path in final_targets
@@ -232,8 +252,11 @@ class CapabilityImportService:
                     timestamp=datetime.now(UTC).isoformat(),
                 )
         except Exception:
-            for path in reversed(moved):
-                path.unlink(missing_ok=True)
+            try:
+                persist_validators(config_path, validators_before)
+            finally:
+                for path in reversed(moved):
+                    path.unlink(missing_ok=True)
             raise
         finally:
             shutil.rmtree(temporary, ignore_errors=True)
@@ -382,3 +405,16 @@ def _is_under(path: Path, root: Path) -> bool:
     except (OSError, ValueError):
         return False
     return True
+
+
+def _reject_symlinked_parents(path: Path, root: Path) -> None:
+    """Keep promotion writes inside the configured capability root."""
+    try:
+        parts = path.relative_to(root).parts[:-1]
+    except ValueError as exc:
+        raise ValueError("capability target is outside root") from exc
+    current = root
+    for part in parts:
+        current /= part
+        if current.is_symlink():
+            raise ValueError("capability target parent may not be a symlink")

@@ -570,6 +570,7 @@ version = "0.8.0"
 source = { editable = "packages/arcmemory" }
 dependencies = [
     { name = "arcllm" },
+    { name = "arcokf" },
     { name = "arcprompt" },
     { name = "arcrun" },
     { name = "arcstore" },
@@ -609,6 +610,7 @@ dev = [
 requires-dist = [
     { name = "arcllm", editable = "packages/arcllm" },
     { name = "arcllm", extras = ["local"], marker = "extra == 'local'", editable = "packages/arcllm" },
+    { name = "arcokf", editable = "packages/arcokf" },
     { name = "arcprompt", editable = "packages/arcprompt" },
     { name = "arcrun", editable = "packages/arcrun" },
     { name = "arcstore", editable = "packages/arcstore" },
