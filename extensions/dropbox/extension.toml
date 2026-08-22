@@ -52,8 +52,20 @@ format = "api_token"
 
 [[secrets]]
 name = "refresh_token"
-prompt = "A Dropbox refresh token, so Arc stays connected without you signing in again. On your app's Permissions tab tick files.metadata.read, files.content.read and files.content.write and Submit, then authorize the app once with token_access_type=offline and paste the refresh token the exchange returns here."
-format = "api_token"
+prompt = "Set for you by `arc connector authorize` — you never paste this. On your app's Permissions tab at dropbox.com/developers/apps tick files.metadata.read, files.content.read and files.content.write and Submit, then run `arc connector authorize` and paste the one-time code Dropbox shows. Arc exchanges it for a durable refresh token and stores it here."
+
+# Native OAuth2 connect: `arc connector authorize` builds the authorize URL from
+# the app key, takes the one-time code Dropbox shows, exchanges it for a DURABLE
+# refresh token (token_access_type=offline), and stores that under refresh_token.
+# The operator supplies only the app key/secret; no short-lived access token is
+# ever stored, and Arc mints access tokens from the refresh token on demand.
+[oauth]
+authorize_url = "https://www.dropbox.com/oauth2/authorize"
+token_url = "https://api.dropbox.com/oauth2/token"
+client_id_secret = "app_key"
+client_secret_secret = "app_secret"
+refresh_token_secret = "refresh_token"
+authorize_params = { token_access_type = "offline" }
 
 [tools]
 allow = [

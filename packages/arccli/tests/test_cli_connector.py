@@ -747,3 +747,84 @@ class TestGrantAndRevoke:
         run("list")
 
         assert "(nobody)" in capsys.readouterr().out
+
+
+# --- native OAuth authorize flow (SPEC-062 connect) ---------------------------
+
+
+def _oauth_auth(instance: str, *, reachable: bool, detail: str) -> Any:
+    import arcagent
+
+    return arcagent.Authorization(
+        instance=instance,
+        extension="dropbox",
+        credentials=(),
+        hosts=(),
+        reachable=reachable,
+        detail=detail,
+        oauth=True,
+        authorize_url=(
+            "https://www.dropbox.com/oauth2/authorize"
+            "?client_id=ak-123&response_type=code&token_access_type=offline"
+        ),
+    )
+
+
+def test_authorize_oauth_shows_the_url_takes_a_code_and_completes(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    """The whole operator flow: an OAuth connector prints its URL, reads the pasted
+    code, and hands it to complete_oauth — never a token field, never a host command."""
+    import argparse
+
+    from arccli.commands.connector import _authorize
+
+    completed: dict[str, str] = {}
+
+    class _FakeConnections:
+        async def authorization(self, instance: str) -> Any:
+            return _oauth_auth(instance, reachable=False, detail="unauthenticated")
+
+        async def complete_oauth(self, instance: str, *, code: str) -> Any:
+            completed["code"] = code
+            return _oauth_auth(instance, reachable=True, detail="dropbox answered")
+
+    monkeypatch.setattr("arccli.commands.connector._connections", lambda _args: _FakeConnections())
+    monkeypatch.setattr("builtins.input", lambda _prompt="": "  the-one-time-code  ")
+
+    _authorize(argparse.Namespace(instance="personal_dropbox"))
+
+    assert completed["code"] == "the-one-time-code", "the pasted code is trimmed and exchanged"
+    out = capsys.readouterr().out
+    assert "dropbox.com/oauth2/authorize" in out, "the operator is shown the consent URL"
+    assert "Connected" in out
+
+
+def test_authorize_oauth_without_app_key_says_supply_it_first(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    """No app key stored yet means no URL to open — the honest next step is named."""
+    import argparse
+
+    from arccli.commands.connector import _authorize
+
+    class _FakeConnections:
+        async def authorization(self, instance: str) -> Any:
+            import arcagent
+
+            return arcagent.Authorization(
+                instance=instance,
+                extension="dropbox",
+                credentials=(),
+                hosts=(),
+                reachable=False,
+                detail="unauthenticated",
+                oauth=True,
+                authorize_url="",
+            )
+
+    monkeypatch.setattr("arccli.commands.connector._connections", lambda _args: _FakeConnections())
+
+    with pytest.raises(SystemExit):
+        _authorize(argparse.Namespace(instance="personal_dropbox"))
+    assert "app key" in capsys.readouterr().err.lower()

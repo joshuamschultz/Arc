@@ -298,6 +298,33 @@ class SecretRequirement(_ManifestModel):
     format: SuppliedFormat = ""
 
 
+class OAuthFlow(_ManifestModel):
+    """``[oauth]`` — a native OAuth2 authorization-code connect flow, done in-harness.
+
+    The host-login path signs in a host BINARY that owns its own credential. A
+    native connector (no binary) that speaks OAuth2 has no such path, so without
+    this the operator has to obtain a refresh token by hand — running the
+    code→token exchange themselves. Declaring this block lets ``arc connector
+    authorize`` do the whole sign-in: build the provider's authorize URL from the
+    stored client id, take the one-time code the provider shows, exchange it for a
+    durable refresh token, and store that under ``refresh_token_secret``. The
+    operator never obtains, types, or sees a refresh token, and no adapter
+    reimplements the exchange.
+
+    ``client_id_secret`` / ``client_secret_secret`` name the ``[[secrets]]`` the
+    operator supplies (the app key and secret). ``refresh_token_secret`` names the
+    ``[[secrets]]`` this flow WRITES — since the operator never types it, that
+    secret's entry carries no prompt.
+    """
+
+    authorize_url: str
+    token_url: str
+    client_id_secret: str
+    client_secret_secret: str
+    refresh_token_secret: str
+    authorize_params: dict[str, str] = Field(default_factory=dict)
+
+
 class DeclaredTool(_ManifestModel):
     """``[[tools.declared]]`` — one tool's classification and trifecta capability tags."""
 
@@ -364,6 +391,7 @@ class ExtensionManifest(_ManifestModel):
     artifact: ArtifactPin | None = None
     host_requires: list[HostRequirement] = Field(default_factory=list)
     secrets: list[SecretRequirement] = Field(default_factory=list)
+    oauth: OAuthFlow | None = None
     requires: list[str] = Field(default_factory=list)
     tools: ToolPolicy = Field(default_factory=ToolPolicy)
     approval: ApprovalPolicy = Field(default_factory=ApprovalPolicy)
@@ -373,6 +401,28 @@ class ExtensionManifest(_ManifestModel):
     @classmethod
     def _drop_denied_keys(cls, config: dict[str, Any]) -> dict[str, Any]:
         return _strip_denied(config)
+
+    @model_validator(mode="after")
+    def _oauth_names_declared_secrets(self) -> ExtensionManifest:
+        """An ``[oauth]`` flow may only wire ``[[secrets]]`` this bundle declares.
+
+        The flow reads the client id/secret from the store and writes the refresh
+        token back to it; naming a field the bundle never declared would fail at
+        connect with a store miss instead of here, where the author can see it.
+        """
+        if self.oauth is None:
+            return self
+        declared = {secret.name for secret in self.secrets}
+        for role, name in (
+            ("client_id_secret", self.oauth.client_id_secret),
+            ("client_secret_secret", self.oauth.client_secret_secret),
+            ("refresh_token_secret", self.oauth.refresh_token_secret),
+        ):
+            if name not in declared:
+                raise ValueError(
+                    f"[oauth].{role} = {name!r} names no [[secrets]] this bundle declares"
+                )
+        return self
 
     @model_validator(mode="after")
     def _a_declared_command_may_only_name_this_bundles_visible_fields(self) -> ExtensionManifest:

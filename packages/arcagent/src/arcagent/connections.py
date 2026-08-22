@@ -42,6 +42,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+import httpx
 from arctrust.audit import AuditEvent, AuditSink, emit
 from arctrust.paths import arc_team, config_file, default_operator_key_path
 
@@ -67,6 +68,7 @@ from arcagent.extension.manifest import (
     HostRequirement,
     SecretRequirement,
 )
+from arcagent.extension.oauth import build_authorize_url, exchange_authorization_code
 from arcagent.extension.secrets import Secret, SecretRef, SecretStore, select_secret_backend
 from arcagent.extension.state import ConnectionStateStore, open_connection_state
 from arcagent.modules.connectors.install import (
@@ -442,6 +444,22 @@ class Authorization:
     detail: str
     sign_in: SignInState = "unknown"
     sign_in_detail: str = ""
+    #: True when the connector's manifest declares an ``[oauth]`` flow — the shape
+    #: is "supply the app key/secret, then finish by pasting a consent code", not a
+    #: host binary or a typed token. Set independently of ``authorize_url`` so a
+    #: surface can tell an OAuth connector whose app key is not supplied yet (no URL
+    #: to open) from one that is not OAuth at all.
+    oauth: bool = False
+    #: The provider consent URL for a native OAuth connector — empty for every
+    #: other shape, and empty for an OAuth connector until its app key is supplied
+    #: (there is no URL before the connector knows which app it is). It names no
+    #: secret (only the public client id), so it is safe to render.
+    authorize_url: str = ""
+
+    @property
+    def oauth_connect(self) -> bool:
+        """True when the next step is opening the URL and pasting a consent code."""
+        return bool(self.authorize_url)
 
     @property
     def working(self) -> bool:
@@ -487,6 +505,24 @@ class Authorization:
         return ""
 
 
+async def _oauth_post(
+    url: str, data: dict[str, str], auth: tuple[str, str]
+) -> tuple[int, dict[str, Any]]:
+    """POST form data with HTTP basic auth for the OAuth exchange — the one HTTP call.
+
+    A plain function, not a method, so :meth:`Connections.complete_oauth` injects
+    it exactly as the exchange's tests inject a fake: the framework owns the HTTP
+    client, the pure exchange in :mod:`arcagent.extension.oauth` owns the protocol.
+    """
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(url, data=data, auth=auth)
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    return response.status_code, payload if isinstance(payload, dict) else {}
+
+
 def _authorization(
     instance: str,
     plan: ConnectorPlan,
@@ -495,6 +531,7 @@ def _authorization(
     credentials: tuple[SuppliedCredential, ...],
     *,
     note: str = "",
+    authorize_url: str = "",
 ) -> Authorization:
     """The one shape both the read and the sign-in answer with.
 
@@ -522,6 +559,8 @@ def _authorization(
         detail=f"{note} {probe.detail}".strip() if note else probe.detail,
         sign_in=state,
         sign_in_detail=sign_in_detail,
+        oauth=plan.manifest.oauth is not None,
+        authorize_url=authorize_url,
     )
 
 
@@ -662,7 +701,90 @@ class Connections:
             probe = await self._reachability(plan, sink)
             sign_in = await self._sign_in_state(plan, sink)
             supplied = await self._supplied(plan, sink)
-        return _authorization(instance, plan, probe, sign_in, supplied)
+            authorize_url = await self._oauth_authorize_url(plan, sink)
+        return _authorization(
+            instance, plan, probe, sign_in, supplied, authorize_url=authorize_url
+        )
+
+    async def complete_oauth(self, instance: str, *, code: str) -> Authorization:
+        """Finish a native OAuth connection by swapping its code for a refresh token.
+
+        The whole in-harness sign-in: read the operator-supplied app key/secret,
+        exchange the one-time ``code`` the provider showed for a DURABLE refresh
+        token (never a short-lived access token), store that under the manifest's
+        ``refresh_token_secret``, and probe. The operator never obtains, types, or
+        sees a refresh token, and Arc keeps only the refresh token — the access
+        tokens the connection needs are minted from it on demand.
+
+        Raises:
+            ExtensionError: The connection is not an OAuth connector, its app
+                key/secret have not been supplied yet, or the exchange failed
+                (a terminal ``invalid_grant`` means the code is dead — authorize
+                again).
+        """
+        with self._audit.open() as sink:
+            plan = self._plan_for(instance, sink)
+            flow = plan.manifest.oauth
+            if flow is None:
+                raise ExtensionError(
+                    code="NOT_OAUTH",
+                    message=(
+                        f"{instance!r} is not an OAuth connector; supply its credentials instead"
+                    ),
+                    details={"instance": instance},
+                )
+            store = self._store(sink)
+            client_id = await self._read_secret(store, instance, flow.client_id_secret)
+            client_secret = await self._read_secret(store, instance, flow.client_secret_secret)
+            if not client_id or not client_secret:
+                raise ExtensionError(
+                    code="OAUTH_CLIENT_MISSING",
+                    message=(
+                        f"supply {flow.client_id_secret} and {flow.client_secret_secret} for "
+                        f"{instance!r} before authorizing"
+                    ),
+                    details={"instance": instance},
+                )
+            tokens = await exchange_authorization_code(
+                flow,
+                code=code.strip(),
+                client_id=client_id,
+                client_secret=client_secret,
+                post=_oauth_post,
+            )
+            await store.put(
+                SecretRef(connection=instance, field=flow.refresh_token_secret),
+                tokens.refresh_token,
+                caller_did=self._world.did,
+            )
+            probe = await self._reachability(plan, sink)
+            sign_in = await self._sign_in_state(plan, sink)
+            supplied = await self._supplied(plan, sink)
+            authorize_url = await self._oauth_authorize_url(plan, sink)
+        return _authorization(
+            instance, plan, probe, sign_in, supplied, authorize_url=authorize_url
+        )
+
+    async def _oauth_authorize_url(self, plan: ConnectorPlan, sink: AuditSink) -> str:
+        """The provider consent URL for a native OAuth connector, or empty.
+
+        Built from the operator-supplied client id (never a secret), so a surface
+        can render it. Empty until the app key is supplied — there is no URL to
+        open before the connector knows which app it is.
+        """
+        flow = plan.manifest.oauth
+        if flow is None:
+            return ""
+        store = self._store(sink)
+        client_id = await self._read_secret(store, plan.instance, flow.client_id_secret)
+        return build_authorize_url(flow, client_id=client_id) if client_id else ""
+
+    async def _read_secret(self, store: SecretStore, instance: str, field: str) -> str:
+        """One connector secret's value, or empty when nothing is stored yet."""
+        found = await store.get(
+            SecretRef(connection=instance, field=field), caller_did=self._world.did
+        )
+        return found.reveal() if found is not None else ""
 
     async def authorize(self, instance: str, *, token: str = "") -> Authorization:
         """Sign this connection's host binary in — when that can be done without a human.
@@ -1188,8 +1310,15 @@ class Connections:
         never been configured.
         """
         store = self._store(sink)
+        # An OAuth connector's refresh token is WRITTEN by ``complete_oauth``, never
+        # typed — the operator supplies only the app key/secret. Listing it as a
+        # field to fill would send them looking for a value they can't get by hand,
+        # which is the exact confusion the OAuth flow exists to remove.
+        managed = plan.manifest.oauth.refresh_token_secret if plan.manifest.oauth else None
         rows: list[SuppliedCredential] = []
         for declared in plan.secrets:
+            if declared.name == managed:
+                continue
             value = ""
             if not declared.sensitive:
                 ref = SecretRef(connection=plan.instance, field=declared.name)
