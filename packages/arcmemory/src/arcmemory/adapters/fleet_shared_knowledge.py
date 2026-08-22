@@ -9,9 +9,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
+import fcntl
 import hashlib
 import json
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -78,6 +81,7 @@ class FleetSharedKnowledgeBackend:
         self._revocations = self._root / "revocations"
         self._audit = self._root / "audit"
         self._trust = self._root / "trusted-signers.json"
+        self._trust_lock = self._root / ".trusted-signers.lock"
 
     @classmethod
     def for_arc_team(cls, base: Path | str | None = None) -> FleetSharedKnowledgeBackend:
@@ -248,13 +252,25 @@ class FleetSharedKnowledgeBackend:
             raise PermissionError("shared knowledge signature verification failed")
 
     def _pin_signer(self, did: str, public_key: str) -> None:
-        trusted = self._load_trusted_signers()
-        pinned = trusted.get(did)
-        if pinned is not None and pinned != public_key:
-            raise PermissionError("shared knowledge TOFU signer key changed")
-        if pinned is None:
-            trusted[did] = public_key
-            atomic_write_text(self._trust, json.dumps(trusted, sort_keys=True) + "\n")
+        with self._signer_registry_lock():
+            trusted = self._load_trusted_signers()
+            pinned = trusted.get(did)
+            if pinned is not None and pinned != public_key:
+                raise PermissionError("shared knowledge TOFU signer key changed")
+            if pinned is None:
+                trusted[did] = public_key
+                atomic_write_text(self._trust, json.dumps(trusted, sort_keys=True) + "\n")
+
+    @contextlib.contextmanager
+    def _signer_registry_lock(self) -> Iterator[None]:
+        """Serialize first-seen signer decisions across fleet processes."""
+        self._root.mkdir(parents=True, exist_ok=True)
+        with self._trust_lock.open("a+b") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
     def _require_pinned_signer(self, did: str, public_key: str) -> None:
         if self._load_trusted_signers().get(did) != public_key:
