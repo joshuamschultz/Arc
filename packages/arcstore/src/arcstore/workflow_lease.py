@@ -59,7 +59,12 @@ class WorkflowRunnerLease:
             token = int(row.get("fencing_token", 0))
             now = _utc(self._clock())
             expires_at = _parse_expiry(row.get("expires_at"))
-            if owner != self._owner_id and expires_at is not None and expires_at > now:
+            if (
+                owner is not None
+                and owner != self._owner_id
+                and expires_at is not None
+                and expires_at > now
+            ):
                 self._fence = None
                 return None
             next_token = token if owner == self._owner_id else token + 1

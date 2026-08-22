@@ -62,6 +62,7 @@ async def test_postgres_runner_lease_can_be_taken_after_expiry(
     assert replacement_fence is not None
     assert replacement_fence.token > fence.token
     assert not await first.is_current(fence)
+    assert await replacement.release()
 
 
 @pytest.mark.asyncio
@@ -69,7 +70,9 @@ async def test_postgres_rejects_a_paused_stale_runner_inside_the_mutation_transa
     postgres_backend: ArcStoreBackend,
 ) -> None:
     """A former owner resuming after replacement cannot append workflow state."""
-    now = datetime.now(UTC)
+    # The expiry test above advances its injected clock by 61 seconds while
+    # sharing the durable singleton lease row.
+    now = datetime.now(UTC) + timedelta(minutes=2)
     old = WorkflowRunnerLease(postgres_backend, owner_id="old", clock=lambda: now)
     old_fence = await old.acquire_or_renew()
     assert old_fence is not None
@@ -92,7 +95,8 @@ async def test_postgres_rejects_a_paused_stale_runner_inside_the_mutation_transa
     replacement = WorkflowRunnerLease(
         postgres_backend, owner_id="new", clock=lambda: now + timedelta(seconds=61)
     )
-    assert await replacement.acquire_or_renew() is not None
+    replacement_fence = await replacement.acquire_or_renew()
+    assert replacement_fence is not None
 
     with pytest.raises(MutationFenceRejectedError):
         await tasks.create_batch(
@@ -109,3 +113,4 @@ async def test_postgres_rejects_a_paused_stale_runner_inside_the_mutation_transa
         )
     record = await runs.record(run_id)
     assert record is not None and record.path_taken == []
+    assert await replacement.release(fence=replacement_fence)
