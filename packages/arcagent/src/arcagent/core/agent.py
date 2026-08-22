@@ -705,6 +705,71 @@ class ArcAgent:
             )
         )
 
+    async def stream_delivered_message(
+        self,
+        *,
+        caller_did: str,
+        message: str,
+        session_key: str,
+        reply_target: str | None = None,
+        reply_label: str | None = None,
+        parts: Sequence[Mapping[str, Any]] | None = None,
+    ) -> AsyncIterator[arcrun.StreamEvent]:
+        """Deliver an interactive message and yield its public ArcRun events.
+
+        This is the gateway-facing streaming facade. It preserves the normal
+        delivery decision: a message joining an existing interactive run is
+        queued there and yields no duplicate response; an idle session opens a
+        run whose handle remains steerable and cancellable while events flow.
+        """
+        self._ensure_started()
+        content = self._compose_from_parts(parts) if parts else None
+        if content is not None:
+            message = _flatten_blocks(content)
+        queue: asyncio.Queue[arcrun.StreamEvent | BaseException | None] = asyncio.Queue()
+        started = asyncio.Event()
+
+        async def pump() -> None:
+            try:
+                session = await self.session(session_key)
+                async for event in dispatch_stream(
+                    self,
+                    message,
+                    session=session,
+                    reply_target=reply_target,
+                    reply_label=reply_label,
+                    interactive=True,
+                    on_handle=lambda _handle: started.set(),
+                ):
+                    await queue.put(event)
+            except BaseException as exc:
+                await queue.put(exc)
+            finally:
+                started.set()
+                await queue.put(None)
+
+        async with self._run_coordinator.delivery(session_key):
+            handle = self._run_coordinator.injection_target(session_key)
+            if handle is not None:
+                injected: str | list[arcrun.ContentBlock] = message
+                if content is not None:
+                    injected = self._materialise(content)
+                await handle.follow_up(caller_did, injected)
+                return
+            task = asyncio.create_task(pump(), name=f"delivery_stream:{session_key}")
+            await started.wait()
+
+        try:
+            while item := await queue.get():
+                if isinstance(item, BaseException):
+                    raise item
+                yield item
+        finally:
+            if not task.done():
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+
     def active_run(self, session_key: str) -> arcrun.RunHandle | None:
         """Return the live steerable run for ``session_key``, or None if idle."""
         return self._run_coordinator.active(session_key)

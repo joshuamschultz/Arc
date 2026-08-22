@@ -32,7 +32,10 @@ async def test_ingest_claims_ordered_attachment_ids_as_reference_parts() -> None
 
     def claim(user: str, agent: str, session: str, chat: str, ids: list[str]) -> list[MediaPart]:
         claimed.append(ids)
-        return [MediaPart(kind="file", mime="image/png", declared_name=i, ref=f"attachments/{i}") for i in ids]
+        return [
+            MediaPart(kind="file", mime="image/png", declared_name=i, ref=f"attachments/{i}")
+            for i in ids
+        ]
 
     adapter = WebPlatformAdapter(on_message=on_message, claim_attachments=claim)
     ws = FakeWebSocket()
@@ -219,6 +222,26 @@ async def test_ingest_builds_correct_inbound_event() -> None:
     await adapter.disconnect()
 
 
+async def test_final_socket_disconnect_requests_run_cancellation() -> None:
+    """A disconnected final browser observer cancels its interactive run."""
+    cancelled: list[tuple[str, str, str]] = []
+
+    async def cancel(chat_id: str, agent_did: str, user_did: str) -> None:
+        cancelled.append((chat_id, agent_did, user_did))
+
+    adapter = WebPlatformAdapter(on_message=_noop_on_message, on_last_socket_disconnect=cancel)
+    ws = FakeWebSocket()
+    adapter.register_socket(ws, "did:arc:agent:a", "did:arc:viewer:u", "chat-1")
+    adapter.unregister_socket(ws)
+    for _ in range(5):
+        if cancelled:
+            break
+        await asyncio.sleep(0)
+
+    assert cancelled == [("chat-1", "did:arc:agent:a", "did:arc:viewer:u")]
+    await adapter.disconnect()
+
+
 async def test_client_seq_resets_per_connection() -> None:
     """A reconnect (new socket, same chat_id) restarts the client_seq baseline.
 
@@ -329,6 +352,47 @@ async def test_send_fans_out_to_all_sockets() -> None:
     await _drain_once(adapter, ws_b)
     assert any(p.get("text") == "hello world" for p in ws_a.sent)
     assert any(p.get("text") == "hello world" for p in ws_b.sent)
+    await adapter.disconnect()
+
+
+async def test_dispatch_delta_streams_sanitised_ordered_frames_and_one_terminal() -> None:
+    """Browser streams expose text/tool names only and terminal once per run."""
+    adapter = _make_adapter()
+    ws = FakeWebSocket()
+    adapter.register_socket(ws, "did:arc:agent:a", "did:arc:viewer:u", "chat-1")
+    target = DeliveryTarget(platform="web", chat_id="chat-1")
+
+    await adapter.dispatch_delta(
+        target, Delta(kind="token", content="hel", turn_id="run-1", sequence=1)
+    )
+    await adapter.dispatch_delta(
+        target, Delta(kind="tool_call", content="safe_tool", turn_id="run-1", sequence=2)
+    )
+    await adapter.dispatch_delta(
+        target, Delta(kind="token", content="lo", turn_id="run-1", sequence=3)
+    )
+    await adapter.dispatch_delta(
+        target, Delta(kind="done", is_final=True, turn_id="run-1", sequence=4)
+    )
+    await adapter.dispatch_delta(
+        target, Delta(kind="done", is_final=True, turn_id="run-1", sequence=4)
+    )
+    for _ in range(10):
+        await asyncio.sleep(0)
+
+    frames = [frame for frame in ws.sent if frame.get("type") == "stream"]
+    assert [frame["event"] for frame in frames] == ["text", "tool", "text", "end"]
+    assert [frame["event_sequence"] for frame in frames] == [1, 2, 3, 4]
+    assert all(frame["run_id"] == "run-1" for frame in frames)
+    assert frames[1] == {
+        "type": "stream",
+        "event": "tool",
+        "tool": "safe_tool",
+        "run_id": "run-1",
+        "event_sequence": 2,
+        "ts": frames[1]["ts"],
+        "seq": frames[1]["seq"],
+    }
     await adapter.disconnect()
 
 
@@ -472,8 +536,8 @@ async def test_max_connections_rejects_overflow() -> None:
 # ── Tool-call frames ──────────────────────────────────────────────────────────
 
 
-async def test_tool_call_delta_sends_tool_call_frame() -> None:
-    """Delta(kind='tool_call') routes to a 'tool_call' frame, not a 'message' frame."""
+async def test_tool_call_delta_sends_sanitised_stream_frame() -> None:
+    """Tool frames expose a name, never their argument body."""
     adapter = _make_adapter()
     ws = FakeWebSocket()
     adapter.register_socket(ws, "did:arc:agent:a", "did:arc:viewer:u", "chat-1")
@@ -483,14 +547,17 @@ async def test_tool_call_delta_sends_tool_call_frame() -> None:
     await _drain_once(adapter, ws)
     assert ws.sent
     payload = ws.sent[-1]
-    assert payload["type"] == "tool_call"
-    assert payload["turn_id"] == "t1"
+    assert payload["type"] == "stream"
+    assert payload["event"] == "tool"
+    assert payload["run_id"] == "t1"
+    assert payload["tool"] == "read_file"
+    assert "path=/x" not in payload.values()
     assert "ts" in payload
     await adapter.disconnect()
 
 
-async def test_dispatch_delta_token_routes_to_message_frame() -> None:
-    """A non-tool_call delta routes through send() and produces a message frame."""
+async def test_dispatch_delta_token_routes_to_incremental_stream_frame() -> None:
+    """A token delta reaches the browser before the terminal frame."""
     adapter = _make_adapter()
     ws = FakeWebSocket()
     adapter.register_socket(ws, "did:arc:agent:a", "did:arc:viewer:u", "chat-1")
@@ -500,8 +567,9 @@ async def test_dispatch_delta_token_routes_to_message_frame() -> None:
     await _drain_once(adapter, ws)
     assert ws.sent
     payload = ws.sent[-1]
-    assert payload["type"] == "message"
-    assert payload["turn_id"] == "turn-x"
+    assert payload["type"] == "stream"
+    assert payload["event"] == "text"
+    assert payload["run_id"] == "turn-x"
     await adapter.disconnect()
 
 

@@ -149,14 +149,11 @@ def test_browser_message_reaches_echo_executor(app_with_chat: Any) -> None:
             assert ready["type"] == "ready"
             ws.send_json({"type": "message", "text": "ping", "client_seq": 1})
 
-            # The echo stub echoes the prompt back via the StreamBridge.
-            # We may receive an intermediate placeholder ("...") before the
-            # final accumulated message. Accept any agent message that
-            # contains the prompt text.
+            # The echo stub reaches the browser as one or more stream frames.
             seen_texts: list[str] = []
             for _ in range(20):
                 frame = ws.receive_json()
-                if frame.get("type") == "message" and frame.get("from") == "agent":
+                if frame.get("type") == "stream" and frame.get("event") == "text":
                     seen_texts.append(frame["text"])
                     if "ping" in frame["text"]:
                         break
@@ -182,7 +179,7 @@ def test_broadcast_to_two_sockets(app_with_chat: Any) -> None:
                 replies: list[str] = []
                 for _ in range(20):
                     frame = ws.receive_json()
-                    if frame.get("type") == "message" and frame.get("from") == "agent":
+                    if frame.get("type") == "stream" and frame.get("event") == "text":
                         replies.append(frame["text"])
                         if any("broadcast" in r for r in replies):
                             break
@@ -208,7 +205,7 @@ def test_concurrent_messages_queue_correctly(app_with_chat: Any) -> None:
             seen_second = False
             for _ in range(60):
                 frame = ws.receive_json()
-                if frame.get("type") != "message" or frame.get("from") != "agent":
+                if frame.get("type") != "stream" or frame.get("event") != "text":
                     continue
                 replies.append(frame["text"])
                 if "first" in frame["text"]:
@@ -409,7 +406,7 @@ def test_non_message_frame_silently_ignored(app_with_chat: Any) -> None:
                     break
                 if f.get("type") == "error":
                     raise AssertionError(f"unexpected error frame: {f}")
-                if f.get("type") == "message" and f.get("from") == "agent":
+                if f.get("type") == "stream" and f.get("event") == "text":
                     saw_real = True
                     break
             assert saw_real

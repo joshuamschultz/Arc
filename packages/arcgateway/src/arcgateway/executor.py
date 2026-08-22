@@ -146,12 +146,15 @@ class Delta(BaseModel):
             (for kind=="tool_call"). Empty string for "done".
         is_final: True only on the terminal "done" delta.
         turn_id: Run-level turn identifier for idempotency keys.
+        sequence: Monotonic event number within ``turn_id`` when supplied by
+            the ArcRun streaming facade. Zero is reserved for legacy executors.
     """
 
     kind: Literal["token", "tool_call", "done"]
     content: str = ""
     is_final: bool = False
     turn_id: str = ""
+    sequence: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -270,6 +273,7 @@ class AsyncioExecutor:
                 tests and dev without a real ArcAgent config).
         """
         self._agent_factory = agent_factory
+        self._live_agents: dict[tuple[str, str], Any] = {}
 
     def set_agent_factory(self, agent_factory: AgentFactory | None) -> None:
         """Replace the agent factory after construction.
@@ -354,6 +358,52 @@ class AsyncioExecutor:
                 extra: dict[str, Any] = {}
                 if any(part.kind != "text" for part in event.parts):
                     extra["parts"] = [part.model_dump() for part in event.parts]
+                stream_delivery = getattr(agent, "stream_delivered_message", None)
+                if callable(stream_delivery):
+                    live_key = (event.agent_did, event.session_key)
+                    self._live_agents[live_key] = agent
+                    try:
+                        async for stream_event in stream_delivery(
+                            caller_did=event.user_did,
+                            message=event.message,
+                            session_key=event.session_key,
+                            reply_target=_reply_target(event),
+                            reply_label=_reply_label(event),
+                            **extra,
+                        ):
+                            stream_name = type(stream_event).__name__
+                            run_id = str(getattr(stream_event, "run_id", "")) or turn_id
+                            sequence = int(getattr(stream_event, "sequence", 0))
+                            if stream_name == "TokenEvent":
+                                text = str(getattr(stream_event, "text", ""))
+                                if text:
+                                    yield Delta(
+                                        kind="token",
+                                        content=text,
+                                        turn_id=run_id,
+                                        sequence=sequence,
+                                    )
+                            elif stream_name == "ToolStartEvent":
+                                tool_name = str(getattr(stream_event, "name", ""))
+                                if tool_name:
+                                    yield Delta(
+                                        kind="tool_call",
+                                        content=tool_name,
+                                        turn_id=run_id,
+                                        sequence=sequence,
+                                    )
+                            elif stream_name == "TurnEndEvent":
+                                yield Delta(
+                                    kind="done",
+                                    is_final=True,
+                                    turn_id=run_id,
+                                    sequence=sequence,
+                                )
+                                return
+                    finally:
+                        self._live_agents.pop(live_key, None)
+                    yield Delta(kind="done", is_final=True, turn_id=turn_id)
+                    return
                 outcome = await agent.deliver_message(
                     caller_did=event.user_did,
                     message=event.message,
@@ -418,6 +468,19 @@ class AsyncioExecutor:
             turn_id=event.session_key,
         )
         yield Delta(kind="done", content="", is_final=True, turn_id=event.session_key)
+
+    async def cancel_session(self, agent_did: str, session_key: str) -> None:
+        """Cancel the live browser stream for one agent session, if any."""
+        agent = self._live_agents.get((agent_did, session_key))
+        if agent is None:
+            return
+        active_run = getattr(agent, "active_run", None)
+        if not callable(active_run):
+            return
+        handle = active_run(session_key)
+        if handle is None:
+            return
+        await handle.cancel("did:arc:gateway", reason="browser disconnected")
 
 
 # ---------------------------------------------------------------------------

@@ -123,6 +123,7 @@ class WebPlatformAdapter:
         max_frame_bytes: int = _DEFAULT_MAX_FRAME_BYTES,
         replay_ttl_seconds: float = _DEFAULT_REPLAY_TTL_SECONDS,
         audit_emitter: Callable[[str, dict[str, Any]], None] | None = None,
+        on_last_socket_disconnect: Callable[[str, str, str], Awaitable[None]] | None = None,
     ) -> None:
         self._on_message = on_message
         self._claim_attachments = claim_attachments
@@ -136,6 +137,7 @@ class WebPlatformAdapter:
         self.max_frame_bytes = max_frame_bytes
         self.replay_ttl_seconds = replay_ttl_seconds
         self._audit_emitter = audit_emitter
+        self._on_last_socket_disconnect = on_last_socket_disconnect
 
         self._sockets: dict[str, set[Any]] = {}
         self._socket_meta: dict[Any, tuple[str, str, str]] = {}
@@ -156,12 +158,19 @@ class WebPlatformAdapter:
         # honour a reconnecting client's since_seq.
         self._outbound_seq: dict[str, int] = {}
         self._replay_buffers: dict[str, deque[dict[str, Any]]] = {}
+        self._terminal_runs: dict[str, deque[str]] = {}
         # Pending TTL-eviction tasks per chat_id (TD-1 follow-up). Task is
         # created on last-socket-unregister, cancelled on register before TTL
         # expires; this trades latency-of-cleanup for replay liveness across
         # transient disconnects.
         self._eviction_tasks: dict[str, asyncio.Task[None]] = {}
         self._n_connections = 0
+
+    def set_disconnect_handler(
+        self, handler: Callable[[str, str, str], Awaitable[None]] | None
+    ) -> None:
+        """Set the cancellation callback composed by the session router."""
+        self._on_last_socket_disconnect = handler
 
     # ── BasePlatformAdapter Protocol ──────────────────────────────────────────
 
@@ -320,13 +329,14 @@ class WebPlatformAdapter:
         meta = self._socket_meta.pop(ws, None)
         if meta is None:
             return
-        chat_id, _, _ = meta
+        chat_id, agent_did, user_did = meta
 
         sockets_for_chat = self._sockets.get(chat_id)
         if sockets_for_chat is not None:
             sockets_for_chat.discard(ws)
             if not sockets_for_chat:
                 del self._sockets[chat_id]
+                self._schedule_disconnect_cancellation(chat_id, agent_did, user_did)
                 # SPEC-025 TD-1 — schedule a deferred eviction of the
                 # per-chat replay state. A reconnect within
                 # `replay_ttl_seconds` cancels this task, preserving replay.
@@ -348,6 +358,38 @@ class WebPlatformAdapter:
             "gateway.adapter.unregister",
             {"platform": "web", "chat_id": chat_id},
         )
+
+    def _schedule_disconnect_cancellation(
+        self, chat_id: str, agent_did: str, user_did: str
+    ) -> None:
+        """Cancel an interactive run when its final browser observer leaves."""
+        handler = self._on_last_socket_disconnect
+        if handler is None:
+            return
+        task: asyncio.Task[None] = asyncio.create_task(
+            self._cancel_after_disconnect(handler, chat_id, agent_did, user_did)
+        )
+        task.add_done_callback(self._log_disconnect_cancellation)
+
+    @staticmethod
+    async def _cancel_after_disconnect(
+        handler: Callable[[str, str, str], Awaitable[None]],
+        chat_id: str,
+        agent_did: str,
+        user_did: str,
+    ) -> None:
+        """Await a transport-provided cancellation hook in a task."""
+        await handler(chat_id, agent_did, user_did)
+
+    @staticmethod
+    def _log_disconnect_cancellation(task: asyncio.Task[None]) -> None:
+        """Observe cancellation callback failures without killing socket cleanup."""
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            _logger.exception("WebPlatformAdapter: disconnect cancellation failed")
 
     async def ingest(
         self,
@@ -419,27 +461,55 @@ class WebPlatformAdapter:
         target: DeliveryTarget,
         delta: Delta,
     ) -> None:
-        """Route a single Delta into the matching outbound frame type.
+        """Deliver one sanitised executor event to browser sockets.
 
-        - ``kind="tool_call"`` → ``tool_call`` frame (per SDD §5.1).
-        - ``kind="token"`` / ``"done"`` → ``message`` frame (the bridge
-          accumulates tokens; this is the single-frame escape hatch).
+        Text crosses this boundary incrementally. Tool argument/result bodies
+        and model reasoning never do: a tool frame carries only its public
+        name. Every run has exactly one terminal frame, retained in the same
+        bounded replay ring as ordinary outbound frames.
         """
-        if delta.kind == "tool_call":
-            sockets = list(self._sockets.get(target.chat_id, set()))
-            if not sockets:
-                return
-            payload = {
-                "type": "tool_call",
-                "tool": delta.content,
-                "args": "",
-                "turn_id": delta.turn_id,
-                "ts": _utcnow_iso(),
-            }
-            self._stamp_and_record(target.chat_id, payload)
-            self._fan_out(sockets, payload)
+        sockets = list(self._sockets.get(target.chat_id, set()))
+        if not sockets:
             return
-        await self.send(target, delta.content, reply_to=delta.turn_id or None)
+        if delta.kind == "done":
+            terminal_seen = delta.turn_id and self._terminal_seen(target.chat_id, delta.turn_id)
+            if not delta.is_final or not delta.turn_id or terminal_seen:
+                return
+            payload = self._stream_payload(delta, event="end")
+        elif delta.kind == "tool_call":
+            tool_name = delta.content.split(maxsplit=1)[0]
+            if not tool_name:
+                return
+            payload = self._stream_payload(delta, event="tool")
+            payload["tool"] = tool_name
+        elif delta.kind == "token":
+            if not delta.content:
+                return
+            payload = self._stream_payload(delta, event="text")
+            payload["text"] = delta.content
+        else:
+            return
+        self._stamp_and_record(target.chat_id, payload)
+        self._fan_out(sockets, payload)
+
+    @staticmethod
+    def _stream_payload(delta: Delta, *, event: str) -> dict[str, Any]:
+        """Build the transport-neutral public projection of one delta."""
+        return {
+            "type": "stream",
+            "event": event,
+            "run_id": delta.turn_id,
+            "event_sequence": delta.sequence,
+            "ts": _utcnow_iso(),
+        }
+
+    def _terminal_seen(self, chat_id: str, run_id: str) -> bool:
+        """Record a terminal run id in a bounded per-chat idempotency window."""
+        terminal_runs = self._terminal_runs.setdefault(chat_id, deque(maxlen=_REPLAY_RING_MAXLEN))
+        if run_id in terminal_runs:
+            return True
+        terminal_runs.append(run_id)
+        return False
 
     # ── Internal ──────────────────────────────────────────────────────────────
 
@@ -476,6 +546,7 @@ class WebPlatformAdapter:
             return
         self._replay_buffers.pop(chat_id, None)
         self._outbound_seq.pop(chat_id, None)
+        self._terminal_runs.pop(chat_id, None)
         self._eviction_tasks.pop(chat_id, None)
         self._audit(
             "gateway.replay.evicted",

@@ -224,7 +224,11 @@ def _tighter(a: float | None, b: float | None) -> float | None:
 
 
 def track_active_run(
-    agent: ArcAgent, session_id: str
+    agent: ArcAgent,
+    session_id: str,
+    *,
+    interactive: bool = False,
+    handle_observer: Callable[[arcrun.RunHandle], None] | None = None,
 ) -> tuple[Callable[[arcrun.RunHandle], None], Callable[[], None]]:
     """Register a streaming run's live handle so the operator kill-switch can reach it.
 
@@ -244,7 +248,9 @@ def track_active_run(
 
     def on_handle(handle: arcrun.RunHandle) -> None:
         registered.append(handle)
-        agent._run_coordinator.register(session_id, handle, interactive=False)
+        agent._run_coordinator.register(session_id, handle, interactive=interactive)
+        if handle_observer is not None:
+            handle_observer(handle)
 
     def untrack() -> None:
         if registered:
@@ -293,6 +299,8 @@ async def dispatch_stream(
     reply_target: str | None = None,
     reply_label: str | None = None,
     allowed_strategies: list[str] | None = None,
+    interactive: bool = False,
+    on_handle: Callable[[arcrun.RunHandle], None] | None = None,
 ) -> AsyncIterator[arcrun.StreamEvent]:
     """The single execution path: stream one agent turn into a session.
 
@@ -329,6 +337,8 @@ async def dispatch_stream(
             reply_target=reply_target,
             reply_label=reply_label,
             allowed_strategies=allowed_strategies,
+            interactive=interactive,
+            on_handle=on_handle,
         ):
             yield event
 
@@ -345,6 +355,8 @@ async def _dispatch_stream_locked(
     reply_target: str | None,
     reply_label: str | None,
     allowed_strategies: list[str] | None,
+    interactive: bool,
+    on_handle: Callable[[arcrun.RunHandle], None] | None,
     overheard: bool = False,
 ) -> AsyncIterator[arcrun.StreamEvent]:
     """Execute a turn after its session serialization lock is held."""
@@ -373,7 +385,9 @@ async def _dispatch_stream_locked(
 
         final_text = ""
         # Expose the streaming run's handle so the operator kill-switch can cancel it.
-        on_handle, untrack_run = track_active_run(agent, session.session_id)
+        on_handle, untrack_run = track_active_run(
+            agent, session.session_id, interactive=interactive, handle_observer=on_handle
+        )
         # Bind the session id for this dispatch so the capability ledger (and the
         # per-agent egress proxy) key trifecta legs to THIS session (SPEC-035).
         session_token = bind_session_id(session.session_id)

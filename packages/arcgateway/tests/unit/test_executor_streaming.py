@@ -47,6 +47,27 @@ class _Handle:
         return _Result(self._content)
 
 
+class _CancellableHandle:
+    """Records the gateway cancellation request made after browser disconnect."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    async def cancel(self, caller_did: str, *, reason: str = "") -> None:
+        self.calls.append((caller_did, reason))
+
+
+class _LiveAgent:
+    """Minimal active-run facade used to prove gateway cancellation routing."""
+
+    def __init__(self, handle: _CancellableHandle) -> None:
+        self._handle = handle
+
+    def active_run(self, session_key: str) -> _CancellableHandle:
+        assert session_key == "sess-1"
+        return self._handle
+
+
 @dataclass
 class _Delivery:
     caller_did: str
@@ -152,3 +173,15 @@ async def test_message_that_joined_a_live_run_streams_no_reply(outcome: str) -> 
     assert agent.deliveries, "the message still reaches the agent"
     assert [d.kind for d in deltas] == ["done"], f"expected only the done sentinel, got {deltas!r}"
     assert deltas[-1].is_final is True
+
+
+@pytest.mark.asyncio
+async def test_cancel_session_routes_browser_disconnect_to_live_agent_handle() -> None:
+    """The executor cancels only the exact live (agent, session) run."""
+    executor = AsyncioExecutor()
+    handle = _CancellableHandle()
+    executor._live_agents[("did:arc:agent:y", "sess-1")] = _LiveAgent(handle)
+
+    await executor.cancel_session("did:arc:agent:y", "sess-1")
+
+    assert handle.calls == [("did:arc:gateway", "browser disconnected")]

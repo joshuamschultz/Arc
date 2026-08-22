@@ -12,6 +12,7 @@ export interface ChatMessage {
   tool?: string
   time: string
   attachments?: string[]
+  streaming?: boolean
 }
 
 export type ChatStatus = 'connecting' | 'ready' | 'reconnecting' | 'closed'
@@ -152,6 +153,44 @@ export function useChatSession(agentId: string | null) {
             text: String(frame.args ?? ''),
             time: String(frame.ts ?? now()),
           })
+          return
+        }
+        if (frame.type === 'stream') {
+          const runId = String(frame.run_id ?? '')
+          if (!runId) return
+          if (frame.event === 'tool') {
+            append({
+              id: `tool-${runId}-${frame.event_sequence ?? frame.seq ?? Date.now()}`,
+              role: 'tool_call',
+              tool: String(frame.tool ?? 'tool'),
+              text: '',
+              time: String(frame.ts ?? now()),
+            })
+            return
+          }
+          if (frame.event === 'text') {
+            const text = String(frame.text ?? '')
+            if (!text) return
+            setMessages((previous) => {
+              const id = `stream-${runId}`
+              const index = previous.findIndex((message) => message.id === id)
+              if (index < 0) {
+                return [...previous, { id, role: 'agent', text, time: String(frame.ts ?? now()), streaming: true }]
+              }
+              const next = [...previous]
+              const current = next[index]
+              next[index] = { ...current, text: current.text + text, streaming: true }
+              return next
+            })
+            return
+          }
+          if (frame.event === 'end') {
+            setMessages((previous) =>
+              previous.map((message) =>
+                message.id === `stream-${runId}` ? { ...message, streaming: false } : message,
+              ),
+            )
+          }
           return
         }
         if (frame.type === 'message' && frame.from === 'agent') {
