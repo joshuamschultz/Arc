@@ -21,6 +21,7 @@ from typing import Any
 
 from arcgateway import team_roster
 from arcstore.approvals import ApprovalStore
+from arcstore.approval_dispatcher import ApprovalDispatcherConfig, ApprovalNotificationDispatcher
 from arcstore.backends import PostgresInboxRepository, open_backend
 from arcstore.cancellations import CancelStore
 from arcstore.config import ArcStoreConfig, resolve_data_dir
@@ -65,6 +66,7 @@ from arcui.routes import trust as trust_routes
 from arcui.routes import workflows as workflows_routes
 from arcui.routes.auth_routes import ROUTES as _AUTH_ROUTES
 from arcui.team_stream import TeamBusObserver, TeamStreamHub
+from arcui.approval_notifications import ApprovalNotificationHub
 
 logger = logging.getLogger(__name__)
 
@@ -359,6 +361,15 @@ def create_app(
                 )
             except Exception:  # reason: inbox routes report explicit unavailability
                 logger.exception("lifespan: durable inbox composition failed")
+        approval_dispatcher = None
+        if all(hasattr(task_store_backend, name) for name in ("claim_outbox", "ack_outbox", "nack_outbox")):
+            approval_dispatcher = ApprovalNotificationDispatcher(
+                task_store_backend,
+                starlette_app.state.approval_notification_hub,
+                config=ApprovalDispatcherConfig(worker_id="arcui-approval-notifications"),
+            )
+            await approval_dispatcher.start()
+            starlette_app.state.approval_notification_dispatcher = approval_dispatcher
         # SPEC-023: when a gateway_config is supplied, compose the in-process
         # gateway runtime and expose its components on app.state. Routes that
         # need the WebPlatformAdapter (chat_ws), the SessionRouter (admin
@@ -456,6 +467,8 @@ def create_app(
         try:
             yield
         finally:
+            if approval_dispatcher is not None:
+                await approval_dispatcher.stop()
             if observer_task is not None:
                 observer_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
@@ -548,6 +561,8 @@ def create_app(
     # Mechanical HITL approvals (SPEC-035) — same shared backend, "approvals"
     # collection; the operator surface for trifecta-block requests.
     app.state.approval_store = ApprovalStore(task_store_backend)
+    app.state.approval_notification_hub = ApprovalNotificationHub()
+    app.state.approval_notification_dispatcher = None
     # Operator kill switch (run cancellation) — same shared backend, "cancellations"
     # collection; the surface that parks a stop request for a per-agent watcher.
     app.state.cancel_store = CancelStore(task_store_backend)

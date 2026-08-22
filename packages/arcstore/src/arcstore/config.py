@@ -77,11 +77,11 @@ class ArcStoreConfig(BaseModel):
         raw_dsn = dsn.get_secret_value()
         parsed = urlparse(raw_dsn)
         if parsed.scheme not in {"postgres", "postgresql"} or not parsed.hostname:
-            raise ValueError("ArcStore PostgreSQL database URL is required")
+            raise ArcStoreConfigurationError("ArcStore PostgreSQL database URL is required")
         local = parsed.hostname in {"localhost", "127.0.0.1", "::1"}
         ssl_mode = parse_qs(parsed.query).get("sslmode", ["prefer" if local else "require"])[0]
         if not local and ssl_mode in {"disable", "allow", "prefer"}:
-            raise ValueError("TLS is required for external PostgreSQL hosts")
+            raise ArcStoreConfigurationError("TLS is required for external PostgreSQL hosts")
         transaction_pool = parsed.port == 6543
         return PostgresSettings(
             dsn=dsn,
@@ -110,3 +110,5 @@ class PostgresSettings(BaseModel):
     connect_timeout: float
     ssl_mode: str
     statement_cache_size: int
+class ArcStoreConfigurationError(ValueError):
+    """Expected missing/invalid ArcStore deployment configuration."""

@@ -283,6 +283,16 @@ async def start_runner_host(
             exc_info=True,
         )
         return None
+    except Exception as exc:
+        from arcstore.config import ArcStoreConfigurationError
+
+        if not isinstance(exc, ArcStoreConfigurationError):
+            raise
+        _logger.warning(
+            "start_runner_host: ArcStore configuration unavailable; workflows disabled",
+            exc_info=True,
+        )
+        return None
     host = await RunnerHost.start(runner)
     _publish_to_agent_tools(runner)
     return host
