@@ -297,11 +297,15 @@ async def wired(tmp_path: Path, monkeypatch: Any) -> Any:
 
     import arcgateway.workflow_runner_host as host_mod
 
+    arcstore_backend = FakeBackend()
+    await arcstore_backend.start()
+
     async def _shared_backend(url: str) -> Any:
         return team_backend
 
     monkeypatch.setattr(host_mod, "_resolve_runner_key_path", lambda: key_path)
     monkeypatch.setattr(host_mod, "_nats_url", lambda: "")
+    monkeypatch.setattr("arcstore.backends.open_backend", lambda: arcstore_backend)
     # Patch the name the host actually calls. The host reaches ArcAgent through
     # its root facade (``arcagent.make_backend``), which binds the function at
     # import time — patching the defining submodule leaves that binding alone.
