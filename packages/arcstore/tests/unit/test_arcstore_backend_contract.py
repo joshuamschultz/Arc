@@ -148,6 +148,62 @@ async def test_mutable_crud_merge_cas_increment_and_batch(
     assert await arcstore_backend.mutable_read("tasks", "task-3") is None
 
 
+async def test_nested_mutable_predicates_match_dotted_json_paths(
+    arcstore_backend: ArcStoreBackend,
+) -> None:
+    await arcstore_backend.mutable_write(
+        "tasks",
+        "flow-task",
+        {"status": "todo", "metadata": {"flow_run_id": "run-1"}},
+        actor_did=_ACTOR,
+    )
+    await arcstore_backend.mutable_write(
+        "tasks",
+        "other-task",
+        {"status": "todo", "metadata": {"flow_run_id": "run-2"}},
+        actor_did=_ACTOR,
+    )
+
+    rows = await arcstore_backend.mutable_query(
+        "tasks", where={"metadata.flow_run_id": "run-1"}
+    )
+    assert [row["metadata"]["flow_run_id"] for row in rows] == ["run-1"]
+    assert await arcstore_backend.update_if(
+        "tasks",
+        "flow-task",
+        {"status": "done"},
+        {"metadata.flow_run_id": "run-1"},
+        actor_did=_ACTOR,
+    )
+    assert (await arcstore_backend.mutable_read("tasks", "flow-task"))["status"] == "done"  # type: ignore[index]
+
+
+async def test_nested_absent_where_blocks_duplicate_claims(
+    arcstore_backend: ArcStoreBackend,
+) -> None:
+    await arcstore_backend.mutable_write(
+        "tasks",
+        "active",
+        {"metadata": {"owner": _ACTOR}, "status": "in_progress"},
+        actor_did=_ACTOR,
+    )
+    await arcstore_backend.mutable_write(
+        "tasks",
+        "candidate",
+        {"metadata": {"owner": None}, "status": "todo"},
+        actor_did=_ACTOR,
+    )
+
+    assert not await arcstore_backend.update_if(
+        "tasks",
+        "candidate",
+        {"metadata": {"owner": _ACTOR}, "status": "in_progress"},
+        {"metadata.owner": None, "status": "todo"},
+        absent_where={"metadata.owner": _ACTOR, "status": "in_progress"},
+        actor_did=_ACTOR,
+    )
+
+
 async def test_approval_resolution_is_single_winner(
     arcstore_backend: ArcStoreBackend,
 ) -> None:

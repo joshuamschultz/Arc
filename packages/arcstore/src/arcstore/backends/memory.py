@@ -17,8 +17,21 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+_MISSING = object()
+
+
+def _lookup(value: dict[str, Any], path: str) -> Any:
+    """Resolve the dotted JSON path syntax shared by store backends."""
+    current: Any = value
+    for part in path.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return _MISSING
+        current = current[part]
+    return current
+
+
 def _matches(value: dict[str, Any], where: dict[str, Any]) -> bool:
-    return all(value.get(field) == expected for field, expected in where.items())
+    return all(_lookup(value, field) == expected for field, expected in where.items())
 
 
 def _increment(value: dict[str, Any], path: str, delta: int | float) -> None:

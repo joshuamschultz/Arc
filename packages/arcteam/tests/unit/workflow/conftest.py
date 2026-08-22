@@ -497,7 +497,7 @@ REVIEWER_DID = "did:arc:local:agent/3333cccc"
 
 
 @pytest.fixture
-async def backend(tmp_path: Any) -> Any:
+async def backend() -> Any:
     store = FakeBackend()
     await store.start()
     yield store
