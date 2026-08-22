@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import binascii
 import hashlib
 import json
 import os
@@ -271,7 +272,30 @@ def _require_key(raw: Mapping[str, Any], field: str) -> str:
     value = raw.get(field)
     if not isinstance(value, str) or not value:
         raise MigrationError(f"{field} is required")
+    if "\x00" in value:
+        raise MigrationError(f"{field} must not contain NUL")
     return value
+
+
+def _mutable_row_key(collection: str, key: str) -> str:
+    """Encode a composite mutable-record key safely for PostgreSQL checkpoints."""
+    encoded = base64.urlsafe_b64encode(canonical_json([collection, key]).encode("utf-8"))
+    return encoded.decode("ascii").rstrip("=")
+
+
+def _parse_mutable_row_key(encoded: str) -> tuple[str, str]:
+    try:
+        padded = encoded + "=" * (-len(encoded) % 4)
+        decoded = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+    except (UnicodeDecodeError, ValueError, json.JSONDecodeError, binascii.Error) as exc:
+        raise MigrationError("invalid mutable-record checkpoint key") from exc
+    if (
+        not isinstance(decoded, list)
+        or len(decoded) != 2
+        or not all(isinstance(item, str) and item and "\x00" not in item for item in decoded)
+    ):
+        raise MigrationError("invalid mutable-record checkpoint key")
+    return decoded[0], decoded[1]
 
 
 def _model_payload(
@@ -330,7 +354,7 @@ def _map_row(source_table: str, raw: Mapping[str, Any]) -> MappedRow:
             "key": key,
             "value": _json_object(raw.get("value"), field="value"),
         }
-        return MappedRow(table, f"{collection}\x00{key}", values, digest(values))
+        return MappedRow(table, _mutable_row_key(collection, key), values, digest(values))
     if table == "inboxes":
         inbox_id = _require_key(raw, "inbox_id")
         payload = _model_payload(
@@ -705,7 +729,7 @@ class PostgresDestination:
             )
             values = None if row is None else {"name": row["name"], "value": row["value"]}
         elif table == "mutable_records":
-            collection, record_key = key.split("\x00", 1)
+            collection, record_key = _parse_mutable_row_key(key)
             row = await connection.fetchrow(
                 "SELECT collection,key,value::text FROM mutable_records "
                 "WHERE collection=$1 AND key=$2",

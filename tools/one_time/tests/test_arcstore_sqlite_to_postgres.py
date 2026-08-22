@@ -17,6 +17,8 @@ from tools.one_time.arcstore_sqlite_to_postgres import (
     MappedRow,
     MigrationError,
     PostgresDestination,
+    _mutable_row_key,
+    _parse_mutable_row_key,
     digest,
     migrate,
 )
@@ -237,6 +239,12 @@ def test_digest_normalizes_equivalent_postgres_and_model_utc_timestamps() -> Non
         "created_at": "2026-08-22T00:00:00+00:00",
     }
     assert digest(planned) == digest(readback)
+
+
+def test_mutable_checkpoint_key_is_reversible_and_postgres_text_safe() -> None:
+    checkpoint_key = _mutable_row_key("tasks", "task-1")
+    assert "\x00" not in checkpoint_key
+    assert _parse_mutable_row_key(checkpoint_key) == ("tasks", "task-1")
 
 
 @pytest.mark.asyncio
