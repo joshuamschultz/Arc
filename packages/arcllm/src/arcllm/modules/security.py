@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import importlib
 import json
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 from arctrust.fips import assert_fips_if_required
@@ -16,12 +16,14 @@ from arcllm.exceptions import ArcLLMConfigError
 from arcllm.modules.base import BaseModule, validate_config_keys
 from arcllm.types import (
     ContentBlock,
+    Delta,
     LLMProvider,
     LLMResponse,
     Message,
     TextBlock,
     Tool,
     ToolCall,
+    ToolCallDelta,
     ToolResultBlock,
     ToolUseBlock,
 )
@@ -45,6 +47,7 @@ _VALID_CONFIG_KEYS = {
 # or verify the loaded code's trustworthiness. Signature verification of
 # the loaded package/class is arctrust/arcagent's job, not arcllm's.
 _ALLOWED_DETECTOR_PREFIXES = ("arcllm.", "arcagent.", "arcpii.")
+_STREAM_REDACTION_TAIL = 128
 
 
 def _load_detector_class(ref: str) -> PiiDetector:
@@ -205,11 +208,118 @@ class SecurityModule(BaseModule):
             # (never an attacker-suppliable response field) — REQ-011.
             if self._signer is not None:
                 with self._span("security.sign"):
-                    payload = canonical_payload(messages, tools, self.model_name)
-                    signature = self._signer.sign(payload).hex()
-                    response = self._attach_signature(response, signature)
+                    response = self._attach_signature(
+                        response, self._signature_metadata(messages, tools)
+                    )
 
             return response
+
+    async def invoke_stream(
+        self,
+        messages: list[Message],
+        tools: list[Tool] | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[Delta]:
+        """Stream through the same redaction and signing boundary as ``invoke``.
+
+        Tool argument fragments are held until the provider closes its stream so a
+        secret split across arbitrary wire chunks cannot escape redaction and the
+        replacement remains one valid JSON fragment for ``StreamAccumulator``.
+        """
+        with self._span("security"):
+            if self._pii_detector is not None:
+                with self._span("security.pii_redact_outbound"):
+                    messages = self._redact_messages(messages)
+
+            signature: dict[str, Any] = {}
+            if self._signer is not None:
+                with self._span("security.sign"):
+                    signature = self._signature_metadata(messages, tools)
+
+            stream = self._inner.invoke_stream(messages, tools, **kwargs)
+            argument_fragments: dict[int, list[str]] = {}
+            text_buffer = [""]
+            terminal: Delta | None = None
+            try:
+                async for delta in stream:
+                    safe = self._redact_delta(delta, argument_fragments)
+                    if self._pii_detector is not None and delta.text:
+                        text_buffer[0] += delta.text
+                        safe = safe.model_copy(
+                            update={"text": self._flush_text_prefix(text_buffer, final=False)}
+                        )
+                    if safe.stop_reason is not None:
+                        terminal = safe
+                    elif not _empty_delta(safe):
+                        yield safe
+
+                if text_buffer[0]:
+                    yield Delta(text=self._redact_str(text_buffer[0]))
+                for index, fragments in argument_fragments.items():
+                    arguments = "".join(fragments)
+                    if self._pii_detector is not None:
+                        arguments = self._redact_str(arguments)
+                    yield Delta(tool_call=ToolCallDelta(index=index, arguments=arguments))
+
+                if terminal is not None:
+                    if signature:
+                        terminal = terminal.model_copy(
+                            update={"metadata": {**(terminal.metadata or {}), **signature}}
+                        )
+                    yield terminal
+                elif signature:
+                    yield Delta(metadata=signature)
+            finally:
+                close = getattr(stream, "aclose", None)
+                if close is not None:
+                    await close()
+
+    def _redact_delta(self, delta: Delta, argument_fragments: dict[int, list[str]]) -> Delta:
+        """Redact visible text and hold tool argument fragments for final assembly."""
+        updates: dict[str, Any] = {}
+        tool_call = delta.tool_call
+        if tool_call is not None:
+            if tool_call.arguments is not None:
+                argument_fragments.setdefault(tool_call.index, []).append(tool_call.arguments)
+                tool_call = tool_call.model_copy(update={"arguments": None})
+            if self._pii_detector is not None:
+                tool_call = tool_call.model_copy(
+                    update={
+                        "id": self._redact_str(tool_call.id) if tool_call.id else None,
+                        "name": self._redact_str(tool_call.name) if tool_call.name else None,
+                    }
+                )
+            updates["tool_call"] = tool_call
+        return delta.model_copy(update=updates) if updates else delta
+
+    def _flush_text_prefix(self, buffer: list[str], *, final: bool) -> str | None:
+        """Flush only text proven not to contain a PII match split across chunks."""
+        if final:
+            prefix, buffer[0] = buffer[0], ""
+        else:
+            cut = max(0, len(buffer[0]) - _STREAM_REDACTION_TAIL)
+            if cut == 0:
+                return None
+            matches = self._pii_detector.detect(buffer[0]) if self._pii_detector else []
+            cut = min(
+                (match.start for match in matches if match.start < cut < match.end),
+                default=cut,
+            )
+            prefix, buffer[0] = buffer[0][:cut], buffer[0][cut:]
+        return self._redact_str(prefix) if prefix else None
+
+    def _signature_metadata(
+        self, messages: list[Message], tools: list[Tool] | None
+    ) -> dict[str, Any]:
+        """Build the same public request attestation metadata used by ``invoke``."""
+        if self._signer is None:
+            return {}
+        payload = canonical_payload(messages, tools, self.model_name)
+        return {
+            "request_signature": self._signer.sign(payload).hex(),
+            "signing_algorithm": self._signing_algorithm,
+            "signing_public_key": self._signer.public_key.hex(),
+        }
 
     def _redact_messages(self, messages: list[Message]) -> list[Message]:
         """Redact PII from all messages, returning new list."""
@@ -322,7 +432,7 @@ class SecurityModule(BaseModule):
                 result.append(call)
         return result
 
-    def _attach_signature(self, response: LLMResponse, signature: str) -> LLMResponse:
+    def _attach_signature(self, response: LLMResponse, signature: dict[str, Any]) -> LLMResponse:
         """Attach asymmetric signing metadata to the response.
 
         The public key rides alongside so a downstream verifier can check the
@@ -330,9 +440,11 @@ class SecurityModule(BaseModule):
         needs, and never receives, signing material.
         """
         metadata = dict(response.metadata) if response.metadata else {}
-        metadata["request_signature"] = signature
-        metadata["signing_algorithm"] = self._signing_algorithm
-        if self._signer is not None:
-            metadata["signing_public_key"] = self._signer.public_key.hex()
+        metadata.update(signature)
 
         return response.model_copy(update={"metadata": metadata})
+
+
+def _empty_delta(delta: Delta) -> bool:
+    """Return whether a redaction pass left no stream-visible fields."""
+    return not any((delta.text, delta.tool_call, delta.usage, delta.metadata))

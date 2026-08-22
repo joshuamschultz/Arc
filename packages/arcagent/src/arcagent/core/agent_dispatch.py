@@ -28,7 +28,7 @@ from arcagent.core.agent_lifecycle import activate_runtime_bindings
 from arcagent.core.module_bus import ModuleBus
 from arcagent.core.session_internal import AssembledPrompt, SessionManager, wire_messages
 from arcagent.core.session_internal.capability_ledger import bind_session_id, reset_session_id
-from arcagent.core.telemetry import AgentTelemetry
+from arcagent.core.telemetry import AgentTelemetry, TelemetryAuditSink
 from arcagent.tools._policy_fill import resolve_run_budget
 from arcagent.tools.approval_policy import narrowed_loop_controls
 from arcagent.utils.moment import moment_cues
@@ -414,6 +414,7 @@ async def _dispatch_stream_locked(
                     max_tokens=run_max_tokens,
                     max_cost_usd=run_max_cost_usd,
                     run_id=run_id,
+                    audit_sink=TelemetryAuditSink(telemetry),
                     on_handle=on_handle,
                     **narrowed_loop_controls(agent, session, allowed_strategies),
                 )

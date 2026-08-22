@@ -18,6 +18,7 @@ import hashlib
 import logging
 import re
 import unicodedata
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -26,6 +27,7 @@ from arcllm.exceptions import ArcLLMConfigError, ArcLLMInjectionError
 from arcllm.modules.base import BaseModule, resolve_enforcement, validate_config_keys
 from arcllm.types import (
     ContentBlock,
+    Delta,
     LLMProvider,
     LLMResponse,
     Message,
@@ -331,6 +333,37 @@ class InjectionModule(BaseModule):
             # Messages pass through untouched — content is never mutated
             # or executed (ADR-421); only the scan copy was normalized.
             return await self._inner.invoke(messages, tools, **kwargs)
+
+    async def invoke_stream(
+        self,
+        messages: list[Message],
+        tools: list[Tool] | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[Delta]:
+        """Apply the same pre-provider injection gate to native streams."""
+        with self._span("arcllm.injection") as span:
+            findings = self._scan(messages)
+            span.set_attribute("arcllm.injection.hits", len(findings))
+            span.set_attribute("arcllm.injection.enforcement", self._enforcement)
+            if findings:
+                if self._enforcement == "block":
+                    raise ArcLLMInjectionError(findings)
+                logger.warning(
+                    "arcllm.injection.flagged",
+                    extra={
+                        "hits": len(findings),
+                        "categories": sorted({f.category for f in findings}),
+                    },
+                )
+
+            stream = self._inner.invoke_stream(messages, tools, **kwargs)
+            try:
+                async for delta in stream:
+                    yield delta
+            finally:
+                close = getattr(stream, "aclose", None)
+                if close is not None:
+                    await close()
 
     def _scan(self, messages: list[Message]) -> list[InjectionFinding]:
         """Scan user + tool-result content across all messages."""

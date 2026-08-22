@@ -139,6 +139,7 @@ class Delta(BaseModel):
     tool_call: ToolCallDelta | None = None
     usage: Usage | None = None
     stop_reason: StopReason | None = None
+    metadata: dict[str, Any] | None = None
 
 
 class ResponseFormat(TypedDict, total=False):
@@ -203,6 +204,7 @@ class StreamAccumulator:
         self._tools: dict[int, _ToolCallParts] = {}
         self._usage: Usage | None = None
         self._stop_reason: StopReason | None = None
+        self._metadata: dict[str, Any] = {}
         self._error: str | None = None
 
     def add(self, delta: Delta) -> None:
@@ -215,6 +217,8 @@ class StreamAccumulator:
             self._usage = delta.usage
         if delta.stop_reason is not None:
             self._stop_reason = delta.stop_reason
+        if delta.metadata:
+            self._metadata.update(delta.metadata)
 
     def build(self) -> LLMResponse:
         """Return a validated response or a sanitized protocol error."""
@@ -229,6 +233,7 @@ class StreamAccumulator:
             usage=self._usage or Usage(input_tokens=0, output_tokens=0, total_tokens=0),
             model=self._model,
             stop_reason=self._stop_reason or "end_turn",
+            metadata=self._metadata or None,
         )
 
     def _add_tool_call(self, delta: ToolCallDelta) -> None:

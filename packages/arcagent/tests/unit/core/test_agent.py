@@ -97,6 +97,10 @@ class TestStartup:
         assert agent._bus is not None
         assert agent._tool_registry is not None
         assert agent._context is not None
+        assert agent._capability_registry is not None
+        assert agent._capability_loader is not None
+        assert callable(getattr(agent._capability_registry._audit_sink, "write", None))
+        assert callable(getattr(agent._capability_loader._audit_sink, "write", None))
 
     async def test_failed_startup_releases_worm_lock(self, agent: ArcAgent) -> None:
         """A module failing during startup must not leak the single-writer WORM

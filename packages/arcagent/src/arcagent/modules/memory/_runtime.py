@@ -50,6 +50,7 @@ from pathlib import Path
 from typing import Any, NoReturn, cast
 
 from arcagent.brain import Brain, NullBrain, select_brain
+from arcagent.core.telemetry import TelemetryAuditSink
 from arcagent.knowledge import KnowledgeAccess, PersonalKnowledgePort, SharedKnowledgePort
 from arcagent.modules.memory.config import MemoryConfig
 
@@ -168,7 +169,12 @@ def configure(
         shared_backend = cast(SharedKnowledgeBackend, FleetSharedKnowledgeBackend.for_arc_team())
         shared_knowledge = cast(
             SharedKnowledgePort,
-            SharedKnowledgeAdapter(shared_backend, agent_did=agent_did, signer=identity),
+            SharedKnowledgeAdapter(
+                shared_backend,
+                agent_did=agent_did,
+                signer=identity,
+                audit_sink=TelemetryAuditSink(telemetry) if telemetry is not None else None,
+            ),
         )
     new_state = _State(
         config=cfg,

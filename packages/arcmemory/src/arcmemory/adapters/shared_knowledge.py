@@ -93,52 +93,129 @@ class SharedKnowledgeAdapter:
 
     async def save(self, draft: _Draft, access: _Access) -> _Reference:
         """Save an explicitly shared document under the caller's signed ownership."""
-        self._authorize(access, draft.classification)
-        return await self._save(
-            title=draft.title,
-            content=draft.content,
-            classification=draft.classification,
-            tags=draft.tags,
-            document_type=draft.document_type,
-            access=access,
+        try:
+            self._authorize(access, draft.classification)
+            result = await self._save(
+                title=draft.title,
+                content=draft.content,
+                classification=draft.classification,
+                tags=draft.tags,
+                document_type=draft.document_type,
+                access=access,
+            )
+        except (PermissionError, ValueError) as error:
+            self._emit_audit(
+                access,
+                action="knowledge.saved_shared",
+                target=draft.title,
+                outcome="deny",
+                extra={"error": type(error).__name__},
+            )
+            raise
+        self._emit_audit(
+            access,
             action="knowledge.saved_shared",
+            target="shared",
+            outcome="allow",
+            payload_hash=result.digest.removeprefix("sha256:"),
         )
+        return result
 
     async def promote(self, source: _Source, access: _Access) -> _Reference:
         """Promote one personal export after identity, clearance, and digest checks."""
-        self._authorize(access, source.classification)
-        if source.reference.scope != "personal":
-            raise ValueError("only personal knowledge can be promoted")
-        content = source.content.strip()
-        digest = "sha256:" + hashlib.sha256(content.encode()).hexdigest()
-        if digest != source.digest:
-            raise ValueError("knowledge promotion digest mismatch")
-        if not content.strip() or not source.title.strip():
-            raise ValueError("knowledge promotion requires title and content")
-        result = await self._save(
-            title=source.title,
-            content=content,
-            classification=source.classification,
-            tags=source.tags,
-            document_type=source.document_type,
-            access=access,
+        try:
+            self._authorize(access, source.classification)
+            if source.reference.scope != "personal":
+                raise ValueError("only personal knowledge can be promoted")
+            content = source.content.strip()
+            digest = "sha256:" + hashlib.sha256(content.encode()).hexdigest()
+            if digest != source.digest:
+                raise ValueError("knowledge promotion digest mismatch")
+            if not content.strip() or not source.title.strip():
+                raise ValueError("knowledge promotion requires title and content")
+            result = await self._save(
+                title=source.title,
+                content=content,
+                classification=source.classification,
+                tags=source.tags,
+                document_type=source.document_type,
+                access=access,
+            )
+            if result.scope != "shared" or result.digest != digest:
+                raise ValueError("shared backend returned an invalid reference")
+        except (PermissionError, ValueError) as error:
+            self._emit_audit(
+                access,
+                action="knowledge.promoted",
+                target=source.digest,
+                outcome="deny",
+                extra={"error": type(error).__name__},
+            )
+            raise
+        self._emit_audit(
+            access,
             action="knowledge.promoted",
+            target="shared",
+            outcome="allow",
+            payload_hash=digest.removeprefix("sha256:"),
         )
-        if result.scope != "shared" or result.digest != digest:
-            raise ValueError("shared backend returned an invalid reference")
         return result
 
     async def read(self, reference: str, access: _Access) -> object:
         """Read through the backend, which owns path and clearance enforcement."""
-        return await self._backend.read(reference, access)
+        try:
+            result = await self._backend.read(reference, access)
+        except (FileNotFoundError, PermissionError, ValueError) as error:
+            self._emit_audit(
+                access,
+                action="knowledge.retrieved",
+                target=reference,
+                outcome="deny",
+                extra={"error": type(error).__name__},
+            )
+            raise
+        self._emit_audit(access, action="knowledge.retrieved", target=reference, outcome="allow")
+        return result
 
     async def search(self, query: str, access: _Access) -> list[object]:
         """Search through the backend, which filters inaccessible documents."""
-        return await self._backend.search(query, access)
+        query_hash = _hash_text(query)
+        try:
+            result = await self._backend.search(query, access)
+        except (PermissionError, ValueError) as error:
+            self._emit_audit(
+                access,
+                action="knowledge.searched",
+                target="shared",
+                outcome="deny",
+                payload_hash=query_hash,
+                extra={"error": type(error).__name__},
+            )
+            raise
+        self._emit_audit(
+            access,
+            action="knowledge.searched",
+            target="shared",
+            outcome="allow",
+            payload_hash=query_hash,
+            extra={"result_count": len(result)},
+        )
+        return result
 
     async def revoke(self, reference: str, access: _Access) -> None:
         """Revoke an owned shared document through the durable backend."""
-        await self._backend.revoke(reference, access)
+        try:
+            await self._backend.revoke(reference, access)
+        except (FileNotFoundError, PermissionError, ValueError) as error:
+            self._emit_audit(
+                access,
+                action="knowledge.revoked",
+                target=reference,
+                outcome="deny",
+                extra={"error": type(error).__name__},
+            )
+            raise
+        self._emit_audit(access, action="knowledge.revoked", target=reference, outcome="allow")
 
     def _authorize(self, access: _Access, classification: str) -> None:
         if access.caller_did != self._agent_did:
@@ -159,7 +236,6 @@ class SharedKnowledgeAdapter:
         tags: tuple[str, ...],
         document_type: str,
         access: _Access,
-        action: str,
     ) -> _Reference:
         content = content.strip()
         if not content or not title.strip() or not document_type.strip():
@@ -188,23 +264,37 @@ class SharedKnowledgeAdapter:
             algorithm=self._signer.algorithm,
         )
         result = await self._backend.save(draft, access)
-        _audit(self._audit_sink, access.caller_did, digest, action)
         return result
 
+    def _emit_audit(
+        self,
+        access: _Access,
+        *,
+        action: str,
+        target: str,
+        outcome: str,
+        payload_hash: str | None = None,
+        extra: dict[str, object] | None = None,
+    ) -> None:
+        """Emit one metadata-only audit record for every shared operation."""
+        if self._audit_sink is None:
+            return
+        emit(
+            AuditEvent(
+                actor_did=access.caller_did,
+                action=action,
+                target=target,
+                outcome=outcome,
+                payload_hash=payload_hash,
+                extra=extra or {},
+            ),
+            self._audit_sink,
+        )
 
-def _audit(sink: AuditSink | None, actor_did: str, digest: str, action: str) -> None:
-    if sink is None:
-        return
-    emit(
-        AuditEvent(
-            actor_did=actor_did,
-            action=action,
-            target="shared",
-            outcome="promoted",
-            payload_hash=digest.removeprefix("sha256:"),
-        ),
-        sink,
-    )
+
+def _hash_text(text: str) -> str:
+    """Hash a search query before it enters an audit record."""
+    return hashlib.sha256(text.encode()).hexdigest()
 
 
 __all__ = ["SharedKnowledgeAdapter", "SharedKnowledgeBackend", "SharedKnowledgeDraft"]

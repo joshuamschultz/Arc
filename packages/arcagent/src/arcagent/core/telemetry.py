@@ -13,8 +13,9 @@ import logging
 import re
 from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager
-from typing import Any
+from typing import Any, Protocol
 
+from arctrust.audit import AuditEvent
 from opentelemetry import trace
 from opentelemetry.trace import NonRecordingSpan, Span
 
@@ -27,6 +28,37 @@ _SENSITIVE_PATTERN = re.compile(
     r"(password|secret|token|key|credential|auth|api_key|private)",
     re.IGNORECASE,
 )
+
+
+class _AuditTelemetry(Protocol):
+    def audit_event(self, event_type: str, details: dict[str, Any]) -> None: ...
+
+
+class TelemetryAuditSink:
+    """Adapt typed arctrust audit events to the agent telemetry boundary."""
+
+    def __init__(self, telemetry: _AuditTelemetry) -> None:
+        self._telemetry = telemetry
+
+    def write(self, event: AuditEvent) -> None:
+        """Forward metadata while letting ``AgentTelemetry`` redact secrets."""
+        self._telemetry.audit_event(
+            event.action,
+            {
+                "actor_did": event.actor_did,
+                "target": event.target,
+                "outcome": event.outcome,
+                "classification": event.classification,
+                "tier": event.tier,
+                "request_id": event.request_id,
+                "payload_hash": event.payload_hash,
+                **event.extra,
+            },
+        )
+
+    def emit(self, event: AuditEvent) -> None:
+        """Support capability lifecycle objects that call their sink ``emit`` method."""
+        self.write(event)
 
 
 class AgentTelemetry:

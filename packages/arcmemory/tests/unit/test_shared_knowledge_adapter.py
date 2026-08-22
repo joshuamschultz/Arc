@@ -18,6 +18,15 @@ class _Backend:
             "Ref", (), {"scope": "shared", "identifier": "team-1", "digest": draft.digest}
         )()
 
+    async def read(self, reference, access):
+        return {"reference": reference}
+
+    async def search(self, query, access):
+        return [{"query": query}]
+
+    async def revoke(self, reference, access):
+        return None
+
 
 class _Access:
     def __init__(self, caller_did: str, clearance: str = "UNCLASSIFIED") -> None:
@@ -95,3 +104,26 @@ async def test_promotion_requires_agent_clearance_and_personal_source() -> None:
     with pytest.raises(ValueError, match="personal"):
         await adapter.promote(source, _Access(identity.did))
     assert backend.saved == []
+
+
+@pytest.mark.asyncio
+async def test_shared_operations_emit_metadata_only_audit_events() -> None:
+    backend = _Backend()
+    sink = _Sink()
+    identity = AgentIdentity.generate("test", "audit")
+    adapter = SharedKnowledgeAdapter(
+        backend, agent_did=identity.did, signer=identity, audit_sink=sink
+    )
+    access = _Access(identity.did)
+
+    await adapter.read("shared-1", access)
+    await adapter.search("private query", access)
+    await adapter.revoke("shared-1", access)
+
+    assert [event.action for event in sink.events] == [
+        "knowledge.retrieved",
+        "knowledge.searched",
+        "knowledge.revoked",
+    ]
+    assert sink.events[1].payload_hash
+    assert "private query" not in str(sink.events[1].model_dump())

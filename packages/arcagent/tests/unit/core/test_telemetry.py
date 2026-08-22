@@ -12,7 +12,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from arcagent.core.config import TelemetryConfig
-from arcagent.core.telemetry import AgentTelemetry
+from arcagent.core.telemetry import AgentTelemetry, TelemetryAuditSink
 
 
 @pytest.fixture(autouse=True)
@@ -162,6 +162,28 @@ class TestAuditEvent:
         events = session.events
         assert len(events) >= 1
         assert events[0].name == "audit:tool.executed"
+
+    def test_typed_audit_sink_forwards_event_metadata(
+        self, telemetry: AgentTelemetry, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from arctrust import AuditEvent
+
+        sink = TelemetryAuditSink(telemetry)
+        with caplog.at_level(logging.INFO, logger="arcagent.audit"):
+            sink.write(
+                AuditEvent(
+                    actor_did="did:arc:actor",
+                    action="stream.end",
+                    target="stream:1234",
+                    outcome="success",
+                    payload_hash="abcd",
+                )
+            )
+
+        data = json.loads(caplog.records[-1].message)
+        assert data["event_type"] == "stream.end"
+        assert data["details"]["target"] == "stream:1234"
+        assert data["details"]["payload_hash"] == "abcd"
 
 
 class TestSetAgentDid:

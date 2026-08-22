@@ -7,7 +7,7 @@ import pytest
 
 from arcllm.exceptions import ArcLLMConfigError
 from arcllm.modules.audit import AuditModule
-from arcllm.types import LLMProvider, LLMResponse, Message, Tool, ToolCall, Usage
+from arcllm.types import Delta, LLMProvider, LLMResponse, Message, Tool, ToolCall, Usage
 
 _OK_RESPONSE = LLMResponse(
     content="Hello there!",
@@ -158,6 +158,23 @@ class TestAuditModule:
             await module.invoke(messages)
 
         assert "Hello there!" not in caplog.text
+
+    async def test_invoke_stream_logs_completed_stream(self, messages, caplog):
+        inner = _make_inner()
+
+        async def native_stream(*_args, **_kwargs):
+            yield Delta(text="Hello ")
+            yield Delta(text="there!", stop_reason="end_turn")
+
+        inner.invoke_stream = native_stream
+        module = AuditModule({}, inner)
+
+        with caplog.at_level(logging.INFO, logger="arcllm.modules.audit"):
+            deltas = [delta async for delta in module.invoke_stream(messages)]
+
+        assert [delta.text for delta in deltas if delta.text] == ["Hello ", "there!"]
+        assert "content_length=12" in caplog.text
+        assert "stop_reason=end_turn" in caplog.text
 
 
 # ---------------------------------------------------------------------------

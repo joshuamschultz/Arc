@@ -65,3 +65,13 @@ def test_accumulator_rejects_invalid_or_conflicting_tool_fragments(deltas: list[
 def test_delta_rejects_hidden_reasoning_payload() -> None:
     with pytest.raises(ValueError, match="reasoning"):
         Delta.model_validate({"text": "visible", "reasoning": "private chain of thought"})
+
+
+def test_accumulator_preserves_terminal_metadata() -> None:
+    accumulator = StreamAccumulator(model="test-model")
+    accumulator.add(Delta(text="ok"))
+    accumulator.add(Delta(stop_reason="end_turn", metadata={"request_signature": "sig"}))
+
+    response = accumulator.build()
+
+    assert response.metadata == {"request_signature": "sig"}

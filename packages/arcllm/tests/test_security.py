@@ -1,5 +1,6 @@
 """Tests for SecurityModule — PII redaction + request signing integration."""
 
+import asyncio
 import os
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -10,11 +11,14 @@ from arcllm._pii import PiiMatch
 from arcllm.exceptions import ArcLLMConfigError
 from arcllm.modules.security import SecurityModule, configured_redactor
 from arcllm.types import (
+    Delta,
     LLMProvider,
     LLMResponse,
     Message,
+    StreamAccumulator,
     TextBlock,
     ToolCall,
+    ToolCallDelta,
     ToolResultBlock,
     ToolUseBlock,
     Usage,
@@ -335,6 +339,91 @@ class TestPiiInbound:
         result = await module.invoke(messages)
 
         assert result.tool_calls[0].arguments == original_args
+
+    async def test_stream_redacts_text_and_tool_arguments_without_breaking_json(self):
+        inner = _make_inner()
+
+        async def native_stream(*_args, **_kwargs):
+            yield Delta(text="Your SSN is 123-45-6789")
+            yield Delta(tool_call=ToolCallDelta(index=0, id="call-1", name="save"))
+            yield Delta(tool_call=ToolCallDelta(index=0, arguments='{"ssn":"123-45-'))
+            yield Delta(tool_call=ToolCallDelta(index=0, arguments='6789"}'))
+            yield Delta(stop_reason="tool_use")
+
+        inner.invoke_stream = native_stream
+        module = SecurityModule(_base_config(signing_enabled=False), inner)
+
+        deltas = [
+            delta async for delta in module.invoke_stream([Message(role="user", content="lookup")])
+        ]
+
+        text = "".join(delta.text or "" for delta in deltas)
+        assert text == "Your SSN is [PII:SSN]"
+        tool_deltas = [delta.tool_call for delta in deltas if delta.tool_call is not None]
+        assert tool_deltas[-1].arguments == '{"ssn":"[PII:SSN]"}'
+        assert deltas[-1].stop_reason == "tool_use"
+        accumulator = StreamAccumulator(model="test-model")
+        for delta in deltas:
+            accumulator.add(delta)
+        assert accumulator.build().tool_calls[0].arguments == {"ssn": "[PII:SSN]"}
+
+    async def test_stream_attaches_request_signature_to_final_delta(self):
+        with patch.dict(os.environ, {"TEST_SIGNING_KEY": "11" * 32}):
+            inner = _make_inner()
+
+            async def native_stream(*_args, **_kwargs):
+                yield Delta(text="ok")
+                yield Delta(stop_reason="end_turn")
+
+            inner.invoke_stream = native_stream
+            module = SecurityModule(_base_config(), inner)
+            deltas = [
+                delta
+                async for delta in module.invoke_stream([Message(role="user", content="hello")])
+            ]
+
+        assert deltas[-1].metadata is not None
+        assert deltas[-1].metadata["request_signature"]
+        assert deltas[-1].metadata["signing_algorithm"] == "ed25519"
+
+    async def test_stream_redacts_pii_split_across_text_deltas(self):
+        inner = _make_inner()
+
+        async def native_stream(*_args, **_kwargs):
+            yield Delta(text="Your SSN is 123-")
+            yield Delta(text="45-6789")
+            yield Delta(stop_reason="end_turn")
+
+        inner.invoke_stream = native_stream
+        module = SecurityModule(_base_config(signing_enabled=False), inner)
+
+        deltas = [
+            delta async for delta in module.invoke_stream([Message(role="user", content="lookup")])
+        ]
+        text = "".join(delta.text or "" for delta in deltas)
+
+        assert text == "Your SSN is [PII:SSN]"
+        assert "123-45-6789" not in text
+
+    async def test_stream_cancellation_closes_inner_provider(self):
+        closed = False
+
+        async def native_stream(*_args, **_kwargs):
+            nonlocal closed
+            try:
+                yield Delta(text="v" * 256)
+                await asyncio.Event().wait()
+            finally:
+                closed = True
+
+        inner = _make_inner()
+        inner.invoke_stream = native_stream
+        module = SecurityModule(_base_config(signing_enabled=False), inner)
+        stream = module.invoke_stream([Message(role="user", content="lookup")])
+        await anext(stream)
+        await stream.aclose()
+
+        assert closed
 
 
 # ---------------------------------------------------------------------------

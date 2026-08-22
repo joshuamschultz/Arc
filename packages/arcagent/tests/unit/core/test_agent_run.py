@@ -127,6 +127,7 @@ async def test_run_passes_tool_io_capture_to_arcrun(
             await agent.shutdown()
 
     assert captured.get("store_raw_bodies") is True
+    assert callable(getattr(captured.get("audit_sink"), "write", None))
 
 
 @pytest.mark.asyncio

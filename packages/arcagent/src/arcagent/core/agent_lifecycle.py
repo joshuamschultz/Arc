@@ -38,6 +38,7 @@ from arcagent.core.runtime_dependencies import (
     RuntimeModule,
     RuntimeTeardownable,
 )
+from arcagent.core.telemetry import TelemetryAuditSink
 from arcagent.core.tool_registry import RegisteredTool, ToolTransport
 from arcagent.tools._egress_build import build_egress_proxy
 from arcagent.utils.source_module import exec_source_module
@@ -133,10 +134,11 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
         msg = "Capability subsystem requires bus, tool_registry, telemetry, and identity"
         raise RuntimeError(msg)
     agent._runtime_bindings.clear()
+    audit_sink = TelemetryAuditSink(telemetry)
 
     agent._capability_registry = CapabilityRegistry(
         bus=bus,
-        audit_sink=None,
+        audit_sink=audit_sink,
         agent_did=identity.did,
         tier=agent._config.security.tier,
         task_supervisor=agent._background_tasks,
@@ -237,6 +239,7 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
         scan_roots=scan_roots,
         registry=agent._capability_registry,
         bus=bus,
+        audit_sink=audit_sink,
         import_policy=posture.import_policy,
         tofu=posture.tofu,
         require_signature=posture.require_signature,
