@@ -11,6 +11,7 @@ export interface ChatMessage {
   text: string
   tool?: string
   time: string
+  attachments?: string[]
 }
 
 export type ChatStatus = 'connecting' | 'ready' | 'reconnecting' | 'closed'
@@ -33,6 +34,7 @@ function now(): string {
 export function useChatSession(agentId: string | null) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [status, setStatus] = useState<ChatStatus>('connecting')
+  const [sessionKey, setSessionKey] = useState<string | null>(null)
 
   const wsRef = useRef<WebSocket | null>(null)
   const lastSeq = useRef(-1)
@@ -133,6 +135,7 @@ export function useChatSession(agentId: string | null) {
 
         if (frame.type === 'ready') {
           chatId.current = (frame.chat_id as string) ?? null
+          setSessionKey(chatId.current)
           setStatus('ready')
           if (chatId.current) loadHistory(agentId, chatId.current)
           return
@@ -201,6 +204,7 @@ export function useChatSession(agentId: string | null) {
     setMessages([])
     lastSeq.current = -1
     chatId.current = null
+    setSessionKey(null)
     historyLoaded.current = true
     try {
       wsRef.current?.close()
@@ -210,8 +214,9 @@ export function useChatSession(agentId: string | null) {
   }, [])
 
   const sendMessage = useCallback(
-    (text: string) => {
-      if (!text.trim()) return
+    (text: string, attachmentIds: string[] = []) => {
+      const opaqueIds = attachmentIds.filter((id) => /^att_[A-Za-z0-9_-]+$/.test(id))
+      if (!text.trim() && opaqueIds.length === 0) return false
       const ws = wsRef.current
       if (!ws || ws.readyState !== WebSocket.OPEN) {
         // Never drop a message silently. If the socket isn't open (the
@@ -224,14 +229,21 @@ export function useChatSession(agentId: string | null) {
           text: 'Not connected — message not sent. Waiting to reconnect to the backend…',
           time: now(),
         })
-        return
+        return false
       }
       clientSeq.current += 1
-      append({ id: `u${clientSeq.current}`, role: 'user', text, time: now() })
-      ws.send(JSON.stringify({ type: 'message', text, client_seq: clientSeq.current }))
+      append({
+        id: `u${clientSeq.current}`,
+        role: 'user',
+        text: text || `Sent ${opaqueIds.length} attachment${opaqueIds.length === 1 ? '' : 's'}`,
+        time: now(),
+        attachments: opaqueIds,
+      })
+      ws.send(JSON.stringify({ type: 'message', text, client_seq: clientSeq.current, attachment_ids: opaqueIds }))
+      return true
     },
     [append],
   )
 
-  return { messages, status, sendMessage, resetForNewSession }
+  return { messages, status, sessionKey, sendMessage, resetForNewSession }
 }

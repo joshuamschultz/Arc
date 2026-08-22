@@ -32,6 +32,8 @@ import { apiPost, ApiError } from '@/lib/api'
 import { initials, fmtTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import type { Agent, Channel, Dict } from '@/lib/types'
+import { AttachmentPicker } from '@/components/attachment-picker'
+import { useAttachmentUploader } from '@/hooks/use-attachment-uploader'
 
 type Selection =
   | { kind: 'agent'; id: string; label: string }
@@ -180,7 +182,8 @@ function ChatPanel({
   agentColor: string
   commands: CommandOption[]
 }) {
-  const { messages, status, sendMessage, resetForNewSession } = useChatSession(agentId)
+  const { messages, status, sessionKey, sendMessage, resetForNewSession } = useChatSession(agentId)
+  const uploader = useAttachmentUploader(agentId, sessionKey)
   const [text, setText] = useComposerDraft(`agent:${agentId}`)
   const [resetting, setResetting] = useState(false)
   const [resetError, setResetError] = useState<string | null>(null)
@@ -202,9 +205,11 @@ function ChatPanel({
   }, [rows])
 
   const send = () => {
-    if (!text.trim()) return
-    sendMessage(text)
-    setText('')
+    if (!text.trim() && uploader.cleanIds.length === 0) return
+    if (sendMessage(text, uploader.cleanIds)) {
+      setText('')
+      uploader.clearClean()
+    }
   }
 
   const newSession = async () => {
@@ -325,6 +330,16 @@ function ChatPanel({
         </div>
       )}
       <div className="flex items-end gap-2 border-t border-border bg-card/30 p-3">
+        <div className="flex w-full flex-col gap-2">
+        <AttachmentPicker
+          key={sessionKey ?? 'not-ready'}
+          items={uploader.items}
+          onAdd={uploader.addFiles}
+          onCancel={uploader.cancelAttachment}
+          onRetry={uploader.retryAttachment}
+          onRemove={uploader.removeAttachment}
+          disabled={status !== 'ready'}
+        />
         <MentionComposer
           value={text}
           onChange={setText}
@@ -333,7 +348,9 @@ function ChatPanel({
           commands={commands}
           placeholder={status === 'ready' ? 'Message… (/ for commands)' : 'Connecting…'}
           disabled={status !== 'ready'}
+          canSubmit={Boolean(text.trim()) || uploader.cleanIds.length > 0}
         />
+        </div>
       </div>
     </div>
   )

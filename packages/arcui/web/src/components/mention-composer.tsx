@@ -86,6 +86,7 @@ export function MentionComposer({
   commands = [],
   placeholder,
   disabled = false,
+  canSubmit = Boolean(value.trim()),
 }: {
   value: string
   onChange: (next: string) => void
@@ -94,6 +95,7 @@ export function MentionComposer({
   commands?: CommandOption[]
   placeholder?: string
   disabled?: boolean
+  canSubmit?: boolean
 }) {
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const [token, setToken] = useState<ActiveToken | null>(null)
@@ -156,7 +158,7 @@ export function MentionComposer({
   }
 
   const submit = () => {
-    if (!value.trim()) return
+    if (!canSubmit) return
     onSubmit()
   }
 
@@ -233,7 +235,7 @@ export function MentionComposer({
         placeholder={placeholder}
         disabled={disabled}
       />
-      <Button onClick={submit} disabled={disabled || !value.trim()} size="icon">
+      <Button onClick={submit} disabled={disabled || !canSubmit} size="icon">
         <Send className="size-4" />
       </Button>
     </div>
