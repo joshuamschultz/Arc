@@ -58,6 +58,8 @@ _FALLBACK_STEM = "file"
 # a flood cannot spin here forever.
 _MAX_COLLISIONS = 1000
 
+_PDF_MAGIC = b"%PDF-"
+
 
 class MediaTooLargeError(Exception):
     """An inbound artefact exceeded the configured ceiling and was refused.
@@ -482,6 +484,7 @@ class MediaStore:
             )
 
         path = self._write(data=data, declared_name=declared_name, sender=sender)
+        detected_mime = _detect_pdf_mime(data, declared_mime=mime)
 
         emit_event(
             "media.received",
@@ -491,7 +494,7 @@ class MediaStore:
             extra={
                 "channel": channel,
                 "kind": kind,
-                "mime": mime,
+                "mime": detected_mime,
                 "size_bytes": size_bytes,
                 "declared_name": declared_name,
             },
@@ -502,7 +505,7 @@ class MediaStore:
             ref=path.relative_to(self._workspace).as_posix(),
             declared_name=declared_name,
             kind=kind,
-            mime=mime,
+            mime=detected_mime,
             size_bytes=size_bytes,
         )
 
@@ -591,12 +594,26 @@ def _compose_name(*, clock: str, sender: str, stem: str, ext: str, ordinal: int)
     return f"{prefix}{stem[:budget]}{tag}{suffix}"
 
 
+def _detect_pdf_mime(data: bytes, *, declared_mime: str) -> str:
+    """Resolve stable content types from bytes before preserving metadata.
+
+    Custody paths are implementation details and may be digest-only in other
+    stores, so extension-based detection is intentionally absent.  Unknown
+    formats retain the platform declaration for backward compatibility; PDFs
+    are authoritative because their magic header is unambiguous.
+    """
+    if data.startswith(_PDF_MAGIC) or data.startswith(b"\xef\xbb\xbf%PDF-"):
+        return "application/pdf"
+    return declared_mime
+
+
 _MAGIC_MIMES: tuple[tuple[bytes, str], ...] = (
     (b"\x89PNG\r\n\x1a\n", "image/png"),
     (b"\xff\xd8\xff", "image/jpeg"),
     (b"GIF87a", "image/gif"),
     (b"GIF89a", "image/gif"),
     (b"%PDF-", "application/pdf"),
+    (b"\xef\xbb\xbf%PDF-", "application/pdf"),
     (b"RIFF", "audio/wav"),
     (b"ID3", "audio/mpeg"),
 )

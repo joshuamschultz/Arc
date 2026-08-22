@@ -24,7 +24,7 @@ from typing import Any
 import arcrun
 import pytest
 
-from arcagent.parts import PartTranslator
+from arcagent.parts import MAX_PDF_TEXT_CHARS, PartTranslator
 
 _IMAGE_REF = "inbox/2026-08-11/120000-alice-cat.jpg"
 _FILE_REF = "inbox/2026-08-11/120001-alice-quarterly.pdf"
@@ -91,6 +91,32 @@ def _rendered(blocks: list[Any]) -> str:
     return json.dumps([block.model_dump() for block in blocks])
 
 
+def _minimal_pdf(text: str) -> bytes:
+    """Build a tiny real, uncompressed PDF without relying on a shell/tool."""
+    stream = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET\n".encode()
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+        b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"endstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    body = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for number, payload in enumerate(objects, 1):
+        offsets.append(len(body))
+        body.extend(f"{number} 0 obj\n".encode())
+        body.extend(payload)
+        body.extend(b"\nendobj\n")
+    xref = len(body)
+    body.extend(f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode())
+    body.extend(b"".join(f"{offset:010d} 00000 n \n".encode() for offset in offsets[1:]))
+    body.extend(
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
+    )
+    return bytes(body)
+
+
 class TestReferenceToModelBlock:
     def test_an_image_reference_becomes_an_arcrun_image_block_carrying_the_bytes(
         self, tmp_path: Path
@@ -132,6 +158,42 @@ class TestReferenceToModelBlock:
         assert "quarterly.pdf" in rendered
         assert base64.b64encode(payload[:256]).decode() not in rendered
         assert len(rendered) < 2000
+
+    def test_a_pdf_is_extracted_from_magic_bytes_even_when_name_has_no_extension(
+        self, tmp_path: Path
+    ) -> None:
+        pytest.importorskip("pypdf")
+        ref = "inbox/2026-08-11/sha256-deadbeef"
+        _write(tmp_path, ref, _minimal_pdf("Hello PDF"))
+        part = {
+            "kind": "file",
+            "mime": "application/octet-stream",
+            "declared_name": "download",
+            "ref": ref,
+        }
+
+        blocks = PartTranslator(workspace=tmp_path).to_model_content(
+            PartTranslator(workspace=tmp_path).to_history_content([part])
+        )
+
+        assert isinstance(blocks[0], arcrun.TextBlock)
+        assert "Hello PDF" in blocks[0].text
+        assert "begin untrusted attachment content" in blocks[0].text
+
+    def test_pdf_extraction_is_bounded_and_sanitizes_controls(self, tmp_path: Path) -> None:
+        pytest.importorskip("pypdf")
+        ref = "inbox/2026-08-11/sha256-bounded"
+        payload = _minimal_pdf("A" * (MAX_PDF_TEXT_CHARS + 500))
+        _write(tmp_path, ref, payload)
+        part = {**_file_part(), "mime": "application/pdf", "ref": ref}
+
+        blocks = PartTranslator(workspace=tmp_path).to_model_content(
+            PartTranslator(workspace=tmp_path).to_history_content([part])
+        )
+
+        assert isinstance(blocks[0], arcrun.TextBlock)
+        assert len(blocks[0].text) < MAX_PDF_TEXT_CHARS + 500
+        assert "content truncated" in blocks[0].text
 
 
 class TestBytesAreForOneCallOnly:

@@ -37,6 +37,11 @@ dependencies = [
     "websockets>=13.0,<16",
     "croniter>=2.0,<7",
     "aiorwlock>=1.4,<2",
+    # PDF attachments are parsed in the agent at the provider boundary.  The
+    # parser is read-only; actions, JavaScript and embedded files are never
+    # executed.  Keeping this dependency here makes PDF ingestion available to
+    # every gateway deployment rather than only an optional memory extra.
+    "pypdf>=4,<7",
 ]
 
 [project.optional-dependencies]
@@ -108,6 +113,10 @@ ignore_missing_imports = true
 # Optional dep for browser_task: browser-use is installed into the deployment
 # venv separately (not a workspace extra — aiohttp pin conflict).
 module = ["browser_use.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["pypdf", "pypdf.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

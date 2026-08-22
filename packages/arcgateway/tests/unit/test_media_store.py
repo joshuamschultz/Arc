@@ -126,6 +126,22 @@ class TestGatewayComposedPath:
         assert stored.mime == "image/jpeg"
         assert stored.size_bytes == len(b"jpegbytes")
 
+    def test_pdf_magic_sets_content_mime_when_declared_metadata_is_wrong(
+        self, store: MediaStore
+    ) -> None:
+        stored = store.store(
+            data=b"%PDF-1.7\nminimal",
+            declared_name="download",
+            mime="application/octet-stream",
+            kind="file",
+            sender=SENDER,
+            channel=CHANNEL,
+            actor_did=ACTOR_DID,
+        )
+
+        assert stored.mime == "application/pdf"
+        assert stored.declared_name == "download"
+
     @pytest.mark.parametrize("declared_name", HOSTILE_NAMES)
     def test_hostile_declared_name_cannot_influence_the_path(
         self, store: MediaStore, workspace: Path, declared_name: str

@@ -30,6 +30,8 @@ file instead.
 from __future__ import annotations
 
 import base64
+import io
+import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -44,6 +46,18 @@ _BLOCK_ADAPTER: TypeAdapter[arcrun.ContentBlock] = TypeAdapter(arcrun.ContentBlo
 
 # Key under which the structured media fields ride on a stored text block.
 _MEDIA = "media"
+
+# Attachment content is context, not a second unbounded input channel.  These
+# limits apply at the last boundary before a provider call, even when a stale
+# or hand-authored session record bypassed gateway custody.
+MAX_PDF_BYTES = 16 * 1024 * 1024
+MAX_PDF_TEXT_CHARS = 32_000
+_PDF_MAGIC = b"%PDF-"
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+class AttachmentExtractionError(ValueError):
+    """A document cannot be safely materialised for a model call."""
 
 
 class PartTranslator:
@@ -117,8 +131,25 @@ class PartTranslator:
         if not isinstance(media, Mapping):
             return _BLOCK_ADAPTER.validate_python(block)
         if media.get("kind") != "image":
-            # A PDF is not an image block. Naming it costs tokens; inlining it
-            # would cost megabytes, and the agent can open the path itself.
+            if self._looks_like_pdf(media):
+                try:
+                    text = self._read_pdf_content(str(media["ref"]))
+                except AttachmentExtractionError as exc:
+                    # A failed extraction is deliberately a bounded, metadata
+                    # only block. The provider never sees malformed/encrypted
+                    # bytes and the turn remains deliverable.
+                    return arcrun.TextBlock(
+                        text=f"{_readable_line(media)}\n[content unavailable: {exc}]"
+                    )
+                return arcrun.TextBlock(
+                    text=(
+                        f"{_readable_line(media)}\n"
+                        "[begin untrusted attachment content]\n"
+                        f"{text}\n"
+                        "[end untrusted attachment content]"
+                    )
+                )
+            # Non-PDF files retain the historical reference-only behaviour.
             return arcrun.TextBlock(text=_readable_line(media))
         payload = self._read_artefact(str(media["ref"]))
         return arcrun.ImageBlock(
@@ -146,6 +177,73 @@ class PartTranslator:
             msg = f"media reference {ref!r} escapes the workspace"
             raise ValueError(msg)
         return resolved.read_bytes()
+
+    def _read_pdf_content(self, ref: str) -> str:
+        """Extract bounded text from a custody file without executing it.
+
+        PDF detection uses bytes, never a sender filename or a custody path
+        suffix.  ``pypdf`` only reads PDF structure; JavaScript, actions and
+        embedded files are not executed.  Any parser error is fail-closed.
+        """
+        resolved = self._resolve_artefact(ref)
+        try:
+            size = resolved.stat().st_size
+        except OSError as exc:
+            raise AttachmentExtractionError("file is unavailable") from exc
+        if size > MAX_PDF_BYTES:
+            raise AttachmentExtractionError("file exceeds the PDF extraction limit")
+        try:
+            payload = resolved.read_bytes()
+        except OSError as exc:
+            raise AttachmentExtractionError("file cannot be read") from exc
+        if len(payload) > MAX_PDF_BYTES or not _has_pdf_magic(payload):
+            raise AttachmentExtractionError("file is not a valid PDF")
+        try:
+            from pypdf import PdfReader
+
+            reader = PdfReader(io.BytesIO(payload), strict=True)
+            if reader.is_encrypted:
+                raise AttachmentExtractionError("encrypted PDFs are not accepted")
+            text = "\n".join(page.extract_text() or "" for page in reader.pages)
+        except AttachmentExtractionError:
+            raise
+        except Exception as exc:  # parser implementations expose varied errors
+            raise AttachmentExtractionError("PDF content could not be safely extracted") from exc
+        return _sanitize_attachment_text(text)
+
+    def _looks_like_pdf(self, media: Mapping[str, Any]) -> bool:
+        """Detect PDF content by magic, with MIME as a compatibility hint."""
+        mime = str(media.get("mime", "")).split(";", 1)[0].strip().lower()
+        if mime == "application/pdf":
+            return True
+        try:
+            with self._resolve_artefact(str(media["ref"])).open("rb") as handle:
+                return _has_pdf_magic(handle.read(1024))
+        except (AttachmentExtractionError, OSError, KeyError, TypeError):
+            return False
+
+    def _resolve_artefact(self, ref: str) -> Path:
+        """Resolve a workspace reference and enforce the symlink-aware fence."""
+        resolved = (self._workspace / ref).resolve()
+        if self._workspace.resolve() not in resolved.parents:
+            raise AttachmentExtractionError("media reference escapes the workspace")
+        if not resolved.is_file():
+            raise AttachmentExtractionError("file is unavailable")
+        return resolved
+
+
+def _has_pdf_magic(payload: bytes) -> bool:
+    """Recognise a PDF by its header, tolerating an optional UTF-8 BOM."""
+    return payload.startswith(_PDF_MAGIC) or payload.startswith(b"\xef\xbb\xbf%PDF-")
+
+
+def _sanitize_attachment_text(text: str) -> str:
+    """Strip control characters and bound extracted text before provider input."""
+    clean = _CONTROL_CHARS.sub("", text).replace("\r\n", "\n").replace("\r", "\n")
+    clean = clean.strip()
+    if len(clean) > MAX_PDF_TEXT_CHARS:
+        return clean[:MAX_PDF_TEXT_CHARS].rstrip() + "\n[content truncated]"
+    return clean
 
 
 def _readable_line(media: Mapping[str, Any]) -> str:
