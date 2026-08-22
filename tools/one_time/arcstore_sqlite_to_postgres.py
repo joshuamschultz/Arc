@@ -142,6 +142,14 @@ def _timestamp(value: Any, *, field: str) -> str:
     return parsed.astimezone(UTC).isoformat()
 
 
+def _database_timestamp(value: str | None, *, field: str) -> datetime | None:
+    """Convert canonical report text into asyncpg's timezone-aware binding type."""
+    if value is None:
+        return None
+    normalized = _timestamp(value, field=field)
+    return datetime.fromisoformat(normalized)
+
+
 def _json_object(value: Any, *, field: str) -> dict[str, Any]:
     if isinstance(value, str):
         try:
@@ -573,7 +581,7 @@ class PostgresDestination:
                 "ON CONFLICT(record_key) DO NOTHING",
                 values["record_key"],
                 canonical_json(values["payload"]),
-                values["ts"],
+                _database_timestamp(values["ts"], field="ts"),
             )
         elif table == "arcstore_cursors":
             await connection.execute(
@@ -596,7 +604,7 @@ class PostgresDestination:
                 "VALUES($1,$2::jsonb,$3::timestamptz) ON CONFLICT(inbox_id) DO NOTHING",
                 values["inbox_id"],
                 canonical_json(values["payload"]),
-                values["created_at"],
+                _database_timestamp(values["created_at"], field="created_at"),
             )
         elif table == "inbox_threads":
             await connection.execute(
@@ -605,7 +613,7 @@ class PostgresDestination:
                 values["thread_id"],
                 values["inbox_id"],
                 canonical_json(values["payload"]),
-                values["updated_at"],
+                _database_timestamp(values["updated_at"], field="updated_at"),
             )
         elif table == "inbox_messages":
             await connection.execute(
@@ -614,7 +622,7 @@ class PostgresDestination:
                 values["message_id"],
                 values["thread_id"],
                 canonical_json(values["payload"]),
-                values["created_at"],
+                _database_timestamp(values["created_at"], field="created_at"),
             )
         elif table == "inbox_handoffs":
             await connection.execute(
@@ -623,7 +631,7 @@ class PostgresDestination:
                 values["handoff_id"],
                 values["thread_id"],
                 canonical_json(values["payload"]),
-                values["created_at"],
+                _database_timestamp(values["created_at"], field="created_at"),
             )
         elif table == "approval_outbox":
             await connection.execute(
@@ -637,11 +645,11 @@ class PostgresDestination:
                 canonical_json(values["payload"]),
                 values["status"],
                 values["attempts"],
-                values["available_at"],
+                _database_timestamp(values["available_at"], field="available_at"),
                 values["lease_owner"],
-                values["lease_until"],
-                values["delivered_at"],
-                values["created_at"],
+                _database_timestamp(values["lease_until"], field="lease_until"),
+                _database_timestamp(values["delivered_at"], field="delivered_at"),
+                _database_timestamp(values["created_at"], field="created_at"),
             )
         else:
             raise MigrationError(f"unsupported destination table: {table}")
