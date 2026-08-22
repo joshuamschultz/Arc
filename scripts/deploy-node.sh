@@ -302,6 +302,16 @@ if [ "$MEMORY_INDEX_BACKEND" = "postgres" ]; then
   PG_PORT_V="$(grep -m1 '^ARC_PG_PORT=' "$ENV_FILE" | cut -d= -f2- || true)"; PG_PORT_V="${PG_PORT_V:-5432}"
   POSTGRES_PASSWORD="$PG_PASSWORD" POSTGRES_USER="$PG_USER_V" POSTGRES_DB="$PG_DB_V" ARC_PG_PORT="$PG_PORT_V" \
     "$RUNTIME_ROOT/scripts/install-postgres.sh"
+  # The backend's asyncpg/pgvector drivers are arcmemory's opt-in [postgres]
+  # extra, NOT pulled by the default arcmemory[local] the runtime ships. A plain
+  # `uv sync` never installs them, so open_index_backend('postgres') would
+  # ImportError at first recall — the server would be up while every agent's
+  # index failed to open. Install them into the ACTIVE runtime venv (idempotent)
+  # so the backend the config now names can actually connect.
+  log "Installing arcmemory[postgres] drivers (asyncpg, pgvector) into the runtime venv..."
+  "$UV" pip install --python "$VENV_PY" 'asyncpg>=0.29' 'pgvector>=0.3' \
+    || fail "could not install the postgres drivers into $RUNTIME_ROOT/.venv"
+  ok "postgres drivers present (asyncpg, pgvector)"
   if ! grep -q '^ARC_MEMORY_PG_DSN=' "$ARC_ENV"; then
     ( umask 077
       printf 'ARC_MEMORY_PG_DSN=postgresql://%s:%s@127.0.0.1:%s/%s\n' \

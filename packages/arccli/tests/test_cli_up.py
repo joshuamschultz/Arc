@@ -315,6 +315,97 @@ def test_preflight_fails_when_the_team_root_holds_no_agent(
 
 
 # ---------------------------------------------------------------------------
+# Index backend (postgres gate)
+# ---------------------------------------------------------------------------
+
+
+def _enable_postgres(deployment: Path, *, tier: str = "personal") -> Path:
+    """Enable the memory module AND name the postgres index backend for the agent.
+
+    Written at the exact toml path the deploy overlay writes and the memory
+    provider folds into ``MemoryConfig`` —
+    ``modules.memory.config.backend.dynamics.index_backend`` — so the check is
+    exercised against the real config shape, not a stand-in.
+    """
+    agent = deployment / "team" / "josh_agent"
+    body = _agent_toml(agent, tier=tier) + (
+        "\n[modules.memory]\nenabled = true\n"
+        "[modules.memory.config.backend.dynamics]\nindex_backend = 'postgres'\n"
+    )
+    (agent / "arcagent.toml").write_text(body, encoding="utf-8")
+    return agent
+
+
+def test_index_backend_check_passes_on_the_sqlite_default(deployment: Path) -> None:
+    """A fleet on the built-in sqlite index needs no server, so it is never gated."""
+    checks = {check.name: check for check in up_cmd.preflight(deployment / "team")}
+    assert checks["index backend"].ok is True
+    assert "sqlite" in checks["index backend"].detail
+
+
+def test_index_backend_reads_postgres_from_the_overlay_config_path(deployment: Path) -> None:
+    """The check sees postgres at the same toml path the deploy overlay writes.
+
+    A check that read a different key than the overlay writes — and the provider
+    folds into ``MemoryConfig`` — would gate on a backend the agent never opens.
+    Assert the real config read finds the configured agent by its roster id.
+    """
+    _enable_postgres(deployment)
+    assert up_cmd._configured_postgres_agents(deployment / "team") == ["josh"]
+
+
+def test_preflight_fails_when_postgres_is_configured_but_unreachable(
+    deployment: Path, started: list[list[str]], monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    """postgres named but not answering: recall cannot open its index — so: stop.
+
+    The probe itself is arcmemory's and tested there; here it is stubbed to the
+    unreachable verdict so the GATE logic — read config, probe, refuse — is what
+    is under test, with no live server required.
+    """
+    _enable_postgres(deployment)
+    from arcmemory.status import IndexBackendHealth
+
+    async def _down(backend: str, **kwargs: Any) -> IndexBackendHealth:
+        return IndexBackendHealth(backend="postgres", connected=False, detail="connection refused")
+
+    monkeypatch.setattr("arcmemory.status.probe_index_backend", _down)
+
+    checks = {check.name: check for check in up_cmd.preflight(deployment / "team")}
+    assert checks["index backend"].ok is False
+    assert "postgres" in checks["index backend"].detail
+
+    with pytest.raises(SystemExit) as exit_info:
+        _run()
+
+    assert exit_info.value.code == 1
+    assert "FAIL" in capsys.readouterr().out
+    assert started == [], "a fleet whose configured index backend is down must not start"
+
+
+def test_preflight_passes_when_postgres_is_configured_and_reachable(
+    deployment: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The paired positive: a reachable postgres must not be refused.
+
+    Without it a check hard-wired to FAIL would satisfy the negative just as well.
+    """
+    _enable_postgres(deployment)
+    from arcmemory.status import IndexBackendHealth
+
+    async def _up(backend: str, **kwargs: Any) -> IndexBackendHealth:
+        return IndexBackendHealth(
+            backend="postgres", connected=True, vec_available=True, detail="answered"
+        )
+
+    monkeypatch.setattr("arcmemory.status.probe_index_backend", _up)
+
+    checks = {check.name: check for check in up_cmd.preflight(deployment / "team")}
+    assert checks["index backend"].ok is True
+    assert "postgres" in checks["index backend"].detail
+
+
+# ---------------------------------------------------------------------------
 # Module bootstrap
 # ---------------------------------------------------------------------------
 

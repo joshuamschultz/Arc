@@ -338,6 +338,81 @@ def _check_team_root(team_root: Path | None) -> Check:
     return Check("team root", True, f"{team_root} — {len(agents)} agent(s): {names}")
 
 
+def _configured_postgres_agents(team_root: Path | None) -> list[str]:
+    """Agents whose memory module names the postgres index backend.
+
+    Read at the SAME toml path the deploy overlay writes and the memory provider
+    folds into ``MemoryConfig`` — ``modules.memory.config.backend.dynamics.
+    index_backend`` — so the preflight cannot gate on a backend the agent would
+    never actually open. A disabled memory module names no backend.
+    """
+    import arcagent
+
+    if team_root is None or not team_root.is_dir():
+        return []
+    names: list[str] = []
+    for agent_id, agent_root in discover_agents(team_root):
+        try:
+            config = arcagent.load_config(agent_root / "arcagent.toml")
+        except Exception as exc:  # reason: agent_states is where this is reported
+            _logger.debug("index-backend check skipped %s: unreadable config (%s)", agent_id, exc)
+            continue
+        memory = config.modules.get("memory")
+        if memory is None or not memory.enabled:
+            continue
+        dynamics = (memory.config.get("backend") or {}).get("dynamics") or {}
+        if str(dynamics.get("index_backend", "sqlite")) == "postgres":
+            names.append(agent_id)
+    return names
+
+
+def _check_index_backend(team_root: Path | None) -> Check:
+    """A configured postgres index backend must answer, or the bring-up stops.
+
+    The index backend is swappable. ``sqlite`` is a per-agent file that is always
+    local — a fleet on the default needs no server and this check passes without
+    probing. ``postgres`` is a shared pgvector server, and an agent pointed at one
+    that is unreachable does not crash loudly: its document/surface index cannot
+    open, so recall and consolidation fail while the process still boots, answers
+    chat, and looks healthy — the silent-degradation shape every check here exists
+    to make loud. So a configured-but-down postgres fails preflight, the identical
+    fail-closed contract ``arc memory backend`` gates a deploy on.
+
+    Probed through ``arcmemory.status.probe_index_backend`` — the same seam that
+    command uses, DSN from ``ARC_MEMORY_PG_DSN`` — so a green line here means the
+    real connection the agents make works, not that a package merely imports.
+    """
+    agents = _configured_postgres_agents(team_root)
+    if not agents:
+        return Check(
+            "index backend",
+            True,
+            "sqlite (per-agent file, always local)",
+            needed_to_install=False,
+        )
+    import asyncio
+
+    from arcmemory.status import probe_index_backend
+
+    health = asyncio.run(probe_index_backend("postgres"))
+    named = ", ".join(sorted(agents))
+    if health.connected:
+        return Check(
+            "index backend",
+            True,
+            f"postgres reachable for {named} — {health.detail}",
+            needed_to_install=False,
+        )
+    return Check(
+        "index backend",
+        False,
+        f"postgres configured for {named} but unreachable: {health.detail}. Provision it "
+        "(scripts/install-postgres.sh) and export ARC_MEMORY_PG_DSN, or switch the memory "
+        "index_backend back to sqlite.",
+        needed_to_install=False,
+    )
+
+
 def _check_data_dir() -> Check:
     """The arcstore data dir must exist and be writable by this user."""
     from arcstore import resolve_data_dir
@@ -359,6 +434,7 @@ def preflight(team_root: Path | None) -> list[Check]:
         _check_operator_key(team_root),
         _check_team_root(team_root),
         _check_agent_identity(team_root),
+        _check_index_backend(team_root),
         _check_data_dir(),
     ]
 
