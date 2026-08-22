@@ -54,6 +54,9 @@ class PromotionSource:
     digest: str
     content: str
     classification: str
+    title: str = ""
+    tags: tuple[str, ...] = ()
+    document_type: str = "note"
 
 
 class KnowledgePort(Protocol):
@@ -69,7 +72,9 @@ class PersonalKnowledgePort(KnowledgePort, Protocol):
 
 
 class SharedKnowledgePort(KnowledgePort, Protocol):
-    pass
+    async def promote(
+        self, source: PromotionSource, access: KnowledgeAccess
+    ) -> KnowledgeRef: ...
 
 
 __all__ = [
