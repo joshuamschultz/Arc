@@ -40,7 +40,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from arcstore.backends.memory import FakeBackend
 from arcstore.tasks import Task, TaskStore
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
@@ -51,8 +50,10 @@ from arcui.auth import AuthConfig, AuthMiddleware
 _CREATOR = "did:arc:test:human/operator"
 
 
-async def _seed_store(data_dir: Path) -> TaskStore:
-    backend = FakeBackend()
+async def _seed_store(_data_dir: Path) -> TaskStore:
+    from arcstore import backends
+
+    backend = backends.open_backend()
     await backend.start()
     return TaskStore(backend)
 
@@ -67,8 +68,8 @@ def _task(id_: str, **overrides: Any) -> Task:
     return Task(**fields)
 
 
-async def _seed(data_dir: Path, tasks: list[Task]) -> None:
-    store = await _seed_store(data_dir)
+async def _seed(_data_dir: Path, tasks: list[Task]) -> None:
+    store = await _seed_store(_data_dir)
     for t in tasks:
         await store.create(t)
 
@@ -557,9 +558,7 @@ class _StubGatePlane:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
 
-    async def resolve_gate(
-        self, task_id: str, *, decision: str, notes: str, actor: Any
-    ) -> Any:
+    async def resolve_gate(self, task_id: str, *, decision: str, notes: str, actor: Any) -> Any:
         from arcui.routes.workflows import ControlPlaneResult
 
         self.calls.append((task_id, decision))
@@ -583,8 +582,14 @@ class TestWorkflowGateTerminates:
         asyncio.run(
             _seed(
                 tmp_path,
-                [_task(tid, owner_did="did:arc:x/a", status="review",
-                       metadata={"node_kind": "gate"})],
+                [
+                    _task(
+                        tid,
+                        owner_did="did:arc:x/a",
+                        status="review",
+                        metadata={"node_kind": "gate"},
+                    )
+                ],
             )
         )
         app, auth, plane = self._gate_app(tmp_path)
@@ -603,8 +608,14 @@ class TestWorkflowGateTerminates:
         asyncio.run(
             _seed(
                 tmp_path,
-                [_task(tid, owner_did="did:arc:x/a", status="review",
-                       metadata={"node_kind": "gate"})],
+                [
+                    _task(
+                        tid,
+                        owner_did="did:arc:x/a",
+                        status="review",
+                        metadata={"node_kind": "gate"},
+                    )
+                ],
             )
         )
         app, auth, plane = self._gate_app(tmp_path)

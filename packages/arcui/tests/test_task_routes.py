@@ -7,11 +7,8 @@ stamped with the owning agent's ``agent_id`` on the fleet route, filtered by
 owner DID on the per-agent route — while keeping the wire-stable
 ``TasksResponse`` shape (``{"tasks": [...]}``, PLAN D1 note).
 
-The routes still read ``tasks.json`` today, so every test here fails RED
-(missing arcstore-row content, not a 404/500) until re-pointed. Task seeding
-uses ``arcstore.tasks.TaskStore`` against the SAME ``store/arcui.db`` that
-``app.state.observe`` (wired below) reads — see test_observe_tasks.py for
-why that's the correct seam.
+Task seeding and the app use the same per-test ArcStore backend supplied by
+the ArcUI test fixture.
 """
 
 from __future__ import annotations
@@ -21,7 +18,6 @@ from pathlib import Path
 from typing import Any
 
 from arcgateway import team_roster
-from arcstore.backends.memory import FakeBackend
 from arcstore.tasks import Task, TaskStore
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
@@ -36,9 +32,11 @@ from arcui.routes.team_pages import routes as team_routes
 _CREATOR = "did:arc:test:human/operator"
 
 
-async def _seed_store(data_dir: Path) -> TaskStore:
-    """Open a TaskStore against the SAME db Observe reads (store/arcui.db)."""
-    backend = FakeBackend()
+async def _seed_store() -> TaskStore:
+    """Open a TaskStore on the test's shared ArcStore backend."""
+    from arcstore import backends
+
+    backend = backends.open_backend()
     await backend.start()
     return TaskStore(backend)
 
@@ -53,8 +51,8 @@ def _task(id_: str, **overrides: Any) -> Task:
     return Task(**fields)
 
 
-async def _seed(data_dir: Path, tasks: list[Task]) -> None:
-    store = await _seed_store(data_dir)
+async def _seed(tasks: list[Task]) -> None:
+    store = await _seed_store()
     for t in tasks:
         await store.create(t)
 
@@ -79,7 +77,9 @@ def _build_team(tmp_path: Path, agents: list[tuple[str, str]]) -> Path:
     return root
 
 
-def _make_app(*, team_root: Path, data_dir: Path) -> tuple[Starlette, AuthConfig]:
+def _make_app(*, team_root: Path) -> tuple[Starlette, AuthConfig]:
+    from arcstore import backends
+
     auth = AuthConfig({"viewer_token": "viewer", "operator_token": "operator"})
     registry = AgentRegistry()
     app = Starlette(routes=[*team_routes, *agent_detail_routes])
@@ -87,7 +87,7 @@ def _make_app(*, team_root: Path, data_dir: Path) -> tuple[Starlette, AuthConfig
     app.state.auth_config = auth
     app.state.agent_registry = registry
     app.state.audit = UIAuditLogger(enabled=False)
-    app.state.observe = Observe(data_dir=data_dir)
+    app.state.observe = Observe(backend=backends.open_backend())
     app.state.team_root = team_root
 
     def _roster_provider() -> list[team_roster.RosterEntry]:
@@ -107,11 +107,10 @@ class TestFleetTasksFromArcstore:
         team = _build_team(tmp_path, [("alpha", "did:arc:alpha"), ("beta", "did:arc:beta")])
         asyncio.run(
             _seed(
-                tmp_path,
                 [_task("t1", owner_did="did:arc:alpha"), _task("t2", owner_did="did:arc:beta")],
             )
         )
-        app, auth = _make_app(team_root=team, data_dir=tmp_path)
+        app, auth = _make_app(team_root=team)
         client = TestClient(app)
 
         resp = client.get("/api/team/tasks", headers=_viewer(auth))
@@ -124,8 +123,8 @@ class TestFleetTasksFromArcstore:
 
     def test_unowned_task_has_no_agent_id(self, tmp_path):
         team = _build_team(tmp_path, [("alpha", "did:arc:alpha")])
-        asyncio.run(_seed(tmp_path, [_task("t1")]))  # unowned -> backlog
-        app, auth = _make_app(team_root=team, data_dir=tmp_path)
+        asyncio.run(_seed([_task("t1")]))  # unowned -> backlog
+        app, auth = _make_app(team_root=team)
         client = TestClient(app)
 
         resp = client.get("/api/team/tasks", headers=_viewer(auth))
@@ -141,8 +140,8 @@ class TestFleetTasksFromArcstore:
         (team / "alpha_agent" / "workspace" / "tasks.json").write_text(
             "not json at all", encoding="utf-8"
         )
-        asyncio.run(_seed(tmp_path, [_task("t1", owner_did="did:arc:alpha")]))
-        app, auth = _make_app(team_root=team, data_dir=tmp_path)
+        asyncio.run(_seed([_task("t1", owner_did="did:arc:alpha")]))
+        app, auth = _make_app(team_root=team)
         client = TestClient(app)
 
         resp = client.get("/api/team/tasks", headers=_viewer(auth))
@@ -156,14 +155,13 @@ class TestPerAgentTasksFromArcstore:
         team = _build_team(tmp_path, [("alpha", "did:arc:alpha"), ("beta", "did:arc:beta")])
         asyncio.run(
             _seed(
-                tmp_path,
                 [
                     _task("t1", owner_did="did:arc:alpha"),
                     _task("t2", owner_did="did:arc:beta"),
                 ],
             )
         )
-        app, auth = _make_app(team_root=team, data_dir=tmp_path)
+        app, auth = _make_app(team_root=team)
         client = TestClient(app)
 
         resp = client.get("/api/agents/alpha/tasks", headers=_viewer(auth))
@@ -173,7 +171,7 @@ class TestPerAgentTasksFromArcstore:
 
     def test_unknown_agent_returns_404(self, tmp_path):
         team = _build_team(tmp_path, [("alpha", "did:arc:alpha")])
-        app, auth = _make_app(team_root=team, data_dir=tmp_path)
+        app, auth = _make_app(team_root=team)
         client = TestClient(app)
 
         resp = client.get("/api/agents/missing/tasks", headers=_viewer(auth))
@@ -188,11 +186,10 @@ class TestTaskRowExposesRunLink:
         team = _build_team(tmp_path, [("alpha", "did:arc:alpha")])
         asyncio.run(
             _seed(
-                tmp_path,
                 [_task("t1", owner_did="did:arc:alpha", status="in_progress", run_id="run-42")],
             )
         )
-        app, auth = _make_app(team_root=team, data_dir=tmp_path)
+        app, auth = _make_app(team_root=team)
         client = TestClient(app)
 
         resp = client.get("/api/team/tasks", headers=_viewer(auth))

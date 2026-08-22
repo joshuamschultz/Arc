@@ -11,7 +11,6 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-from arcstore.backends.memory import FakeBackend
 from arcstore.cancellations import CancelStore
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
@@ -22,8 +21,10 @@ from arcui.auth import AuthConfig, AuthMiddleware
 _OPERATOR_DID = "did:arc:ui:operator"
 
 
-async def _open_store(tmp_path: Path) -> CancelStore:
-    backend = FakeBackend()
+async def _open_store(_tmp_path: Path) -> CancelStore:
+    from arcstore import backends
+
+    backend = backends.open_backend()
     await backend.start()
     return CancelStore(backend)
 
