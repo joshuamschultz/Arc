@@ -35,8 +35,11 @@ from arcagent.extension.attachment import (
     ToolSpec,
 )
 from arcagent.extension.grants import Connection, ConnectionRegistry
+from arcagent.extension.manifest import load_manifest
+from arcagent.extension.mcp_attachment import McpAttachment
 from arcagent.extension.secrets import LocalFileSecretBackend, SecretRef, SecretStore
 from arcagent.extension.state import ConnectionStateStore
+from arcagent.modules.connectors.attachments import build_attachment
 from arcagent.modules.connectors.install import (
     ConnectorPlan,
     install_connector,
@@ -103,6 +106,68 @@ classification = "state_modifying"
 [approval]
 default = "outbound"
 """
+
+
+_MCP_MANIFEST = """
+[extension]
+name = "acme_mcp"
+version = "1.0.0"
+attachment = "mcp"
+
+[tools]
+allow = ["acme_read"]
+
+[[tools.declared]]
+name = "acme_read"
+description = "Read Acme data."
+classification = "read_only"
+
+[config.mcp]
+transport = "stdio"
+argv = ["acme-mcp-server", "--readonly"]
+client_name = "arc-test"
+
+[config.mcp.resilience]
+timeout_seconds = 12.0
+max_attempts = 2
+
+[config.mcp.tools.acme_read]
+classification = "read_only"
+"""
+
+
+def test_mcp_bundle_builds_the_existing_attachment_with_declared_tool_policy(
+    tmp_path: Path,
+) -> None:
+    manifest = load_manifest(_MCP_MANIFEST, tier=Tier.PERSONAL)
+
+    attachment = build_attachment(manifest, tmp_path, {})
+
+    assert isinstance(attachment, McpAttachment)
+    assert attachment._client_name == "arc-test"
+    assert attachment._resilience.timeout_seconds == 12.0
+    assert attachment._resilience.max_attempts == 2
+    assert attachment._tools["acme_read"].classification == "read_only"
+
+
+def test_microsoft365_mcp_manifest_builds_a_stdio_attachment() -> None:
+    manifest_path = Path(__file__).parents[6] / "extensions" / "microsoft365" / "extension.toml"
+    manifest = load_manifest(manifest_path.read_text(encoding="utf-8"), tier=Tier.PERSONAL)
+
+    attachment = build_attachment(manifest, manifest_path.parent, {})
+
+    assert isinstance(attachment, McpAttachment)
+    assert set(attachment._tools) == {
+        "list-mail-messages",
+        "get-mail-message",
+        "list-mail-folders",
+        "send-mail",
+        "list-calendar-events",
+        "get-calendar-view",
+        "create-calendar-event",
+        "list-folder-files",
+        "search-onedrive-files",
+    }
 
 
 class RecordingSink:

@@ -207,6 +207,15 @@ def _files_holding(root: Path, needle: str) -> list[Path]:
     return found
 
 
+def test_host_setup_uses_the_bundle_coordinate_not_its_display_name() -> None:
+    """A display label with spaces must not become an extension lookup key."""
+    source = (
+        Path(__file__).parents[1] / "web" / "src" / "components" / "connector-secrets-sheet.tsx"
+    ).read_text(encoding="utf-8")
+
+    assert "extension={bundle.name}" in source
+
+
 # --- the path a person walks --------------------------------------------------
 
 

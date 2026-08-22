@@ -185,19 +185,20 @@ class _UnreachableAttachment(_FakeAttachment):
 def arc_dir(tmp_path: Path) -> Path:
     """A deployment root with one agent and two resolvable extension bundles."""
     root = tmp_path / "arc"
-    agent = root / "team" / _AGENT
-    agent.mkdir(parents=True)
-    (agent / "arcagent.toml").write_text(
-        "[agent]\n"
-        f'name = "{_AGENT}"\n\n'
-        "[llm]\n"
-        'model = "none"\n\n'
-        "[identity]\n"
-        'did = "did:arc:local:executor/7e3e"\n\n'
-        "[security]\n"
-        'tier = "personal"\n',
-        encoding="utf-8",
-    )
+    for name in (_AGENT, "marketer"):
+        agent = root / "team" / name
+        agent.mkdir(parents=True)
+        (agent / "arcagent.toml").write_text(
+            "[agent]\n"
+            f'name = "{name}"\n\n'
+            "[llm]\n"
+            'model = "none"\n\n'
+            "[identity]\n"
+            'did = "did:arc:local:executor/7e3e"\n\n'
+            "[security]\n"
+            'tier = "personal"\n',
+            encoding="utf-8",
+        )
     bundle = root / "extensions" / _EXTENSION
     bundle.mkdir(parents=True)
     (bundle / "extension.toml").write_text(_MANIFEST, encoding="utf-8")
@@ -388,6 +389,23 @@ class TestAdd:
         with pytest.raises(SystemExit):
             run("add", _EXTENSION, "--name", _INSTANCE, "--api-token", _TOKEN)
         assert _TOKEN not in capsys.readouterr().out
+
+    def test_add_refuses_an_agent_missing_from_the_deployment_roster(
+        self,
+        run: Callable[..., None],
+        arc_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        asked = _answer_prompts(monkeypatch)
+
+        with pytest.raises(SystemExit) as exited:
+            run("add", _EXTENSION, "--name", _INSTANCE, "--agents", "missing_agent")
+
+        assert exited.value.code == 1
+        assert asked == []
+        assert _connections(arc_dir) == {}
+        assert "no agent named missing_agent" in capsys.readouterr().err
 
 
 class TestReadVerbs:
@@ -695,6 +713,23 @@ class TestGrantAndRevoke:
         run("grant", _INSTANCE, "--agents", "marketer")
 
         assert _connections(arc_dir)[_INSTANCE]["agents"] == [_AGENT, "marketer"]
+
+    def test_grant_refuses_an_agent_missing_from_the_deployment_roster(
+        self,
+        run: Callable[..., None],
+        arc_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _answer_prompts(monkeypatch)
+        run("add", _EXTENSION, "--name", _INSTANCE, "--agents", _AGENT)
+
+        with pytest.raises(SystemExit) as exited:
+            run("grant", _INSTANCE, "--agents", "missing_agent")
+
+        assert exited.value.code == 1
+        assert _connections(arc_dir)[_INSTANCE]["agents"] == [_AGENT]
+        assert "no agent named missing_agent" in capsys.readouterr().err
 
     def test_revoke_removes_one_and_leaves_the_rest(
         self, run: Callable[..., None], arc_dir: Path, monkeypatch: pytest.MonkeyPatch

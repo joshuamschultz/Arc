@@ -6,14 +6,16 @@ import contextlib
 import sys
 from collections.abc import Iterator, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from arcagent.core.errors import ExtensionError
 from arcagent.extension.attachment import ExtensionAttachment
 from arcagent.extension.cli_attachment import CliAttachment, CliCommand, CliResilience
+from arcagent.extension.launcher import ProcessDefinition, ProcessLauncher, sandbox_policy_for
 from arcagent.extension.manifest import ExtensionManifest
+from arcagent.extension.mcp_policy import McpResilience, McpToolPolicy
 from arcagent.extension.native_attachment import NativeAttachment
 from arcagent.extension.secrets import Secret
 from arcagent.modules.connectors.credential_placement import (
@@ -57,6 +59,16 @@ class _CliConfig(BaseModel):
     resilience: CliResilience = Field(default_factory=CliResilience)
 
 
+class _McpConfig(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    transport: Literal["stdio"]
+    argv: list[str] = Field(min_length=1)
+    client_name: str = "arc"
+    install_instruction: str = ""
+    resilience: McpResilience = Field(default_factory=McpResilience)
+    tools: dict[str, McpToolPolicy] = Field(default_factory=dict)
+
+
 def build_attachment(
     manifest: ExtensionManifest, bundle: Path, secrets: Mapping[str, Secret]
 ) -> ExtensionAttachment:
@@ -88,6 +100,39 @@ def build_attachment(
             resilience=declared.resilience,
             env=placement_environment(manifest, secrets),
             values=visible_values(manifest, secrets),
+        )
+    if kind == "mcp":
+        from arcagent.extension.mcp_attachment import McpAttachment, StdioTransport
+
+        unplaced = unplaced_secrets(manifest)
+        if unplaced:
+            raise _refuse(
+                f"{manifest.extension.name} declares credential(s) {', '.join(unplaced)} "
+                "with no [secrets.placement], and attaches as 'mcp', which can only "
+                "deliver a credential the bundle names a destination for",
+                extension=manifest.extension.name,
+                attachment=kind,
+                unplaced=unplaced,
+            )
+        mcp_config = _McpConfig.model_validate(manifest.config.get("mcp", {}))
+        launcher = ProcessLauncher(policy=sandbox_policy_for(manifest.extension.tier_floor))
+        transport = StdioTransport(
+            launcher=launcher,
+            definition=ProcessDefinition(
+                key=manifest.extension.name,
+                argv=mcp_config.argv,
+                env={
+                    name: secret.reveal()
+                    for name, secret in placement_environment(manifest, secrets).items()
+                },
+            ),
+            install_instruction=mcp_config.install_instruction,
+        )
+        return McpAttachment(
+            transport,
+            tools=mcp_config.tools,
+            resilience=mcp_config.resilience,
+            client_name=mcp_config.client_name,
         )
     raise _refuse(f"unknown attachment kind {kind!r}", attachment=kind)
 

@@ -50,7 +50,7 @@ from pathlib import Path
 from typing import Any, NoReturn
 
 import arcagent
-from arctrust.paths import arc_home
+from arctrust.paths import arc_home, arc_team
 
 from arccli.commands._shared import dispatch, err
 from arccli.commands._shared import print_json as _print_json
@@ -116,6 +116,7 @@ def _add(args: argparse.Namespace) -> None:
     connections = _connections(args)
     world = connections.world
     agents = _agents(args)
+    _require_deployment_agents(connections, agents)
     try:
         plan = connections.plan(args.extension, args.name, agents=agents)
         _refuse_unsatisfied_host(plan)
@@ -138,6 +139,7 @@ def _grant(args: argparse.Namespace) -> None:
     """Hand one connected account to more agents."""
     connections = _connections(args)
     agents = _agents(args)
+    _require_deployment_agents(connections, agents)
     try:
         granted = connections.grant(args.instance, agents)
     except arcagent.ExtensionError as exc:
@@ -161,6 +163,17 @@ def _agents(args: argparse.Namespace) -> list[str]:
     """The ``--agents a,b`` list, split once so every verb reads it the same way."""
     raw = getattr(args, "agents", "") or ""
     return [name.strip() for name in raw.split(",") if name.strip()]
+
+
+def _require_deployment_agents(connections: arcagent.Connections, agents: Sequence[str]) -> None:
+    """Refuse grants to names that are not agents in this deployment's fleet."""
+    roster = arc_team(base=connections.world.arc_dir)
+    known = (
+        {entry.name for entry in roster.iterdir() if entry.is_dir()} if roster.exists() else set()
+    )
+    missing = [agent for agent in agents if agent not in known]
+    if missing:
+        _fail(f"no agent named {', '.join(missing)} on this deployment")
 
 
 def _auth(args: argparse.Namespace) -> None:

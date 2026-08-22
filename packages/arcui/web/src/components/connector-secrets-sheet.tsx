@@ -150,7 +150,7 @@ export function ConnectorSecretsSheet({
           )}
           {(unsatisfied.length > 0 || bundle.host_requires.length > 0) && (
             <HostSetupPanel
-              extension={bundle.display_name}
+              extension={bundle.name}
               requirements={unsatisfied.length > 0 ? unsatisfied : bundle.host_requires}
               operatorMode={operatorMode}
               blocking={unsatisfied.length > 0}
