@@ -517,6 +517,48 @@ class TestOpenAIInvokeStream:
             async for _ in adapter.invoke_stream([Message(role="user", content="hi")]):
                 pass
 
+    async def test_streams_multiple_tool_fragments_from_one_sse_frame(self):
+        from arcllm.adapters.openai import OpenaiAdapter
+
+        sse_body = (
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":1,"id":"b","function":{"name":"second","arguments":"{\\"b\\":2}"}},{"index":0,"id":"a","function":{"name":"first","arguments":"{\\"a\\":1}"}}]}}]}\n\n'
+            'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}\n\n'
+            "data: [DONE]\n\n"
+        )
+
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=sse_body, headers={"content-type": "text/event-stream"})
+
+        adapter = OpenaiAdapter(FAKE_CONFIG, FAKE_MODEL)
+        await adapter._client.aclose()
+        adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        deltas = [delta async for delta in adapter.invoke_stream([Message(role="user", content="hi")])]
+
+        calls = [delta.tool_call for delta in deltas if delta.tool_call is not None]
+        assert [(call.index, call.id, call.name, call.arguments) for call in calls] == [
+            (1, "b", "second", '{"b":2}'),
+            (0, "a", "first", '{"a":1}'),
+        ]
+        assert deltas[-1].usage is not None
+        assert deltas[-1].stop_reason == "tool_use"
+
+    @pytest.mark.parametrize(
+        "sse_body",
+        ["data: not-json\n\n", 'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'],
+    )
+    async def test_rejects_malformed_or_truncated_sse(self, sse_body: str):
+        from arcllm import ArcLLMStreamProtocolError
+        from arcllm.adapters.openai import OpenaiAdapter
+
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=sse_body, headers={"content-type": "text/event-stream"})
+
+        adapter = OpenaiAdapter(FAKE_CONFIG, FAKE_MODEL)
+        await adapter._client.aclose()
+        adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        with pytest.raises(ArcLLMStreamProtocolError):
+            _ = [delta async for delta in adapter.invoke_stream([Message(role="user", content="hi")])]
+
 
 # ---------------------------------------------------------------------------
 # TestOpenAIResponseParsing

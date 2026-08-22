@@ -17,6 +17,7 @@ from arcllm.exceptions import (
     ArcLLMConfigError,
     ArcLLMError,
     ArcLLMParseError,
+    ArcLLMStreamProtocolError,
 )
 from arcllm.types import (
     LLMResponse,
@@ -782,3 +783,107 @@ class TestAnthropicFullCycle:
         assert len(resp.tool_calls) == 1
         assert resp.tool_calls[0].name == "search"
         assert resp.stop_reason == "tool_use"
+
+
+class TestAnthropicInvokeStream:
+    """Messages SSE frames normalize without exposing private thinking."""
+
+    @staticmethod
+    async def _stream(adapter, body: str):
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
+
+        await adapter._client.aclose()
+        adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        return [
+            delta
+            async for delta in adapter.invoke_stream([Message(role="user", content="stream please")])
+        ]
+
+    @pytest.mark.asyncio
+    async def test_streams_text_parallel_tools_usage_and_stop_reason(self):
+        from arcllm import StreamAccumulator
+        from arcllm.adapters.anthropic import AnthropicAdapter
+
+        body = """event: message_start
+data: {\"type\":\"message_start\",\"message\":{\"model\":\"claude-test-1\",\"usage\":{\"input_tokens\":3,\"output_tokens\":0}}}
+
+event: content_block_start
+data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":\"call-b\",\"name\":\"second\",\"input\":{}}}
+
+event: content_block_start
+data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"call-a\",\"name\":\"first\",\"input\":{}}}
+
+event: content_block_delta
+data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"b\\\":2}\"}}
+
+event: content_block_delta
+data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"a\\\":1}\"}}
+
+event: content_block_delta
+data: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"text_delta\",\"text\":\"done\"}}
+
+event: message_delta
+data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":4}}
+
+event: message_stop
+data: {\"type\":\"message_stop\"}
+
+"""
+        deltas = await self._stream(AnthropicAdapter(FAKE_CONFIG, FAKE_MODEL), body)
+        accumulator = StreamAccumulator(model=FAKE_MODEL)
+        for delta in deltas:
+            accumulator.add(delta)
+        response = accumulator.build()
+        assert response.content == "done"
+        assert response.usage.total_tokens == 7
+        assert [(call.id, call.arguments) for call in response.tool_calls] == [
+            ("call-a", {"a": 1}),
+            ("call-b", {"b": 2}),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_ignores_ping_unknown_and_private_thinking_frames(self):
+        from arcllm.adapters.anthropic import AnthropicAdapter
+
+        body = """event: ping
+data: {\"type\":\"ping\"}
+
+event: content_block_delta
+data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"private\"}}
+
+event: content_block_delta
+data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"secret\"}}
+
+event: future_event
+data: {\"type\":\"future_event\",\"reasoning\":\"private\"}
+
+event: content_block_delta
+data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"visible\"}}
+
+event: message_delta
+data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}
+
+event: message_stop
+data: {\"type\":\"message_stop\"}
+
+"""
+        deltas = await self._stream(AnthropicAdapter(FAKE_CONFIG, FAKE_MODEL), body)
+        assert [delta.text for delta in deltas] == ["visible", None]
+        assert all("private" not in str(delta.model_dump()) for delta in deltas)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "body",
+        [
+            "event: error\ndata: {\"type\":\"error\",\"error\":{\"message\":\"private detail\"}}\n\n",
+            "event: content_block_delta\ndata: not-json\n\n",
+            "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"partial\"}}\n\n",
+        ],
+    )
+    async def test_rejects_error_malformed_or_truncated_stream_without_raw_payload(self, body: str):
+        from arcllm.adapters.anthropic import AnthropicAdapter
+
+        with pytest.raises(ArcLLMStreamProtocolError) as exc_info:
+            await self._stream(AnthropicAdapter(FAKE_CONFIG, FAKE_MODEL), body)
+        assert "private detail" not in str(exc_info.value)

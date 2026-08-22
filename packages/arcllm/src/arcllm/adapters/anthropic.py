@@ -1,18 +1,22 @@
 """Anthropic Messages API adapter."""
 
 import json
+from collections.abc import AsyncIterator
 from typing import Any
 
 from arcllm.adapters.base import BaseAdapter
-from arcllm.exceptions import ArcLLMAPIError, ArcLLMConfigError
+from arcllm.exceptions import ArcLLMAPIError, ArcLLMConfigError, ArcLLMStreamProtocolError
 from arcllm.types import (
+    Delta,
     ImageBlock,
     LLMResponse,
     Message,
+    ResponseFormat,
     StopReason,
     TextBlock,
     Tool,
     ToolCall,
+    ToolCallDelta,
     ToolResultBlock,
     ToolUseBlock,
     Usage,
@@ -348,3 +352,133 @@ class AnthropicAdapter(BaseAdapter):
             )
 
         return self._parse_response(response.json(), self._structured_tool_name(**kwargs))
+
+    async def invoke_stream(
+        self,
+        messages: list[Message],
+        tools: list[Tool] | None = None,
+        *,
+        response_format: ResponseFormat | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[Delta]:
+        """Stream public Messages API deltas without exposing private blocks."""
+        self._check_tool_capability(tools)
+        body = self._build_request_body(messages, tools, response_format=response_format, **kwargs)
+        body["stream"] = True
+        url = f"{self._config.provider.base_url}/v1/messages"
+        input_tokens = 0
+        saw_stop = False
+
+        async with self._client.stream(
+            "POST", url, headers=self._build_headers(), json=body
+        ) as response:
+            if response.status_code != 200:
+                error_body = await response.aread()
+                raise ArcLLMAPIError(
+                    status_code=response.status_code,
+                    body=error_body.decode("utf-8", errors="replace"),
+                    provider=self.name,
+                    retry_after=self._parse_retry_after(response),
+                )
+            event_name: str | None = None
+            async for line in response.aiter_lines():
+                if not line:
+                    continue
+                if line.startswith("event:"):
+                    event_name = line[6:].strip()
+                    continue
+                if not line.startswith("data:"):
+                    continue
+                if event_name is None:
+                    raise ArcLLMStreamProtocolError("event data has no event type")
+                try:
+                    payload = json.loads(line[5:].strip())
+                except json.JSONDecodeError as error:
+                    raise ArcLLMStreamProtocolError("malformed event data") from error
+                if not isinstance(payload, dict):
+                    raise ArcLLMStreamProtocolError("event data is not an object")
+                if event_name == "message_start":
+                    usage = payload.get("message", {}).get("usage", {})
+                    if isinstance(usage, dict):
+                        input_tokens = usage.get("input_tokens", 0)
+                elif event_name == "message_stop":
+                    saw_stop = True
+                else:
+                    delta = self._parse_stream_event(event_name, payload, input_tokens)
+                    if delta is not None:
+                        yield delta
+                event_name = None
+        if not saw_stop:
+            raise ArcLLMStreamProtocolError("stream ended before message_stop")
+
+    def _parse_stream_event(
+        self, event_name: str, payload: dict[str, Any], input_tokens: int
+    ) -> Delta | None:
+        """Normalize one public Anthropic SSE event or safely ignore it."""
+        if event_name in {"ping", "message_start"}:
+            return None
+        if event_name == "error":
+            raise ArcLLMStreamProtocolError("provider reported a stream error")
+        if event_name == "content_block_start":
+            block = payload.get("content_block")
+            if not isinstance(block, dict) or block.get("type") != "tool_use":
+                return None
+            return Delta(
+                tool_call=ToolCallDelta(
+                    index=self._stream_index(payload),
+                    id=self._stream_string(block, "id"),
+                    name=self._stream_string(block, "name"),
+                )
+            )
+        if event_name == "content_block_delta":
+            delta = payload.get("delta")
+            if not isinstance(delta, dict):
+                raise ArcLLMStreamProtocolError("content delta is not an object")
+            if delta.get("type") == "text_delta":
+                text = delta.get("text")
+                if not isinstance(text, str):
+                    raise ArcLLMStreamProtocolError("text delta is not a string")
+                return Delta(text=text)
+            if delta.get("type") == "input_json_delta":
+                arguments = delta.get("partial_json")
+                if not isinstance(arguments, str):
+                    raise ArcLLMStreamProtocolError("tool arguments are not a string")
+                return Delta(
+                    tool_call=ToolCallDelta(index=self._stream_index(payload), arguments=arguments)
+                )
+            return None
+        if event_name == "message_delta":
+            delta_data = payload.get("delta")
+            usage_data = payload.get("usage")
+            if not isinstance(delta_data, dict) or not isinstance(usage_data, dict):
+                raise ArcLLMStreamProtocolError("message delta is malformed")
+            raw_reason = delta_data.get("stop_reason")
+            stop_reason = (
+                self._map_stop_reason(raw_reason) if isinstance(raw_reason, str) else None
+            )
+            output_tokens = usage_data.get("output_tokens", 0)
+            if not isinstance(output_tokens, int):
+                raise ArcLLMStreamProtocolError("usage counters are malformed")
+            return Delta(
+                usage=Usage(
+                    input_tokens=usage_data.get("input_tokens", input_tokens),
+                    output_tokens=output_tokens,
+                    total_tokens=usage_data.get("input_tokens", input_tokens) + output_tokens,
+                ),
+                stop_reason=stop_reason,
+            )
+        return None
+
+    @staticmethod
+    def _stream_index(payload: dict[str, Any]) -> int:
+        index = payload.get("index")
+        if not isinstance(index, int) or index < 0:
+            raise ArcLLMStreamProtocolError("tool index is invalid")
+        return index
+
+    @staticmethod
+    def _stream_string(payload: dict[str, Any], key: str) -> str:
+        value = payload.get(key)
+        if not isinstance(value, str) or not value:
+            raise ArcLLMStreamProtocolError("tool metadata is invalid")
+        return value

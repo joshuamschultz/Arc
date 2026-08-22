@@ -1,16 +1,18 @@
 """OpenAI Chat Completions API adapter."""
 
 import json
+from collections.abc import AsyncIterator
 from typing import Any
 
 from arcllm.adapters.base import BaseAdapter
 from arcllm.config import ProviderConfig
-from arcllm.exceptions import ArcLLMAPIError
+from arcllm.exceptions import ArcLLMAPIError, ArcLLMStreamProtocolError
 from arcllm.types import (
     Delta,
     ImageBlock,
     LLMResponse,
     Message,
+    ResponseFormat,
     StopReason,
     TextBlock,
     Tool,
@@ -100,6 +102,78 @@ def _parse_openai_sse_line(line: str) -> Delta | None:
     if text is None and tool_call is None and usage is None and stop_reason is None:
         return None
     return Delta(text=text, tool_call=tool_call, usage=usage, stop_reason=stop_reason)
+
+
+def _parse_openai_stream_data(payload: str) -> list[Delta]:
+    """Normalize one OpenAI ``data:`` value and reject malformed wire frames."""
+    try:
+        chunk = json.loads(payload)
+    except json.JSONDecodeError as error:
+        raise ArcLLMStreamProtocolError("malformed event data") from error
+    if not isinstance(chunk, dict):
+        raise ArcLLMStreamProtocolError("event data is not an object")
+    if "error" in chunk:
+        raise ArcLLMStreamProtocolError("provider reported a stream error")
+
+    usage = _parse_stream_usage(chunk)
+    choices = chunk.get("choices")
+    if not isinstance(choices, list):
+        raise ArcLLMStreamProtocolError("choices is not a list")
+    if not choices:
+        return [Delta(usage=usage)] if usage is not None else []
+
+    deltas: list[Delta] = []
+    for choice in choices:
+        if not isinstance(choice, dict):
+            raise ArcLLMStreamProtocolError("choice is not an object")
+        delta_data = choice.get("delta", {})
+        if not isinstance(delta_data, dict):
+            raise ArcLLMStreamProtocolError("choice delta is not an object")
+        text = delta_data.get("content")
+        if text is not None:
+            if not isinstance(text, str):
+                raise ArcLLMStreamProtocolError("text delta is not a string")
+            deltas.append(Delta(text=text))
+        tool_calls = delta_data.get("tool_calls", [])
+        if not isinstance(tool_calls, list):
+            raise ArcLLMStreamProtocolError("tool calls is not a list")
+        for tool_call in tool_calls:
+            if not isinstance(tool_call, dict):
+                raise ArcLLMStreamProtocolError("tool call is not an object")
+            index = tool_call.get("index", 0)
+            function = tool_call.get("function", {})
+            if not isinstance(index, int) or index < 0 or not isinstance(function, dict):
+                raise ArcLLMStreamProtocolError("tool call metadata is malformed")
+            identifier = tool_call.get("id")
+            name = function.get("name")
+            arguments = function.get("arguments")
+            if identifier is not None and not isinstance(identifier, str):
+                raise ArcLLMStreamProtocolError("tool call id is malformed")
+            if name is not None and not isinstance(name, str):
+                raise ArcLLMStreamProtocolError("tool name is malformed")
+            if arguments is not None and not isinstance(arguments, str):
+                raise ArcLLMStreamProtocolError("tool arguments are malformed")
+            deltas.append(
+                Delta(
+                    tool_call=ToolCallDelta(
+                        index=index, id=identifier, name=name, arguments=arguments
+                    )
+                )
+            )
+        finish_reason = choice.get("finish_reason")
+        if finish_reason is not None:
+            if not isinstance(finish_reason, str):
+                raise ArcLLMStreamProtocolError("stop reason is malformed")
+            deltas.append(
+                Delta(
+                    usage=usage,
+                    stop_reason=_STOP_REASON_MAP.get(finish_reason, "end_turn"),
+                )
+            )
+            usage = None
+    if usage is not None:
+        deltas.append(Delta(usage=usage))
+    return deltas
 
 
 class OpenaiAdapter(BaseAdapter):
@@ -356,7 +430,14 @@ class OpenaiAdapter(BaseAdapter):
         # populate ``parsed_content``.
         return self._parse_response(response.json(), body.get("response_format"))
 
-    async def invoke_stream(self, messages, tools=None, **kwargs):  # type: ignore[no-untyped-def]  # reason: returns AsyncIterator[Delta] yielded via 'yield' — mypy can't model the async-generator protocol against the base signature cleanly here
+    async def invoke_stream(
+        self,
+        messages: list[Message],
+        tools: list[Tool] | None = None,
+        *,
+        response_format: ResponseFormat | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[Delta]:
         """Stream Deltas using OpenAI's ``stream: true`` SSE protocol.
 
         Re-uses ``_build_request_body`` for parameter parity with
@@ -367,11 +448,12 @@ class OpenaiAdapter(BaseAdapter):
         """
         self._check_tool_capability(tools)
         headers = self._build_headers()
-        body = self._build_request_body(messages, tools, **kwargs)
+        body = self._build_request_body(messages, tools, response_format=response_format, **kwargs)
         body["stream"] = True
         body["stream_options"] = {"include_usage": True}
         url = self._completions_url()
 
+        saw_done = False
         async with self._client.stream("POST", url, headers=headers, json=body) as response:
             if response.status_code != 200:
                 error_body = await response.aread()
@@ -382,6 +464,16 @@ class OpenaiAdapter(BaseAdapter):
                     retry_after=self._parse_retry_after(response),
                 )
             async for line in response.aiter_lines():
-                delta = _parse_openai_sse_line(line)
-                if delta is not None:
+                stripped = line.strip()
+                if not stripped or not stripped.startswith("data:"):
+                    continue
+                payload = stripped[5:].strip()
+                if payload == "[DONE]":
+                    saw_done = True
+                    continue
+                if saw_done:
+                    raise ArcLLMStreamProtocolError("event received after stream completion")
+                for delta in _parse_openai_stream_data(payload):
                     yield delta
+        if not saw_done:
+            raise ArcLLMStreamProtocolError("stream ended before completion")
