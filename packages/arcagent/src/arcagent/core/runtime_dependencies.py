@@ -39,8 +39,6 @@ class RuntimeDependencies:
     egress_proxy: EgressProxy | None
     human_gate: Any
     agent_run_fn: Callable[..., Awaitable[Any]]
-    personal_knowledge_port: Any = None
-    shared_knowledge_port: Any = None
 
     def select_for(
         self, configure: Callable[..., None], module_config: dict[str, Any]
@@ -88,8 +86,6 @@ class DependencyKey(Enum):
     HUMAN_GATE = "human_gate"
     OPERATOR_SIGNER = "operator_signer"
     AGENT_RUN_FN = "agent_run_fn"
-    PERSONAL_KNOWLEDGE_PORT = "personal_knowledge_port"
-    SHARED_KNOWLEDGE_PORT = "shared_knowledge_port"
 
 
 class RuntimeModule(Protocol):

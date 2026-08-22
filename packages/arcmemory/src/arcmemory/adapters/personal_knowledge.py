@@ -11,6 +11,7 @@ from typing import Protocol
 import yaml
 
 from arctrust.classification import dominates, parse_classification
+from arcmemory.mdfile import atomic_write_text
 
 
 class _Draft(Protocol):
@@ -102,8 +103,9 @@ class PersonalKnowledgeAdapter:
             "arc_content_sha256": f"sha256:{digest}",
         }
         self._root.mkdir(parents=True, exist_ok=True)
-        self._path(identifier).write_text(
-            f"---\n{yaml.safe_dump(metadata, sort_keys=True)}---\n\n{draft.content}\n"
+        atomic_write_text(
+            self._path(identifier),
+            f"---\n{yaml.safe_dump(metadata, sort_keys=True)}---\n\n{draft.content}\n",
         )
         return _Reference("personal", identifier, f"sha256:{digest}")
 
@@ -117,7 +119,7 @@ class PersonalKnowledgeAdapter:
             raw = path.read_text()
             _, front, content = raw.split("---", 2)
             metadata = yaml.safe_load(front)
-        except (OSError, ValueError, yaml.YAMLError) as error:
+        except (KeyError, OSError, TypeError, ValueError, yaml.YAMLError) as error:
             raise ValueError("malformed personal knowledge document") from error
         if not isinstance(metadata, dict):
             raise ValueError("malformed personal knowledge frontmatter")
