@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -40,3 +42,30 @@ class CapabilityImportResult:
     quarantine_path: Path
     staging_dir: Path
     files: tuple[CapabilityImportFile, ...]
+
+
+class CapabilityImportStatus(StrEnum):
+    """Non-activating lifecycle states for an imported capability tree."""
+
+    QUARANTINED = "quarantined"
+    VALIDATED = "validated"
+    REVIEW_READY = "review_ready"
+    REJECTED = "rejected"
+    MODIFIED = "modified"
+
+
+@dataclass(frozen=True)
+class CapabilityImportManifest:
+    """Canonical review artifact binding a staged tree to one agent DID."""
+
+    import_id: str
+    target_agent_did: str
+    archive_sha256: str
+    files: tuple[CapabilityImportFile, ...]
+    tools: tuple[str, ...]
+    skills: tuple[str, ...]
+    findings: tuple[str, ...]
+    limits: CapabilityImportLimits
+    supplier_metadata: dict[str, Any]
+    supplier_sbom_sha256: str | None
+    review_digest: str
