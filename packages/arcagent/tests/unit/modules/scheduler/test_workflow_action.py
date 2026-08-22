@@ -205,7 +205,9 @@ class TestCircuitBreaker:
 
         assert store.load()[0].enabled is False
 
-    async def test_a_refusal_is_raised_not_swallowed(self, tmp_path: Path) -> None:
+    async def test_a_refusal_is_raised_not_swallowed(
+        self, tmp_path: Path, arcstore_opener: Any
+    ) -> None:
         """A swallowed refusal would let a broken trigger fire forever.
 
         Drives the REAL control plane (no double): with no runner hosted in this
@@ -220,6 +222,7 @@ class TestCircuitBreaker:
             config={"enabled": True},
             workspace=tmp_path,
             identity=AgentIdentity.generate(org="local", agent_type="agent"),
+            arcstore_opener=arcstore_opener,
         )
         with pytest.raises(RuntimeError, match="refused to start"):
             await start_workflow_run("nope")

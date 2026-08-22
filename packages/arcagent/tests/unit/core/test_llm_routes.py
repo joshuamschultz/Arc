@@ -11,6 +11,12 @@ from arcagent.core.config import ArcAgentConfig, LLMConfig
 from arcagent.core.model_manager import _arcllm_modules
 
 
+@pytest.fixture(autouse=True)
+def _provider_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Route construction is local, but adapters still validate their key."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-anthropic-key")
+
+
 def _config(**llm: object) -> ArcAgentConfig:
     return ArcAgentConfig(
         agent={"name": "olivia"},

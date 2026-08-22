@@ -155,6 +155,7 @@ class _MsgState:
         self.oneshot_fn = None
         self.telemetry = None
         self.config = SimpleNamespace(
+            entity_id="agent://listener",
             channel_route=False,
             entity_name="listener",
             entity_role="listener",
@@ -170,6 +171,10 @@ class _MsgState:
         self.registry = _HumanRegistry("did:arc:test:operator")
         self.svc = None
         self.digests = None
+        # The inbox path now projects verified events to a durable store when
+        # one is configured. This routing fixture deliberately has no store.
+        self.arcstore_opener = None
+        self.inbox_service = None
 
 
 async def _deliver_through_inbox(monkeypatch: Any, message: Any) -> list[dict[str, Any]]:
