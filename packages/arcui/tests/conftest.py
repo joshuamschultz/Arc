@@ -21,6 +21,32 @@ import pytest
 from arctrust.paths import ARC_CONFIG_DIR_ENV
 
 
+@pytest.fixture
+def arcstore_backend() -> object:
+    """Return the per-test in-memory ArcStore backend."""
+    from arcstore.backends.memory import FakeBackend
+
+    return FakeBackend()
+
+
+@pytest.fixture(autouse=True)
+def _isolated_arcstore_backend(
+    monkeypatch: pytest.MonkeyPatch, arcstore_backend: object
+) -> None:
+    """Make every implicit ArcUI composition use a fresh contract-complete backend.
+
+    Production requires PostgreSQL and the CLI validates that requirement before
+    constructing the app. Unit and route tests that do not explicitly inject a
+    backend must remain hermetic rather than inheriting a developer DSN.
+    """
+    def open_fake(**_kwargs: object) -> object:
+        return arcstore_backend
+
+    monkeypatch.setattr("arcstore.backends.open_backend", open_fake)
+    monkeypatch.setattr("arcui.observe.open_backend", open_fake)
+    monkeypatch.setattr("arcui.server.open_backend", open_fake)
+
+
 @pytest.fixture(autouse=True)
 def _isolated_arc_data_dir(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
