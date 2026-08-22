@@ -23,9 +23,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import arcmemory.provider as provider_mod
 import pytest
 
-import arcmemory.provider as provider_mod
 import arcui.routes.knowledge as knowledge_mod
 from arcui.routes.knowledge import _operator_for
 
