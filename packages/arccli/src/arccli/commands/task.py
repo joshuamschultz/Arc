@@ -39,6 +39,13 @@ if TYPE_CHECKING:
 _PRIORITIES = ("low", "medium", "high", "critical")
 
 
+def _backend_factory() -> ArcStoreBackend:
+    """Create the configured ArcStore backend for one command invocation."""
+    from arcstore.backends import open_backend
+
+    return open_backend()
+
+
 # ---------------------------------------------------------------------------
 # Shared resolution helpers
 # ---------------------------------------------------------------------------
@@ -92,10 +99,9 @@ async def _open_store(data_dir: Path, *, mutable: bool) -> tuple[TaskStore, ArcS
     The configured backend is the same one the agents' ``tasks`` module and
     arcui read/write, so a task created here is immediately visible to both.
     """
-    from arcstore.backends import open_backend
     from arcstore.tasks import TaskStore
 
-    backend = open_backend()
+    backend = _backend_factory()
     await backend.start()
     sink = _audit_sink(data_dir) if mutable else None
     return TaskStore(backend, sink=sink), backend

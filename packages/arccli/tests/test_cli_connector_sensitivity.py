@@ -96,6 +96,19 @@ def build_native_attachment(context: dict[str, Any]) -> AcmeFieldsAttachment:
 _ANSWERS = {"api_token": _TOKEN, "base_url": _URL}
 
 
+@pytest.fixture(autouse=True)
+def _arcstore_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Use one fresh backend for the command and its state assertions."""
+    from arcstore.backends.memory import FakeBackend
+
+    backend = FakeBackend()
+
+    async def _open() -> FakeBackend:
+        return backend
+
+    monkeypatch.setattr("arccli.commands.connector._arcstore_opener", lambda: _open)
+
+
 @pytest.fixture
 def arc_dir(tmp_path: Path) -> Path:
     root = tmp_path / "arc"

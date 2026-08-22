@@ -217,6 +217,19 @@ def _reachable(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+@pytest.fixture(autouse=True)
+def _arcstore_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep every command in one test on one fresh ArcStore fake."""
+    from arcstore.backends.memory import FakeBackend
+
+    backend = FakeBackend()
+
+    async def _open() -> FakeBackend:
+        return backend
+
+    monkeypatch.setattr("arccli.commands.connector._arcstore_opener", lambda: _open)
+
+
 @pytest.fixture
 def run(arc_dir: Path, tmp_path: Path) -> Callable[..., None]:
     """Invoke the handler with every path pinned inside the test's own tmp dir.

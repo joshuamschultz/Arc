@@ -30,6 +30,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from arcstore.backends.memory import FakeBackend
 from arctrust.audit import AuditEvent
 from arctrust.paths import arc_team, config_file
 from arctrust.signer import InProcessSigner
@@ -109,6 +110,10 @@ class _Deployment:
         for name in (*_GRANTED, *_UNGRANTED):
             self.agent_dir(name)
         self.sink = _RecordingSink()
+        self.arcstore_backend = FakeBackend()
+
+    async def open_arcstore(self) -> FakeBackend:
+        return self.arcstore_backend
 
     def agent_dir(self, agent: str) -> Path:
         """Create (once) and return one real agent directory with its own DID."""
@@ -143,6 +148,7 @@ class _Deployment:
             data_dir=self.data_dir,
             extensions_root=self.root,
             audit=AuditChain.held(self.sink),
+            state_opener=self.open_arcstore,
         )
 
     async def connect(self, *, agents: tuple[str, ...] = _GRANTED) -> None:
@@ -178,6 +184,7 @@ class _Deployment:
             tool_registry=registry,
             tier="personal",
             human_gate=_gate(self.did(agent)),
+            arcstore_opener=self.open_arcstore,
         )
         capability = Connectors()
         await capability.setup(None)

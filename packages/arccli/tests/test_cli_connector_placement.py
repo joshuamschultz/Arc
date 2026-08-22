@@ -51,6 +51,19 @@ _VERIFY = (
 )
 
 
+@pytest.fixture(autouse=True)
+def _arcstore_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Use one fresh backend for the command and its state assertions."""
+    from arcstore.backends.memory import FakeBackend
+
+    backend = FakeBackend()
+
+    async def _open() -> FakeBackend:
+        return backend
+
+    monkeypatch.setattr("arccli.commands.connector._arcstore_opener", lambda: _open)
+
+
 def _manifest(*, placed: bool = True) -> str:
     placement = f"\n[secrets.placement]\nvariable = {json.dumps(_VARIABLE)}\n" if placed else "\n"
     return f"""

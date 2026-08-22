@@ -56,6 +56,10 @@ def _isolated_arc(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Every entry point resolves its data root from these two env vars."""
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
     monkeypatch.setenv("ARCSTORE_DATA_DIR", str(tmp_path / "data"))
+    from arcstore.backends.memory import FakeBackend
+
+    backend = FakeBackend()
+    monkeypatch.setattr(wf_cmd, "_backend_factory", lambda: backend)
 
 
 @pytest.fixture
@@ -412,15 +416,13 @@ def test_purge_refuses_while_a_real_run_references_the_workflow(
     """
     import asyncio
 
-    from arcstore.backends.memory import FakeBackend
     from arcstore.runs import Run, RunStore
 
     workflow_handler(["create", str(_write_bundle(tmp_path / "src")), "--dir", str(arc_dir)])
     capsys.readouterr()
 
     async def _seed_run() -> None:
-        backend = FakeBackend()
-        await backend.start()
+        backend = wf_cmd._backend_factory()
         await RunStore(backend).create(
             Run(
                 id="run-1",
@@ -431,7 +433,6 @@ def test_purge_refuses_while_a_real_run_references_the_workflow(
                 initiator_did="did:arc:local:operator/test",
             )
         )
-        await backend.stop()
 
     asyncio.run(_seed_run())
 

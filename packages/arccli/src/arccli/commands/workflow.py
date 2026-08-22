@@ -61,6 +61,13 @@ from arctrust.paths import arc_state, config_file, workflows_dir
 from arccli.commands._shared import dispatch, err, print_json, print_table, write
 from arccli.commands.operator import load_operator_key, operator_key_path, operator_public_key
 
+
+def _backend_factory() -> Any:
+    """Create the configured ArcStore backend for one command invocation."""
+    from arcstore.backends import open_backend
+
+    return open_backend()
+
 # ---------------------------------------------------------------------------
 # Deployment context — tier, operator key, audit sink
 # ---------------------------------------------------------------------------
@@ -256,11 +263,10 @@ async def _resolve_control_plane(
         The plane and an ``aclose`` coroutine factory that releases the sqlite
         backend; a CLI process must not leak the handle between subcommands.
     """
-    from arcstore.backends import open_backend
     from arcteam.workflow.runner import build_workflow_runner
     from arcteam.workflow.stores import WorkflowRunStore
 
-    backend = open_backend()
+    backend = _backend_factory()
     await backend.start()
     sink = _audit_sink()
     owners, narrator = await _team_bindings(arc_dir)

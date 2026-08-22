@@ -19,7 +19,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
-from typing import Any
+from typing import TYPE_CHECKING
 
 from arcstore.approvals import ApprovalStore, PendingApproval
 from arctrust.policy import OperatorApprovalAuthority, grant_to_wire, sign_approval_for_hash
@@ -27,16 +27,25 @@ from arctrust.policy import OperatorApprovalAuthority, grant_to_wire, sign_appro
 from arccli.commands._shared import write as _write
 from arccli.formatting import print_table as _print_table
 
+if TYPE_CHECKING:
+    from arcstore.backends import ArcStoreBackend
+
 
 def _err(msg: str) -> None:
     sys.stderr.write(msg + "\n")
 
 
-async def _open_store() -> tuple[ApprovalStore, Any]:
-    """Open the configured arcstore approvals directory."""
+def _backend_factory() -> ArcStoreBackend:
+    """Create the configured ArcStore backend for one command invocation."""
     from arcstore.backends import open_backend
 
-    backend = open_backend()
+    return open_backend()
+
+
+async def _open_store() -> tuple[ApprovalStore, ArcStoreBackend]:
+    """Open the configured arcstore approvals directory."""
+
+    backend = _backend_factory()
     await backend.start()
     return ApprovalStore(backend), backend
 

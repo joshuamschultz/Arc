@@ -27,6 +27,13 @@ _AGENT = "did:arc:test:exec/agent1"
 
 
 @pytest.fixture(autouse=True)
+def _arcstore_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Share one fresh fake between approval setup, CLI resolution, and reads."""
+    backend = FakeBackend()
+    monkeypatch.setattr("arccli.commands.approve._backend_factory", lambda: backend)
+
+
+@pytest.fixture(autouse=True)
 def _isolated_arc(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
 
@@ -42,8 +49,9 @@ def _call() -> ToolCall:
 
 
 async def _seed_pending(call_hash: str, *, enriched: bool = False) -> None:
-    backend = FakeBackend()
-    await backend.start()
+    from arccli.commands.approve import _backend_factory
+
+    backend = _backend_factory()
     extra: dict[str, object] = {}
     if enriched:
         extra = {
@@ -53,29 +61,23 @@ async def _seed_pending(call_hash: str, *, enriched: bool = False) -> None:
                 {"legs": ["private_data"], "tool": "file_read", "args": "p", "at": "t"}
             ],
         }
-    try:
-        await ApprovalStore(backend).create(
-            PendingApproval(
-                id="req1",
-                agent_did=_AGENT,
-                agent_label="josh_agent",
-                tool="send_message",
-                legs=["external_comms", "private_data"],
-                call_hash=call_hash,
-                **extra,
-            )
+    await ApprovalStore(backend).create(
+        PendingApproval(
+            id="req1",
+            agent_did=_AGENT,
+            agent_label="josh_agent",
+            tool="send_message",
+            legs=["external_comms", "private_data"],
+            call_hash=call_hash,
+            **extra,
         )
-    finally:
-        await backend.stop()
+    )
 
 
 async def _read(pid: str) -> PendingApproval | None:
-    backend = FakeBackend()
-    await backend.start()
-    try:
-        return await ApprovalStore(backend).get(pid)
-    finally:
-        await backend.stop()
+    from arccli.commands.approve import _backend_factory
+
+    return await ApprovalStore(_backend_factory()).get(pid)
 
 
 def test_approve_mints_grant_that_verifies_against_the_call() -> None:

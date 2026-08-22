@@ -73,6 +73,15 @@ def _task(argv: list[str]) -> None:
     task_handler(argv)
 
 
+@pytest.fixture(autouse=True)
+def _arcstore_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give each CLI test one explicit backend shared by command and assertions."""
+    from arcstore.backends.memory import FakeBackend
+
+    backend = FakeBackend()
+    monkeypatch.setattr("arccli.commands.task._backend_factory", lambda: backend)
+
+
 def _common_flags(root: Path, data_dir: Path) -> list[str]:
     return ["--root", str(root), "--data-dir", str(data_dir)]
 
@@ -146,49 +155,33 @@ def _create_signing_agent(
 
 
 async def _get_task(data_dir: Path, task_id: str) -> Any:
-    from arcstore.backends.memory import FakeBackend
     from arcstore.tasks import TaskStore
 
+    from arccli.commands.task import _backend_factory
+
     del data_dir
-    backend = FakeBackend()
-    await backend.start()
-    try:
-        store = TaskStore(backend)
-        return await store.get(task_id)
-    finally:
-        await backend.stop()
+    return await TaskStore(_backend_factory()).get(task_id)
 
 
 async def _seed_task(data_dir: Path, **fields: Any) -> Any:
     """Write a task directly via TaskStore, bypassing the CLI (test setup only)."""
-    from arcstore.backends.memory import FakeBackend
     from arcstore.tasks import Task, TaskStore
 
+    from arccli.commands.task import _backend_factory
+
     del data_dir
-    backend = FakeBackend()
-    await backend.start()
-    try:
-        store = TaskStore(backend)
-        task = await store.create(Task(**fields))
-        return task
-    finally:
-        await backend.stop()
+    return await TaskStore(_backend_factory()).create(Task(**fields))
 
 
 async def _force_in_progress(data_dir: Path, task_id: str, owner_did: str) -> None:
-    from arcstore.backends.memory import FakeBackend
     from arcstore.tasks import TaskStore
 
+    from arccli.commands.task import _backend_factory
+
     del data_dir
-    backend = FakeBackend()
-    await backend.start()
-    try:
-        store = TaskStore(backend)
-        await store.update(
-            task_id, {"status": "in_progress", "owner_did": owner_did}, actor_did=owner_did
-        )
-    finally:
-        await backend.stop()
+    await TaskStore(_backend_factory()).update(
+        task_id, {"status": "in_progress", "owner_did": owner_did}, actor_did=owner_did
+    )
 
 
 def _dm_stream(team_backend: Any, handle: str) -> list[dict[str, Any]]:

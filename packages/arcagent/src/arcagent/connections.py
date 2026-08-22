@@ -37,7 +37,7 @@ credential by writing a config block.
 from __future__ import annotations
 
 import tomllib
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -541,11 +541,13 @@ class Connections:
         audit: AuditChain | None = None,
         attachment_factory: AttachmentFactory | None = None,
         install_dir: Path | None = None,
+        state_opener: Callable[[], Awaitable[Any]] | None = None,
     ) -> None:
         self._world = world
         self._audit = audit if audit is not None else AuditChain()
         self._factory: AttachmentFactory = attachment_factory or build_attachment
         self._install_dir = install_dir
+        self._state_opener = state_opener
 
     @classmethod
     def for_deployment(
@@ -558,6 +560,7 @@ class Connections:
         audit: AuditChain | None = None,
         attachment_factory: AttachmentFactory | None = None,
         install_dir: Path | None = None,
+        state_opener: Callable[[], Awaitable[Any]] | None = None,
     ) -> Connections:
         """Resolve a deployment and bind it to a chain in one step."""
         world = resolve_deployment(
@@ -571,6 +574,7 @@ class Connections:
             audit=audit,
             attachment_factory=attachment_factory,
             install_dir=install_dir,
+            state_opener=state_opener,
         )
 
     @property
@@ -1110,7 +1114,7 @@ class Connections:
         the same directory every surface resolves — a second spelling of the data
         dir would mean the agent reads a store no surface ever wrote to.
         """
-        return await open_connection_state()
+        return await open_connection_state(opener=self._state_opener)
 
     def _plan(
         self, extension: str, instance: str, sink: AuditSink, *, tier: Tier | None = None

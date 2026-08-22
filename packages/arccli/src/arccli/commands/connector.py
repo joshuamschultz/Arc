@@ -45,7 +45,7 @@ import argparse
 import asyncio
 import getpass
 import sys
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -64,6 +64,11 @@ from arccli.commands._shared import write as _out
 
 def _attachment_factory() -> arcagent.AttachmentFactory | None:
     """How a manifest becomes something probeable. ``None`` means the shipped builder."""
+    return None
+
+
+def _arcstore_opener() -> Callable[[], Awaitable[Any]] | None:
+    """Optional ArcStore opener passed into the connection state seam."""
     return None
 
 
@@ -97,6 +102,7 @@ def _connections(args: argparse.Namespace) -> arcagent.Connections:
             lambda: operator_worm_sink(world.arc_dir, world.data_dir)
         ),
         attachment_factory=_attachment_factory(),
+        state_opener=_arcstore_opener(),
     )
 
 
