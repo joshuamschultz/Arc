@@ -127,6 +127,7 @@ arctui = { workspace = true }
 arcui = { workspace = true }
 arcprompt = { workspace = true }
 arcmodel = { workspace = true }
+arcokf = { workspace = true }
 arccmd = { workspace = true, editable = true }
 arc-agent = { workspace = true, editable = true }
 arcgateway = { workspace = true, editable = true }
