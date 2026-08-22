@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path
@@ -87,7 +88,7 @@ class PersonalKnowledgeAdapter:
             raise ValueError("invalid knowledge identifier")
         return self._root / f"{identifier}.md"
 
-    async def save(self, draft: _Draft, access: _Access) -> _Reference:
+    def _save(self, draft: _Draft, access: _Access) -> _Reference:
         self._authorize(access, draft.classification)
         self._validate(draft)
         digest = hashlib.sha256(draft.content.encode()).hexdigest()
@@ -106,14 +107,27 @@ class PersonalKnowledgeAdapter:
         )
         return _Reference("personal", identifier, f"sha256:{digest}")
 
-    async def read(self, reference: str, access: _Access) -> _Document:
+    async def save(self, draft: _Draft, access: _Access) -> _Reference:
+        """Persist directly through a worker thread, never the event loop."""
+        return await asyncio.to_thread(self._save, draft, access)
+
+    def _read(self, reference: str, access: _Access) -> _Document:
         path = self._path(reference)
-        raw = path.read_text()
-        _, front, content = raw.split("---", 2)
-        metadata = yaml.safe_load(front)
+        try:
+            raw = path.read_text()
+            _, front, content = raw.split("---", 2)
+            metadata = yaml.safe_load(front)
+        except (OSError, ValueError, yaml.YAMLError) as error:
+            raise ValueError("malformed personal knowledge document") from error
+        if not isinstance(metadata, dict):
+            raise ValueError("malformed personal knowledge frontmatter")
         classification = str(metadata["arc_classification"])
+        if metadata.get("arc_owner_did") != self._agent_did:
+            raise ValueError("personal knowledge ownership was tampered")
         self._authorize(access, classification)
         digest = hashlib.sha256(content.strip().encode()).hexdigest()
+        if metadata.get("arc_content_sha256") != f"sha256:{digest}":
+            raise ValueError("personal knowledge content digest was tampered")
         return _Document(
             _Reference("personal", reference, f"sha256:{digest}"),
             str(metadata["title"]),
@@ -122,12 +136,17 @@ class PersonalKnowledgeAdapter:
             tuple(metadata["tags"]),
         )
 
+    async def read(self, reference: str, access: _Access) -> _Document:
+        """Read and integrity-check through a worker thread."""
+        return await asyncio.to_thread(self._read, reference, access)
+
     async def search(self, query: str, access: _Access) -> list[_Hit]:
         self._authorize(access)
         if not self._root.exists():
             return []
         result: list[_Hit] = []
-        for path in self._root.glob("*.md"):
+        paths = await asyncio.to_thread(lambda: tuple(self._root.glob("*.md")))
+        for path in paths:
             document = await self.read(path.stem, access)
             if query.casefold() in f"{document.title}\n{document.content}".casefold():
                 result.append(_Hit(document.reference, document.title, document.content[:160]))

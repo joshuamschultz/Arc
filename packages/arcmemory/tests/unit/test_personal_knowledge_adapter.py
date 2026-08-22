@@ -37,3 +37,16 @@ async def test_personal_adapter_rejects_cross_agent_access_and_invalid_okf(tmp_p
     invalid = type("Bad", (), {"title": "", "content": "body", "classification": "UNCLASSIFIED", "tags": (), "document_type": "note"})()
     with pytest.raises(ValueError, match="title"):
         await adapter.save(invalid, Access())
+
+
+@pytest.mark.asyncio
+async def test_personal_adapter_fails_closed_on_tampered_digest_or_frontmatter(tmp_path) -> None:
+    adapter = PersonalKnowledgeAdapter(tmp_path, "did:arc:one")
+    reference = await adapter.save(Draft(), Access())
+    path = tmp_path / "knowledge" / f"{reference.identifier}.md"
+    path.write_text(path.read_text().replace("retained as data.", "tampered."))
+    with pytest.raises(ValueError, match="digest"):
+        await adapter.read(reference.identifier, Access())
+    path.write_text("---\nnot: [valid\n---\nbody")
+    with pytest.raises(ValueError, match="malformed"):
+        await adapter.read(reference.identifier, Access())

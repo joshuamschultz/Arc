@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 
 import pytest
@@ -49,3 +50,20 @@ async def test_tools_never_accept_identity_or_clearance_from_llm_arguments() -> 
     _runtime.configure(personal_knowledge_port=FakePort(), shared_knowledge_port=None, agent_did="did:arc:authoritative", clearance="TOP_SECRET")
     await knowledge_read("personal", "one")
     assert _runtime.state().access == KnowledgeAccess(caller_did="did:arc:authoritative", clearance="TOP_SECRET")
+
+
+@pytest.mark.asyncio
+async def test_two_agents_concurrently_keep_ports_and_authority_isolated() -> None:
+    first, second = FakePort(), FakePort()
+    _runtime.configure(personal_knowledge_port=first, agent_did="did:arc:first")
+    first_state = _runtime.state()
+    _runtime.configure(personal_knowledge_port=second, agent_did="did:arc:second")
+    second_state = _runtime.state()
+
+    async def save(state: _runtime._State) -> str:
+        _runtime.bind(state)
+        return await knowledge_save("personal", "Title", "body")
+
+    await asyncio.gather(save(first_state), save(second_state))
+    assert first.calls[0][1] == KnowledgeAccess("did:arc:first", "UNCLASSIFIED")
+    assert second.calls[0][1] == KnowledgeAccess("did:arc:second", "UNCLASSIFIED")
