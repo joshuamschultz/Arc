@@ -1,7 +1,7 @@
 """COMP-003 (T-1038 RED / T-1039 GREEN) — mapping proposal + SPEC-035 approval.
 
 Drives the REAL SPEC-035 approval path: an :class:`~arcstore.approvals.ApprovalStore`
-over a real sqlite backend (``open_backend('sqlite', ...)``), never a mock. A
+over ArcStore's contract-complete in-memory backend. A
 proposed source-to-home mapping must be staged as a pending row and stay
 UN-committable until an operator resolves it ``approved``; once approved it
 persists as facts on a per-source ``mapping`` Entity, additively (a changed
@@ -15,7 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from arcstore.approvals import ApprovalStore
-from arcstore.backends import open_backend
+from arcstore.backends.memory import FakeBackend
 
 from arcmemory.db import MemoryDB
 from arcmemory.index.graph import WeightedGraph
@@ -33,21 +33,18 @@ _AGENT_DID = "did:arc:mapping-test"
 _OPERATOR_DID = "did:arc:operator"
 
 
-def _approval_store(tmp_path: Path) -> ApprovalStore:
-    backend = open_backend("sqlite", db_path=str(tmp_path / "approvals.db"))
-    return ApprovalStore(backend)
+def _approval_store() -> ApprovalStore:
+    return ApprovalStore(FakeBackend())
 
 
 # -- staging + approval gating (real ApprovalStore) --------------------------
 
 
 async def test_stage_mapping_proposal_writes_a_pending_row(tmp_path: Path) -> None:
-    store = _approval_store(tmp_path)
+    store = _approval_store()
     proposal = SourceMapping(source_id="dropbox-1", homes=["memory", "document"])
 
-    pending_id = await stage_mapping_proposal(
-        proposal, approval_store=store, agent_did=_AGENT_DID
-    )
+    pending_id = await stage_mapping_proposal(proposal, approval_store=store, agent_did=_AGENT_DID)
 
     pending = await store.get(pending_id)
     assert pending is not None
@@ -58,7 +55,7 @@ async def test_stage_mapping_proposal_writes_a_pending_row(tmp_path: Path) -> No
 
 
 async def test_approved_mapping_false_before_approval(tmp_path: Path) -> None:
-    store = _approval_store(tmp_path)
+    store = _approval_store()
     proposal = SourceMapping(source_id="wiki-2", homes=["document"])
     await stage_mapping_proposal(proposal, approval_store=store, agent_did=_AGENT_DID)
 
@@ -66,11 +63,9 @@ async def test_approved_mapping_false_before_approval(tmp_path: Path) -> None:
 
 
 async def test_approved_mapping_true_after_operator_approves(tmp_path: Path) -> None:
-    store = _approval_store(tmp_path)
+    store = _approval_store()
     proposal = SourceMapping(source_id="wiki-3", homes=["document"])
-    pending_id = await stage_mapping_proposal(
-        proposal, approval_store=store, agent_did=_AGENT_DID
-    )
+    pending_id = await stage_mapping_proposal(proposal, approval_store=store, agent_did=_AGENT_DID)
 
     resolved = await store.resolve(
         pending_id, status="approved", actor_did=_OPERATOR_DID, grant=None
@@ -81,18 +76,16 @@ async def test_approved_mapping_true_after_operator_approves(tmp_path: Path) -> 
 
 
 async def test_approved_mapping_fails_closed_when_denied(tmp_path: Path) -> None:
-    store = _approval_store(tmp_path)
+    store = _approval_store()
     proposal = SourceMapping(source_id="wiki-4", homes=["memory"])
-    pending_id = await stage_mapping_proposal(
-        proposal, approval_store=store, agent_did=_AGENT_DID
-    )
+    pending_id = await stage_mapping_proposal(proposal, approval_store=store, agent_did=_AGENT_DID)
     await store.resolve(pending_id, status="denied", actor_did=_OPERATOR_DID)
 
     assert await approved_mapping("wiki-4", ["memory"], approval_store=store) is False
 
 
 async def test_approved_mapping_fails_closed_when_never_staged(tmp_path: Path) -> None:
-    store = _approval_store(tmp_path)
+    store = _approval_store()
 
     assert await approved_mapping("never-staged", ["memory"], approval_store=store) is False
 
