@@ -399,6 +399,7 @@ def create_app(
                         embedded_gateway.session_router,
                         approval_operator_target,
                         agent_did=gateway_config.gateway.agent_did,
+                        backend=task_store_backend,
                     )
                 )
             starlette_app.state.web_adapter = embedded_gateway.web_adapter
@@ -588,7 +589,10 @@ def create_app(
     # Mechanical HITL approvals (SPEC-035) — same shared backend, "approvals"
     # collection; the operator surface for trifecta-block requests.
     app.state.approval_store = ApprovalStore(task_store_backend)
-    app.state.approval_notification_hub = ApprovalNotificationHub()
+    # Browser notification delivery is a durable sink of the at-least-once
+    # approval outbox.  It must survive a UI restart and is acknowledged only
+    # after an authenticated browser has shown the event.
+    app.state.approval_notification_hub = ApprovalNotificationHub(backend=task_store_backend)
     app.state.approval_notification_dispatcher = None
     # Operator kill switch (run cancellation) — same shared backend, "cancellations"
     # collection; the surface that parks a stop request for a per-agent watcher.

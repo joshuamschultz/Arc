@@ -1,4 +1,5 @@
 from arcstore.approval_dispatcher import ApprovalNotification
+from arcstore.backends.memory import FakeBackend
 
 from arcgateway.approval_notifications import (
     ApprovalNotificationFanout,
@@ -57,3 +58,53 @@ async def test_configured_operator_target_uses_the_configured_sending_agent() ->
     target = DeliveryTarget.parse("web:operator")
     await GatewayApprovalNotificationSink(router, target, agent_did="did:arc:gateway")(event)
     assert router.calls == [(target, compose_approval_message(event), "did:arc:gateway")]
+
+
+async def test_gateway_sink_deduplicates_after_sink_restart() -> None:
+    event = ApprovalNotification(
+        event_id="evt-restart",
+        approval_id="approval-1",
+        status="pending",
+        agent_did="did:agent:1",
+        tool="send",
+        classification="PERSONAL",
+        attempts=1,
+    )
+    backend = FakeBackend()
+    router = _Router()
+    target = DeliveryTarget.parse("web:operator")
+    await GatewayApprovalNotificationSink(router, target, backend=backend)(event)
+    await GatewayApprovalNotificationSink(router, target, backend=backend)(event)
+    assert len(router.calls) == 1
+
+
+async def test_fanout_continues_after_partial_failure_without_duplicate_success() -> None:
+    event = ApprovalNotification(
+        event_id="evt-partial",
+        approval_id="approval-1",
+        status="pending",
+        agent_did="did:agent:1",
+        tool="send",
+        classification="PERSONAL",
+        attempts=1,
+    )
+    backend = FakeBackend()
+    router = _Router()
+    target = DeliveryTarget.parse("web:operator")
+    gateway = GatewayApprovalNotificationSink(router, target, backend=backend)
+
+    async def failing(_event: ApprovalNotification) -> None:
+        raise RuntimeError("temporary")
+
+    fanout = ApprovalNotificationFanout([gateway, failing])
+    try:
+        await fanout(event)
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("fanout must report partial failure")
+    try:
+        await fanout(event)
+    except RuntimeError:
+        pass
+    assert len(router.calls) == 1

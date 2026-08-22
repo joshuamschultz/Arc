@@ -108,7 +108,24 @@ async def list_notifications(request: Request) -> JSONResponse:
     if not _is_operator(request):
         return _error("operator_role_required", 403)
     hub = getattr(request.app.state, "approval_notification_hub", None)
-    return JSONResponse({"events": hub.recent() if hub is not None else []})
+    if hub is None:
+        return JSONResponse({"events": []})
+    list_recent = getattr(hub, "list_recent", None)
+    events = await list_recent() if callable(list_recent) else hub.recent()
+    return JSONResponse({"events": events})
+
+
+async def acknowledge_notification(request: Request) -> JSONResponse:
+    """Acknowledge a browser notification after it has been displayed."""
+
+    if not _is_operator(request):
+        return _error("operator_role_required", 403)
+    event_id = request.path_params["event_id"]
+    hub = getattr(request.app.state, "approval_notification_hub", None)
+    acknowledge = getattr(hub, "acknowledge", None) if hub is not None else None
+    if not callable(acknowledge) or not await acknowledge(event_id):
+        return _error("notification_not_pending", 404)
+    return JSONResponse({"acknowledged": True, "event_id": event_id})
 
 
 async def approve_request(request: Request) -> JSONResponse:
@@ -206,8 +223,20 @@ async def deny_request(request: Request) -> JSONResponse:
 routes = [
     Route("/api/approvals", list_approvals, methods=["GET"]),
     Route("/api/approvals/notifications", list_notifications, methods=["GET"]),
+    Route(
+        "/api/approvals/notifications/{event_id}/ack",
+        acknowledge_notification,
+        methods=["POST"],
+    ),
     Route("/api/approvals/{id}/approve", approve_request, methods=["POST"]),
     Route("/api/approvals/{id}/deny", deny_request, methods=["POST"]),
 ]
 
-__all__ = ["approve_request", "deny_request", "list_approvals", "list_notifications", "routes"]
+__all__ = [
+    "acknowledge_notification",
+    "approve_request",
+    "deny_request",
+    "list_approvals",
+    "list_notifications",
+    "routes",
+]

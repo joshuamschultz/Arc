@@ -198,3 +198,13 @@ def test_notification_feed_is_authenticated_operator_only_and_sanitized(tmp_path
             }
         ]
     }
+    assert client.post(
+        "/api/approvals/notifications/event-1/ack", headers=_viewer(auth)
+    ).status_code == 403
+    acknowledged = client.post(
+        "/api/approvals/notifications/event-1/ack", headers=_operator(auth)
+    )
+    assert acknowledged.status_code == 200
+    assert client.get("/api/approvals/notifications", headers=_operator(auth)).json() == {
+        "events": []
+    }

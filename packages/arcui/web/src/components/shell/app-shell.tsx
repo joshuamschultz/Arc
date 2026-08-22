@@ -1,5 +1,6 @@
 import { Outlet } from 'react-router-dom'
 import { Sidebar } from './sidebar'
+import { ApprovalNotificationListener } from '@/components/approval-notification-listener'
 
 /**
  * App frame: a slim icon rail plus the routed screen. Each screen renders its
@@ -13,6 +14,7 @@ export function AppShell() {
       <main className="flex flex-1 flex-col overflow-auto">
         <Outlet />
       </main>
+      <ApprovalNotificationListener />
     </div>
   )
 }
