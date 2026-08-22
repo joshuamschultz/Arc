@@ -104,6 +104,11 @@ async def build_run_context(
             system_prompt=child_system_prompt,
             spawn_timeout_seconds=agent._config.spawn.timeout_seconds,
             max_concurrent_spawns=agent._config.spawn.max_concurrent,
+            # A spawned child inherits the agent's own turn cap. Without this it
+            # fell back to a hardcoded 25 while the operator's arcrun.toml set 120,
+            # so a child was truncated mid-task at 25 turns and its run was painted
+            # "Error" (a max_turns breach) even after doing real work.
+            max_child_turns=agent._config.arcrun.max_turns,
             root_token_budget=root_token_budget,
         )
         child_tools.append(spawn_tool)

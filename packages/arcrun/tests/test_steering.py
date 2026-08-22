@@ -77,7 +77,9 @@ class TestSteer:
         handle = await run_async(model, StaticProvider(_tools()), "prompt", "task")
         handle._state.steer_queue.put_nowait(_injection("did:arc:mgr", "redirect"))
         result = await handle.result()
-        events = [e for e in result.events if e.type == "steer.injected"]
+        # Steering is one rule now: a held message is ENTERED at the turn boundary,
+        # under one event, whether it came in as a steer or a follow_up.
+        events = [e for e in result.events if e.type == "message.injected"]
         assert len(events) == 1
         assert events[0].data["caller_did"] == "did:arc:mgr"
         assert events[0].data["preview"] == "redirect"
@@ -90,7 +92,14 @@ class TestSteer:
         )
 
     @pytest.mark.asyncio
-    async def test_steer_skips_remaining_tools(self):
+    async def test_a_held_message_never_interrupts_a_turns_tools(self):
+        """A held message is entered at the turn BOUNDARY, never between tools.
+
+        The old behavior skipped a turn's remaining tools on a steer; that mid-turn
+        interruption is gone. A turn's tool calls all run to completion, and the
+        held message is entered before the NEXT turn — so a user message can never
+        land between an assistant tool_use and its tool_result.
+        """
         from arcrun.loop import run_async
 
         model = MockModel(
@@ -107,30 +116,48 @@ class TestSteer:
             ]
         )
         handle = await run_async(model, StaticProvider(_tools()), "prompt", "task")
-        # Inject steer immediately so it catches between tools
         handle._state.steer_queue.put_nowait(_injection("did:arc:caller", "redirect"))
         result = await handle.result()
         assert result.content == "After steer."
+        # All three tools ran — none skipped by the held message.
+        tool_results = [m for m in handle._state.messages if m.role == "tool"]
+        assert len(tool_results) == 3
 
 
 class TestFollowUp:
     @pytest.mark.asyncio
-    async def test_followup_continues_loop(self):
+    async def test_a_message_arriving_during_a_turn_keeps_the_run_going(self):
+        """A held message that arrives while a turn runs continues the run.
+
+        The end-of-turn is not the end of the chat: a message that landed during
+        the turn is entered at the next boundary and the run does another turn,
+        rather than returning and leaving the message unanswered. The model here
+        enqueues the follow-up as it finishes turn one — arrival DURING the turn,
+        after that turn's boundary drain — so the continue path is what is tested.
+        """
         from arcrun.loop import run_async
 
+        # Turn 1 is a tool call, so the run naturally reaches a second turn; the
+        # held message is entered at turn 1's boundary and rides into the rest of
+        # the run as context — entered, not lost, and the chat keeps going.
         model = MockModel(
             [
-                LLMResponse(content="First answer.", stop_reason="end_turn"),
+                LLMResponse(
+                    tool_calls=[ToolCall(id="tc1", name="echo", arguments={"input": "a"})],
+                    stop_reason="tool_use",
+                ),
                 LLMResponse(content="Also did X.", stop_reason="end_turn"),
             ]
         )
         handle = await run_async(model, StaticProvider(_tools()), "prompt", "task")
-        # Queue followup before loop starts
         handle._state.followup_queue.put_nowait(_injection("did:arc:mgr", "also do X"))
         result = await handle.result()
+
         assert result.content == "Also did X."
         assert result.turns == 2
-        events = [e for e in result.events if e.type == "followup.injected"]
+        entered = [m for m in handle._state.messages if m.role == "user" and m.content == "also do X"]
+        assert entered, "the held message must be entered into context, never lost"
+        events = [e for e in result.events if e.type == "message.injected"]
         assert len(events) == 1
         assert events[0].data["caller_did"] == "did:arc:mgr"
         assert events[0].data["preview"] == "also do X"

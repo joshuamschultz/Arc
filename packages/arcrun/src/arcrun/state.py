@@ -11,11 +11,14 @@ from typing import Any
 
 import arcllm
 
-from arcrun._messages import content_text
+from arcrun._messages import content_text, user_message
 from arcrun.checkpoint import LoopCheckpoint
 from arcrun.dynamic.seal import RunSeal
 from arcrun.events import EventBus
 from arcrun.registry import ToolRegistry
+
+#: How much of a held message's text rides its ``message.injected`` audit event.
+_HELD_PREVIEW_LEN = 120
 
 
 @dataclass(frozen=True)
@@ -145,3 +148,39 @@ class RunState:
     runaway_signature: str | None = None
     runaway_count: int = 0
     consecutive_tool_errors: int = 0
+
+    # -- steering: held messages, entered at turn boundaries --------------------
+    # The whole of steering lives here, on the state every strategy already holds,
+    # so a strategy's loop calls ONE method at its turn boundary instead of each
+    # re-implementing queue draining (DRY). A ``steer`` and a ``follow_up`` are the
+    # same simple thing: a message that arrived while a turn ran, held on a queue,
+    # then entered into context at the next turn boundary — never mid-tool, never
+    # one-at-a-time, never dropped.
+
+    def has_held_messages(self) -> bool:
+        """True when a message arrived and is waiting to be entered next turn."""
+        return not self.steer_queue.empty() or not self.followup_queue.empty()
+
+    def enter_held_messages(self) -> None:
+        """Enter EVERY held message into context as a user turn, oldest first.
+
+        Called by a strategy at its turn boundary. Draining ALL held messages means
+        none is left behind; entering them only between turns means one can never
+        land between an assistant tool_use and its tool_result. A held message is
+        ``user``-role data, never system (LLM01/ASI06), and each entry is attributed
+        to its ``caller_did`` in the tamper-evident chain (Audit pillar). ``steer``
+        is drained before ``follow_up`` so a message that asked to arrive sooner
+        keeps its place; arcrun makes no trust decision here.
+        """
+        for queue in (self.steer_queue, self.followup_queue):
+            while not queue.empty():
+                injection = queue.get_nowait()
+                self.messages.append(user_message(injection.message))
+                self.event_bus.emit(
+                    "message.injected",
+                    {
+                        "caller_did": injection.caller_did,
+                        "message_id": injection.message_id,
+                        "preview": injection.preview_text[:_HELD_PREVIEW_LEN],
+                    },
+                )
