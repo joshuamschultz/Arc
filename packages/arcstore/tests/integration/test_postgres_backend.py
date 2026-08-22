@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from uuid import uuid4
 
 import pytest
+from packages.arcstore.tests.inbox_conformance import (
+    assert_inbox_repository_conforms,
+    participant,
+)
 
 from arcstore.backends.base import ArcStoreBackend
+from arcstore.backends.postgres import PostgresBackend
+from arcstore.backends.postgres_inbox import PostgresInboxRepository
 
 _ACTOR = "did:arc:test:postgres"
 
@@ -81,3 +88,42 @@ async def test_postgres_outbox_create_claim_ack_and_retry(
     assert not any(
         item["event_id"] == event_id for item in await postgres_backend.claim_outbox("worker-c")
     )
+
+
+async def test_postgres_inbox_repository_conformance(
+    postgres_backend: ArcStoreBackend,
+) -> None:
+    assert isinstance(postgres_backend, PostgresBackend)
+    await assert_inbox_repository_conforms(PostgresInboxRepository(postgres_backend))
+
+
+async def test_postgres_inbox_uses_v1_foreign_keys_and_canonical_payloads(
+    postgres_backend: ArcStoreBackend,
+) -> None:
+    assert isinstance(postgres_backend, PostgresBackend)
+    repository = PostgresInboxRepository(postgres_backend)
+    owner = participant(f"did:arc:human:{uuid4().hex}", "human")
+    inbox = await repository.create_inbox(owner, classification="CUI")
+    thread = await repository.create_thread(inbox.inbox_id, (owner,), subject="schema")
+    message = await repository.append_message(
+        thread.thread_id, sender=owner, recipients=(owner,), body="canonical"
+    )
+    async with postgres_backend._require_pool().acquire() as connection:
+        inbox_row = await connection.fetchrow(
+            "SELECT payload::text AS payload FROM inboxes WHERE inbox_id=$1", inbox.inbox_id
+        )
+        thread_row = await connection.fetchrow(
+            "SELECT inbox_id, payload::text AS payload FROM inbox_threads WHERE thread_id=$1",
+            thread.thread_id,
+        )
+        message_row = await connection.fetchrow(
+            "SELECT thread_id, payload::text AS payload FROM inbox_messages WHERE message_id=$1",
+            message.message_id,
+        )
+    assert inbox_row is not None and json.loads(inbox_row["payload"]) == inbox.model_dump(
+        mode="json"
+    )
+    assert thread_row is not None and thread_row["inbox_id"] == inbox.inbox_id
+    assert json.loads(thread_row["payload"])["thread_id"] == thread.thread_id
+    assert message_row is not None and message_row["thread_id"] == thread.thread_id
+    assert json.loads(message_row["payload"]) == message.model_dump(mode="json")

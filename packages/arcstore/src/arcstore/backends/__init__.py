@@ -14,6 +14,7 @@ from arcstore.backends.base import (
 )
 from arcstore.backends.memory import FakeBackend
 from arcstore.backends.postgres import PostgresBackend
+from arcstore.backends.postgres_inbox import PostgresInboxRepository
 from arcstore.config import ArcStoreConfig
 
 
@@ -32,6 +33,7 @@ __all__ = [
     "ArcStoreBackend",
     "FakeBackend",
     "PostgresBackend",
+    "PostgresInboxRepository",
     "StorageBackend",
     "open_backend",
     "table_for_kind",

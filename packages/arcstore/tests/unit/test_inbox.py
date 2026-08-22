@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from packages.arcstore.tests.inbox_conformance import assert_inbox_repository_conforms
 from packages.arcstore.tests.unit.inbox_fake import FakeInboxRepository
 
 from arcstore.inbox import (
@@ -228,3 +229,8 @@ async def test_repository_contract_is_storage_neutral() -> None:
         thread.thread_id, reader_id=owner.participant_id, classification_max="CUI"
     )
     assert len(handoffs) == 1
+
+
+@pytest.mark.asyncio
+async def test_fake_inbox_repository_conformance() -> None:
+    await assert_inbox_repository_conforms(FakeInboxRepository())
