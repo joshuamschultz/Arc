@@ -617,9 +617,7 @@ async def _change_grant(request: Request, *, granting: bool) -> JSONResponse:
     connection = mutation.connection
     if connection is None:
         return _error("connector grant did not produce a connection", 500)
-    body = _row(instance, connection, _labels(_connections(request))).model_dump(
-        mode="json"
-    )
+    body = _row(instance, connection, _labels(_connections(request))).model_dump(mode="json")
     body["activations"] = _activation_payload(mutation.activations)
     return JSONResponse(body)
 
