@@ -18,6 +18,7 @@ tell which verb was refused or what tier refused it has no way to act on it.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -264,6 +265,7 @@ async def _install(
     tags: list[str],
     tier: Tier,
     operator: AgentIdentity,
+    arcstore_opener: Callable[[], Awaitable[Any]],
     egress_allow: tuple[str, ...] = (),
     classification: str = "state_modifying",
 ) -> Any:
@@ -286,7 +288,7 @@ async def _install(
         secret_values={},
         store=SecretStore(LocalFileSecretBackend(tmp_path / "arc.env")),
         caller_did="did:arc:example:org:agent:abc",
-        state=await open_connection_state(str(tmp_path / "data")),
+        state=await open_connection_state(opener=arcstore_opener),
         attachment_factory=lambda _m, _b, _s: FakeAttachment(tool, tags),
         trusted_public_key=operator.public_key,
     )
@@ -297,25 +299,44 @@ class TestInstallRefusal:
     """A bundle declaring a send the tier forbids is refused before anything is written."""
 
     async def test_personal_installs_an_egress_bundle(
-        self, tmp_path: Path, operator: AgentIdentity
+        self,
+        tmp_path: Path,
+        operator: AgentIdentity,
+        arcstore_opener: Callable[[], Awaitable[Any]],
     ) -> None:
         report = await _install(
-            tmp_path, tool=_SEND, tags=[_EGRESS_TAG], tier=Tier.PERSONAL, operator=operator
+            tmp_path,
+            tool=_SEND,
+            tags=[_EGRESS_TAG],
+            tier=Tier.PERSONAL,
+            operator=operator,
+            arcstore_opener=arcstore_opener,
         )
         assert _SEND in report.tools
 
     async def test_enterprise_refuses_an_unlisted_egress_bundle(
-        self, tmp_path: Path, operator: AgentIdentity
+        self,
+        tmp_path: Path,
+        operator: AgentIdentity,
+        arcstore_opener: Callable[[], Awaitable[Any]],
     ) -> None:
         with pytest.raises(ExtensionError) as caught:
             await _install(
-                tmp_path, tool=_SEND, tags=[_EGRESS_TAG], tier=Tier.ENTERPRISE, operator=operator
+                tmp_path,
+                tool=_SEND,
+                tags=[_EGRESS_TAG],
+                tier=Tier.ENTERPRISE,
+                operator=operator,
+                arcstore_opener=arcstore_opener,
             )
         assert caught.value.details["step"] == "manifest"
         assert caught.value.details["tool"] == _SEND
 
     async def test_enterprise_installs_a_listed_egress_bundle(
-        self, tmp_path: Path, operator: AgentIdentity
+        self,
+        tmp_path: Path,
+        operator: AgentIdentity,
+        arcstore_opener: Callable[[], Awaitable[Any]],
     ) -> None:
         report = await _install(
             tmp_path,
@@ -323,21 +344,33 @@ class TestInstallRefusal:
             tags=[_EGRESS_TAG],
             tier=Tier.ENTERPRISE,
             operator=operator,
+            arcstore_opener=arcstore_opener,
             egress_allow=(_SEND,),
         )
         assert _SEND in report.tools
 
     async def test_federal_refuses_an_egress_bundle(
-        self, tmp_path: Path, operator: AgentIdentity
+        self,
+        tmp_path: Path,
+        operator: AgentIdentity,
+        arcstore_opener: Callable[[], Awaitable[Any]],
     ) -> None:
         with pytest.raises(ExtensionError) as caught:
             await _install(
-                tmp_path, tool=_SEND, tags=[_EGRESS_TAG], tier=Tier.FEDERAL, operator=operator
+                tmp_path,
+                tool=_SEND,
+                tags=[_EGRESS_TAG],
+                tier=Tier.FEDERAL,
+                operator=operator,
+                arcstore_opener=arcstore_opener,
             )
         assert caught.value.details["step"] == "manifest"
 
     async def test_federal_refusal_survives_an_egress_allow_entry(
-        self, tmp_path: Path, operator: AgentIdentity
+        self,
+        tmp_path: Path,
+        operator: AgentIdentity,
+        arcstore_opener: Callable[[], Awaitable[Any]],
     ) -> None:
         """A config list must not buy at federal what only a signature buys."""
         with pytest.raises(ExtensionError):
@@ -347,22 +380,35 @@ class TestInstallRefusal:
                 tags=[_EGRESS_TAG],
                 tier=Tier.FEDERAL,
                 operator=operator,
+                arcstore_opener=arcstore_opener,
                 egress_allow=(_SEND,),
             )
 
     async def test_nothing_is_written_when_the_install_is_refused(
-        self, tmp_path: Path, operator: AgentIdentity
+        self,
+        tmp_path: Path,
+        operator: AgentIdentity,
+        arcstore_opener: Callable[[], Awaitable[Any]],
     ) -> None:
         """The refusal is a refusal, not a cleanup: no connection is left behind."""
         with pytest.raises(ExtensionError):
             await _install(
-                tmp_path, tool=_SEND, tags=[_EGRESS_TAG], tier=Tier.FEDERAL, operator=operator
+                tmp_path,
+                tool=_SEND,
+                tags=[_EGRESS_TAG],
+                tier=Tier.FEDERAL,
+                operator=operator,
+                arcstore_opener=arcstore_opener,
             )
         assert ConnectionRegistry(tmp_path / "arc").all() == {}
 
     @pytest.mark.parametrize("tier", [Tier.PERSONAL, Tier.ENTERPRISE, Tier.FEDERAL])
     async def test_a_read_only_bundle_installs_at_every_tier(
-        self, tmp_path: Path, operator: AgentIdentity, tier: Tier
+        self,
+        tmp_path: Path,
+        operator: AgentIdentity,
+        tier: Tier,
+        arcstore_opener: Callable[[], Awaitable[Any]],
     ) -> None:
         report = await _install(
             tmp_path,
@@ -370,6 +416,7 @@ class TestInstallRefusal:
             tags=["file_read"],
             tier=tier,
             operator=operator,
+            arcstore_opener=arcstore_opener,
             classification="read_only",
         )
         assert _READ in report.tools
@@ -380,11 +427,19 @@ class TestRefusalMessage:
     """An operator must be able to read which verb was refused and what refused it."""
 
     async def test_the_enterprise_message_names_the_tool_and_the_tier(
-        self, tmp_path: Path, operator: AgentIdentity
+        self,
+        tmp_path: Path,
+        operator: AgentIdentity,
+        arcstore_opener: Callable[[], Awaitable[Any]],
     ) -> None:
         with pytest.raises(ExtensionError) as caught:
             await _install(
-                tmp_path, tool=_SEND, tags=[_EGRESS_TAG], tier=Tier.ENTERPRISE, operator=operator
+                tmp_path,
+                tool=_SEND,
+                tags=[_EGRESS_TAG],
+                tier=Tier.ENTERPRISE,
+                operator=operator,
+                arcstore_opener=arcstore_opener,
             )
         message = caught.value.message
         assert _SEND in message
@@ -392,11 +447,19 @@ class TestRefusalMessage:
         assert "egress_allow" in message
 
     async def test_the_federal_message_names_the_tool_the_tier_and_the_remedy(
-        self, tmp_path: Path, operator: AgentIdentity
+        self,
+        tmp_path: Path,
+        operator: AgentIdentity,
+        arcstore_opener: Callable[[], Awaitable[Any]],
     ) -> None:
         with pytest.raises(ExtensionError) as caught:
             await _install(
-                tmp_path, tool=_SEND, tags=[_EGRESS_TAG], tier=Tier.FEDERAL, operator=operator
+                tmp_path,
+                tool=_SEND,
+                tags=[_EGRESS_TAG],
+                tier=Tier.FEDERAL,
+                operator=operator,
+                arcstore_opener=arcstore_opener,
             )
         message = caught.value.message
         assert _SEND in message

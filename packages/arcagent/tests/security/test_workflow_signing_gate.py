@@ -20,7 +20,7 @@ regression tests that were missing when it slipped.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -63,7 +63,12 @@ def rogue() -> OperatorKey:
     return OperatorKey.generate()
 
 
-def _configure(tmp_path: Path, tier: str, operator: OperatorKey) -> Any:
+def _configure(
+    tmp_path: Path,
+    tier: str,
+    operator: OperatorKey,
+    arcstore_opener: Callable[[], Awaitable[Any]],
+) -> Any:
     """Bring up the workflows runtime exactly as the agent lifecycle does.
 
     ``ARC_CONFIG_DIR`` is pinned to this same tmp path by the autouse
@@ -81,6 +86,7 @@ def _configure(tmp_path: Path, tier: str, operator: OperatorKey) -> Any:
         identity=AgentIdentity.generate(org="local", agent_type="agent"),
         operator_signer=operator.into_signer(),
         tier=tier,
+        arcstore_opener=arcstore_opener,
     )
     return _runtime
 
@@ -94,9 +100,14 @@ def _clean(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[None]:
     _runtime.reset()
 
 
-async def _store(tmp_path: Path, tier: str, operator_signer: Any) -> Any:
+async def _store(
+    tmp_path: Path,
+    tier: str,
+    operator_signer: Any,
+    arcstore_opener: Callable[[], Awaitable[Any]],
+) -> Any:
     """The definition store the MODULE builds — never one the test constructs."""
-    runtime = _configure(tmp_path, tier, operator_signer)
+    runtime = _configure(tmp_path, tier, operator_signer, arcstore_opener)
     await runtime.ensure_control_plane()
     return runtime.state().definitions
 
@@ -107,17 +118,25 @@ class TestTierReachesTheStore:
 
     @pytest.mark.parametrize("tier", ["enterprise", "federal"])
     async def test_store_is_constructed_with_the_deployment_tier(
-        self, tmp_path: Path, operator: Any, tier: str
+        self,
+        tmp_path: Path,
+        operator: Any,
+        tier: str,
+        arcstore_opener: Callable[[], Awaitable[Any]],
     ) -> None:
-        store = await _store(tmp_path, tier, operator)
+        store = await _store(tmp_path, tier, operator, arcstore_opener)
         assert store.tier == tier
 
     @pytest.mark.parametrize("tier", ["enterprise", "federal"])
     async def test_unsigned_definition_is_refused_above_personal(
-        self, tmp_path: Path, operator: Any, tier: str
+        self,
+        tmp_path: Path,
+        operator: Any,
+        tier: str,
+        arcstore_opener: Callable[[], Awaitable[Any]],
     ) -> None:
         """REQ-225 — the refusal that never fired."""
-        store = await _store(tmp_path, tier, operator)
+        store = await _store(tmp_path, tier, operator, arcstore_opener)
         from arcteam.workflow import parse_definition
 
         store.save_draft(
@@ -128,10 +147,13 @@ class TestTierReachesTheStore:
             store.load_for_run("onboarding")
 
     async def test_unsigned_definition_still_runs_at_personal(
-        self, tmp_path: Path, operator: Any
+        self,
+        tmp_path: Path,
+        operator: Any,
+        arcstore_opener: Callable[[], Awaitable[Any]],
     ) -> None:
         """Tier is stringency, not a gate — personal still runs, and audits it."""
-        store = await _store(tmp_path, "personal", operator)
+        store = await _store(tmp_path, "personal", operator, arcstore_opener)
         from arcteam.workflow import parse_definition
 
         store.save_draft(
@@ -145,10 +167,14 @@ class TestOperatorKeyIsPinned:
     """A signature is trusted for WHOSE key it carries, never merely for verifying."""
 
     async def test_rogue_signed_definition_is_not_verified(
-        self, tmp_path: Path, operator: Any, rogue: Any
+        self,
+        tmp_path: Path,
+        operator: Any,
+        rogue: Any,
+        arcstore_opener: Callable[[], Awaitable[Any]],
     ) -> None:
         """The attack: an agent holding any key self-blesses its own workflow."""
-        store = await _store(tmp_path, "personal", operator)
+        store = await _store(tmp_path, "personal", operator, arcstore_opener)
         from arcteam.workflow import parse_definition
 
         store.save_draft(
@@ -162,9 +188,14 @@ class TestOperatorKeyIsPinned:
 
     @pytest.mark.parametrize("tier", ["enterprise", "federal"])
     async def test_rogue_signed_definition_is_refused_above_personal(
-        self, tmp_path: Path, operator: Any, rogue: Any, tier: str
+        self,
+        tmp_path: Path,
+        operator: Any,
+        rogue: Any,
+        tier: str,
+        arcstore_opener: Callable[[], Awaitable[Any]],
     ) -> None:
-        store = await _store(tmp_path, tier, operator)
+        store = await _store(tmp_path, tier, operator, arcstore_opener)
         from arcteam.workflow import parse_definition
 
         store.save_draft(
@@ -176,10 +207,13 @@ class TestOperatorKeyIsPinned:
             store.load_for_run("onboarding")
 
     async def test_operator_signed_definition_is_verified(
-        self, tmp_path: Path, operator: Any
+        self,
+        tmp_path: Path,
+        operator: Any,
+        arcstore_opener: Callable[[], Awaitable[Any]],
     ) -> None:
         """The guard must not break the case it exists to permit."""
-        store = await _store(tmp_path, "federal", operator)
+        store = await _store(tmp_path, "federal", operator, arcstore_opener)
         from arcteam.workflow import parse_definition
 
         store.save_draft(
@@ -201,14 +235,17 @@ class TestAuditReachesTheStore:
     """
 
     async def test_unsigned_run_at_personal_is_audited(
-        self, tmp_path: Path, operator: Any
+        self,
+        tmp_path: Path,
+        operator: Any,
+        arcstore_opener: Callable[[], Awaitable[Any]],
     ) -> None:
         from arcteam.workflow import parse_definition
 
         from arcagent.modules.workflows import _runtime
 
         events: list[tuple[str, dict[str, Any]]] = []
-        _configure(tmp_path, "personal", operator)
+        _configure(tmp_path, "personal", operator, arcstore_opener)
         _runtime.state().audit_hook = lambda event, payload: events.append((event, payload))
         await _runtime.ensure_control_plane()
         store = _runtime.state().definitions
