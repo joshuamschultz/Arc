@@ -24,7 +24,7 @@ from typing import Any
 import arcrun
 import pytest
 
-from arcagent.parts import MAX_PDF_TEXT_CHARS, PartTranslator
+from arcagent.parts import MAX_PDF_PAGES, MAX_PDF_TEXT_CHARS, PartTranslator
 
 _IMAGE_REF = "inbox/2026-08-11/120000-alice-cat.jpg"
 _FILE_REF = "inbox/2026-08-11/120001-alice-quarterly.pdf"
@@ -101,6 +101,45 @@ def _minimal_pdf(text: str) -> bytes:
         b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"endstream",
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
     ]
+    body = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for number, payload in enumerate(objects, 1):
+        offsets.append(len(body))
+        body.extend(f"{number} 0 obj\n".encode())
+        body.extend(payload)
+        body.extend(b"\nendobj\n")
+    xref = len(body)
+    body.extend(f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode())
+    body.extend(b"".join(f"{offset:010d} 00000 n \n".encode() for offset in offsets[1:]))
+    body.extend(
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
+    )
+    return bytes(body)
+
+
+def _multi_page_pdf(texts: list[str]) -> bytes:
+    """Build a tiny real PDF with one uncompressed text stream per page."""
+    streams = [f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET\n".encode() for text in texts]
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids ["
+        + b" ".join(f"{3 + index * 2} 0 R".encode() for index in range(len(streams)))
+        + f"] /Count {len(streams)} >>".encode(),
+    ]
+    for index, stream in enumerate(streams):
+        page_number = 3 + index * 2
+        content_number = page_number + 1
+        objects.extend(
+            [
+                f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents {content_number} 0 R /Resources << /Font << /F1 {3 + len(streams) * 2} 0 R >> >> >>".encode(),
+                b"<< /Length "
+                + str(len(stream)).encode()
+                + b" >>\nstream\n"
+                + stream
+                + b"endstream",
+            ]
+        )
+    objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
     body = bytearray(b"%PDF-1.4\n")
     offsets = [0]
     for number, payload in enumerate(objects, 1):
@@ -194,6 +233,95 @@ class TestReferenceToModelBlock:
         assert isinstance(blocks[0], arcrun.TextBlock)
         assert len(blocks[0].text) < MAX_PDF_TEXT_CHARS + 500
         assert "content truncated" in blocks[0].text
+
+    def test_pdf_extraction_stops_before_a_later_page_after_budget_is_consumed(
+        self, tmp_path: Path
+    ) -> None:
+        pytest.importorskip("pypdf")
+        ref = "inbox/2026-08-11/many-pages.pdf"
+        _write(tmp_path, ref, _multi_page_pdf(["A" * MAX_PDF_TEXT_CHARS, "LATER_PAGE"]))
+        part = {**_file_part(), "ref": ref}
+
+        blocks = PartTranslator(workspace=tmp_path).to_model_content(
+            PartTranslator(workspace=tmp_path).to_history_content([part])
+        )
+
+        assert isinstance(blocks[0], arcrun.TextBlock)
+        assert "LATER_PAGE" not in blocks[0].text
+        assert "content truncated" in blocks[0].text
+
+    def test_pdf_page_count_limit_returns_metadata_without_extracting_pages(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        pypdf = pytest.importorskip("pypdf")
+
+        class TrackingPage:
+            extract_calls = 0
+
+            def extract_text(self, **_kwargs: Any) -> str:
+                self.extract_calls += 1
+                return "must not run"
+
+        pages = [TrackingPage() for _ in range(MAX_PDF_PAGES + 1)]
+
+        class FakeReader:
+            is_encrypted = False
+
+            def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+                self.pages = pages
+
+        monkeypatch.setattr(pypdf, "PdfReader", FakeReader)
+        ref = "inbox/2026-08-11/too-many-pages.pdf"
+        _write(tmp_path, ref, b"%PDF-1.7\nnot parsed by fake reader")
+        part = {**_file_part(), "ref": ref}
+
+        blocks = PartTranslator(workspace=tmp_path).to_model_content(
+            PartTranslator(workspace=tmp_path).to_history_content([part])
+        )
+
+        assert isinstance(blocks[0], arcrun.TextBlock)
+        assert "page extraction limit" in blocks[0].text
+        assert all(page.extract_calls == 0 for page in pages)
+
+    def test_expanding_page_stops_before_following_page(self, tmp_path: Path) -> None:
+        pytest.importorskip("pypdf")
+
+        class ExpandingPage:
+            def __init__(self, text: str) -> None:
+                self.text = text
+                self.calls = 0
+
+            def extract_text(self, **kwargs: Any) -> str:
+                self.calls += 1
+                if kwargs:
+                    raise TypeError
+                return self.text
+
+        first = ExpandingPage("X" * (MAX_PDF_TEXT_CHARS + 1))
+        later = ExpandingPage("LATER_EXPANSION")
+
+        class FakeReader:
+            is_encrypted = False
+
+            def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+                self.pages = [first, later]
+
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr("pypdf.PdfReader", FakeReader)
+        try:
+            ref = "inbox/2026-08-11/expanded.pdf"
+            _write(tmp_path, ref, b"%PDF-1.7\nnot parsed by fake reader")
+            part = {**_file_part(), "ref": ref}
+            blocks = PartTranslator(workspace=tmp_path).to_model_content(
+                PartTranslator(workspace=tmp_path).to_history_content([part])
+            )
+        finally:
+            monkeypatch.undo()
+
+        assert isinstance(blocks[0], arcrun.TextBlock)
+        assert "LATER_EXPANSION" not in blocks[0].text
+        assert first.calls == 2
+        assert later.calls == 0
 
 
 class TestBytesAreForOneCallOnly:
