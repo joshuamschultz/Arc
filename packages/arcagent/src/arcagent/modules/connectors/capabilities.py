@@ -113,6 +113,7 @@ class Connectors:
         self._revision = 0
         self._reconcile_queue: ConnectorReconcileQueue | None = None
         self._reconcile_task: asyncio.Task[None] | None = None
+        self._queue_unavailable_reported = False
 
     async def setup(self, ctx: Any) -> None:
         del ctx  # Loader passes None; state lives in _runtime.
@@ -181,7 +182,14 @@ class Connectors:
         if queue is None:
             return
         state = _runtime.state()
-        await queue.drain(state.agent_dir.name, self.reconcile)
+        try:
+            await queue.drain(state.agent_dir.name, self.reconcile)
+        except Exception as exc:
+            if not _queue_backend_unavailable(exc):
+                raise
+            self._report_queue_unavailable(state, exc)
+        else:
+            self._queue_unavailable_reported = False
 
     async def _reconcile_loop(self) -> None:
         """Converge durable grants even when a mutation died before it queued work."""
@@ -196,6 +204,24 @@ class Connectors:
         """Apply the current grant snapshot, then acknowledge queued wakeups."""
         await self.reconcile()
         await self._drain_reconcile_commands()
+
+    def _report_queue_unavailable(self, state: _runtime._State, exc: Exception) -> None:
+        """Make an optional queue outage observable without denying grant convergence."""
+        if self._queue_unavailable_reported:
+            return
+        self._queue_unavailable_reported = True
+        _logger.warning("connectors: durable reconcile queue unavailable — %s", exc)
+        emit(
+            AuditEvent(
+                actor_did=state.identity.did,
+                action="connector.reconcile_queue_unavailable",
+                target="connector",
+                outcome="degraded",
+                tier=state.tier,
+                extra={"detail": str(exc)},
+            ),
+            _audit_sink(state.telemetry),
+        )
 
     # --- attaching ----------------------------------------------------------
 
@@ -254,6 +280,17 @@ def _reconcile_backend_opener(state: _runtime._State) -> Any:
         return backend
 
     return open_backend
+
+
+def _queue_backend_unavailable(exc: Exception) -> bool:
+    """Recognize only optional ArcStore setup failures, never a queue execution error."""
+    if isinstance(exc, ImportError):
+        return True
+    try:
+        from arcstore.config import ArcStoreConfigurationError
+    except ImportError:
+        return False
+    return isinstance(exc, ArcStoreConfigurationError)
 
 
 @dataclass(frozen=True)

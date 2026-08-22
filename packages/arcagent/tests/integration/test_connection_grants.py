@@ -162,7 +162,7 @@ class _Deployment:
         return registry
 
     async def start_running_agent(
-        self, agent: str, *, sink: _RecordingSink | None = None
+        self, agent: str, *, sink: _RecordingSink | None = None, with_arcstore: bool = True
     ) -> tuple[ToolRegistry, Connectors]:
         """Start one agent's connectors capability exactly as the agent starts it."""
         registry = ToolRegistry(
@@ -184,7 +184,7 @@ class _Deployment:
             tool_registry=registry,
             tier="personal",
             human_gate=_gate(self.did(agent)),
-            arcstore_opener=self.open_arcstore,
+            arcstore_opener=self.open_arcstore if with_arcstore else None,
         )
         capability = Connectors()
         await capability.setup(None)
@@ -464,6 +464,20 @@ async def test_durable_grant_snapshot_converges_when_enqueue_was_lost(
         await capability._reconcile_cycle()
         assert not any(tool in registry.tools for tool in _SERVED)
         assert await deployment.arcstore_backend.mutable_query("connector_reconcile_commands") == []
+    finally:
+        await capability.teardown()
+
+
+async def test_connector_startup_does_not_require_an_arcstore_queue(
+    deployment: _Deployment, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A generic agent starts from durable grants even without an ArcStore DSN."""
+    monkeypatch.delenv("ARCSTORE_DATABASE_URL", raising=False)
+    registry, capability = await deployment.start_running_agent(
+        _GRANTED[0], with_arcstore=False
+    )
+    try:
+        assert not any(tool in registry.tools for tool in _SERVED)
     finally:
         await capability.teardown()
 
