@@ -56,6 +56,9 @@ class _PromotionSource:
     digest: str
     content: str
     classification: str
+    title: str
+    tags: tuple[str, ...]
+    document_type: str = "note"
 
 
 class PersonalKnowledgeAdapter:
@@ -161,4 +164,6 @@ class PersonalKnowledgeAdapter:
             document.reference.digest,
             document.content,
             document.classification,
+            document.title,
+            document.tags,
         )
