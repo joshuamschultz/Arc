@@ -47,15 +47,17 @@ async def test_service_keeps_runner_alive_until_explicit_shutdown() -> None:
     assert service.running is False
 
 
-async def test_service_refuses_a_second_lifecycle_for_the_same_process() -> None:
+async def test_two_independent_services_can_run_in_one_process() -> None:
     first = WorkflowRunnerService(_Runner())
     second = WorkflowRunnerService(_Runner())
     await first.start()
+    await second.start()
     try:
-        with pytest.raises(RuntimeError, match="already active"):
-            await second.start()
+        assert first.running is True
+        assert second.running is True
     finally:
         await first.stop()
+        await second.stop()
 
 
 async def test_service_waits_through_the_runner_notification_contract() -> None:
@@ -77,4 +79,22 @@ async def test_service_shutdown_is_idempotent_after_runner_failure() -> None:
     await service.start()
 
     await service.stop()
+    await service.stop()
+
+
+async def test_runner_crash_unblocks_a_terminal_wait() -> None:
+    class _CrashingRunner(_Runner):
+        async def run_forever(self, *, interval: float = 5.0) -> None:
+            del interval
+            raise RuntimeError("runner crashed")
+
+        async def wait_for_terminal(self, run_id: str) -> Any:
+            del run_id
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+    service = WorkflowRunnerService(_CrashingRunner())
+    await service.start()
+    with pytest.raises(RuntimeError, match="runner crashed"):
+        await service.wait_for_terminal("run-1")
     await service.stop()

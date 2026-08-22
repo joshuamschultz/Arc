@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import suppress
 from typing import Protocol
 
 from .runner_contracts import RunRecord
@@ -25,9 +26,7 @@ class RunnerLifecycle(Protocol):
 
 
 class WorkflowRunnerService:
-    """Keep exactly one runner alive until an explicit shutdown."""
-
-    _active: WorkflowRunnerService | None = None
+    """Keep one composition-owned runner alive until explicit shutdown."""
 
     def __init__(self, runner: RunnerLifecycle, *, interval: float = 1.0) -> None:
         if interval <= 0:
@@ -35,25 +34,19 @@ class WorkflowRunnerService:
         self._runner = runner
         self._interval = interval
         self._task: asyncio.Task[None] | None = None
-        self._stopped = False
+        self._closed = False
 
     @property
     def running(self) -> bool:
         """Whether this service currently owns a live runner task."""
         return self._task is not None and not self._task.done()
 
-    @classmethod
-    def active(cls) -> WorkflowRunnerService | None:
-        """Return the process-owned service, when one exists."""
-        return cls._active
-
     async def start(self) -> None:
-        """Start the runner and reserve the process lifecycle slot."""
-        if WorkflowRunnerService._active is not None:
-            raise RuntimeError("a workflow runner service is already active in this process")
-        if self._stopped:
+        """Start this service's runner exactly once."""
+        if self._closed:
             raise RuntimeError("a stopped workflow runner service cannot be restarted")
-        WorkflowRunnerService._active = self
+        if self._task is not None:
+            raise RuntimeError("workflow runner service is already running")
         self._task = asyncio.create_task(self._run(), name="arcflow:runner")
 
     async def _run(self) -> None:
@@ -63,32 +56,49 @@ class WorkflowRunnerService:
             raise
         except Exception:
             _logger.exception("workflow runner service stopped unexpectedly")
+            raise
 
     async def stop(self) -> None:
         """Cancel the run loop, close its runner, and release the slot."""
-        if self._stopped:
+        if self._closed:
             return
-        self._stopped = True
+        self._closed = True
         task = self._task
         if task is not None:
-            task.cancel()
+            if not task.done():
+                task.cancel()
             try:
                 await task
             except asyncio.CancelledError:
                 pass
+            except Exception:
+                _logger.exception("workflow runner task raised during shutdown")
         try:
             await self._runner.aclose()
         except Exception:
             _logger.exception("workflow runner close failed")
-        finally:
-            if WorkflowRunnerService._active is self:
-                WorkflowRunnerService._active = None
 
     async def wait_for_terminal(self, run_id: str) -> RunRecord:
         """Wait without manually advancing the runner frontier."""
-        if not self.running:
+        runner_task = self._task
+        if runner_task is None:
             raise RuntimeError("workflow runner service is not running")
-        return await self._runner.wait_for_terminal(run_id)
+        terminal_task = asyncio.create_task(self._runner.wait_for_terminal(run_id))
+        try:
+            done, _ = await asyncio.wait(
+                {runner_task, terminal_task}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if runner_task in done:
+                runner_task.result()
+                raise RuntimeError(
+                    "workflow runner stopped before the run reached a terminal state"
+                )
+            return terminal_task.result()
+        finally:
+            if not terminal_task.done():
+                terminal_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await terminal_task
 
 
 __all__ = ["RunnerLifecycle", "WorkflowRunnerService"]

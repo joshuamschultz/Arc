@@ -13,8 +13,11 @@ the pinned operator key, and a source scan asserts the plural name is gone.
 
 from __future__ import annotations
 
+import asyncio
 import tomllib
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from arctrust.paths import config_file, default_operator_key_path, workflows_dir
@@ -465,6 +468,97 @@ def test_attached_cli_run_owns_a_headless_runner_through_terminal_state(
     output = capsys.readouterr().out
     assert "Started run" in output
     assert "finished (status=done)" in output
+
+
+class _BlockingRunner:
+    def __init__(self, *, crash: bool = False) -> None:
+        self.started = asyncio.Event()
+        self.waiting = asyncio.Event()
+        self.cancelled = asyncio.Event()
+        self._crash = crash
+
+    async def run_forever(self, *, interval: float = 5.0) -> None:
+        del interval
+        self.started.set()
+        if self._crash:
+            raise RuntimeError("runner crashed")
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cancelled.set()
+            raise
+
+    async def wait_for_terminal(self, run_id: str) -> Any:
+        del run_id
+        self.waiting.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    async def aclose(self) -> None:
+        return None
+
+
+class _AttachedPlane:
+    def __init__(self, runner: _BlockingRunner) -> None:
+        self.runner = runner
+        self.cancel_calls: list[dict[str, str]] = []
+
+    async def run(self, workflow_id: str, **_: Any) -> Any:
+        del workflow_id
+        return wf_cmd.ControlPlaneResult(
+            ok=True,
+            run=SimpleNamespace(run_id="run-1", status="running"),
+        )
+
+    async def cancel(self, run_id: str, *, actor_did: str, reason: str) -> Any:
+        self.cancel_calls.append({"run_id": run_id, "actor_did": actor_did, "reason": reason})
+        return wf_cmd.ControlPlaneResult(
+            ok=True,
+            run=SimpleNamespace(run_id=run_id, status="cancelled"),
+        )
+
+
+async def test_attached_cli_run_surfaces_a_runner_crash() -> None:
+    plane = _AttachedPlane(_BlockingRunner(crash=True))
+
+    with pytest.raises(RuntimeError, match="runner crashed"):
+        await wf_cmd._run_attached(
+            plane,  # type: ignore[arg-type] -- isolated control-plane lifecycle seam
+            workflow_id="workflow",
+            run_input={},
+            actor_did="did:arc:test",
+            interval=0.01,
+            on_started=lambda _: None,
+        )
+
+
+async def test_interrupting_an_attached_cli_run_cancels_its_durable_run() -> None:
+    runner = _BlockingRunner()
+    plane = _AttachedPlane(runner)
+    task = asyncio.create_task(
+        wf_cmd._run_attached(
+            plane,  # type: ignore[arg-type] -- isolated control-plane lifecycle seam
+            workflow_id="workflow",
+            run_input={},
+            actor_did="did:arc:test",
+            interval=0.01,
+            on_started=lambda _: None,
+        )
+    )
+    await asyncio.wait_for(runner.waiting.wait(), timeout=1)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert plane.cancel_calls == [
+        {
+            "run_id": "run-1",
+            "actor_did": "did:arc:test",
+            "reason": "operator interrupted attached workflow run",
+        }
+    ]
+    assert runner.cancelled.is_set()
 
 
 def test_signed_definition_round_trips_from_create_through_sign(

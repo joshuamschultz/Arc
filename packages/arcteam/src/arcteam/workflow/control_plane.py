@@ -103,6 +103,11 @@ class WorkflowControlPlane:
         self._tier: Tier = tier
         self._sink: AuditSink = audit_sink or NullSink()
 
+    @property
+    def runner(self) -> WorkflowRunner:
+        """The runner this control plane starts and cancels runs through."""
+        return self._runner
+
     # -- authoring ----------------------------------------------------------
 
     async def create(

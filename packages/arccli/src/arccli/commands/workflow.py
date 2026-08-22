@@ -53,6 +53,7 @@ from arcteam.workflow import (
 )
 from arcteam.workflow.control_plane import ControlPlaneResult, OperationIssue, WorkflowControlPlane
 from arcteam.workflow.runner_contracts import Tier, ValidationIssueLike
+from arcteam.workflow.service import WorkflowRunnerService
 from arctrust import WormSink
 from arctrust.audit import AuditEvent, AuditSink, emit
 from arctrust.paths import arc_state, config_file, workflows_dir
@@ -653,54 +654,78 @@ def _run_workflow(args: argparse.Namespace) -> None:
     if args.input:
         run_input = json.loads(Path(args.input).expanduser().read_text(encoding="utf-8"))
 
-    from arcteam.workflow.service import WorkflowRunnerService
-
     arc_dir = _arc_dir(args)
 
     async def _run() -> None:
         actor_did = _actor_did(arc_dir)
         plane, aclose = await _resolve_control_plane(arc_dir, tier=_deployment_tier(arc_dir))
-        service = WorkflowRunnerService(plane._runner, interval=args.interval)
         try:
-            if not args.detach:
-                await service.start()
-            result = _ok_or_exit(await plane.run(args.id, input=run_input, actor_did=actor_did))
-            record = result.run
-            assert record is not None  # noqa: S101 — ok=True always carries the run
-            write(f"Started run {record.run_id} for {args.id} (status={record.status})")
             if args.detach:
-                return
-            try:
-                terminal = await service.wait_for_terminal(record.run_id)
-            except asyncio.CancelledError:
-                await plane.cancel(
-                    record.run_id,
-                    actor_did=actor_did,
-                    reason="operator interrupted attached workflow run",
+                result = _ok_or_exit(
+                    await plane.run(args.id, input=run_input, actor_did=actor_did)
                 )
-                raise
+                record = result.run
+                assert record is not None  # noqa: S101 — ok=True always carries the run
+                write(f"Started run {record.run_id} for {args.id} (status={record.status})")
+                return
+            record, terminal = await _run_attached(
+                plane,
+                workflow_id=args.id,
+                run_input=run_input,
+                actor_did=actor_did,
+                interval=args.interval,
+                on_started=lambda record: write(
+                    f"Started run {record.run_id} for {args.id} (status={record.status})"
+                ),
+            )
             write(f"Run {record.run_id} finished (status={terminal.status})")
         finally:
-            if not args.detach:
-                await service.stop()
             await aclose()
 
     _run_or_report(_run)
 
 
+async def _run_attached(
+    plane: WorkflowControlPlane,
+    *,
+    workflow_id: str,
+    run_input: Mapping[str, Any],
+    actor_did: str,
+    interval: float,
+    on_started: Callable[[Any], None],
+) -> tuple[Any, Any]:
+    """Run through the control plane while owning its runner lifecycle."""
+    service = WorkflowRunnerService(plane.runner, interval=interval)
+    await service.start()
+    try:
+        result = _ok_or_exit(await plane.run(workflow_id, input=run_input, actor_did=actor_did))
+        record = result.run
+        assert record is not None  # noqa: S101 — ok=True always carries the run
+        on_started(record)
+        try:
+            return record, await service.wait_for_terminal(record.run_id)
+        except asyncio.CancelledError:
+            await plane.cancel(
+                record.run_id,
+                actor_did=actor_did,
+                reason="operator interrupted attached workflow run",
+            )
+            raise
+    finally:
+        await service.stop()
+
+
 def _serve(args: argparse.Namespace) -> None:
     """Own a headless workflow runner until the operator stops this process."""
-    from arcteam.workflow.service import WorkflowRunnerService
-
     arc_dir = _arc_dir(args)
 
     async def _run() -> None:
         _actor_did(arc_dir)
         plane, aclose = await _resolve_control_plane(arc_dir, tier=_deployment_tier(arc_dir))
-        service = WorkflowRunnerService(plane._runner, interval=args.interval)
-        await service.start()
-        write("Workflow runner serving. Press Ctrl-C to stop.")
+        service = WorkflowRunnerService(plane.runner, interval=args.interval)
         try:
+            await service.start()
+            write("Workflow runner serving. Press Ctrl-C to stop.")
             await asyncio.Event().wait()
         finally:
             await service.stop()
