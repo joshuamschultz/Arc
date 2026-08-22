@@ -16,6 +16,7 @@ Platform adapters (T1.7), SubprocessExecutor (T1.6), and NATSExecutor are
 registered separately and not exported here yet.
 """
 
+from arcgateway.approval_notifications import GatewayApprovalNotificationSink
 from arcgateway.delivery import DeliveryTarget
 from arcgateway.executor import AsyncioExecutor, Delta, Executor, InboundEvent
 from arcgateway.media_store import (
@@ -41,6 +42,7 @@ __all__ = [
     "Delta",
     "Executor",
     "GatewayRunner",
+    "GatewayApprovalNotificationSink",
     "InboundEvent",
     "MediaPart",
     "MediaStore",
