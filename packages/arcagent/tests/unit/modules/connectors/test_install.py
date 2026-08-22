@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from arcstore.backends.memory import FakeBackend
 from arctrust.audit import AuditEvent
 
 from arcagent.core.errors import ExtensionError
@@ -204,74 +205,9 @@ class FakeAttachment:
         return ToolResult(tool=tool, outcome=ToolOutcome.OK)
 
 
-class MemoryBackend:
-    """The mutable plane in a dict, with the merge semantics the real one has.
-
-    A real :class:`~arcagent.extension.state.ConnectionStateStore` over a fake
-    plane rather than a fake store: ``_patch`` returning False for a row that does
-    not exist is the behaviour every assertion here turns on, so the store's own
-    code has to run.
-    """
-
-    def __init__(self) -> None:
-        self.rows: dict[str, dict[str, Any]] = {}
-
-    async def mutable_create_batch(
-        self,
-        collection: str,
-        entries: Any,
-        *,
-        actor_did: str,
-        sink: Any | None = None,
-    ) -> list[dict[str, Any]]:
-        return [self.rows.setdefault(key, dict(value)) for key, value in entries]
-
-    async def mutable_merge(
-        self,
-        collection: str,
-        key: str,
-        patch: dict[str, Any],
-        *,
-        actor_did: str,
-        sink: Any | None = None,
-    ) -> bool:
-        row = self.rows.get(key)
-        if row is None:
-            return False
-        _deep_merge(row, patch)
-        return True
-
-    async def mutable_read(self, collection: str, key: str) -> dict[str, Any] | None:
-        return self.rows.get(key)
-
-    async def mutable_query(
-        self, collection: str, *, where: dict[str, Any] | None = None
-    ) -> list[dict[str, Any]]:
-        return [
-            row
-            for row in self.rows.values()
-            if all(row.get(field) == value for field, value in (where or {}).items())
-        ]
-
-    async def mutable_delete(
-        self, collection: str, key: str, *, actor_did: str, sink: Any | None = None
-    ) -> bool:
-        return self.rows.pop(key, None) is not None
-
-
-def _deep_merge(row: dict[str, Any], patch: dict[str, Any]) -> None:
-    """Recursive merge — what a single-statement backend merge does to one row."""
-    for field, value in patch.items():
-        existing = row.get(field)
-        if isinstance(existing, dict) and isinstance(value, dict):
-            _deep_merge(existing, value)
-        else:
-            row[field] = value
-
-
 def _state() -> ConnectionStateStore:
     """The connection directory an install is required to register into."""
-    return ConnectionStateStore(MemoryBackend())
+    return ConnectionStateStore(FakeBackend())
 
 
 def _bundle(root: Path, *, manifest: str = _MANIFEST) -> Path:

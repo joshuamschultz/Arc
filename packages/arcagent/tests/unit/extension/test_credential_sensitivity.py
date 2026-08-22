@@ -33,6 +33,7 @@ import inspect
 from pathlib import Path
 
 import pytest
+from arcstore.backends.memory import FakeBackend
 
 from arcagent.connections import Connections
 from arcagent.core.tier import Tier
@@ -147,7 +148,16 @@ def connected(tmp_path: Path) -> Connections:
     (bundle / "extension.toml").write_text(_MANIFEST, encoding="utf-8")
     (bundle / "acme_fields_attachment.py").write_text(_ADAPTER, encoding="utf-8")
 
-    return Connections.for_deployment(arc_dir=arc_dir, data_dir=tmp_path / "data")
+    backend = FakeBackend()
+
+    async def open_backend() -> FakeBackend:
+        return backend
+
+    return Connections.for_deployment(
+        arc_dir=arc_dir,
+        data_dir=tmp_path / "data",
+        state_opener=open_backend,
+    )
 
 
 async def _install(connections: Connections) -> None:

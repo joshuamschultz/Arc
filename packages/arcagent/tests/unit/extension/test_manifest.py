@@ -456,14 +456,12 @@ class TestTierFloorRefusesButCannotRaise:
         # author control over operator policy, and no behavioural assertion here
         # would see it happen.
         #
-        # ``connection_catalog.py`` is the second and last permitted reader: it copies
-        # the floor onto a catalog listing entry so a surface can SHOW which
-        # bundles this deployment could run ("enterprise+"), and takes no verdict
-        # from it — the listing is a display record with no resolver behind it.
-        # That read is not new; it lived in ``arcui/routes/connectors.py``, out of
-        # this scan's reach, until the connection façade (D-587) made one seam of
-        # it. The set stays exact, so a THIRD reader — or a policy resolver
-        # growing inside either of these two — still fails here.
+        # ``connection_catalog.py`` copies the floor onto a catalog listing entry so
+        # a surface can SHOW which bundles this deployment could run ("enterprise+")
+        # and takes no verdict from it. The MCP attachment also reads the floor to
+        # select its process confinement policy. The set stays exact, so an
+        # unexpected reader — or a policy resolver growing inside these readers —
+        # still fails here.
         root = Path(manifest_module.__file__).resolve().parents[1]
         readers = sorted(
             path.relative_to(root)
@@ -473,7 +471,11 @@ class TestTierFloorRefusesButCannotRaise:
             if re.search(r"\.tier_floor\b", path.read_text(encoding="utf-8"))
         )
 
-        assert readers == [Path("connection_catalog.py"), Path("extension/manifest.py")]
+        assert readers == [
+            Path("connection_catalog.py"),
+            Path("extension/manifest.py"),
+            Path("modules/connectors/attachments.py"),
+        ]
 
 
 # --- what a token_command may name --------------------------------------------
