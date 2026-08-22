@@ -314,9 +314,7 @@ class FileHandler:
     def _extract_docx(self, path: Path) -> str | None:
         """Extract text from Word documents."""
         try:
-            from docx import (  # type: ignore[import-not-found]  # reason: optional dep: arcagent[files]
-                Document,
-            )
+            from docx import Document
 
             doc = Document(str(path))
             paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
@@ -331,9 +329,7 @@ class FileHandler:
     def _extract_xlsx(self, path: Path) -> str | None:
         """Extract text from Excel spreadsheets."""
         try:
-            from openpyxl import (  # type: ignore[import-untyped]  # reason: no type stubs available for openpyxl
-                load_workbook,
-            )
+            from openpyxl import load_workbook
 
             wb = load_workbook(str(path), read_only=True, data_only=True)
             sheets = []
