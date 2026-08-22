@@ -52,11 +52,12 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
 
 from arcagent.capabilities.capability_registry import CapabilityRegistry
+from arcagent.connector_control import ConnectorReconcileResult
 from arcagent.core.errors import ExtensionError
 from arcagent.core.tier import Tier
 from arcagent.core.tool_registry import ToolRegistry, ToolTransport
@@ -84,16 +85,6 @@ _logger = logging.getLogger("arcagent.modules.connectors.capabilities")
 #: other kind runs in this process, and an unknown one never gets this far —
 #: ``build_attachment`` refuses it before anything is registered.
 _SPAWNED_KIND = "cli"
-
-
-@dataclass(frozen=True)
-class ConnectorReconcileResult:
-    """The result of replacing this agent's connector tool snapshot."""
-
-    status: Literal["applied", "activation_pending"]
-    revision: int
-    tools: tuple[str, ...] = ()
-    detail: str = ""
 
 
 class _PreparedRegistry:

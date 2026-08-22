@@ -375,6 +375,39 @@ async def test_running_agent_reconciles_grants_and_revocations_without_a_restart
     assert not any(tool in registry.tools for tool in _SERVED)
 
 
+async def test_live_control_applies_grant_revoke_and_remove_to_a_running_agent(
+    deployment: _Deployment,
+) -> None:
+    """The shared management seam makes a persisted change live immediately."""
+    await deployment.connect(agents=())
+    registry, capability = await deployment.start_running_agent(_GRANTED[0])
+
+    class _Control:
+        async def reconcile(self, agent: str) -> Any:
+            return await capability.reconcile() if agent == _GRANTED[0] else None
+
+    connections = Connections.for_deployment(
+        arc_dir=deployment.arc_dir,
+        data_dir=deployment.data_dir,
+        extensions_root=deployment.root,
+        audit=AuditChain.held(deployment.sink),
+        state_opener=deployment.open_arcstore,
+        connector_control=_Control(),
+    )
+    granted = await connections.grant_and_reconcile(_CONNECTION, [_GRANTED[0]])
+    assert granted.activations[0].status == "applied"
+    assert set(granted.activations[0].tools) == set(_SERVED)
+    assert _SERVED[0] in registry.tools
+
+    revoked = await connections.revoke_and_reconcile(_CONNECTION, [_GRANTED[0]])
+    assert revoked.activations[0].status == "applied"
+    assert not any(tool in registry.tools for tool in _SERVED)
+
+    await connections.grant_and_reconcile(_CONNECTION, [_GRANTED[0]])
+    removed = await connections.remove_and_reconcile(_CONNECTION)
+    assert removed.activations[0].status == "applied"
+    assert not any(tool in registry.tools for tool in _SERVED)
+
 async def test_unstarted_connector_module_reports_activation_pending() -> None:
     pending = await Connectors().reconcile()
 

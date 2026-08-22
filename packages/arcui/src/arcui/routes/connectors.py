@@ -50,6 +50,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from arcui.audit import emit_mutation_audit, operator_audit_sink
+from arcui.routes.agent_detail._common import _agent_did
 from arcui.routes.agent_detail._common import _agent_root
 from arcui.routes.agent_detail.config_files import (
     BodyTooLargeError,
@@ -130,7 +131,43 @@ def _connections(request: Request) -> Connections:
     return Connections.for_deployment(
         audit=AuditChain.held(operator_audit_sink(request)),
         state_opener=state_opener if backend is not None else None,
+        connector_control=_connector_control(request),
     )
+
+
+class _InProcessConnectorControl:
+    """Resolve dashboard-owned agents without teaching arcagent about arcui."""
+
+    def __init__(self, request: Request) -> None:
+        self._request = request
+
+    async def reconcile(self, agent: str) -> arcagent.ConnectorReconcileResult | None:
+        cache = getattr(self._request.app.state, "embedded_agent_cache", None)
+        did = _agent_did(self._request, agent)
+        live_agent = cache.get(did) if cache is not None and did is not None else None
+        if live_agent is None:
+            return None
+        return await live_agent.reconcile_connectors()
+
+
+def _connector_control(request: Request) -> arcagent.ConnectorControl:
+    """Use an explicitly injected control in tests, else the embedded cache."""
+    injected = getattr(request.app.state, "connector_control", None)
+    return injected if injected is not None else _InProcessConnectorControl(request)
+
+
+def _activation_payload(results: Sequence[arcagent.ConnectorReconcileResult]) -> list[dict[str, Any]]:
+    """Safe, operator-facing activation truth; tools/coordinates only."""
+    return [
+        {
+            "agent": result.agent,
+            "status": result.status,
+            "revision": result.revision,
+            "tools": list(result.tools),
+            "detail": result.detail,
+        }
+        for result in results
+    ]
 
 
 def _not_found(exc: ExtensionError) -> bool:
@@ -554,10 +591,10 @@ async def _change_grant(request: Request, *, granting: bool) -> JSONResponse:
     operation = "connector.grant" if granting else "connector.revoke"
     try:
         connections = _connections(request)
-        connection = (
-            connections.grant(instance, agents)
+        mutation = (
+            await connections.grant_and_reconcile(instance, agents)
             if granting
-            else connections.revoke(instance, agents)
+            else await connections.revoke_and_reconcile(instance, agents)
         )
     except ExtensionError as exc:
         emit_mutation_audit(
@@ -576,9 +613,9 @@ async def _change_grant(request: Request, *, granting: bool) -> JSONResponse:
         outcome="applied",
         detail=",".join(agents),
     )
-    return JSONResponse(
-        _row(instance, connection, _labels(_connections(request))).model_dump(mode="json")
-    )
+    body = _row(instance, mutation.connection, _labels(_connections(request))).model_dump(mode="json")
+    body["activations"] = _activation_payload(mutation.activations)
+    return JSONResponse(body)
 
 
 # ---------------------------------------------------------------------------
@@ -920,7 +957,7 @@ async def delete_connection(request: Request) -> JSONResponse:
 
     instance = request.path_params["instance"]
     try:
-        report = await _connections(request).remove(instance)
+        mutation = await _connections(request).remove_and_reconcile(instance)
     except ExtensionError as exc:
         return _error(exc.message, 400)
 
@@ -928,16 +965,16 @@ async def delete_connection(request: Request) -> JSONResponse:
         request,
         target=f"connector:{instance}",
         operation="connector.remove",
-        outcome="applied" if report.removed_config else "denied",
+        outcome="applied" if mutation.removal.removed_config else "denied",
     )
-    return JSONResponse(
-        ConnectorRemoveResponse(
-            instance=report.instance,
-            removed_secrets=list(report.removed_secrets),
-            removed_config=report.removed_config,
-            removed_state=report.removed_state,
-        ).model_dump(mode="json")
-    )
+    body = ConnectorRemoveResponse(
+        instance=mutation.removal.instance,
+        removed_secrets=list(mutation.removal.removed_secrets),
+        removed_config=mutation.removal.removed_config,
+        removed_state=mutation.removal.removed_state,
+    ).model_dump(mode="json")
+    body["activations"] = _activation_payload(mutation.activations)
+    return JSONResponse(body)
 
 
 routes = [

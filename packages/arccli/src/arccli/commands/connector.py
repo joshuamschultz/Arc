@@ -72,6 +72,11 @@ def _arcstore_opener() -> Callable[[], Awaitable[Any]] | None:
     return None
 
 
+def _connector_control() -> arcagent.ConnectorControl | None:
+    """Optional same-process agent controller; a normal CLI has none."""
+    return None
+
+
 def _connections(args: argparse.Namespace) -> arcagent.Connections:
     """Bind this deployment to the operator-signed chain, or exit naming what is wrong.
 
@@ -103,6 +108,7 @@ def _connections(args: argparse.Namespace) -> arcagent.Connections:
         ),
         attachment_factory=_attachment_factory(),
         state_opener=_arcstore_opener(),
+        connector_control=_connector_control(),
     )
 
 
@@ -147,22 +153,22 @@ def _grant(args: argparse.Namespace) -> None:
     agents = _agents(args)
     _require_deployment_agents(connections, agents)
     try:
-        granted = connections.grant(args.instance, agents)
+        mutation = asyncio.run(connections.grant_and_reconcile(args.instance, agents))
     except arcagent.ExtensionError as exc:
         _fail(exc.message)
-    _out(f"'{args.instance}' is now granted to: {', '.join(granted.agents) or '(nobody)'}")
-    _out("  Restart those agents for the connection to attach.")
+    _out(f"'{args.instance}' is now granted to: {', '.join(mutation.connection.agents) or '(nobody)'}")
+    _print_activations(mutation.activations)
 
 
 def _revoke(args: argparse.Namespace) -> None:
     """Take one connected account back from agents. The account itself is untouched."""
     connections = _connections(args)
     try:
-        remaining = connections.revoke(args.instance, _agents(args))
+        mutation = asyncio.run(connections.revoke_and_reconcile(args.instance, _agents(args)))
     except arcagent.ExtensionError as exc:
         _fail(exc.message)
-    _out(f"'{args.instance}' is now granted to: {', '.join(remaining.agents) or '(nobody)'}")
-    _out("  Restart the agents that lost it; a running agent keeps what it attached.")
+    _out(f"'{args.instance}' is now granted to: {', '.join(mutation.connection.agents) or '(nobody)'}")
+    _print_activations(mutation.activations)
 
 
 def _agents(args: argparse.Namespace) -> list[str]:
@@ -422,12 +428,26 @@ def _remove(args: argparse.Namespace) -> None:
     """
     connections = _connections(args)
     try:
-        report = asyncio.run(connections.remove(args.instance))
+        mutation = asyncio.run(connections.remove_and_reconcile(args.instance))
     except arcagent.ExtensionError as exc:
         _fail(exc.message)
+    report = mutation.removal
     _out(f"Disconnected '{report.instance}'.")
     _out(f"  credentials dropped : {', '.join(report.removed_secrets) or '(none)'}")
     _out(f"  connection removed  : {'yes' if report.removed_config else 'no'}")
+    _print_activations(mutation.activations)
+
+
+def _print_activations(results: Sequence[arcagent.ConnectorReconcileResult]) -> None:
+    """Report immediate activation only when this process actually applied it."""
+    for result in results:
+        if result.status == "applied":
+            _out(
+                f"  live activation   : {result.agent}: applied "
+                f"({', '.join(result.tools) or 'no connector tools'})"
+            )
+        else:
+            _out(f"  live activation   : {result.agent}: pending (agent runs in another process)")
 
 
 # ---------------------------------------------------------------------------

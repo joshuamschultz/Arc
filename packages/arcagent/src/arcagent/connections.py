@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import tomllib
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -47,6 +47,7 @@ from arctrust.audit import AuditEvent, AuditSink, emit
 from arctrust.paths import arc_team, config_file, default_operator_key_path
 
 from arcagent.connection_catalog import AuditChain, CatalogEntry, ClosableSink, catalog
+from arcagent.connector_control import ConnectorControl, ConnectorReconcileResult
 from arcagent.core.errors import ExtensionError
 from arcagent.core.tier import Tier
 from arcagent.extension.attachment import ExtensionAttachment, ProbeResult, ToolSpec
@@ -163,6 +164,15 @@ class ConnectionWorld:
     def connections_file(self) -> Path:
         """Where this deployment's connections and grants live."""
         return ConnectionRegistry(self.arc_dir).path
+
+
+@dataclass(frozen=True)
+class ConnectorMutation:
+    """Durable mutation plus the live-agent activation verdicts it produced."""
+
+    activations: tuple[ConnectorReconcileResult, ...]
+    connection: Connection | None = None
+    removal: RemovalReport | None = None
 
 
 #: Recorded as the actor when a deployment has no operator key to derive a DID
@@ -581,12 +591,14 @@ class Connections:
         attachment_factory: AttachmentFactory | None = None,
         install_dir: Path | None = None,
         state_opener: Callable[[], Awaitable[Any]] | None = None,
+        connector_control: ConnectorControl | None = None,
     ) -> None:
         self._world = world
         self._audit = audit if audit is not None else AuditChain()
         self._factory: AttachmentFactory = attachment_factory or build_attachment
         self._install_dir = install_dir
         self._state_opener = state_opener
+        self._connector_control = connector_control
 
     @classmethod
     def for_deployment(
@@ -600,6 +612,7 @@ class Connections:
         attachment_factory: AttachmentFactory | None = None,
         install_dir: Path | None = None,
         state_opener: Callable[[], Awaitable[Any]] | None = None,
+        connector_control: ConnectorControl | None = None,
     ) -> Connections:
         """Resolve a deployment and bind it to a chain in one step."""
         world = resolve_deployment(
@@ -614,6 +627,7 @@ class Connections:
             attachment_factory=attachment_factory,
             install_dir=install_dir,
             state_opener=state_opener,
+            connector_control=connector_control,
         )
 
     @property
@@ -1068,6 +1082,24 @@ class Connections:
             self._record(sink, "connector.revoke", instance, agents)
         return remaining
 
+    async def grant_and_reconcile(
+        self, instance: str, agents: Sequence[str]
+    ) -> ConnectorMutation:
+        """Persist a grant then refresh each affected in-process agent."""
+        connection = self.grant(instance, agents)
+        return ConnectorMutation(
+            connection=connection, activations=await self._reconcile_agents(agents)
+        )
+
+    async def revoke_and_reconcile(
+        self, instance: str, agents: Sequence[str]
+    ) -> ConnectorMutation:
+        """Persist a revocation then remove its tools from live affected agents."""
+        connection = self.revoke(instance, agents)
+        return ConnectorMutation(
+            connection=connection, activations=await self._reconcile_agents(agents)
+        )
+
     async def reauth(self, plan: ConnectorPlan, secrets: Mapping[str, str]) -> tuple[str, ...]:
         """Re-supply an instance's credentials — a rotation, or a first-time fix.
 
@@ -1153,6 +1185,37 @@ class Connections:
                 secret_fields=self._declared_secret_fields(instance, sink),
                 state=await self._connection_state(),
             )
+
+    async def remove_and_reconcile(self, instance: str) -> ConnectorMutation:
+        """Remove an account and refresh every agent that held its tools."""
+        try:
+            agents = self.registry.get(instance).agents
+        except ExtensionError as exc:
+            if exc.code != NOT_INSTALLED:
+                raise
+            agents = ()
+        removal = await self.remove(instance)
+        return ConnectorMutation(removal=removal, activations=await self._reconcile_agents(agents))
+
+    async def _reconcile_agents(self, agents: Sequence[str]) -> tuple[ConnectorReconcileResult, ...]:
+        """Project durable state into this process's live agents when present."""
+        outcomes: list[ConnectorReconcileResult] = []
+        for agent in dict.fromkeys(agents):
+            result = (
+                await self._connector_control.reconcile(agent)
+                if self._connector_control is not None
+                else None
+            )
+            outcomes.append(
+                replace(result, agent=agent)
+                if result is not None
+                else ConnectorReconcileResult(
+                    status="activation_pending",
+                    agent=agent,
+                    detail="agent is not running in this process",
+                )
+            )
+        return tuple(outcomes)
 
     def _refuse_lax_plan(self, plan: ConnectorPlan, agents: Sequence[str]) -> None:
         """Refuse an install whose grantees need more stringency than the plan took.
@@ -1412,6 +1475,9 @@ __all__ = [
     "CatalogEntry",
     "ClosableSink",
     "Connection",
+    "ConnectorControl",
+    "ConnectorMutation",
+    "ConnectorReconcileResult",
     "ConnectionRegistry",
     "ConnectionWorld",
     "Connections",

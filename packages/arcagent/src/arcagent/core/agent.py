@@ -234,6 +234,34 @@ class ArcAgent:
 
         return await set_module_enabled(self, name, enabled=enabled)
 
+    async def reconcile_connectors(self) -> Any:
+        """Refresh this started agent's connector tools from durable grants.
+
+        This is the narrow in-process control seam used by operator surfaces.
+        A started agent without the optional connector module has successfully
+        reconciled to an empty connector snapshot; only a process that cannot
+        locate this agent should report activation as pending.
+        """
+        from arcagent.connector_control import ConnectorReconcileResult
+        from arcagent.core.agent_lifecycle import activate_runtime_bindings
+
+        if not self._started or self._capability_registry is None:
+            return ConnectorReconcileResult(
+                status="applied", detail="agent is not started; no connector tools are active"
+            )
+        activate_runtime_bindings(self)
+        entry = await self._capability_registry.get_capability("connectors")
+        if entry is None or not entry.setup_done:
+            return ConnectorReconcileResult(
+                status="applied", detail="connector module is not active on this agent"
+            )
+        reconcile = getattr(entry.instance, "reconcile", None)
+        if reconcile is None:
+            return ConnectorReconcileResult(
+                status="applied", detail="connector module exposes no live reconciler"
+            )
+        return await reconcile()
+
     def _policy_audit_log_path(self) -> Path:
         """Resolve the WORM chain file for policy-decision audit (SPEC-034).
 
