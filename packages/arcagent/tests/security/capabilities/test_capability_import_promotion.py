@@ -303,6 +303,7 @@ def test_revoke_restores_exact_state_when_second_artifact_fails(
     assert service._ledger.get(manifest.import_id) == {
         "status": CapabilityImportStatus.PROMOTED.value,
         "target_agent_did": manifest.target_agent_did,
+        "review_digest": manifest.review_digest,
         "promoted_paths": [
             path.relative_to(tmp_path / "agent" / "capabilities").as_posix() for path in promoted
         ],

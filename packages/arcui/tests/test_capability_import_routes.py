@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from arctrust import OperatorKey, default_operator_key_path, load_validators
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
@@ -60,6 +61,9 @@ def _archive(*entries: tuple[str, bytes]) -> bytes:
 def _client(tmp_path: Path) -> tuple[TestClient, Path, _Audit]:
     workspace = tmp_path / "ada" / "workspace"
     workspace.mkdir(parents=True)
+    (workspace / "arcagent.toml").write_text(
+        '[agent]\nname = "ada"\n\n[security]\ntier = "federal"\n', encoding="utf-8"
+    )
     audit = _Audit()
     app = Starlette(routes=routes)
     auth = AuthConfig({"viewer_token": "viewer", "operator_token": "operator"})
@@ -122,6 +126,75 @@ def test_upload_rejects_unsafe_archive_without_creating_staging(tmp_path: Path) 
     assert response.status_code == 422
     assert "unsafe" in response.json()["error"].lower()
     assert not (workspace / "capabilities" / "imports" / ".staging").exists()
+
+
+def test_promote_and_revoke_are_operator_signed_and_viewer_denied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc"))
+    operator = OperatorKey.load(default_operator_key_path(), generate_if_absent=True)
+    client, workspace, audit = _client(tmp_path)
+    uploaded = client.post(
+        "/api/agents/ada/capability-imports",
+        headers={"Authorization": "Bearer viewer"},
+        files={"file": ("portable.zip", _archive(("skills/imported/SKILL.md", _SKILL)), "application/zip")},
+    )
+    import_id = uploaded.json()["import_id"]
+    promote_path = f"/api/agents/ada/capability-imports/{import_id}/promote"
+    revoke_path = f"/api/agents/ada/capability-imports/{import_id}/revoke"
+
+    denied = client.post(promote_path, headers={"Authorization": "Bearer viewer"})
+    assert denied.status_code == 403
+
+    promoted = client.post(promote_path, headers={"Authorization": "Bearer operator"})
+    assert promoted.status_code == 200
+    assert promoted.json()["status"] == "promoted"
+    artifact = workspace / "capabilities" / "skills" / "imported" / "SKILL.md"
+    assert artifact.is_file()
+    assert artifact.with_name("SKILL.md.arcsig").is_file()
+    validators = load_validators(workspace / "arcagent.toml")
+    assert operator.public_key.hex() in validators.trusted_keys
+    assert {entry.name for entry in validators.approved} == {"imported"}
+
+    revoked = client.post(revoke_path, headers={"Authorization": "Bearer operator"})
+    assert revoked.status_code == 200
+    assert revoked.json()["status"] == "revoked"
+    assert not artifact.exists()
+    assert not artifact.with_name("SKILL.md.arcsig").exists()
+    validators = load_validators(workspace / "arcagent.toml")
+    assert validators.approved == ()
+    assert operator.public_key.hex() not in validators.trusted_keys
+    operations = [details["operation"] for _, details in audit.events]
+    assert "capability_import.promote" in operations
+    assert "capability_import.revoke" in operations
+
+
+def test_revoke_rejects_stale_review_without_removing_promoted_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc"))
+    OperatorKey.load(default_operator_key_path(), generate_if_absent=True)
+    client, workspace, _ = _client(tmp_path)
+    uploaded = client.post(
+        "/api/agents/ada/capability-imports",
+        headers={"Authorization": "Bearer operator"},
+        files={"file": ("portable.zip", _archive(("skills/imported/SKILL.md", _SKILL)), "application/zip")},
+    )
+    import_id = uploaded.json()["import_id"]
+    promote_path = f"/api/agents/ada/capability-imports/{import_id}/promote"
+    revoke_path = f"/api/agents/ada/capability-imports/{import_id}/revoke"
+    assert client.post(promote_path, headers={"Authorization": "Bearer operator"}).status_code == 200
+    staged = workspace / "capabilities" / "imports" / ".staging" / import_id / "skills" / "imported" / "SKILL.md"
+    staged.write_bytes(staged.read_bytes().replace(b"Use the skill.", b"Changed after review."))
+
+    stale = client.post(revoke_path, headers={"Authorization": "Bearer operator"})
+    assert stale.status_code == 409
+    artifact = workspace / "capabilities" / "skills" / "imported" / "SKILL.md"
+    assert artifact.is_file()
+    listed = client.get(
+        "/api/agents/ada/capability-imports", headers={"Authorization": "Bearer viewer"}
+    )
+    assert listed.json()["imports"][0]["status"] == "modified"
 
 
 def test_list_skips_malformed_or_oversized_review_metadata(tmp_path: Path) -> None:

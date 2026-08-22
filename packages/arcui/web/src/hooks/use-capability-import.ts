@@ -12,6 +12,8 @@ export interface CapabilityImportReview {
   files: Array<{ path: string; sha256: string; size: number }>
   supplier_metadata_keys?: string[]
   activation: 'review_only'
+  promoted_paths?: string[]
+  signer_did?: string
 }
 
 export interface CapabilityImportSource {
@@ -25,6 +27,8 @@ export type CapabilityImportState =
   | { status: 'idle'; review: null; error: null }
   | { status: 'uploading'; review: null; error: null }
   | { status: 'review_ready'; review: CapabilityImportReview; error: null }
+  | { status: 'promoted'; review: CapabilityImportReview; error: null }
+  | { status: 'revoked'; review: CapabilityImportReview; error: null }
   | { status: 'rejected'; review: null; error: string }
 
 function authHeaders(): Record<string, string> {
@@ -79,6 +83,31 @@ export function useCapabilityImport(agentId: string | null) {
     [editRequest],
   )
 
+  const trustRequest = useCallback(
+    async (review: CapabilityImportReview, action: 'promote' | 'revoke') => {
+      if (!agentId) throw new Error('Choose an agent first.')
+      const response = await fetch(
+        `/api/agents/${encodeURIComponent(agentId)}/capability-imports/${review.import_id}/${action}`,
+        { method: 'POST', headers: authHeaders() },
+      )
+      if (!response.ok) throw new Error(await readError(response))
+      const updated = (await response.json()) as CapabilityImportReview
+      setState({ status: updated.status as 'promoted' | 'revoked', review: updated, error: null })
+      return updated
+    },
+    [agentId],
+  )
+
+  const promote = useCallback(
+    (review: CapabilityImportReview) => trustRequest(review, 'promote'),
+    [trustRequest],
+  )
+
+  const revoke = useCallback(
+    (review: CapabilityImportReview) => trustRequest(review, 'revoke'),
+    [trustRequest],
+  )
+
   const upload = useCallback(
     async (file: File) => {
       if (!agentId) {
@@ -125,5 +154,5 @@ export function useCapabilityImport(agentId: string | null) {
     setState({ status: 'idle', review: null, error: null })
   }, [])
 
-  return { ...state, upload, reset, readFile, editFile }
+  return { ...state, upload, reset, readFile, editFile, promote, revoke }
 }

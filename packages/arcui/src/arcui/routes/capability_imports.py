@@ -1,10 +1,9 @@
-"""Agent-scoped, non-activating capability archive review routes.
+"""Agent-scoped capability archive review and trust routes.
 
 Uploads are copied into ArcAgent's quarantine/staging seam and statically
-reviewed there. This surface intentionally has no activation endpoint: the
-existing trust approval route signs already-active loader artifacts, while a
-staged import needs a dedicated promotion contract before it can be executable.
-Returning a fake success here would turn review into an un-audited install.
+reviewed there. Promotion and revocation are separate operator-only routes that
+delegate to ArcAgent's signed trust seam; a stale review is rejected before any
+active capability or trust configuration is changed.
 """
 
 from __future__ import annotations
@@ -17,12 +16,13 @@ import tempfile
 from pathlib import Path
 
 import arcagent
+from arctrust import Signer
 from starlette.datastructures import UploadFile
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from arcui.audit import emit_mutation_audit
+from arcui.audit import emit_mutation_audit, operator_audit_sink
 
 _MAX_UPLOAD_BYTES = arcagent.CapabilityImportLimits().max_compressed_bytes
 _CHUNK_SIZE = 64 * 1024
@@ -60,11 +60,38 @@ def _staging(workspace: Path, import_id: str) -> Path | None:
 
 def _json_error(exc: Exception) -> JSONResponse:
     message = str(exc)
-    if "changed after review" in message or "not review-ready" in message:
+    if (
+        "changed after review" in message
+        or "manifest no longer matches" in message
+        or "not review-ready" in message
+        or "not promoted" in message
+    ):
         return _error(message, 409)
     if "unavailable" in message or "unreadable" in message:
         return _error("capability import unavailable", 503)
     return _error(message, 422)
+
+
+def _operator_signer() -> Signer:
+    """Resolve the deployment operator signer through the existing trust seam."""
+    from arcui.routes.trust import _operator_signer as resolve
+
+    return resolve()
+
+
+def _operator_did(signer: Signer) -> str:
+    from arctrust.policy import OperatorApprovalAuthority
+
+    return OperatorApprovalAuthority(signer).did
+
+
+def _review_payload(
+    service: arcagent.CapabilityImportService, import_id: str
+) -> dict[str, object]:
+    for review in service.list_reviews():
+        if review.import_id == import_id:
+            return review.model_dump(mode="json")
+    raise RuntimeError("capability import review is unavailable")
 
 
 async def _write_upload(upload: UploadFile) -> Path:
@@ -263,6 +290,131 @@ async def edit_import_file(request: Request) -> JSONResponse:
     return JSONResponse(service.review_summary(manifest).model_dump(mode="json"))
 
 
+async def promote_import(request: Request) -> JSONResponse:
+    """Promote one unchanged review using the deployment operator key."""
+    agent_id = request.path_params["agent_id"]
+    import_id = request.path_params["import_id"]
+    target = f"capability_import:{agent_id}:{import_id}"
+    if getattr(request.state, "role", None) != "operator":
+        emit_mutation_audit(
+            request,
+            target=target,
+            operation="capability_import.promote",
+            outcome="denied",
+            detail="operator_role_required",
+        )
+        return _error("operator_role_required", 403)
+    resolved = _agent(request, agent_id)
+    if resolved is None:
+        return _error("agent_not_found", 404)
+    workspace, target_did = resolved
+    staging = _staging(workspace, import_id)
+    if staging is None:
+        return _error("capability_import_not_found", 404)
+    try:
+        signer = await asyncio.to_thread(_operator_signer)
+    except (OSError, RuntimeError, ValueError) as exc:
+        emit_mutation_audit(
+            request,
+            target=target,
+            operation="capability_import.promote",
+            outcome="denied",
+            detail="operator_key_unavailable",
+        )
+        return _error(f"operator_key_unavailable: {type(exc).__name__}", 500)
+    operator_did = _operator_did(signer)
+    service = arcagent.CapabilityImportService(
+        workspace / "capabilities", audit_sink=operator_audit_sink(request)
+    )
+    try:
+        promoted = await asyncio.to_thread(
+            service.promote,
+            staging,
+            target_agent_did=target_did,
+            operator_did=operator_did,
+            signer=signer,
+            config_path=workspace / "arcagent.toml",
+        )
+        payload = await asyncio.to_thread(_review_payload, service, import_id)
+    except (OSError, RuntimeError, ValueError) as exc:
+        emit_mutation_audit(
+            request,
+            target=target,
+            operation="capability_import.promote",
+            outcome="error",
+            detail=type(exc).__name__,
+        )
+        return _json_error(exc)
+    payload["promoted_paths"] = [
+        path.relative_to(workspace / "capabilities").as_posix() for path in promoted
+    ]
+    payload["signer_did"] = operator_did
+    emit_mutation_audit(
+        request, target=target, operation="capability_import.promote", outcome="applied"
+    )
+    return JSONResponse(payload)
+
+
+async def revoke_import(request: Request) -> JSONResponse:
+    """Revoke one unchanged promotion and remove its trust artifacts."""
+    agent_id = request.path_params["agent_id"]
+    import_id = request.path_params["import_id"]
+    target = f"capability_import:{agent_id}:{import_id}"
+    if getattr(request.state, "role", None) != "operator":
+        emit_mutation_audit(
+            request,
+            target=target,
+            operation="capability_import.revoke",
+            outcome="denied",
+            detail="operator_role_required",
+        )
+        return _error("operator_role_required", 403)
+    resolved = _agent(request, agent_id)
+    if resolved is None:
+        return _error("agent_not_found", 404)
+    workspace, _ = resolved
+    staging = _staging(workspace, import_id)
+    if staging is None:
+        return _error("capability_import_not_found", 404)
+    try:
+        signer = await asyncio.to_thread(_operator_signer)
+    except (OSError, RuntimeError, ValueError) as exc:
+        emit_mutation_audit(
+            request,
+            target=target,
+            operation="capability_import.revoke",
+            outcome="denied",
+            detail="operator_key_unavailable",
+        )
+        return _error(f"operator_key_unavailable: {type(exc).__name__}", 500)
+    operator_did = _operator_did(signer)
+    service = arcagent.CapabilityImportService(
+        workspace / "capabilities", audit_sink=operator_audit_sink(request)
+    )
+    try:
+        await asyncio.to_thread(
+            service.revoke,
+            staging,
+            operator_did=operator_did,
+            config_path=workspace / "arcagent.toml",
+        )
+        payload = await asyncio.to_thread(_review_payload, service, import_id)
+    except (OSError, RuntimeError, ValueError) as exc:
+        emit_mutation_audit(
+            request,
+            target=target,
+            operation="capability_import.revoke",
+            outcome="error",
+            detail=type(exc).__name__,
+        )
+        return _json_error(exc)
+    payload["signer_did"] = operator_did
+    emit_mutation_audit(
+        request, target=target, operation="capability_import.revoke", outcome="applied"
+    )
+    return JSONResponse(payload)
+
+
 routes = [
     Route("/api/agents/{agent_id}/capability-imports", list_imports, methods=["GET"]),
     Route("/api/agents/{agent_id}/capability-imports", upload_import, methods=["POST"]),
@@ -276,6 +428,24 @@ routes = [
         edit_import_file,
         methods=["PUT"],
     ),
+    Route(
+        "/api/agents/{agent_id}/capability-imports/{import_id}/promote",
+        promote_import,
+        methods=["POST"],
+    ),
+    Route(
+        "/api/agents/{agent_id}/capability-imports/{import_id}/revoke",
+        revoke_import,
+        methods=["POST"],
+    ),
 ]
 
-__all__ = ["edit_import_file", "list_imports", "read_import_file", "routes", "upload_import"]
+__all__ = [
+    "edit_import_file",
+    "list_imports",
+    "promote_import",
+    "read_import_file",
+    "revoke_import",
+    "routes",
+    "upload_import",
+]

@@ -1,8 +1,8 @@
-"""``arc capability-import`` — inspect and safely edit staged reviews.
+"""``arc capability-import`` — inspect, trust, and revoke staged reviews.
 
-This command never imports or executes staged source.  Promotion and revocation
-remain separate operator trust mutations, while this surface lets an operator
-inspect review metadata and make an explicit, re-reviewed source edit.
+Promotion and revocation are explicit operator trust mutations. They use the
+deployment operator signer and the agent-local ``arcagent.toml`` trust store;
+staged source is never executed by this command.
 """
 
 from __future__ import annotations
@@ -13,8 +13,10 @@ from pathlib import Path
 
 import arcagent
 from arcgateway import team_roster
+from arctrust import Signer, SignerError
+from arctrust.policy import OperatorApprovalAuthority
 
-from arccli.commands._shared import dispatch, print_table, write
+from arccli.commands._shared import audit_chain, dispatch, print_table, write
 from arccli.commands.trust import _resolve_agent
 
 
@@ -92,6 +94,56 @@ def _edit(args: argparse.Namespace) -> None:
     write(f"Updated {args.path}; review digest is now {manifest.review_digest}.")
 
 
+def _operator_signer() -> Signer:
+    """Resolve the same deployment operator signer used by ``arc trust``."""
+    from arccli.commands.operator import resolve_operator_signer
+
+    try:
+        return resolve_operator_signer()
+    except SignerError as exc:
+        raise ValueError(f"cannot resolve the operator signer: {exc}") from exc
+
+
+def _promote(args: argparse.Namespace) -> None:
+    agent_id, agent_root, target_did = _resolve_target(args.agent)
+    staging = _staging(agent_root, args.import_id)
+    signer = _operator_signer()
+    operator_did = OperatorApprovalAuthority(signer).did
+    service = arcagent.CapabilityImportService(agent_root / "capabilities")
+    with audit_chain("arc capability-import", lambda: operator_did) as (sink, _):
+        promoted = service.promote(
+            staging,
+            target_agent_did=target_did,
+            operator_did=operator_did,
+            signer=signer,
+            config_path=agent_root / "arcagent.toml",
+            audit_sink=sink,
+        )
+    paths = ", ".join(
+        path.relative_to(agent_root / "capabilities").as_posix() for path in promoted
+    )
+    write(
+        f"Promoted {args.import_id} on {agent_id} — signed, key pinned, and source pinned "
+        f"({paths})."
+    )
+
+
+def _revoke(args: argparse.Namespace) -> None:
+    agent_id, agent_root, _target_did = _resolve_target(args.agent)
+    staging = _staging(agent_root, args.import_id)
+    signer = _operator_signer()
+    operator_did = OperatorApprovalAuthority(signer).did
+    service = arcagent.CapabilityImportService(agent_root / "capabilities")
+    with audit_chain("arc capability-import", lambda: operator_did) as (sink, _):
+        service.revoke(
+            staging,
+            operator_did=operator_did,
+            config_path=agent_root / "arcagent.toml",
+            audit_sink=sink,
+        )
+    write(f"Revoked {args.import_id} on {agent_id} — signature and trust pins removed.")
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="arc capability-import")
     subs = parser.add_subparsers(dest="subcmd", required=True)
@@ -99,19 +151,28 @@ def _build_parser() -> argparse.ArgumentParser:
         ("list", "List staged reviews."),
         ("show", "Print one reviewed file."),
         ("edit", "Edit one staged file and regenerate evidence."),
+        ("promote", "Promote one reviewed import with the operator signer."),
+        ("revoke", "Revoke one promoted import and remove its trust pins."),
     )
     for name, help_text in commands:
         sub = subs.add_parser(name, help=help_text)
         sub.add_argument("--agent", default=None, help="Agent id under team/.")
         if name != "list":
             sub.add_argument("import_id")
+        if name in {"show", "edit"}:
             sub.add_argument("path")
         if name == "edit":
             sub.add_argument("--content-file", required=True, type=Path)
     return parser
 
 
-_SUBCOMMAND_MAP = {"list": _list, "show": _show, "edit": _edit}
+_SUBCOMMAND_MAP = {
+    "list": _list,
+    "show": _show,
+    "edit": _edit,
+    "promote": _promote,
+    "revoke": _revoke,
+}
 
 
 def capability_import_handler(args: list[str]) -> None:

@@ -24,7 +24,7 @@ from pydantic import ValidationError
 
 from arcagent.capabilities.artifact_signing import write_signature_with_signer
 from arcagent.capabilities.capability_loader import pin_name_for_path
-from arcagent.capabilities.capability_signing import revoke as revoke_capability
+from arcagent.capabilities.import_trust import revoke_import_artifact as revoke_capability
 from arcagent.modules.capability_import.errors import CapabilityImportError
 from arcagent.modules.capability_import.ledger import ImportLedger
 from arcagent.modules.capability_import.manifest import (
@@ -307,14 +307,7 @@ class CapabilityImportService:
         row = self._ledger.get(manifest.import_id)
         if row is None or row.get("status") != CapabilityImportStatus.REVIEW_READY.value:
             raise ValueError("capability import is not review-ready")
-        if (
-            row.get("review_digest") != manifest.review_digest
-            or review_digest(manifest) != manifest.review_digest
-        ):
-            raise ValueError("capability import manifest no longer matches review")
-        if not verify_manifest(manifest, staging_dir):
-            self._ledger.set(manifest.import_id, CapabilityImportStatus.MODIFIED)
-            raise ValueError("capability import changed after review")
+        self._require_current_review(manifest, staging_dir, row)
 
         final_targets = self._target_paths(manifest, self._root)
         for path in final_targets:
@@ -354,6 +347,7 @@ class CapabilityImportService:
                 manifest.import_id,
                 CapabilityImportStatus.PROMOTED,
                 target_agent_did=target_agent_did,
+                review_digest=manifest.review_digest,
                 promoted_paths=[path.relative_to(self._root).as_posix() for path in final_targets],
             )
         except Exception:
@@ -398,6 +392,7 @@ class CapabilityImportService:
         row = self._ledger.get(manifest.import_id)
         if row is None or row.get("status") != CapabilityImportStatus.PROMOTED.value:
             raise ValueError("capability import is not promoted")
+        self._require_current_review(manifest, staging_dir, row)
         raw_paths = row.get("promoted_paths")
         if not isinstance(raw_paths, list) or any(not isinstance(item, str) for item in raw_paths):
             raise ValueError("capability promotion ledger is malformed")
@@ -441,6 +436,37 @@ class CapabilityImportService:
                 raise RuntimeError("capability revocation rollback failed") from rollback_error
             raise
         self._emit(manifest.import_id, "capability_import.revoked", operator_did, None, audit_sink)
+
+    def _require_current_review(
+        self,
+        manifest: CapabilityImportManifest,
+        staging_dir: Path,
+        row: dict[str, object],
+    ) -> None:
+        """Refuse trust mutations when the reviewed evidence is stale.
+
+        The staged manifest is untrusted input too: accepting a rewritten
+        ``import.json`` or changed source bytes would let a caller promote one
+        thing while the operator reviewed another. Marking the import modified
+        makes the refusal visible to every surface and keeps the next action
+        explicit (edit/review again), while preserving promotion metadata for
+        forensic inspection.
+        """
+        current = (
+            row.get("review_digest") == manifest.review_digest
+            and review_digest(manifest) == manifest.review_digest
+            and verify_manifest(manifest, staging_dir)
+        )
+        if current:
+            return
+        data: dict[str, object] = {
+            "target_agent_did": manifest.target_agent_did,
+        }
+        promoted_paths = row.get("promoted_paths")
+        if isinstance(promoted_paths, list):
+            data["promoted_paths"] = promoted_paths
+        self._ledger.set(manifest.import_id, CapabilityImportStatus.MODIFIED, **data)
+        raise ValueError("capability import manifest changed after review")
 
     def _manifest_from_staging(self, staging_dir: Path) -> CapabilityImportManifest:
         path = Path(staging_dir) / "import.json"

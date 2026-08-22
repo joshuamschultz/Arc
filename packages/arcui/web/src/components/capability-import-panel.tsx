@@ -4,18 +4,20 @@ import { Link } from 'react-router-dom'
 import { useRoster } from '@/lib/queries'
 import type { Agent } from '@/lib/types'
 import { useCapabilityImport, type CapabilityImportReview } from '@/hooks/use-capability-import'
+import { useOperatorMode } from '@/hooks/use-operator-mode'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 
 function ReviewEvidence({ review }: { review: CapabilityImportReview }) {
+  const statusLabel = review.status.replaceAll('_', ' ')
   return (
     <div className="space-y-3 rounded-md border border-status-warning/30 bg-status-warning/10 p-3">
       <div className="flex items-start gap-2">
         <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-status-online" />
         <div className="min-w-0">
-          <p className="text-sm font-medium text-foreground">Review evidence ready</p>
+            <p className="text-sm font-medium capitalize text-foreground">{statusLabel}</p>
           <p className="text-xs text-muted-foreground">
             {review.files.length} files · {review.tools.length} tools · {review.skills.length} skills
           </p>
@@ -32,12 +34,17 @@ function ReviewEvidence({ review }: { review: CapabilityImportReview }) {
         </div>
       </dl>
       <p className="text-xs text-muted-foreground">
-        This import is quarantined and inactive. ArcTrust promotion and signing are not available for
-        staged imports yet, so no tool or skill can execute from this upload.
+        {review.status === 'promoted'
+          ? 'Promoted capabilities are signed and pinned to this agent trust store.'
+          : review.status === 'revoked'
+            ? 'Revoked capabilities are removed from the active capability roots.'
+            : 'This import is quarantined and inactive until an operator promotes the reviewed bytes.'}
       </p>
-      <Button asChild variant="outline" size="sm">
-        <Link to="/gated">Open capability trust review</Link>
-      </Button>
+      {review.status === 'review_ready' && (
+        <Button asChild variant="outline" size="sm">
+          <Link to="/gated">Open capability trust review</Link>
+        </Button>
+      )}
     </div>
   )
 }
@@ -51,9 +58,11 @@ export function CapabilityImportPanel() {
   const [dragging, setDragging] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const importer = useCapabilityImport(agentId)
+  const [operatorMode] = useOperatorMode()
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [source, setSource] = useState('')
   const [saving, setSaving] = useState(false)
+  const [trusting, setTrusting] = useState(false)
 
   const choose = (files: FileList | File[]) => {
     const file = files[0]
@@ -80,6 +89,30 @@ export function CapabilityImportPanel() {
       setSource(error instanceof Error ? `Unable to save file: ${error.message}` : 'Unable to save file.')
     } finally {
       setSaving(false)
+    }
+  }
+
+  const promote = async () => {
+    if (!importer.review) return
+    setTrusting(true)
+    try {
+      await importer.promote(importer.review)
+    } catch (error) {
+      setSource(error instanceof Error ? `Unable to promote: ${error.message}` : 'Unable to promote import.')
+    } finally {
+      setTrusting(false)
+    }
+  }
+
+  const revoke = async () => {
+    if (!importer.review) return
+    setTrusting(true)
+    try {
+      await importer.revoke(importer.review)
+    } catch (error) {
+      setSource(error instanceof Error ? `Unable to revoke: ${error.message}` : 'Unable to revoke import.')
+    } finally {
+      setTrusting(false)
     }
   }
 
@@ -144,9 +177,22 @@ export function CapabilityImportPanel() {
             <XCircle className="mt-0.5 size-4 shrink-0" /> {importer.error}
           </div>
         )}
-        {importer.status === 'review_ready' && importer.review && (
+        {importer.review && (
           <>
             <ReviewEvidence review={importer.review} />
+            {operatorMode && importer.status === 'review_ready' && (
+              <Button type="button" size="sm" onClick={() => void promote()} disabled={trusting}>
+                {trusting ? 'Promoting…' : 'Promote and sign reviewed import'}
+              </Button>
+            )}
+            {operatorMode && importer.status === 'promoted' && (
+              <Button type="button" size="sm" variant="destructive" onClick={() => void revoke()} disabled={trusting}>
+                {trusting ? 'Revoking…' : 'Revoke promoted import'}
+              </Button>
+            )}
+            {!operatorMode && importer.status === 'review_ready' && (
+              <p className="text-xs text-muted-foreground">Turn on operator controls to promote this import.</p>
+            )}
             <div className="space-y-3 rounded-md border border-border p-3">
               <p className="text-xs font-medium text-foreground">Reviewed files</p>
               <div className="flex flex-wrap gap-2">
@@ -168,7 +214,9 @@ export function CapabilityImportPanel() {
                 <div className="space-y-2">
                   <label className="text-xs text-muted-foreground" htmlFor="capability-import-editor">{selectedPath}</label>
                   <Textarea id="capability-import-editor" value={source} onChange={(event) => setSource(event.target.value)} rows={12} className="font-mono text-xs" />
-                  <Button type="button" size="sm" onClick={() => void saveFile()} disabled={saving}>{saving ? 'Saving review…' : 'Save reviewed edit'}</Button>
+                  {importer.status === 'review_ready' && (
+                    <Button type="button" size="sm" onClick={() => void saveFile()} disabled={saving || !operatorMode}>{saving ? 'Saving review…' : 'Save reviewed edit'}</Button>
+                  )}
                 </div>
               )}
             </div>
