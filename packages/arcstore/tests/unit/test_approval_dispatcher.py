@@ -19,6 +19,7 @@ class FakeOutbox:
         self.claims: list[tuple[str, int]] = []
         self.acks: list[list[str]] = []
         self.nacks: list[tuple[str, float]] = []
+        self.rejects: list[str] = []
 
     async def claim_outbox(self, consumer_id: str, *, limit: int) -> list[dict[str, Any]]:
         self.claims.append((consumer_id, limit))
@@ -33,6 +34,10 @@ class FakeOutbox:
         self, consumer_id: str, event_id: str, *, retry_after_seconds: float
     ) -> bool:
         self.nacks.append((event_id, retry_after_seconds))
+        return True
+
+    async def reject_outbox(self, consumer_id: str, event_id: str) -> bool:
+        self.rejects.append(event_id)
         return True
 
 
@@ -152,7 +157,7 @@ async def test_sink_failure_nacks_with_deterministic_backoff() -> None:
 
 
 @pytest.mark.asyncio
-async def test_duplicate_after_ack_is_sink_idempotent() -> None:
+async def test_duplicate_after_ack_is_at_least_once_for_idempotent_sink() -> None:
     backend = FakeOutbox([_row()])
     delivered: list[str] = []
     worker = ApprovalNotificationDispatcher(
@@ -163,8 +168,20 @@ async def test_duplicate_after_ack_is_sink_idempotent() -> None:
     await worker.dispatch_once()
     backend.rows = [_row()]
     await worker.dispatch_once()
-    assert delivered == ["event-1"]
+    assert delivered == ["event-1", "event-1"]
     assert backend.acks == [["event-1"], ["event-1"]]
+
+
+@pytest.mark.asyncio
+async def test_malformed_row_is_durably_rejected() -> None:
+    backend = FakeOutbox([{"event_id": "", "approval_id": "a", "event": {}}])
+    worker = ApprovalNotificationDispatcher(
+        backend,
+        lambda _event: asyncio.sleep(0),
+        ApprovalDispatcherConfig(worker_id="worker-a"),
+    )
+    await worker.dispatch_once()
+    assert backend.rejects == [""]
 
 
 async def _record(target: list[str], event: ApprovalNotification) -> None:
@@ -182,4 +199,4 @@ async def test_start_stop_is_deterministic_and_cancellation_propagates() -> None
     await worker.start()
     await asyncio.sleep(0)
     await worker.stop()
-    assert worker._task is None  # noqa: SLF001 — lifecycle assertion
+    assert worker._task is None

@@ -524,6 +524,18 @@ class PostgresBackend:
             )
         return str(result).endswith("1")
 
+    async def reject_outbox(self, consumer_id: str, event_id: str) -> bool:
+        """Safely quarantine a malformed leased row from the ready queue."""
+        async with self._require_pool().acquire() as connection:
+            result = await connection.execute(
+                "UPDATE approval_outbox SET status='delivered', delivered_at=now(), "
+                "lease_owner=NULL, lease_until=NULL WHERE event_id=$1 "
+                "AND lease_owner=$2 AND status='leased'",
+                event_id,
+                consumer_id,
+            )
+        return str(result).endswith("1")
+
     async def _update_if(
         self,
         connection: Any,

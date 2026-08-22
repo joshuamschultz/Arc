@@ -402,6 +402,16 @@ class FakeBackend:
             row.pop("lease_owner", None)
             return True
 
+    async def reject_outbox(self, consumer_id: str, event_id: str) -> bool:
+        async with self._lock:
+            row = self._tables.get(APPROVAL_OUTBOX_TABLE, {}).get(event_id)
+            if row is None or row.get("lease_owner") != consumer_id:
+                return False
+            row["status"] = "delivered"
+            row["rejected"] = True
+            row.pop("lease_owner", None)
+            return True
+
     def _update_if_locked(
         self,
         collection: str,

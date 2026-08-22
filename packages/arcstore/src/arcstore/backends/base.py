@@ -232,5 +232,7 @@ class ArcStoreBackend(Protocol):
         retry_after_seconds: float,
     ) -> bool: ...
 
+    async def reject_outbox(self, consumer_id: str, event_id: str) -> bool: ...
+
 
 StorageBackend = ArcStoreBackend

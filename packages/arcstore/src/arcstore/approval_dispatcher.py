@@ -13,9 +13,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
-
 from arctrust.audit import AuditEvent, AuditSink, emit
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 ApprovalStatus = Literal["pending", "approved", "denied", "expired"]
 _logger = logging.getLogger("arcstore.approval_dispatcher")
@@ -36,7 +35,12 @@ class ApprovalNotification(BaseModel):
 
 
 class ApprovalNotificationSink(Protocol):
-    """Typed sink invoked after an outbox item is claimed."""
+    """Typed, idempotent sink keyed by ``notification.event_id``.
+
+    Delivery is intentionally at-least-once: a process crash after the sink
+    accepts an event and before the database acknowledgement can redeliver it.
+    Implementations must durably deduplicate by ``event_id``.
+    """
 
     async def __call__(self, notification: ApprovalNotification) -> None: ...
 
@@ -55,6 +59,8 @@ class ApprovalOutboxBackend(Protocol):
         *,
         retry_after_seconds: float,
     ) -> bool: ...
+
+    async def reject_outbox(self, consumer_id: str, event_id: str) -> bool: ...
 
 
 @dataclass(frozen=True)
@@ -134,7 +140,6 @@ class ApprovalNotificationDispatcher:
         self._sink = sink
         self._config = config
         self._audit_sink = audit_sink
-        self._delivered: set[str] = set()
         self._stop = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
 
@@ -147,16 +152,11 @@ class ApprovalNotificationDispatcher:
         acknowledged: list[str] = []
         for row in rows:
             event_id = row.get("event_id")
-            if not isinstance(event_id, str) or not event_id:
-                _safe_audit(
-                    self._audit_sink,
-                    action="approval.notification.rejected",
-                    target="unknown",
-                    outcome="invalid_event_id",
-                )
+            if not isinstance(event_id, str):
+                await self._reject(row, "", "invalid_event_id")
                 continue
-            if event_id in self._delivered:
-                acknowledged.append(event_id)
+            if not event_id:
+                await self._reject(row, event_id, "invalid_event_id")
                 continue
             try:
                 notification = _notification(row)
@@ -171,7 +171,6 @@ class ApprovalNotificationDispatcher:
                 await self._nack(row, event_id, "sink_failure")
                 _logger.exception("approval notification sink failed for %s", event_id)
                 continue
-            self._delivered.add(event_id)
             acknowledged.append(event_id)
             _safe_audit(
                 self._audit_sink,
@@ -185,8 +184,8 @@ class ApprovalNotificationDispatcher:
             except asyncio.CancelledError:
                 raise
             except Exception:
-                # A lease will recover these rows.  ``_delivered`` prevents a
-                # second sink call when the claim is redelivered.
+                # A lease will recover this batch. The idempotent sink contract
+                # makes a later claim safe after a process crash.
                 _logger.exception("approval notification ack failed")
                 _safe_audit(
                     self._audit_sink,
@@ -195,6 +194,23 @@ class ApprovalNotificationDispatcher:
                     outcome="lease_recovery",
                 )
         return len(rows)
+
+    async def _reject(self, row: Mapping[str, Any], event_id: str, outcome: str) -> None:
+        """Durably remove a malformed claimed row from the ready queue."""
+        del row  # the backend owns the complete durable row and its lease
+        try:
+            rejected = await self._backend.reject_outbox(self._config.worker_id, event_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _logger.exception("approval notification reject failed")
+            rejected = False
+        _safe_audit(
+            self._audit_sink,
+            action="approval.notification.rejected",
+            target=event_id or "unknown",
+            outcome=outcome if rejected else "lease_recovery",
+        )
 
     async def _nack(self, row: Mapping[str, Any], event_id: str, outcome: str) -> None:
         attempts = row.get("attempts", 1)
