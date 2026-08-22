@@ -183,6 +183,70 @@ def test_upload_requires_existing_agent(tmp_path: Path) -> None:
     assert response.status_code == 404
 
 
+def test_reviewed_file_read_and_operator_edit_regenerate_evidence(tmp_path: Path) -> None:
+    client, workspace, audit = _client(tmp_path)
+    uploaded = client.post(
+        "/api/agents/ada/capability-imports",
+        headers={"Authorization": "Bearer viewer"},
+        files={
+            "file": (
+                "portable.zip",
+                _archive(("skills/imported/SKILL.md", _SKILL)),
+                "application/zip",
+            )
+        },
+    )
+    import_id = uploaded.json()["import_id"]
+    read = client.get(
+        f"/api/agents/ada/capability-imports/{import_id}/files/skills/imported/SKILL.md",
+        headers={"Authorization": "Bearer viewer"},
+    )
+    assert read.status_code == 200
+    assert read.json()["content"] == _SKILL.decode()
+
+    denied = client.put(
+        f"/api/agents/ada/capability-imports/{import_id}/files/skills/imported/SKILL.md",
+        headers={"Authorization": "Bearer viewer"},
+        json={"content": _SKILL.decode().replace("Use the skill.", "Changed.")},
+    )
+    assert denied.status_code == 403
+
+    edited = client.put(
+        f"/api/agents/ada/capability-imports/{import_id}/files/skills/imported/SKILL.md",
+        headers={"Authorization": "Bearer operator"},
+        json={
+            "path": "skills/imported/SKILL.md",
+            "content": _SKILL.decode().replace("Use the skill.", "Changed."),
+        },
+    )
+    assert edited.status_code == 200
+    assert edited.json()["status"] == "review_ready"
+    assert edited.json()["review_digest"] != uploaded.json()["review_digest"]
+    assert "capability_import.edit" in {details["operation"] for _, details in audit.events}
+    assert "Changed." in (
+        workspace
+        / "capabilities/imports/.staging"
+        / import_id
+        / "skills/imported/SKILL.md"
+    ).read_text(encoding="utf-8")
+
+
+def test_reviewed_file_route_rejects_staging_metadata_and_traversal(tmp_path: Path) -> None:
+    client, _, _ = _client(tmp_path)
+    uploaded = client.post(
+        "/api/agents/ada/capability-imports",
+        headers={"Authorization": "Bearer viewer"},
+        files={"file": ("portable.zip", _archive(("skills/imported/SKILL.md", _SKILL)), "application/zip")},
+    )
+    import_id = uploaded.json()["import_id"]
+    for path in ("import.json", "../import.json"):
+        response = client.get(
+            f"/api/agents/ada/capability-imports/{import_id}/files/{path}",
+            headers={"Authorization": "Bearer viewer"},
+        )
+        assert response.status_code in {404, 422}
+
+
 @pytest.mark.parametrize("bad_name", ["portable.txt", "portable.tar"])
 def test_upload_rejects_non_zip_names(tmp_path: Path, bad_name: str) -> None:
     client, _, _ = _client(tmp_path)

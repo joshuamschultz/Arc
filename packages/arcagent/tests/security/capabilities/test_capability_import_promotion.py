@@ -307,3 +307,50 @@ def test_revoke_restores_exact_state_when_second_artifact_fails(
             path.relative_to(tmp_path / "agent" / "capabilities").as_posix() for path in promoted
         ],
     }
+
+
+def test_edit_reviewed_tool_rebuilds_manifest_and_keeps_import_in_review(tmp_path: Path) -> None:
+    _, staging, service, manifest = _setup(tmp_path)
+    original = service.read_reviewed_file(staging, "tools/imported_tool.py")
+    updated = service.edit_reviewed_file(
+        staging,
+        "tools/imported_tool.py",
+        original.replace(b"return 'ok'", b"return 'edited'"),
+        target_agent_did=manifest.target_agent_did,
+    )
+
+    assert updated.review_digest != manifest.review_digest
+    assert service.read_reviewed_file(staging, "tools/imported_tool.py").endswith(b"'edited'\n")
+    assert service._ledger.get(manifest.import_id) == {
+        "status": CapabilityImportStatus.REVIEW_READY.value,
+        "review_digest": updated.review_digest,
+        "target_agent_did": manifest.target_agent_did,
+    }
+
+
+def test_edit_rejects_unreviewed_paths_and_invalid_source_without_mutating(tmp_path: Path) -> None:
+    _, staging, service, manifest = _setup(tmp_path)
+    original = service.read_reviewed_file(staging, "tools/imported_tool.py")
+
+    with pytest.raises(ValueError, match="reviewed manifest"):
+        service.edit_reviewed_file(
+            staging,
+            "tools/new.py",
+            b"new",
+            target_agent_did=manifest.target_agent_did,
+        )
+    with pytest.raises(ValueError, match="static validation"):
+        service.edit_reviewed_file(
+            staging,
+            "tools/imported_tool.py",
+            b"import subprocess\n",
+            target_agent_did=manifest.target_agent_did,
+        )
+    assert service.read_reviewed_file(staging, "tools/imported_tool.py") == original
+
+
+def test_read_rejects_manifest_and_traversal_paths(tmp_path: Path) -> None:
+    _, staging, service, _ = _setup(tmp_path)
+    for path in ("import.json", "../tools/imported_tool.py", "tools/../imported_tool.py"):
+        with pytest.raises(ValueError):
+            service.read_reviewed_file(staging, path)

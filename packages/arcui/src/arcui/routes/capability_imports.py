@@ -10,7 +10,9 @@ Returning a fake success here would turn review into an un-audited install.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
+import re
 import tempfile
 from pathlib import Path
 
@@ -24,6 +26,8 @@ from arcui.audit import emit_mutation_audit
 
 _MAX_UPLOAD_BYTES = arcagent.CapabilityImportLimits().max_compressed_bytes
 _CHUNK_SIZE = 64 * 1024
+_IMPORT_ID = re.compile(r"^[0-9a-f]{64}$")
+_MAX_EDIT_BYTES = arcagent.CapabilityImportLimits().max_file_bytes
 
 
 def _error(message: str, status: int) -> JSONResponse:
@@ -40,6 +44,27 @@ def _agent(request: Request, agent_id: str) -> tuple[Path, str] | None:
             if did:
                 return Path(entry.workspace_path), did
     return None
+
+
+def _staging(workspace: Path, import_id: str) -> Path | None:
+    if _IMPORT_ID.fullmatch(import_id) is None:
+        return None
+    root = workspace / "capabilities" / "imports" / ".staging"
+    candidate = root / import_id
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return None
+    return candidate if candidate.is_dir() else None
+
+
+def _json_error(exc: Exception) -> JSONResponse:
+    message = str(exc)
+    if "changed after review" in message or "not review-ready" in message:
+        return _error(message, 409)
+    if "unavailable" in message or "unreadable" in message:
+        return _error("capability import unavailable", 503)
+    return _error(message, 422)
 
 
 async def _write_upload(upload: UploadFile) -> Path:
@@ -149,9 +174,108 @@ async def upload_import(request: Request) -> JSONResponse:
     return JSONResponse(payload, status_code=201)
 
 
+async def read_import_file(request: Request) -> JSONResponse:
+    """Read reviewed source for an editor; never read arbitrary staging files."""
+    agent_id = request.path_params["agent_id"]
+    import_id = request.path_params["import_id"]
+    path = request.path_params["path"]
+    resolved = _agent(request, agent_id)
+    if resolved is None:
+        return _error("agent_not_found", 404)
+    staging = _staging(resolved[0], import_id)
+    if staging is None:
+        return _error("capability_import_not_found", 404)
+    try:
+        content = await asyncio.to_thread(
+            arcagent.CapabilityImportService(resolved[0] / "capabilities").read_reviewed_file,
+            staging,
+            path,
+        )
+        text = content.decode("utf-8")
+    except (UnicodeDecodeError, OSError, ValueError) as exc:
+        return _json_error(exc)
+    return JSONResponse(
+        {
+            "import_id": import_id,
+            "path": path,
+            "sha256": hashlib.sha256(content).hexdigest(),
+            "content": text,
+        }
+    )
+
+
+async def edit_import_file(request: Request) -> JSONResponse:
+    """Replace one reviewed source file, then regenerate review evidence."""
+    agent_id = request.path_params["agent_id"]
+    import_id = request.path_params["import_id"]
+    target = f"capability_import:{agent_id}:{import_id}"
+    if getattr(request.state, "role", None) != "operator":
+        emit_mutation_audit(
+            request,
+            target=target,
+            operation="capability_import.edit",
+            outcome="denied",
+            detail="operator_role_required",
+        )
+        return _error("operator_role_required", 403)
+    resolved = _agent(request, agent_id)
+    if resolved is None:
+        return _error("agent_not_found", 404)
+    staging = _staging(resolved[0], import_id)
+    if staging is None:
+        return _error("capability_import_not_found", 404)
+    try:
+        body = await request.json()
+    except (ValueError, TypeError):
+        return _error("invalid JSON body", 400)
+    if (
+        not isinstance(body, dict)
+        or not isinstance(body.get("path"), str)
+        or not isinstance(body.get("content"), str)
+    ):
+        return _error("body must include path and UTF-8 content", 400)
+    if body["path"] != request.path_params["path"]:
+        return _error("body path must match URL path", 400)
+    content = body["content"].encode("utf-8")
+    if len(content) > _MAX_EDIT_BYTES:
+        return _error("capability file exceeds configured limit", 422)
+    service = arcagent.CapabilityImportService(resolved[0] / "capabilities")
+    try:
+        manifest = await asyncio.to_thread(
+            service.edit_reviewed_file,
+            staging,
+            body["path"],
+            content,
+            target_agent_did=resolved[1],
+        )
+    except (OSError, ValueError) as exc:
+        emit_mutation_audit(
+            request,
+            target=target,
+            operation="capability_import.edit",
+            outcome="error",
+            detail=type(exc).__name__,
+        )
+        return _json_error(exc)
+    emit_mutation_audit(
+        request, target=target, operation="capability_import.edit", outcome="applied"
+    )
+    return JSONResponse(service.review_summary(manifest).model_dump(mode="json"))
+
+
 routes = [
     Route("/api/agents/{agent_id}/capability-imports", list_imports, methods=["GET"]),
     Route("/api/agents/{agent_id}/capability-imports", upload_import, methods=["POST"]),
+    Route(
+        "/api/agents/{agent_id}/capability-imports/{import_id}/files/{path:path}",
+        read_import_file,
+        methods=["GET"],
+    ),
+    Route(
+        "/api/agents/{agent_id}/capability-imports/{import_id}/files/{path:path}",
+        edit_import_file,
+        methods=["PUT"],
+    ),
 ]
 
-__all__ = ["list_imports", "routes", "upload_import"]
+__all__ = ["edit_import_file", "list_imports", "read_import_file", "routes", "upload_import"]

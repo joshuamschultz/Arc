@@ -25,6 +25,7 @@ from pydantic import ValidationError
 from arcagent.capabilities.artifact_signing import write_signature_with_signer
 from arcagent.capabilities.capability_loader import pin_name_for_path
 from arcagent.capabilities.capability_signing import revoke as revoke_capability
+from arcagent.modules.capability_import.errors import CapabilityImportError
 from arcagent.modules.capability_import.ledger import ImportLedger
 from arcagent.modules.capability_import.manifest import (
     build_manifest,
@@ -187,6 +188,101 @@ class CapabilityImportService:
             return CapabilityImportStatus(str(row["status"]))
         self._ledger.set(manifest.import_id, CapabilityImportStatus.MODIFIED)
         return CapabilityImportStatus.MODIFIED
+
+    def read_reviewed_file(self, staging_dir: Path, relative_path: str) -> bytes:
+        """Read one reviewed capability file without exposing arbitrary staging files.
+
+        The manifest is the authority for what a caller may read.  In particular,
+        this method never accepts ``import.json``/BOM paths or a path that was
+        added after review, and it refuses on any byte drift before returning
+        source to a UI or CLI editor.
+        """
+        manifest = self._manifest_from_staging(staging_dir)
+        if not self._review_matches(manifest, staging_dir):
+            raise ValueError("capability import changed after review")
+        if not _is_safe_review_path(relative_path) or not _is_capability(relative_path):
+            raise ValueError("capability file path is unsafe")
+        if relative_path not in {item.path for item in manifest.files}:
+            raise ValueError("capability file is not in the reviewed manifest")
+        source = Path(staging_dir) / relative_path
+        _reject_symlinked_parents(source, Path(staging_dir))
+        if source.is_symlink() or not source.is_file():
+            raise ValueError("capability file is unavailable")
+        content = source.read_bytes()
+        if len(content) > manifest.limits.max_file_bytes:
+            raise ValueError("capability file exceeds configured limit")
+        return content
+
+    def edit_reviewed_file(
+        self,
+        staging_dir: Path,
+        relative_path: str,
+        content: bytes,
+        *,
+        target_agent_did: str,
+        limits: CapabilityImportLimits | None = None,
+    ) -> CapabilityImportManifest:
+        """Atomically edit one staged file and regenerate its review evidence.
+
+        Editing is an explicit review transition: only a ``REVIEW_READY`` import
+        can be edited, the path must already be in the manifest, and static
+        validation must pass before the new manifest replaces the old one.  An
+        edit never signs or promotes code.
+        """
+        manifest = self._manifest_from_staging(staging_dir)
+        if manifest.target_agent_did != target_agent_did:
+            raise ValueError("capability import targets a different agent")
+        row = self._ledger.get(manifest.import_id)
+        if row is None or row.get("status") != CapabilityImportStatus.REVIEW_READY.value:
+            raise ValueError("capability import is not review-ready")
+        if not self._review_matches(manifest, staging_dir):
+            self._ledger.set(manifest.import_id, CapabilityImportStatus.MODIFIED)
+            raise ValueError("capability import changed after review")
+        if not _is_safe_review_path(relative_path) or not _is_capability(relative_path):
+            raise ValueError("capability file path is unsafe")
+        if relative_path not in {item.path for item in manifest.files}:
+            raise ValueError("capability file is not in the reviewed manifest")
+        effective_limits = limits or manifest.limits
+        if len(content) > effective_limits.max_file_bytes:
+            raise ValueError("capability file exceeds configured limit")
+        try:
+            content.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError("capability files must be UTF-8") from exc
+        source = Path(staging_dir) / relative_path
+        _reject_symlinked_parents(source, Path(staging_dir))
+        if source.is_symlink() or not source.is_file():
+            raise ValueError("capability file is unavailable")
+        previous = source.read_bytes()
+        mode = stat.S_IMODE(source.stat().st_mode)
+        temporary = source.with_name(f".{source.name}.edit.tmp")
+        try:
+            temporary.write_bytes(content)
+            temporary.chmod(0o600)
+            os.replace(temporary, source)
+            try:
+                updated = build_manifest(
+                    Path(staging_dir),
+                    import_id=manifest.import_id,
+                    target_agent_did=manifest.target_agent_did,
+                    archive_sha256=manifest.archive_sha256,
+                    limits=effective_limits,
+                )
+            except CapabilityImportError as exc:
+                raise ValueError("edited capability failed static validation") from exc
+            write_evidence(Path(staging_dir), updated)
+        except Exception:
+            temporary.unlink(missing_ok=True)
+            source.write_bytes(previous)
+            source.chmod(mode)
+            raise
+        self._ledger.set(
+            manifest.import_id,
+            CapabilityImportStatus.REVIEW_READY,
+            review_digest=updated.review_digest,
+            target_agent_did=target_agent_did,
+        )
+        return updated
 
     def promote(
         self,
@@ -366,6 +462,13 @@ class CapabilityImportService:
         except (KeyError, TypeError, ValueError, OSError, json.JSONDecodeError) as exc:
             raise ValueError("capability import manifest is invalid") from exc
 
+    @staticmethod
+    def _review_matches(manifest: CapabilityImportManifest, staging_dir: Path) -> bool:
+        return (
+            verify_manifest(manifest, staging_dir)
+            and review_digest(manifest) == manifest.review_digest
+        )
+
     def _target_paths(self, manifest: CapabilityImportManifest, base: Path) -> list[Path]:
         return [
             base / _target_relative(item.path)
@@ -423,6 +526,11 @@ class CapabilityImportService:
 
 def _is_capability(path: str) -> bool:
     return path.startswith("tools/") or path.startswith("skills/")
+
+
+def _is_safe_review_path(path: str) -> bool:
+    parts = path.split("/")
+    return bool(path) and "\\" not in path and all(part not in {"", ".", ".."} for part in parts)
 
 
 def _target_relative(path: str) -> Path:

@@ -14,6 +14,13 @@ export interface CapabilityImportReview {
   activation: 'review_only'
 }
 
+export interface CapabilityImportSource {
+  import_id: string
+  path: string
+  sha256: string
+  content: string
+}
+
 export type CapabilityImportState =
   | { status: 'idle'; review: null; error: null }
   | { status: 'uploading'; review: null; error: null }
@@ -41,6 +48,36 @@ export function useCapabilityImport(agentId: string | null) {
     error: null,
   })
   const abortRef = useRef<AbortController | null>(null)
+
+  const editRequest = useCallback(
+    async (review: CapabilityImportReview, path: string, content?: string) => {
+      if (!agentId) throw new Error('Choose an agent first.')
+      const url = `/api/agents/${encodeURIComponent(agentId)}/capability-imports/${review.import_id}/files/${path.split('/').map(encodeURIComponent).join('/')}`
+      const response = await fetch(url, {
+        method: content === undefined ? 'GET' : 'PUT',
+        headers: { ...authHeaders(), ...(content === undefined ? {} : { 'Content-Type': 'application/json' }) },
+        ...(content === undefined ? {} : { body: JSON.stringify({ path, content }) }),
+      })
+      if (!response.ok) throw new Error(await readError(response))
+      return (await response.json()) as CapabilityImportReview | CapabilityImportSource
+    },
+    [agentId],
+  )
+
+  const readFile = useCallback(
+    async (review: CapabilityImportReview, path: string) =>
+      (await editRequest(review, path)) as CapabilityImportSource,
+    [editRequest],
+  )
+
+  const editFile = useCallback(
+    async (review: CapabilityImportReview, path: string, content: string) => {
+      const updated = (await editRequest(review, path, content)) as CapabilityImportReview
+      setState({ status: 'review_ready', review: updated, error: null })
+      return updated
+    },
+    [editRequest],
+  )
 
   const upload = useCallback(
     async (file: File) => {
@@ -88,5 +125,5 @@ export function useCapabilityImport(agentId: string | null) {
     setState({ status: 'idle', review: null, error: null })
   }, [])
 
-  return { ...state, upload, reset }
+  return { ...state, upload, reset, readFile, editFile }
 }

@@ -6,6 +6,7 @@ import type { Agent } from '@/lib/types'
 import { useCapabilityImport, type CapabilityImportReview } from '@/hooks/use-capability-import'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 
 function ReviewEvidence({ review }: { review: CapabilityImportReview }) {
@@ -50,10 +51,36 @@ export function CapabilityImportPanel() {
   const [dragging, setDragging] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const importer = useCapabilityImport(agentId)
+  const [selectedPath, setSelectedPath] = useState<string | null>(null)
+  const [source, setSource] = useState('')
+  const [saving, setSaving] = useState(false)
 
   const choose = (files: FileList | File[]) => {
     const file = files[0]
     if (file) void importer.upload(file)
+  }
+
+  const openFile = async (path: string) => {
+    if (!importer.review) return
+    setSelectedPath(path)
+    try {
+      const loaded = await importer.readFile(importer.review, path)
+      setSource(loaded.content)
+    } catch (error) {
+      setSource(error instanceof Error ? `Unable to read file: ${error.message}` : 'Unable to read file.')
+    }
+  }
+
+  const saveFile = async () => {
+    if (!importer.review || !selectedPath) return
+    setSaving(true)
+    try {
+      await importer.editFile(importer.review, selectedPath, source)
+    } catch (error) {
+      setSource(error instanceof Error ? `Unable to save file: ${error.message}` : 'Unable to save file.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   const onDrop = (event: DragEvent<HTMLDivElement>) => {
@@ -117,7 +144,36 @@ export function CapabilityImportPanel() {
             <XCircle className="mt-0.5 size-4 shrink-0" /> {importer.error}
           </div>
         )}
-        {importer.status === 'review_ready' && importer.review && <ReviewEvidence review={importer.review} />}
+        {importer.status === 'review_ready' && importer.review && (
+          <>
+            <ReviewEvidence review={importer.review} />
+            <div className="space-y-3 rounded-md border border-border p-3">
+              <p className="text-xs font-medium text-foreground">Reviewed files</p>
+              <div className="flex flex-wrap gap-2">
+                {importer.review.files
+                  .filter((file) => file.path.startsWith('tools/') || file.path.startsWith('skills/'))
+                  .map((file) => (
+                    <Button
+                      key={file.path}
+                      type="button"
+                      size="sm"
+                      variant={selectedPath === file.path ? 'default' : 'outline'}
+                      onClick={() => void openFile(file.path)}
+                    >
+                      {file.path}
+                    </Button>
+                  ))}
+              </div>
+              {selectedPath && (
+                <div className="space-y-2">
+                  <label className="text-xs text-muted-foreground" htmlFor="capability-import-editor">{selectedPath}</label>
+                  <Textarea id="capability-import-editor" value={source} onChange={(event) => setSource(event.target.value)} rows={12} className="font-mono text-xs" />
+                  <Button type="button" size="sm" onClick={() => void saveFile()} disabled={saving}>{saving ? 'Saving review…' : 'Save reviewed edit'}</Button>
+                </div>
+              )}
+            </div>
+          </>
+        )}
         {agents.length === 0 && !roster.isPending && (
           <div className="flex items-start gap-2 text-xs text-muted-foreground"><ShieldAlert className="size-4 shrink-0" /> Register an agent before importing capabilities.</div>
         )}
