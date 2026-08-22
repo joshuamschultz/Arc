@@ -73,9 +73,17 @@ export function ConnectorSecretsSheet({
     return known && !known.sensitive ? known.value : ''
   }
   const valueFor = (field: string) => values[field] ?? stored(field)
-  const submitted = () => Object.fromEntries(bundle.secrets.map((s) => [s.name, valueFor(s.name)]))
+  // An OAuth connector's refresh token is obtained by the Connect (code-exchange)
+  // flow, never typed here — the server's credential list already omits it, so a
+  // rotating OAuth form asks only for the app key/secret. Fall back to every
+  // declared secret when the server has not answered (a fresh, non-rotating form).
+  const authNames = configured.data?.oauth
+    ? new Set((configured.data.credentials ?? []).map((c) => c.name))
+    : null
+  const fields = authNames ? bundle.secrets.filter((s) => authNames.has(s.name)) : bundle.secrets
+  const submitted = () => Object.fromEntries(fields.map((s) => [s.name, valueFor(s.name)]))
 
-  const complete = bundle.secrets.every((s) => valueFor(s.name).length > 0)
+  const complete = fields.every((s) => valueFor(s.name).length > 0)
   const canSubmit = complete && (rotating || name.trim().length > 0) && !busy
 
   const clear = () => {
@@ -226,7 +234,7 @@ export function ConnectorSecretsSheet({
               </p>
             </div>
           )}
-          {bundle.secrets.map((s) => (
+          {fields.map((s) => (
             <div key={s.name} className="space-y-1.5">
               <label
                 htmlFor={`connector-secret-${s.name}`}

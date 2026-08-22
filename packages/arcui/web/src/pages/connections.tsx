@@ -25,6 +25,7 @@ import {
   useConnections,
   useConnectorCatalog,
   useConnectorDoctor,
+  useConnectorAuthorization,
   useProbeConnector,
   useRemoveConnector,
   useRoster,
@@ -161,6 +162,13 @@ function ConnectionCard({
   // No declared secrets means the host binary holds the credential: there is
   // nothing to type, so this card signs in rather than opening a blank form.
   const holdsOwnLogin = bundle !== undefined && bundle.secrets.length === 0
+  // A native OAuth connector (e.g. Dropbox) HAS secrets — the app key/secret,
+  // supplied via Re-auth — but is finished by an authorization CODE, not a typed
+  // token. It therefore needs BOTH: Re-auth to set the app key/secret, and the
+  // Sign-in panel to run the code exchange. Without surfacing the code flow, the
+  // operator kept pasting a "refresh token" they could never obtain.
+  const authz = useConnectorAuthorization(inst.instance, true)
+  const isOauth = authz.data?.oauth === true
 
   return (
     <div className="rounded-lg border border-border bg-card">
@@ -224,16 +232,21 @@ function ConnectionCard({
             >
               <ShieldCheck /> Approve
             </Button>
-            {holdsOwnLogin ? (
+            {(holdsOwnLogin || isOauth) && (
               <Button
                 variant="outline"
                 size="xs"
                 onClick={() => setShowAuth(!showAuth)}
-                title={`Check or renew the ${inst.extension_display_name} sign-in on this computer`}
+                title={
+                  isOauth
+                    ? `Connect ${inst.extension_display_name} — open the URL and paste the code`
+                    : `Check or renew the ${inst.extension_display_name} sign-in on this computer`
+                }
               >
-                <LogIn /> {showAuth ? 'Hide sign-in' : 'Sign in'}
+                <LogIn /> {showAuth ? 'Hide sign-in' : isOauth ? 'Connect' : 'Sign in'}
               </Button>
-            ) : (
+            )}
+            {!holdsOwnLogin && (
               <Button
                 variant="outline"
                 size="xs"
@@ -241,11 +254,13 @@ function ConnectionCard({
                 onClick={() => bundle && onReauth(bundle, inst.instance)}
                 title={
                   bundle
-                    ? 'Replace this connection’s credentials'
+                    ? isOauth
+                      ? 'Set or replace the app key and secret'
+                      : 'Replace this connection’s credentials'
                     : `${inst.extension_display_name} is no longer on the extension search path`
                 }
               >
-                Re-auth
+                {isOauth ? 'App key/secret' : 'Re-auth'}
               </Button>
             )}
             {confirmRemove ? (
