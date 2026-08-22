@@ -119,6 +119,10 @@ class Route:
             )
         if not self.provider:
             raise ArcLLMConfigError(f"Route {self.name!r} is missing 'provider'")
+        if self.classification_max.lower() not in _CLASSIFICATION_RANK:
+            raise ArcLLMConfigError(
+                f"Unknown route classification_max {self.classification_max!r}"
+            )
         if self.cost_per_1k < 0 or self.latency_ms < 0:
             raise ArcLLMConfigError("route cost_per_1k and latency_ms must be non-negative")
 
@@ -323,13 +327,13 @@ class RoutingModule(LLMProvider):
         self._routes: dict[str, Route] = {r.name: r for r in routes}
         self._build_adapter = build_adapter
         self._policy = policy
-        self._classification = str(config.get("classification", "unclassified")).lower()
-        self._residency = config.get("residency")
-        self._allowed_routes = (
+        self._default_classification = str(config.get("classification", "unclassified")).lower()
+        self._default_residency = config.get("residency")
+        self._default_allowed_routes = (
             frozenset(config["allowed_routes"]) if config.get("allowed_routes") else None
         )
-        self._required_capabilities = frozenset(config.get("required_capabilities", ()))
-        self._remaining_budget = config.get("remaining_budget_usd")
+        self._default_required_capabilities = frozenset(config.get("required_capabilities", ()))
+        self._default_remaining_budget = config.get("remaining_budget_usd")
         self._enforcement = resolve_enforcement(config)
 
         self._default = config.get("default_route") or names[0]
@@ -583,41 +587,41 @@ class RoutingModule(LLMProvider):
 
         return Decision(route=self._default, reason="default")
 
-    def _eligible(self, tools: list[Tool] | None) -> set[str]:
+    def _eligible(self, request: RoutingRequest, tools: list[Tool] | None) -> set[str]:
         """Apply fail-closed authorization, classification, residency and capability gates."""
-        level = _CLASSIFICATION_RANK.get(self._classification)
+        level = _CLASSIFICATION_RANK.get(request.classification)
         if level is None:
-            raise ArcLLMConfigError(f"Unknown classification {self._classification!r}")
+            raise ArcLLMConfigError(f"Unknown classification {request.classification!r}")
         eligible: set[str] = set()
         for name, route in self._routes.items():
-            if self._allowed_routes is not None and name not in self._allowed_routes:
+            if request.allowed_routes is not None and name not in request.allowed_routes:
                 continue
             if _CLASSIFICATION_RANK.get(route.classification_max, -1) < level:
                 continue
-            if route.residency is not None and self._residency not in (None, route.residency):
+            if route.residency is not None and request.residency not in (None, route.residency):
                 continue
-            required = set(self._required_capabilities)
+            required = set(request.required_capabilities)
             if tools:
                 required.add("tools")
             if not required.issubset(route.capabilities):
                 continue
-            if self._remaining_budget is not None and route.cost_per_1k > self._remaining_budget:
+            if request.remaining_budget_usd is not None and route.cost_per_1k > request.remaining_budget_usd:
                 continue
             eligible.add(name)
         if not eligible:
             raise ArcLLMConfigError("No route satisfies classification, residency, capability, or budget policy")
         return eligible
 
-    async def _policy_decision(self, eligible: set[str], session_id: str) -> Decision | None:
+    async def _policy_decision(self, request: RoutingRequest, eligible: set[str]) -> Decision | None:
         if self._policy is None:
             return None
         request = RoutingRequest(
-            classification=self._classification,
-            residency=self._residency,
+            classification=request.classification,
+            residency=request.residency,
             allowed_routes=frozenset(eligible),
-            required_capabilities=self._required_capabilities,
-            remaining_budget_usd=self._remaining_budget,
-            session_id=session_id,
+            required_capabilities=request.required_capabilities,
+            remaining_budget_usd=request.remaining_budget_usd,
+            session_id=request.session_id,
         )
         result = await self._policy.decide(
             request, tuple(route for name, route in self._routes.items() if name in eligible)
@@ -666,13 +670,15 @@ class RoutingModule(LLMProvider):
         """Select a route and dispatch, then record the tool calls it made."""
         pin = kwargs.pop("route", None)
         session_id = str(kwargs.pop("session_id", "default"))
-        self._classification = str(kwargs.pop("classification", self._classification)).lower()
-        self._residency = kwargs.pop("residency", self._residency)
-        self._allowed_routes = (
-            frozenset(kwargs.pop("allowed_routes")) if "allowed_routes" in kwargs else self._allowed_routes
+        request = RoutingRequest(
+            classification=str(kwargs.pop("classification", self._default_classification)).lower(),
+            residency=kwargs.pop("residency", self._default_residency),
+            allowed_routes=(frozenset(kwargs.pop("allowed_routes")) if "allowed_routes" in kwargs else self._default_allowed_routes),
+            required_capabilities=frozenset(kwargs.pop("required_capabilities", self._default_required_capabilities)),
+            remaining_budget_usd=kwargs.pop("remaining_budget_usd", self._default_remaining_budget),
+            session_id=session_id,
         )
-        self._required_capabilities = frozenset(kwargs.pop("required_capabilities", self._required_capabilities))
-        eligible = self._eligible(tools)
+        eligible = self._eligible(request, tools)
         locked = self._locked_route(messages, session_id)
         if locked is not None:
             pin = None
@@ -689,7 +695,7 @@ class RoutingModule(LLMProvider):
             decision = (
                 Decision(route=forced, reason="tool_continuity")
                 if forced
-                else await self._policy_decision(eligible, session_id)
+                else await self._policy_decision(request, eligible)
             )
             if decision is None:
                 decision = await self._select(messages, pin)
@@ -722,8 +728,15 @@ class RoutingModule(LLMProvider):
         """
         pin = kwargs.pop("route", None)
         session_id = str(kwargs.pop("session_id", "default"))
-        self._classification = str(kwargs.pop("classification", self._classification)).lower()
-        eligible = self._eligible(tools)
+        request = RoutingRequest(
+            classification=str(kwargs.pop("classification", self._default_classification)).lower(),
+            residency=kwargs.pop("residency", self._default_residency),
+            allowed_routes=(frozenset(kwargs.pop("allowed_routes")) if "allowed_routes" in kwargs else self._default_allowed_routes),
+            required_capabilities=frozenset(kwargs.pop("required_capabilities", self._default_required_capabilities)),
+            remaining_budget_usd=kwargs.pop("remaining_budget_usd", self._default_remaining_budget),
+            session_id=session_id,
+        )
+        eligible = self._eligible(request, tools)
         locked = self._locked_route(messages, session_id)
         if locked is not None:
             pin = None
@@ -739,7 +752,7 @@ class RoutingModule(LLMProvider):
             decision = (
                 Decision(route=locked, reason="tool_continuity")
                 if locked
-                else await self._policy_decision(eligible, session_id)
+                else await self._policy_decision(request, eligible)
             )
             if decision is None:
                 decision = await self._select(messages, pin)
