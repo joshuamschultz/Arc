@@ -110,6 +110,8 @@ async def test_start_runner_host_starts_a_real_runner(
     nothing errors, and no runner ever advances a frontier. The fail-open
     contract is still covered, by the test below that makes construction raise.
     """
+    import arcstore.backends
+    from arcstore.backends import FakeBackend
     from arctrust import OperatorKey
     from arctrust.paths import default_operator_key_path
 
@@ -117,6 +119,11 @@ async def test_start_runner_host_starts_a_real_runner(
     store_dir = tmp_path / "store"
     monkeypatch.setenv("ARC_CONFIG_DIR", str(arc_dir))
     monkeypatch.setenv("ARCSTORE_DATA_DIR", str(store_dir))
+    # ``_default_runner_factory`` imports the production opener locally, so
+    # patch the module attribute that local import resolves.  Keep the
+    # default runner factory itself intact: this test must still prove the
+    # gateway builds arcteam's real engine after the PostgreSQL cutover.
+    monkeypatch.setattr(arcstore.backends, "open_backend", lambda: FakeBackend())
     OperatorKey.load(
         default_operator_key_path(arc_dir),
         generate_if_absent=True,
