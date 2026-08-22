@@ -7,7 +7,6 @@ build provides TypeScript/compiler coverage for the executable UI.
 
 from pathlib import Path
 
-
 _WEB = Path(__file__).resolve().parents[1] / "web" / "src"
 
 

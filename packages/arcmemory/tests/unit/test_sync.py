@@ -12,15 +12,15 @@ whole engine is unimplemented, not merely mis-named.
 
 from __future__ import annotations
 
+from arctrust.audit import AuditEvent
+
+from arcmemory.config import MemoryConfig
 from arcmemory.sync import (
     BackfillObject,
     SourceChange,
     SyncEngine,
     SyncMode,
 )
-from arctrust.audit import AuditEvent
-
-from arcmemory.config import MemoryConfig
 from arcmemory.types import SourceRecord
 
 _DID = "did:arc:sync-test"

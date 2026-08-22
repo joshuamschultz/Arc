@@ -122,10 +122,9 @@ async def test_datastore_query_emits_allow_audit_carrying_caller_did(workspace: 
 
 
 async def test_ingest_with_memory_mapping_is_recallable_via_retrieve(workspace: Path) -> None:
-    from arcmemory.mapping import commit_mapping
-
     from arcmemory.db import MemoryDB
     from arcmemory.index.graph import WeightedGraph
+    from arcmemory.mapping import commit_mapping
     from arcmemory.stores.semantic import SemanticStore
     from arcmemory.types import SourceMapping
 
@@ -148,10 +147,9 @@ async def test_ingest_with_memory_mapping_is_recallable_via_retrieve(workspace: 
 async def test_ingest_with_document_mapping_indexes_to_doc_pool_not_episodic(
     workspace: Path,
 ) -> None:
-    from arcmemory.mapping import commit_mapping
-
     from arcmemory.db import MemoryDB
     from arcmemory.index.graph import WeightedGraph
+    from arcmemory.mapping import commit_mapping
     from arcmemory.stores.semantic import SemanticStore
     from arcmemory.types import SourceMapping
 

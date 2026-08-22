@@ -14,6 +14,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from arcstore.approvals import ApprovalStore
+from arcstore.backends import open_backend
+
+from arcmemory.db import MemoryDB
+from arcmemory.index.graph import WeightedGraph
 from arcmemory.mapping import (
     approved_mapping,
     commit_mapping,
@@ -21,11 +26,6 @@ from arcmemory.mapping import (
     mapping_call_hash,
     stage_mapping_proposal,
 )
-from arcstore.approvals import ApprovalStore
-from arcstore.backends import open_backend
-
-from arcmemory.db import MemoryDB
-from arcmemory.index.graph import WeightedGraph
 from arcmemory.stores.semantic import SemanticStore
 from arcmemory.types import SourceMapping
 
