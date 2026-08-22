@@ -108,6 +108,8 @@ constraint-dependencies = [
     "urllib3>=2.7.0",         # PYSEC-2026-141/142 (via botocore, requests)
     "idna>=3.15",             # PYSEC-2026-215 (via anyio/httpx)
     "pygments>=2.20.0",       # CVE-2026-4539 (via rich)
+    "msgpack>=1.2.1",         # PYSEC-2026-3625 (via pip-audit/cachecontrol)
+    "pip>=26.2",              # PYSEC-2026-196/2875/2876/3721 (via pip-audit)
 ]
 
 [tool.uv.workspace]
