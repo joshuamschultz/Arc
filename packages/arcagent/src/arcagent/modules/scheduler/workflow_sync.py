@@ -311,9 +311,7 @@ async def sync_workflow_schedule(workflow_id: str) -> None:
             return  # only the owner schedules its workflow
         push_one(state.store, state.config, workflow_id, bundle.effective_trigger, anchor=_now())
     except Exception:  # reason: a sync failure must never break the builder tool
-        _logger.warning(
-            "could not sync a schedule for workflow '%s'", workflow_id, exc_info=True
-        )
+        _logger.warning("could not sync a schedule for workflow '%s'", workflow_id, exc_info=True)
 
 
 __all__ = [

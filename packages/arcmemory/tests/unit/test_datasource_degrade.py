@@ -85,9 +85,7 @@ async def test_datastore_query_for_unregistered_source_returns_none(workspace: P
 async def test_document_search_for_unknown_source_returns_empty_list(workspace: Path) -> None:
     brain = ArcMemoryBrain(workspace, _DID)
 
-    hits = await brain.document_search(
-        "anything", source_id="never-indexed", caller_did=_DID
-    )
+    hits = await brain.document_search("anything", source_id="never-indexed", caller_did=_DID)
 
     assert hits == []
 
@@ -219,9 +217,7 @@ def test_source_sync_disabled_leaves_sync_engine_math_unaffected() -> None:
 async def test_ingest_over_cap_raises_and_writes_nothing(workspace: Path) -> None:
     config = MemoryConfig(ingest_max_batch=2)
     brain = ArcMemoryBrain(workspace, _DID, config=config)
-    records = [
-        SourceRecord(external_id=f"e{i}", text=f"event {i}") for i in range(3)
-    ]
+    records = [SourceRecord(external_id=f"e{i}", text=f"event {i}") for i in range(3)]
 
     with pytest.raises(ValueError):
         await brain.ingest_batch("src", records, caller_did=_DID)

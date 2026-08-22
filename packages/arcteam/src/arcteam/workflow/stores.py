@@ -237,9 +237,7 @@ class WorkflowRunStore:
                 return
             if any(_same_path_entry(existing, path_entry) for existing in current.path_taken):
                 return
-            appended = await self._runs.append_path_entry(
-                run_id, path_entry, actor_did=actor_did
-            )
+            appended = await self._runs.append_path_entry(run_id, path_entry, actor_did=actor_did)
             if appended is not None:
                 return
             await asyncio.sleep(0)

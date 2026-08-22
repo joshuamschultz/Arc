@@ -101,9 +101,7 @@ async def test_axis_a_slack_memory_mapping_is_recallable(workspace: Path, embedd
 # -- Axis B: Dropbox -> document ------------------------------------------------
 
 
-async def test_axis_b_dropbox_document_mapping_is_doc_pool_only(
-    workspace: Path, embedder
-) -> None:
+async def test_axis_b_dropbox_document_mapping_is_doc_pool_only(workspace: Path, embedder) -> None:
     commit_mapping(SourceMapping(source_id="dropbox", homes=["document"]), store=_store(workspace))
     sink = RecordingSink()
     brain = ArcMemoryBrain(workspace, _DID, embedder=embedder, audit_sink=sink)
@@ -134,7 +132,9 @@ async def test_axis_b_document_search_falsifiable_by_off_switch(workspace: Path,
         caller_did=_DID,
     )
 
-    hits = await off_brain.document_search("compliance report", source_id="dropbox", caller_did=_DID)
+    hits = await off_brain.document_search(
+        "compliance report", source_id="dropbox", caller_did=_DID
+    )
 
     assert hits == []
 
@@ -144,9 +144,7 @@ async def test_axis_b_document_search_falsifiable_by_off_switch(workspace: Path,
 
 def _erp_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
-    conn.execute(
-        "CREATE TABLE invoices (id TEXT PRIMARY KEY, amount REAL, customer_id TEXT)"
-    )
+    conn.execute("CREATE TABLE invoices (id TEXT PRIMARY KEY, amount REAL, customer_id TEXT)")
     conn.execute("INSERT INTO invoices VALUES ('001', 425.50, 'cust-1')")
     conn.commit()
     return conn
@@ -191,11 +189,13 @@ async def test_all_three_axes_emit_allow_audit_events(workspace: Path, embedder)
     brain = ArcMemoryBrain(workspace, _DID, embedder=embedder, audit_sink=sink)
 
     await brain.ingest_batch(
-        "slack", [SourceRecord(external_id="m1", text="the launch shipped tuesday")],
+        "slack",
+        [SourceRecord(external_id="m1", text="the launch shipped tuesday")],
         caller_did=_DID,
     )
     await brain.ingest_batch(
-        "dropbox", [SourceRecord(external_id="d1", text="the Q3 compliance report body")],
+        "dropbox",
+        [SourceRecord(external_id="d1", text="the Q3 compliance report body")],
         caller_did=_DID,
     )
     await brain.document_search("compliance report", source_id="dropbox", caller_did=_DID)

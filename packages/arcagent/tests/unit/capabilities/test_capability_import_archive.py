@@ -44,7 +44,9 @@ def test_intake_extracts_only_supported_layout_to_content_addressed_roots(tmp_pa
         "skills/imported/references/guide.md",
         "tools/hello.py",
     ]
-    assert (result.staging_dir / "tools" / "hello.py").read_bytes() == b"from arcagent import tool\n"
+    assert (
+        result.staging_dir / "tools" / "hello.py"
+    ).read_bytes() == b"from arcagent import tool\n"
     assert stat.S_IMODE(result.staging_dir.stat().st_mode) == 0o700
     assert stat.S_IMODE((result.staging_dir / "tools" / "hello.py").stat().st_mode) == 0o600
     assert stat.S_IMODE(result.quarantine_path.stat().st_mode) == 0o600
@@ -88,7 +90,9 @@ def test_intake_accepts_local_tree_without_following_links(tmp_path: Path) -> No
         CapabilityImportLimits(max_compression_ratio=1),
     ],
 )
-def test_limits_are_enforced_before_staging(tmp_path: Path, limits: CapabilityImportLimits) -> None:
+def test_limits_are_enforced_before_staging(
+    tmp_path: Path, limits: CapabilityImportLimits
+) -> None:
     archive = _zip(
         tmp_path / "capabilities.zip",
         {"tools/hello.py": b"abcdef", "skills/imported/SKILL.md": _skill()},

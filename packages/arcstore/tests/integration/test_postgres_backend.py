@@ -131,7 +131,9 @@ async def test_postgres_approval_resolution_winner_enqueues_one_terminal_event(
 
     winner = next(item for item in (approved, denied) if item is not None)
     events = await postgres_backend.claim_outbox(f"approval-terminal-{uuid4().hex}")
-    terminal = [item for item in events if item["event_id"].startswith(f"approval-resolved:{approval_id}:")]
+    terminal = [
+        item for item in events if item["event_id"].startswith(f"approval-resolved:{approval_id}:")
+    ]
     assert len(terminal) == 1
     assert terminal[0]["event"]["status"] == winner.status
 

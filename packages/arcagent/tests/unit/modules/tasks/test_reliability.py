@@ -239,7 +239,9 @@ class _CappedRun:
         self.calls = 0
         self.reason = reason
 
-    async def __call__(self, text: str, *, session_key: str, run_id: str | None = None, **_: Any) -> Any:
+    async def __call__(
+        self, text: str, *, session_key: str, run_id: str | None = None, **_: Any
+    ) -> Any:
         self.calls += 1
         return SimpleNamespace(
             content=f"{self.reason} limit reached before task completed.",
@@ -308,9 +310,7 @@ class TestBudgetCapSettlement:
         st, identity = state
 
         async def run(text: str, *, session_key: str, run_id: str | None = None, **_: Any) -> Any:
-            await st.store.finish(
-                "t1", status="done", resolution="did it", actor_did=identity.did
-            )
+            await st.store.finish("t1", status="done", resolution="did it", actor_did=identity.did)
             return SimpleNamespace(
                 completion_payload={"status": "failed", "error": "max_cost", "summary": "x"},
                 completion_tool=None,

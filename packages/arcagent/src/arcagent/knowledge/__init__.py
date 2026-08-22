@@ -72,9 +72,7 @@ class PersonalKnowledgePort(KnowledgePort, Protocol):
 
 
 class SharedKnowledgePort(KnowledgePort, Protocol):
-    async def promote(
-        self, source: PromotionSource, access: KnowledgeAccess
-    ) -> KnowledgeRef: ...
+    async def promote(self, source: PromotionSource, access: KnowledgeAccess) -> KnowledgeRef: ...
 
     async def revoke(self, reference: str, access: KnowledgeAccess) -> None: ...
 

@@ -183,9 +183,7 @@ async def test_a_builtin_wins_a_name_clash_with_a_workflow() -> None:
     async def _reply(text: str) -> None:
         sent.append(text)
 
-    handled = await reg.dispatch(
-        _event("/echo hi"), "a", "u", cast(Any, object()), _reply
-    )
+    handled = await reg.dispatch(_event("/echo hi"), "a", "u", cast(Any, object()), _reply)
     assert handled is True
     assert sent == ["echo:hi"]  # the command ran
     assert provider.ran == []  # the workflow did NOT

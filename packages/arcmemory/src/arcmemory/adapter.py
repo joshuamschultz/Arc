@@ -41,16 +41,10 @@ class DictAdapter:
             external_id=str(raw.get("external_id", "")),
             text=str(text) if text is not None else "",
             kind=kind if isinstance(kind, str) else "observation",
-            classification=(
-                classification if isinstance(classification, str) else "unclassified"
-            ),
-            source_updated_at=(
-                source_updated_at if isinstance(source_updated_at, str) else ""
-            ),
+            classification=(classification if isinstance(classification, str) else "unclassified"),
+            source_updated_at=(source_updated_at if isinstance(source_updated_at, str) else ""),
             salience=float(salience) if isinstance(salience, (int, float)) else 0.0,
             metadata=(
-                {str(k): str(v) for k, v in metadata.items()}
-                if isinstance(metadata, dict)
-                else {}
+                {str(k): str(v) for k, v in metadata.items()} if isinstance(metadata, dict) else {}
             ),
         )

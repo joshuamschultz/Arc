@@ -121,7 +121,7 @@ async def test_composed_attachment_store_rejects_infected_file(
     (agent_dir / "arcagent.toml").write_text(
         '[identity]\ndid = "did:arc:agent:default"\n', encoding="utf-8"
     )
-    cfg = _config('[platforms.web]\nenabled = true\n')
+    cfg = _config("[platforms.web]\nenabled = true\n")
     bundle = await build_for_embedded(
         empty_team_root,
         cfg,

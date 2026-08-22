@@ -60,6 +60,7 @@ def _trace_send_failure(st: Any, tool_name: str, target: str, exc: object) -> No
         extra={"delivery": "failed"},
     )
 
+
 _logger = logging.getLogger("arcagent.modules.messaging.capabilities")
 
 # Required positive interval for the @background_task registration. The loop is
@@ -345,8 +346,7 @@ async def inject_messaging_sections(ctx: Any) -> None:
             "answering, so your reply lands in the same thread.",
             "- Channel messages are FYI — only jump in when it fits your role.",
             "- Reply to `action_required: true` messages promptly.",
-            "- Blocked? Say so in the channel and tag who can help. "
-            "Never work in silence.",
+            "- Blocked? Say so in the channel and tag who can help. Never work in silence.",
             "- `notify_user` is for the human only. Use `messaging_send` for "
             "teammates and channels.",
         ]

@@ -33,8 +33,21 @@ async def test_personal_adapter_uses_owned_workspace_okf_and_explicit_export(tmp
 async def test_personal_adapter_rejects_cross_agent_access_and_invalid_okf(tmp_path) -> None:
     adapter = PersonalKnowledgeAdapter(tmp_path, "did:arc:one")
     with pytest.raises(PermissionError):
-        await adapter.save(Draft(), type("Other", (), {"caller_did": "did:arc:two", "clearance": "UNCLASSIFIED"})())
-    invalid = type("Bad", (), {"title": "", "content": "body", "classification": "UNCLASSIFIED", "tags": (), "document_type": "note"})()
+        await adapter.save(
+            Draft(),
+            type("Other", (), {"caller_did": "did:arc:two", "clearance": "UNCLASSIFIED"})(),
+        )
+    invalid = type(
+        "Bad",
+        (),
+        {
+            "title": "",
+            "content": "body",
+            "classification": "UNCLASSIFIED",
+            "tags": (),
+            "document_type": "note",
+        },
+    )()
     with pytest.raises(ValueError, match="title"):
         await adapter.save(invalid, Access())
 

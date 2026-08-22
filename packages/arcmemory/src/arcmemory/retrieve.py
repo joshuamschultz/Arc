@@ -141,8 +141,12 @@ class Retriever:
         optional ``window`` filters candidates to a time slice (COMP-008).
         """
         bundle = await self.retrieve(
-            situation, clearance=clearance, top_k=top_k, budget=budget,
-            reranker=reranker, window=window,
+            situation,
+            clearance=clearance,
+            top_k=top_k,
+            budget=budget,
+            reranker=reranker,
+            window=window,
         )
         return [_to_card(recall) for recall in bundle.recalls]
 

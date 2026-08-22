@@ -318,9 +318,7 @@ async def _review_decision(request: Request, *, approve: bool) -> Response:
     return JSONResponse(updated.model_dump(mode="json"))
 
 
-async def _resolve_gate(
-    request: Request, task_id: str, *, approve: bool, target: str
-) -> Response:
+async def _resolve_gate(request: Request, task_id: str, *, approve: bool, target: str) -> Response:
     """Relay a gate task's approve/reject to the runner's gate control plane.
 
     Approve continues the run; reject fails it and records the rejection the
@@ -334,9 +332,7 @@ async def _resolve_gate(
     if plane is None:
         return _error("gate_control_plane_unavailable", 503)
     decision = "approve" if approve else "fail_run"
-    result = await plane.resolve_gate(
-        task_id, decision=decision, notes="", actor=_actor(request)
-    )
+    result = await plane.resolve_gate(task_id, decision=decision, notes="", actor=_actor(request))
     return _relay(request, result, target=target, operation="gate.resolve", ok_status=200)
 
 

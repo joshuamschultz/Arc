@@ -157,9 +157,9 @@ async def _index_documents(
     ]
     if not chunks:
         return
-    await DocIndex(
-        db, workspace, config, embedder=embedder, audit_sink=audit_sink
-    ).index_source(source_id, agent_did, chunks)
+    await DocIndex(db, workspace, config, embedder=embedder, audit_sink=audit_sink).index_source(
+        source_id, agent_did, chunks
+    )
 
 
 def register_source(

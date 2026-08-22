@@ -173,9 +173,7 @@ async def test_holdings_publishes_unclassified_entity_pointers(workspace: Path) 
 
     brain = ArcMemoryBrain(workspace, _DID)
     store = SemanticStore(workspace, WeightedGraph(brain._db), scope=_DID)
-    store.write_fact(
-        "nnl", "requirements", "Rust toolchain and a signed SBOM", name="NNL"
-    )
+    store.write_fact("nnl", "requirements", "Rust toolchain and a signed SBOM", name="NNL")
     store.write_fact(
         "black-op", "detail", "need to know", name="Black Op", classification="secret"
     )

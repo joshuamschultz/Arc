@@ -248,11 +248,7 @@ class WindowDedup:
         """
         turn = self._turn.get(session_id, 0) + 1
         seen = self._seen.setdefault(session_id, {})
-        novel = [
-            cid
-            for cid in card_ids
-            if cid not in seen or turn - seen[cid] >= self._window
-        ]
+        novel = [cid for cid in card_ids if cid not in seen or turn - seen[cid] >= self._window]
         for cid in novel:
             seen[cid] = turn
         self._prune(seen, turn)

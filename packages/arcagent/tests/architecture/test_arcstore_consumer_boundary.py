@@ -36,7 +36,9 @@ def test_arcagent_core_keeps_arcstore_optional() -> None:
     """Core can import without the optional ArcStore package installed."""
     repository = Path(__file__).parents[4]
     violations: list[str] = []
-    for path in sorted((repository / "packages" / "arcagent" / "src" / "arcagent" / "core").rglob("*.py")):
+    for path in sorted(
+        (repository / "packages" / "arcagent" / "src" / "arcagent" / "core").rglob("*.py")
+    ):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in tree.body:
             if isinstance(node, ast.Import) and any(

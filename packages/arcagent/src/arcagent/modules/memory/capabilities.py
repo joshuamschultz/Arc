@@ -641,9 +641,7 @@ def _render_doc_hits(query: str, hits: list[Any]) -> str:
 
 @tool(
     name="datastore_query",
-    description=(
-        "Exact lookup in a connected structured datastore (get_record/find/list)."
-    ),
+    description=("Exact lookup in a connected structured datastore (get_record/find/list)."),
     classification="read_only",
     when_to_use=(
         "Exact lookup in a connected structured datastore — get_record/find/list; "

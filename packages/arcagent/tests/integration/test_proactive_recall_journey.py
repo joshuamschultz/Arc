@@ -211,9 +211,9 @@ class Recorders:
 
 
 @asynccontextmanager
-async def _booted(deployment: Deployment, config: ArcAgentConfig) -> AsyncIterator[
-    tuple[ArcAgent, Recorders]
-]:
+async def _booted(
+    deployment: Deployment, config: ArcAgentConfig
+) -> AsyncIterator[tuple[ArcAgent, Recorders]]:
     """Start a real agent over ``deployment``; record the model wire + memory audit.
 
     The ``run_stream`` recorder replaces the LLM with a single-token turn AND keeps
@@ -290,7 +290,9 @@ def _memory_brain(agent: ArcAgent) -> Any:
     return state.brain
 
 
-def _seed_entity(agent: ArcAgent, brain: Any, name: str, *, classification: str = "unclassified") -> None:
+def _seed_entity(
+    agent: ArcAgent, brain: Any, name: str, *, classification: str = "unclassified"
+) -> None:
     """Write an entity card so the ``entity_seen`` detector can fire on its name.
 
     ``entity_seen`` only fires when a turn cue overlaps a KNOWN entity term, and an
@@ -408,8 +410,7 @@ async def test_a_detected_entity_injects_its_bounded_card_into_the_recall_sectio
     )
     blocks = recall.count("<memory-result")
     assert 0 < blocks <= bound, (
-        f"proactive recall was not bounded to proactive_max_cards={bound}: "
-        f"{blocks} cards rendered"
+        f"proactive recall was not bounded to proactive_max_cards={bound}: {blocks} cards rendered"
     )
 
 
@@ -442,9 +443,7 @@ async def test_a_secret_card_is_excluded_from_the_proactive_recall_section(
             classification="SECRET",
         )
 
-        recall = await _proactive_recall_section(
-            agent, text="what is the falcon mission status"
-        )
+        recall = await _proactive_recall_section(agent, text="what is the falcon mission status")
 
     assert "GREENLIGHT_UNCLASS" in recall, (
         "proactive recall did not run at all — the exclusion below would be vacuous"
@@ -476,9 +475,7 @@ async def test_a_moment_with_no_matching_cue_injects_nothing(
     async with _booted(deployment, _config(deployment)) as (agent, recorders):
         brain = _memory_brain(agent)
         _seed_entity(agent, brain, "Kestrel")
-        await _seed_fact(
-            brain, "The Kestrel deployment root for Arc modules is XYZZY42QUUX."
-        )
+        await _seed_fact(brain, "The Kestrel deployment root for Arc modules is XYZZY42QUUX.")
 
         recall = await _proactive_recall_section(agent, text="please compute two plus two")
 
@@ -511,9 +508,7 @@ async def test_the_same_entity_twice_in_a_session_injects_its_card_once(
     async with _booted(deployment, _config(deployment)) as (agent, recorders):
         brain = _memory_brain(agent)
         _seed_entity(agent, brain, "Kestrel")
-        await _seed_fact(
-            brain, "The Kestrel deployment root for Arc modules is XYZZY42QUUX."
-        )
+        await _seed_fact(brain, "The Kestrel deployment root for Arc modules is XYZZY42QUUX.")
 
         # Both moments share one session key (the default the live user-turn emit
         # uses), so ``WindowDedup`` sees them as consecutive turns of one session —
@@ -561,9 +556,7 @@ async def test_a_live_turn_emits_the_moment_and_audits_its_trigger(
     async with _booted(deployment, _config(deployment)) as (agent, recorders):
         brain = _memory_brain(agent)
         _seed_entity(agent, brain, "Kestrel")
-        await _seed_fact(
-            brain, "The Kestrel deployment root for Arc modules is XYZZY42QUUX."
-        )
+        await _seed_fact(brain, "The Kestrel deployment root for Arc modules is XYZZY42QUUX.")
 
         model_input = await _drive_turn(
             agent, recorders, "give me the kestrel deployment root please", key="j5"
@@ -579,4 +572,3 @@ async def test_a_live_turn_emits_the_moment_and_audits_its_trigger(
     assert triggers == {"entity_seen"}, (
         f"proactive attribution carried the wrong trigger kind: {triggers}"
     )
-

@@ -109,9 +109,7 @@ class DropboxAttachment:
             ToolSpec(
                 name="dropbox_list",
                 description="List files and folders under a Dropbox path (empty = root).",
-                input_schema=_schema(
-                    {"path": _STRING, "recursive": _STRING, "limit": _STRING}
-                ),
+                input_schema=_schema({"path": _STRING, "recursive": _STRING, "limit": _STRING}),
                 classification="read_only",
             ),
             ToolSpec(

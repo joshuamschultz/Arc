@@ -363,9 +363,8 @@ def create_app(
             await task_store_backend.start()
         except Exception:  # reason: fail-open — dashboard still serves
             logger.exception("lifespan: task_store backend failed to start; writes will fail")
-        if (
-            starlette_app.state.inbox_service is None
-            and isinstance(task_store_backend, PostgresBackend)
+        if starlette_app.state.inbox_service is None and isinstance(
+            task_store_backend, PostgresBackend
         ):
             try:
                 starlette_app.state.inbox_service = DurableInboxService(

@@ -73,8 +73,7 @@ def test_run_recalls_route_returns_the_cards_attributed_to_that_run(
         resp = client.get("/api/runs/run-x/recalls", headers=_viewer(auth))
 
     assert resp.status_code == 200, (
-        f"D2 route/backend absent: GET /api/runs/run-x/recalls -> "
-        f"{resp.status_code} {resp.text}"
+        f"D2 route/backend absent: GET /api/runs/run-x/recalls -> {resp.status_code} {resp.text}"
     )
     events = resp.json()["events"]
     assert events, "expected the seeded memory.recall_attributed event for run-x"

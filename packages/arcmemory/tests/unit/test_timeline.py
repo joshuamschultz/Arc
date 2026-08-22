@@ -59,7 +59,9 @@ def test_read_timeline_degrades_when_stores_absent(tmp_path: Path) -> None:
 def test_read_timeline_gates_classified_changes(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
     events = EventStore(workspace)
-    events.upsert("op-eclipse", "Op Eclipse", date="2026-08-12", outcome="done", classification="SECRET")
+    events.upsert(
+        "op-eclipse", "Op Eclipse", date="2026-08-12", outcome="done", classification="SECRET"
+    )
 
     entries = read_timeline(workspace, clearance="unclassified")
     blob = " ".join(e.summary for e in entries)

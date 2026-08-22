@@ -50,9 +50,7 @@ async def upload_attachment(request: Request) -> JSONResponse:
     roster = getattr(request.app.state, "roster_provider", None)
     agent_did = None
     if roster:
-        agent_did = next(
-            (entry.did for entry in roster() if entry.agent_id == agent_id), None
-        )
+        agent_did = next((entry.did for entry in roster() if entry.agent_id == agent_id), None)
     if not agent_did:
         return JSONResponse({"error": "agent not found"}, status_code=404)
     owner_did = derive_viewer_did(token)

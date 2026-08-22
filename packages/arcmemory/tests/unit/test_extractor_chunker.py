@@ -163,7 +163,8 @@ def test_recursive_chunker_defangs_injection_line_before_splitting() -> None:
 def test_recursive_chunker_overlaps_adjacent_chunks() -> None:
     chunker = RecursiveChunker(chunk_tokens=40, overlap=0.5)
     text = "\n\n".join(
-        f"Sentence {i} adds unique content to the paragraph body text right here." for i in range(20)
+        f"Sentence {i} adds unique content to the paragraph body text right here."
+        for i in range(20)
     )
 
     chunks = chunker.chunk(text, source_path="doc.md")

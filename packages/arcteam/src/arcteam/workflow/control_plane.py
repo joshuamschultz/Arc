@@ -326,9 +326,7 @@ class WorkflowControlPlane:
         if updated is None:
             current = await tasks.get(task_id)
             if current is None or current.metadata.get("gate_decision") != recorded:
-                self._emit(
-                    _Operation("workflow.gate.resolved", task_id, "conflict"), actor_did
-                )
+                self._emit(_Operation("workflow.gate.resolved", task_id, "conflict"), actor_did)
                 return ControlPlaneResult(
                     ok=False,
                     errors=(OperationIssue(None, "status", "gate was resolved concurrently"),),

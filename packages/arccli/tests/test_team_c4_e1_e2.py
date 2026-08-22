@@ -224,9 +224,7 @@ def _create_agent(tmp_path: Path, name: str) -> str:
 
 class TestSendSigned:
     @pytest.fixture
-    def durable_inbox(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> FakeInboxRepository:
+    def durable_inbox(self, monkeypatch: pytest.MonkeyPatch) -> FakeInboxRepository:
         """Inject the durable inbox opener without weakening production wiring.
 
         ``arc team`` composes ``PostgresInboxRepository`` over the production
@@ -244,9 +242,7 @@ class TestSendSigned:
             return repository
 
         monkeypatch.setattr("arcstore.backends.open_backend", _open_backend)
-        monkeypatch.setattr(
-            "arcstore.backends.PostgresInboxRepository", _open_inbox_repository
-        )
+        monkeypatch.setattr("arcstore.backends.PostgresInboxRepository", _open_inbox_repository)
         return repository
 
     def test_send_signs_outgoing_message(

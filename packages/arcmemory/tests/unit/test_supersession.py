@@ -35,8 +35,7 @@ def test_conflicting_fact_keeps_newest_current_and_marks_older(workspace: Any, d
 
     view = superseded_view(entity)
     assert any(
-        "wound down" in line and "superseded" in line.lower() and "active" in line
-        for line in view
+        "wound down" in line and "superseded" in line.lower() and "active" in line for line in view
     )
 
 

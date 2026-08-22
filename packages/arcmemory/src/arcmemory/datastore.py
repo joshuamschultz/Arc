@@ -76,8 +76,7 @@ class Datastore:
         table_names = [
             str(row[0])
             for row in self._conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' "
-                "AND name NOT LIKE 'sqlite_%'"
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
             ).fetchall()
         ]
         tables: dict[str, TableInfo] = {}
@@ -128,9 +127,7 @@ class Datastore:
             store.write_fact(
                 slug, "primary_key", info.primary_key or "", name=name, entity_type="db_table"
             )
-            store.write_fact(
-                slug, "row_count", str(self._row_count(name)), entity_type="db_table"
-            )
+            store.write_fact(slug, "row_count", str(self._row_count(name)), entity_type="db_table")
             store.write_fact(
                 slug,
                 "searchable_columns",

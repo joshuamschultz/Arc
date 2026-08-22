@@ -277,9 +277,7 @@ class RunStore:
         if current is None:
             return None
         return (
-            current
-            if any(_same_path_entry(item, entry) for item in current.path_taken)
-            else None
+            current if any(_same_path_entry(item, entry) for item in current.path_taken) else None
         )
 
     async def reserve_budget(

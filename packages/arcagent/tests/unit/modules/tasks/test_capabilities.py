@@ -44,9 +44,7 @@ from packages.arcagent.tests.unit.modules.tasks.conftest import make_peer_entity
 
 
 @pytest.fixture
-def tasks_state(
-    tmp_path: Path, arcstore_opener: Any
-) -> Iterator[Any]:
+def tasks_state(tmp_path: Path, arcstore_opener: Any) -> Iterator[Any]:
     """Bootstrap the runtime against a test-local ArcStore backend.
 
     ``_runtime.configure()`` is SYNC and called with no ``await`` — the exact

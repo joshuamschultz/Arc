@@ -67,6 +67,7 @@ def _run_event_extra(event: Event) -> dict[str, Any]:
             return {"strategy": strategy}
     return {}
 
+
 # Tool-lifecycle event types mirrored as ``tool_event`` records (SPEC-028 FR-1).
 # Code execution (``execute_python``) rides these like any other tool (FR-2).
 _TOOL_EVENT_TYPES = frozenset({"tool.start", "tool.end", "tool.error"})

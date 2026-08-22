@@ -110,5 +110,7 @@ class PostgresSettings(BaseModel):
     connect_timeout: float
     ssl_mode: str
     statement_cache_size: int
+
+
 class ArcStoreConfigurationError(ValueError):
     """Expected missing/invalid ArcStore deployment configuration."""

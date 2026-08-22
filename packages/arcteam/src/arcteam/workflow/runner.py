@@ -1083,9 +1083,7 @@ class WorkflowRunner:
         return await self._terminate(run.run_id, "done", "all nodes complete")
 
     @staticmethod
-    def _terminal_states_moved(
-        prev: RunState, curr: RunState, definition: WorkflowSpec
-    ) -> bool:
+    def _terminal_states_moved(prev: RunState, curr: RunState, definition: WorkflowSpec) -> bool:
         """True when any node's terminal state differs between the two reads.
 
         A change means a task settled after the decide pass read the store — the

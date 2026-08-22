@@ -643,7 +643,9 @@ async def test_a_memory_recall_is_recorded_as_a_tool_event_in_the_run_trace(
 
     rows = [json.loads(line) for line in spool_file.read_text().splitlines()]
     recalls = [
-        r for r in rows if r.get("tool_name") == "memory_search" and r.get("extra", {}).get("implicit")
+        r
+        for r in rows
+        if r.get("tool_name") == "memory_search" and r.get("extra", {}).get("implicit")
     ]
     assert recalls, "a memory recall was not recorded as a tool_event in the run trace"
     assert all(r.get("request_id") for r in recalls), "recall tool_event not correlated to a run"

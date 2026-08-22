@@ -282,9 +282,7 @@ class ArcMemoryBrain:
         # Merge this turn's cues into the bounded per-session working set (COMP-001);
         # off-switch → empty set, so the detectors see only the current cues (SPEC-071).
         active = (
-            self._working_set.update(session_id, cue_list)
-            if self._cfg.working_set_enabled
-            else []
+            self._working_set.update(session_id, cue_list) if self._cfg.working_set_enabled else []
         )
         store = SemanticStore(self._workspace, self._graph, self._scope(session_id).key)
         session_state = _MomentSessionState(
@@ -298,8 +296,13 @@ class ArcMemoryBrain:
         if not decision.fire:
             return ""
         return await self._proactive_recall(
-            kind, decision, text=text, clearance=clearance, top_k=top_k,
-            budget=budget, session_id=session_id,
+            kind,
+            decision,
+            text=text,
+            clearance=clearance,
+            top_k=top_k,
+            budget=budget,
+            session_id=session_id,
         )
 
     async def _proactive_recall(

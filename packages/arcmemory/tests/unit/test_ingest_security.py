@@ -179,9 +179,7 @@ def test_readable_provenances_unparseable_classification_fails_closed(db: Memory
         digest, Provenance(source="slack", external_id="msg-1", classification="not-a-real-label")
     )
 
-    readable = store.readable_provenances(
-        digest, clearance=Classification.TOP_SECRET, strict=True
-    )
+    readable = store.readable_provenances(digest, clearance=Classification.TOP_SECRET, strict=True)
     assert readable == []
 
 

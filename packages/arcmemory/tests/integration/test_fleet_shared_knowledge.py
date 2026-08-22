@@ -24,7 +24,9 @@ class _Draft:
 
 
 @pytest.mark.asyncio
-async def test_authorized_agent_promotes_and_peer_retrieves_from_canonical_shared_root(tmp_path) -> None:
+async def test_authorized_agent_promotes_and_peer_retrieves_from_canonical_shared_root(
+    tmp_path,
+) -> None:
     publisher = AgentIdentity.generate("test", "publisher")
     reader = AgentIdentity.generate("test", "reader")
     publisher_access = _Access(publisher)

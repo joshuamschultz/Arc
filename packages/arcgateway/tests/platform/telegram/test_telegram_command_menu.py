@@ -29,7 +29,10 @@ def _make_adapter() -> TelegramAdapter:
 
 def test_set_command_names_records_specs() -> None:
     adapter = _make_adapter()
-    specs = [CommandSpec("new", "Start a new session"), CommandSpec("briefing", "Morning briefing")]
+    specs = [
+        CommandSpec("new", "Start a new session"),
+        CommandSpec("briefing", "Morning briefing"),
+    ]
     adapter.set_command_names(specs)
     assert adapter._command_specs == tuple(specs)
 

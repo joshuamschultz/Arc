@@ -40,7 +40,7 @@ def test_backend_sqlite_reports_vec_status_per_workspace(
 
 
 def test_backend_sqlite_no_workspace_prints_default_note(
-    capsys: pytest.CaptureFixture[str]
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """No workspace + sqlite -> a plain note, exit 0."""
     memory_handler(["backend"])
@@ -66,9 +66,7 @@ def test_backend_postgres_without_dsn_exits_one(
 
 
 @pytest.mark.skipif(not _PG_DSN, reason="ARC_MEMORY_PG_DSN not set")
-def test_backend_postgres_connects_when_dsn_set(
-    capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_backend_postgres_connects_when_dsn_set(capsys: pytest.CaptureFixture[str]) -> None:
     """Where a real DSN is set, postgres connects and the command exits 0."""
     memory_handler(["backend", "--index-backend", "postgres"])  # no SystemExit
 

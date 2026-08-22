@@ -59,9 +59,7 @@ class _MomentSpyBrain:
     optional ``on_moment`` method under test.
     """
 
-    def __init__(
-        self, *, moment_text: str = "<memory-result>proactive</memory-result>"
-    ) -> None:
+    def __init__(self, *, moment_text: str = "<memory-result>proactive</memory-result>") -> None:
         self.retrieves: list[str] = []
         self.moment_calls: list[dict[str, Any]] = []
         self._moment_text = moment_text

@@ -61,9 +61,7 @@ class _SpyBrain:
     async def document_search(
         self, query: str, *, source_id: str | None = None, top_k: int = 10, **_: Any
     ) -> list[_DocHit]:
-        self.document_search_calls.append(
-            {"query": query, "source_id": source_id, "top_k": top_k}
-        )
+        self.document_search_calls.append({"query": query, "source_id": source_id, "top_k": top_k})
         return [_DocHit(text=f"result for {query}", source_id=source_id or "", pointer="doc://x")]
 
     async def datastore_query(

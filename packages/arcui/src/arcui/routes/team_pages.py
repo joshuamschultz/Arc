@@ -223,8 +223,7 @@ async def get_tools_skills(request: Request) -> JSONResponse:
                 {
                     "name": tool,
                     "agents": [],
-                    "classification": row.get("classification")
-                    or _BUILTIN_CLASS.get(tool, ""),
+                    "classification": row.get("classification") or _BUILTIN_CLASS.get(tool, ""),
                 },
             )
             if entry.agent_id not in existing["agents"]:

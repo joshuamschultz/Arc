@@ -54,9 +54,7 @@ async def test_routes_multiple_records_in_one_call_as_separate_events(
     await sink("source-a", records)
 
     conn = db.connect()
-    count = conn.execute(
-        "SELECT COUNT(*) FROM episodic WHERE scope=?", (scope.key,)
-    ).fetchone()[0]
+    count = conn.execute("SELECT COUNT(*) FROM episodic WHERE scope=?", (scope.key,)).fetchone()[0]
     assert count == 2
 
 

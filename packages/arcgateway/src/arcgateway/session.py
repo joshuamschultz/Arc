@@ -110,8 +110,16 @@ def _adapter_key(adapter: _AdapterProtocol) -> tuple[str, str]:
 def _inbox_event_id(direction: str, event: InboundEvent, body: str = "") -> str:
     """Derive a retry-stable event key without retaining raw platform payloads."""
     value = "\x1f".join(
-        (direction, event.platform, event.chat_id, event.thread_id or "", event.user_did,
-         event.agent_did, event.session_key, body or event.message)
+        (
+            direction,
+            event.platform,
+            event.chat_id,
+            event.thread_id or "",
+            event.user_did,
+            event.agent_did,
+            event.session_key,
+            body or event.message,
+        )
     )
     return f"gateway_{direction}_{hashlib.sha256(value.encode('utf-8')).hexdigest()}"
 

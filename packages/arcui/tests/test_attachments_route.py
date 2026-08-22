@@ -18,7 +18,9 @@ class Entry:
 
 def _app(tmp_path: Path, **store_options: object) -> Starlette:
     app = Starlette(routes=routes)
-    app.state.auth_config = type("Auth", (), {"validate_token": lambda _, token: "viewer" if token == "viewer" else None})()
+    app.state.auth_config = type(
+        "Auth", (), {"validate_token": lambda _, token: "viewer" if token == "viewer" else None}
+    )()
     app.state.roster_provider = lambda: [Entry()]
     app.state.attachment_store_for = lambda did: MediaStore(
         workspace=tmp_path, max_bytes=100, **store_options
@@ -46,7 +48,12 @@ def test_upload_returns_opaque_manifest_and_derives_identity(tmp_path: Path) -> 
 def test_upload_requires_auth_and_roster(tmp_path: Path) -> None:
     with TestClient(_app(tmp_path)) as client:
         assert client.post("/api/agents/olivia/attachments").status_code == 401
-        assert client.post("/api/agents/missing/attachments", headers={"Authorization": "Bearer viewer"}).status_code == 404
+        assert (
+            client.post(
+                "/api/agents/missing/attachments", headers={"Authorization": "Bearer viewer"}
+            ).status_code
+            == 404
+        )
 
 
 def test_actual_bytes_are_limited_without_content_length(tmp_path: Path) -> None:

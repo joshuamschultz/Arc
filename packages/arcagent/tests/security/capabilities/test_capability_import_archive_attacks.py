@@ -47,7 +47,8 @@ def test_zip_path_attacks_are_rejected_without_staging(tmp_path: Path, name: str
 
 def test_zip_duplicate_and_unicode_case_collisions_are_rejected(tmp_path: Path) -> None:
     duplicate = _archive(
-        tmp_path / "duplicate.zip", ["tools/hello.py", "tools/hello.py", "skills/imported/SKILL.md"]
+        tmp_path / "duplicate.zip",
+        ["tools/hello.py", "tools/hello.py", "skills/imported/SKILL.md"],
     )
     collision = _archive(
         tmp_path / "collision.zip",

@@ -30,15 +30,14 @@ def arcstore_backend() -> object:
 
 
 @pytest.fixture(autouse=True)
-def _isolated_arcstore_backend(
-    monkeypatch: pytest.MonkeyPatch, arcstore_backend: object
-) -> None:
+def _isolated_arcstore_backend(monkeypatch: pytest.MonkeyPatch, arcstore_backend: object) -> None:
     """Make every implicit ArcUI composition use a fresh contract-complete backend.
 
     Production requires PostgreSQL and the CLI validates that requirement before
     constructing the app. Unit and route tests that do not explicitly inject a
     backend must remain hermetic rather than inheriting a developer DSN.
     """
+
     def open_fake(**_kwargs: object) -> object:
         return arcstore_backend
 

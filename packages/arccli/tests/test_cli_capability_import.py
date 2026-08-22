@@ -103,10 +103,5 @@ def test_list_and_edit_are_agent_scoped_and_review_bound(
         ]
     )
     assert "review digest" in capsys.readouterr().out
-    staged = (
-        agent_root
-        / "capabilities/imports/.staging"
-        / import_id
-        / "skills/imported/SKILL.md"
-    )
+    staged = agent_root / "capabilities/imports/.staging" / import_id / "skills/imported/SKILL.md"
     assert b"Use edited." in staged.read_bytes()

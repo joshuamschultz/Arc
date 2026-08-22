@@ -527,12 +527,16 @@ class TestOpenAIInvokeStream:
         )
 
         def handler(_request: httpx.Request) -> httpx.Response:
-            return httpx.Response(200, content=sse_body, headers={"content-type": "text/event-stream"})
+            return httpx.Response(
+                200, content=sse_body, headers={"content-type": "text/event-stream"}
+            )
 
         adapter = OpenaiAdapter(FAKE_CONFIG, FAKE_MODEL)
         await adapter._client.aclose()
         adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-        deltas = [delta async for delta in adapter.invoke_stream([Message(role="user", content="hi")])]
+        deltas = [
+            delta async for delta in adapter.invoke_stream([Message(role="user", content="hi")])
+        ]
 
         calls = [delta.tool_call for delta in deltas if delta.tool_call is not None]
         assert [(call.index, call.id, call.name, call.arguments) for call in calls] == [
@@ -551,13 +555,18 @@ class TestOpenAIInvokeStream:
         from arcllm.adapters.openai import OpenaiAdapter
 
         def handler(_request: httpx.Request) -> httpx.Response:
-            return httpx.Response(200, content=sse_body, headers={"content-type": "text/event-stream"})
+            return httpx.Response(
+                200, content=sse_body, headers={"content-type": "text/event-stream"}
+            )
 
         adapter = OpenaiAdapter(FAKE_CONFIG, FAKE_MODEL)
         await adapter._client.aclose()
         adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         with pytest.raises(ArcLLMStreamProtocolError):
-            _ = [delta async for delta in adapter.invoke_stream([Message(role="user", content="hi")])]
+            _ = [
+                delta
+                async for delta in adapter.invoke_stream([Message(role="user", content="hi")])
+            ]
 
 
 # ---------------------------------------------------------------------------

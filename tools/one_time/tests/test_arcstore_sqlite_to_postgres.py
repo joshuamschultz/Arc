@@ -205,9 +205,7 @@ async def test_resume_and_digest_verification_are_idempotent(tmp_path: Path) -> 
         == first.tables["mutable_records"]["source_digest"]
     )
     assert second.tables["llm_calls"]["migrated_count"] == 0
-    migrated = destination.rows["mutable_records"][
-        _mutable_row_key("tasks", identifiers["task"])
-    ]
+    migrated = destination.rows["mutable_records"][_mutable_row_key("tasks", identifiers["task"])]
     assert migrated.values["updated_at"] == "2026-08-22T00:00:00+00:00"
 
 

@@ -195,9 +195,7 @@ async def test_disable_without_teardown_still_unwinds(
     agent = _fake_agent(tmp_path, modules={"web": ModuleEntry(enabled=True)})
     agent._runtime_bindings.append(RuntimeBinding("web", lambda _s: None, object()))
 
-    monkeypatch.setattr(
-        agent_lifecycle, "load_module_runtime", lambda _n: SimpleNamespace()
-    )
+    monkeypatch.setattr(agent_lifecycle, "load_module_runtime", lambda _n: SimpleNamespace())
 
     await agent_lifecycle.set_module_enabled(agent, "web", enabled=False)
 

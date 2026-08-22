@@ -44,9 +44,7 @@ def _configured_agent(tmp_path: Any) -> ArcAgent:
     return agent
 
 
-def _patch_one_runtime(
-    monkeypatch: pytest.MonkeyPatch, name: str, runtime: object
-) -> None:
+def _patch_one_runtime(monkeypatch: pytest.MonkeyPatch, name: str, runtime: object) -> None:
     monkeypatch.setattr(agent_lifecycle, "active_modules", lambda _config: [name])
     monkeypatch.setattr(agent_lifecycle, "_warn_config_without_folder", lambda _agent: None)
     monkeypatch.setattr(agent_lifecycle, "load_module_runtime", lambda _name: runtime)
@@ -94,9 +92,7 @@ def _full_deps(workspace: Path) -> RuntimeDependencies:
 def test_select_for_delivers_exactly_the_named_vocabulary(tmp_path: Path) -> None:
     deps = _full_deps(tmp_path)
 
-    def configure(
-        *, config: Any, telemetry: Any, workspace: Any, operator_signer: Any
-    ) -> None:
+    def configure(*, config: Any, telemetry: Any, workspace: Any, operator_signer: Any) -> None:
         del config, telemetry, workspace, operator_signer
 
     kwargs = deps.select_for(configure, {"prefix": ">>"})

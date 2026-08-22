@@ -292,6 +292,7 @@ class TestModelSanitizationAndStorePath:
         from arcstore.backends.memory import FakeBackend
 
         from arcagent.modules.tasks.store import open_store
+
         backend = FakeBackend()
         store, owner = await open_store(opener=lambda: _ready(backend))
         assert owner is backend

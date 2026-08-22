@@ -155,7 +155,9 @@ class TestFollowUp:
 
         assert result.content == "Also did X."
         assert result.turns == 2
-        entered = [m for m in handle._state.messages if m.role == "user" and m.content == "also do X"]
+        entered = [
+            m for m in handle._state.messages if m.role == "user" and m.content == "also do X"
+        ]
         assert entered, "the held message must be entered into context, never lost"
         events = [e for e in result.events if e.type == "message.injected"]
         assert len(events) == 1

@@ -92,9 +92,7 @@ def _connections(tmp_path: Path, root: Path, backend: FakeBackend) -> Connection
     )
 
 
-async def _install_with_app_creds(
-    tmp_path: Path, root: Path, backend: FakeBackend
-) -> None:
+async def _install_with_app_creds(tmp_path: Path, root: Path, backend: FakeBackend) -> None:
     """Install the connection holding only the app key/secret — no refresh token yet."""
     await install_connector(
         _plan(root),
@@ -114,7 +112,9 @@ async def _refresh_token(arc_dir: Path) -> str | None:
     return found.reveal() if found is not None else None
 
 
-async def _ok_post(url: str, data: dict[str, str], auth: tuple[str, str]) -> tuple[int, dict[str, Any]]:
+async def _ok_post(
+    url: str, data: dict[str, str], auth: tuple[str, str]
+) -> tuple[int, dict[str, Any]]:
     assert data["grant_type"] == "authorization_code"
     assert auth == ("ak-123", "as-456"), "the stored app key/secret authenticate the exchange"
     return 200, {"refresh_token": "rt-durable-xyz", "access_token": "at", "expires_in": 14400}
@@ -123,7 +123,10 @@ async def _ok_post(url: str, data: dict[str, str], auth: tuple[str, str]) -> tup
 async def _dead_code_post(
     url: str, data: dict[str, str], auth: tuple[str, str]
 ) -> tuple[int, dict[str, Any]]:
-    return 400, {"error": "invalid_grant", "error_description": "code doesn't exist or has expired"}
+    return 400, {
+        "error": "invalid_grant",
+        "error_description": "code doesn't exist or has expired",
+    }
 
 
 async def test_complete_oauth_stores_a_durable_refresh_token_and_connects(

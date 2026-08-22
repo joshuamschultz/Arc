@@ -32,7 +32,11 @@ def _tool(counter: dict[str, int]) -> Tool:
     return Tool(
         name="echo",
         description="Echo one value.",
-        input_schema={"type": "object", "properties": {"value": {"type": "string"}}, "required": ["value"]},
+        input_schema={
+            "type": "object",
+            "properties": {"value": {"type": "string"}},
+            "required": ["value"],
+        },
         execute=execute,
     )
 
@@ -44,18 +48,28 @@ class _NativeModel:
         self.stream_calls = 0
         self.invoke_calls = 0
 
-    async def invoke(self, _messages: list[Any], tools: list[Any] | None = None, **_kwargs: Any) -> arcllm.LLMResponse:
+    async def invoke(
+        self, _messages: list[Any], tools: list[Any] | None = None, **_kwargs: Any
+    ) -> arcllm.LLMResponse:
         self.invoke_calls += 1
         if tools and any(tool.name == "select_strategy" for tool in tools):
             return arcllm.LLMResponse(
-                tool_calls=[arcllm.ToolCall(id="strategy", name="select_strategy", arguments={"strategy": "react"})],
+                tool_calls=[
+                    arcllm.ToolCall(
+                        id="strategy", name="select_strategy", arguments={"strategy": "react"}
+                    )
+                ],
                 stop_reason="tool_use",
                 usage=_USAGE,
                 model="test",
             )
-        return arcllm.LLMResponse(content="native text", usage=_USAGE, model="test", stop_reason="end_turn")
+        return arcllm.LLMResponse(
+            content="native text", usage=_USAGE, model="test", stop_reason="end_turn"
+        )
 
-    async def invoke_stream(self, _messages: list[Any], tools: list[Any] | None = None, **_kwargs: Any) -> AsyncIterator[arcllm.Delta]:
+    async def invoke_stream(
+        self, _messages: list[Any], tools: list[Any] | None = None, **_kwargs: Any
+    ) -> AsyncIterator[arcllm.Delta]:
         self.stream_calls += 1
         if self.stream_calls == 1:
             self.first_delta.set()
@@ -63,15 +77,22 @@ class _NativeModel:
             if self.release is not None:
                 await self.release.wait()
             yield arcllm.Delta(text="text")
-            yield arcllm.Delta(usage=arcllm.Usage(input_tokens=1, output_tokens=2, total_tokens=3), stop_reason="end_turn")
+            yield arcllm.Delta(
+                usage=arcllm.Usage(input_tokens=1, output_tokens=2, total_tokens=3),
+                stop_reason="end_turn",
+            )
 
 
 class _ToolStreamModel(_NativeModel):
-    async def invoke_stream(self, _messages: list[Any], tools: list[Any] | None = None, **_kwargs: Any) -> AsyncIterator[arcllm.Delta]:
+    async def invoke_stream(
+        self, _messages: list[Any], tools: list[Any] | None = None, **_kwargs: Any
+    ) -> AsyncIterator[arcllm.Delta]:
         self.stream_calls += 1
         if self.stream_calls == 1:
             yield arcllm.Delta(tool_call=arcllm.ToolCallDelta(index=0, id="call", name="echo"))
-            yield arcllm.Delta(tool_call=arcllm.ToolCallDelta(index=0, arguments='{"value":"secret"}'))
+            yield arcllm.Delta(
+                tool_call=arcllm.ToolCallDelta(index=0, arguments='{"value":"secret"}')
+            )
             yield arcllm.Delta(stop_reason="tool_use")
             return
         yield arcllm.Delta(text="complete")
@@ -84,7 +105,9 @@ class _BlockedStreamModel(_NativeModel):
         self.started = asyncio.Event()
         self.closed = asyncio.Event()
 
-    async def invoke_stream(self, _messages: list[Any], **_kwargs: Any) -> AsyncIterator[arcllm.Delta]:
+    async def invoke_stream(
+        self, _messages: list[Any], **_kwargs: Any
+    ) -> AsyncIterator[arcllm.Delta]:
         self.started.set()
         try:
             await asyncio.Event().wait()
@@ -94,7 +117,9 @@ class _BlockedStreamModel(_NativeModel):
 
 
 class _TextThenBlockedModel(_BlockedStreamModel):
-    async def invoke_stream(self, _messages: list[Any], **_kwargs: Any) -> AsyncIterator[arcllm.Delta]:
+    async def invoke_stream(
+        self, _messages: list[Any], **_kwargs: Any
+    ) -> AsyncIterator[arcllm.Delta]:
         try:
             yield arcllm.Delta(text="visible")
             self.started.set()
@@ -109,7 +134,9 @@ async def test_native_text_arrives_before_provider_completion_and_is_monotonic()
     release = asyncio.Event()
     model = _NativeModel(release)
     counter = {"calls": 0}
-    stream = await run_stream(model=model, capabilities=StaticProvider([_tool(counter)]), system_prompt="sys", task="task")
+    stream = await run_stream(
+        model=model, capabilities=StaticProvider([_tool(counter)]), system_prompt="sys", task="task"
+    )
     iterator = stream.__aiter__()
     next_event = asyncio.create_task(anext(iterator))
     await asyncio.wait_for(model.first_delta.wait(), timeout=1)
@@ -128,7 +155,12 @@ async def test_native_text_arrives_before_provider_completion_and_is_monotonic()
 @pytest.mark.asyncio
 async def test_tool_fragments_dispatch_once_without_raw_lifecycle_bodies() -> None:
     counter = {"calls": 0}
-    stream = await run_stream(model=_ToolStreamModel(), capabilities=StaticProvider([_tool(counter)]), system_prompt="sys", task="task")
+    stream = await run_stream(
+        model=_ToolStreamModel(),
+        capabilities=StaticProvider([_tool(counter)]),
+        system_prompt="sys",
+        task="task",
+    )
     events = [event async for event in stream]
     assert counter["calls"] == 1
     starts = [event for event in events if isinstance(event, ToolStartEvent)]
@@ -145,7 +177,12 @@ async def test_collect_stream_matches_blocking_result_without_duplicate_stream_c
     counter = {"calls": 0}
     streamed_model = _NativeModel()
     streamed = await collect(
-        await run_stream(model=streamed_model, capabilities=StaticProvider([_tool(counter)]), system_prompt="sys", task="task")
+        await run_stream(
+            model=streamed_model,
+            capabilities=StaticProvider([_tool(counter)]),
+            system_prompt="sys",
+            task="task",
+        )
     )
     blocking_model = _NativeModel()
     blocking = await run(blocking_model, StaticProvider([_tool(counter)]), "sys", "task")

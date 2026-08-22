@@ -99,7 +99,11 @@ class TestProgressForwarding:
         await _drain()
 
         assert progress.seen == [
-            {"event": "strategy.selected", "reply_target": "telegram:7", "data": {"strategy": "react"}},
+            {
+                "event": "strategy.selected",
+                "reply_target": "telegram:7",
+                "data": {"strategy": "react"},
+            },
             {"event": "turn.start", "reply_target": "telegram:7", "data": {"turn_number": 1}},
         ]
 

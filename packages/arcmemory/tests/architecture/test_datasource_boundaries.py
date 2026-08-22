@@ -117,9 +117,7 @@ def test_fusion_does_not_import_the_concrete_index_backend() -> None:
     offenders: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
-            if node.module == "arcmemory.index.backend" or node.module.endswith(
-                ".index.backend"
-            ):
+            if node.module == "arcmemory.index.backend" or node.module.endswith(".index.backend"):
                 offenders.add(node.module)
         elif isinstance(node, ast.Import):
             for alias in node.names:
@@ -134,8 +132,7 @@ def test_fusion_does_not_import_the_concrete_index_backend() -> None:
 def test_detector_would_catch_a_violation() -> None:
     """The gate is real: synthetic violations of each rule are flagged."""
     tree = ast.parse(
-        "import arcagent.core\nimport arcgateway\nfrom arcrun import loop\n"
-        "import arcllm\n"
+        "import arcagent.core\nimport arcgateway\nfrom arcrun import loop\nimport arcllm\n"
     )
     roots = _imported_roots(tree)
     assert roots & _FORBIDDEN_ALWAYS == _FORBIDDEN_ALWAYS

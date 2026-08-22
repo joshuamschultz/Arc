@@ -62,9 +62,7 @@ def walk_blob_source(
     for folder, folder_objects in groups.items():
         folder_label = folder or "root"
         slug = canonical_slug(f"blob-{source_id}-{folder_label}")
-        classification = dominating_classification(
-            [obj.classification for obj in folder_objects]
-        )
+        classification = dominating_classification([obj.classification for obj in folder_objects])
         for predicate, value in (
             ("path", folder_label),
             ("file_count", str(len(folder_objects))),

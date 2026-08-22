@@ -95,9 +95,7 @@ class IndexBackend(Protocol):
         """Every chunk id in ``scope``, newest first."""
         ...
 
-    async def chunk_meta(
-        self, scope: str, chunk_id: str
-    ) -> tuple[str, str, float | None] | None:
+    async def chunk_meta(self, scope: str, chunk_id: str) -> tuple[str, str, float | None] | None:
         """``(source_path, classification, mtime)`` for one chunk, or ``None``."""
         ...
 
@@ -228,9 +226,7 @@ class SqliteIndexBackend:
         ).fetchall()
         return [row[0] for row in rows]
 
-    async def chunk_meta(
-        self, scope: str, chunk_id: str
-    ) -> tuple[str, str, float | None] | None:
+    async def chunk_meta(self, scope: str, chunk_id: str) -> tuple[str, str, float | None] | None:
         conn = self._db.connect()
         row = conn.execute(
             "SELECT source_path, classification, mtime FROM chunks WHERE chunk_id=? AND scope=?",
@@ -327,9 +323,7 @@ class PostgresIndexBackend:
             await conn.execute(
                 "CREATE INDEX IF NOT EXISTS chunks_tsv_gin ON chunks USING gin (tsv)"
             )
-            await conn.execute(
-                "CREATE INDEX IF NOT EXISTS chunks_scope_btree ON chunks (scope)"
-            )
+            await conn.execute("CREATE INDEX IF NOT EXISTS chunks_scope_btree ON chunks (scope)")
 
     async def upsert_chunk(
         self,
@@ -412,9 +406,7 @@ class PostgresIndexBackend:
     async def chunk_texts(self, scope: str) -> list[tuple[str, str]]:
         pool = await self._pool()
         async with pool.acquire() as conn:
-            rows = await conn.fetch(
-                "SELECT chunk_id, text FROM chunks WHERE scope=$1", scope
-            )
+            rows = await conn.fetch("SELECT chunk_id, text FROM chunks WHERE scope=$1", scope)
         return [(str(row["chunk_id"]), str(row["text"])) for row in rows]
 
     async def recency_order(self, scope: str) -> list[str]:
@@ -427,9 +419,7 @@ class PostgresIndexBackend:
             )
         return [str(row["chunk_id"]) for row in rows]
 
-    async def chunk_meta(
-        self, scope: str, chunk_id: str
-    ) -> tuple[str, str, float | None] | None:
+    async def chunk_meta(self, scope: str, chunk_id: str) -> tuple[str, str, float | None] | None:
         pool = await self._pool()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
@@ -485,18 +475,13 @@ def open_index_backend(
     if backend == "postgres":
         resolved = dsn if dsn is not None else os.environ.get("ARC_MEMORY_PG_DSN")
         if not resolved:
-            raise ValueError(
-                "postgres index backend requires a DSN (set ARC_MEMORY_PG_DSN)"
-            )
+            raise ValueError("postgres index backend requires a DSN (set ARC_MEMORY_PG_DSN)")
         if importlib.util.find_spec("asyncpg") is None:
             raise RuntimeError(
-                "postgres index backend requires asyncpg + pgvector; "
-                "install arcmemory[postgres]"
+                "postgres index backend requires asyncpg + pgvector; install arcmemory[postgres]"
             )
         return PostgresIndexBackend(resolved, db.dims)
-    raise ValueError(
-        f"Unknown arcmemory index backend: {backend!r}. Use 'sqlite' or 'postgres'."
-    )
+    raise ValueError(f"Unknown arcmemory index backend: {backend!r}. Use 'sqlite' or 'postgres'.")
 
 
 def _cosine(a: list[float], b: list[float]) -> float:

@@ -16,6 +16,7 @@ async def test_hub_deduplicates_and_bounds_events() -> None:
             classification="UNCLASSIFIED",
             attempts=1,
         )
+
     await hub(make("one"))
     await hub(make("one"))
     await hub(make("two"))

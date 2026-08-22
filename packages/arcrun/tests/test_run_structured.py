@@ -32,7 +32,9 @@ def _messages() -> list[arcrun.Message]:
 
 async def test_it_returns_the_forced_tool_call_arguments() -> None:
     args = {"steps": [{"step_id": "a"}]}
-    model = MockModel([LLMResponse(tool_calls=[arcrun.ToolCall(id="1", name="emit_plan", arguments=args)])])
+    model = MockModel(
+        [LLMResponse(tool_calls=[arcrun.ToolCall(id="1", name="emit_plan", arguments=args)])]
+    )
 
     out = await arcrun.run_structured(model, _messages(), tool=_tool())
 

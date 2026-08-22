@@ -61,8 +61,7 @@ def superseded_view(entity: Entity) -> list[str]:
         if fact.was_value is None:
             continue
         lines.append(
-            f"{fact.predicate}: {fact.value} (current, {fact.date}) "
-            f"| superseded: {fact.was_value}"
+            f"{fact.predicate}: {fact.value} (current, {fact.date}) | superseded: {fact.was_value}"
         )
     return lines
 

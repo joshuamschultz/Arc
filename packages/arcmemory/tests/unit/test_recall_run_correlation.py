@@ -51,9 +51,7 @@ async def test_recall_attribution_carries_the_active_run_id(workspace: Path) -> 
     brain = ArcMemoryBrain(workspace, _DID, audit_sink=sink)
 
     with request_context("run-abc"):
-        text = await brain.retrieve(
-            "widget", clearance="unclassified", top_k=5, budget=10_000
-        )
+        text = await brain.retrieve("widget", clearance="unclassified", top_k=5, budget=10_000)
 
     assert "shipping cadence" in text, "setup broken: the seeded card never surfaced"
     attributed = _attributed_events(sink)

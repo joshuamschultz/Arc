@@ -91,9 +91,7 @@ class DocxExtractor:
 class XlsxExtractor:
     """``.xlsx`` via ``openpyxl`` (``read_only``, ``data_only``)."""
 
-    mimes: tuple[str, ...] = (
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
+    mimes: tuple[str, ...] = ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",)
 
     def extract(self, data: bytes, *, filename: str = "") -> str:
         try:

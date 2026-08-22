@@ -638,9 +638,7 @@ routes = [
         methods=["GET"],
     ),
     Route("/api/agents/{agent_id}/knowledge/mappings", list_mappings, methods=["GET"]),
-    Route(
-        "/api/agents/{agent_id}/knowledge/blob-folders", list_blob_folders, methods=["GET"]
-    ),
+    Route("/api/agents/{agent_id}/knowledge/blob-folders", list_blob_folders, methods=["GET"]),
     Route(
         "/api/agents/{agent_id}/knowledge/datastore-tables",
         list_datastore_tables,

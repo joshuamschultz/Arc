@@ -164,9 +164,7 @@ async def test_nested_mutable_predicates_match_dotted_json_paths(
         actor_did=_ACTOR,
     )
 
-    rows = await arcstore_backend.mutable_query(
-        "tasks", where={"metadata.flow_run_id": "run-1"}
-    )
+    rows = await arcstore_backend.mutable_query("tasks", where={"metadata.flow_run_id": "run-1"})
     assert [row["metadata"]["flow_run_id"] for row in rows] == ["run-1"]
     assert await arcstore_backend.update_if(
         "tasks",

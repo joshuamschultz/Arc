@@ -161,9 +161,7 @@ class TestFailedDeliveryIsTraced:
         assert "error" in out  # the model still sees the failure
         rows = [json.loads(line) for line in spool_file.read_text().splitlines()]
         errs = [
-            r
-            for r in rows
-            if r.get("tool_name") == "notify_user" and r.get("outcome") == "error"
+            r for r in rows if r.get("tool_name") == "notify_user" and r.get("outcome") == "error"
         ]
         assert errs, "a failed send left nothing in the trace"
         assert errs[0]["extra"]["delivery"] == "failed"

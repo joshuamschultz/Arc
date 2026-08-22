@@ -55,15 +55,21 @@ async def test_working_set_surfaces_prior_turn_entity_as_net_new(
         # Turn 1 names Vortex via a topic_shift that does NOT fire (no prior baseline),
         # so the card is never surfaced/deduped now — but Vortex enters the working set.
         await _proactive_recall_section(
-            agent, text="let us switch to vortex", cues=["vortex"], kind="topic_shift",
+            agent,
+            text="let us switch to vortex",
+            cues=["vortex"],
+            kind="topic_shift",
             session_id="wsA",
         )
         # Turn 2 is about something else entirely; Vortex is in neither cues nor text.
         # The empty-query drain removes the query-recall confound, so a Vortex card here
         # can ONLY have come from the working set (net-new relative to the literal message).
         recall = await _proactive_recall_section(
-            agent, text="now about the sparrow schedule", cues=["sparrow"],
-            kind="entity_seen", session_id="wsA",
+            agent,
+            text="now about the sparrow schedule",
+            cues=["sparrow"],
+            kind="entity_seen",
+            session_id="wsA",
         )
 
     assert "Vortex" in recall, (
@@ -87,12 +93,18 @@ async def test_working_set_disabled_yields_no_prior_turn_card(
         await _seed_fact(brain, "Vortex deployment note: the marker is WS_MARKER_9.")
 
         await _proactive_recall_section(
-            agent, text="let us switch to vortex", cues=["vortex"], kind="topic_shift",
+            agent,
+            text="let us switch to vortex",
+            cues=["vortex"],
+            kind="topic_shift",
             session_id="wsB",
         )
         recall = await _proactive_recall_section(
-            agent, text="now about the sparrow schedule", cues=["sparrow"],
-            kind="entity_seen", session_id="wsB",
+            agent,
+            text="now about the sparrow schedule",
+            cues=["sparrow"],
+            kind="entity_seen",
+            session_id="wsB",
         )
 
     assert "Vortex" not in recall
@@ -184,12 +196,16 @@ async def test_superseded_fact_shows_current_and_marked_old(
         did = agent._identity.did  # type: ignore[attr-defined]
         store = SemanticStore(brain._workspace, WeightedGraph(brain._db), scope=did)
         store.write_fact("northwind", "status", "OLD_ACTIVE", name="Northwind", entity_type="org")
-        store.write_fact("northwind", "status", "NEW_WOUND_DOWN", name="Northwind", entity_type="org")
+        store.write_fact(
+            "northwind", "status", "NEW_WOUND_DOWN", name="Northwind", entity_type="org"
+        )
         entity = store.read("northwind")
 
     assert entity is not None
     view = superseded_view(entity)
-    assert any("NEW_WOUND_DOWN" in v and "OLD_ACTIVE" in v and "superseded" in v.lower() for v in view)
+    assert any(
+        "NEW_WOUND_DOWN" in v and "OLD_ACTIVE" in v and "superseded" in v.lower() for v in view
+    )
     # The old value is retained on disk (mark-not-delete).
     fact = next(f for f in entity.facts if f.predicate == "status")
     assert fact.value == "NEW_WOUND_DOWN" and fact.was_value == "OLD_ACTIVE"
@@ -211,7 +227,9 @@ async def test_what_changed_timeline_ordered_and_gated(
         events = EventStore(ws)
         events.upsert("acme-signed", "Acme signed", date="2026-08-10", outcome="closed won")
         events.upsert("beta-ship", "Beta ship", date="2026-08-18", outcome="shipped")
-        events.upsert("op-eclipse", "Op Eclipse", date="2026-08-14", outcome="done", classification="SECRET")
+        events.upsert(
+            "op-eclipse", "Op Eclipse", date="2026-08-14", outcome="done", classification="SECRET"
+        )
 
         window = TimeWindow(start="2026-08-01", end="2026-08-31")
         entries = read_timeline(ws, window=window, clearance="unclassified")

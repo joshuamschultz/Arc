@@ -69,7 +69,14 @@ async def test_decision_point_routes_to_midloop_not_assemble_buffer() -> None:
     _install(brain, {"proactive_decision_point": True})
 
     await on_agent_moment(
-        _ctx({"kind": "decision_point", "cues": ["pick-db"], "text": "choose db", "session_id": None})
+        _ctx(
+            {
+                "kind": "decision_point",
+                "cues": ["pick-db"],
+                "text": "choose db",
+                "session_id": None,
+            }
+        )
     )
 
     assert brain.calls == ["decision_point"]  # Brain consulted
@@ -95,8 +102,15 @@ async def test_pre_tool_moment_ignored_unless_pre_tool_opt_in() -> None:
     _install(brain, {"proactive_decision_point": True})  # pre_tool NOT opted in
 
     await on_agent_moment(
-        _ctx({"kind": "decision_point", "point": "pre_tool", "cues": ["deploy"],
-              "text": "deploy()", "session_id": None})
+        _ctx(
+            {
+                "kind": "decision_point",
+                "point": "pre_tool",
+                "cues": ["deploy"],
+                "text": "deploy()",
+                "session_id": None,
+            }
+        )
     )
 
     assert brain.calls == []  # pre_tool site skipped
@@ -108,8 +122,15 @@ async def test_pre_tool_moment_staged_when_opted_in() -> None:
     _install(brain, {"proactive_decision_point": True, "decision_point_pre_tool": True})
 
     await on_agent_moment(
-        _ctx({"kind": "decision_point", "point": "pre_tool", "cues": ["deploy"],
-              "text": "deploy()", "session_id": None})
+        _ctx(
+            {
+                "kind": "decision_point",
+                "point": "pre_tool",
+                "cues": ["deploy"],
+                "text": "deploy()",
+                "session_id": None,
+            }
+        )
     )
 
     assert brain.calls == ["decision_point"]
@@ -121,8 +142,15 @@ async def test_pre_plan_moment_routes_regardless_of_pre_tool_flag() -> None:
     _install(brain, {"proactive_decision_point": True})  # pre_tool off; pre_plan still routes
 
     await on_agent_moment(
-        _ctx({"kind": "decision_point", "point": "pre_plan", "cues": [], "text": "",
-              "session_id": None})
+        _ctx(
+            {
+                "kind": "decision_point",
+                "point": "pre_plan",
+                "cues": [],
+                "text": "",
+                "session_id": None,
+            }
+        )
     )
 
     assert brain.calls == ["decision_point"]

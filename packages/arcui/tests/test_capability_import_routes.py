@@ -137,7 +137,13 @@ def test_promote_and_revoke_are_operator_signed_and_viewer_denied(
     uploaded = client.post(
         "/api/agents/ada/capability-imports",
         headers={"Authorization": "Bearer viewer"},
-        files={"file": ("portable.zip", _archive(("skills/imported/SKILL.md", _SKILL)), "application/zip")},
+        files={
+            "file": (
+                "portable.zip",
+                _archive(("skills/imported/SKILL.md", _SKILL)),
+                "application/zip",
+            )
+        },
     )
     import_id = uploaded.json()["import_id"]
     promote_path = f"/api/agents/ada/capability-imports/{import_id}/promote"
@@ -178,13 +184,30 @@ def test_revoke_rejects_stale_review_without_removing_promoted_artifact(
     uploaded = client.post(
         "/api/agents/ada/capability-imports",
         headers={"Authorization": "Bearer operator"},
-        files={"file": ("portable.zip", _archive(("skills/imported/SKILL.md", _SKILL)), "application/zip")},
+        files={
+            "file": (
+                "portable.zip",
+                _archive(("skills/imported/SKILL.md", _SKILL)),
+                "application/zip",
+            )
+        },
     )
     import_id = uploaded.json()["import_id"]
     promote_path = f"/api/agents/ada/capability-imports/{import_id}/promote"
     revoke_path = f"/api/agents/ada/capability-imports/{import_id}/revoke"
-    assert client.post(promote_path, headers={"Authorization": "Bearer operator"}).status_code == 200
-    staged = workspace / "capabilities" / "imports" / ".staging" / import_id / "skills" / "imported" / "SKILL.md"
+    assert (
+        client.post(promote_path, headers={"Authorization": "Bearer operator"}).status_code == 200
+    )
+    staged = (
+        workspace
+        / "capabilities"
+        / "imports"
+        / ".staging"
+        / import_id
+        / "skills"
+        / "imported"
+        / "SKILL.md"
+    )
     staged.write_bytes(staged.read_bytes().replace(b"Use the skill.", b"Changed after review."))
 
     stale = client.post(revoke_path, headers={"Authorization": "Bearer operator"})
@@ -297,10 +320,7 @@ def test_reviewed_file_read_and_operator_edit_regenerate_evidence(tmp_path: Path
     assert edited.json()["review_digest"] != uploaded.json()["review_digest"]
     assert "capability_import.edit" in {details["operation"] for _, details in audit.events}
     assert "Changed." in (
-        workspace
-        / "capabilities/imports/.staging"
-        / import_id
-        / "skills/imported/SKILL.md"
+        workspace / "capabilities/imports/.staging" / import_id / "skills/imported/SKILL.md"
     ).read_text(encoding="utf-8")
 
 
@@ -309,7 +329,13 @@ def test_reviewed_file_route_rejects_staging_metadata_and_traversal(tmp_path: Pa
     uploaded = client.post(
         "/api/agents/ada/capability-imports",
         headers={"Authorization": "Bearer viewer"},
-        files={"file": ("portable.zip", _archive(("skills/imported/SKILL.md", _SKILL)), "application/zip")},
+        files={
+            "file": (
+                "portable.zip",
+                _archive(("skills/imported/SKILL.md", _SKILL)),
+                "application/zip",
+            )
+        },
     )
     import_id = uploaded.json()["import_id"]
     for path in ("import.json", "../import.json"):

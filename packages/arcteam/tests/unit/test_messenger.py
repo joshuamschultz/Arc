@@ -566,9 +566,9 @@ class TestMentionJoinsChannel:
 
         # The mention pulled a2 into #work: membership now resolves to a2.
         work = next(c for c in await svc.list_channels() if c.name == "work")
-        assert any(
-            ref in ("agent://a2", "did:arc:test:agent/a2", "a2") for ref in work.members
-        ), work.members
+        assert any(ref in ("agent://a2", "did:arc:test:agent/a2", "a2") for ref in work.members), (
+            work.members
+        )
 
         # And so a2's reply is no longer refused as a non-member.
         sent = await svc.send(
@@ -576,9 +576,7 @@ class TestMentionJoinsChannel:
         )
         assert sent.seq >= 1
 
-    async def test_mention_join_does_not_bypass_no_write_down(
-        self, svc: MessagingService
-    ) -> None:
+    async def test_mention_join_does_not_bypass_no_write_down(self, svc: MessagingService) -> None:
         """An under-cleared mentioned agent is not joined into a higher channel."""
         await registry_add_secret_agent(svc)
         await svc.create_channel(

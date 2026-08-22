@@ -44,9 +44,15 @@ def test_authorize_url_asks_for_a_code_with_offline_access() -> None:
 async def test_a_code_is_swapped_for_a_refresh_token() -> None:
     calls: list[tuple[str, dict[str, str], tuple[str, str]]] = []
 
-    async def post(url: str, data: dict[str, str], auth: tuple[str, str]) -> tuple[int, dict[str, Any]]:
+    async def post(
+        url: str, data: dict[str, str], auth: tuple[str, str]
+    ) -> tuple[int, dict[str, Any]]:
         calls.append((url, data, auth))
-        return 200, {"refresh_token": "rt-durable", "access_token": "at-short", "expires_in": 14400}
+        return 200, {
+            "refresh_token": "rt-durable",
+            "access_token": "at-short",
+            "expires_in": 14400,
+        }
 
     tokens = await exchange_authorization_code(
         _FLOW, code="one-time-code", client_id="ak", client_secret="as", post=post
@@ -60,8 +66,13 @@ async def test_a_code_is_swapped_for_a_refresh_token() -> None:
 
 
 async def test_a_dead_code_is_a_terminal_error_not_a_retry() -> None:
-    async def post(url: str, data: dict[str, str], auth: tuple[str, str]) -> tuple[int, dict[str, Any]]:
-        return 400, {"error": "invalid_grant", "error_description": "code doesn't exist or has expired"}
+    async def post(
+        url: str, data: dict[str, str], auth: tuple[str, str]
+    ) -> tuple[int, dict[str, Any]]:
+        return 400, {
+            "error": "invalid_grant",
+            "error_description": "code doesn't exist or has expired",
+        }
 
     with pytest.raises(OAuthExchangeError) as exc:
         await exchange_authorization_code(
@@ -72,7 +83,9 @@ async def test_a_dead_code_is_a_terminal_error_not_a_retry() -> None:
 
 
 async def test_offline_access_missing_yields_no_refresh_token_error() -> None:
-    async def post(url: str, data: dict[str, str], auth: tuple[str, str]) -> tuple[int, dict[str, Any]]:
+    async def post(
+        url: str, data: dict[str, str], auth: tuple[str, str]
+    ) -> tuple[int, dict[str, Any]]:
         return 200, {"access_token": "at-only", "expires_in": 14400}  # no refresh_token
 
     with pytest.raises(OAuthExchangeError) as exc:

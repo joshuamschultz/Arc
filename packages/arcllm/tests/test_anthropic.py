@@ -797,7 +797,9 @@ class TestAnthropicInvokeStream:
         adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         return [
             delta
-            async for delta in adapter.invoke_stream([Message(role="user", content="stream please")])
+            async for delta in adapter.invoke_stream(
+                [Message(role="user", content="stream please")]
+            )
         ]
 
     @pytest.mark.asyncio
@@ -876,12 +878,14 @@ data: {\"type\":\"message_stop\"}
     @pytest.mark.parametrize(
         "body",
         [
-            "event: error\ndata: {\"type\":\"error\",\"error\":{\"message\":\"private detail\"}}\n\n",
+            'event: error\ndata: {"type":"error","error":{"message":"private detail"}}\n\n',
             "event: content_block_delta\ndata: not-json\n\n",
-            "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"partial\"}}\n\n",
+            'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}\n\n',
         ],
     )
-    async def test_rejects_error_malformed_or_truncated_stream_without_raw_payload(self, body: str):
+    async def test_rejects_error_malformed_or_truncated_stream_without_raw_payload(
+        self, body: str
+    ):
         from arcllm.adapters.anthropic import AnthropicAdapter
 
         with pytest.raises(ArcLLMStreamProtocolError) as exc_info:

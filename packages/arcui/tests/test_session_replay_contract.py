@@ -159,8 +159,7 @@ def _add_teammate(team_root: Path, name: str, did: str) -> None:
     agent = team_root / f"{name}_agent"
     (agent / "workspace" / "sessions").mkdir(parents=True)
     (agent / "arcagent.toml").write_text(
-        f'[agent]\nname = "{name}"\norg = "research"\ntype = "scout"\n'
-        f'[identity]\ndid = "{did}"\n',
+        f'[agent]\nname = "{name}"\norg = "research"\ntype = "scout"\n[identity]\ndid = "{did}"\n',
         encoding="utf-8",
     )
 

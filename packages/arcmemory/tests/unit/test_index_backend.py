@@ -38,9 +38,7 @@ def memdb(tmp_path: Path) -> MemoryDB:
         pytest.param("postgres", marks=_needs_pg),
     ],
 )
-async def test_open_index_backend_conforms_to_protocol(
-    memdb: MemoryDB, backend_name: str
-) -> None:
+async def test_open_index_backend_conforms_to_protocol(memdb: MemoryDB, backend_name: str) -> None:
     dsn = _PG_DSN if backend_name == "postgres" else None
     backend = open_index_backend(backend_name, db=memdb, dsn=dsn)
     assert isinstance(backend, IndexBackend)
@@ -118,8 +116,13 @@ async def test_bm25_recency_chunk_texts_and_delete_scope_round_trip(memdb: Memor
     backend = open_index_backend("sqlite", db=memdb)
     for i in range(2):
         await backend.upsert_chunk(
-            scope=_SCOPE, chunk_id=f"event:e{i}", source_path="episodic", mtime=float(i),
-            classification="unclassified", content_hash=f"h{i}", text=f"launch note {i}",
+            scope=_SCOPE,
+            chunk_id=f"event:e{i}",
+            source_path="episodic",
+            mtime=float(i),
+            classification="unclassified",
+            content_hash=f"h{i}",
+            text=f"launch note {i}",
             embedding=None,
         )
     # bm25 finds the keyword; recency lists newest first; chunk_texts returns bodies.

@@ -36,7 +36,9 @@ def test_turn_start_builds_a_pre_plan_decision_point() -> None:
 
 
 def test_tool_start_builds_a_pre_tool_decision_point_with_tool_cues() -> None:
-    moment = decision_point_moment(_event("tool.start", {"tool": "web_search", "args": {"q": "x"}}))
+    moment = decision_point_moment(
+        _event("tool.start", {"tool": "web_search", "args": {"q": "x"}})
+    )
     assert moment is not None
     assert moment["point"] == "pre_tool"
     assert moment["cues"] == ["web_search"]

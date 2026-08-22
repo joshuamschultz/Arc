@@ -166,7 +166,9 @@ async def multifile_plane(tmp_path: Path) -> Any:
     (bundle / "schemas").mkdir(parents=True)
     (bundle / "workflow.toml").write_text(_MULTIFILE_DEFINITION, encoding="utf-8")
     (bundle / "prompts" / "make.md").write_text("make the thing", encoding="utf-8")
-    (bundle / "scripts" / "run.sh").write_text("#!/usr/bin/env bash\necho '{}'\n", encoding="utf-8")
+    (bundle / "scripts" / "run.sh").write_text(
+        "#!/usr/bin/env bash\necho '{}'\n", encoding="utf-8"
+    )
     (bundle / "schemas" / "out.json").write_text('{"type": "object"}', encoding="utf-8")
 
     backend = FakeBackend()

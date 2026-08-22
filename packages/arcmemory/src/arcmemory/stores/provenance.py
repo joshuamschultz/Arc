@@ -46,8 +46,7 @@ class ProvenanceStore:
         """Every provenance recorded against ``item_id``, unfiltered."""
         conn = self._db.connect()
         rows = conn.execute(
-            "SELECT source, external_id, classification FROM item_provenances "
-            "WHERE item_id = ?",
+            "SELECT source, external_id, classification FROM item_provenances WHERE item_id = ?",
             (item_id,),
         ).fetchall()
         return [

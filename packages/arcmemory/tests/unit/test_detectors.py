@@ -207,9 +207,7 @@ def test_decision_point_does_not_fire_on_empty_cues_and_text(workspace: Any, db:
 # --- entity_seen ----------------------------------------------------------
 
 
-def test_entity_seen_fires_when_a_cue_matches_a_known_entity_name(
-    workspace: Any, db: Any
-) -> None:
+def test_entity_seen_fires_when_a_cue_matches_a_known_entity_name(workspace: Any, db: Any) -> None:
     store = _store(workspace, db)
     store.write_fact("alice", "role", "engineer", name="Alice", entity_type="person")
 

@@ -60,7 +60,9 @@ async def test_on_moment_seeding_setup_runs_without_error(workspace: Path) -> No
     brain = ArcMemoryBrain(workspace, _DID, audit_sink=sink)
 
     await brain.capture(
-        "the zephyr-token widget was mentioned in passing", kind="respond", classification="unclassified"
+        "the zephyr-token widget was mentioned in passing",
+        kind="respond",
+        classification="unclassified",
     )
     _seed_entities(brain, count=5, token="zephyr", classification="unclassified")
 
@@ -148,7 +150,9 @@ async def test_on_moment_no_cue_returns_empty_and_does_not_attribute(workspace: 
     assert not [e for e in sink.events if e.action == "memory.recall_attributed"]
 
 
-async def test_on_moment_unknown_kind_returns_empty_and_does_not_attribute(workspace: Path) -> None:
+async def test_on_moment_unknown_kind_returns_empty_and_does_not_attribute(
+    workspace: Path,
+) -> None:
     """An unrecognized moment kind never fires — fail-open, no recall."""
     sink = RecordingSink()
     brain = ArcMemoryBrain(workspace, _DID, audit_sink=sink)

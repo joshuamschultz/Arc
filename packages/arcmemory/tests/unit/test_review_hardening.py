@@ -104,8 +104,13 @@ async def test_doc_index_reranks_when_margin_is_tight(workspace: Path, db, embed
     cfg = MemoryConfig(doc_rerank_margin=0.5)  # wide gate -> any close margin reranks
     index = DocIndex(db, workspace, cfg, embedder=embedder, reranker=reranker)
     chunks = [
-        SourceChunk(chunk_id=f"c{i}", source_path=f"dropbox:{i}", text=f"revenue report {i}",
-                    classification="unclassified", mtime=float(i))
+        SourceChunk(
+            chunk_id=f"c{i}",
+            source_path=f"dropbox:{i}",
+            text=f"revenue report {i}",
+            classification="unclassified",
+            mtime=float(i),
+        )
         for i in range(3)
     ]
     await index.index_source("dropbox", _DID, chunks)

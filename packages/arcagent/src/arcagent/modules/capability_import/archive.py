@@ -138,9 +138,7 @@ def _preflight_zip(
                     or expanded > limits.max_expanded_bytes
                 ):
                     raise CapabilityImportLimitError("archive exceeds configured aggregate limit")
-                candidates.append(
-                    _Candidate(path, info.file_size, info.compress_size, info)
-                )
+                candidates.append(_Candidate(path, info.file_size, info.compress_size, info))
     except (OSError, zipfile.BadZipFile, NotImplementedError) as exc:
         raise CapabilityImportSourceError("unreadable ZIP source") from exc
     _check_count(candidates, limits)

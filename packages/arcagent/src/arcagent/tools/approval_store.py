@@ -23,8 +23,12 @@ async def open_approval_store(
     secret: SecretStr | str | None = None,
 ) -> tuple[ApprovalStore, ArcStoreBackend]:
     """Open the configured approvals collection and return its owner."""
-    backend = await opener() if opener is not None else open_backend(
-        config=config, secret=SecretStr(secret) if isinstance(secret, str) else secret
+    backend = (
+        await opener()
+        if opener is not None
+        else open_backend(
+            config=config, secret=SecretStr(secret) if isinstance(secret, str) else secret
+        )
     )
     if opener is None:
         await backend.start()

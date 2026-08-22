@@ -178,9 +178,7 @@ class TestSourcesAndMappings:
         self, app_with_connector_data: Any
     ) -> None:
         with TestClient(app_with_connector_data) as client:
-            resp = client.get(
-                "/api/agents/connector-agent/knowledge/sources", headers=_viewer()
-            )
+            resp = client.get("/api/agents/connector-agent/knowledge/sources", headers=_viewer())
         assert resp.status_code == 200
         slugs = {item["slug"] for item in resp.json()["items"]}
         assert f"source-{_SOURCE_ID}" in slugs
@@ -202,16 +200,12 @@ class TestSourcesAndMappings:
         self, app_with_connector_data: Any
     ) -> None:
         with TestClient(app_with_connector_data) as client:
-            resp = client.get(
-                "/api/agents/connector-agent/knowledge/mappings", headers=_viewer()
-            )
+            resp = client.get("/api/agents/connector-agent/knowledge/mappings", headers=_viewer())
         assert resp.status_code == 200
         source_ids = {item["source_id"] for item in resp.json()["items"]}
         assert _SOURCE_ID in source_ids
 
-    def test_list_sources_empty_workspace_is_200_empty(
-        self, app_no_connector_data: Any
-    ) -> None:
+    def test_list_sources_empty_workspace_is_200_empty(self, app_no_connector_data: Any) -> None:
         with TestClient(app_no_connector_data) as client:
             resp = client.get("/api/agents/fresh/knowledge/sources", headers=_viewer())
         assert resp.status_code == 200
@@ -240,23 +234,18 @@ class TestBlobFolders:
     ) -> None:
         with TestClient(app_with_connector_data) as client:
             resp = client.get(
-                "/api/agents/connector-agent/knowledge/blob-folders"
-                f"?source={_SOURCE_ID}",
+                f"/api/agents/connector-agent/knowledge/blob-folders?source={_SOURCE_ID}",
                 headers=_viewer(),
             )
         assert resp.status_code == 200
         items = resp.json()["items"]
-        assert items and all(
-            item["slug"].startswith(f"blob-{_SOURCE_ID}-") for item in items
-        )
+        assert items and all(item["slug"].startswith(f"blob-{_SOURCE_ID}-") for item in items)
 
     def test_list_blob_folders_empty_workspace_is_200_empty(
         self, app_no_connector_data: Any
     ) -> None:
         with TestClient(app_no_connector_data) as client:
-            resp = client.get(
-                "/api/agents/fresh/knowledge/blob-folders", headers=_viewer()
-            )
+            resp = client.get("/api/agents/fresh/knowledge/blob-folders", headers=_viewer())
         assert resp.status_code == 200
         assert resp.json()["items"] == []
 
@@ -278,9 +267,7 @@ class TestDatastore:
         slugs = {item["slug"] for item in resp.json()["items"]}
         assert "db-table-invoices" in slugs
 
-    def test_datastore_query_returns_the_reopened_row(
-        self, app_with_connector_data: Any
-    ) -> None:
+    def test_datastore_query_returns_the_reopened_row(self, app_with_connector_data: Any) -> None:
         with TestClient(app_with_connector_data) as client:
             resp = client.get(
                 "/api/agents/connector-agent/knowledge/datastore"
@@ -296,9 +283,7 @@ class TestDatastore:
         self, app_no_connector_data: Any
     ) -> None:
         with TestClient(app_no_connector_data) as client:
-            resp = client.get(
-                "/api/agents/fresh/knowledge/datastore-tables", headers=_viewer()
-            )
+            resp = client.get("/api/agents/fresh/knowledge/datastore-tables", headers=_viewer())
         assert resp.status_code == 200
         assert resp.json()["items"] == []
 
@@ -309,13 +294,10 @@ class TestDatastore:
 
 
 class TestDocuments:
-    def test_document_search_finds_the_indexed_chunk(
-        self, app_with_connector_data: Any
-    ) -> None:
+    def test_document_search_finds_the_indexed_chunk(self, app_with_connector_data: Any) -> None:
         with TestClient(app_with_connector_data) as client:
             resp = client.get(
-                "/api/agents/connector-agent/knowledge/documents"
-                f"?source={_SOURCE_ID}&q=Acme",
+                f"/api/agents/connector-agent/knowledge/documents?source={_SOURCE_ID}&q=Acme",
                 headers=_viewer(),
             )
         assert resp.status_code == 200
@@ -340,9 +322,7 @@ class TestDocuments:
 
 
 class TestProvenance:
-    def test_provenance_returns_both_recorded_sources(
-        self, app_with_connector_data: Any
-    ) -> None:
+    def test_provenance_returns_both_recorded_sources(self, app_with_connector_data: Any) -> None:
         with TestClient(app_with_connector_data) as client:
             resp = client.get(
                 f"/api/agents/connector-agent/knowledge/provenance/{_ITEM_ID}",
@@ -352,9 +332,7 @@ class TestProvenance:
         sources = {item["source"] for item in resp.json()["items"]}
         assert sources == {_SOURCE_ID, "other-source"}
 
-    def test_provenance_unknown_item_is_200_empty(
-        self, app_with_connector_data: Any
-    ) -> None:
+    def test_provenance_unknown_item_is_200_empty(self, app_with_connector_data: Any) -> None:
         with TestClient(app_with_connector_data) as client:
             resp = client.get(
                 "/api/agents/connector-agent/knowledge/provenance/never-recorded",
@@ -370,9 +348,7 @@ class TestProvenance:
 
 
 class TestIndexHealth:
-    def test_index_health_returns_a_semantic_status(
-        self, app_with_connector_data: Any
-    ) -> None:
+    def test_index_health_returns_a_semantic_status(self, app_with_connector_data: Any) -> None:
         with TestClient(app_with_connector_data) as client:
             resp = client.get(
                 "/api/agents/connector-agent/knowledge/index-health", headers=_viewer()
@@ -382,13 +358,9 @@ class TestIndexHealth:
         assert "embedder_live" in body
         assert "vec_extension" in body
 
-    def test_index_health_empty_workspace_is_200(
-        self, app_no_connector_data: Any
-    ) -> None:
+    def test_index_health_empty_workspace_is_200(self, app_no_connector_data: Any) -> None:
         with TestClient(app_no_connector_data) as client:
-            resp = client.get(
-                "/api/agents/fresh/knowledge/index-health", headers=_viewer()
-            )
+            resp = client.get("/api/agents/fresh/knowledge/index-health", headers=_viewer())
         assert resp.status_code == 200
 
 

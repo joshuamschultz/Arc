@@ -1759,7 +1759,9 @@ def test_the_dashboard_completes_a_native_oauth_connection(
     assert "token_access_type=offline" in auth["authorize_url"]
     assert "refresh_token" not in {c["name"] for c in auth["credentials"]}
 
-    async def _fake_post(url: str, data: dict[str, str], creds: tuple[str, str]) -> tuple[int, Any]:
+    async def _fake_post(
+        url: str, data: dict[str, str], creds: tuple[str, str]
+    ) -> tuple[int, Any]:
         return 200, {"refresh_token": "rt-web-durable", "expires_in": 14400}
 
     monkeypatch.setattr("arcagent.connections._oauth_post", _fake_post)

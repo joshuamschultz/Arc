@@ -210,7 +210,9 @@ class TestApprovalStore:
             final = await store.get("req1")
             assert final is not None and final.status in ("approved", "denied")
             events = await be.claim_outbox("terminal-worker")
-            terminal = [event for event in events if event["event_id"].startswith("approval-resolved:")]
+            terminal = [
+                event for event in events if event["event_id"].startswith("approval-resolved:")
+            ]
             assert len(terminal) == 1
             assert terminal[0]["event"]["status"] == final.status
         finally:

@@ -53,9 +53,7 @@ def read_timeline(
     return entries
 
 
-def _life_events(
-    root: Path, window: TimeWindow | None, clearance: str
-) -> list[TimelineEntry]:
+def _life_events(root: Path, window: TimeWindow | None, clearance: str) -> list[TimelineEntry]:
     """Life-event cards that fall in the window and the clearance may read."""
     store = EventStore(root)
     out: list[TimelineEntry] = []
@@ -73,9 +71,7 @@ def _life_events(
     return out
 
 
-def _daily_decisions(
-    root: Path, window: TimeWindow | None, clearance: str
-) -> list[TimelineEntry]:
+def _daily_decisions(root: Path, window: TimeWindow | None, clearance: str) -> list[TimelineEntry]:
     """Curated daily-log decisions that fall in the window and the clearance may read."""
     store = DailyNotesStore(root)
     out: list[TimelineEntry] = []

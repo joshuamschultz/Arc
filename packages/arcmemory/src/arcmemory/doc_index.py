@@ -80,9 +80,7 @@ class DocIndex:
         self._audit = audit_sink
         self._reranker = reranker
 
-    async def index_source(
-        self, source_id: str, agent_did: str, chunks: list[SourceChunk]
-    ) -> int:
+    async def index_source(self, source_id: str, agent_did: str, chunks: list[SourceChunk]) -> int:
         """Upsert every chunk under this source's doc-scope; return count indexed."""
         scope = doc_scope(agent_did, source_id)
         backend = open_index_backend(self._cfg.index_backend, db=self._db)
@@ -145,9 +143,7 @@ class DocIndex:
             provenance=[source_id],
         )
 
-    async def _embed(
-        self, backend: IndexBackend, texts: list[str]
-    ) -> list[list[float]] | None:
+    async def _embed(self, backend: IndexBackend, texts: list[str]) -> list[list[float]] | None:
         """Embed through the injected seam, or ``None`` when embeddings are unavailable."""
         if not backend.vec_available:
             return None

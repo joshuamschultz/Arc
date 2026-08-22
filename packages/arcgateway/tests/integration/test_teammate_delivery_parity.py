@@ -160,9 +160,7 @@ class _DeliverySpy:
         self.calls.append(call)
         return self._stream(call, *args, **kwargs)
 
-    async def _stream(
-        self, call: _DeliveryCall, *args: Any, **kwargs: Any
-    ) -> AsyncIterator[Any]:
+    async def _stream(self, call: _DeliveryCall, *args: Any, **kwargs: Any) -> AsyncIterator[Any]:
         saw_event = False
         stream = self._stream_inner(*args, **kwargs)
         try:
