@@ -306,13 +306,14 @@ class WorkflowRunner:
         if dimension is not None:
             return await self._terminate(run_id, "failed", f"budget exhausted: {dimension}")
 
+        last_state: RunState | None = None
         for _ in range(len(definition.node_ids) + 2):
-            run, changed = await self._pass(run, definition)
+            run, changed, last_state = await self._pass(run, definition)
             if run.status in TERMINAL_RUN_STATUSES:
                 return run
             if not changed:
                 break
-        return await self._finalize(run, definition)
+        return await self._finalize(run, definition, last_state)
 
     async def run_forever(self, *, interval: float = 5.0) -> None:
         """Tick until cancelled — the host's entry point (COMP-009).
@@ -441,8 +442,15 @@ class WorkflowRunner:
 
     # -- one pass over the graph -------------------------------------------
 
-    async def _pass(self, run: RunRecord, definition: WorkflowSpec) -> tuple[RunRecord, bool]:
-        """Decide every node once against a freshly derived state."""
+    async def _pass(
+        self, run: RunRecord, definition: WorkflowSpec
+    ) -> tuple[RunRecord, bool, RunState]:
+        """Decide every node once against a freshly derived state.
+
+        Returns the state it read alongside the run and change flag, so ``_finalize``
+        can compare it against its own read and tell an in-tick completion race from a
+        real stall.
+        """
         rows = await self._tasks.query_by_flow_run(run.run_id)
         state = RunState(rows, run.path_taken)
         scope = state.scope(run.input)
@@ -452,12 +460,12 @@ class WorkflowRunner:
 
         routed = await self._follow_llm_routers(run, definition, state)
         if routed is None:
-            return await self._require_run(run.run_id), True
+            return await self._require_run(run.run_id), True, state
         changed |= routed
 
         looped = await self._follow_loops(run, definition, state)
         if looped is None:
-            return await self._require_run(run.run_id), True
+            return await self._require_run(run.run_id), True, state
         pending, loop_changed = looped
         pending.extend(revisions)
         changed |= loop_changed
@@ -479,14 +487,14 @@ class WorkflowRunner:
                     pending.append((node, decision.iteration))
         except NodeDecisionError as exc:
             await self._terminate(run.run_id, "failed", str(exc))
-            return await self._require_run(run.run_id), True
+            return await self._require_run(run.run_id), True, state
 
         try:
             changed |= await self._materialize(run, definition, state, scope, pending)
         except NodeDecisionError as exc:
             await self._terminate(run.run_id, "failed", str(exc))
-            return await self._require_run(run.run_id), True
-        return await self._require_run(run.run_id), changed
+            return await self._require_run(run.run_id), True, state
+        return await self._require_run(run.run_id), changed, state
 
     def _decide(self, node: NodeSpec, state: RunState, scope: Mapping[str, Any]) -> _Decision:
         """Whether this node runs, is skipped, or is not yet decidable."""
@@ -986,8 +994,15 @@ class WorkflowRunner:
 
     # -- roll-up -------------------------------------------------------------
 
-    async def _finalize(self, run: RunRecord, definition: WorkflowSpec) -> RunRecord:
-        """Roll node terminal states into the Run, or escalate a stall."""
+    async def _finalize(
+        self, run: RunRecord, definition: WorkflowSpec, prev_state: RunState | None = None
+    ) -> RunRecord:
+        """Roll node terminal states into the Run, or escalate a stall.
+
+        ``prev_state`` is the last decide pass's read of the tasks. Comparing it to
+        this roll-up's own read is what catches a node settling mid-tick (the read
+        race) so it is not mistaken for a stall.
+        """
         rows = await self._tasks.query_by_flow_run(run.run_id)
         state = RunState(rows, run.path_taken)
         in_flight = state.in_flight()
@@ -1009,6 +1024,22 @@ class WorkflowRunner:
             return await self._terminate(
                 run.run_id, "failed", f"node failed: {failures[0].node_id}"
             )
+        # A task that settled between the decide pass and this roll-up moved the
+        # frontier AFTER the pass decided against it — not a stall. The decide pass
+        # and this roll-up read the store separately, so a predecessor committing
+        # 'done' in the ~40ms between the two reads left its successor un-materialized
+        # this tick; the next tick materializes it. Comparing the two reads is what
+        # separates "a predecessor just finished" (keep running) from "a reachable
+        # node was never materialized because the write was dropped" (genuine stall).
+        # Without it, that read race turned a healthy run into a permanent failure
+        # (run-f031846f710c).
+        if prev_state is not None and self._terminal_states_moved(prev_state, state, definition):
+            if run.status != "running":
+                await self._runs.set_status(
+                    run.run_id, "running", actor_did=self._runner_did, expected_status=run.status
+                )
+                return await self._require_run(run.run_id)
+            return run
         undecided = [
             node.id for node in definition.nodes if state.terminal_state(node.id)[0] == "absent"
         ]
@@ -1019,6 +1050,20 @@ class WorkflowRunner:
                 f"stalled: nothing in flight and {undecided[0]} never became reachable",
             )
         return await self._terminate(run.run_id, "done", "all nodes complete")
+
+    @staticmethod
+    def _terminal_states_moved(
+        prev: RunState, curr: RunState, definition: WorkflowSpec
+    ) -> bool:
+        """True when any node's terminal state differs between the two reads.
+
+        A change means a task settled after the decide pass read the store — the
+        signal that distinguishes an in-tick completion race from a real stall.
+        """
+        return any(
+            prev.terminal_state(node.id)[0] != curr.terminal_state(node.id)[0]
+            for node in definition.nodes
+        )
 
     async def _terminate(self, run_id: str, status: RunStatus, resolution: str) -> RunRecord:
         run = await self._require_run(run_id)
