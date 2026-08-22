@@ -17,7 +17,9 @@ class Provider:
     async def invoke(self, messages, tools=None, **kwargs):
         self.calls += 1
         await asyncio.sleep(0)
-        return LLMResponse(content="ok", usage=_USAGE, model=self.model_name, stop_reason="end_turn")
+        return LLMResponse(
+            content="ok", usage=_USAGE, model=self.model_name, stop_reason="end_turn"
+        )
 
     async def invoke_stream(self, messages, tools=None, **kwargs):
         self.stream_calls += 1
@@ -34,7 +36,9 @@ class Provider:
 def build_router(**config):
     providers = {"default": Provider("p", "cheap"), "strong": Provider("p", "strong")}
     routes = [Route("default", "p", "cheap"), Route("strong", "p", "strong")]
-    return RoutingModule({"default_route": "default", **config}, routes, lambda r: providers[r.name]), providers
+    return RoutingModule(
+        {"default_route": "default", **config}, routes, lambda r: providers[r.name]
+    ), providers
 
 
 @pytest.mark.asyncio
@@ -57,6 +61,7 @@ async def test_continuity_lock_is_session_scoped_and_beats_pin():
 async def test_capability_gate_blocks_tool_incompatible_route():
     router, providers = build_router(enforcement="block")
     router._routes["default"] = Route("default", "p", "cheap", capabilities=())
+    router._routes["strong"] = Route("strong", "p", "strong", capabilities=())
     with pytest.raises(ArcLLMConfigError, match="capabil"):
         await router.invoke(
             [Message(role="user", content="go")],
@@ -75,8 +80,12 @@ async def test_concurrent_request_policies_do_not_leak():
     router = RoutingModule({"default_route": "public"}, routes, lambda r: providers[r.name])
     message = [Message(role="user", content="go")]
     secure, public = await asyncio.gather(
-        router.invoke(message, classification="cui", residency="secure", allowed_routes={"secure"}),
-        router.invoke(message, classification="unclassified", residency="public", allowed_routes={"public"}),
+        router.invoke(
+            message, classification="cui", residency="secure", allowed_routes={"secure"}
+        ),
+        router.invoke(
+            message, classification="unclassified", residency="public", allowed_routes={"public"}
+        ),
     )
     assert secure.model == "secure"
     assert public.model == "public"
@@ -87,8 +96,17 @@ async def test_concurrent_request_policies_do_not_leak():
 async def test_streaming_applies_all_request_policy_overrides():
     providers = {name: Provider("p", name) for name in ("secure", "public")}
     routes = [
-        Route("secure", "p", "secure", classification_max="cui", residency="secure", cost_per_1k=0.1),
-        Route("public", "p", "public", classification_max="top_secret", residency="public", cost_per_1k=2.0),
+        Route(
+            "secure", "p", "secure", classification_max="cui", residency="secure", cost_per_1k=0.1
+        ),
+        Route(
+            "public",
+            "p",
+            "public",
+            classification_max="top_secret",
+            residency="public",
+            cost_per_1k=2.0,
+        ),
     ]
     router = RoutingModule({"default_route": "public"}, routes, lambda r: providers[r.name])
     deltas = [

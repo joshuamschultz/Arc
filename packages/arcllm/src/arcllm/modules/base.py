@@ -117,16 +117,6 @@ class BaseModule(LLMProvider):
         async for delta in self._inner.invoke_stream(messages, tools, **kwargs):
             yield delta
 
-    async def invoke_stream(
-        self,
-        messages: list[Message],
-        tools: list[Tool] | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterator[Delta]:
-        """Forward native provider deltas without falling back to ``invoke``."""
-        async for delta in self._inner.invoke_stream(messages, tools, **kwargs):
-            yield delta
-
     def validate_config(self) -> bool:
         return self._inner.validate_config()
 
