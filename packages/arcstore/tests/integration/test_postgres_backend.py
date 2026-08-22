@@ -229,3 +229,26 @@ async def test_postgres_inbox_idempotent_event_survives_backend_restart(
     )
 
     assert retry == first
+
+
+async def test_postgres_v3_indexes_cover_inbox_foreign_keys_and_queries(
+    postgres_backend: ArcStoreBackend,
+) -> None:
+    """The forward migration installs FK/scope/order indexes idempotently."""
+    assert isinstance(postgres_backend, PostgresBackend)
+    async with postgres_backend._require_pool().acquire() as connection:
+        rows = await connection.fetch(
+            "SELECT tablename, indexdef FROM pg_indexes "
+            "WHERE schemaname=current_schema() AND indexname = ANY($1::text[])",
+            [
+                "inbox_threads_inbox_updated_idx",
+                "inbox_messages_thread_created_idx",
+                "inbox_handoffs_thread_created_idx",
+                "approval_outbox_approval_id_idx",
+            ],
+        )
+    definitions = {row["tablename"]: row["indexdef"] for row in rows}
+    assert "(inbox_id, updated_at DESC, thread_id DESC)" in definitions["inbox_threads"]
+    assert "(thread_id, created_at, message_id)" in definitions["inbox_messages"]
+    assert "(thread_id, created_at, handoff_id)" in definitions["inbox_handoffs"]
+    assert "(approval_id)" in definitions["approval_outbox"]

@@ -8,6 +8,10 @@ import pytest
 from pydantic import SecretStr, ValidationError
 
 from arcstore import ArcStoreConfig, resolve_data_dir
+from arcstore.backends import open_backend
+from arcstore.backends.base import ArcStoreBackend
+from arcstore.backends.postgres import PostgresBackend
+from arcstore.backends.postgres_inbox import PostgresInboxRepository
 from arcstore.config import ENV_DATA_DIR, ENV_DATABASE_URL
 
 
@@ -38,8 +42,70 @@ def test_supabase_pooler_disables_prepared_statement_cache() -> None:
         SecretStr("postgresql://user:secret@db.pooler.supabase.com:6543/postgres")
     )
     assert settings.statement_cache_size == 0
+    assert settings.ssl_mode == "require"
+    assert "db.pooler.supabase.com:6543" in settings.dsn.get_secret_value()
     assert "user:secret@" not in repr(config)
     assert "user:secret@" not in repr(settings)
+
+
+@pytest.mark.asyncio
+async def test_supabase_pooler_starts_full_postgres_adapter_with_tls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pooler-safe settings are passed to the same complete PostgresBackend contract."""
+    import asyncpg
+
+    calls: dict[str, object] = {}
+
+    class Transaction:
+        async def __aenter__(self) -> Transaction:
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    class Connection:
+        def transaction(self) -> Transaction:
+            return Transaction()
+
+        async def execute(self, *_args: object) -> str:
+            return "OK"
+
+        async def fetchval(self, *_args: object) -> None:
+            return None
+
+    class Acquire:
+        async def __aenter__(self) -> Connection:
+            return Connection()
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    class Pool:
+        def acquire(self) -> Acquire:
+            return Acquire()
+
+        async def close(self) -> None:
+            return None
+
+    async def create_pool(**kwargs: object) -> Pool:
+        calls.update(kwargs)
+        return Pool()
+
+    monkeypatch.setattr(asyncpg, "create_pool", create_pool)
+    dsn = "postgresql://user:secret@db.pooler.supabase.com:6543/postgres"
+    backend = open_backend(secret=SecretStr(dsn))
+    assert isinstance(backend, PostgresBackend)
+    assert isinstance(backend, ArcStoreBackend)
+    repository = PostgresInboxRepository(backend)
+    assert repository._backend is backend
+    await backend.start()
+    try:
+        assert calls["dsn"] == dsn
+        assert calls["ssl"] is True
+        assert calls["statement_cache_size"] == 0
+    finally:
+        await backend.stop()
 
 
 def test_database_url_env_is_resolved_per_call(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 from uuid import uuid4
 
@@ -18,6 +18,7 @@ from tools.one_time.arcstore_sqlite_to_postgres import (
     MappedRow,
     MigrationError,
     PostgresDestination,
+    SQLiteSource,
     _mutable_row_key,
     _parse_mutable_row_key,
     digest,
@@ -223,6 +224,57 @@ async def test_invalid_mutable_updated_at_fails_before_destination_write(tmp_pat
         await migrate(source, destination)
 
     assert destination.writes == 0
+
+
+@pytest.mark.asyncio
+async def test_streaming_batch_size_does_not_change_migration_digests(tmp_path: Path) -> None:
+    source = tmp_path / "legacy.db"
+    _source_db(source)
+    one = await migrate(source, FakeDestination(), batch_size=1, dry_run=True)
+    many = await migrate(source, FakeDestination(), batch_size=17, dry_run=True)
+    assert one.destination["migration_id"] == many.destination["migration_id"]
+    assert one.tables["mutable_records"]["source_digest"] == many.tables["mutable_records"][
+        "source_digest"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_large_source_reads_are_fetchmany_bounded_and_read_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "large.db"
+    connection = sqlite3.connect(source)
+    connection.execute(
+        "CREATE TABLE llm_calls(record_key TEXT PRIMARY KEY, payload TEXT, ts TEXT)"
+    )
+    stamp = "2026-08-22T00:00:00+00:00"
+    connection.executemany(
+        "INSERT INTO llm_calls VALUES (?, ?, ?)",
+        ((f"call-{index:04d}", json.dumps({"index": index}), stamp) for index in range(257)),
+    )
+    connection.commit()
+    connection.close()
+
+    observed_sizes: list[int] = []
+    original = SQLiteSource.iter_rows
+
+    def instrumented(
+        self: SQLiteSource, table: str, *, batch_size: int, ordered: bool = False
+    ) -> Iterable[tuple[dict[str, object], ...]]:
+        batches = original(self, table, batch_size=batch_size, ordered=ordered)
+        for batch in batches:
+            observed_sizes.append(len(batch))
+            yield batch
+
+    monkeypatch.setattr(SQLiteSource, "iter_rows", instrumented)
+    destination = FakeDestination()
+    report = await migrate(source, destination, batch_size=13)
+
+    assert report.tables["llm_calls"]["source_count"] == 257
+    assert report.tables["llm_calls"]["destination_count"] == 257
+    assert destination.writes == 257
+    assert observed_sizes
+    assert max(observed_sizes) <= 13
 
 
 @pytest.mark.asyncio

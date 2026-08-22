@@ -2,8 +2,9 @@
 """One-time, removable migration from legacy ArcStore SQLite to PostgreSQL.
 
 The script is intentionally outside runtime packages.  It accepts only known
-ArcStore source tables, opens SQLite read-only, and writes the production v1/v2
-schema using one transaction per bounded batch plus a durable checkpoint.
+ArcStore source tables, opens SQLite read-only, and writes the production v1/v3
+schema using one transaction per bounded batch plus a durable checkpoint. Source
+tables are streamed in bounded chunks; no complete table is held in memory.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ import os
 import re
 import sqlite3
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -26,8 +27,8 @@ from typing import Any, Protocol, Self
 
 from arcstore.inbox import Handoff, Inbox, Message, Thread
 
-SCHEMA_HEAD = 2
-PROTOCOL_VERSION = "arcstore-sqlite-postgres-v1-v2"
+SCHEMA_HEAD = 3
+PROTOCOL_VERSION = "arcstore-sqlite-postgres-v1-v3"
 META_TABLE = "arcstore_one_time_migrations"
 CHECKPOINT_TABLE = "arcstore_one_time_migration_checkpoints"
 OPERATIONAL_TABLES = frozenset(
@@ -78,9 +79,9 @@ class MappedRow:
 class TablePlan:
     source_table: str
     destination_table: str
-    rows: tuple[MappedRow, ...]
     source_count: int
     source_digest: str
+    mapped_digest: str
 
 
 @dataclass
@@ -147,6 +148,35 @@ def _digest_rows(rows: Sequence[MappedRow]) -> str:
     return hashlib.sha256(
         "".join(row.digest for row in sorted(rows, key=lambda row: (row.key, row.digest))).encode()
     ).hexdigest()
+
+
+def _digest_sorted_rows(rows: Iterable[MappedRow]) -> tuple[int, str]:
+    """Digest rows already ordered by their stable migration key.
+
+    SQLiteSource orders mapped rows by the same key used by the old in-memory
+    sort.  Hashing the stream directly avoids retaining either source payloads
+    or mapped rows while preserving the old ``_digest_rows`` result.
+    """
+    hasher = hashlib.sha256()
+    count = 0
+    for row in rows:
+        hasher.update(row.digest.encode())
+        count += 1
+    return count, hasher.hexdigest()
+
+
+def _digest_source_rows(rows: Iterable[Mapping[str, Any]]) -> tuple[int, str]:
+    """Digest the legacy row-list representation incrementally."""
+    hasher = hashlib.sha256()
+    hasher.update(b"[")
+    count = 0
+    for raw in rows:
+        if count:
+            hasher.update(b",")
+        hasher.update(canonical_json(_semantic_production_value(raw)).encode("utf-8"))
+        count += 1
+    hasher.update(b"]")
+    return count, hasher.hexdigest()
 
 
 def _redact(value: str) -> str:
@@ -229,24 +259,65 @@ class SQLiteSource:
             "tables": tables,
         }
 
-    def rows(self, table: str) -> list[dict[str, Any]]:
+    def _columns(self, table: str) -> list[str]:
         if not _SAFE_IDENTIFIER.fullmatch(table):
             raise MigrationError(f"unsafe source table name: {table!r}")
         columns = [str(row[1]) for row in self.connection.execute(f'PRAGMA table_info("{table}")')]
         if not columns:
             raise MigrationError(f"source table has no columns: {table}")
+        return columns
+
+    @staticmethod
+    def _order_expression(table: str, columns: Sequence[str]) -> str | None:
+        available = set(columns)
+        canonical = SOURCE_ALIASES.get(table, table)
+        if canonical in OPERATIONAL_TABLES:
+            if {"record_key", "record_id"} <= available:
+                return "COALESCE(record_key, record_id)"
+            if "record_key" in available:
+                return "record_key"
+            if "record_id" in available:
+                return "record_id"
+        if canonical == "arcstore_cursors":
+            if {"name", "source"} <= available:
+                return "COALESCE(name, source)"
+            if "name" in available:
+                return "name"
+            if "source" in available:
+                return "source"
+        if canonical == "mutable_records" and {"collection", "key"} <= available:
+            return "collection, key"
+        key_column = {
+            "inboxes": "inbox_id",
+            "inbox_threads": "thread_id",
+            "inbox_messages": "message_id",
+            "inbox_handoffs": "handoff_id",
+            "approval_outbox": "event_id",
+        }.get(canonical)
+        return key_column if key_column in available else None
+
+    def iter_rows(
+        self, table: str, *, batch_size: int, ordered: bool = False
+    ) -> Iterable[tuple[dict[str, Any], ...]]:
+        """Yield bounded source chunks; never materialize a source table."""
+        if batch_size < 1:
+            raise ValueError("batch_size must be positive")
+        columns = self._columns(table)
         names = ",".join(f'"{column.replace(chr(34), chr(34) * 2)}"' for column in columns)
+        order_expression = self._order_expression(table, columns) if ordered else "rowid"
+        order_clause = f" ORDER BY {order_expression}" if order_expression else ""
         try:
             cursor = self.connection.execute(
-                f'SELECT {names} FROM "{table}" ORDER BY rowid'  # noqa: S608 - known SQLite table/columns
+                f'SELECT {names} FROM "{table}"{order_clause}'  # noqa: S608 - known SQLite table/columns
             )
         except sqlite3.OperationalError as exc:
-            if "rowid" not in str(exc):
+            if not order_clause or "rowid" not in str(exc):
                 raise
             cursor = self.connection.execute(
                 f'SELECT {names} FROM "{table}"'  # noqa: S608 - known SQLite table/columns
             )
-        return [dict(zip(columns, row, strict=True)) for row in cursor]
+        while batch := cursor.fetchmany(batch_size):
+            yield tuple(dict(zip(columns, row, strict=True)) for row in batch)
 
 
 def _payload_row(raw: Mapping[str, Any], *, key: str, timestamp: str | None) -> dict[str, Any]:
@@ -438,7 +509,39 @@ def _map_row(source_table: str, raw: Mapping[str, Any]) -> MappedRow:
     raise MigrationError(f"unsupported source table: {source_table}")
 
 
-def _plans(source: SQLiteSource) -> tuple[list[TablePlan], list[str]]:
+def _mapped_batches(
+    source: SQLiteSource, table: str, *, batch_size: int
+) -> Iterable[tuple[MappedRow, ...]]:
+    """Map one bounded, deterministically ordered source chunk at a time."""
+    previous_key: str | None = None
+    for raw_batch in source.iter_rows(table, batch_size=batch_size, ordered=True):
+        mapped = tuple(_map_row(table, raw) for raw in raw_batch)
+        for row in mapped:
+            if previous_key == row.key:
+                raise MigrationError(f"duplicate source keys in {table}")
+            previous_key = row.key
+        yield mapped
+
+
+def _table_plan(source: SQLiteSource, table: str, *, batch_size: int) -> TablePlan:
+    raw_count, raw_digest = _digest_source_rows(
+        raw for batch in source.iter_rows(table, batch_size=batch_size) for raw in batch
+    )
+    mapped_count, mapped_digest = _digest_sorted_rows(
+        row for batch in _mapped_batches(source, table, batch_size=batch_size) for row in batch
+    )
+    if raw_count != mapped_count:
+        raise MigrationError(f"source row count changed while planning {table}")
+    return TablePlan(
+        table,
+        SOURCE_ALIASES.get(table, table),
+        raw_count,
+        raw_digest,
+        mapped_digest,
+    )
+
+
+def _plans(source: SQLiteSource, *, batch_size: int = 500) -> tuple[list[TablePlan], list[str]]:
     schema_tables = set(source.schema()["tables"])
     unknown = schema_tables - KNOWN_SOURCE_TABLES
     if unknown:
@@ -451,17 +554,7 @@ def _plans(source: SQLiteSource) -> tuple[list[TablePlan], list[str]]:
     )
     plans: list[TablePlan] = []
     for name in names:
-        raw_rows = source.rows(name)
-        rows = sorted(
-            (_map_row(name, raw) for raw in raw_rows), key=lambda row: (row.key, row.digest)
-        )
-        if len({row.key for row in rows}) != len(rows):
-            raise MigrationError(f"duplicate source keys in {name}")
-        plans.append(
-            TablePlan(
-                name, SOURCE_ALIASES.get(name, name), tuple(rows), len(raw_rows), digest(raw_rows)
-            )
-        )
+        plans.append(_table_plan(source, name, batch_size=batch_size))
     return plans, ignored
 
 
@@ -474,7 +567,7 @@ class Destination(Protocol):
     async def write_batch(
         self, migration_id: str, table: str, rows: Sequence[MappedRow]
     ) -> None: ...
-    async def verify(self, table: str, rows: Sequence[MappedRow]) -> tuple[int, str]: ...
+    async def verify(self, table: str, rows: Iterable[MappedRow]) -> tuple[int, str]: ...
     async def close(self) -> None: ...
 
 
@@ -509,9 +602,9 @@ class FakeDestination:
             last = rows[-1]
             self.checkpoints[(migration_id, table)] = (last.key, last.digest)
 
-    async def verify(self, table: str, rows: Sequence[MappedRow]) -> tuple[int, str]:
-        actual = [self.rows[table][row.key] for row in rows if row.key in self.rows[table]]
-        return len(actual), _digest_rows(actual)
+    async def verify(self, table: str, rows: Iterable[MappedRow]) -> tuple[int, str]:
+        actual = (self.rows[table][row.key] for row in rows if row.key in self.rows[table])
+        return _digest_sorted_rows(actual)
 
     async def close(self) -> None:
         return None
@@ -702,11 +795,16 @@ class PostgresDestination:
         else:
             raise MigrationError(f"unsupported destination table: {table}")
 
-    async def verify(self, table: str, rows: Sequence[MappedRow]) -> tuple[int, str]:
+    async def verify(self, table: str, rows: Iterable[MappedRow]) -> tuple[int, str]:
         async with (await self._started()).acquire() as connection:
-            actual = [await self._read_row(connection, table, row.key) for row in rows]
-        present = [row for row in actual if row is not None]
-        return len(present), _digest_rows(present)
+            count = 0
+            hasher = hashlib.sha256()
+            for expected in rows:
+                actual = await self._read_row(connection, table, expected.key)
+                if actual is not None:
+                    hasher.update(actual.digest.encode())
+                    count += 1
+        return count, hasher.hexdigest()
 
     async def _read_row(self, connection: Any, table: str, key: str) -> MappedRow | None:
         if table in OPERATIONAL_TABLES:
@@ -847,12 +945,12 @@ async def migrate(
         report.source["backup_path"] = str(backup)
     with SQLiteSource(source_path) as source:
         schema = source.schema()
-        plans, skipped = _plans(source)
+        plans, skipped = _plans(source, batch_size=batch_size)
         migration_id = digest(
             {
                 "protocol": PROTOCOL_VERSION,
                 "schema": schema,
-                "plans": [(plan.source_table, _digest_rows(plan.rows)) for plan in plans],
+                "plans": [(plan.source_table, plan.mapped_digest) for plan in plans],
             }
         )
         report.source.update({"path": str(source.path), "read_only": True, "schema": schema})
@@ -869,11 +967,10 @@ async def migrate(
         if not dry_run:
             await destination.register(migration_id, schema)
         for plan in plans:
-            source_digest = _digest_rows(plan.rows)
             info: dict[str, Any] = {
                 "destination_table": plan.destination_table,
                 "source_count": plan.source_count,
-                "source_digest": source_digest,
+                "source_digest": plan.mapped_digest,
                 "migrated_count": 0,
                 "batches": 0,
             }
@@ -881,8 +978,8 @@ async def migrate(
             if dry_run:
                 info.update(
                     {
-                        "migrated_count": len(plan.rows),
-                        "batches": (len(plan.rows) + batch_size - 1) // batch_size,
+                        "migrated_count": plan.source_count,
+                        "batches": (plan.source_count + batch_size - 1) // batch_size,
                         "destination_count": None,
                         "destination_digest": None,
                     }
@@ -890,24 +987,35 @@ async def migrate(
                 report.tables[plan.source_table] = info
                 continue
             checkpoint = await destination.checkpoint(migration_id, plan.destination_table)
-            start = 0
-            if checkpoint is not None:
-                try:
-                    start = next(
-                        index + 1
-                        for index, row in enumerate(plan.rows)
-                        if (row.key, row.digest) == checkpoint
+            checkpoint_seen = checkpoint is None
+            for mapped_batch in _mapped_batches(source, plan.source_table, batch_size=batch_size):
+                batch = mapped_batch
+                if not checkpoint_seen:
+                    remaining: list[MappedRow] = []
+                    for row in mapped_batch:
+                        if (row.key, row.digest) == checkpoint:
+                            checkpoint_seen = True
+                        elif checkpoint_seen:
+                            remaining.append(row)
+                    batch = tuple(remaining)
+                if batch:
+                    await destination.write_batch(migration_id, plan.destination_table, batch)
+                    info["migrated_count"] += len(batch)
+                    info["batches"] += 1
+            if not checkpoint_seen:
+                raise MigrationError(f"stale checkpoint for {plan.source_table}")
+            count, destination_digest = await destination.verify(
+                plan.destination_table,
+                (
+                    row
+                    for mapped_batch in _mapped_batches(
+                        source, plan.source_table, batch_size=batch_size
                     )
-                except StopIteration as exc:
-                    raise MigrationError(f"stale checkpoint for {plan.source_table}") from exc
-            for offset in range(start, len(plan.rows), batch_size):
-                batch = plan.rows[offset : offset + batch_size]
-                await destination.write_batch(migration_id, plan.destination_table, batch)
-                info["migrated_count"] += len(batch)
-                info["batches"] += 1
-            count, destination_digest = await destination.verify(plan.destination_table, plan.rows)
+                    for row in mapped_batch
+                ),
+            )
             info.update({"destination_count": count, "destination_digest": destination_digest})
-            if count != len(plan.rows) or destination_digest != source_digest:
+            if count != plan.source_count or destination_digest != plan.mapped_digest:
                 raise MigrationError(
                     f"count or digest verification failed for {plan.destination_table}"
                 )
