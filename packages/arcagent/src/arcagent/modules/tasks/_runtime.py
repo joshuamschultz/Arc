@@ -14,7 +14,7 @@ see ``arcagent/builtins/capabilities/_runtime.py`` for the full rationale.
 dispatcher (``core.agent_lifecycle.configure_module_runtimes``) calls
 ``configure_fn(**kwargs)`` without ``await`` and has no ``registry`` kwarg
 in its available set. An earlier revision of this module made ``configure()``
-async so it could open the SQLite backend eagerly — that silently no-oped in
+async so it could open the backend eagerly — that silently no-oped in
 production (the coroutine was constructed but never scheduled). Fixed by
 mirroring the messaging module's ``ensure_live_backend`` pattern instead:
 ``configure()`` only stores plain state; :func:`ensure_store` — idempotent,

@@ -30,10 +30,6 @@ class WorkflowsConfig(ModuleConfig):
     # dashboard, and can never run (ADR-029 governs an agent's OWN state, and a
     # workflow is a deployment artifact).
     workflows_dir: str = "workflows"
-    # Forwarded to ``arcstore.config.resolve_data_dir`` for the shared run/task
-    # plane — empty defers to that function's env > default precedence so this
-    # module, the tasks module, and arcui always agree on one SQLite file.
-    data_dir: str = ""
     # The team bus this deployment's agents are on. Set (mirroring the tasks
     # module) it gives the authoring check a real roster, so a node naming an
     # agent nobody registered is refused while it can still be repaired. Empty

@@ -23,11 +23,6 @@ class TasksConfig(ModuleConfig):
     # explicitly (ASI01/LLM06), never on by mere module presence. When true,
     # the dispatch loop starts the agent's ready, owned tasks and runs them.
     dispatch: bool = False
-    # Forwarded to ``arcstore.config.resolve_data_dir`` — empty string defers
-    # to that function's own env > default precedence (SPEC-026 §13.2) so
-    # this module and arcui always agree on which SQLite file is the durable
-    # Task directory.
-    data_dir: str = ""
     # NATS JetStream url for the shared arcteam registry (mirrors
     # MessagingConfig.nats_url). Empty means no live registry is built —
     # assign_task/create_task's @handle resolution degrades with a clear

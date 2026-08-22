@@ -4,7 +4,7 @@ Mirrors the scheduler module's test conventions (``test_scheduler_capabilities.p
 exercises the ``@tool`` decorator functions in :mod:`arcagent.modules.tasks.capabilities`
 directly, bootstrapped via ``_runtime.configure`` (the production wiring) so each tool
 runs over a real ``arcstore.tasks.TaskStore`` (SPEC-056 Phase A, arcstore/tests/unit/
-test_tasks.py — done) opened against a ``tmp_path`` SQLite db, and a real arcteam
+test_tasks.py — done) backed by a test-local ArcStore fake, and a real arcteam
 ``EntityRegistry`` for ``@handle`` resolution (mirrors the messaging module's identity
 pattern — SDD §3 explicitly calls out ``st.identity``, not the scheduler template,
 which carries no identity).
@@ -12,7 +12,7 @@ which carries no identity).
 ``_runtime.configure()`` is called SYNCHRONOUSLY here (no ``await``) — exactly the
 shape ``core.agent_lifecycle.configure_module_runtimes`` calls every module's
 ``configure()`` in production (no ``await``, no ``registry`` kwarg threaded through).
-An earlier revision made ``configure()`` async to open the SQLite backend eagerly;
+An earlier revision made ``configure()`` async to open the backend eagerly;
 that silently no-oped in production (the coroutine was built but never scheduled) —
 ``TestSyncConfigureLiveWiring`` below is the regression guard for that bug. The real
 async wiring now happens lazily, inside ``_runtime.ensure_store()``, awaited by every
@@ -44,31 +44,29 @@ from packages.arcagent.tests.unit.modules.tasks.conftest import make_peer_entity
 
 
 @pytest.fixture
-def tasks_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
-    """Bootstrap the runtime against a tmp_path SQLite db and yield the state.
+def tasks_state(
+    tmp_path: Path, arcstore_opener: Any
+) -> Iterator[Any]:
+    """Bootstrap the runtime against a test-local ArcStore backend.
 
     ``_runtime.configure()`` is SYNC and called with no ``await`` — the exact
     shape production uses (``core.agent_lifecycle.configure_module_runtimes``
-    never awaits a module's ``configure()``). The SQLite backend isn't open
-    yet when this fixture returns; it's opened lazily by
+    never awaits a module's ``configure()``). The backend isn't opened by
+    ``configure()``; it is opened lazily by
     ``_runtime.ensure_store()`` on the first tool call within each test.
-
-    ``ARCSTORE_DATA_DIR`` is the highest-precedence override (arcstore.config
-    §13.2) — cleared so the module config's ``data_dir`` (pointed at ``tmp_path``)
-    actually wins and tests never touch the real ``~/.arc/store``.
     """
     from arcagent.modules.tasks import _runtime
 
-    monkeypatch.delenv("ARCSTORE_DATA_DIR", raising=False)
     _runtime.reset()
     identity = AgentIdentity.generate(org="local", agent_type="agent")
     registry = make_registry()
     _runtime.configure(
-        config={"enabled": True, "data_dir": str(tmp_path)},
+        config={"enabled": True},
         telemetry=MagicMock(),
         workspace=tmp_path,
         identity=identity,
         registry=registry,
+        arcstore_opener=arcstore_opener,
     )
     st = _runtime.state()
     yield st
@@ -106,7 +104,7 @@ class TestSyncConfigureLiveWiring:
     ``_runtime.configure(**kwargs)`` synchronously (no ``await``) with no
     ``registry`` kwarg in its available set (agent_lifecycle.py:214-239). An
     earlier revision of this module made ``configure()`` async so it could
-    open the SQLite backend eagerly — that call shape would have built an
+    open the backend eagerly — that call shape would have built an
     unawaited coroutine and never actually run, leaving the module silently
     unconfigured in a real agent. Fixed: ``configure()`` is sync; the real
     async wiring happens lazily in ``ensure_store()``, awaited by every tool
@@ -114,21 +112,21 @@ class TestSyncConfigureLiveWiring:
     """
 
     async def test_tool_works_after_sync_configure_with_no_registry(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, arcstore_opener: Any
     ) -> None:
         from arcagent.modules.tasks import _runtime
         from arcagent.modules.tasks.capabilities import create_task
 
-        monkeypatch.delenv("ARCSTORE_DATA_DIR", raising=False)
         _runtime.reset()
         identity = AgentIdentity.generate(org="local", agent_type="agent")
         try:
             # Exactly the dispatcher's call shape: no `await`, no `registry`.
             _runtime.configure(
-                config={"enabled": True, "data_dir": str(tmp_path)},
+                config={"enabled": True},
                 telemetry=MagicMock(),
                 workspace=tmp_path,
                 identity=identity,
+                arcstore_opener=arcstore_opener,
             )
             result = json.loads(await create_task(title="Live-wired"))
             assert result["title"] == "Live-wired"
@@ -136,21 +134,21 @@ class TestSyncConfigureLiveWiring:
             _runtime.reset()
 
     async def test_assign_degrades_cleanly_with_no_registry(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, arcstore_opener: Any
     ) -> None:
         """No injected registry + no ``nats_url`` -> a clear error, not a crash."""
         from arcagent.modules.tasks import _runtime
         from arcagent.modules.tasks.capabilities import assign_task, create_task
 
-        monkeypatch.delenv("ARCSTORE_DATA_DIR", raising=False)
         _runtime.reset()
         identity = AgentIdentity.generate(org="local", agent_type="agent")
         try:
             _runtime.configure(
-                config={"enabled": True, "data_dir": str(tmp_path)},
+                config={"enabled": True},
                 telemetry=MagicMock(),
                 workspace=tmp_path,
                 identity=identity,
+                arcstore_opener=arcstore_opener,
             )
             created = json.loads(await create_task(title="Needs a teammate", owner=""))
             result = json.loads(await assign_task(id=created["id"], to_handle="@bob"))

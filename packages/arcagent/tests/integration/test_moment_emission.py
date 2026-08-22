@@ -29,6 +29,7 @@ what proves that.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 from arcrun import TurnEndEvent
@@ -132,7 +133,7 @@ class _OrderRecorder:
 
 
 async def test_task_start_emits_agent_moment_before_agent_run_fn(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, arcstore_opener: Any
 ) -> None:
     """``_run_task`` must announce ``kind="task_start"`` before the model runs.
 
@@ -147,14 +148,14 @@ async def test_task_start_emits_agent_moment_before_agent_run_fn(
     from arcagent.modules.tasks import _runtime
     from arcagent.modules.tasks.capabilities import _dispatch_tick, create_task
 
-    monkeypatch.delenv("ARCSTORE_DATA_DIR", raising=False)
     _runtime.reset()
     identity = AgentIdentity.generate(org="local", agent_type="agent")
     _runtime.configure(
-        config={"enabled": True, "data_dir": str(tmp_path), "dispatch": True},
+        config={"enabled": True, "dispatch": True},
         telemetry=None,
         workspace=tmp_path,
         identity=identity,
+        arcstore_opener=arcstore_opener,
     )
     st = _runtime.state()
     witness = _OrderRecorder()

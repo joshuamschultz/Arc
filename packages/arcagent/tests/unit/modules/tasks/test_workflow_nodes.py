@@ -65,18 +65,18 @@ def _run_root(workspace: Path, run_id: str = "run_1") -> Path:
 
 
 @pytest.fixture
-def node_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
-    """A real tasks runtime over a tmp_path SQLite db (production call shape)."""
+def node_state(tmp_path: Path, arcstore_opener: Any) -> Iterator[Any]:
+    """A real tasks runtime over a test-local ArcStore backend."""
     from arcagent.modules.tasks import _runtime
 
-    monkeypatch.delenv("ARCSTORE_DATA_DIR", raising=False)
     _runtime.reset()
     _runtime.configure(
-        config={"enabled": True, "data_dir": str(tmp_path), "default_max_attempts": 3},
+        config={"enabled": True, "default_max_attempts": 3},
         telemetry=MagicMock(),
         workspace=tmp_path,
         identity=AgentIdentity.generate(org="local", agent_type="agent"),
         registry=make_registry(),
+        arcstore_opener=arcstore_opener,
     )
     yield _runtime.state()
     _runtime.reset()

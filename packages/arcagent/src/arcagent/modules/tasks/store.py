@@ -2,9 +2,8 @@
 
 No logic duplicated here — ``arcstore.tasks.TaskStore`` owns the durable
 directory model, atomic claim/assign, and dependency gating (SPEC-056 Phase
-A). This module only resolves the shared SQLite path — the SAME db arcui
-reads (``arcui.observe.Observe``, SDD §2/§6) — and hands back an open store
-so the agent and the dashboard always agree on task state.
+A). This module opens the configured ArcStore backend and hands back an open
+store so the agent and dashboard agree on task state.
 """
 
 from __future__ import annotations

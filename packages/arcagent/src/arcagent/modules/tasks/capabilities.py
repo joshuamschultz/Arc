@@ -108,7 +108,7 @@ async def _state() -> _runtime._State:
     """Fetch runtime state, finishing the module's lazy async wiring first.
 
     ``_runtime.configure()`` is sync (mirrors every other module — the
-    dispatcher calls it without ``await``), so the SQLite backend and, when
+    dispatcher calls it without ``await``), so the backend and, when
     live, the registry are opened lazily by ``ensure_store()`` on first tool
     use rather than at configure time.
     """

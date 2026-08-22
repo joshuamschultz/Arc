@@ -33,17 +33,17 @@ class _Recorder:
 
 
 @pytest.fixture
-def state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
+def state(tmp_path: Path, arcstore_opener: Any) -> Iterator[Any]:
     from arcagent.modules.tasks import _runtime
 
-    monkeypatch.delenv("ARCSTORE_DATA_DIR", raising=False)
     _runtime.reset()
     identity = AgentIdentity.generate(org="local", agent_type="agent")
     _runtime.configure(
-        config={"enabled": True, "data_dir": str(tmp_path), "dispatch": True},
+        config={"enabled": True, "dispatch": True},
         telemetry=MagicMock(),
         workspace=tmp_path,
         identity=identity,
+        arcstore_opener=arcstore_opener,
     )
     st = _runtime.state()
     st.agent_run_fn = _Recorder()

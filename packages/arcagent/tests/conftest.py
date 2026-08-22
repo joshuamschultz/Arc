@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 
 import freezegun
 import pytest
+from arcstore.backends import ArcStoreBackend
+from arcstore.backends.memory import FakeBackend
 
 # freezegun patches datetime references by walking every module in sys.modules.
 # Once a memory test has imported the arcmemory brain, sentence-transformers has
@@ -17,6 +20,21 @@ import pytest
 # Nothing under `transformers` holds a datetime freezegun needs to patch, so
 # skipping it is the correct fix rather than a workaround.
 freezegun.configure(extend_ignore_list=["transformers"])
+
+
+@pytest.fixture
+async def arcstore_opener() -> AsyncIterator[Callable[[], Awaitable[ArcStoreBackend]]]:
+    """Return one started in-memory ArcStore backend for a test runtime."""
+    backend = FakeBackend()
+    await backend.start()
+
+    async def open_fake_backend() -> ArcStoreBackend:
+        return backend
+
+    try:
+        yield open_fake_backend
+    finally:
+        await backend.stop()
 
 
 @pytest.fixture(autouse=True)

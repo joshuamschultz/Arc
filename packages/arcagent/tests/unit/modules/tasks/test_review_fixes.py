@@ -40,30 +40,21 @@ async def _ready(backend: Any) -> Any:
     return backend
 
 
-async def _fake_opener() -> Any:
-    from arcstore.backends.memory import FakeBackend
-
-    backend = FakeBackend()
-    await backend.start()
-    return backend
-
-
 @pytest.fixture
-def tasks_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
+def tasks_state(tmp_path: Path, arcstore_opener: Any) -> Iterator[Any]:
     """Bootstrap the runtime against an injected backend."""
     from arcagent.modules.tasks import _runtime
 
-    monkeypatch.delenv("ARCSTORE_DATA_DIR", raising=False)
     _runtime.reset()
     identity = AgentIdentity.generate(org="local", agent_type="agent")
     registry = make_registry()
     _runtime.configure(
-        config={"enabled": True, "data_dir": str(tmp_path)},
+        config={"enabled": True},
         telemetry=MagicMock(),
         workspace=tmp_path,
         identity=identity,
         registry=registry,
-        arcstore_opener=_fake_opener,
+        arcstore_opener=arcstore_opener,
     )
     st = _runtime.state()
     yield st
@@ -119,11 +110,10 @@ class TestLiveServicesUseRealOperatorSigner:
         assert messenger is not None
 
     async def test_ensure_store_fails_closed_when_no_operator_signer_for_live_build(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, arcstore_opener: Any
     ) -> None:
         from arcagent.modules.tasks import _runtime
 
-        monkeypatch.delenv("ARCSTORE_DATA_DIR", raising=False)
         _runtime.reset()
         identity = AgentIdentity.generate(org="local", agent_type="agent")
         # nats_url set + no injected registry -> the live-build path fires, but no
@@ -131,13 +121,12 @@ class TestLiveServicesUseRealOperatorSigner:
         _runtime.configure(
             config={
                 "enabled": True,
-                "data_dir": str(tmp_path),
                 "nats_url": "nats://127.0.0.1:1",
             },
             telemetry=MagicMock(),
             workspace=tmp_path,
             identity=identity,
-            arcstore_opener=_fake_opener,
+            arcstore_opener=arcstore_opener,
         )
         with pytest.raises(RuntimeError, match="operator signer"):
             await _runtime.ensure_store()
@@ -159,25 +148,24 @@ class _FakeMessenger:
 @pytest.mark.asyncio
 class TestClassificationPropagation:
     async def test_assign_notify_carries_task_classification(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, arcstore_opener: Any
     ) -> None:
         from arcagent.modules.tasks import _runtime
         from arcagent.modules.tasks.capabilities import assign_task
         from arcagent.modules.tasks.models import Task
 
-        monkeypatch.delenv("ARCSTORE_DATA_DIR", raising=False)
         _runtime.reset()
         identity = AgentIdentity.generate(org="local", agent_type="agent")
         registry = make_registry()
         fake = _FakeMessenger()
         _runtime.configure(
-            config={"enabled": True, "data_dir": str(tmp_path)},
+            config={"enabled": True},
             telemetry=MagicMock(),
             workspace=tmp_path,
             identity=identity,
             registry=registry,
             messenger=fake,
-            arcstore_opener=_fake_opener,
+            arcstore_opener=arcstore_opener,
         )
         st = _runtime.state()
 
@@ -211,21 +199,20 @@ class TestClassificationPropagation:
 @pytest.mark.asyncio
 class TestEnsureStoreBuildsOnce:
     async def test_concurrent_first_calls_open_store_exactly_once(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, arcstore_opener: Any
     ) -> None:
         from arcagent.modules.tasks import _runtime
 
-        monkeypatch.delenv("ARCSTORE_DATA_DIR", raising=False)
         _runtime.reset()
         identity = AgentIdentity.generate(org="local", agent_type="agent")
         registry = make_registry()
         _runtime.configure(
-            config={"enabled": True, "data_dir": str(tmp_path)},
+            config={"enabled": True},
             telemetry=MagicMock(),
             workspace=tmp_path,
             identity=identity,
             registry=registry,
-            arcstore_opener=_fake_opener,
+            arcstore_opener=arcstore_opener,
         )
 
         calls = {"n": 0}
