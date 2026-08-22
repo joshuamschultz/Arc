@@ -7,8 +7,9 @@ deployments can use Telegram/Slack/etc. without reversing package seams.
 
 from __future__ import annotations
 
-from arcstore.approval_dispatcher import ApprovalNotification
 from collections.abc import Iterable
+
+from arcstore.approval_dispatcher import ApprovalNotification
 
 from arcgateway.delivery import DeliveryTarget
 from arcgateway.session import SessionRouter

@@ -365,7 +365,10 @@ def create_app(
                 logger.exception("lifespan: durable inbox composition failed")
         approval_dispatcher = None
         approval_fanout = ApprovalNotificationFanout([starlette_app.state.approval_notification_hub])
-        if all(hasattr(task_store_backend, name) for name in ("claim_outbox", "ack_outbox", "nack_outbox")):
+        if all(
+            hasattr(task_store_backend, name)
+            for name in ("claim_outbox", "ack_outbox", "nack_outbox")
+        ):
             approval_dispatcher = ApprovalNotificationDispatcher(
                 task_store_backend,
                 approval_fanout,
