@@ -20,12 +20,13 @@ import logging
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast
 
 from arcgateway.broker_bootstrap import BrokerHandle, start_broker
 from arcgateway.commands import build_default_registry
 from arcgateway.executor import AsyncioExecutor, Executor
 from arcgateway.media_store import MediaStore
+from arcgateway.parts import MediaPart, Part
 from arcgateway.session import SessionRouter
 from arcgateway.stream_bridge import StreamBridge
 
@@ -223,14 +224,44 @@ def _build_executor(tier: str, agent_factory: Any, team_root: Path) -> Executor:
 def _build_web_adapter(
     cfg: GatewayConfig,
     session_router: SessionRouter,
+    media_store_for: Callable[[str], MediaStore | None],
 ) -> WebPlatformAdapter | None:
     """Build a WebPlatformAdapter when enabled, else return None."""
     if not cfg.platforms.web.enabled:
         return None
     from arcgateway.adapters.web import WebPlatformAdapter
 
+    def claim(
+        user_did: str,
+        agent_did: str,
+        session_key: str,
+        _chat_id: str,
+        ids: list[str],
+    ) -> list[Part]:
+        store = media_store_for(agent_did)
+        if store is None or len(ids) != len(set(ids)):
+            raise ValueError("attachments unavailable")
+        return [
+            MediaPart(
+                kind=cast(Literal["image", "file", "audio"], stored.kind),
+                mime=stored.mime,
+                declared_name=stored.declared_name,
+                ref=stored.ref,
+            )
+            for stored in (
+                store.claim(
+                    attachment_id=attachment_id,
+                    owner_did=user_did,
+                    agent_did=agent_did,
+                    session_key=session_key,
+                )
+                for attachment_id in ids
+            )
+        ]
+
     return WebPlatformAdapter(
         on_message=session_router.handle,
+        claim_attachments=claim,
         agent_did=cfg.effective_agent_did("web"),
         max_connections=cfg.platforms.web.max_connections,
         idle_timeout_seconds=cfg.platforms.web.idle_timeout_seconds,
@@ -370,7 +401,7 @@ async def _compose_embedded(
 
     from arcgateway.adapters.registry import AdapterUnavailableError, build_adapters
 
-    web_adapter = _build_web_adapter(gateway_config, session_router)
+    web_adapter = _build_web_adapter(gateway_config, session_router, _media_store_for)
 
     # Remote platforms load through the generic adapter-plugin registry.
     # Federal tier fails closed (AdapterUnavailableError) so a misconfigured

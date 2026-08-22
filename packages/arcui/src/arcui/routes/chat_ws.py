@@ -200,6 +200,8 @@ async def chat_ws_endpoint(ws: WebSocket) -> None:
                     isinstance(item, str) and item.startswith("att_") for item in attachment_ids
                 ):
                     raise ValueError("attachment_ids must be opaque IDs")
+                if len(attachment_ids) != len(set(attachment_ids)):
+                    raise ValueError("attachment_ids must not contain duplicates")
                 await web_adapter.ingest(
                     chat_id,
                     frame.get("text", ""),
