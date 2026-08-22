@@ -52,7 +52,10 @@ class ApprovalNotificationFanout:
     """Deliver one typed event to browser and configured operator sinks."""
 
     def __init__(self, sinks: Iterable[object]) -> None:
-        self._sinks = tuple(sinks)
+        self._sinks = list(sinks)
+
+    def add(self, sink: object) -> None:
+        self._sinks.append(sink)
 
     async def __call__(self, notification: ApprovalNotification) -> None:
         for sink in self._sinks:

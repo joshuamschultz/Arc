@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from arcgateway import team_roster
+from arcgateway.approval_notifications import ApprovalNotificationFanout, GatewayApprovalNotificationSink
 from arcstore.approvals import ApprovalStore
 from arcstore.approval_dispatcher import ApprovalDispatcherConfig, ApprovalNotificationDispatcher
 from arcstore.backends import PostgresInboxRepository, open_backend
@@ -180,6 +181,7 @@ def create_app(
     allow_external_task_refs: bool = False,
     workflow_control_plane: Any | None = None,
     gate_control_plane: Any | None = None,
+    approval_operator_target: Any | None = None,
     arcstore_config: ArcStoreConfig | None = None,
     arcstore_secret: SecretStr | None = None,
     arcstore_backend: Any | None = None,
@@ -362,10 +364,11 @@ def create_app(
             except Exception:  # reason: inbox routes report explicit unavailability
                 logger.exception("lifespan: durable inbox composition failed")
         approval_dispatcher = None
+        approval_fanout = ApprovalNotificationFanout([starlette_app.state.approval_notification_hub])
         if all(hasattr(task_store_backend, name) for name in ("claim_outbox", "ack_outbox", "nack_outbox")):
             approval_dispatcher = ApprovalNotificationDispatcher(
                 task_store_backend,
-                starlette_app.state.approval_notification_hub,
+                approval_fanout,
                 config=ApprovalDispatcherConfig(worker_id="arcui-approval-notifications"),
             )
             await approval_dispatcher.start()
@@ -386,6 +389,12 @@ def create_app(
             starlette_app.state.embedded_gateway = embedded_gateway
             starlette_app.state.executor = embedded_gateway.executor
             starlette_app.state.session_router = embedded_gateway.session_router
+            if approval_operator_target is not None:
+                approval_fanout.add(
+                    GatewayApprovalNotificationSink(
+                        embedded_gateway.session_router, approval_operator_target
+                    )
+                )
             starlette_app.state.web_adapter = embedded_gateway.web_adapter
             starlette_app.state.stream_bridge = embedded_gateway.stream_bridge
             # COMP-008: the broker the gateway ensured. Routes read ``available``
