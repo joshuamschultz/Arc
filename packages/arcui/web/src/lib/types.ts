@@ -874,6 +874,18 @@ export interface ConnectorInstance {
   agents: string[]
 }
 
+export interface ConnectorActivation {
+  agent: string
+  status: 'applied' | 'activation_pending'
+  revision: number
+  tools: string[]
+  detail: string
+}
+
+export interface ConnectorMutationResponse extends ConnectorInstance {
+  activations: ConnectorActivation[]
+}
+
 /** Every connection this deployment has, and who holds each one — the answer to
  *  "who can reach what" for the whole fleet in a single read. */
 export interface ConnectionsResponse {

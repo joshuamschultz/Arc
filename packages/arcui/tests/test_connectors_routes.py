@@ -851,6 +851,7 @@ async def test_granting_through_the_route_registers_the_tools_for_exactly_that_a
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["agents"] == [_AGENT]
+    assert resp.json()["activations"][0]["status"] == "activation_pending"
     backend = client.app.state.arcstore_backend
     assert "ping" in (await _start_agent(world, _AGENT, backend)).tools
     assert "ping" not in (await _start_agent(world, second, backend)).tools, (

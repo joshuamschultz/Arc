@@ -49,6 +49,8 @@ calls ``_runtime.configure`` once at startup; this capability reads state lazily
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -58,6 +60,7 @@ from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
 
 from arcagent.capabilities.capability_registry import CapabilityRegistry
 from arcagent.connector_control import ConnectorReconcileResult
+from arcagent.connector_reconcile import ConnectorReconcileQueue
 from arcagent.core.errors import ExtensionError
 from arcagent.core.tier import Tier
 from arcagent.core.tool_registry import ToolRegistry, ToolTransport
@@ -107,6 +110,8 @@ class Connectors:
         self._registered: tuple[str, ...] = ()
         self._state_store: ConnectionStateStore | None = None
         self._revision = 0
+        self._reconcile_queue: ConnectorReconcileQueue | None = None
+        self._reconcile_task: asyncio.Task[None] | None = None
 
     async def setup(self, ctx: Any) -> None:
         del ctx  # Loader passes None; state lives in _runtime.
@@ -114,6 +119,13 @@ class Connectors:
         self._registry = state.tool_registry
         result = await self.reconcile()
         self._registered = result.tools
+        self._reconcile_queue = ConnectorReconcileQueue(
+            _reconcile_backend_opener(state), actor_did=str(state.identity.did)
+        )
+        await self._drain_reconcile_commands()
+        self._reconcile_task = asyncio.create_task(
+            self._reconcile_loop(), name=f"connector-reconcile:{state.agent_dir.name}"
+        )
         _logger.info(
             "Connectors capability started (%d tool(s) from configured connections)",
             len(self._registered),
@@ -121,6 +133,13 @@ class Connectors:
 
     async def teardown(self) -> None:
         """Drop every verb this module put in the registry, and only those."""
+        task = self._reconcile_task
+        self._reconcile_task = None
+        if task is not None:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        self._reconcile_queue = None
         registry = self._registry
         if registry is not None:
             for name in self._registered:
@@ -155,6 +174,22 @@ class Connectors:
         return ConnectorReconcileResult(
             status="applied", revision=self._revision, tools=self._registered
         )
+
+    async def _drain_reconcile_commands(self) -> None:
+        queue = self._reconcile_queue
+        if queue is None:
+            return
+        state = _runtime.state()
+        await queue.drain(state.agent_dir.name, self.reconcile)
+
+    async def _reconcile_loop(self) -> None:
+        """Retry durable work after a mutation from another process or a restart."""
+        while True:
+            try:
+                await self._drain_reconcile_commands()
+            except Exception:
+                _logger.warning("connector reconcile command will retry", exc_info=True)
+            await asyncio.sleep(1)
 
     # --- attaching ----------------------------------------------------------
 
@@ -198,6 +233,21 @@ class Connectors:
 
 
 # --- steps ------------------------------------------------------------------
+
+
+def _reconcile_backend_opener(state: _runtime._State) -> Any:
+    """Use the agent's shared ArcStore opener, lazily importing the optional peer."""
+    if state.arcstore_opener is not None:
+        return state.arcstore_opener
+
+    async def open_backend() -> Any:
+        from arcstore.backends import open_backend
+
+        backend = open_backend()
+        await backend.start()
+        return backend
+
+    return open_backend
 
 
 @dataclass(frozen=True)

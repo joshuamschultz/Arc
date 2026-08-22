@@ -41,6 +41,7 @@ export function AgentGrantChips({
   const revoke = useRevokeConnection(instance)
   const busy = grant.isPending || revoke.isPending
   const error = grant.error ?? revoke.error
+  const activations = grant.data?.activations ?? revoke.data?.activations ?? []
 
   // A grant naming an agent this deployment no longer has: kept visible rather
   // than filtered out, because an invisible grant is one nobody revokes.
@@ -113,7 +114,9 @@ export function AgentGrantChips({
       {error && <p className="text-[11px] text-destructive">{error.message}</p>}
       {(grant.isSuccess || revoke.isSuccess) && !busy && (
         <p className="text-[11px] text-muted-foreground">
-          Restart the agents that changed — a connection attaches when an agent starts.
+          {activations.every((activation) => activation.status === 'applied')
+            ? 'Applied to the running agent.'
+            : 'Queued durably; the owning agent applies it when it is running.'}
         </p>
       )}
     </div>

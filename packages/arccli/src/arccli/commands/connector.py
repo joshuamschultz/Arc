@@ -449,7 +449,7 @@ def _print_activations(results: Sequence[arcagent.ConnectorReconcileResult]) -> 
                 f"({', '.join(result.tools) or 'no connector tools'})"
             )
         else:
-            _out(f"  live activation   : {result.agent}: pending (agent runs in another process)")
+            _out(f"  live activation   : {result.agent}: pending (durably queued for its owner)")
 
 
 # ---------------------------------------------------------------------------

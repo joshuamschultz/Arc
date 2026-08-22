@@ -10,7 +10,7 @@ import type {
   ConnectorCatalogResponse,
   ConnectorDoctorResponse,
   ConnectorInstallResponse,
-  ConnectorInstance,
+  ConnectorMutationResponse,
   ConnectorProbeResponse,
   ConnectorRemoveResponse,
   HostSetupResponse,
@@ -1070,7 +1070,7 @@ export const useInstallConnector = () => {
 // stays at its one coordinate and every grantee reads it through the same store.
 export const useGrantConnection = (instance: string) => {
   const invalidate = useGrantInvalidator()
-  return useMutation<ConnectorInstance, Error, string[]>({
+  return useMutation<ConnectorMutationResponse, Error, string[]>({
     mutationFn: (agents) => apiPost(connectionPath(instance, '/grant'), { agents }),
     onSuccess: invalidate,
   })
@@ -1078,7 +1078,7 @@ export const useGrantConnection = (instance: string) => {
 
 export const useRevokeConnection = (instance: string) => {
   const invalidate = useGrantInvalidator()
-  return useMutation<ConnectorInstance, Error, string[]>({
+  return useMutation<ConnectorMutationResponse, Error, string[]>({
     mutationFn: (agents) => apiDelete(connectionPath(instance, '/grant'), { agents }),
     onSuccess: invalidate,
   })

@@ -409,6 +409,77 @@ async def test_live_control_applies_grant_revoke_and_remove_to_a_running_agent(
     assert not any(tool in registry.tools for tool in _SERVED)
 
 
+async def test_durable_reconcile_commands_survive_a_management_process_restart(
+    deployment: _Deployment,
+) -> None:
+    """A later owner consumes the persisted command and acknowledges its revision."""
+    await deployment.connect(agents=())
+
+    pending = await deployment.connections().grant_and_reconcile(_CONNECTION, [_GRANTED[0]])
+    assert pending.activations[0].status == "activation_pending"
+    command = (
+        await deployment.arcstore_backend.mutable_query(
+            "connector_reconcile_commands", where={"agent": _GRANTED[0]}
+        )
+    )[0]
+    assert command["status"] == "pending"
+
+    registry, capability = await deployment.start_running_agent(_GRANTED[0])
+    try:
+        assert set(registry.tools) >= set(_SERVED)
+        ack = await deployment.arcstore_backend.mutable_read(
+            "connector_reconcile_acks", command["command_id"]
+        )
+        assert ack is not None
+        assert ack["revision"] == command["revision"]
+        assert ack["status"] == "applied"
+
+        revoked = await deployment.connections().revoke_and_reconcile(_CONNECTION, [_GRANTED[0]])
+        assert revoked.activations[0].status == "activation_pending"
+        await capability._drain_reconcile_commands()
+        assert not any(tool in registry.tools for tool in _SERVED)
+
+        await deployment.connections().grant_and_reconcile(_CONNECTION, [_GRANTED[0]])
+        await capability._drain_reconcile_commands()
+        assert set(registry.tools) >= set(_SERVED)
+        removed = await deployment.connections().remove_and_reconcile(_CONNECTION)
+        assert removed.activations[0].status == "activation_pending"
+        await capability._drain_reconcile_commands()
+        assert not any(tool in registry.tools for tool in _SERVED)
+    finally:
+        await capability.teardown()
+
+
+async def test_one_live_control_failure_does_not_skip_later_durable_commands(
+    deployment: _Deployment,
+) -> None:
+    """Every target is queued before a local failure can happen."""
+    await deployment.connect(agents=())
+
+    class _Control:
+        async def reconcile(self, agent: str) -> Any:
+            if agent == _GRANTED[0]:
+                raise RuntimeError("worker restarting")
+            return arcagent.ConnectorReconcileResult(status="applied", tools=_SERVED)
+
+    import arcagent
+
+    connections = Connections.for_deployment(
+        arc_dir=deployment.arc_dir,
+        data_dir=deployment.data_dir,
+        extensions_root=deployment.root,
+        audit=AuditChain.held(deployment.sink),
+        state_opener=deployment.open_arcstore,
+        connector_control=_Control(),
+    )
+    mutation = await connections.grant_and_reconcile(_CONNECTION, _GRANTED)
+
+    assert [result.status for result in mutation.activations] == ["activation_pending", "applied"]
+    commands = await deployment.arcstore_backend.mutable_query("connector_reconcile_commands")
+    assert {row["agent"] for row in commands} == set(_GRANTED)
+    assert len(await deployment.arcstore_backend.mutable_query("connector_reconcile_acks")) == 1
+
+
 async def test_unstarted_connector_module_reports_activation_pending() -> None:
     pending = await Connectors().reconcile()
 

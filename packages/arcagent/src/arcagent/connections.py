@@ -48,6 +48,7 @@ from arctrust.paths import arc_team, config_file, default_operator_key_path
 
 from arcagent.connection_catalog import AuditChain, CatalogEntry, ClosableSink, catalog
 from arcagent.connector_control import ConnectorControl, ConnectorReconcileResult
+from arcagent.connector_reconcile import ConnectorReconcileQueue
 from arcagent.core.errors import ExtensionError
 from arcagent.core.tier import Tier
 from arcagent.extension.attachment import ExtensionAttachment, ProbeResult, ToolSpec
@@ -1083,7 +1084,7 @@ class Connections:
         return remaining
 
     async def grant_and_reconcile(self, instance: str, agents: Sequence[str]) -> ConnectorMutation:
-        """Persist a grant then refresh each affected in-process agent."""
+        """Persist a grant then durably refresh every affected running agent."""
         connection = self.grant(instance, agents)
         return ConnectorMutation(
             connection=connection, activations=await self._reconcile_agents(agents)
@@ -1198,24 +1199,55 @@ class Connections:
     async def _reconcile_agents(
         self, agents: Sequence[str]
     ) -> tuple[ConnectorReconcileResult, ...]:
-        """Project durable state into this process's live agents when present."""
+        """Queue every projection then use this process as an optional fast path."""
+        commands = await self._reconcile_queue().enqueue(agents)
         outcomes: list[ConnectorReconcileResult] = []
-        for agent in dict.fromkeys(agents):
-            result = (
-                await self._connector_control.reconcile(agent)
-                if self._connector_control is not None
-                else None
-            )
-            outcomes.append(
-                replace(result, agent=agent)
-                if result is not None
-                else ConnectorReconcileResult(
+        queue = self._reconcile_queue()
+        for command in commands:
+            agent = command.agent
+            try:
+                result = (
+                    await self._connector_control.reconcile(agent)
+                    if self._connector_control is not None
+                    else None
+                )
+            except Exception as exc:
+                outcomes.append(
+                    ConnectorReconcileResult(
+                        status="activation_pending",
+                        agent=agent,
+                        revision=command.revision,
+                        detail=f"reconcile retry pending: {exc}",
+                    )
+                )
+                continue
+            if result is None:
+                outcomes.append(
+                    ConnectorReconcileResult(
                     status="activation_pending",
                     agent=agent,
+                    revision=command.revision,
                     detail="agent is not running in this process",
                 )
-            )
+                )
+                continue
+            outcome = replace(result, agent=agent, revision=command.revision)
+            if outcome.status == "applied":
+                await queue.acknowledge(command, outcome)
+            outcomes.append(outcome)
         return tuple(outcomes)
+
+    def _reconcile_queue(self) -> ConnectorReconcileQueue:
+        return ConnectorReconcileQueue(self._open_reconcile_backend, actor_did=self._world.did)
+
+    async def _open_reconcile_backend(self) -> Any:
+        if self._state_opener is not None:
+            return await self._state_opener()
+        from arcstore.backends import open_backend
+
+        backend = open_backend()
+        await backend.start()
+        return backend
 
     def _refuse_lax_plan(self, plan: ConnectorPlan, agents: Sequence[str]) -> None:
         """Refuse an install whose grantees need more stringency than the plan took.
