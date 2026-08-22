@@ -57,18 +57,19 @@ async def test_concurrent_duplicate_journal_appends_are_idempotent(
     postgres_backend: ArcStoreBackend,
 ) -> None:
     """Retries of one tick must not duplicate its materialization event."""
-    runs, run_id = await _run_store(postgres_backend)
-    entry = {"kind": "skipped", "node_id": "a", "iteration": 0, "reason": "condition"}
+    for _ in range(20):
+        runs, run_id = await _run_store(postgres_backend)
+        entry = {"kind": "skipped", "node_id": "a", "iteration": 0, "reason": "condition"}
 
-    await asyncio.gather(
-        *(runs.append_path(run_id, entry, actor_did=_ACTOR) for _ in range(8))
-    )
+        await asyncio.gather(
+            *(runs.append_path(run_id, entry, actor_did=_ACTOR) for _ in range(8))
+        )
 
-    state = await postgres_backend.mutable_read("workflow_run_state", run_id)
-    record = await runs.record(run_id)
-    assert state is not None and record is not None
-    assert state["path"] == [entry]
-    assert [path.node_id for path in record.path_taken] == ["a"]
+        state = await postgres_backend.mutable_read("workflow_run_state", run_id)
+        record = await runs.record(run_id)
+        assert state is not None and record is not None
+        assert state["path"] == [entry]
+        assert [path.node_id for path in record.path_taken] == ["a"]
 
 
 @pytest.mark.asyncio

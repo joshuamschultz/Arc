@@ -252,6 +252,42 @@ class FakeBackend:
         )
         return won
 
+    async def append_if_absent(
+        self,
+        collection: str,
+        key: str,
+        field: str,
+        item: dict[str, Any],
+        *,
+        length_field: str | None = None,
+        actor_did: str,
+        sink: Any | None = None,
+    ) -> bool:
+        async with self._lock:
+            stored = self._mutable.get((collection, key))
+            if stored is None:
+                won = False
+            else:
+                value, _ = stored
+                entries = value.setdefault(field, [])
+                if item in entries:
+                    won = False
+                else:
+                    entries.append(copy.deepcopy(item))
+                    if length_field is not None:
+                        value[length_field] = len(entries)
+                    self._mutable[(collection, key)] = (value, _now())
+                    won = True
+        _emit(
+            "mutable.append_if_absent",
+            collection,
+            key,
+            actor_did,
+            sink,
+            "applied" if won else "no-op",
+        )
+        return won
+
     async def update_if_with_outbox(
         self,
         collection: str,

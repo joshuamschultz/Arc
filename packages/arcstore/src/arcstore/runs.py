@@ -158,6 +158,18 @@ class MutableRunBackend(Protocol):
         sink: Any | None = None,
     ) -> bool: ...
 
+    async def append_if_absent(
+        self,
+        collection: str,
+        key: str,
+        field: str,
+        item: dict[str, Any],
+        *,
+        length_field: str | None = None,
+        actor_did: str,
+        sink: Any | None = None,
+    ) -> bool: ...
+
 
 class RunStore:
     """Run directory over the mutable plane's ``"runs"`` collection."""
@@ -247,23 +259,28 @@ class RunStore:
         ``None`` if the run is gone or another append won the race first (the
         caller re-reads and retries).
         """
-        current = await self.get(run_id)
-        if current is None:
-            return None
-        updated = [*current.path_taken, entry]
-        won = await self._backend.update_if(
+        won = await self._backend.append_if_absent(
             self._COLLECTION,
             run_id,
-            {
-                "path_taken": [e.model_dump(mode="json") for e in updated],
-                "path_len": current.path_len + 1,
-                "updated_at": _now(),
-            },
-            where={"path_len": current.path_len},
+            "path_taken",
+            entry.model_dump(mode="json"),
+            length_field="path_len",
             actor_did=actor_did,
             sink=self._sink,
         )
-        return await self.get(run_id) if won else None
+        if won:
+            current = await self.get(run_id)
+            if current is not None:
+                return current
+            return None
+        current = await self.get(run_id)
+        if current is None:
+            return None
+        return (
+            current
+            if any(_same_path_entry(item, entry) for item in current.path_taken)
+            else None
+        )
 
     async def reserve_budget(
         self,
@@ -365,3 +382,13 @@ __all__ = [
     "RunStatus",
     "RunStore",
 ]
+
+
+def _same_path_entry(left: PathEntry, right: PathEntry) -> bool:
+    return (
+        left.node_id == right.node_id
+        and left.kind == right.kind
+        and left.outcome == right.outcome
+        and left.router_choice == right.router_choice
+        and left.loop_iteration == right.loop_iteration
+    )

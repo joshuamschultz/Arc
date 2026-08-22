@@ -181,6 +181,18 @@ class ArcStoreBackend(Protocol):
         sink: Any | None = None,
     ) -> bool: ...
 
+    async def append_if_absent(
+        self,
+        collection: str,
+        key: str,
+        field: str,
+        item: dict[str, Any],
+        *,
+        length_field: str | None = None,
+        actor_did: str,
+        sink: Any | None = None,
+    ) -> bool: ...
+
     async def update_if_with_outbox(
         self,
         collection: str,

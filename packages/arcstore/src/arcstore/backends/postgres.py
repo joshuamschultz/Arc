@@ -357,6 +357,50 @@ class PostgresBackend:
         )
         return won
 
+    async def append_if_absent(
+        self,
+        collection: str,
+        key: str,
+        field: str,
+        item: dict[str, Any],
+        *,
+        length_field: str | None = None,
+        actor_did: str,
+        sink: Any | None = None,
+    ) -> bool:
+        """Append one JSON object only if the array does not already contain it."""
+        path = field.split(".")
+        params: list[Any] = [path, _json(item), collection, key]
+        appended = (
+            "jsonb_set(value, $1::text[], COALESCE(value #> $1::text[], '[]'::jsonb) "
+            "|| jsonb_build_array($2::jsonb), true)"
+        )
+        if length_field is not None:
+            params.append(length_field.split("."))
+            length_ref = len(params)
+            appended = (
+                f"jsonb_set({appended}, ${length_ref}::text[], "
+                f"to_jsonb(COALESCE((value #>> ${length_ref}::text[])::int, "
+                "jsonb_array_length(COALESCE(value #> $1::text[], '[]'::jsonb))) + 1), true)"
+            )
+        statement = (
+            f"UPDATE mutable_records SET value={appended}, updated_at=now() "  # noqa: S608
+            "WHERE collection=$3 AND key=$4 "
+            "AND NOT COALESCE((value #> $1::text[]) @> jsonb_build_array($2::jsonb), false)"
+        )
+        async with self._require_pool().acquire() as connection:
+            result = await connection.execute(statement, *params)
+        won = str(result).endswith("1")
+        _emit(
+            "mutable.append_if_absent",
+            collection,
+            key,
+            actor_did,
+            sink,
+            "applied" if won else "no-op",
+        )
+        return won
+
     async def update_if_with_outbox(
         self,
         collection: str,
