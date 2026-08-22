@@ -97,7 +97,8 @@ class PersonalKnowledgeAdapter:
     def _save(self, draft: _Draft, access: _Access) -> _Reference:
         self._authorize(access, draft.classification)
         self._validate(draft)
-        digest = hashlib.sha256(draft.content.encode()).hexdigest()
+        content = draft.content.strip()
+        digest = hashlib.sha256(content.encode()).hexdigest()
         identifier = hashlib.sha256(f"{draft.title}\0{digest}".encode()).hexdigest()[:16]
         metadata = {
             "type": draft.document_type,
@@ -107,7 +108,7 @@ class PersonalKnowledgeAdapter:
             "arc_owner_did": self._agent_did,
             "arc_content_sha256": f"sha256:{digest}",
         }
-        document = Document(metadata, draft.content)
+        document = Document(metadata, content)
         try:
             encoded = render(document)
             parse(encoded)

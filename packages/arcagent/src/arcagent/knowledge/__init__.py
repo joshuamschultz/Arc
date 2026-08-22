@@ -76,6 +76,8 @@ class SharedKnowledgePort(KnowledgePort, Protocol):
         self, source: PromotionSource, access: KnowledgeAccess
     ) -> KnowledgeRef: ...
 
+    async def revoke(self, reference: str, access: KnowledgeAccess) -> None: ...
+
 
 __all__ = [
     "KnowledgeAccess",

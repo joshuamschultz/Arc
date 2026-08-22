@@ -23,11 +23,13 @@ import asyncio
 import logging
 import re
 import time
-from typing import Any
+from html import escape
+from typing import Any, Literal
 
 import arcrun
 
 from arcagent.core import midloop_recall, turn_context
+from arcagent.knowledge import KnowledgeAccess, KnowledgeDraft, KnowledgePort
 from arcagent.modules.memory import _runtime
 from arcagent.tools._decorator import background_task, hook, tool
 from arcagent.utils.audit import safe_audit
@@ -312,6 +314,8 @@ async def inject_insight(ctx: Any) -> None:
 _NO_CAPTURE_TOOLS = frozenset({"memory_search"})
 _MIN_TOOL_RESULT_CHARS = 24
 
+KnowledgeScope = Literal["personal", "shared"]
+
 
 def _worth_capturing_tool(tool_name: str, result: str) -> bool:
     """Whether a tool event carries durable signal (vs. transcript noise)."""
@@ -453,6 +457,130 @@ async def memory_search(query: str, top_k: int = 5) -> str:
     text = await st.brain.retrieve(query, clearance="unclassified", top_k=top_k)
     await _audit("memory.recall", {"query_len": len(query), "hit": bool(text), "tool": True})
     return text or "No memory results found."
+
+
+# -- Explicit curated knowledge tools ------------------------------------
+
+
+def _knowledge_port(scope: KnowledgeScope) -> tuple[KnowledgePort, KnowledgeAccess]:
+    """Return one explicitly selected port and its trusted caller context."""
+    st = _runtime.state()
+    if st.knowledge_access is None or st.personal_knowledge is None or st.shared_knowledge is None:
+        raise RuntimeError("curated knowledge is not enabled for this agent")
+    port = st.personal_knowledge if scope == "personal" else st.shared_knowledge
+    return port, st.knowledge_access
+
+
+@tool(
+    name="knowledge_save",
+    description="Save a curated document in an explicitly selected personal or shared workspace.",
+    classification="state_modifying",
+    capability_tags=["knowledge", "memory"],
+    when_to_use=(
+        "Persist a reviewed fact, procedure, or note for this agent or the authorized fleet."
+    ),
+)
+async def knowledge_save(
+    scope: KnowledgeScope,
+    title: str,
+    content: str,
+    classification: str = "UNCLASSIFIED",
+    tags: list[str] | None = None,
+    document_type: str = "note",
+) -> str:
+    """Save exactly one explicitly scoped document through the appropriate port."""
+    try:
+        port, access = _knowledge_port(scope)
+        reference = await port.save(
+            KnowledgeDraft(title, content, classification, tuple(tags or ()), document_type),
+            access,
+        )
+    except (PermissionError, RuntimeError, ValueError) as error:
+        return f"Knowledge save refused: {error}"
+    return f"Saved {scope} knowledge {reference.identifier}."
+
+
+@tool(
+    name="knowledge_promote",
+    description="Promote owned personal knowledge to signed, shared fleet knowledge.",
+    classification="state_modifying",
+    capability_tags=["knowledge", "memory"],
+    when_to_use="Publish a reviewed personal document that teammates should retrieve.",
+)
+async def knowledge_promote(reference: str) -> str:
+    """Promote a personal document through the signed shared-store gate."""
+    st = _runtime.state()
+    if st.knowledge_access is None or st.personal_knowledge is None or st.shared_knowledge is None:
+        return "Knowledge promotion refused: curated knowledge is not enabled for this agent"
+    try:
+        source = await st.personal_knowledge.export_for_promotion(reference, st.knowledge_access)
+        promoted = await st.shared_knowledge.promote(source, st.knowledge_access)
+    except (FileNotFoundError, PermissionError, ValueError) as error:
+        return f"Knowledge promotion refused: {error}"
+    return f"Promoted shared knowledge {promoted.identifier}."
+
+
+@tool(
+    name="knowledge_retrieve",
+    description="Retrieve one document from the explicitly selected personal or shared workspace.",
+    classification="read_only",
+    capability_tags=["knowledge", "memory"],
+    when_to_use="Read a known curated document after choosing its personal or shared scope.",
+)
+async def knowledge_retrieve(scope: KnowledgeScope, reference: str) -> str:
+    """Return a boundary-marked, clearance-checked document."""
+    try:
+        port, access = _knowledge_port(scope)
+        document = await port.read(reference, access)
+    except (FileNotFoundError, PermissionError, RuntimeError, ValueError) as error:
+        return f"Knowledge retrieval refused: {error}"
+    return (
+        f'<knowledge-document scope="{scope}" '
+        f'reference="{escape(document.reference.identifier)}">\n'
+        f"# {escape(document.title)}\n\n{document.content}\n</knowledge-document>"
+    )
+
+
+@tool(
+    name="knowledge_search",
+    description="Search the explicitly selected personal or shared curated-knowledge workspace.",
+    classification="read_only",
+    capability_tags=["knowledge", "memory"],
+    when_to_use=(
+        "Find curated knowledge after choosing whether to search personal or shared scope."
+    ),
+)
+async def knowledge_search(scope: KnowledgeScope, query: str) -> str:
+    """Search a selected scope and return only clearance-permitted hits."""
+    try:
+        port, access = _knowledge_port(scope)
+        hits = await port.search(query, access)
+    except (PermissionError, RuntimeError, ValueError) as error:
+        return f"Knowledge search refused: {error}"
+    if not hits:
+        return "No knowledge results found."
+    return "\n".join(f"- {hit.reference.identifier}: {hit.title} — {hit.excerpt}" for hit in hits)
+
+
+@tool(
+    name="knowledge_revoke",
+    description="Revoke an owned document from the explicitly selected shared workspace.",
+    classification="state_modifying",
+    capability_tags=["knowledge", "memory"],
+    when_to_use="Withdraw an owned shared document that should no longer be retrievable.",
+)
+async def knowledge_revoke(scope: KnowledgeScope, reference: str) -> str:
+    """Revoke a shared document; a personal scope is never implicitly widened."""
+    if scope != "shared":
+        return "Knowledge revocation is available only for explicitly shared documents."
+    st = _runtime.state()
+    if st.knowledge_access is None or st.shared_knowledge is None:
+        return "Knowledge revocation refused: curated knowledge is not enabled for this agent"
+    try:
+        await st.shared_knowledge.revoke(reference, st.knowledge_access)
+    except (FileNotFoundError, PermissionError, ValueError) as error:
+        return f"Knowledge revocation refused: {error}"
+    return f"Revoked shared knowledge {reference}."
 
 
 @tool(
