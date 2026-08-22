@@ -320,6 +320,60 @@ async def test_failed_node_finalizes_the_run_instead_of_hanging(
     assert node_ids == {"first"}
 
 
+async def test_predecessor_completing_mid_tick_does_not_falsely_stall_the_run(
+    stores: Any, registry: Any
+) -> None:
+    """A node that completes BETWEEN the decide pass and the roll-up is not a stall.
+
+    The decide pass reads the tasks, sees ``first`` still in flight, and leaves
+    ``second`` unmaterialized. The external executor then commits ``first`` done in
+    the ~40ms before ``_finalize`` does its OWN, separate read. ``_finalize`` must
+    not read that as "second never became reachable" and permanently fail the run —
+    ``second`` is reachable now; the next tick materializes it. Reproduces the real
+    DGX failure of ``run-f031846f710c`` (nightly-meeting-ingest), where a 40ms
+    in-tick read inconsistency turned a healthy run into a permanent failure.
+    """
+    definition = Definition(
+        id="chain",
+        nodes=(
+            Node(id="first", kind="agent", agent="@sales"),
+            Node(id="second", kind="agent", agent="@ops", needs=("first",)),
+        ),
+    )
+    flow_tasks, runs, tasks = stores
+    runner = build(stores, registry, definition)
+    run = await runner.start_run("chain", input={}, initiator_did="did:arc:x/1")
+
+    # `first` is materialized and in flight; `second` waits on it, so it is not yet
+    # a task row — exactly the state the decide pass reads at the top of the tick.
+    ids = {r.metadata["node_id"] for r in await flow_tasks.query_by_flow_run(run.run_id)}
+    assert ids == {"first"}
+
+    # The race: `first` commits `done` AFTER the decide pass read it (in flight) but
+    # BEFORE the roll-up reads. Injected by completing it inside `_finalize`.
+    original_finalize = runner._finalize
+    injected = {"done": False}
+
+    async def racing_finalize(run_rec: Any, defn: Any, prev_state: Any = None) -> Any:
+        if not injected["done"]:
+            injected["done"] = True
+            await complete_node(tasks, task_id(run.run_id, "first", 0), SALES_DID, {"ok": True})
+        return await original_finalize(run_rec, defn, prev_state)
+
+    runner._finalize = racing_finalize  # type: ignore[method-assign]
+
+    record = await runner.advance(run.run_id)
+    assert record.status == "running", (
+        "a predecessor completing mid-tick must leave the run running for the next tick "
+        f"to materialize the frontier, not fail it (got {record.status}: {record.resolution})"
+    )
+
+    # The following tick sees `first` done and materializes the now-reachable node.
+    await runner.advance(run.run_id)
+    ids = {r.metadata["node_id"] for r in await flow_tasks.query_by_flow_run(run.run_id)}
+    assert "second" in ids, "the frontier advanced on the following tick"
+
+
 async def test_two_runs_can_never_derive_the_same_task_row(stores: Any, registry: Any) -> None:
     """The row id is an identity pair, so it must be UNAMBIGUOUS.
 

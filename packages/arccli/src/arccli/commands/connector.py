@@ -245,6 +245,9 @@ def _authorize(args: argparse.Namespace) -> None:
     connections = _connections(args)
     try:
         auth = asyncio.run(connections.authorization(args.instance))
+        if auth.oauth:
+            _authorize_oauth(connections, args.instance, auth)
+            return
         if auth.token_binary:
             token = getpass.getpass(f"Token for {auth.token_binary} (hidden): ")
             auth = asyncio.run(connections.authorize(args.instance, token=token))
@@ -253,6 +256,34 @@ def _authorize(args: argparse.Namespace) -> None:
 
     _direct_host_authorization(auth)
     if not auth.working:
+        sys.exit(1)
+
+
+def _authorize_oauth(connections: Any, instance: str, auth: arcagent.Authorization) -> None:
+    """Finish a native OAuth connection: open the URL, paste the code, Arc exchanges it.
+
+    The whole persistent sign-in in one place — the operator never obtains, types,
+    or sees a refresh token. If the app key/secret are not supplied yet there is no
+    URL to open, so the honest next step is to supply them first.
+    """
+    if not auth.authorize_url:
+        _fail(
+            f"supply {instance}'s app key and app secret first "
+            f"(arc connector auth {instance}), then run authorize again."
+        )
+    _out("Open this URL, click Allow, and copy the code it shows:")
+    _out(f"  {auth.authorize_url}")
+    code = input("Paste the code here: ").strip()
+    if not code:
+        _fail("no code entered — authorization not attempted.")
+    try:
+        auth = asyncio.run(connections.complete_oauth(instance, code=code))
+    except arcagent.ExtensionError as exc:
+        _fail(exc.message)
+    if auth.working:
+        _out(f"  Connected: {auth.extension} answered — a durable refresh token is stored.")
+    else:
+        _out(f"  NOT connected: {auth.detail}")
         sys.exit(1)
 
 

@@ -580,6 +580,7 @@ def create_app(
     )
     # TaskStore writer (SPEC-056 Phase D) — see `task_store_backend` above.
     app.state.task_store = TaskStore(task_store_backend)
+    app.state.arcstore_backend = task_store_backend
     # Mechanical HITL approvals (SPEC-035) — same shared backend, "approvals"
     # collection; the operator surface for trifecta-block requests.
     app.state.approval_store = ApprovalStore(task_store_backend)

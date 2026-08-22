@@ -685,7 +685,7 @@ _DEFAULT_ARCRUN_CONFIG = """\
 # (Per-run token/cost/request ceilings live in arcllm.toml [budget]; the
 # tier-floored circuit breakers live in arcagent.toml [security].)
 
-max_turns = 40          # hard cap on agentic loop turns
+max_turns = 120         # hard cap on the agent's own agentic loop turns
 # tool_timeout = 30.0   # per-tool-call wall-clock timeout (seconds); unset = none
 # Unset = every strategy is available and the model picks the one that fits each
 # task. Narrow it only to take capability away. The federal tier ignores this and

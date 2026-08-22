@@ -8,6 +8,7 @@ import {
   Pause,
   Eye,
   Loader,
+  Gauge,
   TrendingUp,
   TrendingDown,
 } from 'lucide-react'
@@ -98,6 +99,8 @@ const STATUS: Record<string, { tone: keyof typeof TONE_CLASS; Icon: typeof Check
   held: { tone: 'warning', Icon: Pause },
   stale: { tone: 'warning', Icon: Pause },
   waiting: { tone: 'warning', Icon: Pause },
+  // Hit a turn/cost/token cap after real work — amber, not the red of a crash.
+  limited: { tone: 'warning', Icon: Gauge },
   error: { tone: 'error', Icon: X },
   failed: { tone: 'error', Icon: X },
   denied: { tone: 'error', Icon: X },

@@ -312,11 +312,14 @@ def _finalize_run(run: dict[str, Any], *, now: float) -> dict[str, Any]:
     start, end = _epoch(run["started_at"]), _epoch(run["ended_at"])
     duration_ms = round((end - start) * 1000, 1) if start is not None and end is not None else None
     if run["_breached"]:
-        # Reached a terminal, but by hitting a budget/turn/token cap — an
-        # incomplete outcome the agent did not choose. Honest status is "error"
-        # (the existing non-clean terminal), never "completed": a $2 cost cap on
-        # a run that ballooned to 589K input tokens is a failure, not a finish.
-        status = "error"
+        # Reached a terminal by hitting a turn/cost/token cap. This is NOT the same
+        # as a run that errored and died: the agent did real work and then ran out
+        # of budget. Painting it red "error" is the dishonest status that made
+        # every capped run look like a crash. "limited" is its own honest status —
+        # the operator raises the cap (arcagent.toml [arcrun]/[spawn]) or reads it
+        # as a run that genuinely ran away; either way it is distinct from a
+        # completed run (it did not finish) and from an error (it did not die).
+        status = "limited"
     elif run["_completed"]:
         # A run that reached its terminal (loop.complete, emitted once in
         # build_result on every clean exit) FINISHED. Any tool/LLM error along

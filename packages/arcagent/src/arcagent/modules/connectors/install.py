@@ -379,13 +379,20 @@ async def resolve_secrets(
             extension=manifest.extension.name,
             connection=connection,
         )
+    # An OAuth connector's refresh token is absent until `arc connector authorize`
+    # obtains it. That is not a missing credential to refuse the build over — the
+    # attachment builds without it and probes as unauthenticated until it is stored,
+    # which is the honest state of a connection whose sign-in is not finished. Once
+    # stored, it resolves and reaches the attachment like any other secret.
+    optional = manifest.oauth.refresh_token_secret if manifest.oauth else None
     resolved: dict[str, Secret] = {}
     missing: list[str] = []
     for declared in manifest.secrets:
         ref = SecretRef(connection=connection, field=declared.name)
         secret = await store.get(ref, caller_did=caller_did)
         if secret is None:
-            missing.append(declared.name)
+            if declared.name != optional:
+                missing.append(declared.name)
         else:
             resolved[declared.name] = secret
     if missing:
@@ -475,8 +482,16 @@ async def _write_secrets(
     reaches the operator in its own words rather than as a rolled-back install step.
     """
     shaped = shape_supplied(plan, values)
+    # An OAuth connector's refresh token is obtained by `arc connector authorize`
+    # AFTER install (the code exchange), never supplied here — so it is not a
+    # required value at install time. The operator supplies only the app
+    # key/secret; requiring the token now would refuse the install for a value
+    # nobody can produce yet, which is the exact wall the OAuth flow removes.
+    managed = plan.manifest.oauth.refresh_token_secret if plan.manifest.oauth else None
     written: list[SecretRef] = []
     for declared in plan.secrets:
+        if declared.name == managed:
+            continue
         value = shaped.get(declared.name, "")
         ref = SecretRef(connection=plan.instance, field=declared.name)
         try:

@@ -388,6 +388,15 @@ class SpawnConfig(BaseModel):
         ge=1,
         description="Maximum concurrent child runs.",
     )
+    max_turns: int = Field(
+        default=50,
+        gt=0,
+        description=(
+            "Hard cap on turns for a spawned child run. Lower than the agent's own "
+            "cap: a child does one bounded sub-task, and this is what stopped it "
+            "truncating at the old hardcoded 25."
+        ),
+    )
     timeout_seconds: int = Field(
         default=300,
         ge=1,
@@ -640,7 +649,7 @@ class ArcRunConfig(BaseModel):
     concern that governs their stringency.
     """
 
-    max_turns: int = Field(default=40, gt=0, description="Hard cap on agentic loop turns.")
+    max_turns: int = Field(default=120, gt=0, description="Hard cap on agentic loop turns.")
     tool_timeout: float | None = Field(
         default=None,
         gt=0,

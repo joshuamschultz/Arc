@@ -37,6 +37,7 @@ from arcagent.modules.connectors.capabilities import Connectors
 from arcagent.modules.connectors.install import connector_env_file
 from arcagent.tools.human_gate import HumanGate
 from arcgateway import team_roster
+from arcstore.backends.memory import FakeBackend
 from arctrust.identity import AgentIdentity
 from arctrust.paths import arc_team, extensions_dir
 from arctrust.signer import InProcessSigner
@@ -413,6 +414,7 @@ def _agent(world: Path) -> tuple[TestClient, str, Path]:
     app.state.roster_provider = lambda: team_roster.list_team(
         team_root=team_root, online_ids=set()
     )
+    app.state.arcstore_backend = FakeBackend()
     return TestClient(app), "acme", agent_dir
 
 
@@ -779,7 +781,11 @@ def _second_agent(world: Path, name: str = "second_agent") -> str:
     return name
 
 
-async def _start_agent(world: Path, agent: str) -> ToolRegistry:
+async def _open_fake_backend(backend: FakeBackend) -> FakeBackend:
+    return backend
+
+
+async def _start_agent(world: Path, agent: str, backend: FakeBackend) -> ToolRegistry:
     """Start one agent's connectors capability exactly as a running agent starts it.
 
     This is the far end of the seam. The route writes a grant; THIS is what reads
@@ -816,6 +822,7 @@ async def _start_agent(world: Path, agent: str) -> ToolRegistry:
         tool_registry=registry,
         tier="personal",
         human_gate=gate,
+        arcstore_opener=lambda: _open_fake_backend(backend),
     )
     try:
         await Connectors().setup(None)
@@ -844,8 +851,9 @@ async def test_granting_through_the_route_registers_the_tools_for_exactly_that_a
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["agents"] == [_AGENT]
-    assert "ping" in (await _start_agent(world, _AGENT)).tools
-    assert "ping" not in (await _start_agent(world, second)).tools, (
+    backend = client.app.state.arcstore_backend
+    assert "ping" in (await _start_agent(world, _AGENT, backend)).tools
+    assert "ping" not in (await _start_agent(world, second, backend)).tools, (
         "a grant to one agent is not a grant to the fleet"
     )
 
@@ -860,11 +868,12 @@ async def test_revoking_through_the_route_takes_the_tools_away(world: Path) -> N
     client, _agent_id, _dir = _agent(world)
     _write_bundle(_bundles(world))
     assert _install(client).status_code == 200
-    assert "ping" in (await _start_agent(world, _AGENT)).tools
+    backend = client.app.state.arcstore_backend
+    assert "ping" in (await _start_agent(world, _AGENT, backend)).tools
 
     assert _revoke(client, [_AGENT]).status_code == 200
 
-    assert "ping" not in (await _start_agent(world, _AGENT)).tools
+    assert "ping" not in (await _start_agent(world, _AGENT, backend)).tools
 
 
 def test_the_listing_shows_holders_after_a_grant_and_after_a_revoke(world: Path) -> None:
@@ -1632,3 +1641,164 @@ def test_a_prerequisite_this_host_lacks_reports_unsatisfied_with_its_instruction
     required = entry["host_requires"]
     assert required[0]["satisfied"] is False
     assert "Install the acme CLI" in required[0]["instruction"]
+
+
+# --- native OAuth connect through the dashboard (SPEC-062) ---------------------
+
+_MANIFEST_OAUTH = """
+[extension]
+name = "acme_oauth"
+version = "1.0.0"
+attachment = "native"
+description = "Acme via a native OAuth code exchange."
+
+[config.native]
+entrypoint = "acme_oauth_attachment"
+
+[[secrets]]
+name = "app_key"
+sensitive = false
+
+[[secrets]]
+name = "app_secret"
+
+[[secrets]]
+name = "refresh_token"
+
+[oauth]
+authorize_url = "https://provider.example/oauth2/authorize"
+token_url = "https://provider.example/oauth2/token"
+client_id_secret = "app_key"
+client_secret_secret = "app_secret"
+refresh_token_secret = "refresh_token"
+authorize_params = { token_access_type = "offline" }
+
+[tools]
+allow = ["ping"]
+
+[[tools.declared]]
+name = "ping"
+description = "ping"
+classification = "read_only"
+
+[approval]
+default = "outbound"
+"""
+
+_ADAPTER_OAUTH = '''
+"""A native OAuth connector: reachable once the exchanged refresh token arrives."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from arcagent.extension.attachment import ProbeResult, ToolResult, ToolSpec
+
+
+class OAuthAttachment:
+    def __init__(self, context: dict[str, Any]) -> None:
+        self._has_token = bool(context.get("refresh_token"))
+
+    def requirements(self) -> list[Any]:
+        return []
+
+    async def probe(self) -> ProbeResult:
+        held = "authenticated" if self._has_token else "unauthenticated"
+        return ProbeResult(reachable=True, tools=await self.describe_tools(), detail=f"acme oauth ({held})")
+
+    async def describe_tools(self) -> list[ToolSpec]:
+        return [
+            ToolSpec(
+                name="ping",
+                description="ping",
+                input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                classification="read_only",
+            )
+        ]
+
+    async def invoke(self, tool: str, args: dict[str, Any]) -> ToolResult:
+        return ToolResult(tool=tool, content="ok")
+
+
+def build_native_attachment(context: dict[str, Any]) -> OAuthAttachment:
+    return OAuthAttachment(context)
+'''
+
+
+def _write_oauth_bundle(world: Path) -> None:
+    bundle = _bundles(world) / "acme_oauth"
+    bundle.mkdir(parents=True, exist_ok=True)
+    (bundle / "extension.toml").write_text(_MANIFEST_OAUTH, encoding="utf-8")
+    (bundle / "acme_oauth_attachment.py").write_text(_ADAPTER_OAUTH, encoding="utf-8")
+
+
+def test_the_dashboard_completes_a_native_oauth_connection(
+    world: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The whole connect flow a non-technical operator drives from arcui: install
+    with the app key/secret, read the authorize URL, paste the code, and the
+    dashboard exchanges it for a DURABLE refresh token — no token ever typed."""
+    client, _agent_id, _dir = _agent(world)
+    _write_oauth_bundle(world)
+
+    installed = client.post(
+        "/api/connections",
+        json={
+            "extension": "acme_oauth",
+            "instance": "obx",
+            "agents": [_AGENT],
+            "secrets": {"app_key": "ak-9", "app_secret": "as-9"},
+        },
+        headers=_headers("operator"),
+    )
+    assert installed.status_code == 200, installed.text
+
+    auth = client.get("/api/connections/obx/auth", headers=_headers("viewer")).json()
+    assert auth["oauth"] is True, "the panel is told to show the URL flow, not a token form"
+    assert "ak-9" in auth["authorize_url"]
+    assert "token_access_type=offline" in auth["authorize_url"]
+    assert "refresh_token" not in {c["name"] for c in auth["credentials"]}
+
+    async def _fake_post(url: str, data: dict[str, str], creds: tuple[str, str]) -> tuple[int, Any]:
+        return 200, {"refresh_token": "rt-web-durable", "expires_in": 14400}
+
+    monkeypatch.setattr("arcagent.connections._oauth_post", _fake_post)
+
+    done = client.post(
+        "/api/connections/obx/oauth", json={"code": "one-time"}, headers=_headers("operator")
+    )
+    assert done.status_code == 200, done.text
+    assert "rt-web-durable" in _env_file(world).read_text(encoding="utf-8"), (
+        "the exchanged durable token is persisted to the owner-only env file"
+    )
+
+
+def test_completing_oauth_is_operator_only_and_needs_a_code(
+    world: Path,
+) -> None:
+    """A viewer cannot finish a sign-in, and an empty code is refused before anything runs."""
+    client, _agent_id, _dir = _agent(world)
+    _write_oauth_bundle(world)
+    client.post(
+        "/api/connections",
+        json={
+            "extension": "acme_oauth",
+            "instance": "obx",
+            "agents": [_AGENT],
+            "secrets": {"app_key": "ak-9", "app_secret": "as-9"},
+        },
+        headers=_headers("operator"),
+    )
+
+    assert (
+        client.post(
+            "/api/connections/obx/oauth", json={"code": "x"}, headers=_headers("viewer")
+        ).status_code
+        == 403
+    )
+    assert (
+        client.post(
+            "/api/connections/obx/oauth", json={"code": "  "}, headers=_headers("operator")
+        ).status_code
+        == 400
+    )

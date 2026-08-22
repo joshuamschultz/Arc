@@ -103,6 +103,11 @@ async def build_run_context(
             system_prompt=child_system_prompt,
             spawn_timeout_seconds=agent._config.spawn.timeout_seconds,
             max_concurrent_spawns=agent._config.spawn.max_concurrent,
+            # A spawned child gets its OWN turn cap ([spawn].max_turns, default 50)
+            # — a child does one bounded sub-task, lower than the agent's own cap.
+            # Without threading it here it fell back to a hardcoded 25 and truncated
+            # mid-task, its max_turns breach then painted "Error" after real work.
+            max_child_turns=agent._config.spawn.max_turns,
             root_token_budget=root_token_budget,
         )
         child_tools.append(spawn_tool)

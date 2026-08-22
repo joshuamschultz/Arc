@@ -1,0 +1,41 @@
+# A minimal native connector that declares an [oauth] authorization-code flow, so
+# `complete_oauth` can be exercised end to end against a real store without a
+# socket. Mirrors the reference extension: the "service" is the object itself, so
+# the only thing under test is the framework's OAuth wiring, never an upstream.
+[extension]
+name = "oauth_reference"
+version = "1.0.0"
+description = "A reference OAuth connector for the native code-exchange flow."
+attachment = "native"
+
+[config.native]
+entrypoint = "oauth_attachment"
+
+[[secrets]]
+name = "app_key"
+prompt = "The app's client id (public)."
+sensitive = false
+
+[[secrets]]
+name = "app_secret"
+prompt = "The app's client secret."
+
+[[secrets]]
+name = "refresh_token"
+prompt = "Set by `arc connector authorize` — never typed."
+
+[oauth]
+authorize_url = "https://provider.example/oauth2/authorize"
+token_url = "https://provider.example/oauth2/token"
+client_id_secret = "app_key"
+client_secret_secret = "app_secret"
+refresh_token_secret = "refresh_token"
+authorize_params = { token_access_type = "offline" }
+
+[tools]
+allow = ["oauth_ping"]
+
+[[tools.declared]]
+name = "oauth_ping"
+description = "Report whether the refresh token arrived."
+classification = "read_only"

@@ -63,6 +63,9 @@ const STATUS_TONE: Record<string, string> = {
   in_progress: 'text-status-info',
   running: 'text-status-info',
   stale: 'text-status-warning',
+  // Hit a turn/cost/token cap after doing real work — amber, not the red of a
+  // run that errored and died. Distinct from "completed" (it did not finish).
+  limited: 'text-status-warning',
 }
 
 /** Inline status text with a tone dot. */

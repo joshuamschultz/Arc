@@ -371,6 +371,10 @@ if [ "$MEMORY_INDEX_BACKEND" = "postgres" ]; then
   POSTGRES_PASSWORD="$MEMORY_PASSWORD" POSTGRES_USER="$MEMORY_USER" \
     POSTGRES_DB="$MEMORY_DB" ARC_MEMORY_PG_PORT="$MEMORY_PORT" \
     "$RUNTIME_ROOT/scripts/install-memory-postgres.sh"
+  log "Installing arcmemory PostgreSQL drivers into the runtime venv..."
+  "$UV" pip install --python "$VENV_PY" 'asyncpg>=0.29' 'pgvector>=0.3' \
+    || fail "could not install the arcmemory PostgreSQL drivers"
+  ok "arcmemory PostgreSQL drivers present (asyncpg, pgvector)"
   if ! grep -q '^ARC_MEMORY_PG_DSN=' "$ARC_ENV"; then
     ( umask 077
       printf 'ARC_MEMORY_PG_DSN=postgresql://%s:%s@127.0.0.1:%s/%s\n' \

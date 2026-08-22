@@ -1160,6 +1160,21 @@ export const useAuthorizeConnector = (instance: string) => {
   })
 }
 
+// Native OAuth connect: exchange the one-time authorization code for a durable
+// refresh token, server-side. The operator opens the authorize URL, pastes the
+// code here, and this finishes the sign-in — no token is ever typed or stored
+// short-lived. Operator-only server side.
+export const useCompleteOauth = (instance: string) => {
+  const queryClient = useQueryClient()
+  return useMutation<ConnectorAuthStatusResponse, Error, { code: string }>({
+    mutationFn: (body) => apiPost(connectionPath(instance, '/oauth'), body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: authStatusKey(instance) })
+      queryClient.invalidateQueries({ queryKey: ['connections', instance, 'auth'] })
+    },
+  })
+}
+
 // Disconnects the account for everyone: its credential, its definition, and
 // every grant on it. There is no per-agent removal, because a connection left
 // standing for one agent and gone for another is a credential nobody thinks is live.

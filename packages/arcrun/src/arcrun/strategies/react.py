@@ -18,7 +18,6 @@ from arcrun._messages import (
     assistant_message,
     content_text,
     tool_result,
-    user_message,
 )
 from arcrun.builtins.task_complete import (
     BudgetBreachReason,
@@ -29,7 +28,7 @@ from arcrun.checkpoint import to_checkpoint
 from arcrun.executor import execute_tool_call
 from arcrun.parallel_dispatch import BatchClassifier, dispatch_batch
 from arcrun.sandbox import Sandbox
-from arcrun.state import Injection, RunState
+from arcrun.state import RunState
 from arcrun.strategies import Strategy
 from arcrun.types import LoopResult
 
@@ -103,23 +102,9 @@ def _update_runaway(state: RunState, tool_calls: list[Any]) -> None:
         state.runaway_count = 1
 
 
-def _inject(state: RunState, injection: Injection, event_type: str) -> None:
-    """Append an injected message as user-role data and emit its audit event.
-
-    Single drain path for both steer and follow_up: the message is appended as
-    ``user`` role (data, never system — mitigates LLM01/ASI06) and every
-    injection is attributed to its ``caller_did`` in the tamper-evident event
-    chain (Audit pillar). arcrun makes no trust decision here.
-    """
-    state.messages.append(user_message(injection.message))
-    state.event_bus.emit(
-        event_type,
-        {
-            "caller_did": injection.caller_did,
-            "message_id": injection.message_id,
-            "preview": injection.preview_text[:_PREVIEW_LEN],
-        },
-    )
+# Steering — holding a message and entering it at the next turn boundary — is
+# unified on RunState (``enter_held_messages`` / ``has_held_messages``) so every
+# strategy drives the same one rule rather than re-implementing queue draining.
 
 
 # Debug-only guard for the transform_context append-only contract. Off by
@@ -267,9 +252,15 @@ async def react_loop(
 
         bus.emit("turn.start", {"turn_number": state.turn_count + 1})
 
-        # Check steer queue
-        if not state.steer_queue.empty():
-            _inject(state, state.steer_queue.get_nowait(), "steer.injected")
+        # Turn boundary: enter EVERY held message into context before this turn's
+        # model call. A message that arrived while the previous turn ran is held on
+        # a queue and entered here — at the next turn boundary — which is the whole
+        # of steering and its ONLY injection point. Draining ALL held messages (not
+        # one per turn) means none is ever left behind or lost; entering them only
+        # between turns (never mid-tool) means a message can never land between an
+        # assistant tool_use and its tool_result. A "steer" and a "follow_up" are
+        # the same simple thing: held, then entered next turn.
+        state.enter_held_messages()
 
         # Transform context hook. Contract: append-only between turns (see
         # _check_append_only). Compaction is a deliberate boundary reset, not
@@ -321,11 +312,12 @@ async def react_loop(
 
         # End turn (no tool calls)
         if response.stop_reason == "end_turn" and not response.tool_calls:
-            if not state.followup_queue.empty():
-                _inject(state, state.followup_queue.get_nowait(), "followup.injected")
-                _end_turn(state, bus)
-                continue
             _end_turn(state, bus)
+            # A message that arrived during this turn keeps the run going: loop back
+            # so the top-of-turn drain enters it into context, rather than returning
+            # and leaving it behind. Otherwise the turn is genuinely done.
+            if state.has_held_messages():
+                continue
             return build_result(state, response.content)
 
         # Dispatch this turn's tool calls through the one gated dispatch path.
@@ -333,14 +325,10 @@ async def react_loop(
             response.tool_calls, state, sandbox
         )
         state.messages.extend(result_messages)
-        # Drain a steer that arrived DURING the turn only after the tool_results
-        # are appended: Anthropic rejects a tool_use that is not immediately
-        # followed by its tool_result, so an injected user message must never
-        # land between the assistant(tool_use) and its result (the mid-run
-        # interrupt an always-on agent triggers). The top-of-loop drain handles
-        # a steer arriving between turns.
-        if not state.steer_queue.empty():
-            _inject(state, state.steer_queue.get_nowait(), "steer.injected")
+        # No mid-turn injection: held messages are entered ONLY at the top of the
+        # next turn (above), after this turn's tool_results are appended. That keeps
+        # a user message from ever landing between an assistant tool_use and its
+        # tool_result, and makes steering one simple rule instead of three.
         # Feed the runaway detector with THIS turn's signatures (REQ-020/025).
         _update_runaway(state, response.tool_calls)
 
