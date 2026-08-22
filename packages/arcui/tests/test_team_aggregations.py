@@ -26,7 +26,7 @@ from arcui.routes.team_pages import routes as team_routes
 from arcui.types import AgentRegistration
 
 
-async def _seed_tasks(data_dir: Path, tasks: list[Task]) -> None:
+async def _seed_tasks(backend: FakeBackend, tasks: list[Task]) -> None:
     """Seed tasks into the arcstore mutable plane `Observe.tasks()` reads.
 
     SPEC-056 Phase D re-pointed `/api/team/tasks` off `tasks.json` (which
@@ -34,7 +34,6 @@ async def _seed_tasks(data_dir: Path, tasks: list[Task]) -> None:
     tasks route no longer reads) onto arcstore — this seeds the real source
     of truth.
     """
-    backend = FakeBackend()
     await backend.start()
     store = TaskStore(backend)
     for task in tasks:
@@ -62,7 +61,9 @@ def _write_worm_audit(data_dir: Path, *, seq: int, actor_did: str) -> None:
         fh.write(json.dumps(line) + "\n")
 
 
-def _make_app(team_root: Path | None = None) -> tuple[Starlette, AuthConfig, AgentRegistry]:
+def _make_app(
+    team_root: Path | None = None, backend: FakeBackend | None = None
+) -> tuple[Starlette, AuthConfig, AgentRegistry]:
     auth = AuthConfig(
         {
             "viewer_token": "viewer",
@@ -75,7 +76,7 @@ def _make_app(team_root: Path | None = None) -> tuple[Starlette, AuthConfig, Age
     app.state.auth_config = auth
     app.state.agent_registry = registry
     app.state.audit = UIAuditLogger(enabled=False)
-    app.state.observe = Observe()
+    app.state.observe = Observe(backend=backend) if backend is not None else Observe()
     app.state.team_root = team_root
 
     def _roster_provider() -> list[team_roster.RosterEntry]:
@@ -250,11 +251,11 @@ class TestFleetPolicy:
 
 
 class TestFleetTasks:
-    def test_aggregates_tasks_with_agent_id(self, tmp_path, _isolated_arc_data_dir: Path):
+    def test_aggregates_tasks_with_agent_id(self, tmp_path, arcstore_backend: FakeBackend):
         team = _build_team(tmp_path, [("alpha", ""), ("beta", "")])
         asyncio.run(
             _seed_tasks(
-                _isolated_arc_data_dir,
+                arcstore_backend,
                 [
                     Task(
                         id="alpha-t1",
@@ -271,7 +272,7 @@ class TestFleetTasks:
                 ],
             )
         )
-        app, auth, _ = _make_app(team_root=team)
+        app, auth, _ = _make_app(team_root=team, backend=arcstore_backend)
         client = TestClient(app)
         resp = client.get("/api/team/tasks", headers=_viewer(auth))
         assert resp.status_code == 200
