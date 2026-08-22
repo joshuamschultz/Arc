@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Mapping, Sequence
+from datetime import datetime
 from typing import Any
 
 from arctrust.audit import AuditEvent, emit
@@ -71,7 +72,9 @@ class PostgresBackend:
             async with connection.transaction():
                 for key, row in rows:
                     payload = {**row, "record_id": key}
-                    await connection.execute(statement, key, _json(payload), payload.get("ts"))
+                    await connection.execute(
+                        statement, key, _json(payload), _timestamp(payload.get("ts"))
+                    )
 
     async def query(
         self,
@@ -468,6 +471,21 @@ class PostgresBackend:
 
 def _json(value: dict[str, Any]) -> str:
     return json.dumps(value, ensure_ascii=True, separators=(",", ":"))
+
+
+def _timestamp(value: Any) -> datetime | None:
+    """Reject ambiguous input before it reaches PostgreSQL's session timezone."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("ArcStore timestamp must be an ISO-8601 string")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("ArcStore timestamp must be ISO-8601") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("ArcStore timestamp must include a timezone")
+    return parsed
 
 
 def _as_dict(value: Any) -> dict[str, Any]:

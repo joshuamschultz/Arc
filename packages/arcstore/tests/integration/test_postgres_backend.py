@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from uuid import uuid4
 
+import pytest
+
 from arcstore.backends.base import ArcStoreBackend
 
 _ACTOR = "did:arc:test:postgres"
@@ -23,6 +25,16 @@ async def test_postgres_schema_and_operational_round_trip(
     assert rows == [
         {"record_id": key, "kind": "llm_call", "actor_did": _ACTOR, "ts": "2026-08-22T00:00:00Z"}
     ]
+
+
+async def test_postgres_rejects_ambiguous_or_malformed_timestamps(
+    postgres_backend: ArcStoreBackend,
+) -> None:
+    for timestamp in ("2026-08-22T00:00:00", "not-a-timestamp"):
+        with pytest.raises(ValueError, match="timestamp"):
+            await postgres_backend.upsert(
+                "llm_calls", uuid4().hex, {"ts": timestamp, "actor_did": _ACTOR}
+            )
 
 
 async def test_postgres_cas_serializes_cross_row_claim_guard(
