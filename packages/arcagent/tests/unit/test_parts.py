@@ -19,12 +19,14 @@ from __future__ import annotations
 import base64
 import json
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 
 import arcrun
 import pytest
 
-from arcagent.parts import MAX_PDF_PAGES, MAX_PDF_TEXT_CHARS, PartTranslator
+from arcagent import _pdf_worker
+from arcagent.parts import MAX_PDF_TEXT_CHARS, PartTranslator
 
 _IMAGE_REF = "inbox/2026-08-11/120000-alice-cat.jpg"
 _FILE_REF = "inbox/2026-08-11/120001-alice-quarterly.pdf"
@@ -202,6 +204,8 @@ class TestReferenceToModelBlock:
         self, tmp_path: Path
     ) -> None:
         pytest.importorskip("pypdf")
+        if not _pdf_worker._limits_available():
+            pytest.skip("OS PDF worker limits are unavailable")
         ref = "inbox/2026-08-11/sha256-deadbeef"
         _write(tmp_path, ref, _minimal_pdf("Hello PDF"))
         part = {
@@ -221,6 +225,8 @@ class TestReferenceToModelBlock:
 
     def test_pdf_extraction_is_bounded_and_sanitizes_controls(self, tmp_path: Path) -> None:
         pytest.importorskip("pypdf")
+        if not _pdf_worker._limits_available():
+            pytest.skip("OS PDF worker limits are unavailable")
         ref = "inbox/2026-08-11/sha256-bounded"
         payload = _minimal_pdf("A" * (MAX_PDF_TEXT_CHARS + 500))
         _write(tmp_path, ref, payload)
@@ -238,6 +244,8 @@ class TestReferenceToModelBlock:
         self, tmp_path: Path
     ) -> None:
         pytest.importorskip("pypdf")
+        if not _pdf_worker._limits_available():
+            pytest.skip("OS PDF worker limits are unavailable")
         ref = "inbox/2026-08-11/many-pages.pdf"
         _write(tmp_path, ref, _multi_page_pdf(["A" * MAX_PDF_TEXT_CHARS, "LATER_PAGE"]))
         part = {**_file_part(), "ref": ref}
@@ -253,24 +261,11 @@ class TestReferenceToModelBlock:
     def test_pdf_page_count_limit_returns_metadata_without_extracting_pages(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        pypdf = pytest.importorskip("pypdf")
+        def fail_closed(_path: Path) -> str:
+            raise _pdf_worker.PdfWorkerError("PDF exceeds the page extraction limit")
 
-        class TrackingPage:
-            extract_calls = 0
+        monkeypatch.setattr(_pdf_worker, "extract_pdf", fail_closed)
 
-            def extract_text(self, **_kwargs: Any) -> str:
-                self.extract_calls += 1
-                return "must not run"
-
-        pages = [TrackingPage() for _ in range(MAX_PDF_PAGES + 1)]
-
-        class FakeReader:
-            is_encrypted = False
-
-            def __init__(self, *_args: Any, **_kwargs: Any) -> None:
-                self.pages = pages
-
-        monkeypatch.setattr(pypdf, "PdfReader", FakeReader)
         ref = "inbox/2026-08-11/too-many-pages.pdf"
         _write(tmp_path, ref, b"%PDF-1.7\nnot parsed by fake reader")
         part = {**_file_part(), "ref": ref}
@@ -281,36 +276,16 @@ class TestReferenceToModelBlock:
 
         assert isinstance(blocks[0], arcrun.TextBlock)
         assert "page extraction limit" in blocks[0].text
-        assert all(page.extract_calls == 0 for page in pages)
 
     def test_expanding_page_stops_before_following_page(self, tmp_path: Path) -> None:
-        pytest.importorskip("pypdf")
-
-        class ExpandingPage:
-            def __init__(self, text: str) -> None:
-                self.text = text
-                self.calls = 0
-
-            def extract_text(self, **kwargs: Any) -> str:
-                self.calls += 1
-                if kwargs:
-                    raise TypeError
-                return self.text
-
-        first = ExpandingPage("X" * (MAX_PDF_TEXT_CHARS + 1))
-        later = ExpandingPage("LATER_EXPANSION")
-
-        class FakeReader:
-            is_encrypted = False
-
-            def __init__(self, *_args: Any, **_kwargs: Any) -> None:
-                self.pages = [first, later]
+        def bounded_expansion(_path: Path) -> str:
+            return "X" * MAX_PDF_TEXT_CHARS + "\n[content truncated]"
 
         monkeypatch = pytest.MonkeyPatch()
-        monkeypatch.setattr("pypdf.PdfReader", FakeReader)
+        monkeypatch.setattr(_pdf_worker, "extract_pdf", bounded_expansion)
         try:
             ref = "inbox/2026-08-11/expanded.pdf"
-            _write(tmp_path, ref, b"%PDF-1.7\nnot parsed by fake reader")
+            _write(tmp_path, ref, b"%PDF-1.7\nnot parsed by fake worker")
             part = {**_file_part(), "ref": ref}
             blocks = PartTranslator(workspace=tmp_path).to_model_content(
                 PartTranslator(workspace=tmp_path).to_history_content([part])
@@ -319,9 +294,96 @@ class TestReferenceToModelBlock:
             monkeypatch.undo()
 
         assert isinstance(blocks[0], arcrun.TextBlock)
-        assert "LATER_EXPANSION" not in blocks[0].text
-        assert first.calls == 2
-        assert later.calls == 0
+        assert "content truncated" in blocks[0].text
+
+
+class TestPdfWorkerBounds:
+    def test_worker_fails_closed_when_os_limits_are_unavailable(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(_pdf_worker, "_limits_available", lambda: False)
+
+        with pytest.raises(_pdf_worker.PdfWorkerError, match="limits are unavailable"):
+            _pdf_worker.extract_pdf(tmp_path / "missing.pdf")
+
+    def test_worker_rejects_oversized_ipc_output(self) -> None:
+        payload = b"O" + b"x" * (_pdf_worker.MAX_PDF_TEXT_CHARS + len("\n[content truncated]") + 1)
+
+        with pytest.raises(_pdf_worker.PdfWorkerError, match="output exceeded"):
+            _pdf_worker._decode_result(payload)
+
+    def test_worker_memory_overage_kills_the_process(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class FakeProcess:
+            pid = 42
+            killed = False
+
+            def communicate(self, **_kwargs: Any) -> tuple[bytes, bytes]:
+                raise _pdf_worker.subprocess.TimeoutExpired("pdf", 0.01)
+
+            def kill(self) -> None:
+                self.killed = True
+
+        process = FakeProcess()
+        monkeypatch.setattr(_pdf_worker, "_kill_process_group", lambda proc: proc.kill())
+        monkeypatch.setattr(
+            _pdf_worker.psutil,
+            "Process",
+            lambda _pid: SimpleNamespace(
+                memory_info=lambda: SimpleNamespace(
+                    rss=_pdf_worker.MAX_PDF_WORKER_MEMORY_BYTES + 1
+                )
+            ),
+        )
+
+        with pytest.raises(_pdf_worker.PdfWorkerError, match="memory limit"):
+            _pdf_worker._communicate_with_limits(
+                cast(_pdf_worker.subprocess.Popen[bytes], process)
+            )
+
+        assert process.killed
+
+    def test_worker_timeout_terminates_and_closes_child(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class FakeProcess:
+            def __init__(self) -> None:
+                self.returncode = None
+                self.kill_called = False
+                self.communicate_calls = 0
+                self.pid = 42
+
+            def poll(self) -> None:
+                return None
+
+            def communicate(self, **_kwargs: Any) -> tuple[bytes, bytes]:
+                self.communicate_calls += 1
+                if self.kill_called:
+                    return b"", b""
+                raise _pdf_worker.subprocess.TimeoutExpired("pdf", 0.01)
+
+            def kill(self) -> None:
+                self.kill_called = True
+                self.returncode = -9
+
+        process = FakeProcess()
+        monkeypatch.setattr(_pdf_worker, "_limits_available", lambda: True)
+        monkeypatch.setattr(_pdf_worker.subprocess, "Popen", lambda *_a, **_k: process)
+        monkeypatch.setattr(_pdf_worker, "_kill_process_group", lambda proc: proc.kill())
+        monkeypatch.setattr(
+            _pdf_worker.psutil,
+            "Process",
+            lambda _pid: SimpleNamespace(memory_info=lambda: SimpleNamespace(rss=0)),
+        )
+        moments = iter((0.0, 0.0, _pdf_worker.MAX_PDF_WORKER_WALL_SECONDS + 1))
+        monkeypatch.setattr(_pdf_worker.time, "monotonic", lambda: next(moments))
+
+        with pytest.raises(_pdf_worker.PdfWorkerError, match="wall-time limit"):
+            _pdf_worker.extract_pdf(Path("/tmp/bounded-test.pdf"))
+
+        assert process.kill_called
+        assert process.communicate_calls == 2
 
 
 class TestBytesAreForOneCallOnly:

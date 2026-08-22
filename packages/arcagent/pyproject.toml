@@ -42,6 +42,7 @@ dependencies = [
     # executed.  Keeping this dependency here makes PDF ingestion available to
     # every gateway deployment rather than only an optional memory extra.
     "pypdf>=4,<7",
+    "psutil>=7,<8",
 ]
 
 [project.optional-dependencies]

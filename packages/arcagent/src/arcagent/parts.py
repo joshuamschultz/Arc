@@ -30,14 +30,14 @@ file instead.
 from __future__ import annotations
 
 import base64
-import io
-import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 import arcrun
 from pydantic import TypeAdapter
+
+from arcagent import _pdf_worker
 
 # One adapter for the whole discriminated union, so a stored block of any kind
 # (text, tool_use, tool_result, …) is revived by the model layer's own rules
@@ -50,11 +50,9 @@ _MEDIA = "media"
 # Attachment content is context, not a second unbounded input channel.  These
 # limits apply at the last boundary before a provider call, even when a stale
 # or hand-authored session record bypassed gateway custody.
-MAX_PDF_BYTES = 16 * 1024 * 1024
-MAX_PDF_TEXT_CHARS = 32_000
-MAX_PDF_PAGES = 100
-_PDF_MAGIC = b"%PDF-"
-_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+MAX_PDF_BYTES = _pdf_worker.MAX_PDF_BYTES
+MAX_PDF_TEXT_CHARS = _pdf_worker.MAX_PDF_TEXT_CHARS
+MAX_PDF_PAGES = _pdf_worker.MAX_PDF_PAGES
 
 
 class AttachmentExtractionError(ValueError):
@@ -180,12 +178,7 @@ class PartTranslator:
         return resolved.read_bytes()
 
     def _read_pdf_content(self, ref: str) -> str:
-        """Extract bounded text from a custody file without executing it.
-
-        PDF detection uses bytes, never a sender filename or a custody path
-        suffix.  ``pypdf`` only reads PDF structure; JavaScript, actions and
-        embedded files are not executed.  Any parser error is fail-closed.
-        """
+        """Extract bounded text in a resource-limited child process."""
         resolved = self._resolve_artefact(ref)
         try:
             size = resolved.stat().st_size
@@ -194,44 +187,9 @@ class PartTranslator:
         if size > MAX_PDF_BYTES:
             raise AttachmentExtractionError("file exceeds the PDF extraction limit")
         try:
-            payload = resolved.read_bytes()
-        except OSError as exc:
-            raise AttachmentExtractionError("file cannot be read") from exc
-        if len(payload) > MAX_PDF_BYTES or not _has_pdf_magic(payload):
-            raise AttachmentExtractionError("file is not a valid PDF")
-        try:
-            from pypdf import PdfReader
-
-            reader = PdfReader(io.BytesIO(payload), strict=True)
-            if reader.is_encrypted:
-                raise AttachmentExtractionError("encrypted PDFs are not accepted")
-            pages = reader.pages
-            page_count = len(pages)
-            if page_count > MAX_PDF_PAGES:
-                raise AttachmentExtractionError("PDF exceeds the page extraction limit")
-
-            extracted: list[str] = []
-            used = 0
-            for page_number in range(page_count):
-                remaining = MAX_PDF_TEXT_CHARS - used
-                if remaining <= 0:
-                    break
-                page_text, exhausted = _extract_pdf_page(pages[page_number], remaining)
-                if page_text:
-                    if extracted and used < MAX_PDF_TEXT_CHARS:
-                        extracted.append("\n")
-                        used += 1
-                    available = MAX_PDF_TEXT_CHARS - used
-                    extracted.append(page_text[:available])
-                    used += min(len(page_text), available)
-                if exhausted or used >= MAX_PDF_TEXT_CHARS:
-                    break
-            text = "".join(extracted)
-        except AttachmentExtractionError:
-            raise
-        except Exception as exc:  # parser implementations expose varied errors
-            raise AttachmentExtractionError("PDF content could not be safely extracted") from exc
-        return _sanitize_attachment_text(text, truncated=used >= MAX_PDF_TEXT_CHARS)
+            return _pdf_worker.extract_pdf(resolved)
+        except _pdf_worker.PdfWorkerError as exc:
+            raise AttachmentExtractionError(str(exc)) from exc
 
     def _looks_like_pdf(self, media: Mapping[str, Any]) -> bool:
         """Detect PDF content by magic, with MIME as a compatibility hint."""
@@ -240,7 +198,7 @@ class PartTranslator:
             return True
         try:
             with self._resolve_artefact(str(media["ref"])).open("rb") as handle:
-                return _has_pdf_magic(handle.read(1024))
+                return _pdf_worker._has_pdf_magic(handle.read(1024))
         except (AttachmentExtractionError, OSError, KeyError, TypeError):
             return False
 
@@ -252,56 +210,6 @@ class PartTranslator:
         if not resolved.is_file():
             raise AttachmentExtractionError("file is unavailable")
         return resolved
-
-
-def _has_pdf_magic(payload: bytes) -> bool:
-    """Recognise a PDF by its header, tolerating an optional UTF-8 BOM."""
-    return payload.startswith(_PDF_MAGIC) or payload.startswith(b"\xef\xbb\xbf%PDF-")
-
-
-class _PDFTextLimitReachedError(Exception):
-    """Internal control flow used to stop pypdf inside a page."""
-
-
-def _extract_pdf_page(page: Any, remaining: int) -> tuple[str, bool]:
-    """Extract at most ``remaining`` characters from one page."""
-    chunks: list[str] = []
-    used = 0
-
-    def visitor_text(text: str, *_args: Any) -> None:
-        nonlocal used
-        if not text:
-            return
-        available = remaining - used
-        if available <= 0:
-            raise _PDFTextLimitReachedError
-        chunks.append(text[:available])
-        used += min(len(text), available)
-        if len(text) >= available:
-            raise _PDFTextLimitReachedError
-
-    try:
-        page.extract_text(visitor_text=visitor_text)
-    except _PDFTextLimitReachedError:
-        return "".join(chunks), True
-    except TypeError:
-        extracted = page.extract_text()
-        if not isinstance(extracted, str):
-            return "", False
-        return extracted[:remaining], len(extracted) >= remaining
-    return "".join(chunks), used >= remaining
-
-
-def _sanitize_attachment_text(text: str, *, truncated: bool = False) -> str:
-    """Strip control characters and bound extracted text before provider input."""
-    clean = _CONTROL_CHARS.sub("", text).replace("\r\n", "\n").replace("\r", "\n")
-    clean = clean.strip()
-    if len(clean) > MAX_PDF_TEXT_CHARS:
-        clean = clean[:MAX_PDF_TEXT_CHARS].rstrip()
-        truncated = True
-    if truncated:
-        return clean + "\n[content truncated]"
-    return clean
 
 
 def _readable_line(media: Mapping[str, Any]) -> str:
