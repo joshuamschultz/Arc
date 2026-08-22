@@ -52,12 +52,14 @@ import importlib.util
 import shutil
 import sys
 import uuid
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
 import arcbundle
 import pytest
 from arcrun import ToolContext
+from arcstore.backends.memory import FakeBackend
 from arctrust import ValidatorsConfig, generate_keypair
 from arctrust.audit import AuditEvent
 from arctrust.paths import module_root
@@ -190,8 +192,26 @@ def _config(tmp_path: Path, *, modules: dict[str, ModuleEntry] | None = None) ->
     )
 
 
-async def _started_agent(config: ArcAgentConfig, tmp_path: Path) -> ArcAgent:
-    agent = ArcAgent(config=config, config_path=tmp_path / "arcagent.toml")
+async def _open_fake(backend: FakeBackend) -> FakeBackend:
+    return backend
+
+
+class _FakeArcStoreAgent(ArcAgent):
+    def __init__(self, config: ArcAgentConfig, config_path: Path, backend: FakeBackend) -> None:
+        self._test_backend = backend
+        super().__init__(config=config, config_path=config_path)
+
+    def _make_arcstore_opener(self) -> Callable[[], Awaitable[Any]]:
+        async def open_backend() -> FakeBackend:
+            return self._test_backend
+
+        return open_backend
+
+
+async def _started_agent(
+    config: ArcAgentConfig, config_path: Path, backend: FakeBackend
+) -> ArcAgent:
+    agent = _FakeArcStoreAgent(config, config_path, backend)
     await agent.startup()
     return agent
 
@@ -281,9 +301,9 @@ def _data_dir(agent_dir: Path) -> Path:
     return path
 
 
-async def _connection_state(agent_dir: Path) -> ConnectionStateStore:
+async def _connection_state(backend: FakeBackend) -> ConnectionStateStore:
     """The connection directory an install registers into, and the agent reads back."""
-    return await open_connection_state(str(_data_dir(agent_dir)))
+    return await open_connection_state(opener=lambda: _open_fake(backend))
 
 
 def _write_agent_toml(
@@ -450,6 +470,7 @@ async def test_installing_the_reference_extension_reaches_its_own_implementation
     over and an operator can delete.
     """
     arc_dir = _arc_dir(tmp_path)
+    backend = FakeBackend()
     root = arc_dir / "extensions"
     _install(root)
     store = SecretStore(LocalFileSecretBackend(connector_env_file(arc_dir)))
@@ -468,7 +489,7 @@ async def test_installing_the_reference_extension_reaches_its_own_implementation
         secret_values={"reference_token": "unused"},
         store=store,
         caller_did=_CALLER,
-        state=await _connection_state(arc_dir),
+        state=await _connection_state(backend),
     )
 
     assert sorted(report.tools) == [_ECHO, _STORE]
@@ -500,6 +521,7 @@ async def test_a_started_agent_serves_the_tools_of_an_installed_connection(
     """
     agent_home = _agent_home(tmp_path)
     arc_dir = _arc_dir(tmp_path)
+    backend = FakeBackend()
     root = arc_dir / "extensions"
     _install(root)
     config_path = _write_agent_toml(agent_home, connectors_enabled=True, arc_dir=arc_dir)
@@ -518,7 +540,7 @@ async def test_a_started_agent_serves_the_tools_of_an_installed_connection(
         secret_values={"reference_token": "unused"},
         store=_credential_store(arc_dir),
         caller_did=_CALLER,
-        state=await _connection_state(arc_dir),
+        state=await _connection_state(backend),
     )
     assert _INSTANCE in connections.all(), "the install did not define the connection"
     # The manifest's default gates every outbound call on a signed operator grant, which
@@ -529,8 +551,7 @@ async def test_a_started_agent_serves_the_tools_of_an_installed_connection(
         _INSTANCE, Connection(extension=_BUNDLE, approval="none", agents=(_AGENT_SLUG,))
     )
 
-    agent = ArcAgent(config=load_config(config_path), config_path=config_path)
-    await agent.startup()
+    agent = await _started_agent(load_config(config_path), config_path, backend)
     try:
         registered = _registry(agent).tools
 
@@ -573,6 +594,7 @@ async def test_a_started_agent_serves_a_connection_with_its_credential_delivered
     """
     agent_home = _agent_home(tmp_path)
     arc_dir = _arc_dir(tmp_path)
+    backend = FakeBackend()
     root = arc_dir / "extensions"
     _install(root)
     config_path = _write_agent_toml(agent_home, connectors_enabled=True, arc_dir=arc_dir)
@@ -591,14 +613,13 @@ async def test_a_started_agent_serves_a_connection_with_its_credential_delivered
         secret_values={"reference_token": _TOKEN},
         store=_credential_store(arc_dir),
         caller_did=_CALLER,
-        state=await _connection_state(arc_dir),
+        state=await _connection_state(backend),
     )
     connections.define(
         _INSTANCE, Connection(extension=_BUNDLE, approval="none", agents=(_AGENT_SLUG,))
     )
 
-    agent = ArcAgent(config=load_config(config_path), config_path=config_path)
-    await agent.startup()
+    agent = await _started_agent(load_config(config_path), config_path, backend)
     try:
         answered = await _dispatch(agent, _ECHO, {"message": _FINGERPRINT_KEY})
 
@@ -623,14 +644,14 @@ async def test_a_started_agent_refuses_a_connection_whose_credential_is_gone(
     """
     agent_home = _agent_home(tmp_path)
     arc_dir = _arc_dir(tmp_path)
+    backend = FakeBackend()
     _install(arc_dir / "extensions")
     config_path = _write_agent_toml(agent_home, connectors_enabled=True, arc_dir=arc_dir)
     _connections(arc_dir).define(
         _INSTANCE, Connection(extension=_BUNDLE, approval="none", agents=(_AGENT_SLUG,))
     )
 
-    agent = ArcAgent(config=load_config(config_path), config_path=config_path)
-    await agent.startup()
+    agent = await _started_agent(load_config(config_path), config_path, backend)
     try:
         assert _ECHO not in _registry(agent).tools
         assert "ls" in _registry(agent).tools, "the agent itself must still have started"
@@ -654,6 +675,7 @@ async def test_an_unsigned_bundle_is_verified_before_any_of_its_code_runs(
     """
     root = tmp_path / "extensions"
     _install(root)  # unsigned: no .arcsig sidecars are written
+    backend = FakeBackend()
     built: list[str] = []
 
     def _factory(manifest: Any, bundle: Path, secrets: Any) -> Any:
@@ -675,7 +697,7 @@ async def test_an_unsigned_bundle_is_verified_before_any_of_its_code_runs(
             secret_values={"reference_token": "unused"},
             store=SecretStore(LocalFileSecretBackend(tmp_path / "arc.env")),
             caller_did=_CALLER,
-            state=await _connection_state(tmp_path),
+            state=await _connection_state(backend),
             attachment_factory=_factory,
         )
 
@@ -699,7 +721,7 @@ async def test_the_same_bridge_and_envelope_execute_the_fixture_attachment_direc
     """
     module = _import_fixture_module()
     attachment = module.build_native_attachment({})
-    agent = await _started_agent(_config(tmp_path), tmp_path)
+    agent = await _started_agent(_config(tmp_path), tmp_path, FakeBackend())
     try:
         report = CapabilityBridge(
             registry=_registry(agent),
@@ -749,7 +771,7 @@ async def test_an_agent_with_no_extensions_installed_starts_and_passes_smoke(
     tmp_path: Path,
 ) -> None:
     """REQ-284 — with every extension removed, the agent is still an agent."""
-    agent = await _started_agent(_config(tmp_path), tmp_path)
+    agent = await _started_agent(_config(tmp_path), tmp_path, FakeBackend())
     try:
         await _smoke(agent)
     finally:
@@ -763,7 +785,7 @@ async def test_an_agent_with_no_optional_modules_enabled_starts_and_passes_smoke
     config = _config(tmp_path)
     assert active_modules(config) == []
 
-    agent = await _started_agent(config, tmp_path)
+    agent = await _started_agent(config, tmp_path, FakeBackend())
     try:
         await _smoke(agent)
     finally:
@@ -783,7 +805,7 @@ async def test_an_agent_without_connectors_configuration_gains_no_new_tools(
     tmp_path: Path,
 ) -> None:
     """REQ-286 — an existing agent gains no behaviour from a module it never enabled."""
-    baseline = await _started_agent(_config(tmp_path), tmp_path / "a")
+    baseline = await _started_agent(_config(tmp_path), tmp_path / "a", FakeBackend())
     try:
         tools = set(_registry(baseline).tools)
     finally:
@@ -804,7 +826,7 @@ async def test_an_enabled_connectors_module_with_nothing_installed_still_starts(
     """REQ-284 — enabling the host module with every extension removed is not a failure."""
     config = _config(tmp_path, modules={"connectors": ModuleEntry(enabled=True)})
 
-    agent = await _started_agent(config, tmp_path)
+    agent = await _started_agent(config, tmp_path, FakeBackend())
     try:
         assert "connectors" in active_modules(config)
         await _smoke(agent)
@@ -842,8 +864,7 @@ async def test_residual_configuration_after_removal_does_not_break_startup(
     assert not statuses["gone_module"].discovered
     assert not statuses["gone_module"].enabled
 
-    agent = ArcAgent(config=config, config_path=config_path)
-    await agent.startup()
+    agent = await _started_agent(config, tmp_path, FakeBackend())
     try:
         await _smoke(agent)
     finally:
