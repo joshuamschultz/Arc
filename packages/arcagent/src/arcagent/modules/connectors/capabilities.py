@@ -88,6 +88,7 @@ _logger = logging.getLogger("arcagent.modules.connectors.capabilities")
 #: other kind runs in this process, and an unknown one never gets this far —
 #: ``build_attachment`` refuses it before anything is registered.
 _SPAWNED_KIND = "cli"
+_RECONCILE_INTERVAL_SECONDS = 5.0
 
 
 class _PreparedRegistry:
@@ -183,13 +184,18 @@ class Connectors:
         await queue.drain(state.agent_dir.name, self.reconcile)
 
     async def _reconcile_loop(self) -> None:
-        """Retry durable work after a mutation from another process or a restart."""
+        """Converge durable grants even when a mutation died before it queued work."""
         while True:
             try:
-                await self._drain_reconcile_commands()
+                await self._reconcile_cycle()
             except Exception:
-                _logger.warning("connector reconcile command will retry", exc_info=True)
-            await asyncio.sleep(1)
+                _logger.warning("connector reconciliation will retry", exc_info=True)
+            await asyncio.sleep(_RECONCILE_INTERVAL_SECONDS)
+
+    async def _reconcile_cycle(self) -> None:
+        """Apply the current grant snapshot, then acknowledge queued wakeups."""
+        await self.reconcile()
+        await self._drain_reconcile_commands()
 
     # --- attaching ----------------------------------------------------------
 

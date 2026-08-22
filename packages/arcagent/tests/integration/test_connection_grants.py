@@ -450,6 +450,24 @@ async def test_durable_reconcile_commands_survive_a_management_process_restart(
         await capability.teardown()
 
 
+async def test_durable_grant_snapshot_converges_when_enqueue_was_lost(
+    deployment: _Deployment,
+) -> None:
+    """The owner reconciles the registry even after a mutator crashes before queueing."""
+    await deployment.connect(agents=())
+    deployment.connections().grant(_CONNECTION, [_GRANTED[0]])
+    registry, capability = await deployment.start_running_agent(_GRANTED[0])
+    try:
+        assert set(registry.tools) >= set(_SERVED)
+
+        deployment.connections().revoke(_CONNECTION, [_GRANTED[0]])
+        await capability._reconcile_cycle()
+        assert not any(tool in registry.tools for tool in _SERVED)
+        assert await deployment.arcstore_backend.mutable_query("connector_reconcile_commands") == []
+    finally:
+        await capability.teardown()
+
+
 async def test_one_live_control_failure_does_not_skip_later_durable_commands(
     deployment: _Deployment,
 ) -> None:
