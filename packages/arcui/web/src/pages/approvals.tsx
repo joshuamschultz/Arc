@@ -5,6 +5,7 @@ import { OperatorModeToggle } from '@/components/operator-mode-toggle'
 import { QueryState, EmptyState } from '@/components/states'
 import { ApprovalRequest, ContextNote } from '@/components/hitl'
 import { useOperatorMode } from '@/hooks/use-operator-mode'
+import { apiGet } from '@/lib/api'
 import { useApprovals } from '@/lib/queries'
 
 export function ApprovalsPage() {
@@ -18,9 +19,12 @@ export function ApprovalsPage() {
   useEffect(() => {
     if (!notifications) return
     const poll = async () => {
-      const response = await fetch('/api/approvals/notifications')
-      if (!response.ok) return
-      const data = await response.json() as { events?: Array<{ event_id: string; approval_id: string; status: string; tool?: string }> }
+      let data: { events?: Array<{ event_id: string; approval_id: string; status: string; tool?: string }> }
+      try {
+        data = await apiGet('/api/approvals/notifications')
+      } catch {
+        return
+      }
       for (const event of data.events ?? []) {
         if (seen.current.has(event.event_id)) continue
         seen.current.add(event.event_id)

@@ -130,6 +130,39 @@ class DurableInboxService:
     async def mark_read(self, message_id: str, *, reader: Participant) -> Message:
         return await self._repository.mark_read(message_id, reader.participant_id)
 
+    async def reply(
+        self,
+        thread_id: str,
+        *,
+        sender: Participant,
+        body: str,
+        reply_to_id: str | None = None,
+        classification_max: str = "UNCLASSIFIED",
+    ) -> Message:
+        """Append an authorized reply from one thread participant.
+
+        A reply stays in the durable communication record.  Transport adapters
+        remain responsible for delivering it to an external platform.
+        """
+        thread = await self._repository.get_thread(
+            thread_id,
+            reader_id=sender.participant_id,
+            classification_max=classification_max,
+        )
+        recipients = tuple(
+            item for item in thread.participants if item.participant_id != sender.participant_id
+        )
+        if not recipients:
+            raise ValueError("a reply requires at least one other thread participant")
+        return await self._repository.append_message(
+            thread_id,
+            sender=sender,
+            recipients=recipients,
+            body=body,
+            reply_to_id=reply_to_id,
+            trace=TraceMetadata(classification=thread.classification),
+        )
+
     async def create_handoff(
         self,
         thread_id: str,

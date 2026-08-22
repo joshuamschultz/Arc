@@ -274,12 +274,18 @@ class ApprovalNotificationDispatcher:
             self._task = asyncio.create_task(self.run(), name="arcstore-approval-dispatcher")
 
     async def stop(self) -> None:
-        """Request shutdown and await the worker, preserving cancellation semantics."""
+        """Stop the worker promptly, returning an interrupted lease for retry."""
         self._stop.set()
         task = self._task
+        self._task = None
+        if task is not None and not task.done():
+            task.cancel()
         if task is not None:
-            await task
-            self._task = None
+            try:
+                await task
+            except asyncio.CancelledError:
+                if not task.cancelled():
+                    raise
 
 
 __all__ = [

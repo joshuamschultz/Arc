@@ -25,6 +25,7 @@ from arctrust.policy import (
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
+from arcui.approval_notifications import ApprovalNotificationHub
 from arcui.audit import UIAuditLogger
 from arcui.auth import AuthConfig, AuthMiddleware
 
@@ -75,7 +76,7 @@ async def _seed_store(data_dir: Path, call_hash: str, *, enriched: bool = False)
 
 def _make_app(
     tmp_path: Path, call_hash: str, *, enriched: bool = False
-) -> tuple[Starlette, AuthConfig]:
+) -> tuple[Starlette, AuthConfig, ApprovalStore]:
     from arcui.routes.approvals import routes as approval_routes
 
     auth = AuthConfig({"viewer_token": "viewer", "operator_token": "operator"})
@@ -84,7 +85,7 @@ def _make_app(
     app.state.auth_config = auth
     app.state.audit = UIAuditLogger(enabled=False)
     app.state.approval_store = asyncio.run(_seed_store(tmp_path, call_hash, enriched=enriched))
-    return app, auth
+    return app, auth, app.state.approval_store
 
 
 def _viewer(auth: AuthConfig) -> dict[str, str]:
@@ -95,12 +96,12 @@ def _operator(auth: AuthConfig) -> dict[str, str]:
     return {"Authorization": f"Bearer {auth.operator_token}"}
 
 
-def _read(app: Starlette) -> Any:
-    return asyncio.run(app.state.approval_store.get("req1"))
+def _read(store: ApprovalStore) -> Any:
+    return asyncio.run(store.get("req1"))
 
 
 def test_list_pending_visible_to_viewer(tmp_path: Path) -> None:
-    app, auth = _make_app(tmp_path, _hash_call(_call()))
+    app, auth, _ = _make_app(tmp_path, _hash_call(_call()))
     client = TestClient(app)
     resp = client.get("/api/approvals", headers=_viewer(auth))
     assert resp.status_code == 200
@@ -111,7 +112,7 @@ def test_list_pending_visible_to_viewer(tmp_path: Path) -> None:
 def test_list_surfaces_enrichment_fields(tmp_path: Path) -> None:
     # SPEC-035 approval enrichment — GET exposes session_id, redacted arguments,
     # and leg provenance so the panel can render triage context.
-    app, auth = _make_app(tmp_path, _hash_call(_call()), enriched=True)
+    app, auth, _ = _make_app(tmp_path, _hash_call(_call()), enriched=True)
     client = TestClient(app)
     resp = client.get("/api/approvals", headers=_viewer(auth))
     assert resp.status_code == 200
@@ -124,24 +125,24 @@ def test_list_surfaces_enrichment_fields(tmp_path: Path) -> None:
 
 
 def test_viewer_cannot_approve(tmp_path: Path) -> None:
-    app, auth = _make_app(tmp_path, _hash_call(_call()))
+    app, auth, store = _make_app(tmp_path, _hash_call(_call()))
     client = TestClient(app)
     resp = client.post("/api/approvals/req1/approve", headers=_viewer(auth))
     assert resp.status_code == 403
-    assert _read(app).status == "pending"
+    assert _read(store).status == "pending"
 
 
 def test_operator_approve_mints_verifiable_pinned_grant(tmp_path: Path) -> None:
     call = _call()
     # Pre-create the on-box operator key the route will sign with.
     OperatorKey.load(default_operator_key_path(tmp_path), generate_if_absent=True)
-    app, auth = _make_app(tmp_path, _hash_call(call))
+    app, auth, store = _make_app(tmp_path, _hash_call(call))
     client = TestClient(app)
 
     resp = client.post("/api/approvals/req1/approve", headers=_operator(auth))
     assert resp.status_code == 200, resp.text
 
-    row = _read(app)
+    row = _read(store)
     assert row.status == "approved"
     grant = grant_from_wire(row.grant)
     assert verify_approval(call, grant) is True
@@ -150,10 +151,50 @@ def test_operator_approve_mints_verifiable_pinned_grant(tmp_path: Path) -> None:
 
 
 def test_operator_deny(tmp_path: Path) -> None:
-    app, auth = _make_app(tmp_path, _hash_call(_call()))
+    app, auth, store = _make_app(tmp_path, _hash_call(_call()))
     client = TestClient(app)
     resp = client.post("/api/approvals/req1/deny", headers=_operator(auth))
     assert resp.status_code == 200
-    row = _read(app)
+    row = _read(store)
     assert row.status == "denied"
     assert row.grant is None
+
+
+def test_notification_feed_is_authenticated_operator_only_and_sanitized(tmp_path: Path) -> None:
+    app, auth, _ = _make_app(tmp_path, _hash_call(_call()))
+    hub = ApprovalNotificationHub()
+    from arcstore.approval_dispatcher import ApprovalNotification
+
+    asyncio.run(
+        hub(
+            ApprovalNotification(
+                event_id="event-1",
+                approval_id="req1",
+                status="pending",
+                agent_did=_AGENT,
+                tool="send_message",
+                classification="UNCLASSIFIED",
+                attempts=1,
+            )
+        )
+    )
+    app.state.approval_notification_hub = hub
+    client = TestClient(app)
+
+    assert client.get("/api/approvals/notifications").status_code == 401
+    assert client.get("/api/approvals/notifications", headers=_viewer(auth)).status_code == 403
+    response = client.get("/api/approvals/notifications", headers=_operator(auth))
+    assert response.status_code == 200
+    assert response.json() == {
+        "events": [
+            {
+                "type": "approval_notification",
+                "event_id": "event-1",
+                "approval_id": "req1",
+                "status": "pending",
+                "agent_did": _AGENT,
+                "tool": "send_message",
+                "classification": "UNCLASSIFIED",
+            }
+        ]
+    }

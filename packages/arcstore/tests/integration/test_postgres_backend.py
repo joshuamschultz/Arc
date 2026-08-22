@@ -15,6 +15,9 @@ from packages.arcstore.tests.inbox_conformance import (
 from arcstore.backends.base import ArcStoreBackend
 from arcstore.backends.postgres import PostgresBackend
 from arcstore.backends.postgres_inbox import PostgresInboxRepository
+from arcstore.inbox import ParticipantRole
+from arcstore.inbox_projection import DurableInboxService
+from arcstore.inbox_projection import participant as inbox_participant
 
 _ACTOR = "did:arc:test:postgres"
 
@@ -132,33 +135,27 @@ async def test_postgres_inbox_uses_v1_foreign_keys_and_canonical_payloads(
 async def test_postgres_inbox_idempotent_event_survives_backend_restart(
     postgres_backend: ArcStoreBackend,
 ) -> None:
-    """A retry after a pool restart reads the original durable event copy."""
+    """A retried transport projection reads every original durable copy after restart."""
     assert isinstance(postgres_backend, PostgresBackend)
-    repository = PostgresInboxRepository(postgres_backend)
-    owner = participant(f"did:arc:human:{uuid4().hex}", "human")
-    inbox = await repository.create_inbox(owner, inbox_id=f"inbox-{uuid4().hex}")
-    thread = await repository.create_thread(
-        inbox.inbox_id,
-        (owner,),
-        thread_id=f"thread-{uuid4().hex}",
-    )
-    message_id = f"message-{uuid4().hex}"
-    first = await repository.append_message(
-        thread.thread_id,
-        sender=owner,
-        recipients=(owner,),
+    sender = inbox_participant(f"did:arc:human:{uuid4().hex}", role=ParticipantRole.HUMAN)
+    recipient = inbox_participant(f"did:arc:agent:{uuid4().hex}")
+    event_id = f"event-{uuid4().hex}"
+    first = await DurableInboxService(PostgresInboxRepository(postgres_backend)).record_event(
+        event_id=event_id,
+        sender=sender,
+        recipients=(recipient,),
         body="survives restart",
-        message_id=message_id,
+        external_thread_id="platform-thread",
     )
 
     await postgres_backend.stop()
     await postgres_backend.start()
-    retry = await PostgresInboxRepository(postgres_backend).append_message(
-        thread.thread_id,
-        sender=owner,
-        recipients=(owner,),
+    retry = await DurableInboxService(PostgresInboxRepository(postgres_backend)).record_event(
+        event_id=event_id,
+        sender=sender,
+        recipients=(recipient,),
         body="survives restart",
-        message_id=message_id,
+        external_thread_id="platform-thread",
     )
 
     assert retry == first

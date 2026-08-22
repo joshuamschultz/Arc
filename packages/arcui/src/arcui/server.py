@@ -26,7 +26,7 @@ from arcgateway.approval_notifications import (
 )
 from arcstore.approval_dispatcher import ApprovalDispatcherConfig, ApprovalNotificationDispatcher
 from arcstore.approvals import ApprovalStore
-from arcstore.backends import PostgresInboxRepository, open_backend
+from arcstore.backends import PostgresBackend, PostgresInboxRepository, open_backend
 from arcstore.cancellations import CancelStore
 from arcstore.config import ArcStoreConfig, resolve_data_dir
 from arcstore.inbox_projection import DurableInboxService
@@ -359,7 +359,10 @@ def create_app(
             await task_store_backend.start()
         except Exception:  # reason: fail-open — dashboard still serves
             logger.exception("lifespan: task_store backend failed to start; writes will fail")
-        if starlette_app.state.inbox_service is None:
+        if (
+            starlette_app.state.inbox_service is None
+            and isinstance(task_store_backend, PostgresBackend)
+        ):
             try:
                 starlette_app.state.inbox_service = DurableInboxService(
                     PostgresInboxRepository(task_store_backend)
@@ -370,17 +373,6 @@ def create_app(
         approval_fanout = ApprovalNotificationFanout(
             [starlette_app.state.approval_notification_hub]
         )
-        if all(
-            hasattr(task_store_backend, name)
-            for name in ("claim_outbox", "ack_outbox", "nack_outbox")
-        ):
-            approval_dispatcher = ApprovalNotificationDispatcher(
-                task_store_backend,
-                approval_fanout,
-                config=ApprovalDispatcherConfig(worker_id="arcui-approval-notifications"),
-            )
-            await approval_dispatcher.start()
-            starlette_app.state.approval_notification_dispatcher = approval_dispatcher
         # SPEC-023: when a gateway_config is supplied, compose the in-process
         # gateway runtime and expose its components on app.state. Routes that
         # need the WebPlatformAdapter (chat_ws), the SessionRouter (admin
@@ -400,7 +392,9 @@ def create_app(
             if approval_operator_target is not None:
                 approval_fanout.add(
                     GatewayApprovalNotificationSink(
-                        embedded_gateway.session_router, approval_operator_target
+                        embedded_gateway.session_router,
+                        approval_operator_target,
+                        agent_did=gateway_config.gateway.agent_did,
                     )
                 )
             starlette_app.state.web_adapter = embedded_gateway.web_adapter
@@ -481,6 +475,17 @@ def create_app(
         # extension below.
         for hook in getattr(starlette_app.state, "_extra_startup_hooks", []):
             await hook()
+        if all(
+            hasattr(task_store_backend, name)
+            for name in ("claim_outbox", "ack_outbox", "nack_outbox")
+        ):
+            approval_dispatcher = ApprovalNotificationDispatcher(
+                task_store_backend,
+                approval_fanout,
+                config=ApprovalDispatcherConfig(worker_id="arcui-approval-notifications"),
+            )
+            await approval_dispatcher.start()
+            starlette_app.state.approval_notification_dispatcher = approval_dispatcher
         try:
             yield
         finally:

@@ -52,6 +52,7 @@ from arcui.routes.agent_detail.inbox import (
     get_inbox_threads,
     post_inbox_handoff,
     post_inbox_read,
+    post_inbox_reply,
 )
 from arcui.routes.agent_detail.policy import (
     get_policy,
@@ -129,6 +130,7 @@ routes = [
         post_inbox_read,
         methods=["POST"],
     ),
+    Route("/api/agents/{id}/inbox/{thread_id}/reply", post_inbox_reply, methods=["POST"]),
     Route("/api/agents/{id}/inbox/{thread_id}/handoffs", post_inbox_handoff, methods=["POST"]),
     Route("/api/agents/{id}/stats", get_stats, methods=["GET"]),
     Route("/api/agents/{id}/traces", get_traces, methods=["GET"]),

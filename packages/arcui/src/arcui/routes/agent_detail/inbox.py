@@ -9,6 +9,7 @@ from arcstore.inbox_projection import participant
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from arcui.audit import emit_mutation_audit
 from arcui.routes.agent_detail._common import _agent_did
 
 
@@ -101,6 +102,57 @@ async def post_inbox_read(request: Request) -> JSONResponse:
     except (KeyError, ValueError) as exc:
         return JSONResponse({"error": str(exc)}, status_code=404)
     return JSONResponse({"message": message.model_dump(mode="json")})
+
+
+async def post_inbox_reply(request: Request) -> JSONResponse:
+    """Append an operator-authorized reply to the durable thread record."""
+    thread_id = request.path_params["thread_id"]
+    target = f"inbox:{thread_id}"
+    if getattr(request.state, "role", None) != "operator":
+        emit_mutation_audit(
+            request,
+            target=target,
+            operation="inbox.reply",
+            outcome="denied",
+            detail="viewer role",
+        )
+        return JSONResponse({"error": "operator_role_required"}, status_code=403)
+    service, reader = _service(request), _reader(request)
+    if service is None:
+        return JSONResponse({"error": "durable_inbox_unavailable"}, status_code=503)
+    if reader is None:
+        return JSONResponse({"error": "agent_not_found"}, status_code=404)
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "expected JSON object"}, status_code=400)
+    if not isinstance(payload, dict):
+        return JSONResponse({"error": "expected JSON object"}, status_code=400)
+    body = payload.get("body")
+    reply_to_id = payload.get("reply_to_id")
+    if not isinstance(body, str) or not body.strip():
+        return JSONResponse({"error": "body must be a non-empty string"}, status_code=400)
+    if reply_to_id is not None and (not isinstance(reply_to_id, str) or not reply_to_id):
+        return JSONResponse({"error": "reply_to_id must be a non-empty string"}, status_code=400)
+    try:
+        message = await service.reply(
+            thread_id,
+            sender=reader,
+            body=body,
+            reply_to_id=reply_to_id,
+            classification_max=_clearance(request),
+        )
+    except (KeyError, PermissionError, ValueError) as exc:
+        emit_mutation_audit(
+            request,
+            target=target,
+            operation="inbox.reply",
+            outcome="denied",
+            detail=str(exc),
+        )
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    emit_mutation_audit(request, target=target, operation="inbox.reply", outcome="applied")
+    return JSONResponse({"message": message.model_dump(mode="json")}, status_code=201)
 
 
 async def post_inbox_handoff(request: Request) -> JSONResponse:

@@ -147,9 +147,7 @@ async def test_sink_failure_nacks_with_deterministic_backoff() -> None:
     worker = ApprovalNotificationDispatcher(
         backend,
         sink,
-        ApprovalDispatcherConfig(
-            worker_id="worker-a", retry_base_seconds=2, retry_max_seconds=10
-        ),
+        ApprovalDispatcherConfig(worker_id="worker-a", retry_base_seconds=2, retry_max_seconds=10),
     )
     await worker.dispatch_once()
     assert backend.acks == []
@@ -212,4 +210,26 @@ async def test_start_stop_is_deterministic_and_cancellation_propagates() -> None
     await worker.start()
     await asyncio.sleep(0)
     await worker.stop()
+    assert worker._task is None
+
+
+@pytest.mark.asyncio
+async def test_stop_cancels_an_inflight_sink_without_leaking_the_worker_task() -> None:
+    backend = FakeOutbox([_row()])
+    entered = asyncio.Event()
+
+    async def sink(_notification: ApprovalNotification) -> None:
+        entered.set()
+        await asyncio.Event().wait()
+
+    worker = ApprovalNotificationDispatcher(
+        backend,
+        sink,
+        ApprovalDispatcherConfig(worker_id="worker-a"),
+    )
+    await worker.start()
+    await entered.wait()
+    task = worker._task
+    await worker.stop()
+    assert task is not None and task.cancelled()
     assert worker._task is None
