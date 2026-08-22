@@ -12,8 +12,21 @@ import json
 from pathlib import Path
 
 import pytest
+from arcstore.backends.memory import FakeBackend
 
 from arccli.commands.store import store_handler
+
+
+@pytest.fixture
+def fake_backend(monkeypatch: pytest.MonkeyPatch) -> FakeBackend:
+    """Inject the backend seam; production ``open_backend`` is PostgreSQL-only."""
+    backend = FakeBackend()
+
+    def _open_backend(**_kwargs: object) -> FakeBackend:
+        return backend
+
+    monkeypatch.setattr("arcstore.backends.open_backend", _open_backend)
+    return backend
 
 
 def _worm_file(data_dir: Path) -> Path:
@@ -62,7 +75,7 @@ def test_status_reports_paths(tmp_path: Path, capsys: pytest.CaptureFixture[str]
     out = capsys.readouterr().out
     assert str(tmp_path) in out
     assert "spool" in out
-    assert "sqlite" in out.lower()
+    assert "postgres" in out.lower()
 
 
 # -- verify -------------------------------------------------------------------
@@ -116,7 +129,7 @@ def _seed_spool(data_dir: Path) -> None:
 
 
 def test_backfill_ingests_spool_records(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], fake_backend: FakeBackend
 ) -> None:
     _seed_spool(tmp_path)
     store_handler(["backfill", "--data-dir", str(tmp_path)])
@@ -126,20 +139,16 @@ def test_backfill_ingests_spool_records(
     assert (tmp_path / "store").is_dir()
 
 
-def test_backfill_then_query_roundtrip(tmp_path: Path) -> None:
+def test_backfill_then_query_roundtrip(tmp_path: Path, fake_backend: FakeBackend) -> None:
     """backfill is idempotent and the row is queryable afterwards (UC-1)."""
     import asyncio
-
-    from arcstore.backends import open_backend
 
     _seed_spool(tmp_path)
     store_handler(["backfill", "--data-dir", str(tmp_path)])
     store_handler(["backfill", "--data-dir", str(tmp_path)])  # idempotent
 
-    db = next((tmp_path / "store").glob("*.db"))
-
     async def _count() -> int:
-        backend = open_backend("sqlite", db)
+        backend = fake_backend
         await backend.start()
         try:
             rows = await backend.query("llm_calls")
@@ -174,7 +183,9 @@ def test_store_registered_in_command_registry() -> None:
     assert cmd.handler is not None
 
 
-def test_backfill_json_payload_is_machine_readable(tmp_path: Path) -> None:
+def test_backfill_json_payload_is_machine_readable(
+    tmp_path: Path, fake_backend: FakeBackend
+) -> None:
     """``--json`` emits a parseable object for scripting/air-gapped tooling."""
     _seed_spool(tmp_path)
     import io

@@ -25,8 +25,19 @@ def _isolated_arc(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ARCSTORE_DATA_DIR", str(tmp_path))
 
 
-async def _list_pending() -> list[CancelRequest]:
+@pytest.fixture
+def fake_backend(monkeypatch: pytest.MonkeyPatch) -> FakeBackend:
+    """Inject the backend seam; production ``open_backend`` is PostgreSQL-only."""
     backend = FakeBackend()
+
+    def _open_backend(**_kwargs: object) -> FakeBackend:
+        return backend
+
+    monkeypatch.setattr("arcstore.backends.open_backend", _open_backend)
+    return backend
+
+
+async def _list_pending(backend: FakeBackend) -> list[CancelRequest]:
     await backend.start()
     try:
         return await CancelStore(backend).list(status="pending")
@@ -42,10 +53,10 @@ def _operator_did() -> str:
     return OperatorApprovalAuthority(resolve_operator_signer()).did
 
 
-def test_stop_writes_pending_request_attributed_to_operator() -> None:
+def test_stop_writes_pending_request_attributed_to_operator(fake_backend: FakeBackend) -> None:
     stop_handler(["run-abc", "--reason", "too long"])
 
-    pending = asyncio.run(_list_pending())
+    pending = asyncio.run(_list_pending(fake_backend))
     assert len(pending) == 1
     req = pending[0]
     assert req.run_id == "run-abc"
@@ -54,16 +65,18 @@ def test_stop_writes_pending_request_attributed_to_operator() -> None:
     assert req.requested_by == _operator_did()
 
 
-def test_stop_by_session_key() -> None:
+def test_stop_by_session_key(fake_backend: FakeBackend) -> None:
     stop_handler(["--session", "cli:main"])
 
-    pending = asyncio.run(_list_pending())
+    pending = asyncio.run(_list_pending(fake_backend))
     assert len(pending) == 1
     assert pending[0].session_key == "cli:main"
     assert pending[0].run_id == ""
 
 
-def test_stop_list_shows_pending(capsys: pytest.CaptureFixture[str]) -> None:
+def test_stop_list_shows_pending(
+    capsys: pytest.CaptureFixture[str], fake_backend: FakeBackend
+) -> None:
     stop_handler(["run-abc"])
     capsys.readouterr()  # drop the create confirmation
 
@@ -73,9 +86,11 @@ def test_stop_list_shows_pending(capsys: pytest.CaptureFixture[str]) -> None:
     assert "run-abc" in out
 
 
-def test_stop_with_no_target_prints_help(capsys: pytest.CaptureFixture[str]) -> None:
+def test_stop_with_no_target_prints_help(
+    capsys: pytest.CaptureFixture[str], fake_backend: FakeBackend
+) -> None:
     stop_handler([])
 
     out = capsys.readouterr().out
     assert "usage" in out.lower()
-    assert asyncio.run(_list_pending()) == []
+    assert asyncio.run(_list_pending(fake_backend)) == []

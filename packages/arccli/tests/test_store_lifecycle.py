@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 from arcstore import ArcStoreConfig
+from arcstore.backends.memory import FakeBackend
 
 from arccli.commands.agent import _store_lifecycle as sl
 
@@ -25,11 +26,11 @@ def _cfg(tmp_path: Path, **kw: object) -> ArcStoreConfig:
 def test_load_config_defaults_when_no_toml(tmp_path: Path) -> None:
     cfg = sl.load_arcstore_config(tmp_path)
     assert cfg.enabled is True
-    assert cfg.backend == "sqlite"
+    assert cfg.database_credential_ref == ""
 
 
 def test_load_config_reads_arcstore_block(tmp_path: Path) -> None:
-    (tmp_path / "arcagent.toml").write_text('[arcstore]\nenabled = false\nbackend = "sqlite"\n')
+    (tmp_path / "arcagent.toml").write_text("[arcstore]\nenabled = false\n")
     cfg = sl.load_arcstore_config(tmp_path)
     assert cfg.enabled is False
 
@@ -52,7 +53,16 @@ def test_spool_dir_always_created_even_when_disabled(tmp_path: Path) -> None:
     assert (tmp_path / "spool").is_dir()
 
 
-def test_enabled_starts_and_stops_ingest_no_orphan(tmp_path: Path) -> None:
+def test_enabled_starts_and_stops_ingest_no_orphan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend = FakeBackend()
+
+    def _open_backend(**_kwargs: object) -> FakeBackend:
+        return backend
+
+    monkeypatch.setattr("arcstore.backends.open_backend", _open_backend)
+
     async def _go() -> int:
         async with sl.managed_store_ingest(_cfg(tmp_path)) as ingest:
             assert ingest is not None
@@ -63,7 +73,7 @@ def test_enabled_starts_and_stops_ingest_no_orphan(tmp_path: Path) -> None:
 
     leftover = asyncio.run(_go())
     assert leftover == 0
-    assert (tmp_path / "store").is_dir()
+    assert (tmp_path / "worm").is_dir()
 
 
 def test_broken_backend_is_fail_open(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
