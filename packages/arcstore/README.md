@@ -69,7 +69,8 @@ What makes `arcstore` the most reliable foundation for agent operations:
 
 ### **Reliability & Durability**
 - **Fail-open audit emission** — Audit events never block durable writes; AU-5 compliance built in
-- **SQLite foundation** — Single-file database with full ACID guarantees; no external database required
+- **PostgreSQL foundation** — One durable database with ACID guarantees, connection pooling, and
+  the same adapter for local PostgreSQL and Supabase
 - **Cross-package consistency** — Every Arc package uses the same storage layer; unified query interface across all operational data
 
 ### **Task System Support**
@@ -203,21 +204,24 @@ A frozen Pydantic model (mutation goes through `RunStore`, never in place):
 ## ⚙️ Install & Entry Points
 
 ```bash
-pip install arcstore                 # spool + sqlite backend
-pip install "arcstore[postgres]"     # + asyncpg backend deps
-pip install "arcstore[cloud]"        # + boto3
+pip install arcstore                 # spool + PostgreSQL backend
 ```
+
+ArcStore is provisioned with `scripts/install-postgres.sh` for a local operator, or
+pointed at a managed PostgreSQL URL such as a Supabase direct or transaction-pooler
+URL. See [the operator runbook](../../docs/runbooks/deploy/arcstore-postgres.md) for
+the protected environment setup, health/schema smoke check, and idempotent deploy flow.
 
 Public surface off the package root:
 
 - **Spool** — `SpoolRecord`, `record`, `read`, `spool_path`
 - **Paths** — `resolve_data_dir` (env `ARCSTORE_DATA_DIR` > configured `data_dir` >
-  `arctrust.paths.store_dir`), `store_db_path` (the `store/arcui.db` file the arcui reads),
-  `ArcStoreConfig`
+  `arctrust.paths.store_dir`), `ArcStoreConfig`
 
 Domain APIs live under their submodules: `arcstore.tasks` (`Task`, `TaskStore`),
 `arcstore.runs` (`Run`, `RunStore`), plus `arcstore.ingest` / `arcstore.query` for the
-tailer and read API, and `arcstore.backends` for `SqliteBackend` and the in-memory backend.
+tailer and read API, and `arcstore.backends` for `PostgresBackend` and the in-memory test
+backend.
 
 ---
 

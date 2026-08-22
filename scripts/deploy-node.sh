@@ -257,6 +257,12 @@ fi
 ANTHROPIC_API_KEY="$(grep -m1 '^ANTHROPIC_API_KEY=' "$ENV_FILE" | cut -d= -f2-)"
 [ -n "$ANTHROPIC_API_KEY" ] || fail "ANTHROPIC_API_KEY missing from $ENV_FILE"
 
+ARCSTORE_URL_INPUT="$(grep -m1 '^ARCSTORE_DATABASE_URL=' "$ENV_FILE" | cut -d= -f2- || true)"
+ARCSTORE_REF_INPUT="$(grep -m1 '^ARCSTORE_DATABASE_CREDENTIAL_REF=' "$ENV_FILE" | cut -d= -f2- || true)"
+ARCSTORE_PASSWORD_INPUT="$(grep -m1 '^ARCSTORE_DATABASE_PASSWORD=' "$ENV_FILE" | cut -d= -f2- || true)"
+ARCSTORE_PORT="$(grep -m1 '^ARCSTORE_PG_PORT=' "$ENV_FILE" | cut -d= -f2- || true)"
+ARCSTORE_PORT="${ARCSTORE_PORT:-5432}"
+
 TELEGRAM_BOT_TOKEN=""
 if [ "$ENABLE_TELEGRAM" = "1" ]; then
   TELEGRAM_BOT_TOKEN="$(grep -m1 '^ARCAGENT_TELEGRAM_BOT_TOKEN=' "$ENV_FILE" | cut -d= -f2-)"
@@ -277,38 +283,99 @@ else
       [ -n "$TELEGRAM_BOT_TOKEN" ] && printf 'TELEGRAM_BOT_TOKEN=%s\n' "$TELEGRAM_BOT_TOKEN"
       printf 'VIEWER_TOKEN=%s\n' "$VIEWER_TOKEN"
       printf 'OPERATOR_TOKEN=%s\n' "$OPERATOR_TOKEN"
+      [ -n "$ARCSTORE_URL_INPUT" ] && printf 'ARCSTORE_DATABASE_URL=%s\n' "$ARCSTORE_URL_INPUT"
+      [ -n "$ARCSTORE_REF_INPUT" ] && printf 'ARCSTORE_DATABASE_CREDENTIAL_REF=%s\n' "$ARCSTORE_REF_INPUT"
     } > "$ARC_ENV"
   )
   chmod 600 "$ARC_ENV"
   ok "$ARC_ENV written (0600)"
 fi
+# Preserve an operator-managed database URL or vault coordinate when the
+# protected runtime environment already exists from an earlier deploy.
+if [ -n "$ARCSTORE_URL_INPUT" ] && ! grep -q '^ARCSTORE_DATABASE_URL=' "$ARC_ENV"; then
+  ( umask 077; printf 'ARCSTORE_DATABASE_URL=%s\n' "$ARCSTORE_URL_INPUT" >> "$ARC_ENV" )
+fi
+if [ -n "$ARCSTORE_REF_INPUT" ] && ! grep -q '^ARCSTORE_DATABASE_CREDENTIAL_REF=' "$ARC_ENV"; then
+  ( umask 077; printf 'ARCSTORE_DATABASE_CREDENTIAL_REF=%s\n' "$ARCSTORE_REF_INPUT" >> "$ARC_ENV" )
+fi
+chmod 600 "$ARC_ENV"
 set -a
 # shellcheck disable=SC1090
 . "$ARC_ENV"
 set +a
 
-# --- 5b. optional postgres index backend (SPEC-073 COMP-007, OPT-IN) -------
-# Default: ARC_MEMORY_INDEX_BACKEND unset -> arcmemory uses its built-in sqlite +
-# sqlite-vec index and NONE of this runs (a default deploy is byte-for-byte the
-# same). Set ARC_MEMORY_INDEX_BACKEND=postgres + POSTGRES_PASSWORD in the deploy
-# .env to provision pgvector (via Docker) and point the fleet at it. The DSN is a
-# secret -> arc.env (0600), sourced into the service; never written to any toml.
+# --- 5b. ArcStore PostgreSQL ----------------------------------------------
+# A managed URL (for example Supabase) is validated by the same ArcStore
+# adapter. Without a URL or vault coordinate, provision the dedicated local
+# database and keep its DSN only in arc.env (0600).
+if [ -z "${ARCSTORE_DATABASE_URL:-}" ] && [ -z "${ARCSTORE_DATABASE_CREDENTIAL_REF:-}" ]; then
+  ARCSTORE_PASSWORD_INPUT="${ARCSTORE_PASSWORD_INPUT:-$(openssl rand -hex 32)}"
+  ARCSTORE_DATABASE_URL="postgresql://arcstore:${ARCSTORE_PASSWORD_INPUT}@127.0.0.1:${ARCSTORE_PORT}/arcstore"
+  ( umask 077
+    printf 'ARCSTORE_DATABASE_URL=%s\n' "$ARCSTORE_DATABASE_URL" >> "$ARC_ENV"
+  )
+  ok "ArcStore DSN stored in $ARC_ENV (0600)"
+fi
+
+if [ -n "${ARCSTORE_DATABASE_URL:-}" ]; then
+  ARCSTORE_DATABASE_PASSWORD_RUNTIME="$("$VENV_PY" -c '
+import sys
+from urllib.parse import unquote, urlparse
+
+parsed = urlparse(sys.argv[1])
+print(unquote(parsed.password or ""))
+' "$ARCSTORE_DATABASE_URL")"
+  if [[ "$ARCSTORE_DATABASE_URL" == *"@127.0.0.1:"* || "$ARCSTORE_DATABASE_URL" == *"@localhost:"* ]]; then
+    ARCSTORE_DATABASE_PASSWORD="$ARCSTORE_DATABASE_PASSWORD_RUNTIME" \
+    ARCSTORE_DATABASE_URL="$ARCSTORE_DATABASE_URL" ARCSTORE_PG_PORT="$ARCSTORE_PORT" \
+      ARCSTORE_PYTHON="$VENV_PY" ARCSTORE_REQUIRE_SCHEMA=1 \
+      "$RUNTIME_ROOT/scripts/install-postgres.sh"
+  else
+    ARCSTORE_DATABASE_URL="$ARCSTORE_DATABASE_URL" "$VENV_PY" -c '
+import asyncio
+
+from arcstore.backends import open_backend
+
+
+async def main() -> None:
+    backend = open_backend()
+    await backend.start()
+    await backend.stop()
+
+
+asyncio.run(main())
+'
+    ok "managed ArcStore PostgreSQL schema and connection smoke check passed"
+  fi
+elif [ -n "${ARCSTORE_DATABASE_CREDENTIAL_REF:-}" ]; then
+  ok "ArcStore database resolved by vault coordinate ${ARCSTORE_DATABASE_CREDENTIAL_REF}"
+else
+  fail "ArcStore requires ARCSTORE_DATABASE_URL or ARCSTORE_DATABASE_CREDENTIAL_REF"
+fi
+
+# --- 5c. optional arcmemory pgvector index -------------------------------
+# This legacy opt-in remains separate from ArcStore: it gets a different
+# container, named volume, port, database, and DSN. Enabling it never changes
+# the ArcStore URL above.
 MEMORY_INDEX_BACKEND="$(grep -m1 '^ARC_MEMORY_INDEX_BACKEND=' "$ENV_FILE" | cut -d= -f2- || true)"
 if [ "$MEMORY_INDEX_BACKEND" = "postgres" ]; then
-  PG_PASSWORD="$(grep -m1 '^POSTGRES_PASSWORD=' "$ENV_FILE" | cut -d= -f2- || true)"
-  [ -n "$PG_PASSWORD" ] || fail "ARC_MEMORY_INDEX_BACKEND=postgres but POSTGRES_PASSWORD missing from $ENV_FILE"
-  PG_USER_V="$(grep -m1 '^POSTGRES_USER=' "$ENV_FILE" | cut -d= -f2- || true)"; PG_USER_V="${PG_USER_V:-arc}"
-  PG_DB_V="$(grep -m1 '^POSTGRES_DB=' "$ENV_FILE" | cut -d= -f2- || true)"; PG_DB_V="${PG_DB_V:-arcmemory}"
-  PG_PORT_V="$(grep -m1 '^ARC_PG_PORT=' "$ENV_FILE" | cut -d= -f2- || true)"; PG_PORT_V="${PG_PORT_V:-5432}"
-  POSTGRES_PASSWORD="$PG_PASSWORD" POSTGRES_USER="$PG_USER_V" POSTGRES_DB="$PG_DB_V" ARC_PG_PORT="$PG_PORT_V" \
-    "$RUNTIME_ROOT/scripts/install-postgres.sh"
+  MEMORY_PASSWORD="$(grep -m1 '^POSTGRES_PASSWORD=' "$ENV_FILE" | cut -d= -f2- || true)"
+  [ -n "$MEMORY_PASSWORD" ] || fail \
+    "ARC_MEMORY_INDEX_BACKEND=postgres but POSTGRES_PASSWORD missing from $ENV_FILE"
+  MEMORY_USER="$(grep -m1 '^POSTGRES_USER=' "$ENV_FILE" | cut -d= -f2- || true)"
+  MEMORY_USER="${MEMORY_USER:-arc}"
+  MEMORY_DB="$(grep -m1 '^POSTGRES_DB=' "$ENV_FILE" | cut -d= -f2- || true)"
+  MEMORY_DB="${MEMORY_DB:-arcmemory}"
+  MEMORY_PORT="$(grep -m1 '^ARC_MEMORY_PG_PORT=' "$ENV_FILE" | cut -d= -f2- || true)"
+  MEMORY_PORT="${MEMORY_PORT:-5433}"
+  POSTGRES_PASSWORD="$MEMORY_PASSWORD" POSTGRES_USER="$MEMORY_USER" \
+    POSTGRES_DB="$MEMORY_DB" ARC_MEMORY_PG_PORT="$MEMORY_PORT" \
+    "$RUNTIME_ROOT/scripts/install-memory-postgres.sh"
   if ! grep -q '^ARC_MEMORY_PG_DSN=' "$ARC_ENV"; then
     ( umask 077
       printf 'ARC_MEMORY_PG_DSN=postgresql://%s:%s@127.0.0.1:%s/%s\n' \
-        "$PG_USER_V" "$PG_PASSWORD" "$PG_PORT_V" "$PG_DB_V" >> "$ARC_ENV" )
-    ok "ARC_MEMORY_PG_DSN written to arc.env (0600)"
-  else
-    ok "ARC_MEMORY_PG_DSN already pinned in arc.env"
+        "$MEMORY_USER" "$MEMORY_PASSWORD" "$MEMORY_PORT" "$MEMORY_DB" >> "$ARC_ENV" )
+    ok "memory index DSN stored in $ARC_ENV (0600)"
   fi
   set -a
   # shellcheck disable=SC1090
@@ -330,8 +397,9 @@ log "Applying user-wide config overlays..."
 "$VENV_PY" "$OVERLAYS" agent-config \
   "$ARC_CONFIG_DIR/config/arcagent.toml" --provider "$PROVIDER" --model "${AGENT_MODEL#*/}"
 
-# Opt-in: point the memory index backend at postgres (config only; DSN is in arc.env).
-if [ "${MEMORY_INDEX_BACKEND:-}" = "postgres" ]; then
+"$VENV_PY" "$OVERLAYS" arcstore-config \
+  "$ARC_CONFIG_DIR/config/arcagent.toml" --credential-ref "${ARCSTORE_DATABASE_CREDENTIAL_REF:-}"
+if [ "$MEMORY_INDEX_BACKEND" = "postgres" ]; then
   "$VENV_PY" "$OVERLAYS" memory-config \
     "$ARC_CONFIG_DIR/config/arcagent.toml" --index-backend postgres
 fi
@@ -358,6 +426,8 @@ for AGENT_NAME in "${AGENT_NAMES[@]}"; do
   fi
   "$VENV_PY" "$OVERLAYS" agent-config \
     "$TEAM_ROOT/$AGENT_NAME/arcagent.toml" --provider "$PROVIDER" --model "${AGENT_MODEL#*/}"
+  "$VENV_PY" "$OVERLAYS" arcstore-config \
+    "$TEAM_ROOT/$AGENT_NAME/arcagent.toml" --credential-ref "${ARCSTORE_DATABASE_CREDENTIAL_REF:-}"
   "$ARC_BIN" agent build "$TEAM_ROOT/$AGENT_NAME" --check
 done
 

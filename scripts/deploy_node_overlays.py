@@ -11,6 +11,7 @@ allowed_user_ids is left alone unless --allowed-user-ids is passed).
 
 Usage:
     deploy_node_overlays.py agent-config PATH [--provider anthropic] [--model claude-sonnet-5]
+    deploy_node_overlays.py arcstore-config PATH [--credential-ref vault://...]
     deploy_node_overlays.py gateway-config PATH [--agent-did DID] [--enable-telegram]
                                                  [--allowed-user-ids ID [ID ...]]
 """
@@ -96,16 +97,26 @@ def apply_gateway_overlay(
     print(f"  [+] {path}: [platforms.web] enabled{telegram_note}")
 
 
-def apply_memory_overlay(path: Path, index_backend: str) -> None:
-    """Set the arcmemory document/chunk index backend (SPEC-073 COMP-007).
+def apply_arcstore_overlay(path: Path, credential_ref: str | None = None) -> None:
+    """Normalize the ArcStore block and optionally record a vault coordinate.
 
-    ``index_backend`` is a validated ``MemoryConfig`` field, so it rides the
-    ``dynamics`` sub-table (merged over the tier defaults + re-validated by
-    arcmemory.provider), not a flat backend key. Idempotent: re-running against an
-    already-patched file just rewrites the same value. The postgres DSN is NEVER
-    written here — it is a secret sourced from the ARC_MEMORY_PG_DSN env var
-    (arc.env), mirroring ARC_EMBED_API_KEY.
+    The DSN remains in ``ARCSTORE_DATABASE_URL`` (or is resolved by the vault
+    coordinate); it is never written to TOML. Removing the old ``backend`` key
+    is required because ``ArcStoreConfig`` rejects unknown fields.
     """
+    doc = _load(path)
+    arcstore = doc.setdefault("arcstore", tomlkit.table())
+    if "backend" in arcstore:
+        del arcstore["backend"]
+    if credential_ref is not None:
+        arcstore["database_credential_ref"] = credential_ref
+    _save(path, doc)
+    credential_note = ", vault coordinate set" if credential_ref else ""
+    print(f"  [+] {path}: [arcstore] PostgreSQL{credential_note}")
+
+
+def apply_memory_overlay(path: Path, index_backend: str) -> None:
+    """Set the optional arcmemory document/chunk index backend."""
     doc = _load(path)
     modules = doc.setdefault("modules", tomlkit.table())
     memory = modules.setdefault("memory", tomlkit.table())
@@ -114,7 +125,7 @@ def apply_memory_overlay(path: Path, index_backend: str) -> None:
     dynamics = backend.setdefault("dynamics", tomlkit.table())
     dynamics["index_backend"] = index_backend
     _save(path, doc)
-    print(f"  [+] {path}: [modules.memory.config.backend.dynamics] index_backend={index_backend}")
+    print(f"  [+] {path}: optional memory index backend={index_backend}")
 
 
 def main() -> None:
@@ -125,6 +136,10 @@ def main() -> None:
     agent_cmd.add_argument("path", type=Path)
     agent_cmd.add_argument("--provider", default="anthropic")
     agent_cmd.add_argument("--model", default="claude-sonnet-5")
+
+    store_cmd = sub.add_parser("arcstore-config")
+    store_cmd.add_argument("path", type=Path)
+    store_cmd.add_argument("--credential-ref", default=None)
 
     mem_cmd = sub.add_parser("memory-config")
     mem_cmd.add_argument("path", type=Path)
@@ -140,6 +155,8 @@ def main() -> None:
 
     if args.command == "agent-config":
         apply_agent_overlay(args.path, args.provider, args.model)
+    elif args.command == "arcstore-config":
+        apply_arcstore_overlay(args.path, args.credential_ref)
     elif args.command == "memory-config":
         apply_memory_overlay(args.path, args.index_backend)
     elif args.command == "gateway-config":
