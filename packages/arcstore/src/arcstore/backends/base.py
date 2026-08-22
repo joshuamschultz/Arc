@@ -54,7 +54,7 @@ def table_for_kind(kind: str) -> str:
 
 
 @runtime_checkable
-class StorageBackend(Protocol):
+class ArcStoreBackend(Protocol):
     """Swappable storage abstraction for operational + audit data.
 
     All methods are async so a single contract spans the stdlib-``sqlite3``
@@ -102,3 +102,14 @@ class StorageBackend(Protocol):
     async def set_cursor(self, name: str, value: int) -> None:
         """Persist the byte offset consumed for a source file."""
         ...
+
+
+StorageBackend = ArcStoreBackend
+
+__all__ = [
+    "AUDIT_TABLE",
+    "OPERATIONAL_TABLES",
+    "ArcStoreBackend",
+    "StorageBackend",
+    "table_for_kind",
+]
