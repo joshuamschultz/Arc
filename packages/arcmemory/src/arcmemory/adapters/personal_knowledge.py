@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import Protocol
 
 import yaml
-
 from arctrust.classification import dominates, parse_classification
+
 from arcmemory.mdfile import atomic_write_text
 
 
@@ -156,4 +156,9 @@ class PersonalKnowledgeAdapter:
 
     async def export_for_promotion(self, reference: str, access: _Access) -> _PromotionSource:
         document = await self.read(reference, access)
-        return _PromotionSource(document.reference, document.reference.digest, document.content, document.classification)
+        return _PromotionSource(
+            document.reference,
+            document.reference.digest,
+            document.content,
+            document.classification,
+        )
