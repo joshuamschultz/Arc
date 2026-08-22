@@ -10,6 +10,7 @@ from datetime import date
 from pathlib import Path
 
 import arcrun
+from arcokf import OKFValidationError, validate
 
 from arccli.commands.agent._common import (
     _load_arcagent,
@@ -91,9 +92,13 @@ async def _agent_run_once(
         context_path.parent.mkdir(parents=True, exist_ok=True)
         source = Path(context)
         if source.is_file():
-            context_path.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+            content = source.read_text(encoding="utf-8")
         else:
-            context_path.write_text(context, encoding="utf-8")
+            content = context
+        validation = validate(content, path=context_path.name)
+        if not validation.valid:
+            raise OKFValidationError(validation.diagnostics)
+        context_path.write_text(content, encoding="utf-8")
 
     await arc_agent.startup()
     try:

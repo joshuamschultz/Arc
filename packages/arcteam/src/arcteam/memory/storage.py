@@ -15,7 +15,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-import frontmatter  # type: ignore[import-untyped]  # reason: python-frontmatter ships no type stubs; we use only .load/.dumps with documented signatures
+from arcokf import Document, OKFValidationError, parse, render
 
 from arcteam.memory.errors import EntityValidationError, LockTimeoutError
 from arcteam.memory.types import EntityFile, EntityMetadata, IndexEntry
@@ -30,6 +30,8 @@ _LOCK_MAX_RETRIES = 5
 
 # Safe path component pattern: alphanumeric, hyphens, underscores, dots (no slashes)
 _SAFE_PATH_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
+_WIKI_LINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
+_MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\.md\)")
 
 
 class MemoryStorage:
@@ -146,17 +148,20 @@ class MemoryStorage:
         if not path.exists():
             return None
         try:
-            post = frontmatter.load(str(path))
-            return dict(post.metadata), post.content
-        except (OSError, ValueError, UnicodeDecodeError) as exc:
+            document = parse(path.read_bytes(), path=path.as_posix())
+            content = _MARKDOWN_LINK_RE.sub(lambda match: f"[[{match.group(1)}]]", document.body)
+            return dict(document.metadata), content
+        except (OSError, ValueError, UnicodeDecodeError, OKFValidationError) as exc:
             logger.warning("Failed to read %s: %s", path, exc)
             return None
 
     def _sync_write(self, path: Path, metadata: dict[str, Any], content: str) -> None:
         """Atomic write via tempfile + os.replace. Uses fcntl.flock."""
         path.parent.mkdir(parents=True, exist_ok=True)
-        post = frontmatter.Post(content, **metadata)
-        serialized = frontmatter.dumps(post)
+        metadata = {"type": "ArcTeamEntity", **metadata}
+        body = _WIKI_LINK_RE.sub(lambda match: f"[{match.group(1)}]({match.group(1)}.md)", content)
+        serialized = render(Document(metadata, body)) + "\n"
+        parse(serialized, path=path.as_posix())
 
         # Acquire lock on target file (create if needed)
         with open(path, "a+b") as lock_fd:
@@ -166,7 +171,6 @@ class MemoryStorage:
                 try:
                     with os.fdopen(fd, "w", encoding="utf-8") as f:
                         f.write(serialized)
-                        f.write("\n")
                     os.replace(tmp, path)
                 except BaseException:
                     if os.path.exists(tmp):
@@ -190,27 +194,8 @@ class MemoryStorage:
         if not path.exists():
             return None
         try:
-            # Read first lines until we find closing ---
-            lines: list[str] = []
-            in_frontmatter = False
-            with open(path, encoding="utf-8") as f:
-                for i, line in enumerate(f):
-                    if i == 0 and line.strip() == "---":
-                        in_frontmatter = True
-                        lines.append(line)
-                        continue
-                    if in_frontmatter:
-                        lines.append(line)
-                        if line.strip() == "---":
-                            break
-                    if i > 30:  # safety limit
-                        break
-            if not lines:
-                return None
-            text = "".join(lines)
-            post = frontmatter.loads(text)
-            return dict(post.metadata)
-        except (OSError, ValueError, UnicodeDecodeError) as exc:
+            return dict(parse(path.read_bytes(), path=path.as_posix()).metadata)
+        except (OSError, ValueError, UnicodeDecodeError, OKFValidationError) as exc:
             logger.warning("Failed to read frontmatter from %s: %s", path, exc)
             return None
 

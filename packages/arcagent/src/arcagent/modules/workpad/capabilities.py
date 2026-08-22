@@ -29,6 +29,7 @@ from datetime import date
 from typing import Any
 
 import arcrun
+from arcokf import OKFValidationError, validate
 from arcprompt import load_stock
 
 from arcagent.modules.workpad import _runtime
@@ -235,6 +236,9 @@ def _render_input(current_context: str, transcript_text: str) -> str:
 
 def _atomic_write(path: Any, content: str) -> None:
     """Write via a temp file + rename so a concurrent per-run read is never torn."""
+    result = validate(content, path=path.name)
+    if not result.valid:
+        raise OKFValidationError(result.diagnostics)
     tmp = path.parent / f".{path.name}.tmp"
     tmp.write_text(content, encoding="utf-8")
     os.replace(tmp, path)

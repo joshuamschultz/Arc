@@ -21,6 +21,7 @@ The table below is the full inventory. Two entries (`arcmas`, `arcmodel`) are me
 | **arctrust** | Foundation | `packages/arctrust/src/arctrust/` | Security nucleus: DID identity, Ed25519 keypairs, `PolicyPipeline`, WORM chain | nothing in `arc*` | Import any other Arc package |
 | **arcbundle** | Foundation | `packages/arcbundle/src/arcbundle/` | Signed module bundles: manifest, verify, atomic materialize, per-agent capability copy | `arctrust`, Pydantic | Import `arcagent` — or anything else in `arc*` |
 | **arcstore** | Foundation | `packages/arcstore/src/arcstore/` | Operational/observability storage: append-only spool + `StorageBackend` query layer | `arctrust` | Import `arcagent`, `arcui`, `arccli`, `arcrun`, or `arcgateway` |
+| **arcokf** | Foundation | `packages/arcokf/src/arcokf/` | Typed Open Knowledge Format v0.2 parser and linter | `PyYAML` | Import agent/runtime packages |
 | **arcllm** | LLM | `packages/arcllm/src/arcllm/` | Provider-agnostic LLM calls (16 providers), telemetry, budgets, circuit breakers | `arctrust`, `arcstore` | Be called by anything except `arcrun` (and `arc llm` CLI) |
 | **arcprompt** | Runtime | `packages/arcprompt/src/arcprompt/` | Editable, signed, inspectable system-prompt store | `arctrust` | Import anything above it |
 | **arcrun** | Runtime | `packages/arcrun/src/arcrun/` | The execution loop — the *only* runtime path to `arcllm` | `arcllm`, `arctrust`, `arcstore` | Import `arcagent`; call `arcllm.registry.load_model()` directly |

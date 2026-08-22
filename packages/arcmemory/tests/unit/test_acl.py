@@ -23,6 +23,7 @@ def _config(tier: str = "federal") -> MemoryACLConfig:
 
 def _frontmatter(visibility: str, owner_did: str = "did:arc:org:user/abc") -> str:
     return f"""---
+type: entity
 acl:
   cross_session_visibility: {visibility}
 owner_did: {owner_did}
@@ -109,7 +110,7 @@ class TestFromFrontmatter:
         assert acl.cross_session_visibility == "private"
 
     def test_unknown_visibility_falls_back_to_tier_default(self) -> None:
-        content = "---\nacl:\n  cross_session_visibility: unknown_value\n---\n"
+        content = "---\ntype: entity\nacl:\n  cross_session_visibility: unknown_value\n---\n"
         acl = SessionACL.from_frontmatter(content, _config("federal"))
         assert acl.cross_session_visibility == "private"
 
@@ -125,7 +126,7 @@ class TestFromFrontmatter:
         assert acl.owner_did == owner
 
     def test_owner_did_falls_back_to_kwarg(self) -> None:
-        content = "---\nacl:\n  cross_session_visibility: private\n---\n"
+        content = "---\ntype: entity\nacl:\n  cross_session_visibility: private\n---\n"
         acl = SessionACL.from_frontmatter(
             content, _config("federal"), owner_did="did:arc:fallback"
         )

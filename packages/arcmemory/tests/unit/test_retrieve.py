@@ -50,7 +50,7 @@ def _write_entity(workspace: Path, slug: str, classification: str, body: str) ->
     path = workspace / "memory" / "entities" / f"{slug}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        f"---\nslug: {slug}\nclassification: {classification}\n---\n\n{body}\n",
+        f"---\ntype: entity\nslug: {slug}\nclassification: {classification}\n---\n\n{body}\n",
         encoding="utf-8",
     )
 
@@ -107,7 +107,9 @@ async def test_unlabeled_rejected_at_federal(workspace, db, scope) -> None:
     # An entity file with NO classification frontmatter -> unlabeled.
     path = workspace / "memory" / "entities" / "mystery.md"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("the widget of unknown provenance\n", encoding="utf-8")
+    path.write_text(
+        "---\ntype: entity\n---\n\nthe widget of unknown provenance\n", encoding="utf-8"
+    )
     sink = _RecordingSink()
     rv = Retriever(
         db,
@@ -130,7 +132,9 @@ async def test_unlabeled_rejected_at_federal(workspace, db, scope) -> None:
 async def test_unlabeled_defaulted_at_personal(workspace, db, scope) -> None:
     path = workspace / "memory" / "entities" / "mystery.md"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("the widget of unknown provenance\n", encoding="utf-8")
+    path.write_text(
+        "---\ntype: entity\n---\n\nthe widget of unknown provenance\n", encoding="utf-8"
+    )
     sink = _RecordingSink()
     rv = await _retriever(workspace, db, scope, sink)  # personal by default
 

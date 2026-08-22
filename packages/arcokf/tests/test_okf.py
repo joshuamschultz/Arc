@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from arcokf import DiagnosticCode, OKFValidationError, parse, render, validate
+from arcokf import DiagnosticCode, OKFValidationError, lint, parse, render, validate
 
 
 def test_round_trip_preserves_unknown_metadata() -> None:
@@ -68,3 +68,30 @@ def test_duplicate_yaml_keys_are_rejected() -> None:
 def test_invalid_utf8_is_rejected() -> None:
     with pytest.raises(OKFValidationError):
         parse(b"---\ntype: Entity\n---\n\xff")
+
+
+def test_lint_reads_a_file_and_reports_path(tmp_path) -> None:
+    path = tmp_path / "entity.md"
+    path.write_text("---\ntype: Entity\n---\n# Entity\n", encoding="utf-8")
+
+    result = lint(path)
+
+    assert result.valid
+    assert result.document is not None
+    assert result.document.path == path.as_posix()
+
+
+def test_context_is_a_reserved_workspace_document() -> None:
+    result = validate("# Open loops\n", path="context.md")
+
+    assert result.valid
+
+
+def test_lint_fails_closed_for_malformed_workspace_document(tmp_path) -> None:
+    path = tmp_path / "knowledge.md"
+    path.write_text("---\ntype: [invalid]\n---\nbody\n", encoding="utf-8")
+
+    result = lint(path)
+
+    assert not result.valid
+    assert result.diagnostics[0].path == path.as_posix()

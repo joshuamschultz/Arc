@@ -117,6 +117,10 @@ class TestYAMLFrontmatterRoundtrip:
         with pytest.raises(ValueError, match="frontmatter"):
             UserProfile.from_markdown("# No frontmatter here\n\nJust markdown")
 
+    def test_profile_markdown_is_typed_okf(self) -> None:
+        profile = _make_profile()
+        assert "type: UserProfile" in profile.to_markdown()
+
     def test_created_timestamp_preserved(self) -> None:
         """Created timestamp survives serialisation and parsing."""
         ts = datetime(2026, 4, 18, 9, 30, 0, tzinfo=UTC)

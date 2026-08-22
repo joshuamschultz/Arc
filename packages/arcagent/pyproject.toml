@@ -20,6 +20,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
+    "arcokf>=0.2",
     "pydantic>=2.0,<3",
     "pydantic-settings>=2.14.2,<3",
     "pynacl>=1.5,<2",

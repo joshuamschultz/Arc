@@ -102,8 +102,8 @@ async def test_index_reembeds_only_changed_file(workspace, db, scope) -> None:
     emb = ConceptEmbedder()
     entities = workspace / "memory" / "entities"
     entities.mkdir(parents=True)
-    (entities / "rex.md").write_text("---\nname: Rex\n---\n\nthe hound barked")
-    (entities / "felix.md").write_text("---\nname: Felix\n---\n\nthe feline meowed")
+    (entities / "rex.md").write_text("---\ntype: entity\nname: Rex\n---\n\nthe hound barked")
+    (entities / "felix.md").write_text("---\ntype: entity\nname: Felix\n---\n\nthe feline meowed")
 
     surface = _surface(db, workspace, scope, embedder=emb)
     await surface.index_if_needed()
@@ -111,7 +111,7 @@ async def test_index_reembeds_only_changed_file(workspace, db, scope) -> None:
     assert baseline == 2
 
     # Change one file's *content* -> only that chunk re-embeds.
-    (entities / "rex.md").write_text("---\nname: Rex\n---\n\nthe canine sailed")
+    (entities / "rex.md").write_text("---\ntype: entity\nname: Rex\n---\n\nthe canine sailed")
     changed = await surface.index_if_needed()
     assert changed == 1
     assert emb.calls == baseline + 1

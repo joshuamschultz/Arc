@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 import arcagent
+from arcokf import OKFValidationError, validate
 from arctrust.paths import dotenv_file, env_file
 
 from arccli.commands._arcllm_surface import (
@@ -935,6 +936,9 @@ def _scaffold_workspace(agent_dir: Path, name: str) -> None:
 
     context_path = workspace / "context.md"
     if not context_path.exists():
+        result = validate(_DEFAULT_CONTEXT, path=context_path.name)
+        if not result.valid:
+            raise OKFValidationError(result.diagnostics)
         context_path.write_text(_DEFAULT_CONTEXT)
 
     # Per-agent capabilities live at the AGENT root (trusted scan root).

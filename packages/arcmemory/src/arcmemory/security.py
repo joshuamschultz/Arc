@@ -361,10 +361,11 @@ def _defang(text: str) -> str:
     keeps the marker recognizable as text while preventing it from becoming a real
     wire boundary when rendered into a prompt.
     """
-    for marker, safe_marker in (("memory-result", "memory_result"), ("knowledge-document", "knowledge_document")):
-        text = re.sub(
-            rf"<{marker}(?=[\s>])", f"<{safe_marker}", text, flags=re.IGNORECASE
-        )
+    for marker, safe_marker in (
+        ("memory-result", "memory_result"),
+        ("knowledge-document", "knowledge_document"),
+    ):
+        text = re.sub(rf"<{marker}(?=[\s>])", f"<{safe_marker}", text, flags=re.IGNORECASE)
         text = re.sub(
             rf"</{marker}\s*>",
             f"</{safe_marker}>",

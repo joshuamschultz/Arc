@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **arcokf 0.2.0** — public typed OKF document/linter contract. Arc-created
+  context, curated memory, shared entities, personal knowledge, and user-profile
+  Markdown now validate before write; operational TOML/JSON/JSONL and audit
+  artifacts remain outside OKF.
+
 ## 2026-08-21 — arcmemory 0.8.0 / arcagent 0.18.0
 
 SPEC-072: context-aware and time-aware proactive recall, extending the shipped SPEC-071

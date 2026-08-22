@@ -177,6 +177,7 @@ flowchart TB
 | LLM | [**arcllm**](packages/arcllm/) | Talk to 16 LLM providers via direct HTTP — no SDKs. PII/secret redaction, prompt-injection + output guardrails, full encrypted trace capture, load balancing, request signing, OpenTelemetry, audit |
 | Foundation | [**arctrust**](packages/arctrust/) | The cryptographic leaf — Ed25519 keypairs, DID identity, audit emission, the deny-by-default policy pipeline |
 | Foundation | [**arcstore**](packages/arcstore/) | Operational storage — the durable backing store layers read from and write to |
+| Foundation | [**arcokf**](packages/arcokf/) | Typed Open Knowledge Format v0.2 parser and linter for durable Markdown knowledge |
 | — | 🧪 arcprompt · arcmodel | Strategy prompts · model routing (early scaffolding) |
 
 ---

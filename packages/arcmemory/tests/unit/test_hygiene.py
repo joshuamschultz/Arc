@@ -22,25 +22,25 @@ def _seed(workspace: Path) -> None:
     ents = workspace / "memory" / "entities"
     _write(
         ents / "Custom ERP.md",
-        "---\nentity_type: system\nentity_id: custom-erp\nname: Custom ERP\n"
+        "---\ntype: entity\nentity_type: system\nentity_id: custom-erp\nname: Custom ERP\n"
         "classification: unclassified\ncross_session_visibility: false\nconfidence: 0.9\n"
         "links_to: []\ntags: [erp]\n---\n\n# Custom ERP\n\n## Facts\n- vendor: Acme .9 2024-01-01\n",
     )
     _write(
         ents / "custom-erp.md",
-        "---\nentity_type: unknown\nentity_id: custom-erp\nname: ''\n"
+        "---\ntype: entity\nentity_type: unknown\nentity_id: custom-erp\nname: ''\n"
         "classification: unclassified\ncross_session_visibility: false\nconfidence: 0.8\n"
         "links_to: []\ntags: [system]\n---\n\n# custom-erp\n\n## Facts\n- users: 200 .8 2024-02-01\n",
     )
     procs = workspace / "memory" / "procedures"
     _write(
         procs / "Deploy Agent.md",
-        "---\nslug: deploy-agent\ntitle: Deploy Agent\nwhen_to_use: when deploying\n"
+        "---\ntype: procedure\nslug: deploy-agent\ntitle: Deploy Agent\nwhen_to_use: when deploying\n"
         "use_count: 5\nclassification: unclassified\n---\n\n# Deploy Agent\n\n## Steps\n1. only step\n",
     )
     _write(
         procs / "deploy-agent.md",
-        "---\nslug: deploy-agent\ntitle: Deploy Agent\nwhen_to_use: when deploying\n"
+        "---\ntype: procedure\nslug: deploy-agent\ntitle: Deploy Agent\nwhen_to_use: when deploying\n"
         "use_count: 3\nclassification: unclassified\n---\n\n"
         "# Deploy Agent\n\n## Steps\n1. step one\n2. step two\n",
     )

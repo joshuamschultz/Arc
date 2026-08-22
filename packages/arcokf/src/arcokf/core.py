@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 from enum import StrEnum
 from importlib import import_module
+from pathlib import Path
 from typing import Any, Protocol, cast
 
 
@@ -23,6 +24,7 @@ MAX_DOCUMENT_BYTES = 2_000_000
 MAX_FRONTMATTER_BYTES = 256_000
 MAX_NESTING = 32
 MAX_ALIASES = 16
+VERSION = "0.2"
 
 
 class DiagnosticCode(StrEnum):
@@ -181,7 +183,7 @@ def validate(source: str | bytes, *, path: str | None = None) -> ValidationResul
         )
     metadata, body, diagnostics = _frontmatter(text, path)
     basename = path.rsplit("/", 1)[-1] if path else None
-    if basename in {"index.md", "log.md"}:
+    if basename in {"context.md", "index.md", "log.md"}:
         if text.startswith("---\n"):
             diagnostics.append(
                 Diagnostic(
@@ -215,6 +217,23 @@ def parse(source: str | bytes, *, path: str | None = None) -> Document:
     return result.document
 
 
+def lint(path: Path) -> ValidationResult:
+    """Validate one UTF-8 document from disk, retaining its relative path."""
+    try:
+        source = path.read_bytes()
+    except OSError as error:
+        return ValidationResult(
+            False,
+            (Diagnostic(DiagnosticCode.INVALID_UTF8, str(error), path.as_posix()),),
+        )
+    return validate(source, path=path.as_posix())
+
+
 def render(document: Document) -> str:
+    """Serialize and validate one typed OKF document."""
     metadata = yaml.safe_dump(document.metadata, allow_unicode=True, sort_keys=True).rstrip()
-    return f"---\n{metadata}\n---\n{document.body.lstrip()}"
+    encoded = f"---\n{metadata}\n---\n{document.body.lstrip()}"
+    result = validate(encoded, path=document.path)
+    if not result.valid:
+        raise OKFValidationError(result.diagnostics)
+    return encoded

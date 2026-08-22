@@ -103,7 +103,7 @@ def test_a_card_written_before_step_confidence_still_loads(tmp_path: Path) -> No
     cards = tmp_path / "memory" / "procedures"
     cards.mkdir(parents=True)
     (cards / "legacy.md").write_text(
-        "---\nslug: legacy\ntitle: Legacy\nuse_count: 4\nclassification: unclassified\n---\n\n"
+        "---\ntype: procedure\nslug: legacy\ntitle: Legacy\nuse_count: 4\nclassification: unclassified\n---\n\n"
         "# Legacy\n\n## Steps\n1. first thing\n2. second thing\n",
         encoding="utf-8",
     )

@@ -208,7 +208,9 @@ def _write_entity(workspace: Path, slug: str, classification: str, body: str) ->
     path = workspace / "memory" / "entities" / f"{slug}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     label = f"classification: {classification}\n" if classification else ""
-    path.write_text(f"---\nslug: {slug}\n{label}---\n\n{body}\n", encoding="utf-8")
+    path.write_text(
+        f"---\ntype: entity\nslug: {slug}\n{label}---\n\n{body}\n", encoding="utf-8"
+    )
 
 
 def _structural_degraded(sink: RecordingSink) -> bool:

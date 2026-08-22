@@ -321,6 +321,7 @@ version = "0.18.0"
 source = { editable = "packages/arcagent" }
 dependencies = [
     { name = "aiorwlock" },
+    { name = "arcokf" },
     { name = "arcprompt" },
     { name = "arcrun" },
     { name = "arctrust" },
@@ -360,6 +361,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiorwlock", specifier = ">=1.4,<2" },
+    { name = "arcokf", editable = "packages/arcokf" },
     { name = "arcmemory", marker = "extra == 'memory'", editable = "packages/arcmemory" },
     { name = "arcprompt", editable = "packages/arcprompt" },
     { name = "arcrun", editable = "packages/arcrun" },
@@ -428,6 +430,7 @@ dependencies = [
     { name = "arc-agent" },
     { name = "arcbundle" },
     { name = "arcllm" },
+    { name = "arcokf" },
     { name = "arcrun" },
     { name = "arcteam" },
     { name = "click" },
@@ -441,6 +444,7 @@ requires-dist = [
     { name = "arc-agent", editable = "packages/arcagent" },
     { name = "arcbundle", editable = "packages/arcbundle" },
     { name = "arcllm", editable = "packages/arcllm" },
+    { name = "arcokf", editable = "packages/arcokf" },
     { name = "arcrun", editable = "packages/arcrun" },
     { name = "arcteam", editable = "packages/arcteam" },
     { name = "click", specifier = ">=8.0" },
@@ -645,7 +649,7 @@ source = { editable = "packages/arcmodel" }
 
 [[package]]
 name = "arcokf"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "packages/arcokf" }
 dependencies = [
     { name = "pyyaml" },
@@ -759,21 +763,21 @@ name = "arcteam"
 version = "0.7.0"
 source = { editable = "packages/arcteam" }
 dependencies = [
+    { name = "arcokf" },
     { name = "arcstore" },
     { name = "arctrust" },
     { name = "nats-py" },
     { name = "pydantic" },
-    { name = "python-frontmatter" },
     { name = "rank-bm25" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "arcokf", editable = "packages/arcokf" },
     { name = "arcstore", editable = "packages/arcstore" },
     { name = "arctrust", editable = "packages/arctrust" },
     { name = "nats-py", specifier = ">=2.15.0" },
     { name = "pydantic", specifier = ">=2.0,<3" },
-    { name = "python-frontmatter", specifier = ">=1.0" },
     { name = "rank-bm25", specifier = ">=0.2.2" },
 ]
 

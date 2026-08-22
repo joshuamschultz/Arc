@@ -21,6 +21,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from arcokf import Document, parse, render
+
 from arcagent.modules.user_profile._fsutil import atomic_write
 from arcagent.modules.user_profile.config import UserProfileConfig
 from arcagent.modules.user_profile.errors import BodyOverflow, ProfileNotFound
@@ -90,6 +92,7 @@ class ProfileStore:
             BodyOverflow: body exceeds cap; no write performed.
         """
         text = profile.to_markdown()
+        parse(text, path=self.profile_path(profile.user_did).as_posix())
         body_size = _body_size(text)
 
         if body_size > self._config.body_cap_bytes:
@@ -241,7 +244,9 @@ class ProfileStore:
         Raises:
             BodyOverflow: if the rendered annotation exceeds body_cap_bytes.
         """
-        annotation_text = "# " + section + "\n\n" + content + "\n"
+        annotation_text = render(
+            Document({"type": "UserProfileAnnotation", "section": section}, content)
+        )
         body_size = len(annotation_text.encode("utf-8"))
 
         if body_size > self._config.body_cap_bytes:

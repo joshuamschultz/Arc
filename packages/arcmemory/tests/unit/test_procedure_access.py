@@ -98,7 +98,7 @@ def test_an_existing_card_without_the_counter_still_loads(tmp_path: Path) -> Non
     cards = tmp_path / "memory" / "procedures"
     cards.mkdir(parents=True)
     (cards / "legacy.md").write_text(
-        "---\nslug: legacy\ntitle: Legacy\nwhen_to_use: Old card\nuse_count: 4\n"
+        "---\ntype: procedure\nslug: legacy\ntitle: Legacy\nwhen_to_use: Old card\nuse_count: 4\n"
         "classification: unclassified\n---\n\n# Legacy\n\n## Steps\n1. first\n2. second\n",
         encoding="utf-8",
     )

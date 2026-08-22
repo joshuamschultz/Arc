@@ -19,15 +19,8 @@ import re
 from datetime import datetime
 from typing import Any
 
-import yaml
+from arcokf import Document, parse, render
 from pydantic import BaseModel, Field, field_validator
-
-# Regex to extract YAML frontmatter between --- fences (non-greedy).
-# The first fence must be at column 0; the second fence terminates the block.
-_FRONTMATTER_RE = re.compile(
-    r"^---\r?\n(.*?)^---\r?\n(.*)",
-    re.DOTALL | re.MULTILINE,
-)
 
 # Regex to match a single durable-fact line including provenance comment.
 # Format:  - Fact text  <!-- session_id=xxx ts=ISO -->
@@ -143,12 +136,11 @@ class UserProfile(BaseModel):
         Raises:
             ValueError: if the file has no valid YAML frontmatter.
         """
-        m = _FRONTMATTER_RE.match(text)
-        if not m:
+        if not text.startswith("---\n"):
             raise ValueError("Profile has no YAML frontmatter delimited by ---")
-
-        frontmatter_raw, body = m.group(1), m.group(2)
-        fm: dict[str, Any] = yaml.safe_load(frontmatter_raw) or {}
+        document = parse(text)
+        fm = document.metadata
+        body = document.body
 
         acl_raw = fm.get("acl", {})
         acl = ACL(
@@ -176,6 +168,7 @@ class UserProfile(BaseModel):
     def to_markdown(self) -> str:
         """Serialise the profile back to its on-disk markdown form."""
         fm: dict[str, Any] = {
+            "type": "UserProfile",
             "user_did": self.user_did,
             "created": self.created.isoformat(),
             "classification": self.classification,
@@ -186,8 +179,6 @@ class UserProfile(BaseModel):
             },
             "schema_version": self.schema_version,
         }
-        frontmatter = yaml.dump(fm, default_flow_style=False, allow_unicode=True)
-
         # Build body sections
         parts: list[str] = []
 
@@ -212,7 +203,7 @@ class UserProfile(BaseModel):
         parts.append("")
 
         body = "\n".join(parts)
-        return f"---\n{frontmatter}---\n{body}"
+        return render(Document(fm, body))
 
     model_config = {"frozen": False}
 
