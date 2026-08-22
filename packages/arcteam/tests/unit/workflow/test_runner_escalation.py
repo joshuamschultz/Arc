@@ -173,3 +173,28 @@ async def test_one_poisoned_run_still_does_not_stop_the_tick(stores: Any, regist
 
     degraded = [e for e in sink.events if e.action == "workflow.runner.degraded"]
     assert degraded == [], "a poisoned RUN must not trip the whole-tick escalation"
+
+
+async def test_poisoned_run_is_terminalized_after_bounded_advance_failures(
+    stores: Any, registry: Any
+) -> None:
+    """A deterministic per-run fault must not be retried forever on every tick."""
+    _, runs, _ = stores
+    sink = RecordingSink()
+    runner = build(stores, registry, WIRED, audit_sink=sink, advance_failure_threshold=3)
+    started = await runner.start_run("wired", input={}, initiator_did="did:arc:x/1")
+
+    async def poisoned(_: str) -> Any:
+        raise RuntimeError("corrupt companion state")
+
+    runner.advance = poisoned  # type: ignore[method-assign]
+    await runner.tick()
+    await runner.tick()
+    await runner.tick()
+
+    terminal = await runs.get(started.run_id)
+    assert terminal is not None
+    assert terminal.status == "failed"
+    failures = [event for event in sink.events if event.action == "workflow.run.advance_failed"]
+    assert [event.outcome for event in failures] == ["retrying", "retrying", "terminalized"]
+    assert failures[-1].extra["consecutive_failures"] == 3

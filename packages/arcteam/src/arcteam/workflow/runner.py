@@ -40,6 +40,7 @@ from typing import Any, Literal, cast
 from uuid import uuid4
 
 from arcstore.tasks import Task
+from arcstore.workflow_lease import WorkflowRunnerLease
 from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
 
 from .narrator import RunNarrator, assert_channel_binding
@@ -84,6 +85,10 @@ class NodeDecisionError(WorkflowRunError):
         super().__init__(f"node {node_id}: {detail}")
         self.node_id = node_id
         self.detail = detail
+
+
+class WorkflowRunnerLeaseUnavailableError(WorkflowRunError):
+    """Another process currently owns the fenced ArcFlow runner lease."""
 
 
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -165,7 +170,9 @@ class WorkflowRunner:
         run_workspace_root: Path | None = None,
         on_close: Callable[[], Awaitable[None]] | None = None,
         tick_failure_threshold: int = 3,
+        advance_failure_threshold: int = 3,
         max_capability_legs: int = 16,
+        lease: WorkflowRunnerLease | None = None,
     ) -> None:
         self._tasks = tasks
         self._runs = runs
@@ -186,6 +193,11 @@ class WorkflowRunner:
         # consecutive_failures + circuit_breaker_threshold, default 3). See
         # ``run_forever`` for why this counts and escalates but never stops.
         self._tick_failure_threshold = tick_failure_threshold
+        if advance_failure_threshold < 1:
+            raise ValueError("advance_failure_threshold must be at least one")
+        self._advance_failure_threshold = advance_failure_threshold
+        self._advance_failures: dict[str, int] = {}
+        self._lease = lease
         # Ceiling on the run's carried trifecta legs (mirrors CarriedLegs'
         # default). A per-run security collection that grows without a bound is
         # the SPEC-009 lesson; truncation is audited, never silent.
@@ -231,6 +243,7 @@ class WorkflowRunner:
         run_id: str | None = None,
     ) -> RunRecord:
         """Create the Run record, then materialize the first frontier."""
+        await self._require_lease()
         # Check the id before it reaches the store, which resolves it against a
         # directory. The store refuses a traversal id itself — this is the
         # boundary check that means that backstop is never the thing that fires.
@@ -289,6 +302,7 @@ class WorkflowRunner:
 
     async def advance(self, run_id: str) -> RunRecord:
         """One deterministic tick: settle, decide, materialize, roll up."""
+        await self._require_lease()
         run = await self._require_run(run_id)
         if run.status in TERMINAL_RUN_STATUSES:
             return run
@@ -359,14 +373,20 @@ class WorkflowRunner:
     async def tick(self) -> int:
         """Advance every active run once. Returns how many were advanced."""
         try:
+            await self._require_lease()
             advanced = 0
             runs = await self._runs.active_runs()
             self._last_known_channels = sorted({r.channel for r in runs if r.channel is not None})
             for run in runs:
                 try:
                     await self.advance(run.run_id)
-                except Exception:  # reason: one poisoned run must not stall the rest
+                except WorkflowRunnerLeaseUnavailableError:
+                    raise
+                except Exception as exc:  # reason: one poisoned run must not stall the rest
                     logger.exception("advancing run %s failed", run.run_id)
+                    await self._on_advance_failure(run, exc)
+                else:
+                    self._advance_failures.pop(run.run_id, None)
                 advanced += 1
             return advanced
         finally:
@@ -417,11 +437,51 @@ class WorkflowRunner:
                 channel=channel, consecutive_failures=count, last_error=last_error
             )
 
+    async def _on_advance_failure(self, run: RunRecord, exc: Exception) -> None:
+        """Bound a poisoned run's retries without degrading healthy neighbours."""
+        count = self._advance_failures.get(run.run_id, 0) + 1
+        self._advance_failures[run.run_id] = count
+        error = str(exc)
+        terminalizing = count >= self._advance_failure_threshold
+        self._audit(
+            "workflow.run.advance_failed",
+            target=run.run_id,
+            outcome="terminalized" if terminalizing else "retrying",
+            extra={"consecutive_failures": count, "last_error": error},
+        )
+        if not terminalizing:
+            return
+        try:
+            await self._terminate(
+                run.run_id,
+                "failed",
+                f"runner advance failed {count} consecutive times: {error}",
+            )
+        except Exception:
+            # The failure count and escalation audit are already durable when the
+            # store is healthy. A broken terminalization path remains noisy.
+            logger.exception("failed to terminalize poisoned workflow run %s", run.run_id)
+        else:
+            self._advance_failures.pop(run.run_id, None)
+
+    async def _require_lease(self) -> None:
+        """Renew the cross-process fence before advancing any workflow state."""
+        if self._lease is None:
+            return
+        if await self._lease.acquire_or_renew() is None:
+            raise WorkflowRunnerLeaseUnavailableError(
+                "another process owns the ArcFlow workflow runner lease"
+            )
+
     async def aclose(self) -> None:
         """Release what this runner owns. Idempotent — shutdown may retry."""
-        if self._on_close is not None:
-            closer, self._on_close = self._on_close, None
-            await closer()
+        try:
+            if self._on_close is not None:
+                closer, self._on_close = self._on_close, None
+                await closer()
+        finally:
+            if self._lease is not None:
+                await self._lease.release()
 
     async def cancel(
         self, run_id: str, *, actor_did: str, reason: str = "cancelled by operator"
@@ -1367,6 +1427,10 @@ def build_workflow_runner(
         run_workspace_root=root / "shared",
         on_close=on_close,
         tick_failure_threshold=tick_failure_threshold,
+        # The DID is audit identity, not lease identity: two processes running
+        # the same deployment share it, so the lease generates a per-process
+        # owner nonce for fencing.
+        lease=WorkflowRunnerLease(task_store_backend),
     )
 
 

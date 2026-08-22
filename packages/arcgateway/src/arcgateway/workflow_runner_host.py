@@ -7,15 +7,12 @@ dashboard process to be running. This module has zero import of ``arcui``
 (enforced by ``tests/unit/test_workflow_runner_host.py``), so a headless
 gateway still progresses workflow runs.
 
-Singleton enforcement (REQ-231)
---------------------------------
-Two runner instances must never advance the same run frontier. For v1 this is
-an EXPLICIT, IN-PROCESS guard (a class-level slot that refuses a second
-``start()``) — not a distributed lease. Per SDD.md (Risks and Mitigations,
-citing Kleppmann): a lease alone is not safe under pauses/partitions, so this
-guard is a deliberately stated ceiling — one process, one runner — and
-relaxing it to multi-process later requires fencing tokens, not just this
-guard widened.
+Distributed ownership
+---------------------
+The real runner renews a durable ArcStore lease and presents a monotonic fence
+before every progress tick. ``_active`` below is only local lifecycle
+bookkeeping; it is never the correctness boundary between gateway and CLI
+processes.
 
 Merge-reconciliation note (SPEC-061 concurrent build)
 ------------------------------------------------------
@@ -67,9 +64,8 @@ class RunnerAlreadyActiveError(RuntimeError):
 class RunnerHost:
     """Owns exactly one running WorkflowRunner task for this process.
 
-    The class-level ``_active`` slot is the singleton guard: two RunnerHost
-    instances must never both drive the same frontier. This is explicitly a
-    single-PROCESS guard, not a distributed lease — see the module docstring.
+    The class-level ``_active`` slot tracks this process's task for callers;
+    ArcStore's fenced lease remains the cross-process correctness boundary.
     """
 
     _active: RunnerHost | None = None
@@ -116,12 +112,24 @@ class RunnerHost:
         return host
 
     async def _run(self) -> None:
+        cancelled = False
         try:
             await self._runner.run_forever()
         except asyncio.CancelledError:
+            cancelled = True
             raise
         except Exception:  # reason: a runner crash must not crash the gateway process
             _logger.exception("workflow runner task terminated unexpectedly")
+        finally:
+            # A fatal return used to strand `_active` with a done task, so the
+            # gateway could never restart its runner without process restart.
+            if RunnerHost._active is self:
+                RunnerHost._active = None
+            if not cancelled:
+                try:
+                    await self._runner.aclose()
+                except Exception:  # reason: a crashed runner must still release its lease
+                    _logger.exception("error closing fatal workflow runner")
 
     async def stop(self) -> None:
         """Cancel the runner task, close the runner, and clear the singleton slot."""

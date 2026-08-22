@@ -93,6 +93,25 @@ async def test_stop_survives_a_runner_that_raises_on_close() -> None:
     assert RunnerHost.active() is None
 
 
+async def test_fatal_runner_exit_clears_the_active_slot_and_allows_restart() -> None:
+    """A completed-crashed task must not leave a dead host blocking a restart."""
+
+    class _ExplodingRunner(_FakeRunner):
+        async def run_forever(self) -> None:
+            raise RuntimeError("runner crashed")
+
+    dead = await RunnerHost.start(_ExplodingRunner())
+    for _ in range(20):
+        if RunnerHost.active() is None:
+            break
+        await asyncio.sleep(0)
+    assert RunnerHost.active() is None
+
+    replacement = await RunnerHost.start(_FakeRunner())
+    assert replacement is not dead
+    await replacement.stop()
+
+
 # ---------------------------------------------------------------------------
 # start_runner_host — the bootstrap-facing entry point
 # ---------------------------------------------------------------------------
