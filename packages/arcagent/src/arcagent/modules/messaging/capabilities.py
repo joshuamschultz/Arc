@@ -224,6 +224,7 @@ async def _handle_incoming(message: Any) -> None:
     is dropped in the startup window.
     """
     st = _runtime.state()
+    await _persist_team_event(message, recipient_id=st.config.entity_id)
     decision = await activation.decide(message, st)
     if st.telemetry is not None:
         st.telemetry.audit_event(
@@ -476,6 +477,7 @@ async def deliver_channel_reply(ctx: Any) -> None:
 async def messaging_shutdown(ctx: Any) -> None:
     """Log module stop. Background poll task is cancelled by the loader."""
     del ctx  # event payload unused
+    await _runtime.close_durable_inbox()
     _logger.info("Messaging module stopped")
 
 
@@ -509,7 +511,7 @@ async def _send_to_team(st: Any, target: str, message: str) -> None:
     from arcteam.types import Message
 
     sender_floor = st.identity.clearance.name if st.identity is not None else "UNCLASSIFIED"
-    await st.svc.send(
+    sent = await st.svc.send(
         Message(
             sender=st.config.entity_id,
             to=[target],
@@ -518,6 +520,38 @@ async def _send_to_team(st: Any, target: str, message: str) -> None:
             hop=turn_context.inbound_hop() + 1,
         )
     )
+    await _persist_team_event(sent, recipient_ids=(target,))
+
+
+async def _persist_team_event(
+    message: Any,
+    *,
+    recipient_id: str = "",
+    recipient_ids: tuple[str, ...] = (),
+) -> None:
+    """Project a verified team event into Postgres without blocking messaging."""
+    try:
+        from arcstore.inbox import ParticipantRole, TraceMetadata
+        from arcstore.inbox_projection import participant
+
+        targets = recipient_ids or ((recipient_id,) if recipient_id else tuple(message.to))
+        if not targets:
+            return
+        service = await _runtime.ensure_durable_inbox()
+        if service is None:
+            return
+        await service.record_event(
+            event_id=str(message.id),
+            sender=participant(str(message.sender)),
+            recipients=tuple(
+                participant(str(target), role=ParticipantRole.AGENT) for target in targets
+            ),
+            body=str(message.body),
+            external_thread_id=str(message.thread_id or message.id),
+            trace=TraceMetadata(classification=str(message.classification)),
+        )
+    except Exception:  # reason: bus delivery remains available during store outage
+        _logger.exception("durable inbox projection failed for team event")
 
 
 @tool(
@@ -620,6 +654,7 @@ async def messaging_send(
             hop=turn_context.inbound_hop() + 1,
         )
         sent = await st.svc.send(msg)
+        await _persist_team_event(sent)
         _logger.info("Sent message %s to %s", sent.id, to)
         return json.dumps(
             {

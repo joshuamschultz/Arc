@@ -42,6 +42,8 @@ import {
   useAgent,
   useAgentCapabilities,
   useAgentChannels,
+  useAgentInbox,
+  useAgentInboxThread,
   useAgentConfig,
   useAgentPolicy,
   useAgentPolicyStats,
@@ -1647,33 +1649,25 @@ function InboxRow({ s, onOpen }: { s: Dict; onOpen: () => void }) {
   )
 }
 
+void InboxRow
+
 /** Inbox — everything arriving at this agent, in one structured place: what is
  *  waiting on a human (approvals, review), where it receives (delivery
  *  channels), and its incoming message threads. */
 function InboxTab({ agentId }: { agentId: string }) {
   const roster = useRoster()
   const channelsQ = useAgentChannels(agentId)
-  const sessionsQ = useAgentSessions(agentId)
+  const inboxQ = useAgentInbox(agentId)
   const tasksQ = useAgentTasks(agentId)
   const approvalsQ = useApprovals()
   const [operatorMode] = useOperatorMode()
   const [active, setActive] = useState<string | null>(null)
+  const threadQ = useAgentInboxThread(agentId, active)
 
   const did = (roster.data?.agents ?? []).find((a) => a.agent_id === agentId)?.did ?? ''
   const approvals = (approvalsQ.data?.approvals ?? []).filter((a) => a.agent_did === did)
   const channels = channelsQ.data?.channels ?? []
-  const sessions = (sessionsQ.data?.sessions ?? []) as unknown as Dict[]
-  // The backend classifies each session with `kind` (messaging = teammate DM,
-  // chat = human) — those are the inbox; namespaced system sessions
-  // (cli/pulse/scheduler/serve) are not. Fall back to the sid heuristic only for
-  // an older backend that predates the field.
-  const inbox = sessions
-    .filter((s) => {
-      const kind = String(s.kind ?? '')
-      if (kind) return kind === 'messaging' || kind === 'chat'
-      return /messag|inbox/i.test(String(s.sid ?? ''))
-    })
-    .sort((a, b) => Number(b.mtime ?? b.updated_at ?? 0) - Number(a.mtime ?? a.updated_at ?? 0))
+  const inbox = inboxQ.data?.threads ?? []
   const tasks = (tasksQ.data?.tasks ?? []) as unknown as Dict[]
   const reviewTasks = tasks.filter((t) => String(t.status) === 'review')
 
@@ -1733,27 +1727,45 @@ function InboxTab({ agentId }: { agentId: string }) {
         ) : (
           <div className="space-y-2">
             <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-              <Mail className="size-3.5" /> Unread = touched in the last 24h · newest first
+              <Mail className="size-3.5" /> Durable Postgres mailbox · newest first
             </div>
             <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border">
-              {inbox.map((s) => (
-                <InboxRow
-                  key={String(s.sid)}
-                  s={s}
-                  onOpen={() => setActive(String(s.sid))}
-                />
+              {inbox.map((thread) => (
+                <li key={thread.thread_id}>
+                  <button
+                    type="button"
+                    onClick={() => setActive(thread.thread_id)}
+                    className="flex w-full items-center gap-3 bg-card px-3 py-2.5 text-left hover:bg-muted/40"
+                  >
+                    <span className={cn('size-2 rounded-full', thread.unread_count ? 'bg-status-online' : 'bg-muted')} />
+                    <span className="min-w-0 flex-1 truncate text-sm text-foreground">
+                      {thread.subject || thread.participants.map((p) => p.display_name || p.participant_id).join(', ')}
+                    </span>
+                    <span className="text-xs text-muted-foreground">{thread.unread_count} unread</span>
+                  </button>
+                </li>
               ))}
             </ul>
+            {active && (
+              <div className="space-y-2 rounded-lg border border-border bg-card p-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">Thread</span>
+                  <Button variant="ghost" size="sm" onClick={() => setActive(null)}>Close</Button>
+                </div>
+                {(threadQ.data?.messages ?? []).map((message) => (
+                  <div key={message.message_id} className="rounded bg-muted/40 p-2 text-sm">
+                    <div className="mb-1 text-xs text-muted-foreground">{message.sender.participant_id}</div>
+                    {message.body}
+                  </div>
+                ))}
+                {(threadQ.data?.handoffs ?? []).length > 0 && (
+                  <div className="text-xs text-muted-foreground">{threadQ.data?.handoffs.length} internal handoff trace(s)</div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </Section>
-
-      <RunReplayDrawer
-        agentId={agentId}
-        sid={active}
-        open={!!active}
-        onOpenChange={(o) => !o && setActive(null)}
-      />
     </div>
   )
 }

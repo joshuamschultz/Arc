@@ -58,6 +58,7 @@ class _State:
     # a hard import-time dependency on the optional arcteam package.
     svc: Any  # MessagingService
     registry: Any  # EntityRegistry
+    arcstore_opener: Any = None
     # Deliver a policy-gated teammate message into the agent's current run
     # (REQ-040/041); bound from the agent:ready payload alongside agent_run_fn.
     deliver_fn: Any = None
@@ -92,6 +93,9 @@ class _State:
     channel_last_woken: dict[str, float] = field(default_factory=dict)
     # SPEC-068 D4d — per-channel breaker around the relevance gate.
     channel_breakers: dict[str, Any] = field(default_factory=dict)
+    inbox_service: Any = None
+    inbox_backend: Any = None
+    inbox_init_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 _state_var: contextvars.ContextVar[_State | None] = contextvars.ContextVar(
@@ -108,6 +112,7 @@ def configure(
     agent_name: str = "",
     identity: AgentIdentity | None = None,
     operator_signer: Any = None,
+    arcstore_opener: Any = None,
 ) -> None:
     """Bind module state for the CURRENT asyncio task and bootstrap arcteam services.
 
@@ -172,6 +177,7 @@ def configure(
             agent_name=agent_name,
             identity=identity,
             operator_signer=operator_signer,
+            arcstore_opener=arcstore_opener,
             svc=svc,
             registry=registry,
             digests=DigestStore(backend),
@@ -220,6 +226,34 @@ async def ensure_live_backend() -> None:
     _logger.info("Messaging upgraded to live NATS backend at %s", st.config.nats_url)
 
 
+async def ensure_durable_inbox() -> Any | None:
+    """Open the shared Postgres inbox once for this agent process."""
+    st = state()
+    if st.inbox_service is not None:
+        return st.inbox_service
+    if st.arcstore_opener is None:
+        return None
+    async with st.inbox_init_lock:
+        if st.inbox_service is not None:
+            return st.inbox_service
+        from arcstore.backends import PostgresInboxRepository
+        from arcstore.inbox_projection import DurableInboxService
+
+        backend = await st.arcstore_opener()
+        st.inbox_backend = backend
+        st.inbox_service = DurableInboxService(PostgresInboxRepository(backend))
+        return st.inbox_service
+
+
+async def close_durable_inbox() -> None:
+    """Release the module-owned ArcStore backend when the agent stops."""
+    st = state()
+    backend, st.inbox_backend = st.inbox_backend, None
+    st.inbox_service = None
+    if backend is not None:
+        await backend.stop()
+
+
 def state() -> _State:
     """Return the configured state. Raises if unconfigured."""
     current = _state_var.get()
@@ -247,4 +281,12 @@ def reset() -> None:
     _state_var.set(None)
 
 
-__all__ = ["bind", "configure", "ensure_live_backend", "reset", "state"]
+__all__ = [
+    "bind",
+    "close_durable_inbox",
+    "configure",
+    "ensure_durable_inbox",
+    "ensure_live_backend",
+    "reset",
+    "state",
+]

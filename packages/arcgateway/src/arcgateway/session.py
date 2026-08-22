@@ -38,6 +38,7 @@ code must not gate logic on it.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
@@ -106,6 +107,15 @@ def _adapter_key(adapter: _AdapterProtocol) -> tuple[str, str]:
     return (adapter.name, getattr(adapter, "agent_did", "") or "")
 
 
+def _inbox_event_id(direction: str, event: InboundEvent, body: str = "") -> str:
+    """Derive a retry-stable event key without retaining raw platform payloads."""
+    value = "\x1f".join(
+        (direction, event.platform, event.chat_id, event.thread_id or "", event.user_did,
+         event.agent_did, event.session_key, body or event.message)
+    )
+    return f"gateway_{direction}_{hashlib.sha256(value.encode('utf-8')).hexdigest()}"
+
+
 def _draft_to_event(draft: InboundDraft) -> InboundEvent:
     """Turn an adapter's draft into the envelope the gateway routes.
 
@@ -172,6 +182,7 @@ class SessionRouter:
         command_registry: CommandRegistry | None = None,
         session_epoch_db_path: Path | None = None,
         media_store_for: Callable[[str], MediaStore | None] | None = None,
+        inbox_service: Any | None = None,
         _test_hooks: bool = True,
     ) -> None:
         """Initialise SessionRouter with the given executor.
@@ -203,6 +214,7 @@ class SessionRouter:
                             dict for test introspection.
         """
         self._executor = executor
+        self._inbox_service = inbox_service
         self._identity_graph: object | None = identity_graph
         self._custodian = MediaCustodian(
             media_store_for=media_store_for, send_reply=self._send_reply
@@ -458,6 +470,8 @@ class SessionRouter:
                 return
             inbound = taken
 
+        await self._persist_inbound(inbound)
+
         session_key = inbound.session_key
 
         # Bookkeeping is synchronous so a burst of messages is counted exactly
@@ -519,22 +533,34 @@ class SessionRouter:
         )
         try:
             delta_stream: AsyncIterator[Delta] = await self._executor.run(event)
+            reply_parts: list[str] = []
+
+            async def capture() -> AsyncIterator[Delta]:
+                async for delta in delta_stream:
+                    if delta.kind == "token":
+                        reply_parts.append(delta.content)
+                    yield delta
 
             adapter = self._resolve_outbound(event)
             if adapter is not None:
                 target = self._resolve_delivery_target(event)
                 dispatch_delta = getattr(adapter, "dispatch_delta", None)
                 if callable(dispatch_delta):
-                    async for delta in delta_stream:
+                    async for delta in capture():
                         await dispatch_delta(target, delta)
                         if delta.is_final:
+                            await self._persist_outbound(
+                                event, "".join(reply_parts), delta.turn_id
+                            )
                             return
                 else:
-                    await self._stream_bridge.consume(delta_stream, target, adapter)
+                    await self._stream_bridge.consume(capture(), target, adapter)
+                    await self._persist_outbound(event, "".join(reply_parts), "")
             else:
-                async for delta in delta_stream:
+                async for delta in capture():
                     if delta.is_final:
                         _logger.debug("Session %s: turn complete", session_key)
+                        await self._persist_outbound(event, "".join(reply_parts), delta.turn_id)
                     else:
                         _logger.debug(
                             "Session %s: delta kind=%s content=%r",
@@ -545,6 +571,44 @@ class SessionRouter:
         except Exception:  # reason: re-raise after log
             _logger.exception("Executor error in session %s", session_key)
             raise
+
+    async def _persist_inbound(self, event: InboundEvent) -> None:
+        """Write a paired, approved platform event before handing it to an agent."""
+        if self._inbox_service is None:
+            return
+        from arcstore.inbox import ParticipantRole, TraceMetadata
+        from arcstore.inbox_projection import participant
+
+        try:
+            await self._inbox_service.record_event(
+                event_id=_inbox_event_id("in", event),
+                sender=participant(event.user_did, role=ParticipantRole.HUMAN),
+                recipients=(participant(event.agent_did),),
+                body=event.message,
+                external_thread_id=event.session_key,
+                trace=TraceMetadata(source_session_id=event.session_key),
+            )
+        except Exception:  # reason: delivery stays available while storage is degraded
+            _logger.exception("durable inbox projection failed for inbound gateway event")
+
+    async def _persist_outbound(self, event: InboundEvent, body: str, turn_id: str) -> None:
+        """Write a completed agent reply without making delivery depend on storage."""
+        if self._inbox_service is None or not body.strip():
+            return
+        from arcstore.inbox import ParticipantRole, TraceMetadata
+        from arcstore.inbox_projection import participant
+
+        try:
+            await self._inbox_service.record_event(
+                event_id=turn_id or _inbox_event_id("out", event, body),
+                sender=participant(event.agent_did),
+                recipients=(participant(event.user_did, role=ParticipantRole.HUMAN),),
+                body=body,
+                external_thread_id=event.session_key,
+                trace=TraceMetadata(source_session_id=event.session_key),
+            )
+        except Exception:  # reason: a reply has already reached its user
+            _logger.exception("durable inbox projection failed for outbound gateway event")
 
     async def dispatch_and_await(
         self,

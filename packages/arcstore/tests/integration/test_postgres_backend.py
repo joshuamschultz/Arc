@@ -127,3 +127,38 @@ async def test_postgres_inbox_uses_v1_foreign_keys_and_canonical_payloads(
     assert json.loads(thread_row["payload"])["thread_id"] == thread.thread_id
     assert message_row is not None and message_row["thread_id"] == thread.thread_id
     assert json.loads(message_row["payload"]) == message.model_dump(mode="json")
+
+
+async def test_postgres_inbox_idempotent_event_survives_backend_restart(
+    postgres_backend: ArcStoreBackend,
+) -> None:
+    """A retry after a pool restart reads the original durable event copy."""
+    assert isinstance(postgres_backend, PostgresBackend)
+    repository = PostgresInboxRepository(postgres_backend)
+    owner = participant(f"did:arc:human:{uuid4().hex}", "human")
+    inbox = await repository.create_inbox(owner, inbox_id=f"inbox-{uuid4().hex}")
+    thread = await repository.create_thread(
+        inbox.inbox_id,
+        (owner,),
+        thread_id=f"thread-{uuid4().hex}",
+    )
+    message_id = f"message-{uuid4().hex}"
+    first = await repository.append_message(
+        thread.thread_id,
+        sender=owner,
+        recipients=(owner,),
+        body="survives restart",
+        message_id=message_id,
+    )
+
+    await postgres_backend.stop()
+    await postgres_backend.start()
+    retry = await PostgresInboxRepository(postgres_backend).append_message(
+        thread.thread_id,
+        sender=owner,
+        recipients=(owner,),
+        body="survives restart",
+        message_id=message_id,
+    )
+
+    assert retry == first

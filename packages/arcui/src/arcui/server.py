@@ -21,9 +21,10 @@ from typing import Any
 
 from arcgateway import team_roster
 from arcstore.approvals import ApprovalStore
-from arcstore.backends import open_backend
+from arcstore.backends import PostgresInboxRepository, open_backend
 from arcstore.cancellations import CancelStore
 from arcstore.config import ArcStoreConfig, resolve_data_dir
+from arcstore.inbox_projection import DurableInboxService
 from arcstore.tasks import TaskStore
 from pydantic import SecretStr
 from starlette.applications import Starlette
@@ -180,6 +181,8 @@ def create_app(
     arcstore_config: ArcStoreConfig | None = None,
     arcstore_secret: SecretStr | None = None,
     arcstore_backend: Any | None = None,
+    inbox_service: DurableInboxService | None = None,
+    inbox_clearance: str = "UNCLASSIFIED",
 ) -> Starlette:
     """Build a Starlette application with all ArcUI routes.
 
@@ -349,6 +352,13 @@ def create_app(
             await task_store_backend.start()
         except Exception:  # reason: fail-open — dashboard still serves
             logger.exception("lifespan: task_store backend failed to start; writes will fail")
+        if starlette_app.state.inbox_service is None:
+            try:
+                starlette_app.state.inbox_service = DurableInboxService(
+                    PostgresInboxRepository(task_store_backend)
+                )
+            except Exception:  # reason: inbox routes report explicit unavailability
+                logger.exception("lifespan: durable inbox composition failed")
         # SPEC-023: when a gateway_config is supplied, compose the in-process
         # gateway runtime and expose its components on app.state. Routes that
         # need the WebPlatformAdapter (chat_ws), the SessionRouter (admin
@@ -357,7 +367,11 @@ def create_app(
         if gateway_config is not None and team_root is not None:
             from arcgateway.bootstrap import build_for_embedded
 
-            embedded_gateway = await build_for_embedded(team_root, gateway_config)
+            embedded_gateway = await build_for_embedded(
+                team_root,
+                gateway_config,
+                inbox_service=starlette_app.state.inbox_service,
+            )
             starlette_app.state.embedded_gateway = embedded_gateway
             starlette_app.state.executor = embedded_gateway.executor
             starlette_app.state.session_router = embedded_gateway.session_router
@@ -537,6 +551,8 @@ def create_app(
     # Operator kill switch (run cancellation) — same shared backend, "cancellations"
     # collection; the surface that parks a stop request for a per-agent watcher.
     app.state.cancel_store = CancelStore(task_store_backend)
+    app.state.inbox_service = inbox_service
+    app.state.inbox_clearance = inbox_clearance
     # Ingest policy (ADR-019 tier = stringency): may operator-authored task
     # text carry URLs/emails? Federal → False (default, secure-by-default);
     # the launcher raises it for personal/enterprise. Reads are never gated.

@@ -272,6 +272,8 @@ def _build_web_adapter(
 async def build_for_embedded(
     team_root: Path,
     gateway_config: GatewayConfig,
+    *,
+    inbox_service: Any | None = None,
 ) -> EmbeddedGateway:
     """Compose the in-process gateway runtime for arcui.
 
@@ -302,7 +304,12 @@ async def build_for_embedded(
     # the rest of the gateway still serves.
     broker = await start_broker()
     try:
-        return await _compose_embedded(team_root, gateway_config, broker)
+        return await _compose_embedded(
+            team_root,
+            gateway_config,
+            broker,
+            inbox_service=inbox_service,
+        )
     except BaseException:
         # A broker started moments ago and abandoned here would outlive the
         # process that started it. Reuse is not ownership, so aclose() is a
@@ -315,6 +322,8 @@ async def _compose_embedded(
     team_root: Path,
     gateway_config: GatewayConfig,
     broker: BrokerHandle,
+    *,
+    inbox_service: Any | None = None,
 ) -> EmbeddedGateway:
     """Wire the components onto an already-ensured broker (see build_for_embedded)."""
     # Late-bound holder: the factory needs a per-agent deliver fn that closes
@@ -394,6 +403,7 @@ async def _compose_embedded(
         command_registry=command_registry,
         session_epoch_db_path=gateway_config.pairing.db_path.parent / "session_epochs.db",
         media_store_for=_media_store_for,
+        inbox_service=inbox_service,
     )
     # Now that the router exists, satisfy the factory's late-bound delivery hook.
     router_holder["router"] = session_router

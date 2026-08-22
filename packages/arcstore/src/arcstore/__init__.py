@@ -36,11 +36,13 @@ from arcstore.inbox import (
     ThreadPage,
     TraceMetadata,
 )
+from arcstore.inbox_projection import DurableInboxService
 from arcstore.records import SpoolRecord
 from arcstore.spool import read, record, spool_path
 
 __all__ = [
     "ArcStoreConfig",
+    "DurableInboxService",
     "Handoff",
     "Inbox",
     "InboxRepository",

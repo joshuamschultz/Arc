@@ -47,6 +47,12 @@ from arcui.routes.agent_detail.config import get_config, get_file_read, get_file
 from arcui.routes.agent_detail.config_files import get_config_file, patch_config_file
 from arcui.routes.agent_detail.connect_telegram import connect_telegram_route
 from arcui.routes.agent_detail.files_write import put_file_write
+from arcui.routes.agent_detail.inbox import (
+    get_inbox_messages,
+    get_inbox_threads,
+    post_inbox_handoff,
+    post_inbox_read,
+)
 from arcui.routes.agent_detail.policy import (
     get_policy,
     get_policy_bullets,
@@ -116,6 +122,14 @@ routes = [
     Route("/api/agents/{id}/capabilities", get_capabilities, methods=["GET"]),
     Route("/api/agents/{id}/sessions", get_sessions, methods=["GET"]),
     Route("/api/agents/{id}/sessions/{sid}", get_session_replay, methods=["GET"]),
+    Route("/api/agents/{id}/inbox", get_inbox_threads, methods=["GET"]),
+    Route("/api/agents/{id}/inbox/{thread_id}", get_inbox_messages, methods=["GET"]),
+    Route(
+        "/api/agents/{id}/inbox/messages/{message_id}/read",
+        post_inbox_read,
+        methods=["POST"],
+    ),
+    Route("/api/agents/{id}/inbox/{thread_id}/handoffs", post_inbox_handoff, methods=["POST"]),
     Route("/api/agents/{id}/stats", get_stats, methods=["GET"]),
     Route("/api/agents/{id}/traces", get_traces, methods=["GET"]),
     Route("/api/agents/{id}/audit", get_audit, methods=["GET"]),

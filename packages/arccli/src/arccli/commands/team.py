@@ -9,7 +9,7 @@ import signal
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from arccli.commands._shared import dispatch, err
 from arccli.commands._shared import print_json as _print_json
@@ -114,6 +114,16 @@ async def _shutdown(backend: Any) -> None:
     close = getattr(backend, "close", None)
     if close is not None:
         await close()
+
+
+async def _durable_inbox_service() -> tuple[Any, Any]:
+    """Open the shared Postgres inbox for one short-lived CLI operation."""
+    from arcstore.backends import PostgresBackend, PostgresInboxRepository, open_backend
+    from arcstore.inbox_projection import DurableInboxService
+
+    backend = open_backend()
+    await backend.start()
+    return DurableInboxService(PostgresInboxRepository(cast(PostgresBackend, backend))), backend
 
 
 def _print_message(msg: Any) -> None:
@@ -755,7 +765,21 @@ def _send(args: argparse.Namespace) -> None:
                 refs=refs,
                 thread_id=getattr(args, "thread_id", None),
             )
-            return await svc.send(message)
+            sent = await svc.send(message)
+            inbox, inbox_backend = await _durable_inbox_service()
+            try:
+                from arcstore.inbox_projection import participant
+
+                await inbox.record_event(
+                    event_id=sent.id,
+                    sender=participant(sender),
+                    recipients=tuple(participant(target) for target in targets),
+                    body=sent.body,
+                    external_thread_id=sent.thread_id,
+                )
+            finally:
+                await inbox_backend.stop()
+            return sent
         finally:
             await _shutdown(backend)
 
@@ -764,29 +788,37 @@ def _send(args: argparse.Namespace) -> None:
 
 
 def _inbox(args: argparse.Namespace) -> None:
-    """Poll every stream the sender subscribes to (REQ-012)."""
-    root = _get_root(args)
+    """List the sender's durable, restart-safe inbox threads."""
     sender: str = args.sender
     limit: int = getattr(args, "limit", 10)
     use_json: bool = getattr(args, "use_json", False)
 
     async def _run() -> Any:
-        svc, _, _, backend = await _build_service(root)
-        try:
-            return await svc.poll_all(sender, max_per_stream=limit)
-        finally:
-            await _shutdown(backend)
+        from arcstore.inbox_projection import participant
 
-    result = asyncio.run(_run())
+        service, backend = await _durable_inbox_service()
+        try:
+            _, threads, cursor = await service.list_threads(
+                participant(sender),
+                limit=limit,
+            )
+            return threads, cursor
+        finally:
+            await backend.stop()
+
+    result, cursor = asyncio.run(_run())
     if use_json:
-        _print_json({stream: [m.model_dump() for m in msgs] for stream, msgs in result.items()})
+        _print_json(
+            {
+                "threads": [thread.model_dump(mode="json") for thread in result],
+                "next_cursor": cursor,
+            }
+        )
     elif not result:
         _write("No new messages.")
     else:
-        for stream, msgs in result.items():
-            _write(f"{stream} ({len(msgs)} unread):")
-            for msg in msgs:
-                _print_message(msg)
+        for thread in result:
+            _write(f"{thread.thread_id} ({thread.unread_count} unread): {thread.subject or ''}")
 
 
 def _read(args: argparse.Namespace) -> None:
@@ -823,25 +855,26 @@ def _read(args: argparse.Namespace) -> None:
 
 
 def _thread(args: argparse.Namespace) -> None:
-    """Show all messages in a thread, chronologically (REQ-012)."""
-    root = _get_root(args)
+    """Show durable thread messages chronologically (REQ-012)."""
     thread_id: str = args.thread_id
-    stream: str = args.stream
+    sender: str = args.sender
     use_json: bool = getattr(args, "use_json", False)
 
     async def _run() -> Any:
-        svc, _, _, backend = await _build_service(root)
+        service, backend = await _durable_inbox_service()
         try:
-            return await svc.get_thread(stream, thread_id)
+            from arcstore.inbox_projection import participant
+
+            return await service.list_messages(thread_id, reader=participant(sender))
         finally:
-            await _shutdown(backend)
+            await backend.stop()
 
     messages = asyncio.run(_run())
     if use_json:
-        _print_json([m.model_dump() for m in messages])
+        _print_json([m.model_dump(mode="json") for m in messages.items])
     else:
-        _write(f"Thread {thread_id} ({len(messages)} messages):")
-        for msg in messages:
+        _write(f"Thread {thread_id} ({len(messages.items)} messages):")
+        for msg in messages.items:
             _print_message(msg)
 
 
@@ -1179,7 +1212,7 @@ def _build_parser() -> argparse.ArgumentParser:
     # thread
     p = subs.add_parser("thread", help="View a message thread.")
     p.add_argument("thread_id", help="Thread id.")
-    p.add_argument("--stream", required=True, help="Stream name.")
+    p.add_argument("--sender", required=True, help="Thread participant ref.")
 
     # up
     p = subs.add_parser("up", help="Boot each team member as a supervised daemon.")

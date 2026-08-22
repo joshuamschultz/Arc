@@ -629,6 +629,46 @@ export const useAgentSkillDetail = (agentId: string, skillName: string | null) =
     enabled: !!skillName,
   })
 
+export interface DurableInboxThread extends Dict {
+  thread_id: string
+  subject?: string | null
+  updated_at: string
+  unread_count: number
+  participants: Array<{ participant_id: string; display_name?: string | null }>
+}
+
+export interface DurableInboxMessage extends Dict {
+  message_id: string
+  body: string
+  created_at: string
+  sender: { participant_id: string }
+}
+
+export interface DurableInboxResponse {
+  threads: DurableInboxThread[]
+  next_cursor?: string | null
+}
+
+export interface DurableThreadResponse {
+  messages: DurableInboxMessage[]
+  handoffs: Dict[]
+  next_cursor?: string | null
+}
+
+export const useAgentInbox = (agentId: string) =>
+  useQuery<DurableInboxResponse>({
+    queryKey: ['agent', agentId, 'inbox'],
+    queryFn: ({ signal }) => apiGet(`/api/agents/${agentId}/inbox`, signal),
+    refetchInterval: 4000,
+  })
+
+export const useAgentInboxThread = (agentId: string, threadId: string | null) =>
+  useQuery<DurableThreadResponse>({
+    queryKey: ['agent', agentId, 'inbox', threadId],
+    queryFn: ({ signal }) => apiGet(`/api/agents/${agentId}/inbox/${threadId}`, signal),
+    enabled: !!threadId,
+  })
+
 // COMP-010 — editable system prompts. List every prompt across packages; the
 // detail hook is lazy (only when a prompt is selected) and carries the
 // server-computed unified diff so the browser ships no diff library.
