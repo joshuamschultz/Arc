@@ -220,6 +220,13 @@ def _trust_handler(args: list[str]) -> None:
     trust_handler(args)
 
 
+def _capability_import_handler(args: list[str]) -> None:
+    """Dispatch staged capability-import review commands."""
+    from arccli.commands.capability_import import capability_import_handler
+
+    capability_import_handler(args)
+
+
 def _workflow_handler(args: list[str]) -> None:
     """Dispatch wrapper."""
     from arccli.commands.workflow import workflow_handler
@@ -704,6 +711,14 @@ COMMAND_REGISTRY: list[CommandDef] = [
         args_hint="<subcommand>",
         cli_only=True,
         handler=_trust_handler,
+    ),
+    CommandDef(
+        name="capability-import",
+        description="Review staged capability ZIPs — list, show, edit",
+        category="Tools & Skills",
+        args_hint="<subcommand>",
+        cli_only=True,
+        handler=_capability_import_handler,
     ),
     CommandDef(
         name="workflow",

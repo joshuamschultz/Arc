@@ -17,6 +17,9 @@ def test_capability_import_ui_is_agent_scoped_and_review_only() -> None:
     assert "review_only" in hook
     assert "inactive" in panel
     assert "capability-imports" in hook
+    assert "readFile" in hook
+    assert "editFile" in hook
+    assert "Save reviewed edit" in panel
 
 
 def test_capability_import_ui_does_not_offer_fake_activation() -> None:
