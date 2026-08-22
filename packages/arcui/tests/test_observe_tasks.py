@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from arcstore.backends.sqlite import SqliteBackend
+from arcstore.backends.memory import FakeBackend
 from arcstore.tasks import Task, TaskStore
 
 from arcui.observe import Observe
@@ -29,7 +29,7 @@ from arcui.observe import Observe
 _CREATOR = "did:arc:test:human/operator"
 
 
-async def _seed_store(data_dir: Path) -> TaskStore:
+async def _seed_store(data_dir: Path) -> tuple[TaskStore, FakeBackend]:
     """Open a TaskStore against the SAME db Observe reads (store/arcui.db).
 
     Mirrors ``arcagent.modules.tasks.store.open_store`` exactly — production
@@ -37,9 +37,9 @@ async def _seed_store(data_dir: Path) -> TaskStore:
     file so writes are visible without any push wire (SPEC-026 FR-5 spirit
     applied to the mutable plane).
     """
-    backend = SqliteBackend(data_dir / "store" / "arcui.db")
+    backend = FakeBackend()
     await backend.start()
-    return TaskStore(backend)
+    return TaskStore(backend), backend
 
 
 def _task(id_: str, **overrides: Any) -> Task:
@@ -54,11 +54,11 @@ def _task(id_: str, **overrides: Any) -> Task:
 
 @pytest.mark.asyncio
 async def test_tasks_returns_rows_from_mutable_plane(tmp_path: Path) -> None:
-    store = await _seed_store(tmp_path)
+    store, backend = await _seed_store(tmp_path)
     await store.create(_task("t1", owner_did="did:arc:acme:analyst/aaaa"))
     await store.create(_task("t2"))
 
-    observe = Observe(data_dir=tmp_path)
+    observe = Observe(data_dir=tmp_path, backend=backend)
     await observe.start()
     try:
         rows = await observe.tasks()
@@ -75,11 +75,11 @@ async def test_tasks_returns_rows_from_mutable_plane(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_tasks_filters_by_owner_did(tmp_path: Path) -> None:
-    store = await _seed_store(tmp_path)
+    store, backend = await _seed_store(tmp_path)
     await store.create(_task("t1", owner_did="did:arc:acme:analyst/aaaa"))
     await store.create(_task("t2", owner_did="did:arc:acme:analyst/bbbb"))
 
-    observe = Observe(data_dir=tmp_path)
+    observe = Observe(data_dir=tmp_path, backend=backend)
     await observe.start()
     try:
         rows = await observe.tasks(owner_did="did:arc:acme:analyst/aaaa")
@@ -90,11 +90,11 @@ async def test_tasks_filters_by_owner_did(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_tasks_filters_by_status(tmp_path: Path) -> None:
-    store = await _seed_store(tmp_path)
+    store, backend = await _seed_store(tmp_path)
     await store.create(_task("t1", owner_did="did:arc:acme:analyst/aaaa", status="in_progress"))
     await store.create(_task("t2"))  # defaults to backlog (unowned)
 
-    observe = Observe(data_dir=tmp_path)
+    observe = Observe(data_dir=tmp_path, backend=backend)
     await observe.start()
     try:
         rows = await observe.tasks(status="in_progress")
@@ -109,7 +109,7 @@ async def test_tasks_exposes_run_id_for_cost_link(tmp_path: Path) -> None:
     join to the existing run/trace view. ``observe.timeline`` already joins
     on ``request_id == run_id`` (observe.py:277-291); this only proves the
     field rides through the tasks reader, not the join itself."""
-    store = await _seed_store(tmp_path)
+    store, backend = await _seed_store(tmp_path)
     await store.create(
         _task(
             "t1",
@@ -119,7 +119,7 @@ async def test_tasks_exposes_run_id_for_cost_link(tmp_path: Path) -> None:
         )
     )
 
-    observe = Observe(data_dir=tmp_path)
+    observe = Observe(data_dir=tmp_path, backend=backend)
     await observe.start()
     try:
         rows = await observe.tasks()
@@ -171,7 +171,7 @@ async def test_audit_filters_by_target_for_task_activity_timeline(tmp_path: Path
         tmp_path, seq=2, actor_did="did:arc:x/aaaa", action="tasks.start", target="task:t1"
     )
 
-    observe = Observe(data_dir=tmp_path)
+    observe = Observe(data_dir=tmp_path, backend=FakeBackend())
     await observe.start()
     try:
         timeline = await observe.audit(target="task:t1")

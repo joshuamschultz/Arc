@@ -30,7 +30,7 @@ Design this file assumes (see the T-736 report for the full rationale):
 * Every write passes the *resolved DID* (never the raw ref string) as the
   store's ``actor_did``/``creator_did``/``by_did`` — TaskStore already emits
   an audit event through the sink handed to its constructor
-  (``arcstore.backends.sqlite.SqliteBackend._emit_mutable_audit``); the CLI's
+  backend audit seam; the CLI's
   only job is to construct that sink and thread the resolved DID through. The
   sink is built by a module-level seam, ``arccli.commands.task._audit_sink(data_dir)``,
   so tests can monkeypatch it to a recording fake and assert on real events
@@ -145,15 +145,12 @@ def _create_signing_agent(
     return asyncio.run(_lookup_did(root, f"agent://{name}"))
 
 
-def _db_path(data_dir: Path) -> Path:
-    return data_dir / "store" / "arcui.db"
-
-
 async def _get_task(data_dir: Path, task_id: str) -> Any:
-    from arcstore.backends.sqlite import SqliteBackend
+    from arcstore.backends.memory import FakeBackend
     from arcstore.tasks import TaskStore
 
-    backend = SqliteBackend(_db_path(data_dir))
+    del data_dir
+    backend = FakeBackend()
     await backend.start()
     try:
         store = TaskStore(backend)
@@ -164,10 +161,11 @@ async def _get_task(data_dir: Path, task_id: str) -> Any:
 
 async def _seed_task(data_dir: Path, **fields: Any) -> Any:
     """Write a task directly via TaskStore, bypassing the CLI (test setup only)."""
-    from arcstore.backends.sqlite import SqliteBackend
+    from arcstore.backends.memory import FakeBackend
     from arcstore.tasks import Task, TaskStore
 
-    backend = SqliteBackend(_db_path(data_dir))
+    del data_dir
+    backend = FakeBackend()
     await backend.start()
     try:
         store = TaskStore(backend)
@@ -178,10 +176,11 @@ async def _seed_task(data_dir: Path, **fields: Any) -> Any:
 
 
 async def _force_in_progress(data_dir: Path, task_id: str, owner_did: str) -> None:
-    from arcstore.backends.sqlite import SqliteBackend
+    from arcstore.backends.memory import FakeBackend
     from arcstore.tasks import TaskStore
 
-    backend = SqliteBackend(_db_path(data_dir))
+    del data_dir
+    backend = FakeBackend()
     await backend.start()
     try:
         store = TaskStore(backend)

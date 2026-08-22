@@ -121,6 +121,17 @@ class MutableConnectionBackend(Protocol):
         self, collection: str, key: str, *, actor_did: str, sink: Any | None = None
     ) -> bool: ...
 
+    async def update_if(
+        self,
+        collection: str,
+        key: str,
+        patch: dict[str, Any],
+        where: dict[str, Any],
+        *,
+        actor_did: str,
+        sink: Any | None = None,
+    ) -> bool: ...
+
 
 class ConnectionStateStore:
     """Connection directory over the mutable plane's ``"connections"`` collection."""
@@ -229,8 +240,33 @@ class ConnectionStateStore:
         inside one statement, so two tools approved at the same instant both
         land — a read-modify-write of the whole map would lose one.
         """
-        return await self._patch(
-            connection, {"approved_tool_hashes": {tool: contract_hash}}, actor_did=actor_did
+        for _ in range(8):
+            current = await self._backend.mutable_read(self._COLLECTION, connection)
+            if current is None:
+                return False
+            hashes = current.get("approved_tool_hashes", {})
+            if not isinstance(hashes, dict):
+                raise ExtensionError(
+                    code="CONNECTION_STATE_UNREADABLE",
+                    message=f"connection state row is unreadable: {connection}",
+                    details={"connection": connection},
+                )
+            merged = {**hashes, tool: contract_hash}
+            where = {name: value for name, value in current.items() if name != "updated_at"}
+            won = await self._backend.update_if(
+                self._COLLECTION,
+                connection,
+                {"approved_tool_hashes": merged, "updated_at": _now()},
+                where,
+                actor_did=actor_did,
+                sink=self._sink,
+            )
+            if won:
+                return True
+        raise ExtensionError(
+            code="CONNECTION_STATE_BUSY",
+            message=f"connection state changed while approving {tool!r}",
+            details={"connection": connection, "tool": tool},
         )
 
     async def approved_hash(self, connection: str, tool: str) -> str | None:

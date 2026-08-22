@@ -179,6 +179,7 @@ def create_app(
     gate_control_plane: Any | None = None,
     arcstore_config: ArcStoreConfig | None = None,
     arcstore_secret: SecretStr | None = None,
+    arcstore_backend: Any | None = None,
 ) -> Starlette:
     """Build a Starlette application with all ArcUI routes.
 
@@ -229,7 +230,9 @@ def create_app(
 
     # TaskStore writer (SPEC-056 Phase D, FR-7): one configured backend shared
     # by the mutation stores and the read-side Observe plane.
-    task_store_backend = open_backend(config=arcstore_config, secret=arcstore_secret)
+    task_store_backend = arcstore_backend or open_backend(
+        config=arcstore_config, secret=arcstore_secret
+    )
 
     routes = [
         Route("/", _index),

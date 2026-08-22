@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 from arcgateway import team_roster
-from arcstore.backends.sqlite import SqliteBackend
+from arcstore.backends.memory import FakeBackend
 from arcstore.tasks import Task, TaskStore
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
@@ -34,7 +34,7 @@ async def _seed_task(data_dir: Path, task: Task) -> None:
     (which `_build_team_dir` still writes for the directory-layout docstring,
     but is never read) onto arcstore — this seeds the real source of truth.
     """
-    backend = SqliteBackend(data_dir / "store" / "arcui.db")
+    backend = FakeBackend()
     await backend.start()
     await TaskStore(backend).create(task)
 
@@ -186,7 +186,7 @@ def _make_detail_app(
     app.state.audit = UIAuditLogger(enabled=False)
     app.state.team_root = team_root
     # SPEC-026 FR-5: stats and traces routes read from the Observe plane.
-    app.state.observe = Observe(data_dir=data_dir)
+    app.state.observe = Observe(data_dir=data_dir, backend=FakeBackend())
 
     def _roster_provider() -> list[team_roster.RosterEntry]:
         if app.state.team_root is None:
@@ -549,7 +549,7 @@ class TestAuditRoute:
 
         team = _build_team_dir(tmp_path)
         auth = AuthConfig({"viewer_token": "viewer", "operator_token": "operator"})
-        app = create_app(auth_config=auth, team_root=team)
+        app = create_app(auth_config=auth, team_root=team, arcstore_backend=FakeBackend())
         with TestClient(app) as client:
             resp = client.get("/api/agents/alpha/audit", headers=_viewer(auth))
         assert resp.status_code == 200
@@ -607,7 +607,9 @@ class TestTasksAndSchedulesRoutes:
                 ),
             )
         )
-        app, auth, _ = _make_detail_app(team_root=team)
+        app, auth, _ = _make_detail_app(
+            team_root=team, data_dir=_isolated_arc_data_dir
+        )
         client = TestClient(app)
         resp = client.get("/api/agents/alpha/tasks", headers=_viewer(auth))
         assert resp.status_code == 200
@@ -778,7 +780,7 @@ class TestEdgeCases:
 
         team = _build_team_dir(tmp_path)
         auth = AuthConfig({"viewer_token": "viewer", "operator_token": "operator"})
-        app = create_app(auth_config=auth, team_root=team)
+        app = create_app(auth_config=auth, team_root=team, arcstore_backend=FakeBackend())
         with TestClient(app) as client:
             resp = client.get(
                 "/api/agents/alpha/traces?limit=5",

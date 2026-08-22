@@ -11,9 +11,8 @@ import asyncio
 from pathlib import Path
 
 import pytest
-from arcstore.backends.sqlite import SqliteBackend
+from arcstore.backends.memory import FakeBackend
 from arcstore.cancellations import CancelRequest, CancelStore
-from arcstore.config import store_db_path
 
 from arccli.commands.stop import stop_handler
 
@@ -27,7 +26,7 @@ def _isolated_arc(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 async def _list_pending() -> list[CancelRequest]:
-    backend = SqliteBackend(store_db_path(None))
+    backend = FakeBackend()
     await backend.start()
     try:
         return await CancelStore(backend).list(status="pending")

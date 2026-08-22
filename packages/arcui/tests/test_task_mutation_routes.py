@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from arcstore.backends.sqlite import SqliteBackend
+from arcstore.backends.memory import FakeBackend
 from arcstore.tasks import Task, TaskStore
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
@@ -52,7 +52,7 @@ _CREATOR = "did:arc:test:human/operator"
 
 
 async def _seed_store(data_dir: Path) -> TaskStore:
-    backend = SqliteBackend(data_dir / "store" / "arcui.db")
+    backend = FakeBackend()
     await backend.start()
     return TaskStore(backend)
 

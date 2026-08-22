@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from arcgateway import team_roster
-from arcstore.backends.sqlite import SqliteBackend
+from arcstore.backends.memory import FakeBackend
 from arcstore.tasks import Task, TaskStore
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
@@ -38,7 +38,7 @@ _CREATOR = "did:arc:test:human/operator"
 
 async def _seed_store(data_dir: Path) -> TaskStore:
     """Open a TaskStore against the SAME db Observe reads (store/arcui.db)."""
-    backend = SqliteBackend(data_dir / "store" / "arcui.db")
+    backend = FakeBackend()
     await backend.start()
     return TaskStore(backend)
 

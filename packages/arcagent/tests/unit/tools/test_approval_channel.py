@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 from arcstore.approvals import ApprovalStore
-from arcstore.backends.sqlite import SqliteBackend
+from arcstore.backends.memory import FakeBackend
 from arctrust.identity import AgentIdentity
 from arctrust.policy import (
     OperatorApprovalAuthority,
@@ -33,8 +33,9 @@ _TRIFECTA = frozenset({"private_data", "external_comms", "untrusted_input"})
 _AGENT = "did:arc:example:org:agent:abc"
 
 
-async def _store(tmp_path: Path) -> tuple[ApprovalStore, SqliteBackend]:
-    be = SqliteBackend(tmp_path / "store.db")
+async def _store(tmp_path: Path) -> tuple[ApprovalStore, FakeBackend]:
+    del tmp_path
+    be = FakeBackend()
     await be.start()
     return ApprovalStore(be), be
 

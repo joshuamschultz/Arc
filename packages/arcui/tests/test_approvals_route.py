@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 from arcstore.approvals import ApprovalStore, PendingApproval
-from arcstore.backends.sqlite import SqliteBackend
+from arcstore.backends.memory import FakeBackend
 from arctrust import OperatorKey, default_operator_key_path
 from arctrust.policy import (
     OperatorApprovalAuthority,
@@ -47,7 +47,7 @@ def _call() -> ToolCall:
 
 
 async def _seed_store(data_dir: Path, call_hash: str, *, enriched: bool = False) -> ApprovalStore:
-    backend = SqliteBackend(data_dir / "store" / "arcui.db")
+    backend = FakeBackend()
     await backend.start()
     store = ApprovalStore(backend)
     extra: dict[str, Any] = {}
@@ -97,7 +97,7 @@ def _operator(auth: AuthConfig) -> dict[str, str]:
 
 def _read(tmp_path: Path) -> Any:
     async def _run() -> Any:
-        backend = SqliteBackend(tmp_path / "store" / "arcui.db")
+        backend = FakeBackend()
         await backend.start()
         try:
             return await ApprovalStore(backend).get("req1")

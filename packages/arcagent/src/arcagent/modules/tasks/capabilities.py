@@ -37,7 +37,6 @@ import asyncio
 import json
 import logging
 import os
-import sqlite3
 import sys
 import uuid
 from collections.abc import Iterator
@@ -98,10 +97,9 @@ from arcagent.utils.json_args import as_optional_object
 from arcagent.utils.moment import moment_cues
 from arcagent.utils.sanitizer import sanitize_text
 
-# A SQLite lock-timeout under shared-db contention surfaces as
-# ``sqlite3.OperationalError`` from deep in the store; catch it alongside the
-# validation errors so a tool degrades to a clean ``{"error"}`` (REL-F3b).
-_TOOL_ERRORS = (ValueError, TypeError, sqlite3.OperationalError)
+# Backend failures are caught at the tool seam so a tool degrades to a clean
+# structured error instead of crashing the agent.
+_TOOL_ERRORS = (ValueError, TypeError, OSError)
 
 _logger = logging.getLogger("arcagent.modules.tasks.capabilities")
 

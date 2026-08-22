@@ -412,15 +412,14 @@ def test_purge_refuses_while_a_real_run_references_the_workflow(
     """
     import asyncio
 
-    from arcstore import store_db_path
-    from arcstore.backends.sqlite import SqliteBackend
+    from arcstore.backends.memory import FakeBackend
     from arcstore.runs import Run, RunStore
 
     workflow_handler(["create", str(_write_bundle(tmp_path / "src")), "--dir", str(arc_dir)])
     capsys.readouterr()
 
     async def _seed_run() -> None:
-        backend = SqliteBackend(store_db_path(None))
+        backend = FakeBackend()
         await backend.start()
         await RunStore(backend).create(
             Run(

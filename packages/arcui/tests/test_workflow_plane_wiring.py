@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from arcstore.backends.sqlite import SqliteBackend
+from arcstore.backends.memory import FakeBackend
 from arcteam.workflow.runner import build_workflow_runner
 from arctrust import OperatorKey
 
@@ -43,7 +43,7 @@ async def plane(tmp_path: Path) -> Any:
     bundle.mkdir(parents=True)
     (bundle / "workflow.toml").write_text(_DEFINITION, encoding="utf-8")
 
-    backend = SqliteBackend(tmp_path / "store.db")
+    backend = FakeBackend()
     await backend.start()
     runner = build_workflow_runner(
         tier="personal",
@@ -169,7 +169,7 @@ async def multifile_plane(tmp_path: Path) -> Any:
     (bundle / "scripts" / "run.sh").write_text("#!/usr/bin/env bash\necho '{}'\n", encoding="utf-8")
     (bundle / "schemas" / "out.json").write_text('{"type": "object"}', encoding="utf-8")
 
-    backend = SqliteBackend(tmp_path / "store.db")
+    backend = FakeBackend()
     await backend.start()
     runner = build_workflow_runner(
         tier="personal",

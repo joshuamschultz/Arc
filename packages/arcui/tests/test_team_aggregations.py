@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 
 from arcgateway import team_roster
-from arcstore.backends.sqlite import SqliteBackend
+from arcstore.backends.memory import FakeBackend
 from arcstore.tasks import Task, TaskStore
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
@@ -34,7 +34,7 @@ async def _seed_tasks(data_dir: Path, tasks: list[Task]) -> None:
     tasks route no longer reads) onto arcstore — this seeds the real source
     of truth.
     """
-    backend = SqliteBackend(data_dir / "store" / "arcui.db")
+    backend = FakeBackend()
     await backend.start()
     store = TaskStore(backend)
     for task in tasks:

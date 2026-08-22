@@ -6,7 +6,7 @@ suite that never starts a runner is precisely the failure this file exists to
 make loud: the host failed open, no runner ever started, and every gate the
 engine enforces was bypassed by simply never running.
 
-So: real SqliteBackend, real arcstore RunStore and TaskStore, real
+So: real ArcStore backend, real arcstore RunStore and TaskStore, real
 DefinitionStore over a real signed-on-disk bundle, real RunnerIdentity from a
 real operator key, and the real ``start_runner_host`` the gateway bootstrap
 calls. No doubles anywhere in the construction path.
@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from arcstore.backends.sqlite import SqliteBackend
+from arcstore.backends.memory import FakeBackend
 from arcstore.tasks import TaskStore
 from arctrust import OperatorKey
 from arctrust.paths import arc_state, default_operator_key_path, workflows_dir
@@ -85,7 +85,7 @@ async def deployment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
     bundle.mkdir(parents=True)
     (bundle / "workflow.toml").write_text(WORKFLOW)
 
-    backend = SqliteBackend(tmp_path / "store.db")
+    backend = FakeBackend()
     await backend.start()
     # The workspace root is the STATE root, matching both production callers:
     # `arc workflow` passes arc_state(arc_dir), and the gateway host derives it
@@ -225,7 +225,7 @@ async def test_a_runner_without_an_identity_refuses_to_build(tmp_path: Path) -> 
     """No operator key means no attributable rows — do not start (REQ-232)."""
     from arcteam.workflow.identity import RunnerIdentityUnavailableError
 
-    backend = SqliteBackend(tmp_path / "store.db")
+    backend = FakeBackend()
     await backend.start()
     try:
         with pytest.raises(RunnerIdentityUnavailableError):
@@ -309,7 +309,6 @@ async def wired(tmp_path: Path, monkeypatch: Any) -> Any:
     # and the run fails at node 1 for a reason that looks nothing like a stale
     # patch target.
     monkeypatch.setattr("arcagent.make_backend", _shared_backend)
-    monkeypatch.setattr("arcstore.config.store_db_path", lambda _: tmp_path / "store.db")
 
     yield tmp_path, key_path, team_backend, registry
 

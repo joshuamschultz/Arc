@@ -12,8 +12,7 @@ from pathlib import Path
 
 import pytest
 from arcstore.approvals import ApprovalStore, PendingApproval
-from arcstore.backends.sqlite import SqliteBackend
-from arcstore.config import store_db_path
+from arcstore.backends.memory import FakeBackend
 from arctrust.policy import (
     OperatorApprovalAuthority,
     ToolCall,
@@ -43,7 +42,7 @@ def _call() -> ToolCall:
 
 
 async def _seed_pending(call_hash: str, *, enriched: bool = False) -> None:
-    backend = SqliteBackend(store_db_path(None))
+    backend = FakeBackend()
     await backend.start()
     extra: dict[str, object] = {}
     if enriched:
@@ -71,7 +70,7 @@ async def _seed_pending(call_hash: str, *, enriched: bool = False) -> None:
 
 
 async def _read(pid: str) -> PendingApproval | None:
-    backend = SqliteBackend(store_db_path(None))
+    backend = FakeBackend()
     await backend.start()
     try:
         return await ApprovalStore(backend).get(pid)

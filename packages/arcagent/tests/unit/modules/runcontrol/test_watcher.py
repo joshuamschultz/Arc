@@ -9,12 +9,11 @@ operator-attributed audit event fires. A request naming no live run stays pendin
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from pathlib import Path
 from typing import Any
 
 import pytest
 import pytest_asyncio
-from arcstore.backends.sqlite import SqliteBackend
+from arcstore.backends.memory import FakeBackend
 from arcstore.cancellations import CancelRequest, CancelStore
 
 from arcagent.modules.runcontrol import _runtime
@@ -53,8 +52,8 @@ class _FakeTelemetry:
 
 
 @pytest_asyncio.fixture
-async def store(tmp_path: Path) -> AsyncIterator[CancelStore]:
-    be = SqliteBackend(tmp_path / "store.db")
+async def store() -> AsyncIterator[CancelStore]:
+    be = FakeBackend()
     await be.start()
     yield CancelStore(be)
     await be.stop()

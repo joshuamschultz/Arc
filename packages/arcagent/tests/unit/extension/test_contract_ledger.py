@@ -26,12 +26,11 @@ Two non-obvious properties get their own tests:
 
 from __future__ import annotations
 
-from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from arcstore.backends.sqlite import SqliteBackend
+from arcstore.backends.memory import FakeBackend
 
 if TYPE_CHECKING:
     from arcagent.extension.attachment import ToolSpec
@@ -73,15 +72,15 @@ _APPROVED = [_spec("create_issue"), _spec("list_issues")]
 
 
 @pytest.fixture
-async def backend(tmp_path: Path) -> SqliteBackend:
-    """This test's own db file — never the env-resolved shared store."""
-    inner = SqliteBackend(tmp_path / "contract-ledger.db")
+async def backend() -> FakeBackend:
+    """A fresh backend fake isolates this test from deployment state."""
+    inner = FakeBackend()
     await inner.start()
     return inner
 
 
 @pytest.fixture
-async def store(backend: SqliteBackend) -> ConnectionStateStore:
+async def store(backend: FakeBackend) -> ConnectionStateStore:
     from arcagent.extension.state import ConnectionRecord, ConnectionStateStore
 
     opened = ConnectionStateStore(backend)

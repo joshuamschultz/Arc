@@ -129,7 +129,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 import pytest
-from arcstore.backends.sqlite import SqliteBackend
+from arcstore.backends.memory import FakeBackend
 from arcstore.tasks import Task, TaskStore
 
 from arcteam.workflow.runner import node_task_id
@@ -256,7 +256,7 @@ class FlowRunStore:
 
     _COLLECTION = "runs"
 
-    def __init__(self, backend: SqliteBackend) -> None:
+    def __init__(self, backend: FakeBackend) -> None:
         self._backend = backend
 
     async def create_run(
@@ -375,7 +375,7 @@ class FlowTaskStore:
     is a JSON-scoped read (``metadata.flow_run_id``), never a list-then-filter.
     """
 
-    def __init__(self, backend: SqliteBackend, tasks: TaskStore) -> None:
+    def __init__(self, backend: FakeBackend, tasks: TaskStore) -> None:
         self._backend = backend
         self._tasks = tasks
         self.created_keys: list[str] = []
@@ -472,7 +472,7 @@ REVIEWER_DID = "did:arc:local:agent/3333cccc"
 
 @pytest.fixture
 async def backend(tmp_path: Any) -> Any:
-    store = SqliteBackend(tmp_path / "flow.db")
+    store = FakeBackend()
     await store.start()
     yield store
     await store.stop()

@@ -19,7 +19,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from arcstore.backends.sqlite import SqliteBackend
+from arcstore.backends.memory import FakeBackend
 from arcstore.tasks import Task, TaskStore
 from packages.arcteam.tests.unit.workflow.conftest import FlowRunStore, FlowTaskStore
 
@@ -43,9 +43,9 @@ def _row(run_id: str, node_id: str) -> Task:
 @pytest.fixture
 async def pair(tmp_path: Any) -> Any:
     """The real adapter and the double, each over its own real backend."""
-    real_backend = SqliteBackend(tmp_path / "real.db")
+    real_backend = FakeBackend()
     await real_backend.start()
-    double_backend = SqliteBackend(tmp_path / "double.db")
+    double_backend = FakeBackend()
     await double_backend.start()
 
     real = (

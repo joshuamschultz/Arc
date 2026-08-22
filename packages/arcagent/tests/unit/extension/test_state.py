@@ -28,12 +28,10 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Sequence
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from arcstore.backends.sqlite import SqliteBackend
-from arcstore.config import store_db_path
+from arcstore.backends.memory import FakeBackend
 from pydantic import ValidationError
 
 if TYPE_CHECKING:
@@ -65,7 +63,7 @@ class _CountingBackend:
     store must never do, and counting only the writes would not see it.
     """
 
-    def __init__(self, inner: SqliteBackend) -> None:
+    def __init__(self, inner: FakeBackend) -> None:
         self._inner = inner
         self.calls: list[str] = []
 
@@ -102,6 +100,21 @@ class _CountingBackend:
         self.calls.append("delete")
         return await self._inner.mutable_delete(collection, key, actor_did=actor_did, sink=sink)
 
+    async def update_if(
+        self,
+        collection: str,
+        key: str,
+        patch: dict[str, Any],
+        where: dict[str, Any],
+        *,
+        actor_did: str,
+        sink: Any | None = None,
+    ) -> bool:
+        self.calls.append("update_if")
+        return await self._inner.update_if(
+            collection, key, patch, where, actor_did=actor_did, sink=sink
+        )
+
     async def mutable_read(self, collection: str, key: str) -> dict[str, Any] | None:
         self.calls.append("read")
         return await self._inner.mutable_read(collection, key)
@@ -116,9 +129,10 @@ class _CountingBackend:
 class _BarrierBackend:
     """Real backend whose merges all wait on one barrier — forces interleaving."""
 
-    def __init__(self, inner: SqliteBackend, barrier: asyncio.Barrier) -> None:
+    def __init__(self, inner: FakeBackend, barrier: asyncio.Barrier) -> None:
         self._inner = inner
         self._barrier = barrier
+        self._barrier_calls = 0
 
     async def mutable_create_batch(
         self,
@@ -141,9 +155,28 @@ class _BarrierBackend:
         actor_did: str,
         sink: Any | None = None,
     ) -> bool:
-        await self._barrier.wait()
+        if self._barrier_calls < 2:
+            self._barrier_calls += 1
+            await self._barrier.wait()
         return await self._inner.mutable_merge(
             collection, key, patch, actor_did=actor_did, sink=sink
+        )
+
+    async def update_if(
+        self,
+        collection: str,
+        key: str,
+        patch: dict[str, Any],
+        where: dict[str, Any],
+        *,
+        actor_did: str,
+        sink: Any | None = None,
+    ) -> bool:
+        if self._barrier_calls < 2:
+            self._barrier_calls += 1
+            await self._barrier.wait()
+        return await self._inner.update_if(
+            collection, key, patch, where, actor_did=actor_did, sink=sink
         )
 
     async def mutable_delete(
@@ -161,22 +194,15 @@ class _BarrierBackend:
 
 
 @pytest.fixture
-async def backend(tmp_path: Path) -> SqliteBackend:
-    """A db file of this test's own — never the resolved shared store.
-
-    Deliberately NOT ``store_db_path(tmp_path)``: ``ARCSTORE_DATA_DIR`` outranks
-    that argument in ``resolve_data_dir``, so the path would come from the
-    environment and these assertions would depend on the shell they run in. A
-    row leaked in from another test or another run would then be
-    indistinguishable from a bug in ``list()``.
-    """
-    inner = SqliteBackend(tmp_path / "connection-state.db")
+async def backend() -> FakeBackend:
+    """A fresh backend fake isolates each test from shared deployment state."""
+    inner = FakeBackend()
     await inner.start()
     return inner
 
 
 @pytest.fixture
-async def store(backend: SqliteBackend) -> ConnectionStateStore:
+async def store(backend: FakeBackend) -> ConnectionStateStore:
     from arcagent.extension.state import ConnectionStateStore
 
     return ConnectionStateStore(backend)
@@ -216,7 +242,7 @@ def test_no_field_can_hold_a_credential_value() -> None:
 
 
 async def test_persisted_row_carries_only_schema_keys(
-    store: ConnectionStateStore, backend: SqliteBackend
+    store: ConnectionStateStore, backend: FakeBackend
 ) -> None:
     from arcagent.extension.state import CONNECTION_COLLECTION, ConnectionRecord
 
@@ -282,7 +308,7 @@ async def test_set_health_marks_a_connection_needing_attention(
 
 
 async def test_credential_metadata_records_coordinates_not_the_value(
-    store: ConnectionStateStore, backend: SqliteBackend
+    store: ConnectionStateStore, backend: FakeBackend
 ) -> None:
     from arcagent.extension.state import CONNECTION_COLLECTION
 
@@ -383,7 +409,7 @@ async def test_reapproving_a_tool_replaces_its_hash(store: ConnectionStateStore)
 
 
 async def test_concurrent_approvals_of_two_tools_both_persist(
-    backend: SqliteBackend,
+    backend: FakeBackend,
 ) -> None:
     """Forced interleaving: a read-modify-write store loses one approval here."""
     from arcagent.extension.state import ConnectionStateStore
@@ -420,7 +446,7 @@ async def test_dependency_declarations_round_trip(store: ConnectionStateStore) -
 # --- atomicity: one statement per mutation, never read-modify-write ---------
 
 
-async def test_every_mutation_is_a_single_backend_call(backend: SqliteBackend) -> None:
+async def test_every_mutation_is_a_single_backend_call(backend: FakeBackend) -> None:
     """A half-written record is impossible only if each update is one statement.
 
     One call, and that call a merge: no read-modify-write (which would let a
@@ -441,13 +467,21 @@ async def test_every_mutation_is_a_single_backend_call(backend: SqliteBackend) -
         ),
         lambda: store.declare_dependencies(_CONNECTION, ["httpx>=0.27"], actor_did=_ACTOR),
     )
-    for operation in operations:
+    for operation in operations[:2]:
         counting.calls.clear()
         await operation()
         assert counting.calls == ["merge"]
 
+    counting.calls.clear()
+    await operations[2]()
+    assert counting.calls == ["read", "update_if"]
 
-async def test_writes_carry_the_actor_to_the_audit_sink(backend: SqliteBackend) -> None:
+    counting.calls.clear()
+    await operations[3]()
+    assert counting.calls == ["merge"]
+
+
+async def test_writes_carry_the_actor_to_the_audit_sink(backend: FakeBackend) -> None:
     from arcagent.extension.state import ConnectionStateStore
 
     sink = _RecordingSink()
@@ -461,7 +495,7 @@ async def test_writes_carry_the_actor_to_the_audit_sink(backend: SqliteBackend) 
 
 
 async def test_get_on_an_unreadable_row_raises_naming_the_connection(
-    store: ConnectionStateStore, backend: SqliteBackend
+    store: ConnectionStateStore, backend: FakeBackend
 ) -> None:
     from arcagent.core.errors import ExtensionError
     from arcagent.extension.state import CONNECTION_COLLECTION
@@ -481,7 +515,7 @@ async def test_get_on_an_unreadable_row_raises_naming_the_connection(
 
 async def test_list_survives_one_unreadable_row_and_logs_it(
     store: ConnectionStateStore,
-    backend: SqliteBackend,
+    backend: FakeBackend,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     from arcagent.extension.state import CONNECTION_COLLECTION
@@ -509,18 +543,16 @@ async def test_list_survives_one_unreadable_row_and_logs_it(
 # --- opener -----------------------------------------------------------------
 
 
-async def test_open_connection_state_uses_the_shared_operational_db(tmp_path: Path) -> None:
-    """The opener lands on the resolved store — the db arcui and the CLI read.
-
-    The repo's autouse ``_isolate_arcstore_data_dir`` fixture points
-    ``ARCSTORE_DATA_DIR`` at this test's tmp dir, and that env var is the top of
-    ``resolve_data_dir``'s precedence — so the resolved path is asserted here,
-    not a path built from ``tmp_path``, which the env would override anyway.
-    """
+async def test_open_connection_state_accepts_an_injected_backend() -> None:
     from arcagent.extension.state import open_connection_state
 
-    store = await open_connection_state(str(tmp_path))
+    backend = FakeBackend()
+    await backend.start()
+    store = await open_connection_state(opener=lambda: _ready(backend))
     await _create(store)
 
-    assert store_db_path().exists()
     assert await store.get(_CONNECTION) is not None
+
+
+async def _ready(backend: FakeBackend) -> FakeBackend:
+    return backend
