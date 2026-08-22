@@ -804,10 +804,11 @@ class ArcAgent:
                     projection = _delivery_projection(event)
                     if projection is None:
                         continue
+                    if isinstance(projection, DeliveryTerminalEvent) and terminal_sent:
+                        continue
                     await queue.put(projection)
                     if isinstance(projection, DeliveryTerminalEvent):
                         terminal_sent = True
-                        return
             except asyncio.CancelledError:
                 cancelled = True
                 raise
@@ -843,9 +844,16 @@ class ArcAgent:
                 yield item
         finally:
             if not task.done():
-                task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
+                if terminal_sent:
+                    # A terminal event is emitted before ``dispatch_stream``
+                    # leaves its cleanup scopes. Let that completion unregister
+                    # the interactive handle instead of cancelling its finally
+                    # block and leaving a stale injection target behind.
                     await task
+                else:
+                    task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
 
     def active_run(self, session_key: str) -> arcrun.RunHandle | None:
         """Return the live steerable run for ``session_key``, or None if idle."""

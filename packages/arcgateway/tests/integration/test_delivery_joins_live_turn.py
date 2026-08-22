@@ -120,10 +120,11 @@ class _DeliveryCall:
 
 
 class _DeliverySpy:
-    """Records calls to the agent's delivery API and delegates to the real one."""
+    """Records both delivery facades while preserving their real behaviour."""
 
-    def __init__(self, inner: Callable[..., Any]) -> None:
+    def __init__(self, inner: Callable[..., Any], stream_inner: Callable[..., Any]) -> None:
         self._inner = inner
+        self._stream_inner = stream_inner
         self.calls: list[_DeliveryCall] = []
 
     async def __call__(self, *args: Any, **kwargs: Any) -> Any:
@@ -132,6 +133,30 @@ class _DeliverySpy:
         outcome = await self._inner(*args, **kwargs)
         call.outcome = outcome
         return outcome
+
+    def stream(self, *args: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        """Wrap the typed streaming facade used by the gateway transport."""
+        call = _DeliveryCall(args=args, kwargs=dict(kwargs))
+        self.calls.append(call)
+        return self._stream(call, *args, **kwargs)
+
+    async def _stream(
+        self, call: _DeliveryCall, *args: Any, **kwargs: Any
+    ) -> AsyncIterator[Any]:
+        saw_event = False
+        stream = self._stream_inner(*args, **kwargs)
+        try:
+            async for event in stream:
+                saw_event = True
+                yield event
+        finally:
+            aclose = getattr(stream, "aclose", None)
+            if callable(aclose):
+                await aclose()
+            # A joined delivery intentionally has no second stream. Recording
+            # the outcome describes the public streaming contract without
+            # changing the agent's run decision.
+            call.outcome = "started" if saw_event else "followed_up"
 
     def for_session(self, session_key: str) -> list[_DeliveryCall]:
         """Calls whose arguments name ``session_key`` — however it is spelled."""
@@ -198,11 +223,11 @@ async def harness(tmp_path: Path) -> AsyncIterator[_Harness]:
 
     agent = ArcAgent(config=_config(workspace, tmp_path))
 
-    # Install the spy BEFORE startup: ``agent:ready`` publishes the bound
-    # ``deliver_message`` as ``deliver_fn``, so a consumer that binds the
-    # callback at startup is observed too.
-    spy = _DeliverySpy(agent.deliver_message)
+    # The gateway uses the streaming delivery facade while teammate modules
+    # bind ``deliver_message`` at ``agent:ready``.  Observe both real facades.
+    spy = _DeliverySpy(agent.deliver_message, agent.stream_delivered_message)
     agent.deliver_message = spy  # type: ignore[method-assign]
+    agent.stream_delivered_message = spy.stream  # type: ignore[method-assign]
 
     await agent.startup()
     model = _GatedModel()
@@ -307,9 +332,9 @@ async def test_second_message_joins_the_run_already_in_flight(harness: _Harness)
 async def test_first_message_still_starts_a_turn(harness: _Harness) -> None:
     """With nothing in flight the ordinary path must still open a turn.
 
-    The delivery entry point reports ``"started"`` and the model really sees the
-    message — routing a message through the agent must not cost us the plain
-    first-message case.
+    The streaming delivery entry point starts a real turn and the model sees
+    the message — routing a message through the agent must not cost us the
+    plain first-message case.
     """
     await harness.router.handle(harness.inbound("hello there"))
     await _settle()
@@ -319,10 +344,6 @@ async def test_first_message_still_starts_a_turn(harness: _Harness) -> None:
         "REQ-302: the gateway never called the agent's delivery entry point for "
         "the first message of an idle session; it drove a turn itself instead."
     )
-    assert calls[-1].outcome == "started", (
-        f"Expected the idle-session delivery to report 'started', got {calls[-1].outcome!r}."
-    )
-
     await _wait_until(
         lambda: any("hello there" in text for turn in harness.model.turns for text in turn),
         what="the model to be invoked with the inbound message",
@@ -399,9 +420,9 @@ async def test_human_message_opens_its_own_turn_beside_a_background_run(
         "REQ-303: the gateway never called the agent's delivery entry point, so "
         "the agent never got to decide that this message opens a new turn."
     )
-    assert calls[-1].outcome == "started", (
-        "REQ-303: with only a background run in flight the message must open a "
-        f"new turn in its own session; delivery reported {calls[-1].outcome!r}."
+    await _wait_until(
+        lambda: any("are you there?" in text for turn in harness.model.turns for text in turn),
+        what="the human turn to start beside the background run",
     )
 
     assert _pending_injections(background) == 0, (

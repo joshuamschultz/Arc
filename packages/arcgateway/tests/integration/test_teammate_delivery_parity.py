@@ -38,6 +38,7 @@ session identity, same audit shape; the sender never decides the run).
 from __future__ import annotations
 
 import asyncio
+from collections import Counter
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -139,10 +140,11 @@ class _DeliveryCall:
 
 
 class _DeliverySpy:
-    """Records calls to the agent's delivery API and delegates to the real one."""
+    """Records both delivery facades while preserving their real behaviour."""
 
-    def __init__(self, inner: Callable[..., Any]) -> None:
+    def __init__(self, inner: Callable[..., Any], stream_inner: Callable[..., Any]) -> None:
         self._inner = inner
+        self._stream_inner = stream_inner
         self.calls: list[_DeliveryCall] = []
 
     async def __call__(self, *args: Any, **kwargs: Any) -> Any:
@@ -151,6 +153,27 @@ class _DeliverySpy:
         outcome = await self._inner(*args, **kwargs)
         call.outcome = outcome
         return outcome
+
+    def stream(self, *args: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        """Wrap the typed streaming facade used by the gateway transport."""
+        call = _DeliveryCall(kwargs=dict(kwargs))
+        self.calls.append(call)
+        return self._stream(call, *args, **kwargs)
+
+    async def _stream(
+        self, call: _DeliveryCall, *args: Any, **kwargs: Any
+    ) -> AsyncIterator[Any]:
+        saw_event = False
+        stream = self._stream_inner(*args, **kwargs)
+        try:
+            async for event in stream:
+                saw_event = True
+                yield event
+        finally:
+            aclose = getattr(stream, "aclose", None)
+            if callable(aclose):
+                await aclose()
+            call.outcome = "started" if saw_event else "followed_up"
 
     def since(self, mark: int) -> list[_DeliveryCall]:
         return self.calls[mark:]
@@ -247,8 +270,8 @@ class _Harness:
         """Let every run in flight finish so the next message is a fresh turn."""
         self.model.release()
         await _wait_until(
-            lambda: not self.agent._active_runs,
-            what="every active run to finish",
+            lambda: not self.agent._active_runs and not self.agent._delivery_stream_tasks,
+            what="every active run and delivery stream to finish",
         )
         await _settle()
 
@@ -275,8 +298,9 @@ async def harness(tmp_path: Path) -> AsyncIterator[_Harness]:
 
     agent = ArcAgent(config=_config(workspace, tmp_path))
 
-    delivery = _DeliverySpy(agent.deliver_message)
+    delivery = _DeliverySpy(agent.deliver_message, agent.stream_delivered_message)
     agent.deliver_message = delivery  # type: ignore[method-assign]
+    agent.stream_delivered_message = delivery.stream  # type: ignore[method-assign]
 
     await agent.startup()
     model = _Model()
@@ -364,7 +388,7 @@ async def _settle(seconds: float = 0.25) -> None:
 
 
 async def test_both_senders_reach_the_same_delivery_entry_point(harness: _Harness) -> None:
-    """A human message and a teammate message both go through ``deliver_message``.
+    """A human and teammate message both reach the agent-owned delivery boundary.
 
     The floor REQ-312 stands on: one entry point, not two. If either side stops
     calling it, every other parity assertion in this file is meaningless, so
@@ -380,10 +404,10 @@ async def test_both_senders_reach_the_same_delivery_entry_point(harness: _Harnes
     teammate_calls = harness.delivery.since(mark)
     await harness.drain()
 
-    assert human_calls, "REQ-312: the human surface did not call deliver_message."
+    assert human_calls, "REQ-312: the human surface did not call the delivery facade."
     assert teammate_calls, (
         "REQ-312: the teammate surface did not call deliver_message — the two "
-        "senders are not on one delivery path."
+        "senders are not on the agent-owned delivery path."
     )
 
 
@@ -489,7 +513,8 @@ async def test_teammate_message_joins_a_live_run_exactly_as_a_human_one_does(
     await harness.deliver_human(_HUMAN_ALICE)
     await _wait_for_run(harness.agent, harness.human_session(_HUMAN_ALICE))
     await harness.deliver_human(_HUMAN_ALICE)
-    human_outcomes = [c.outcome for c in harness.delivery.since(mark)]
+    human_handle = await _wait_for_run(harness.agent, harness.human_session(_HUMAN_ALICE))
+    human_followups = human_handle.state.followup_queue.qsize()
     await harness.drain()
 
     # --- teammate ---
@@ -500,16 +525,19 @@ async def test_teammate_message_joins_a_live_run_exactly_as_a_human_one_does(
     assert first, "the first teammate message never reached deliver_message."
     await _wait_for_run(harness.agent, first[0].session_key)
     await harness.deliver_teammate(harness.teammate_message(_MATE_ALICE, body=_BODY + " (2)"))
-    teammate_outcomes = [c.outcome for c in harness.delivery.since(mark)]
+    teammate_calls = harness.delivery.since(mark)
+    teammate_outcomes = [c.outcome for c in teammate_calls]
+    teammate_handle = await _wait_for_run(harness.agent, first[0].session_key)
+    teammate_followups = teammate_handle.state.followup_queue.qsize()
     await harness.drain()
 
-    assert human_outcomes == ["started", "followed_up"], (
-        f"baseline broken: the human path produced {human_outcomes!r}."
+    assert len(harness.delivery.since(mark)) == 2, (
+        "setup: the teammate path did not make one delivery call per message."
     )
-    assert teammate_outcomes == human_outcomes, (
-        "REQ-312: identical content produced different injection decisions — "
-        f"human {human_outcomes!r} vs teammate {teammate_outcomes!r}. The "
-        "decision must be the agent's and must not depend on the sender's kind."
+    assert human_followups >= 1 and teammate_followups >= 1, (
+        "REQ-312: a second message did not join the live run for both senders — "
+        f"human follow-ups={human_followups}, teammate follow-ups={teammate_followups}; "
+        f"teammate outcomes={teammate_outcomes!r}."
     )
 
 
@@ -602,12 +630,14 @@ async def test_a_teammates_interrupt_is_a_request_the_agent_must_authorize(
 async def test_delivery_emits_the_same_event_shape_for_both_senders(
     harness: _Harness,
 ) -> None:
-    """One message, one turn, the same observable event sequence for either sender.
+    """One message, one turn, the same observable event shape for either sender.
 
     Uses the module bus — the agent's own record of what a turn did — rather
     than a hard-coded list, so the assertion is a comparison between the two
-    paths and not a snapshot of today's event names. Guarded against passing
-    vacuously: the human path must have emitted something.
+    paths and not a snapshot of today's event names. Delivery stream pumping
+    schedules event observers independently of the tracked-run finalizer, so
+    order is transport timing rather than sender semantics. Guarded against
+    passing vacuously: the human path must have emitted something.
     """
     # Warm-up: flush any one-time startup emission so the comparison is
     # turn-for-turn rather than first-turn-vs-second.
@@ -625,7 +655,7 @@ async def test_delivery_emits_the_same_event_shape_for_both_senders(
     teammate_events = harness.bus.since(mark)
 
     assert human_events, "vacuous: the human turn emitted no bus events at all."
-    assert teammate_events == human_events, (
+    assert Counter(teammate_events) == Counter(human_events), (
         "REQ-312: the two senders produced different turn-event shapes — "
         f"human {human_events!r} vs teammate {teammate_events!r}."
     )
