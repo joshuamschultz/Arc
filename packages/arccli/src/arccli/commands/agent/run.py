@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+from collections.abc import AsyncIterator
 from datetime import date
 from pathlib import Path
 
@@ -17,6 +18,44 @@ from arccli.commands.agent._common import (
     _resolve_agent_dir,
     _scaffold_workspace,
 )
+
+
+async def _collect_agent_stream(
+    stream: AsyncIterator[arcrun.StreamEvent], *, emit_tokens: bool
+) -> tuple[arcrun.RunResult, bool]:
+    """Drain one agent stream while optionally rendering token events.
+
+    The terminal event remains authoritative for totals and final status. The
+    boolean tells terminal callers whether content was already rendered, so a
+    CLI never prints a streamed answer twice.
+    """
+    token_text: list[str] = []
+    terminal: arcrun.TurnEndEvent | None = None
+    streamed = False
+    async for event in stream:
+        if isinstance(event, arcrun.TokenEvent):
+            token_text.append(event.text)
+            if emit_tokens and event.text:
+                sys.stdout.write(event.text)
+                sys.stdout.flush()
+                streamed = True
+        elif isinstance(event, arcrun.TurnEndEvent):
+            terminal = event
+
+    if terminal is None:
+        return arcrun.RunResult(content="".join(token_text)), streamed
+    return (
+        arcrun.RunResult(
+            content=terminal.final_text,
+            turns=terminal.turns,
+            tool_calls_made=terminal.tool_calls_made,
+            cost_usd=terminal.cost_usd,
+            tokens_used=terminal.tokens_used,
+            completion_payload=terminal.completion_payload,
+            completion_tool=terminal.completion_tool,
+        ),
+        streamed,
+    )
 
 
 def _default_session_id() -> str:
@@ -62,12 +101,16 @@ async def _agent_run_once(
         # stream to a final result (SPEC-027 AC-2.2). Session id is dated/rolling
         # (or --session) so tasks don't all pile into one unbounded transcript.
         session = await arc_agent.session(session_id)
-        result = await arcrun.collect(arc_agent.run(task, session=session))
+        result, streamed = await _collect_agent_stream(
+            arc_agent.run(task, session=session), emit_tokens=not as_json
+        )
 
         if as_json:
             _print_result_json(result)
         else:
-            if result.content:
+            if streamed:
+                sys.stdout.write("\n")
+            elif result.content:
                 sys.stdout.write(result.content + "\n")
             if verbose:
                 sys.stdout.write(

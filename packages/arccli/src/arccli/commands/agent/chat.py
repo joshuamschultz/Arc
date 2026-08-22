@@ -9,8 +9,6 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
-import arcrun
-
 from arccli.commands.agent._common import (
     _iter_capability_files,
     _load_arcagent,
@@ -18,7 +16,7 @@ from arccli.commands.agent._common import (
     _resolve_agent_dir,
     _scaffold_workspace,
 )
-from arccli.commands.agent.run import _agent_run_once, _default_session_id
+from arccli.commands.agent.run import _agent_run_once, _collect_agent_stream, _default_session_id
 
 
 def _make_chat_reader() -> Callable[[], str]:
@@ -232,14 +230,18 @@ async def _chat_interactive(
             # Execute task via the one streaming entry, collected to a result.
             try:
                 session = await arc_agent.session(current_session_id)
-                result = await arcrun.collect(arc_agent.run(user_input, session=session))
+                result, streamed = await _collect_agent_stream(
+                    arc_agent.run(user_input, session=session), emit_tokens=True
+                )
 
                 total_cost += result.cost_usd
                 total_turns += result.turns
                 total_tool_calls += result.tool_calls_made
 
                 sys.stdout.write("\n")
-                if result.content:
+                if streamed:
+                    sys.stdout.write("\n")
+                elif result.content:
                     sys.stdout.write(result.content + "\n")
 
                 if verbose:
