@@ -55,6 +55,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import arcbundle
 import pytest
 from arcrun import StreamEvent, ToolContext, TurnEndEvent
+from arcstore.backends.memory import FakeBackend
 from arctrust import ValidatorsConfig, generate_keypair
 from arctrust.paths import identity_dir, module_root, operator_dir
 
@@ -309,14 +310,25 @@ async def _booted(
 
     for entered in stack:
         entered.__enter__()
+    # The production opener is intentionally PostgreSQL-only.  This suite is
+    # offline and exercises module wiring, so inject one explicit backend for
+    # the agent's lifetime instead of relying on a removed SQLite fallback.
+    backend = FakeBackend()
+    await backend.start()
+
+    async def open_test_backend() -> FakeBackend:
+        return backend
+
     agent = ArcAgent(config=config, config_path=deployment.config_path)
     try:
-        await agent.startup()
+        with patch.object(agent, "_make_arcstore_opener", return_value=open_test_backend):
+            await agent.startup()
         yield agent
     finally:
         try:
             await agent.shutdown()
         finally:
+            await backend.stop()
             for entered in reversed(stack):
                 entered.__exit__(None, None, None)
 

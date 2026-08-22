@@ -38,7 +38,7 @@ Two invariants must hold TOGETHER, and both are pinned here:
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -46,6 +46,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from arcgateway.executor import AsyncioExecutor, InboundEvent
 from arcgateway.session import SessionRouter
+from arcrun import StreamEvent, TurnEndEvent
+from arcstore.backends.memory import FakeBackend
 
 from arcagent.builtins.capabilities import _runtime as builtin_runtime
 from arcagent.core.agent import ArcAgent
@@ -89,33 +91,36 @@ async def _started_agent(config: ArcAgentConfig) -> ArcAgent:
 
     async def _do() -> ArcAgent:
         agent = ArcAgent(config=config)
-        with patch("arcagent.core.agent_dispatch.arcrun.run_stream"):
+        backend = FakeBackend()
+        await backend.start()
+
+        async def open_test_backend() -> FakeBackend:
+            return backend
+
+        with (
+            patch.object(agent, "_make_arcstore_opener", return_value=open_test_backend),
+            patch("arcagent.core.agent_dispatch.arcrun.run_stream"),
+        ):
             await agent.startup()
         return agent
 
     return await asyncio.create_task(_do())
 
 
-class _FakeRunHandle:
-    """Stand-in for the arcrun RunHandle ``run_async`` returns."""
-
-    async def result(self) -> Any:
-        return MagicMock(content="ok")
-
-
-def _fake_run_async_recording(observed: dict[str, _Observation], key: str) -> Callable[..., Any]:
-    """Build an ``arcrun.run_async`` stand-in that records the CURRENT task's
+def _fake_run_stream_recording(observed: dict[str, _Observation], key: str) -> Callable[..., Any]:
+    """Build an ``arcrun.run_stream`` stand-in that records the CURRENT task's
     builtin-runtime state at the exact point a real tool call would read
     it — i.e. after activate_runtime_bindings() has (or hasn't) run.
 
-    ``run_async`` is the loop entry the delivery path drives (SPEC-065): the
-    gateway hands the message to ``ArcAgent.deliver_message``, which opens the
-    turn through ``start_tracked_run``. The binding must be replayed there for
-    exactly the same reason it must be replayed in the streaming path — the turn
-    runs in a sibling task that never itself called ``configure()``.
+    ``run_stream`` is the loop entry the delivery path drives: the gateway
+    hands the message to ``ArcAgent.deliver_message``, which opens the turn
+    through the streaming dispatch path. The binding must be replayed there
+    because the turn runs in a sibling task that never itself called
+    ``configure()``.
     """
 
     async def _fake(*args: Any, **kwargs: Any) -> Any:
+        del args, kwargs
         try:
             bound_identity = builtin_runtime._identity_var.get()
             observed[key] = {
@@ -124,7 +129,11 @@ def _fake_run_async_recording(observed: dict[str, _Observation], key: str) -> Ca
             }
         except RuntimeError as exc:
             observed[key] = {"error": str(exc)}
-        return _FakeRunHandle()
+
+        async def _events() -> AsyncIterator[StreamEvent]:
+            yield TurnEndEvent(final_text="ok", tool_calls_made=0)
+
+        return _events()
 
     return _fake
 
@@ -208,15 +217,15 @@ class TestSameAgentTwoSiblingTurns:
 
         observed: dict[str, _Observation] = {}
         with patch(
-            "arcagent.core.agent_dispatch.arcrun.run_async",
-            side_effect=_fake_run_async_recording(observed, "turn1"),
+            "arcagent.core.agent_dispatch.arcrun.run_stream",
+            side_effect=_fake_run_stream_recording(observed, "turn1"),
         ):
             await router.handle(_make_event(agent_did=real_did, session_key="s1", message="turn1"))
             await _await_record(observed, "turn1")
 
         with patch(
-            "arcagent.core.agent_dispatch.arcrun.run_async",
-            side_effect=_fake_run_async_recording(observed, "turn2"),
+            "arcagent.core.agent_dispatch.arcrun.run_stream",
+            side_effect=_fake_run_stream_recording(observed, "turn2"),
         ):
             # A SECOND, independent asyncio.Task — SessionRouter.handle()
             # spawns a fresh one per turn; this is NOT a child of turn 1's
@@ -274,8 +283,8 @@ class TestTwoAgentsInterleaved:
 
         observed: dict[str, _Observation] = {}
         with patch(
-            "arcagent.core.agent_dispatch.arcrun.run_async",
-            side_effect=_fake_run_async_recording(observed, "josh_turn"),
+            "arcagent.core.agent_dispatch.arcrun.run_stream",
+            side_effect=_fake_run_stream_recording(observed, "josh_turn"),
         ):
             await router.handle(
                 _make_event(agent_did=josh_did, session_key="josh-1", message="josh turn")
@@ -283,8 +292,8 @@ class TestTwoAgentsInterleaved:
             await _await_record(observed, "josh_turn")
 
         with patch(
-            "arcagent.core.agent_dispatch.arcrun.run_async",
-            side_effect=_fake_run_async_recording(observed, "coder_turn"),
+            "arcagent.core.agent_dispatch.arcrun.run_stream",
+            side_effect=_fake_run_stream_recording(observed, "coder_turn"),
         ):
             await router.handle(
                 _make_event(agent_did=coder_did, session_key="coder-1", message="coder turn")
