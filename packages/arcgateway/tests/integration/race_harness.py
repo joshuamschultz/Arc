@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Callable
+from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -86,22 +87,49 @@ class _Decision:
 
 
 class _DeliverySpy:
-    """Wraps the agent's delivery entry point, recording every decision."""
+    """Wrap the agent's streaming entry point and record its run decision.
 
-    def __init__(self, inner: Callable[..., Any]) -> None:
+    ``AsyncioExecutor`` now consumes ``DeliveryStreamSource`` rather than
+    ``deliver_message``.  The streaming method is an async generator, so its
+    return value no longer exposes ``"started"``/``"followed_up"``.  Observe
+    the coordinator's injection lookup in the same task instead: ``None`` is
+    the one message that opened the parked run, a handle is a queued message,
+    and ``QueueFull`` remains the sender-visible refusal.
+    """
+
+    def __init__(self, inner: Callable[..., Any], agent: ArcAgent) -> None:
         self._inner = inner
+        self._current: ContextVar[_Decision | None] = ContextVar(
+            "race_delivery_decision", default=None
+        )
         self.decisions: list[_Decision] = []
+        coordinator = agent._run_coordinator
+        original_target = coordinator.injection_target
 
-    async def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        def observed_target(session_key: str) -> Any:
+            target = original_target(session_key)
+            decision = self._current.get()
+            if decision is not None:
+                decision.outcome = "started" if target is None else "injected"
+            return target
+
+        coordinator.injection_target = observed_target  # type: ignore[method-assign]
+
+    def __call__(self, *args: Any, **kwargs: Any) -> AsyncIterator[Any]:
         record = _Decision(session_key=str(kwargs.get("session_key", "")))
         self.decisions.append(record)
+        return self._stream(record, self._inner(*args, **kwargs))
+
+    async def _stream(self, record: _Decision, stream: AsyncIterator[Any]) -> AsyncIterator[Any]:
+        token: Token[_Decision | None] = self._current.set(record)
         try:
-            outcome = await self._inner(*args, **kwargs)
-        except BaseException as exc:  # reason: recorded, then re-raised unchanged
+            async for event in stream:
+                yield event
+        except BaseException as exc:  # reason: record, then re-raise unchanged
             record.error = exc
             raise
-        record.outcome = outcome
-        return outcome
+        finally:
+            self._current.reset(token)
 
     def settled(self, session_key: str) -> list[_Decision]:
         """Decisions for ``session_key`` that have actually finished."""
@@ -206,8 +234,8 @@ async def build_harness(tmp_path: Path) -> RaceHarness:
     workspace.mkdir(exist_ok=True)
 
     agent = ArcAgent(config=_config(workspace, tmp_path))
-    spy = _DeliverySpy(agent.deliver_message)
-    agent.deliver_message = spy  # type: ignore[method-assign]  # reason: spy delegates to the real one
+    spy = _DeliverySpy(agent.stream_delivered_message, agent)
+    agent.stream_delivered_message = spy  # type: ignore[method-assign]  # reason: spy delegates to the real one
     await agent.startup()
     model = ParkedModel()
     agent._model = model
@@ -226,6 +254,9 @@ async def teardown_harness(harness: RaceHarness) -> None:
     await asyncio.sleep(0.05)
     for task in harness.background:
         task.cancel()
+    pending = tuple(harness.router._pending_tasks)
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
     await harness.agent.shutdown()
 
 
