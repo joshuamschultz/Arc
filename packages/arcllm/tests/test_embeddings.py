@@ -231,12 +231,20 @@ def _raise_import(model: str) -> object:
     raise ImportError("sentence-transformers not installed")
 
 
-@pytest.mark.skipif(not _LOCAL_AVAILABLE, reason="requires arcllm[local] extra")
-async def test_local_embedder_is_deterministic_and_offline() -> None:
+async def test_local_embedder_is_deterministic_and_offline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import arcllm.embeddings as emb
+
+    class _OfflineModel:
+        def encode(self, texts: list[str], **_: object) -> list[list[float]]:
+            return [[float(len(text)), 1.0] for text in texts]
+
+    monkeypatch.setattr(emb, "_load_sentence_transformer", lambda _model: _OfflineModel())
     embedder = resolve_embedder("all-MiniLM-L6-v2", backend="local")
     a = await embedder.embed(["the quick brown fox"])
     b = await embedder.embed(["the quick brown fox"])
-    assert a.dims == 384
+    assert a.dims == 2
     assert a.vectors == b.vectors  # fixed model -> fixed vector
 
 

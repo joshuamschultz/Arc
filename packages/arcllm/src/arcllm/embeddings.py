@@ -121,7 +121,7 @@ def _load_sentence_transformer(model: str) -> Any:
     """
     from sentence_transformers import SentenceTransformer  # arcllm[local] extra
 
-    return SentenceTransformer(model)
+    return SentenceTransformer(model, local_files_only=True)
 
 
 class LocalEmbedder(EmbeddingProvider):
@@ -146,10 +146,10 @@ class LocalEmbedder(EmbeddingProvider):
         if self._st is None:
             try:
                 self._st = _load_sentence_transformer(self._model)
-            except ImportError as e:
+            except (ImportError, OSError) as e:
                 raise ArcLLMEmbeddingUnavailableError(
                     self._model,
-                    "the arcllm[local] extra (sentence-transformers) is not installed",
+                    "the local embedding model is not installed in the offline model cache",
                 ) from e
         return self._st
 
