@@ -196,7 +196,11 @@ class InboxRepository(Protocol):
     """
 
     async def create_inbox(
-        self, owner: Participant, *, classification: str = "UNCLASSIFIED"
+        self,
+        owner: Participant,
+        *,
+        classification: str = "UNCLASSIFIED",
+        inbox_id: str | None = None,
     ) -> Inbox: ...
 
     async def get_inbox(self, inbox_id: str) -> Inbox: ...
@@ -208,6 +212,7 @@ class InboxRepository(Protocol):
         *,
         subject: str | None = None,
         classification: str = "UNCLASSIFIED",
+        thread_id: str | None = None,
     ) -> Thread: ...
 
     async def get_thread(
@@ -237,6 +242,7 @@ class InboxRepository(Protocol):
         body: str,
         reply_to_id: str | None = None,
         trace: TraceMetadata | None = None,
+        message_id: str | None = None,
     ) -> Message: ...
 
     async def list_messages(

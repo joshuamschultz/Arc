@@ -24,6 +24,7 @@ from arcstore.inbox import (
     Thread,
     ThreadPage,
     TraceMetadata,
+    _id,
 )
 
 _MAX_PAGE_SIZE = 100
@@ -43,16 +44,27 @@ class PostgresInboxRepository:
         self._backend = backend
 
     async def create_inbox(
-        self, owner: Participant, *, classification: str = "UNCLASSIFIED"
+        self,
+        owner: Participant,
+        *,
+        classification: str = "UNCLASSIFIED",
+        inbox_id: str | None = None,
     ) -> Inbox:
-        inbox = Inbox(owner=owner, classification=classification)
+        inbox = Inbox(
+            owner=owner,
+            classification=classification,
+            inbox_id=inbox_id or _id("inbox"),
+        )
         async with self._pool.acquire() as connection:
-            await connection.execute(
-                "INSERT INTO inboxes(inbox_id, payload, created_at) VALUES ($1, $2::jsonb, $3)",
+            result = await connection.execute(
+                "INSERT INTO inboxes(inbox_id, payload, created_at) VALUES ($1, $2::jsonb, $3) "
+                "ON CONFLICT(inbox_id) DO NOTHING",
                 inbox.inbox_id,
                 _model_json(inbox),
                 inbox.created_at,
             )
+            if not str(result).endswith("1"):
+                return await self._get_inbox(connection, inbox.inbox_id)
         return inbox
 
     async def get_inbox(self, inbox_id: str) -> Inbox:
@@ -66,26 +78,31 @@ class PostgresInboxRepository:
         *,
         subject: str | None = None,
         classification: str = "UNCLASSIFIED",
+        thread_id: str | None = None,
     ) -> Thread:
         thread = Thread(
             inbox_id=inbox_id,
             participants=participants,
             subject=subject,
             classification=classification,
+            thread_id=thread_id or _id("thread"),
         )
         async with self._pool.acquire() as connection:
             async with connection.transaction():
                 inbox = await self._get_inbox(connection, inbox_id)
                 if not dominates(_level(inbox.classification), _level(thread.classification)):
                     raise ValueError("thread classification exceeds inbox classification")
-                await connection.execute(
+                result = await connection.execute(
                     "INSERT INTO inbox_threads(thread_id, inbox_id, payload, updated_at) "
-                    "VALUES ($1, $2, $3::jsonb, $4)",
+                    "VALUES ($1, $2, $3::jsonb, $4) "
+                    "ON CONFLICT(thread_id) DO NOTHING",
                     thread.thread_id,
                     thread.inbox_id,
                     _model_json(thread),
                     thread.updated_at,
                 )
+                if not str(result).endswith("1"):
+                    return await self._get_thread(connection, thread.thread_id)
         return thread
 
     async def get_thread(
@@ -166,6 +183,7 @@ class PostgresInboxRepository:
         body: str,
         reply_to_id: str | None = None,
         trace: TraceMetadata | None = None,
+        message_id: str | None = None,
     ) -> Message:
         async with self._pool.acquire() as connection:
             async with connection.transaction():
@@ -180,6 +198,7 @@ class PostgresInboxRepository:
                     if parent.thread_id != thread_id:
                         raise ValueError("reply_to_id must reference a message in this thread")
                 message = Message(
+                    message_id=message_id or _id("message"),
                     thread_id=thread_id,
                     sender=sender,
                     recipients=recipients,
@@ -189,14 +208,17 @@ class PostgresInboxRepository:
                 )
                 if message.trace.classification != thread.classification:
                     raise ValueError("message classification must match thread classification")
-                await connection.execute(
+                result = await connection.execute(
                     "INSERT INTO inbox_messages(message_id, thread_id, payload, created_at) "
-                    "VALUES ($1, $2, $3::jsonb, $4)",
+                    "VALUES ($1, $2, $3::jsonb, $4) "
+                    "ON CONFLICT(message_id) DO NOTHING",
                     message.message_id,
                     thread_id,
                     _model_json(message),
                     message.created_at,
                 )
+                if not str(result).endswith("1"):
+                    return await self._get_message(connection, message.message_id)
                 updated_thread = thread.model_copy(
                     update={
                         "updated_at": message.created_at,

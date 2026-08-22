@@ -44,9 +44,19 @@ class FakeInboxRepository:
         self.handoffs: dict[str, Handoff] = {}
 
     async def create_inbox(
-        self, owner: Participant, *, classification: str = "UNCLASSIFIED"
+        self,
+        owner: Participant,
+        *,
+        classification: str = "UNCLASSIFIED",
+        inbox_id: str | None = None,
     ) -> Inbox:
-        inbox = Inbox(owner=owner, classification=classification)
+        if inbox_id is not None and inbox_id in self.inboxes:
+            return self.inboxes[inbox_id]
+        inbox = (
+            Inbox(owner=owner, classification=classification, inbox_id=inbox_id)
+            if inbox_id is not None
+            else Inbox(owner=owner, classification=classification)
+        )
         self.inboxes[inbox.inbox_id] = inbox
         return inbox
 
@@ -63,13 +73,26 @@ class FakeInboxRepository:
         *,
         subject: str | None = None,
         classification: str = "UNCLASSIFIED",
+        thread_id: str | None = None,
     ) -> Thread:
         inbox = await self.get_inbox(inbox_id)
-        thread = Thread(
-            inbox_id=inbox_id,
-            participants=participants,
-            subject=subject,
-            classification=classification,
+        if thread_id is not None and thread_id in self.threads:
+            return self.threads[thread_id]
+        thread = (
+            Thread(
+                inbox_id=inbox_id,
+                participants=participants,
+                subject=subject,
+                classification=classification,
+                thread_id=thread_id,
+            )
+            if thread_id is not None
+            else Thread(
+                inbox_id=inbox_id,
+                participants=participants,
+                subject=subject,
+                classification=classification,
+            )
         )
         if not dominates(_level(inbox.classification), _level(thread.classification)):
             raise ValueError("thread classification exceeds inbox classification")
@@ -135,6 +158,7 @@ class FakeInboxRepository:
         body: str,
         reply_to_id: str | None = None,
         trace: TraceMetadata | None = None,
+        message_id: str | None = None,
     ) -> Message:
         thread = self._thread(thread_id)
         participants = {item.participant_id for item in thread.participants}
@@ -146,13 +170,27 @@ class FakeInboxRepository:
             parent = self._message(reply_to_id)
             if parent.thread_id != thread_id:
                 raise ValueError("reply_to_id must reference a message in this thread")
-        message = Message(
-            thread_id=thread_id,
-            sender=sender,
-            recipients=recipients,
-            body=body,
-            reply_to_id=reply_to_id,
-            trace=trace or TraceMetadata(classification=thread.classification),
+        if message_id is not None and message_id in self.messages:
+            return self.messages[message_id]
+        message = (
+            Message(
+                thread_id=thread_id,
+                sender=sender,
+                recipients=recipients,
+                body=body,
+                reply_to_id=reply_to_id,
+                trace=trace or TraceMetadata(classification=thread.classification),
+                message_id=message_id,
+            )
+            if message_id is not None
+            else Message(
+                thread_id=thread_id,
+                sender=sender,
+                recipients=recipients,
+                body=body,
+                reply_to_id=reply_to_id,
+                trace=trace or TraceMetadata(classification=thread.classification),
+            )
         )
         if message.trace.classification != thread.classification:
             raise ValueError("message classification must match thread classification")
