@@ -45,6 +45,14 @@ from arcstore.inbox import (
 from arcstore.inbox_projection import DurableInboxService, InboxDeliveryPort
 from arcstore.inbox_spool import InboxProjectionSpool, ProjectionEvent
 from arcstore.records import SpoolRecord
+from arcstore.source_sync import (
+    ArcStoreSourceSyncStore,
+    InMemorySourceSyncStore,
+    SourceSyncBackend,
+    SourceSyncLease,
+    SourceSyncState,
+    SourceSyncStatus,
+)
 from arcstore.spool import read, record, spool_path
 
 __all__ = [
@@ -52,9 +60,11 @@ __all__ = [
     "ApprovalNotification",
     "ApprovalNotificationDispatcher",
     "ArcStoreConfig",
+    "ArcStoreSourceSyncStore",
     "DurableInboxService",
     "Handoff",
     "HandoffStatus",
+    "InMemorySourceSyncStore",
     "Inbox",
     "InboxDeliveryPort",
     "InboxProjectionSpool",
@@ -67,6 +77,10 @@ __all__ = [
     "ProjectionEvent",
     "ReadReceipt",
     "ReadState",
+    "SourceSyncBackend",
+    "SourceSyncLease",
+    "SourceSyncState",
+    "SourceSyncStatus",
     "SpoolRecord",
     "Thread",
     "ThreadPage",

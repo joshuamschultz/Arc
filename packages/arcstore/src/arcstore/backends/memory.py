@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import copy
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from arctrust.audit import AuditEvent, emit
@@ -17,6 +17,7 @@ from arcstore.mutation_fence import (
     MutationFenceRejectedError,
     RunnerFence,
 )
+from arcstore.source_sync import SourceSyncBackend
 
 
 def _now() -> str:
@@ -56,7 +57,7 @@ def _increment(value: dict[str, Any], path: str, delta: int | float) -> None:
     current[leaf] = previous + delta
 
 
-class FakeBackend:
+class FakeBackend(SourceSyncBackend):
     """Lock-protected contract fake used to test every backend-neutral domain."""
 
     def __init__(self) -> None:
@@ -131,6 +132,162 @@ class FakeBackend:
             raise ValueError("cursor value must be non-negative")
         async with self._lock:
             self._cursors[name] = value
+
+    async def source_sync_get_state(self, agent_did: str, source_id: str) -> dict[str, Any]:
+        source_key = f"{agent_did}\0{source_id}"
+        async with self._lock:
+            row = self._tables.setdefault("connected_source_sync", {}).get(source_key)
+            return copy.deepcopy(
+                row
+                or {
+                    "agent_did": agent_did,
+                    "source_id": source_id,
+                    "status": "idle",
+                    "pages": 0,
+                    "bytes_processed": 0,
+                    "fencing_token": 0,
+                }
+            )
+
+    async def source_sync_acquire_lease(
+        self, agent_did: str, source_id: str, owner_id: str, ttl_seconds: float
+    ) -> dict[str, Any] | None:
+        source_key = f"{agent_did}\0{source_id}"
+        if ttl_seconds <= 0:
+            raise ValueError("lease ttl must be positive")
+        now = datetime.now(UTC)
+        async with self._lock:
+            table = self._tables.setdefault("connected_source_sync", {})
+            row = table.setdefault(
+                source_key,
+                {
+                    "agent_did": agent_did,
+                    "source_id": source_id,
+                    "status": "idle",
+                    "pages": 0,
+                    "bytes_processed": 0,
+                    "fencing_token": 0,
+                },
+            )
+            expires = row.get("lease_expires_at")
+            if (
+                expires is not None
+                and datetime.fromisoformat(expires) > now
+                and row.get("lease_owner") != owner_id
+            ):
+                return None
+            token = int(row.get("fencing_token", 0)) + 1
+            expires_at = now + timedelta(seconds=ttl_seconds)
+            row.update(
+                {
+                    "fencing_token": token,
+                    "lease_owner": owner_id,
+                    "lease_expires_at": expires_at.isoformat(),
+                    "status": "running",
+                }
+            )
+            return {
+                "owner_id": owner_id,
+                "fencing_token": token,
+                "expires_at": expires_at.isoformat(),
+            }
+
+    async def source_sync_commit_page(self, agent_did: str, source_id: str, **kwargs: Any) -> bool:
+        source_key = f"{agent_did}\0{source_id}"
+        async with self._lock:
+            table = self._tables.setdefault("connected_source_sync", {})
+            row = table.setdefault(
+                source_key,
+                {
+                    "agent_did": agent_did,
+                    "source_id": source_id,
+                    "status": "idle",
+                    "pages": 0,
+                    "bytes_processed": 0,
+                    "fencing_token": 0,
+                },
+            )
+            expires = row.get("lease_expires_at")
+            if (
+                row.get("lease_owner") != kwargs["owner_id"]
+                or int(row.get("fencing_token", -1)) != kwargs["fencing_token"]
+                or expires is None
+                or datetime.fromisoformat(expires) <= datetime.now(UTC)
+            ):
+                return False
+            pages = self._tables.setdefault("connected_source_pages", {})
+            key = f"{source_key}\0{kwargs['page_id']}"
+            if row.get("cursor") != kwargs["expected_cursor"]:
+                return key in pages
+            if key in pages:
+                return True
+            pages[key] = {
+                "cursor_after": kwargs["next_cursor"],
+                "page_count": kwargs["page_count"],
+                "page_bytes": kwargs["page_bytes"],
+            }
+            row.update(
+                {
+                    "cursor": kwargs["next_cursor"],
+                    "pages": int(row.get("pages", 0)) + kwargs["page_count"],
+                    "bytes_processed": int(row.get("bytes_processed", 0)) + kwargs["page_bytes"],
+                }
+            )
+            return True
+
+    async def source_sync_set_status(
+        self, agent_did: str, source_id: str, status: str, **kwargs: Any
+    ) -> bool:
+        source_key = f"{agent_did}\0{source_id}"
+        async with self._lock:
+            row = self._tables.setdefault("connected_source_sync", {}).setdefault(
+                source_key,
+                {
+                    "agent_did": agent_did,
+                    "source_id": source_id,
+                    "pages": 0,
+                    "bytes_processed": 0,
+                    "fencing_token": 0,
+                },
+            )
+            if (
+                row.get("lease_owner") != kwargs["owner_id"]
+                or int(row.get("fencing_token", -1)) != kwargs["fencing_token"]
+                or row.get("lease_expires_at") is None
+                or datetime.fromisoformat(row["lease_expires_at"]) <= datetime.now(UTC)
+            ):
+                return False
+            row.update({"status": status, "error_code": kwargs.get("error_code")})
+            return True
+
+    async def source_sync_release_lease(
+        self, agent_did: str, source_id: str, **kwargs: Any
+    ) -> None:
+        source_key = f"{agent_did}\0{source_id}"
+        async with self._lock:
+            row = self._tables.setdefault("connected_source_sync", {}).get(source_key)
+            if (
+                row is not None
+                and row.get("lease_owner") == kwargs["owner_id"]
+                and int(row.get("fencing_token", -1)) == kwargs["fencing_token"]
+            ):
+                row.pop("lease_owner", None)
+                row.pop("lease_expires_at", None)
+
+    async def source_sync_renew_lease(self, agent_did: str, source_id: str, **kwargs: Any) -> bool:
+        source_key = f"{agent_did}\0{source_id}"
+        async with self._lock:
+            row = self._tables.setdefault("connected_source_sync", {}).get(source_key)
+            if (
+                row is None
+                or row.get("lease_owner") != kwargs["owner_id"]
+                or int(row.get("fencing_token", -1)) != kwargs["fencing_token"]
+            ):
+                return False
+            row["lease_expires_at"] = (
+                datetime.now(UTC) + timedelta(seconds=kwargs["ttl_seconds"])
+            ).isoformat()
+            return True
 
     async def mutable_write(
         self,

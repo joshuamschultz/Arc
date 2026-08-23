@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Mapping, Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from arctrust.audit import AuditEvent, emit
@@ -20,6 +20,7 @@ from arcstore.mutation_fence import (
     MutationFenceRejectedError,
     RunnerFence,
 )
+from arcstore.source_sync import SourceSyncBackend
 
 _logger = logging.getLogger("arcstore.backends.postgres")
 _ORDER_BY = frozenset({"ts", "ts ASC", "ts DESC"})
@@ -62,7 +63,7 @@ def _pools_lock() -> asyncio.Lock:
     return _SHARED_POOLS_LOCK
 
 
-class PostgresBackend:
+class PostgresBackend(SourceSyncBackend):
     """The one production ArcStore backend; all state lives in PostgreSQL."""
 
     def __init__(self, settings: ArcStoreConfig | PostgresSettings) -> None:
@@ -196,6 +197,136 @@ class PostgresBackend:
                 name,
                 value,
             )
+
+    async def source_sync_get_state(self, agent_did: str, source_id: str) -> dict[str, Any]:
+        async with self._require_pool().acquire() as connection:
+            row = await connection.fetchrow(
+                "SELECT agent_did, source_id, cursor, status, pages, bytes_processed, fencing_token, error_code "  # noqa: E501
+                "FROM connected_source_sync WHERE agent_did=$1 AND source_id=$2",
+                agent_did,
+                source_id,
+            )
+        if row is None:
+            return {
+                "agent_did": agent_did,
+                "source_id": source_id,
+                "status": "idle",
+                "pages": 0,
+                "bytes_processed": 0,
+                "fencing_token": 0,
+            }
+        return dict(row)
+
+    async def source_sync_acquire_lease(
+        self, agent_did: str, source_id: str, owner_id: str, ttl_seconds: float
+    ) -> dict[str, Any] | None:
+        if ttl_seconds <= 0:
+            raise ValueError("lease ttl must be positive")
+        async with self._require_pool().acquire() as connection:
+            async with connection.transaction():
+                row = await connection.fetchrow(
+                    "INSERT INTO connected_source_sync(agent_did, source_id, status, lease_owner, lease_expires_at, fencing_token) "  # noqa: E501
+                    "VALUES ($1, $2, 'running', $3, now() + ($4 * interval '1 second'), 1) "
+                    "ON CONFLICT(agent_did, source_id) DO UPDATE SET status='running', lease_owner=$3, "  # noqa: E501
+                    "lease_expires_at=now() + ($4 * interval '1 second'), fencing_token=connected_source_sync.fencing_token + 1, updated_at=now() "  # noqa: E501
+                    "WHERE connected_source_sync.lease_expires_at IS NULL OR connected_source_sync.lease_expires_at <= now() OR connected_source_sync.lease_owner=$3 "  # noqa: E501
+                    "RETURNING lease_owner, fencing_token, lease_expires_at",
+                    agent_did,
+                    source_id,
+                    owner_id,
+                    ttl_seconds,
+                )
+        return (
+            None
+            if row is None
+            else {
+                "owner_id": row["lease_owner"],
+                "fencing_token": row["fencing_token"],
+                "expires_at": row["lease_expires_at"],
+            }
+        )
+
+    async def source_sync_commit_page(self, agent_did: str, source_id: str, **kwargs: Any) -> bool:
+        async with self._require_pool().acquire() as connection:
+            async with connection.transaction():
+                state = await connection.fetchrow(
+                    "SELECT cursor, lease_owner, fencing_token, lease_expires_at FROM connected_source_sync WHERE agent_did=$1 AND source_id=$2 FOR UPDATE",  # noqa: E501
+                    agent_did,
+                    source_id,
+                )
+                if (
+                    state is None
+                    or state["lease_owner"] != kwargs["owner_id"]
+                    or state["fencing_token"] != kwargs["fencing_token"]
+                    or state["lease_expires_at"] <= datetime.now(UTC)
+                ):
+                    return False
+                if state["cursor"] != kwargs["expected_cursor"]:
+                    return bool(
+                        await connection.fetchval(
+                            "SELECT EXISTS(SELECT 1 FROM connected_source_pages WHERE agent_did=$1 AND source_id=$2 AND page_id=$3)",  # noqa: E501
+                            agent_did,
+                            source_id,
+                            kwargs["page_id"],
+                        )
+                    )
+                inserted = await connection.fetchval(
+                    "INSERT INTO connected_source_pages(agent_did, source_id, page_id, cursor_after, page_count, page_bytes) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING RETURNING page_id",  # noqa: E501
+                    agent_did,
+                    source_id,
+                    kwargs["page_id"],
+                    kwargs["next_cursor"],
+                    kwargs["page_count"],
+                    kwargs["page_bytes"],
+                )
+                if inserted is None:
+                    return True
+                await connection.execute(
+                    "UPDATE connected_source_sync SET cursor=$3, pages=pages+$4, bytes_processed=bytes_processed+$5, updated_at=now() WHERE agent_did=$1 AND source_id=$2",  # noqa: E501
+                    agent_did,
+                    source_id,
+                    kwargs["next_cursor"],
+                    kwargs["page_count"],
+                    kwargs["page_bytes"],
+                )
+                return True
+
+    async def source_sync_set_status(
+        self, agent_did: str, source_id: str, status: str, **kwargs: Any
+    ) -> bool:
+        result = await self._require_pool().execute(
+            "UPDATE connected_source_sync SET status=$3, error_code=$4, updated_at=now() WHERE agent_did=$1 AND source_id=$2 AND lease_owner=$5 AND fencing_token=$6 AND lease_expires_at > now()",  # noqa: E501
+            agent_did,
+            source_id,
+            status,
+            kwargs.get("error_code"),
+            kwargs["owner_id"],
+            kwargs["fencing_token"],
+        )
+        return str(result) == "UPDATE 1"
+
+    async def source_sync_release_lease(
+        self, agent_did: str, source_id: str, **kwargs: Any
+    ) -> None:
+        await self._require_pool().execute(
+            "UPDATE connected_source_sync SET lease_owner=NULL, lease_expires_at=NULL, updated_at=now() WHERE agent_did=$1 AND source_id=$2 AND lease_owner=$3 AND fencing_token=$4",  # noqa: E501
+            agent_did,
+            source_id,
+            kwargs["owner_id"],
+            kwargs["fencing_token"],
+        )
+
+    async def source_sync_renew_lease(self, agent_did: str, source_id: str, **kwargs: Any) -> bool:
+        result = await self._require_pool().execute(
+            "UPDATE connected_source_sync SET lease_expires_at=now() + ($5 * interval '1 second'), updated_at=now() "  # noqa: E501
+            "WHERE agent_did=$1 AND source_id=$2 AND lease_owner=$3 AND fencing_token=$4 AND lease_expires_at > now()",  # noqa: E501
+            agent_did,
+            source_id,
+            kwargs["owner_id"],
+            kwargs["fencing_token"],
+            kwargs["ttl_seconds"],
+        )
+        return str(result) == "UPDATE 1"
 
     async def mutable_write(
         self,
