@@ -101,6 +101,7 @@ allow = [
   "get-calendar-view",
   "create-calendar-event",
   "list-folder-files",
+  "get-onedrive-file",
   "search-onedrive-files",
 ]
 
@@ -151,6 +152,11 @@ description = "List files in a OneDrive folder."
 classification = "read_only"
 
 [[tools.declared]]
+name = "get-onedrive-file"
+description = "Read one OneDrive file by identifier."
+classification = "read_only"
+
+[[tools.declared]]
 name = "search-onedrive-files"
 description = "Search OneDrive files by name and content."
 classification = "read_only"
@@ -167,7 +173,7 @@ transport = "stdio"
 argv = [
   "ms-365-mcp-server",
   "--enabled-tools",
-  "^(list-mail-messages|get-mail-message|list-mail-folders|send-mail|list-calendar-events|get-calendar-view|create-calendar-event|list-folder-files|search-onedrive-files)$",
+  "^(list-mail-messages|get-mail-message|list-mail-folders|send-mail|list-calendar-events|get-calendar-view|create-calendar-event|list-folder-files|get-onedrive-file|search-onedrive-files)$",
   "--allowed-scopes",
   "User.Read Mail.Read Mail.Send Calendars.ReadWrite Files.Read",
 ]
@@ -204,6 +210,9 @@ classification = "state_modifying"
 capability_tags = ["network_egress"]
 
 [config.mcp.tools.list-folder-files]
+classification = "read_only"
+
+[config.mcp.tools.get-onedrive-file]
 classification = "read_only"
 
 [config.mcp.tools.search-onedrive-files]

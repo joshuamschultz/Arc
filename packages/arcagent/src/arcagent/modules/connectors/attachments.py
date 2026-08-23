@@ -99,6 +99,18 @@ class _SourceEnabledAttachment:
         return self._source
 
 
+class _MultiSourceEnabledAttachment(_SourceEnabledAttachment):
+    """One grant may expose isolated source streams such as Outlook and OneDrive."""
+
+    def __init__(self, delegate: ExtensionAttachment, sources: dict[str, SourceAdapter]) -> None:
+        first = next(iter(sources.values()))
+        super().__init__(delegate, first)
+        self._sources = dict(sources)
+
+    def source_adapters(self) -> dict[str, SourceAdapter]:
+        return dict(self._sources)
+
+
 def build_attachment(
     manifest: ExtensionManifest, bundle: Path, secrets: Mapping[str, Secret]
 ) -> ExtensionAttachment:
@@ -178,6 +190,18 @@ def _with_source_adapter(
     entrypoint = _SourceConfig.model_validate(source_config).entrypoint
     with _importable(bundle):
         module = importlib.import_module(entrypoint)
+        factories = getattr(module, "build_source_adapters", None)
+        if callable(factories):
+            sources = factories({"attachment": attachment})
+            if (
+                not isinstance(sources, dict)
+                or not sources
+                or not all(isinstance(adapter, SourceAdapter) for adapter in sources.values())
+            ):
+                raise _refuse(
+                    "source entrypoint did not return SourceAdapters", entrypoint=entrypoint
+                )
+            return _MultiSourceEnabledAttachment(attachment, sources)
         factory = getattr(module, "build_source_adapter", None)
         source = factory({"attachment": attachment}) if callable(factory) else None
     if not isinstance(source, SourceAdapter):

@@ -182,7 +182,9 @@ class Connectors:
                 if registration.connection_id not in prepared.sources:
                     if registration.connection_id in prepared.unsupported_sources:
                         await state.source_catalog.unregister(registration.connection_id)
-                    elif registration.connection_id not in _granted_source_ids(state):
+                    elif registration.connection_id.split(":", 1)[0] not in _granted_source_ids(
+                        state
+                    ):
                         await state.source_catalog.unregister(registration.connection_id)
             for connection_id, adapter in prepared.sources.items():
                 await state.source_catalog.register(connection_id, adapter)
@@ -384,13 +386,19 @@ async def _attach_one(
         len(report.registered),
         len(report.denied),
     )
-    source_adapter_factory = getattr(connection, "source_adapter", None)
-    source_adapter = source_adapter_factory() if callable(source_adapter_factory) else None
+    adapters_factory = getattr(connection, "source_adapters", None)
+    adapters = adapters_factory() if callable(adapters_factory) else {}
+    if not adapters:
+        source_adapter_factory = getattr(connection, "source_adapter", None)
+        source_adapter = source_adapter_factory() if callable(source_adapter_factory) else None
+        adapters = {"": source_adapter} if source_adapter is not None else {}
     if isinstance(ctx.registry, _PreparedRegistry) and state.source_catalog is not None:
-        if source_adapter is None:
+        if not adapters:
             ctx.registry.unsupported_sources.add(instance)
         else:
-            ctx.registry.sources[instance] = source_adapter
+            for suffix, source_adapter in adapters.items():
+                connection_id = instance if not suffix else f"{instance}:{suffix}"
+                ctx.registry.sources[connection_id] = source_adapter
     return report.registered
 
 

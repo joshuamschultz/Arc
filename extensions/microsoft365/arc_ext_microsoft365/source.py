@@ -102,8 +102,99 @@ class OutlookSourceAdapter:
         return None
 
 
+class OneDriveSourceAdapter:
+    """OneDrive files are a separate source stream from Outlook mail on one grant."""
+
+    def __init__(self, attachment: Any) -> None:
+        self._attachment = attachment
+        self._folder = "root"
+
+    async def inspect_source(self, request: InspectSource) -> SourceDescription:
+        return SourceDescription(
+            connection_id=request.connection_id,
+            source_kind="onedrive",
+            account_id="microsoft365-onedrive-account",
+            display_name="Microsoft OneDrive",
+            supports_incremental=False,
+            supports_deletes=False,
+            root_locator=self._folder,
+        )
+
+    async def list_source_resources(
+        self, request: ListSourceResources
+    ) -> tuple[SourceResource, ...]:
+        result = await self._attachment.invoke("list-folder-files", {"folder": "root"})
+        values = _json(result.content).get("value", _json(result.content).get("files", []))
+        resources = [
+            SourceResource(resource_id="root", label="OneDrive root", resource_kind="folder")
+        ]
+        for value in values if isinstance(values, list) else []:
+            if not isinstance(value, dict) or not value.get("folder"):
+                continue
+            identifier = str(value.get("id") or "")
+            if identifier:
+                resources.append(
+                    SourceResource(
+                        resource_id=identifier,
+                        label=str(value.get("name") or identifier),
+                        resource_kind="folder",
+                    )
+                )
+        return tuple(resources)
+
+    async def select_source_resources(self, request: SelectSourceResources) -> None:
+        if len(request.resource_ids) != 1:
+            raise SourceError(SourceFailureCode.UNSUPPORTED_CONTENT, "select one OneDrive folder")
+        self._folder = request.resource_ids[0]
+
+    async def sync_source(self, request: SyncSource) -> SyncSourcePage:
+        if request.checkpoint is not None:
+            return SyncSourcePage(next_checkpoint=request.checkpoint, has_more=False)
+        result = await self._attachment.invoke(
+            "list-folder-files", {"folder": request.root_locator or self._folder}
+        )
+        values = _json(result.content).get("value", _json(result.content).get("files", []))
+        objects = tuple(
+            _onedrive_object(value)
+            for value in values
+            if isinstance(value, dict) and value.get("file")
+        )
+        return SyncSourcePage(objects=objects, next_checkpoint="snapshot-1", has_more=False)
+
+    async def fetch_source(self, request: FetchSourceObject) -> SourceContent:
+        result = await self._attachment.invoke("get-onedrive-file", {"file_id": request.object_id})
+        item = _json(result.content)
+        version = str(item.get("eTag") or item.get("lastModifiedDateTime") or "1")
+        if version != request.version:
+            raise SourceError(
+                SourceFailureCode.VERSION_CHANGED, "OneDrive file changed during fetch"
+            )
+        content = str(item.get("content") or item.get("text") or "").encode()
+        if len(content) > request.max_bytes:
+            raise SourceError(SourceFailureCode.TOO_LARGE, "OneDrive file exceeds byte limit")
+        return SourceContent(
+            object_id=request.object_id,
+            version=version,
+            media_type=str(item.get("mimeType") or "text/plain"),
+            content=content,
+            metadata={"classification": "unclassified"},
+        )
+
+    async def close_source(self) -> None:
+        return None
+
+
 def build_source_adapter(context: dict[str, Any]) -> OutlookSourceAdapter:
     return OutlookSourceAdapter(context["attachment"])
+
+
+def build_source_adapters(context: dict[str, Any]) -> dict[str, Any]:
+    """Return isolated mail and file streams for a single Microsoft grant."""
+    attachment = context["attachment"]
+    return {
+        "outlook": OutlookSourceAdapter(attachment),
+        "onedrive": OneDriveSourceAdapter(attachment),
+    }
 
 
 def _object(value: dict[str, Any]) -> SourceObject:
@@ -116,6 +207,20 @@ def _object(value: dict[str, Any]) -> SourceObject:
         kind=SourceObjectKind.FILE,
         version=str(value.get("changeKey") or value.get("lastModifiedDateTime") or "1"),
         media_type="text/plain",
+        metadata={"classification": "unclassified"},
+    )
+
+
+def _onedrive_object(value: dict[str, Any]) -> SourceObject:
+    identifier = str(value.get("id") or "")
+    if not identifier:
+        raise SourceError(SourceFailureCode.TRANSIENT, "OneDrive returned a file without an id")
+    return SourceObject(
+        object_id=identifier,
+        locator=str(value.get("webUrl") or value.get("name") or identifier),
+        kind=SourceObjectKind.FILE,
+        version=str(value.get("eTag") or value.get("lastModifiedDateTime") or "1"),
+        media_type=str(value.get("file", {}).get("mimeType") or "application/octet-stream"),
         metadata={"classification": "unclassified"},
     )
 
