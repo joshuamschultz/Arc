@@ -3,9 +3,10 @@
 
 The gate is intentionally explicit: it runs the cross-package connected-data
 journey and the ArcUI operator lifecycle tests, rather than relying on package
-test discovery to include them.  Set ``ARC_RELEASE_GATE_POSTGRES=1`` when a
-PostgreSQL service is available to include ArcStore's source-sync integration
-contract as well.
+test discovery to include them. Set ``ARC_RELEASE_GATE_POSTGRES=1`` and
+``ARCSTORE_TEST_POSTGRES_DSN`` when a PostgreSQL service is available to include
+ArcStore's source-sync integration contract. The gate refuses to silently skip
+that contract when live PostgreSQL was explicitly requested.
 """
 
 from __future__ import annotations
@@ -21,6 +22,12 @@ def main() -> int:
         "packages/arcui/tests/test_connected_data_routes.py",
     ]
     if os.environ.get("ARC_RELEASE_GATE_POSTGRES") == "1":
+        if not os.environ.get("ARCSTORE_TEST_POSTGRES_DSN"):
+            sys.stderr.write(
+                "ARCSTORE_TEST_POSTGRES_DSN is required when "
+                "ARC_RELEASE_GATE_POSTGRES=1\n"
+            )
+            return 2
         tests.append("packages/arcstore/tests/integration/test_source_sync_postgres.py")
     return subprocess.run(  # noqa: S603 - executable and test paths are repository constants
         [sys.executable, "-m", "pytest", "-q", *tests], check=False
