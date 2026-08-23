@@ -86,7 +86,7 @@ Paths (``arctrust.paths`` — the ONE resolver; never compose your own):
     activate_runtime    — atomic ``current`` symlink flip (update / rollback)
 """
 
-__version__ = "0.10.0"
+__version__ = "0.11.0"
 
 from arctrust.artifact import (
     ArtifactSignature,

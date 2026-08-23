@@ -6,7 +6,22 @@ versioning.
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-08-22
+
+### Added
+
+- Pluggable index backends: the default local SQLite/sqlite-vec index remains
+  disposable, while PostgreSQL + pgvector is an opt-in scalable index.
+- Signed personal and fleet-shared knowledge adapters with save, retrieve,
+  search, promote and revoke operations and exact classification enforcement.
+- OKF v0.2 validation for durable human-readable memory/knowledge documents.
+
 ### Changed
+
+- Shared knowledge lives under `arc_team()/shared/knowledge`; promotion copies a
+  verified personal record into fleet scope without making agent state global.
+- Backend and knowledge integrations remain removable behind the same typed
+  ports; arcmemory still runs standalone with local defaults.
 
 - Documentation refresh — README, CLAUDE.md, and this changelog reconciled with the
   current source tree (agentic consolidation, confirm-gated dedup, events store, degrade

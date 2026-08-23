@@ -73,6 +73,15 @@ These are the standout capabilities that make `arcagent` best-in-class for produ
 - **Vendor-CLI-first** — Extensions built around vendor CLIs (AWS, GCP, GitHub, etc.)
 - **Deployment-wide connections** — Shared connectors with per-agent grants; deny-by-default
 - **Operator-gated** — All connector setup requires explicit operator approval
+- **Durable convergence** — Grants and revocations reconcile from the durable
+  snapshot on startup and periodically; queue records are wakeups, not the source
+  of truth
+- **One contract everywhere** — ArcUI and ArcCLI use the same canonical connector
+  coordinates and report `applied` versus `activation_pending` honestly
+
+See the [connections operations
+runbook](../../docs/runbooks/operate/connections.md) for setup, activation and
+troubleshooting.
 
 ### **Configuration**
 - **TOML-based** — Three sibling files (`arcagent.toml` / `arcllm.toml` / `arcrun.toml`); full surface area

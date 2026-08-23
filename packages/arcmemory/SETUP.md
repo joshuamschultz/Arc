@@ -135,7 +135,34 @@ Absent, `open_index_backend("postgres")` raises a clear "install arcmemory[postg
 
 ---
 
+## 5. Signed fleet-shared knowledge
+
+Shared knowledge is optional and belongs to the existing memory module rather
+than a parallel runtime:
+
+```toml
+[modules.memory.config]
+shared_knowledge_enabled = true
+```
+
+The fleet root resolves through `arc_team()` and records are stored below
+`shared/knowledge`. Do not compose this path manually. The service account must
+be able to create this directory atomically; production storage should be
+encrypted at rest. Agent signing keys remain non-exportable and must not be
+copied into configuration or the shared tree.
+
+Smoke-test the boundary by saving a personal record, calling
+`knowledge_promote(reference)`, retrieving it from a second authorized agent,
+and confirming a lower-clearance agent receives no record. Directly changing a
+shared document must make signature verification fail rather than silently
+accepting the edit.
+
+---
+
 ## Change log of out-of-band setup actions
+
+- **2026-08-22** — Added optional PostgreSQL/pgvector indexing and signed,
+  classification-gated fleet knowledge promotion under the canonical team root.
 
 - **2026-07-13** — Installed `sentence-transformers>=3.0` (→ `sentence-transformers 5.6.0`,
   pulled `torch 2.13.0`) into the DGX arc venv. The box had neither installed, so the

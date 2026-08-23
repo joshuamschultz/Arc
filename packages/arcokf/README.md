@@ -4,6 +4,13 @@
 It parses typed Markdown knowledge documents, rejects malformed YAML and unsafe
 links, and returns structured diagnostics suitable for fail-closed stores.
 
+It is intentionally not part of `arcmemory`. OKF is the canonical document
+boundary for workspaces, shared knowledge, importers and third-party plugins;
+those consumers must be able to validate documents without installing a memory
+engine. Dependencies point from consumers such as arcmemory to arcokf, never
+back upward. Either package can therefore be removed or replaced behind the
+same typed parse/render/validate contract without breaking unrelated function.
+
 ## v0.2 document shape
 
 Knowledge documents use YAML frontmatter with a non-empty string `type` and a

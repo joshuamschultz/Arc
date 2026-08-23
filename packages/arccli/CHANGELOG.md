@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-22
+
+- Native streamed agent output and reliable attached/headless ArcFlow commands.
+- Durable inbox/thread reads and sends, capability ZIP staging, and hardened
+  connector add/grant/revoke/remove with roster validation and durable activation.
+
 ## [0.8.0] - 2026-08-19
 
 A wide operator-surface expansion: memory maintenance, connectors, signed module

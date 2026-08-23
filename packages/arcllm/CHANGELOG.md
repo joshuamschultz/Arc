@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-22
+
+- Native Anthropic and hardened OpenAI SSE streaming, including parallel tool
+  fragments, usage/stop normalization, truncation detection and cancellation.
+- Routing-policy provenance is preserved across model selection and responses;
+  optional routing stays inside ArcLLM rather than coupling ArcRun to a vendor.
+
 ### Changed
 - Docs: README + CLAUDE.md refreshed to current API — 17 providers (LiteLLM gateway in, phantom OpenRouter/NVIDIA out), always-on routing, the `embed()` surface, install extras, and the `response.cost_usd` example fix.
 

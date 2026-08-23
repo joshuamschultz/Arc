@@ -111,6 +111,9 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-packages --all-groups
 
+      - name: Run zero-trust adversarial battery
+        run: uv run python scripts/run_adversarial_tests.py -q --tb=short
+
       - name: Export harness runtime closure
         # Scope the vulnerability gate to what Arc actually ships: every
         # workspace package + product extras (azure/cloud/container),

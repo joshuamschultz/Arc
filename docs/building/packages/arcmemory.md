@@ -8,6 +8,13 @@
 
 ## Overview
 
+> **Current in 0.9:** durable memory remains workspace-local; an optional
+> PostgreSQL/pgvector index implements the same removable index port, and signed
+> knowledge can be explicitly promoted from personal scope to
+> `arc_team()/shared/knowledge`. See the package
+> [README](../../../packages/arcmemory/README.md#personal-and-fleet-shared-knowledge)
+> and [setup guide](../../../packages/arcmemory/SETUP.md).
+
 `arcmemory` provides **dual-speed memory** for agents:
 - **Episodic memory** - Recent events, high recall
 - **Entity graph** - Persistent facts about people/things
@@ -459,4 +466,3 @@ flowchart LR
 | `semantic_degraded` | `() -> 'bool'` |
 | `async semantic_status` | `(workspaces: 'Sequence[Path]' = (), *, embedder: 'Embedder \| None', backend: 'str' = 'local') -> 'Se` |
 | `sqlite_vec_loadable` | `() -> 'bool'` |
-

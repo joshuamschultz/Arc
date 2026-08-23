@@ -742,3 +742,32 @@ The trust boundary was recently corrected so that layering is clean:
 The rule of thumb: **discovery is arcagent, approval is arctrust.** A caller
 lists what's gated (arcagent), then pins a hash (arctrust). This keeps the
 security-critical trust logic in one auditable, sibling-free leaf package.
+
+---
+
+## Hostile-insider baseline
+
+Arc does not treat local filesystem access, process access, a socket, a database
+row, a DID string, or knowledge of an entry point as authority. Assume an
+attacker can alter a prompt, skill, tool, module or cached artifact; scrape or
+truncate logs and backups; replay messages; invoke ArcRun directly; trigger an
+agent through an internal route; race approvals and leases; substitute paths or
+symlinks; and compromise a provider, plugin, exporter or operator session.
+
+Protected artifacts are content-addressed, signed and reverified at use.
+Operator and agent keys are non-exportable; privileged actions require signed,
+authorized, replay-resistant requests. Logs, traces, transcripts and exports
+are sensitive data: encrypt at rest, redact before emission, authorize and
+audit reads/exports, and detect chain truncation. Direct standalone ArcRun use
+remains supported, but conveys no ArcAgent identity, capabilities, workspace,
+fleet membership or credential authority.
+
+Run the separately named regression gate before release:
+
+```bash
+uv run python scripts/run_adversarial_tests.py -q
+```
+
+The authoritative engineering rules and expanded threat inventory live in root
+`AGENTS.md` and `CLAUDE.md`; the scenario map is in the [adversarial test
+runbook](../runbooks/security/adversarial-tests.md).

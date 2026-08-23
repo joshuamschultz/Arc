@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-08-22
+
+- Trust seams now cover uploaded capabilities, shared knowledge promotion,
+  connector reconciliation, approval outboxes and workflow fenced mutations.
+- Zero-trust build guidance explicitly treats filesystem/process/database access
+  as untrusted and requires non-exportable key handles and audited reads.
+
 ## [0.10.0] - 2026-08-19
 
 Catch-up release: the leaf gains data-protection primitives (PII/secret

@@ -49,6 +49,35 @@ All of these are
 - optional installs at the cli level
 - optional imports, imported separately and specifically
 
+#### The seam is the product boundary
+
+Everything outside a package nucleus is a replaceable layer, module, adapter or
+plugin behind one explicit typed contract. The core knows the contract and a
+default implementation; it never knows a vendor, feature directory or concrete
+class. Every implementation accepts the same canonical input model and returns
+the same canonical output/event model so it can be removed, replaced or rewritten
+without changing callers.
+
+- Adding an implementation means registering/discovering a leaf component, not
+  adding a core `if provider == ...` branch.
+- Removing its files must leave imports, startup and every unrelated feature
+  working. Only that capability may become unavailable, through a typed degraded
+  result rather than an import error or partial initialization.
+- Optional dependencies are imported inside the plugin boundary only. They never
+  leak into public contract types or become transitive requirements of the core.
+- Plugins own their state and lifecycle. Registration returns an ownership token;
+  teardown removes every handler, tool, task, resource and cache entry it added.
+- Cross-layer calls use the public root facade and the adjacent seam only. No deep
+  imports, reverse imports, shared mutable globals, database-table reach-through
+  or side-channel callbacks.
+- Contract tests run against the default, fake and every real implementation.
+  Architecture tests prove the package starts with each optional component
+  physically absent.
+
+If a feature cannot be deleted from the tree without breaking unrelated behavior,
+or cannot be replaced while preserving its input/output contract, it is not
+properly seamed and must not merge. See `docs/concepts/seam-model.md`.
+
 
 ### 3. One resolver per Arc-home path
 
@@ -133,6 +162,72 @@ Every deployment, at every tier (personal / enterprise / federal), enforces:
 4. **Audit** — `arctrust.audit.emit(AuditEvent, sink)` on every operation. Single emission point; sinks fan out: `JsonlSink` (compliance), `SignedChainSink` (tamper-evident chain), `arcui.bridge.UIBridgeSink` (live observability).
 
 **Tier is stringency metadata, not a gate.** Federal: FIPS-validated crypto, signed allowlists, hard `max_turns` cap, all 5 policy layers. Personal: self-signed bundles (audit warn), Global-only policy layer, dynamic tool creation. **Every tier still identifies, verifies, authorizes, and audits.**
+
+#### Assume an active attacker is already inside
+
+Zero trust is the default threat model, not a network topology. Design every
+boundary as though an attacker can read and modify ordinary files, call public
+APIs, replay messages, invoke package entry points, and inspect local traffic.
+Possession of a path, process, socket, database connection, or valid-looking DID
+is never authority. A compromised component must not be able to turn its local
+access into a trusted fleet action.
+
+The security boundary is cryptographic identity plus explicit authorization:
+
+- **Tools, skills, modules, extensions and backends:** direct filesystem edits
+  never change what an agent trusts or can load. Every executable artifact is
+  content-addressed, signed, verified at load and again when it changes, bound to
+  an approved manifest and agent scope, then authorized before use. Cache hits,
+  hot reloads and already-running processes do not bypass re-verification.
+- **Prompts and instructions:** system prompts, identity, policy, workflow
+  definitions and other control-plane instructions are protected artifacts, not
+  ordinary mutable text. Changes require an authenticated operator action or an
+  explicitly authorized agent action, integrity/version checks and audit. Treat
+  workspace files, retrieved documents, inbox content, tool output and model
+  output as untrusted data that cannot overwrite higher-priority instructions.
+- **Keys and credentials:** operator and agent private keys are non-exportable.
+  Code receives a signing/decryption capability or short-lived handle, never raw
+  key material. Agent keys are scoped to that agent and operation; operator
+  authority is exercised only through an authenticated operator surface such as
+  ArcUI. Never log, serialize, return, copy or expose a private key or reusable
+  credential to an LLM, tool, subprocess, plugin or client.
+- **Runs and manual invocation:** starting, resuming, steering or replaying an
+  Arc agent requires a fresh, signed and authorized request with nonce/timestamp
+  replay protection and an audit event. Calling `arcrun` directly is allowed for
+  its standalone library contract, but grants no Arc agent identity, trusted
+  capability registry, workspace state, fleet access or credentials. There is
+  no internal "trusted caller" shortcut.
+- **Logs, traces and transcripts:** LLM inputs/outputs, run events, tool I/O,
+  traces and audit records are sensitive data. Encrypt them at rest and in
+  transit, bind reads to authenticated identity and least-privilege policy,
+  redact secrets before persistence, and audit every read/export as well as
+  every write. Audit integrity is tamper-evident; observability access never
+  implies payload access.
+- **Data stores and messages:** authenticate and authorize every query, mutation
+  and subscription; enforce tenant, agent, classification and purpose scope at
+  the data boundary. Sign messages, reject replays and stale revisions, and use
+  atomic state transitions/outboxes so a crash cannot create an authorization
+  gap.
+- **Failure behavior:** verification, key custody, policy, audit, encryption or
+  identity failures fail closed. Recovery never means accepting unsigned state,
+  skipping a policy layer, using a default identity or downgrading protection.
+
+For each feature, write abuse cases alongside success cases: direct artifact
+tampering, prompt replacement, log scraping, forged/replayed triggers, stolen
+handles, confused-deputy calls, stale-process behavior and partial-commit/crash
+windows. Include malicious or compromised operators, agents, plugins, providers,
+models, databases, message buses, caches, backups, observability exporters,
+install/update channels and recovery tooling. Cover rollback/downgrade attacks,
+TOCTOU swaps after verification, symlink/path substitution, dependency confusion,
+forged DIDs, cross-agent/tenant reads, classification laundering, nonce reuse,
+clock skew, queue redelivery, stale leases, poisoned indexes/caches, resource
+exhaustion, audit truncation, backup/export leakage, and attempts to turn health,
+debug, migration or break-glass paths into authorization bypasses. Tests must
+prove these paths are refused and audited at every tier.
+
+Run the dedicated cross-package battery with
+`uv run python scripts/run_adversarial_tests.py`. A security-sensitive change is
+not complete until its abuse case is added to that battery.
 
 #### Other invariants
 

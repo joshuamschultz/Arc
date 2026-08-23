@@ -1,6 +1,6 @@
 """arcrun — async execution engine for autonomous agents."""
 
-__version__ = "0.10.0"
+__version__ = "0.11.0"
 
 from arcrun._messages import SystemPrompt, content_text, system_messages
 from arcrun.builtins import (

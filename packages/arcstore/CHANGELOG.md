@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-22
+
+- Production storage is PostgreSQL-only, using one async adapter for local
+  PostgreSQL and Supabase with pooling, TLS and forward migrations.
+- Complete mutable/CAS/batch/increment contract, fenced workflow writes, durable
+  inbox, approval outbox leases and atomic transition-plus-notification methods.
+- SQLite is removed from runtime; a resumable verified migration utility lives
+  separately under `tools/one_time/` for later deletion.
+
 ### Changed
 - Documentation refresh — README now covers the `runs` / ArcFlow surface, `create_batch`,
   the `mutable_increment` / `mutable_create_batch` primitives, and `store_db_path`.

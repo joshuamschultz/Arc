@@ -109,6 +109,7 @@ Look things up here.
 **Operate**
 [Teams](runbooks/operate/teams.md) ·
 [Tasks](runbooks/operate/tasks.md) ·
+[Connections](runbooks/operate/connections.md) ·
 [Agent features](runbooks/operate/agent-features.md) ·
 [Policy and proactive engine](runbooks/operate/policy-and-proactive.md)
 
@@ -151,6 +152,10 @@ the way they are.
    every tier. Tier is stringency metadata, not a gate.
 4. **Clean code, lean code.** No migration helpers, no compatibility shims. The
    code reflects current reality; commit messages hold the history.
+5. **The seam is the removable unit.** Every optional layer, module, adapter or
+   plugin implements one typed canonical input/output contract. Deleting one
+   may remove its capability, but must not break unrelated function or require
+   conditionals in the nucleus.
 
 Architecture Decision Records are project history rather than published guides,
 so they stay with the repository's system files instead of appearing in this set.

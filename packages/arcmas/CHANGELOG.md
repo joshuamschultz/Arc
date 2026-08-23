@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-22
+
+- Meta-install aligned with the 0.4 alpha stack: PostgreSQL ArcStore, streaming,
+  durable inbox/approvals, ArcFlow reliability, attachments and shared knowledge.
+
 ## [0.4.0] - 2026-08-19
 
 ### Added

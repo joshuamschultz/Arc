@@ -68,6 +68,10 @@ What makes `arcmemory` fundamentally different from vector-only memory systems:
 - **Model seam** — Inject any LLM for consolidation; arcmemory doesn't mandate a specific provider
 - **Embedder seam** — Local or remote embedding service; sqlite-vec by default with BM25 fallback
 - **Distiller seam** — Optional LLM call to distill raw captures into structured memories
+- **Index seam** — Local SQLite/sqlite-vec is disposable by default; PostgreSQL +
+  pgvector is an optional implementation of the same typed index contract
+- **Knowledge-scope seam** — Personal and fleet-shared knowledge use one tool
+  surface; scope is explicit, never an implicit global
 
 ### **Failure Handling**
 - **Graceful degradation** — No embedder → BM25 + graph fallback; no LLM → deterministic pipeline
@@ -98,6 +102,7 @@ What makes `arcmemory` fundamentally different from vector-only memory systems:
 ```bash
 pip install arcmemory              # core: in-process vector index + agentic sleep pass
 pip install "arcmemory[local]"     # + on-device embedder (via arcllm[local])
+pip install "arcmemory[postgres]"  # optional PostgreSQL + pgvector index
 ```
 
 `sqlite-vec` ships by default, so the vector table always exists; the `[local]` extra is
@@ -132,6 +137,31 @@ asyncio.run(main())
 Wire the `model=`, `embedder=`, and `distiller=` seams (see *The consolidation
 engine* and *Pluggability*) to light up semantic + analogical recall and the
 agentic sleep pass. With none of them, the example above still runs.
+
+## Personal and fleet-shared knowledge
+
+Enable shared knowledge through the existing memory module:
+
+```toml
+[modules.memory.config]
+shared_knowledge_enabled = true
+```
+
+| Tool | Purpose |
+|---|---|
+| `knowledge_save(scope, ...)` | Save to explicit `personal` or `shared` scope |
+| `knowledge_retrieve(scope, reference)` | Retrieve one verified record |
+| `knowledge_search(scope, query)` | Search within the authorized scope |
+| `knowledge_promote(reference)` | Copy a signed personal record into fleet scope |
+| `knowledge_revoke(scope, reference)` | Revoke without erasing the audit trail |
+
+Fleet records live at the canonical `arc_team()/shared/knowledge` path and are
+valid OKF documents. Promotion verifies the personal record, signs the shared
+copy with the owning agent identity, pins the signer, enforces classification
+and no-write-down rules, and emits audit. It does not make an agent's private
+workspace or memory global.
+
+See [SETUP.md](SETUP.md#5-signed-fleet-shared-knowledge) for deployment checks.
 
 ---
 

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-08-22
+
+### Added
+- Resource-isolated PDF attachment extraction and signed review-only ZIP intake
+  for agent-scoped tools and skills.
+- Durable inbox delivery facade, streaming delivery events, connector control
+  and personal/shared knowledge tools.
+
+### Changed
+- Connector grants now converge from durable state on startup and periodically;
+  queues are wakeups, never the source of truth. Direct file edits cannot bypass
+  capability signature/trust gates.
+- Workspace knowledge, memory and profile documents write strict OKF v0.2.
+
 ## [0.17.0] - 2026-08-19
 
 Config split into three sibling files, ArcFlow workflows and connectors as new modules, a

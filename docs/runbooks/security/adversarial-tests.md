@@ -1,4 +1,4 @@
-# Adversarial Test Suite — ArcRun
+# Adversarial Test Suite — Zero Trust Across Arc
 
 > **Runbooks**  ·  Operate  ·  page 17 of 20  
 > **For** Operators deploying and running Arc  
@@ -16,17 +16,45 @@ flowchart LR
     A --> B --> C --> D
 ```
 
-**Version**: 1.0
-**Date**: 2026-02-21
-**Location**: `tests/security/`
-**Total Tests**: 36
+**Version**: 2.0
+**Date**: 2026-08-22
+**Manifest**: `scripts/run_adversarial_tests.py`
 
 ## Overview
 
-The adversarial test suite validates ArcRun's resilience against the attack
-vectors identified in the OWASP LLM Top 10 (2025) and OWASP Agentic Top 10
-(2026). Tests use a MockModel to simulate adversarial LLM behavior without
-requiring live API calls.
+The dedicated battery composes real security suites from ArcTrust, ArcPrompt,
+ArcRun, ArcAgent, ArcGateway, ArcMemory and ArcUI. It assumes an attacker can
+modify ordinary files, call entry points, replay traffic and inspect storage,
+but cannot forge an operator/agent signature. Assertions prove the control
+fired: unsigned or drifted artifacts do not load, tampered prompts do not
+verify, protected logs do not disclose payloads, forged/replayed actions are
+refused, identities cannot cross scope, and standalone ArcRun gains no ArcAgent
+authority.
+
+## Run it
+
+```bash
+uv run python scripts/run_adversarial_tests.py -q
+```
+
+Pass normal pytest flags after the script name. The command validates its
+manifest before executing, so a renamed/deleted security suite fails loudly
+instead of silently reducing coverage.
+
+## Cross-package zero-trust scenarios
+
+| Threat | Production boundaries exercised |
+|---|---|
+| Direct skill/tool/module modification | load-time signatures, trust pins, drift detection, operator promotion |
+| Prompt replacement or injected instructions | pinned prompt signatures, overlay isolation, role/instruction boundaries |
+| LLM/run/tool/audit log scraping or tampering | at-rest sealing, hash chains, replay redaction and path isolation |
+| Manual/forged/replayed agent actions | ArcUI operator gates, signed approvals, gateway identity and replay dedup |
+| Key theft and cross-agent/tenant reads | trust-store permissions, DID/key separation, runtime and classification isolation |
+| Direct ArcRun invocation and resource abuse | package dependency direction, absence of ArcAgent authority, time/memory/spawn bounds |
+
+The manifest is intentionally curated. Package-local security suites remain
+broader; this battery is the fast release gate for the hostile-insider threat
+model in root `AGENTS.md` and `CLAUDE.md`.
 
 ## Test Categories
 
@@ -157,14 +185,14 @@ Tests that concurrent operations don't cause deadlocks, interleaving, or corrupt
 ## Running the Suite
 
 ```bash
-# All security tests
-pytest tests/security/ -v
+# Cross-Arc hostile-insider release gate
+uv run python scripts/run_adversarial_tests.py -v
 
-# Single category
-pytest tests/security/test_event_tampering.py -v
+# Package-local extended suite (example)
+uv run pytest packages/arcrun/tests/security/ -v
 
-# With coverage
-pytest tests/security/ --cov=arcrun -v
+# Cross-Arc gate with coverage enabled
+uv run python scripts/run_adversarial_tests.py --cov=arcrun --cov=arcagent
 ```
 
 ## Shared Fixtures (`conftest.py`)

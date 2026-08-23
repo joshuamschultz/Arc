@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-22
+
+- Incremental chat streaming and bounded attachment/PDF upload.
+- Durable inbox threads/handoffs, approval notifications, capability ZIP review,
+  and live/durable connector activation status.
+- PostgreSQL-backed operational views and shared-knowledge controls.
+
 ## [0.4.0] - 2026-08-19
 
 The 2027 control-plane redesign wave: the dashboard is rebuilt from a telemetry

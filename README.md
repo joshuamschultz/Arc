@@ -27,6 +27,27 @@
 
 ---
 
+## Alpha 0.4
+
+The first alpha adds native end-to-end streaming, PostgreSQL/Supabase ArcStore,
+durable inboxes and approvals, reliable ArcFlow runners, live connector
+convergence, signed ZIP capability intake, PDF message attachments, OKF workspace
+documents, and signed personal-to-fleet knowledge promotion.
+
+Arc assumes an attacker may already have local process or filesystem access.
+Authority therefore comes from verified identity, signatures, authorization and
+audit—not possession of a path, socket, database row or runtime entry point. Run
+the dedicated hostile-insider release gate with:
+
+```bash
+uv run python scripts/run_adversarial_tests.py -q
+```
+
+See the [seam model](docs/concepts/seam-model.md), [threat
+model](docs/runbooks/security/threat-model.md), [adversarial test
+runbook](docs/runbooks/security/adversarial-tests.md), and [0.4.0 release
+notes](CHANGELOG.md).
+
 ## 📚 Documentation
 
 **Full documentation: [joshuamschultz.github.io/Arc](https://joshuamschultz.github.io/Arc/)** — or read it

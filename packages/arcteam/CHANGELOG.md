@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-22
+
+- ArcFlow headless service, attached CLI completion, durable runner leases,
+  mutation fencing, bounded poisoned-run failure and restart-safe lifecycle.
+- Signed fleet shared-knowledge storage and promotion through the memory seam.
+
 ## [0.7.0] - 2026-08-19
 
 Two additions land: **ArcFlow** (SPEC-061), a signed workflow-definition layer with a

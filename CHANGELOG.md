@@ -7,10 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- **arcokf 0.2.0** — public typed OKF document/linter contract. Arc-created
-  context, curated memory, shared entities, personal knowledge, and user-profile
-  Markdown now validate before write; operational TOML/JSON/JSONL and audit
-  artifacts remain outside OKF.
+## [0.4.0] - 2026-08-22
+
+First alpha release candidate: the runtime is PostgreSQL-native, streaming end
+to end, operable through durable inbox/approval/workflow surfaces, and hardened
+for hostile-insider zero trust.
+
+### Added
+
+- Native ArcLLM/ArcRun streaming through ArcAgent, ArcCLI, ArcUI, web sockets,
+  Telegram, Slack and Mattermost, including cancellation and bounded backpressure.
+- Durable agent inbox threads and handoffs; operator approval notifications with
+  crash-recoverable outbox claims; capability ZIP intake for tools and skills.
+- PDF message attachments with custody fencing and resource-isolated extraction.
+- OKF v0.2 workspace/knowledge documents and signed fleet shared-knowledge tools
+  with personal/shared save, retrieve, search, promote and revoke scopes.
+- A removable one-time SQLite-to-PostgreSQL migration tool under `tools/one_time/`.
+- A cross-package zero-trust adversarial battery:
+  `uv run python scripts/run_adversarial_tests.py`.
+
+### Changed
+
+- ArcStore is PostgreSQL-only in production; local PostgreSQL and Supabase share
+  one adapter contract. SQLite remains only as migration input.
+- Connector grants reconcile live and durably across processes; setup uses one
+  canonical CLI/UI contract and supports MCP stdio attachments.
+- ArcFlow has a headless runner service, attached CLI execution, durable leases,
+  fenced mutations, bounded failure terminalization and PostgreSQL CAS semantics.
+- Root engineering standards now assume an active attacker is already inside and
+  require every feature to remain removable behind a unified typed seam.
+
+### Package versions
+
+`arc` 0.4.0; `arc-agent` 0.19.0; `arccmd` 0.9.0; `arcgateway`
+0.4.0; `arcllm` 0.9.0; `arcrun` 0.11.0; `arcstore` 0.4.0;
+`arcteam` 0.8.0; `arcmemory` 0.9.0; `arcui` 0.5.0; `arctrust`
+0.11.0; `arcmas` 0.5.0. `arcokf` remains 0.2.0.
 
 ## 2026-08-21 — arcmemory 0.8.0 / arcagent 0.18.0
 

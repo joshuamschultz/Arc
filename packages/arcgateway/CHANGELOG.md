@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-22
+
+- Incremental sanitized delivery across web, Slack, Telegram and Mattermost with
+  bounded queues, terminal deduplication, cancellation and replay.
+- Durable inbox projection and crash-recoverable approval notification dispatch.
+- File/PDF message custody with bounded fetch and workspace-safe references.
+
 ## [0.3.0] - 2026-08-19
 
 ### Added

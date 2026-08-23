@@ -364,6 +364,10 @@ arc connector auth ./my-agent <connector>
 arc connector probe ./my-agent <connector>
 arc connector remove ./my-agent <connector>
 
+# === Capability archive intake (review only until ArcTrust promotion) ===
+arc capability import ./capability.zip --agent <agent-id>
+arc capability-import import - --agent <agent-id> --json
+
 # === Signed module bundles (SPEC-066) ===
 arc module list
 arc module bundle ./my-module                                   # produce a signed bundle

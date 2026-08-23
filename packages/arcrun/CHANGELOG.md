@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-08-22
+
+- ReAct consumes the typed ArcLLM stream, accumulates tool fragments once, emits
+  ordered run-scoped events and cancels blocked provider reads cleanly.
+- Stream transports expose no raw tool arguments/results or hidden reasoning.
+
 - Docs refreshed (2026-08-19) to current reality: `run()` capability/system-prompt
   signature, the five built-in strategies, `run_oneshot`, the `RunHandle` intervention
   signatures, and the ArcLLM model facade re-export.
