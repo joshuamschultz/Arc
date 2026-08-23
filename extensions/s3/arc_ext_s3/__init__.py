@@ -46,12 +46,14 @@ class S3Attachment:
         session_token: str,
         region: str,
         endpoint_url: str,
+        endpoint_configured: bool = True,
     ) -> None:
         self._access_key_id = access_key_id
         self._secret_access_key = secret_access_key
         self._session_token = session_token
         self._region = region
         self._endpoint_url = endpoint_url or None
+        self._endpoint_configured = endpoint_configured
         self._client: Any | None = None
         self._auth_errors: tuple[type[BaseException], ...] = ()
         self._client_errors: tuple[type[BaseException], ...] = ()
@@ -83,6 +85,22 @@ class S3Attachment:
 
     async def probe(self) -> ProbeResult:
         """Use ListBuckets as a bounded credential and endpoint check."""
+        missing = tuple(
+            name
+            for name, value in (
+                ("access_key_id", self._access_key_id),
+                ("secret_access_key", self._secret_access_key),
+                ("region", self._region),
+                ("endpoint_url", "configured" if self._endpoint_configured else ""),
+            )
+            if not value
+        )
+        if missing and not self._access_key_id and not self._secret_access_key:
+            missing = (*missing, "session_token")
+        if missing:
+            return ProbeResult(
+                reachable=False, detail=f"s3 has no credential for {', '.join(missing)}"
+            )
         try:
             await self._call("list_buckets")
         except SourceError as exc:
@@ -391,6 +409,7 @@ def build_native_attachment(context: dict[str, Any]) -> S3Attachment:
         session_token=str(context.get("session_token", "")),
         region=str(context.get("region", "")),
         endpoint_url=str(context.get("endpoint_url", "")),
+        endpoint_configured="endpoint_url" in context,
     )
 
 

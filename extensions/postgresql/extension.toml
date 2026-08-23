@@ -10,7 +10,7 @@ tier_floor = "personal"
 entrypoint = "arc_ext_postgresql"
 
 [[secrets]]
-name = "database_url"
+name = "database_dsn"
 prompt = "A read-only PostgreSQL/Supabase connection URL. Arc keeps it in the vault and never exposes it to agents."
 format = "api_token"
 

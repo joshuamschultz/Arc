@@ -26,13 +26,14 @@ format = "api_token"
 
 [[secrets]]
 name = "region"
-prompt = "The bucket region (for example us-east-1)."
+prompt = "The bucket's AWS region, shown in the S3 console after you select the bucket: open Properties, find AWS Region, and copy the code such as us-east-1. For MinIO, use the region configured by its administrator."
 sensitive = false
 
 [[secrets]]
 name = "endpoint_url"
-prompt = "The S3 endpoint URL; use AWS's standard endpoint or a MinIO-compatible endpoint."
+prompt = "For MinIO, copy its HTTPS server address from the administrator or Console settings, including the port. For AWS, paste the regional HTTPS S3 endpoint shown in the bucket's Properties page; Arc uses this address only for this connection."
 sensitive = false
+format = "https_url"
 
 [tools]
 allow = ["s3_list", "s3_read"]

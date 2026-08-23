@@ -91,7 +91,7 @@ def _attachment() -> Any:
         (_BUNDLE / "extension.toml").read_text(encoding="utf-8"), tier=Tier.PERSONAL
     )
     wrapper: Any = build_attachment(
-        manifest, _BUNDLE, {"database_url": Secret("postgresql://reader:secret@db.example/app")}
+        manifest, _BUNDLE, {"database_dsn": Secret("postgresql://reader:secret@db.example/app")}
     )
     return wrapper._delegate
 
@@ -160,5 +160,5 @@ def _attachment_for_dsn(dsn: str) -> Any:
     manifest = load_manifest(
         (_BUNDLE / "extension.toml").read_text(encoding="utf-8"), tier=Tier.PERSONAL
     )
-    wrapper: Any = build_attachment(manifest, _BUNDLE, {"database_url": Secret(dsn)})
+    wrapper: Any = build_attachment(manifest, _BUNDLE, {"database_dsn": Secret(dsn)})
     return wrapper._delegate

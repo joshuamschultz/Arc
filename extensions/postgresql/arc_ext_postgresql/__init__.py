@@ -67,7 +67,7 @@ class PostgreSQLAttachment:
     async def probe(self) -> ProbeResult:
         """Verify the scoped connection without returning connection details."""
         if not self._database_url:
-            return ProbeResult(reachable=False, detail="postgresql has no database_url credential")
+            return ProbeResult(reachable=False, detail="postgresql has no database_dsn credential")
         try:
             await self._execute("SELECT 1")
         except (OSError, ConnectionError, TimeoutError, SourceError) as exc:
@@ -378,7 +378,7 @@ class PostgreSQLAttachment:
 
 def build_native_attachment(context: dict[str, Any]) -> PostgreSQLAttachment:
     """Build from Arc's ephemeral vault-reveal context; never persist credentials."""
-    return PostgreSQLAttachment(str(context.get("database_url", "")))
+    return PostgreSQLAttachment(str(context.get("database_dsn", "")))
 
 
 def _schema(properties: dict[str, dict[str, str]], required: tuple[str, ...]) -> dict[str, Any]:
