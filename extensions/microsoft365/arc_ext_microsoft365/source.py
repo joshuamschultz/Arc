@@ -103,39 +103,66 @@ class OutlookSourceAdapter:
 
 
 class OneDriveSourceAdapter:
-    """OneDrive files are a separate source stream from Outlook mail on one grant."""
+    """Graph delta source for OneDrive, isolated from the Outlook source stream."""
 
-    def __init__(self, attachment: Any) -> None:
+    def __init__(self, attachment: Any | None = None, *, graph: Any | None = None) -> None:
         self._attachment = attachment
+        self._graph = graph
         self._folder = "root"
+        self._drive = ""
+        self._account = ""
 
     async def inspect_source(self, request: InspectSource) -> SourceDescription:
+        if self._graph is not None:
+            user = await self._graph_request("GET", "/me")
+            self._account = str(user.get("id") or "")
         return SourceDescription(
             connection_id=request.connection_id,
             source_kind="onedrive",
-            account_id="microsoft365-onedrive-account",
+            account_id=self._account or "microsoft365-onedrive-account",
             display_name="Microsoft OneDrive",
-            supports_incremental=False,
-            supports_deletes=False,
+            supports_incremental=self._graph is not None,
+            supports_deletes=self._graph is not None,
             root_locator=self._folder,
         )
 
     async def list_source_resources(
         self, request: ListSourceResources
     ) -> tuple[SourceResource, ...]:
-        result = await self._attachment.invoke("list-folder-files", {"folder": "root"})
-        values = _json(result.content).get("value", _json(result.content).get("files", []))
-        resources = [
-            SourceResource(resource_id="root", label="OneDrive root", resource_kind="folder")
-        ]
+        if self._graph is not None:
+            drives = await self._graph_request("GET", "/me/drives")
+            values: list[Any] = []
+            resources: list[SourceResource] = []
+            for drive in drives.get("value", []):
+                if not isinstance(drive, dict) or not (drive_id := str(drive.get("id") or "")):
+                    continue
+                self._drive = self._drive or drive_id
+                resources.append(
+                    SourceResource(
+                        resource_id=f"{drive_id}:root",
+                        label=str(drive.get("name") or "OneDrive"),
+                        resource_kind="folder",
+                    )
+                )
+                children = await self._graph_request("GET", f"/drives/{drive_id}/root/children")
+                values.extend(
+                    [dict(item, _drive_id=drive_id) for item in children.get("value", [])]
+                )
+        else:
+            result = await self._attachment.invoke("list-folder-files", {"folder": "root"})
+            values = _json(result.content).get("value", _json(result.content).get("files", []))
+            resources = [
+                SourceResource(resource_id="root", label="OneDrive root", resource_kind="folder")
+            ]
         for value in values if isinstance(values, list) else []:
-            if not isinstance(value, dict) or not value.get("folder"):
+            if not isinstance(value, dict) or "folder" not in value:
                 continue
             identifier = str(value.get("id") or "")
+            drive_id = str(value.get("_drive_id") or self._drive)
             if identifier:
                 resources.append(
                     SourceResource(
-                        resource_id=identifier,
+                        resource_id=f"{drive_id}:{identifier}" if drive_id else identifier,
                         label=str(value.get("name") or identifier),
                         resource_kind="folder",
                     )
@@ -146,8 +173,26 @@ class OneDriveSourceAdapter:
         if len(request.resource_ids) != 1:
             raise SourceError(SourceFailureCode.UNSUPPORTED_CONTENT, "select one OneDrive folder")
         self._folder = request.resource_ids[0]
+        if ":" in self._folder:
+            self._drive, self._folder = self._folder.split(":", 1)
 
     async def sync_source(self, request: SyncSource) -> SyncSourcePage:
+        if self._graph is not None:
+            drive, folder = self._drive_folder()
+            path = request.checkpoint or f"/drives/{drive}/items/{folder}/delta"
+            response = await self._graph_request("GET", path)
+            values = response.get("value", [])
+            objects = tuple(
+                _onedrive_object(value, drive) for value in values if isinstance(value, dict)
+            )
+            next_checkpoint = str(
+                response.get("@odata.nextLink") or response.get("@odata.deltaLink") or path
+            )
+            return SyncSourcePage(
+                objects=objects,
+                next_checkpoint=next_checkpoint,
+                has_more="@odata.nextLink" in response,
+            )
         if request.checkpoint is not None:
             return SyncSourcePage(next_checkpoint=request.checkpoint, has_more=False)
         result = await self._attachment.invoke(
@@ -162,6 +207,44 @@ class OneDriveSourceAdapter:
         return SyncSourcePage(objects=objects, next_checkpoint="snapshot-1", has_more=False)
 
     async def fetch_source(self, request: FetchSourceObject) -> SourceContent:
+        if self._graph is not None:
+            drive, item_id = _split_drive_object(request.object_id)
+            item = await self._graph_request("GET", f"/drives/{drive}/items/{item_id}")
+            version = str(item.get("eTag") or "").strip('"')
+            if version != request.version:
+                raise SourceError(
+                    SourceFailureCode.VERSION_CHANGED, "OneDrive file changed during fetch"
+                )
+            response = await self._graph_response(
+                "GET", f"/drives/{drive}/items/{item_id}/content"
+            )
+            try:
+                chunks: list[bytes] = []
+                size = 0
+                async for chunk in response.aiter_bytes():
+                    size += len(chunk)
+                    if size > request.max_bytes:
+                        raise SourceError(
+                            SourceFailureCode.TOO_LARGE, "OneDrive file exceeds byte limit"
+                        )
+                    chunks.append(chunk)
+            finally:
+                await response.aclose()
+            return SourceContent(
+                object_id=request.object_id,
+                version=version,
+                media_type=str(
+                    response.headers.get("Content-Type")
+                    or item.get("file", {}).get("mimeType")
+                    or "application/octet-stream"
+                ),
+                content=b"".join(chunks),
+                metadata={
+                    "classification": str(
+                        response.headers.get("x-ms-classification") or "unclassified"
+                    )
+                },
+            )
         result = await self._attachment.invoke("get-onedrive-file", {"file_id": request.object_id})
         item = _json(result.content)
         version = str(item.get("eTag") or item.get("lastModifiedDateTime") or "1")
@@ -181,7 +264,53 @@ class OneDriveSourceAdapter:
         )
 
     async def close_source(self) -> None:
-        return None
+        if self._graph is not None:
+            await self._graph.aclose()
+
+    def _drive_folder(self) -> tuple[str, str]:
+        if not self._drive:
+            if ":" not in self._folder:
+                raise SourceError(SourceFailureCode.NOT_FOUND, "select a OneDrive folder")
+            self._drive, self._folder = self._folder.split(":", 1)
+        return self._drive, self._folder
+
+    async def _graph_request(self, method: str, path: str) -> dict[str, Any]:
+        response = await self._graph_response(method, path)
+        try:
+            return response.json()
+        finally:
+            await response.aclose()
+
+    async def _graph_response(self, method: str, path: str) -> Any:
+        try:
+            response = await self._graph.request(method, path)
+        except Exception as exc:
+            status = int(getattr(exc, "status_code", 0))
+            code = (
+                SourceFailureCode.AUTH_REQUIRED
+                if status == 401
+                else SourceFailureCode.RATE_LIMITED
+                if status == 429
+                else SourceFailureCode.TRANSIENT
+            )
+            retry = _retry_after(getattr(exc, "headers", {})) if status == 429 else None
+            raise SourceError(code, "Microsoft Graph request failed", retry_after=retry) from exc
+        if response.status_code >= 400:
+            code = (
+                SourceFailureCode.AUTH_REQUIRED
+                if response.status_code == 401
+                else SourceFailureCode.RATE_LIMITED
+                if response.status_code == 429
+                else SourceFailureCode.TRANSIENT
+            )
+            raise SourceError(
+                code,
+                "Microsoft Graph request failed",
+                retry_after=_retry_after(response.headers)
+                if response.status_code == 429
+                else None,
+            )
+        return response
 
 
 def build_source_adapter(context: dict[str, Any]) -> OutlookSourceAdapter:
@@ -207,22 +336,53 @@ def _object(value: dict[str, Any]) -> SourceObject:
         kind=SourceObjectKind.FILE,
         version=str(value.get("changeKey") or value.get("lastModifiedDateTime") or "1"),
         media_type="text/plain",
-        metadata={"classification": "unclassified"},
+        metadata={
+            "classification": str(
+                value.get("fileSystemInfo", {}).get("classification") or "unclassified"
+            )
+        },
     )
 
 
-def _onedrive_object(value: dict[str, Any]) -> SourceObject:
+def _onedrive_object(value: dict[str, Any], drive_id: str = "") -> SourceObject:
     identifier = str(value.get("id") or "")
     if not identifier:
         raise SourceError(SourceFailureCode.TRANSIENT, "OneDrive returned a file without an id")
+    deleted = "deleted" in value
+    name = str(value.get("name") or identifier)
+    parent = str(value.get("parentReference", {}).get("path") or "")
     return SourceObject(
-        object_id=identifier,
-        locator=str(value.get("webUrl") or value.get("name") or identifier),
-        kind=SourceObjectKind.FILE,
-        version=str(value.get("eTag") or value.get("lastModifiedDateTime") or "1"),
+        object_id=f"{drive_id}:{identifier}" if drive_id else identifier,
+        locator=str(value.get("webUrl") or f"{parent}/{name}"),
+        kind=SourceObjectKind.DELETED if deleted else SourceObjectKind.FILE,
+        version=str(value.get("eTag") or value.get("lastModifiedDateTime") or "deleted").strip(
+            '"'
+        ),
+        deleted=deleted,
         media_type=str(value.get("file", {}).get("mimeType") or "application/octet-stream"),
-        metadata={"classification": "unclassified"},
+        metadata={
+            "classification": str(
+                value.get("fileSystemInfo", {}).get("classification") or "unclassified"
+            )
+        },
     )
+
+
+def _split_drive_object(value: str) -> tuple[str, str]:
+    drive, separator, item = value.partition(":")
+    if not separator or not drive or not item:
+        raise SourceError(SourceFailureCode.NOT_FOUND, "invalid OneDrive object identifier")
+    return drive, item
+
+
+def _retry_after(headers: Any) -> float | None:
+    if not isinstance(headers, dict):
+        return None
+    value = headers.get("Retry-After") or headers.get("retry-after")
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _json(value: str) -> dict[str, Any]:
