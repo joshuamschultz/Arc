@@ -461,3 +461,68 @@ async def test_failed_status_fence_failure_is_audited_as_lease_loss() -> None:
         )
     assert "connected_data.sync.lease_lost" in events
     assert (await store.get_state("did:a", "source")).status.value == SyncStatus.RUNNING.value
+
+
+def mixed_page(cursor: str) -> SyncSourcePage:
+    """What a real document account returns: files sitting inside folders."""
+    return SyncSourcePage(
+        objects=(
+            SourceObject(
+                object_id="folder-1",
+                locator="/Projects",
+                kind=SourceObjectKind.FOLDER,
+                version=None,
+                size=0,
+            ),
+            SourceObject(
+                object_id="report",
+                locator="/Projects/report.txt",
+                kind=SourceObjectKind.FILE,
+                version="1",
+                size=1,
+            ),
+        ),
+        next_checkpoint=cursor,
+        has_more=bool(cursor),
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_folder_does_not_fail_the_sync_that_contains_it() -> None:
+    """A folder holds other entries; it has no content of its own.
+
+    Handed to the ingest port with content of None it was refused, and one
+    folder in a listing failed the whole sync — so no account with folders,
+    which is every real one, could finish.
+    """
+    source = FakeSource([mixed_page(cursor="")])
+    ingest = FakeIngest()
+
+    result = await ConnectedDataCoordinator(source, ingest, InMemorySourceSyncStore()).run(
+        SourceDescription(connection_id="source", source_kind="test", account_id="account"),
+        agent_did="did:a",
+        owner_id="worker",
+    )
+
+    assert result.status.value == "complete"
+    assert ingest.ingested == ["report"]
+
+
+@pytest.mark.asyncio
+async def test_a_folder_is_not_reconciled_as_a_missing_object() -> None:
+    """Kept in the snapshot set, a never-ingested folder reads as deleted later."""
+    source = FakeSource([mixed_page(cursor="")])
+    ingest = FakeIngest()
+
+    await ConnectedDataCoordinator(source, ingest, InMemorySourceSyncStore()).run(
+        SourceDescription(
+            connection_id="source",
+            source_kind="test",
+            account_id="account",
+            supports_incremental=False,
+        ),
+        agent_did="did:a",
+        owner_id="worker",
+    )
+
+    assert ingest.snapshots == [frozenset({"report"})]

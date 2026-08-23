@@ -22,6 +22,7 @@ from arcagent.connected_data import (
     SourceError,
     SourceFailureCode,
     SourceObject,
+    SourceObjectKind,
     SyncError,
     SyncLimits,
     SyncSource,
@@ -100,7 +101,11 @@ class ConnectedDataCoordinator:
                 if pages >= chosen.max_pages:
                     raise SyncError("page limit exceeded")
                 page = await self._fetch_with_retry(source, cursor, chosen, started, cancel_event)
-                snapshot_ids.update(item.object_id for item in page.objects if not item.deleted)
+                snapshot_ids.update(
+                    item.object_id
+                    for item in page.objects
+                    if not item.deleted and not _is_container(item)
+                )
                 page_bytes = await self._ingest_page(
                     source,
                     page,
@@ -253,6 +258,11 @@ class ConnectedDataCoordinator:
         for source_object in page.objects:
             self._check_cancel(cancel_event)
             self._check_deadline(started, limits)
+            # A folder is the shape of the tree, not a document. Passed on with no
+            # content the ingest port refused it, and one folder in a listing
+            # failed the whole sync — which is every real document account.
+            if _is_container(source_object):
+                continue
             content = None
             if source_object.kind.value != "deleted" and source_object.version is not None:
                 available = remaining_bytes - page_bytes
@@ -405,6 +415,11 @@ class ConnectedDataCoordinator:
 
 class _CancellationError(Exception):
     pass
+
+
+def _is_container(source_object: SourceObject) -> bool:
+    """True for an entry that holds other entries rather than content of its own."""
+    return source_object.kind is SourceObjectKind.FOLDER
 
 
 def _page_bytes(page: SyncSourcePage) -> int:
