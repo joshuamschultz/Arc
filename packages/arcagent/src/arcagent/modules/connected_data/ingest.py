@@ -160,8 +160,10 @@ class ArcMemoryIngestAdapter(IngestPort):
         service = self._connected_service()
         module = import_module("arcmemory.connected_data")
         try:
-            return await service.propose_mapping(
-                self._source_model(module, source), tuple(home.value for home in homes)
+            return str(
+                await service.propose_mapping(
+                    self._source_model(module, source), tuple(home.value for home in homes)
+                )
             )
         except module.SourceMappingPendingError as exc:
             raise MappingPendingError() from exc
@@ -194,7 +196,7 @@ class ArcMemoryIngestAdapter(IngestPort):
         del source_id
         module = import_module("arcmemory.profile")
         review_status = None if status is None else module.ReviewStatus(status)
-        return await self._connected_service().review_port.list(status=review_status)
+        return list(await self._connected_service().review_port.list(status=review_status))
 
     async def resolve_review(self, review_id: str, decision: str) -> Any | None:
         review = self._connected_service().review_port
@@ -214,8 +216,10 @@ class ArcMemoryIngestAdapter(IngestPort):
         self, profile_id: str, query: str, *, clearance: str = "unclassified"
     ) -> list[Any]:
         """Recall only approved profile facts; pending proposals cannot surface."""
-        return await self._connected_service().review_port.recall(
-            profile_id, query, clearance=clearance
+        return list(
+            await self._connected_service().review_port.recall(
+                profile_id, query, clearance=clearance
+            )
         )
 
     async def register_datastore(

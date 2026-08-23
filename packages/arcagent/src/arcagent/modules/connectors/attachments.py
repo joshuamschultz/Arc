@@ -134,7 +134,7 @@ def build_attachment(
                 unplaced=unplaced,
             )
         declared = _CliConfig.model_validate(manifest.config.get("cli", {}))
-        attachment = CliAttachment(
+        cli_attachment = CliAttachment(
             binary=declared.binary,
             commands=declared.commands,
             probe_argv=declared.probe_argv,
@@ -143,7 +143,7 @@ def build_attachment(
             env=placement_environment(manifest, secrets),
             values=visible_values(manifest, secrets),
         )
-        return _with_source_adapter(manifest, bundle, attachment)
+        return _with_source_adapter(manifest, bundle, cli_attachment)
     if kind == "mcp":
         from arcagent.extension.mcp_attachment import McpAttachment, StdioTransport
 
@@ -171,13 +171,13 @@ def build_attachment(
             ),
             install_instruction=mcp_config.install_instruction,
         )
-        attachment = McpAttachment(
+        mcp_attachment = McpAttachment(
             transport,
             tools=mcp_config.tools,
             resilience=mcp_config.resilience,
             client_name=mcp_config.client_name,
         )
-        return _with_source_adapter(manifest, bundle, attachment)
+        return _with_source_adapter(manifest, bundle, mcp_attachment)
     raise _refuse(f"unknown attachment kind {kind!r}", attachment=kind)
 
 
