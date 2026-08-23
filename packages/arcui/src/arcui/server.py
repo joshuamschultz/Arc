@@ -464,7 +464,12 @@ def create_app(
                 logger.exception("lifespan: embedded messaging construction failed")
                 resolved_service, resolved_registry, built_backend = None, None, None
         starlette_app.state.messaging_service = resolved_service
-        if resolved_service is not None and starlette_app.state.inbox_service is not None:
+        starlette_app.state.messaging_registry = resolved_registry
+        if (
+            resolved_service is not None
+            and resolved_registry is not None
+            and starlette_app.state.inbox_service is not None
+        ):
             try:
                 from arcui.messaging import build_agent_mail_service
 
@@ -472,13 +477,14 @@ def create_app(
                     transport=resolved_service,
                     store=starlette_app.state.inbox_service,
                     outbox=mail_outbox,
+                    registry=resolved_registry,
                 )
             except ImportError:
                 starlette_app.state.agent_mail = None
         else:
             starlette_app.state.agent_mail = None
         mail_worker_task: asyncio.Task[None] | None = None
-        if starlette_app.state.agent_mail is not None:
+        if starlette_app.state.agent_mail is not None and resolved_service is not None:
             from arcteam.mail import MailDeliveryWorker
 
             worker = MailDeliveryWorker(

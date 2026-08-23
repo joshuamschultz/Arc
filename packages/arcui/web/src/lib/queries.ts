@@ -643,14 +643,26 @@ export interface DurableInboxThread extends Dict {
   subject?: string | null
   updated_at: string
   unread_count: number
-  participants: Array<{ participant_id: string; display_name?: string | null }>
+  participants: Array<{
+    participant_id: string
+    display_name?: string | null
+    role?: 'agent' | 'human' | 'service'
+  }>
 }
 
 export interface DurableInboxMessage extends Dict {
   message_id: string
+  thread_id: string
   body: string
   created_at: string
-  sender: { participant_id: string }
+  sender: { participant_id: string; display_name?: string | null; role?: 'agent' | 'human' | 'service' }
+  recipients?: Array<{
+    participant_id: string
+    display_name?: string | null
+    role?: 'agent' | 'human' | 'service'
+  }>
+  attachments?: string[]
+  reply_to_id?: string | null
 }
 
 export interface DurableInboxResponse {
@@ -662,6 +674,10 @@ export interface DurableThreadResponse {
   messages: DurableInboxMessage[]
   handoffs: Dict[]
   next_cursor?: string | null
+}
+
+export interface DurableInboxSearchResponse {
+  messages: DurableInboxMessage[]
 }
 
 export const useAgentInbox = (agentId: string) =>
@@ -676,6 +692,14 @@ export const useAgentInboxThread = (agentId: string, threadId: string | null) =>
     queryKey: ['agent', agentId, 'inbox', threadId],
     queryFn: ({ signal }) => apiGet(`/api/agents/${agentId}/inbox/${threadId}`, signal),
     enabled: !!threadId,
+  })
+
+export const useAgentInboxSearch = (agentId: string, query: string) =>
+  useQuery<DurableInboxSearchResponse>({
+    queryKey: ['agent', agentId, 'inbox', 'search', query],
+    queryFn: ({ signal }) =>
+      apiGet(`/api/agents/${agentId}/inbox/search?q=${encodeURIComponent(query)}`, signal),
+    enabled: query.trim().length > 0,
   })
 
 // COMP-010 — editable system prompts. List every prompt across packages; the

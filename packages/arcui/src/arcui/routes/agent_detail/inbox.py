@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from json import JSONDecodeError
 from typing import Any
 
 from arcstore.inbox import HandoffStatus, ParticipantRole, TraceMetadata
@@ -30,6 +31,29 @@ def _operator_sender(service: Any) -> Any | None:
     return participant(did, role=ParticipantRole.HUMAN) if isinstance(did, str) and did else None
 
 
+def _observe_authorized(request: Request, service: Any, *, target: str) -> JSONResponse | None:
+    """Gate sensitive fleet mail on the key-backed operator identity."""
+    if getattr(request.state, "role", None) != "operator":
+        emit_mutation_audit(
+            request,
+            target=target,
+            operation="inbox.observe",
+            outcome="denied",
+            detail="viewer role",
+        )
+        return JSONResponse({"error": "operator_role_required"}, status_code=403)
+    if _operator_sender(service) is None:
+        emit_mutation_audit(
+            request,
+            target=target,
+            operation="inbox.observe",
+            outcome="denied",
+            detail="operator mail identity unavailable",
+        )
+        return JSONResponse({"error": "operator_mail_identity_unavailable"}, status_code=503)
+    return None
+
+
 def _clearance(request: Request) -> str:
     return str(getattr(request.app.state, "inbox_clearance", "UNCLASSIFIED"))
 
@@ -51,6 +75,9 @@ async def get_inbox_threads(request: Request) -> JSONResponse:
     service, reader = _service(request), _reader(request)
     if service is None:
         return JSONResponse({"error": "durable_inbox_unavailable"}, status_code=503)
+    denied = _observe_authorized(request, service, target=f"inbox:{request.path_params['id']}")
+    if denied is not None:
+        return denied
     if reader is None:
         return JSONResponse({"error": "agent_not_found"}, status_code=404)
     try:
@@ -62,6 +89,12 @@ async def get_inbox_threads(request: Request) -> JSONResponse:
         )
     except (PermissionError, ValueError) as exc:
         return JSONResponse({"error": str(exc)}, status_code=403)
+    emit_mutation_audit(
+        request,
+        target=f"inbox:{request.path_params['id']}",
+        operation="inbox.observe",
+        outcome="applied",
+    )
     return JSONResponse(
         {
             "inbox": inbox.model_dump(mode="json"),
@@ -76,9 +109,12 @@ async def get_inbox_messages(request: Request) -> JSONResponse:
     service, reader = _service(request), _reader(request)
     if service is None:
         return JSONResponse({"error": "durable_inbox_unavailable"}, status_code=503)
+    thread_id = request.path_params["thread_id"]
+    denied = _observe_authorized(request, service, target=f"inbox:{thread_id}")
+    if denied is not None:
+        return denied
     if reader is None:
         return JSONResponse({"error": "agent_not_found"}, status_code=404)
-    thread_id = request.path_params["thread_id"]
     try:
         page = await service.list_messages(
             thread_id,
@@ -92,6 +128,9 @@ async def get_inbox_messages(request: Request) -> JSONResponse:
         )
     except (KeyError, PermissionError, ValueError) as exc:
         return JSONResponse({"error": str(exc)}, status_code=404)
+    emit_mutation_audit(
+        request, target=f"inbox:{thread_id}", operation="inbox.observe", outcome="applied"
+    )
     return JSONResponse(
         {
             "messages": [message.model_dump(mode="json") for message in page.items],
@@ -106,6 +145,11 @@ async def get_inbox_search(request: Request) -> JSONResponse:
     service, reader = _service(request), _reader(request)
     if service is None:
         return JSONResponse({"error": "durable_inbox_unavailable"}, status_code=503)
+    denied = _observe_authorized(
+        request, service, target=f"inbox:{request.path_params['id']}:search"
+    )
+    if denied is not None:
+        return denied
     if reader is None:
         return JSONResponse({"error": "agent_not_found"}, status_code=404)
     query = request.query_params.get("q", "")
@@ -118,6 +162,13 @@ async def get_inbox_search(request: Request) -> JSONResponse:
         )
     except (PermissionError, ValueError) as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
+    emit_mutation_audit(
+        request,
+        target=f"inbox:{request.path_params['id']}:search",
+        operation="inbox.observe",
+        outcome="applied",
+        detail="search",
+    )
     return JSONResponse({"messages": [message.model_dump(mode="json") for message in messages]})
 
 
@@ -128,12 +179,22 @@ async def post_inbox_read(request: Request) -> JSONResponse:
     service, reader = _service(request), _reader(request)
     if service is None:
         return JSONResponse({"error": "durable_inbox_unavailable"}, status_code=503)
+    denied = _observe_authorized(
+        request, service, target=f"inbox:message:{request.path_params['message_id']}"
+    )
+    if denied is not None:
+        return denied
     if reader is None:
         return JSONResponse({"error": "agent_not_found"}, status_code=404)
+    target = f"inbox:message:{request.path_params['message_id']}"
     try:
         message = await service.mark_read(request.path_params["message_id"], reader=reader)
     except (KeyError, ValueError) as exc:
+        emit_mutation_audit(
+            request, target=target, operation="inbox.mark_read", outcome="denied", detail=str(exc)
+        )
         return JSONResponse({"error": str(exc)}, status_code=404)
+    emit_mutation_audit(request, target=target, operation="inbox.mark_read", outcome="applied")
     return JSONResponse({"message": message.model_dump(mode="json")})
 
 
@@ -153,6 +214,9 @@ async def post_inbox_reply(request: Request) -> JSONResponse:
     service, reader = _service(request), _reader(request)
     if service is None:
         return JSONResponse({"error": "durable_inbox_unavailable"}, status_code=503)
+    denied = _observe_authorized(request, service, target=target)
+    if denied is not None:
+        return denied
     if reader is None:
         return JSONResponse({"error": "agent_not_found"}, status_code=404)
     sender = _operator_sender(service)
@@ -160,7 +224,7 @@ async def post_inbox_reply(request: Request) -> JSONResponse:
         return JSONResponse({"error": "operator_mail_identity_unavailable"}, status_code=503)
     try:
         payload = await request.json()
-    except Exception:
+    except (JSONDecodeError, UnicodeDecodeError):
         return JSONResponse({"error": "expected JSON object"}, status_code=400)
     if not isinstance(payload, dict):
         return JSONResponse({"error": "expected JSON object"}, status_code=400)
@@ -207,11 +271,15 @@ async def post_inbox_handoff(request: Request) -> JSONResponse:
     service, reader = _service(request), _reader(request)
     if service is None:
         return JSONResponse({"error": "durable_inbox_unavailable"}, status_code=503)
+    target = f"inbox:{request.path_params['thread_id']}"
+    denied = _observe_authorized(request, service, target=target)
+    if denied is not None:
+        return denied
     if reader is None:
         return JSONResponse({"error": "agent_not_found"}, status_code=404)
     try:
         body = await request.json()
-    except Exception:
+    except (JSONDecodeError, UnicodeDecodeError):
         return JSONResponse({"error": "expected JSON object"}, status_code=400)
     targets = body.get("to") if isinstance(body, dict) else None
     if not isinstance(targets, list) or not all(
@@ -221,10 +289,13 @@ async def post_inbox_handoff(request: Request) -> JSONResponse:
     idempotency_key = _idempotency_key(request)
     if idempotency_key is None:
         return JSONResponse({"error": "Idempotency-Key header is required"}, status_code=400)
+    sender = _operator_sender(service)
+    if sender is None:
+        return JSONResponse({"error": "operator_mail_identity_unavailable"}, status_code=503)
     try:
         handoff = await service.create_handoff(
             request.path_params["thread_id"],
-            sender=reader,
+            sender=sender,
             recipients=tuple(participant(item, role=ParticipantRole.AGENT) for item in targets),
             source_message_id=body.get("source_message_id"),
             trace=TraceMetadata(
@@ -266,15 +337,26 @@ async def post_inbox_handoff_resolution(request: Request) -> JSONResponse:
     service, reader = _service(request), _reader(request)
     if service is None:
         return JSONResponse({"error": "durable_inbox_unavailable"}, status_code=503)
+    denied = _observe_authorized(request, service, target=target)
+    if denied is not None:
+        return denied
     if reader is None:
         return JSONResponse({"error": "agent_not_found"}, status_code=404)
+    actor = _operator_sender(service)
+    if actor is None:
+        return JSONResponse({"error": "operator_mail_identity_unavailable"}, status_code=503)
     try:
         payload = await request.json()
         status = HandoffStatus(payload["status"])
     except (KeyError, TypeError, ValueError):
         return JSONResponse({"error": "status must be accepted or declined"}, status_code=400)
     try:
-        handoff = await service.resolve_handoff(handoff_id, recipient=reader, status=status)
+        handoff = await service.resolve_handoff(
+            handoff_id,
+            recipient=reader,
+            actor_did=actor.participant_id,
+            status=status,
+        )
     except RuntimeError as exc:
         emit_mutation_audit(
             request,
@@ -294,6 +376,13 @@ async def post_inbox_handoff_resolution(request: Request) -> JSONResponse:
         )
         return JSONResponse({"error": str(exc)}, status_code=403)
     emit_mutation_audit(
-        request, target=target, operation="inbox.handoff.resolve", outcome="applied", detail=status
+        request,
+        target=target,
+        operation="inbox.handoff.resolve",
+        outcome="applied",
+        detail=(
+            f"status={status.value}; actor={actor.participant_id}; "
+            f"recipient={reader.participant_id}"
+        ),
     )
     return JSONResponse({"handoff": handoff.model_dump(mode="json")})

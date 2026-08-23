@@ -80,10 +80,11 @@ async function apiSend<T>(
   method: 'POST' | 'PATCH' | 'PUT' | 'DELETE',
   path: string,
   body?: unknown,
+  headers?: Record<string, string>,
 ): Promise<T> {
   const res = await fetch(path, {
     method,
-    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    headers: { ...authHeaders(), 'Content-Type': 'application/json', ...headers },
     body: body === undefined ? undefined : JSON.stringify(body),
   })
   if (!res.ok) {
@@ -95,8 +96,8 @@ async function apiSend<T>(
   return (await res.json()) as T
 }
 
-export const apiPost = <T>(path: string, body?: unknown) =>
-  apiSend<T>('POST', path, body)
+export const apiPost = <T>(path: string, body?: unknown, headers?: Record<string, string>) =>
+  apiSend<T>('POST', path, body, headers)
 export const apiPatch = <T>(path: string, body?: unknown) =>
   apiSend<T>('PATCH', path, body)
 export const apiPut = <T>(path: string, body?: unknown) =>

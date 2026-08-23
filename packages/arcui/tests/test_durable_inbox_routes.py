@@ -39,9 +39,22 @@ class _MailTransport:
         return message
 
 
-def _app() -> tuple[Starlette, AuthConfig, DurableInboxService]:
+class _MailOutbox:
+    def claim(self, _worker_id: str, *, limit: int) -> tuple[object, ...]:
+        return ()
+
+
+class _MailAddressBook:
+    async def did_for(self, address: str) -> str:
+        return address
+
+    async def address_for(self, did: str) -> str:
+        return f"agent://{did.rsplit(':', maxsplit=1)[-1]}"
+
+
+def _app(*, delivery_port: _DeliveryPort | None = None) -> tuple[Starlette, AuthConfig, DurableInboxService]:
     auth = AuthConfig({"viewer_token": "viewer", "operator_token": "operator"})
-    service = DurableInboxService(FakeInboxRepository(), delivery_port=_DeliveryPort())
+    service = DurableInboxService(FakeInboxRepository(), delivery_port=delivery_port)
     app = Starlette(routes=routes)
     app.add_middleware(AuthMiddleware, auth_config=auth)
     app.state.auth_config = auth
@@ -50,6 +63,8 @@ def _app() -> tuple[Starlette, AuthConfig, DurableInboxService]:
     app.state.agent_mail = AgentMailService(
         _MailTransport(),
         service,
+        outbox=_MailOutbox(),
+        address_book=_MailAddressBook(),
         signer=MessageSigner(did=_OPERATOR_DID, private_key=_OPERATOR_SEED),
     )
     app.state.inbox_clearance = "UNCLASSIFIED"
@@ -95,16 +110,18 @@ def _seed(service: DurableInboxService) -> tuple[str, str]:
 
 
 def test_inbox_routes_authenticate_and_support_thread_reply_read_and_handoff() -> None:
-    app, auth, service = _app()
+    app, auth, service = _app(delivery_port=_DeliveryPort())
     thread_id, message_id = _seed(service)
     client = TestClient(app)
     base = "/api/agents/alpha/inbox"
 
     assert client.get(base).status_code == 401
     listed = client.get(base, headers=_headers(auth, "viewer"))
+    assert listed.status_code == 403
+    listed = client.get(base, headers=_headers(auth, "operator"))
     assert listed.status_code == 200
     assert [thread["thread_id"] for thread in listed.json()["threads"]] == [thread_id]
-    thread = client.get(f"{base}/{thread_id}", headers=_headers(auth, "viewer"))
+    thread = client.get(f"{base}/{thread_id}", headers=_headers(auth, "operator"))
     assert thread.status_code == 200
     assert [message["message_id"] for message in thread.json()["messages"]] == [message_id]
 
@@ -121,16 +138,46 @@ def test_inbox_routes_authenticate_and_support_thread_reply_read_and_handoff() -
         headers={**_headers(auth, "operator"), "Idempotency-Key": "reply-1"},
     )
     assert reply.status_code == 201
-    assert reply.json()["message"]["reply_to_id"] == message_id
+    assert reply.json()["message"]["reply_to_event_id"] == "event-1"
 
     read = client.post(f"{base}/messages/{message_id}/read", headers=_headers(auth, "operator"))
     assert read.status_code == 200
     handoff = client.post(
         f"{base}/{thread_id}/handoffs",
-        json={"to": [_OPERATOR_DID], "source_message_id": message_id},
+        json={"to": [_AGENT_DID], "source_message_id": message_id},
         headers={**_headers(auth, "operator"), "Idempotency-Key": "handoff-1"},
     )
     assert handoff.status_code == 201
-    updated = client.get(f"{base}/{thread_id}", headers=_headers(auth, "viewer"))
+    assert handoff.json()["handoff"]["from_participant"]["participant_id"] == _OPERATOR_DID
+    assert handoff.json()["handoff"]["to_participants"][0]["participant_id"] == _AGENT_DID
+    handoff_id = handoff.json()["handoff"]["handoff_id"]
+    resolution = client.post(
+        f"{base}/handoffs/{handoff_id}/resolution",
+        json={"status": "accepted"},
+        headers=_headers(auth, "operator"),
+    )
+    assert resolution.status_code == 200
+    assert resolution.json()["handoff"]["resolved_by"]["participant_id"] == _AGENT_DID
+    assert resolution.json()["handoff"]["resolved_actor_did"] == _OPERATOR_DID
+    updated = client.get(f"{base}/{thread_id}", headers=_headers(auth, "operator"))
     assert len(updated.json()["messages"]) == 2
     assert len(updated.json()["handoffs"]) == 1
+
+    search = client.get(f"{base}/search?q=review", headers=_headers(auth, "operator"))
+    assert search.status_code == 200
+    assert search.json()["messages"][0]["message_id"] == message_id
+
+
+def test_operator_reply_uses_agent_mail_transport_when_no_inbox_delivery_port() -> None:
+    app, auth, service = _app()
+    thread_id, _ = _seed(service)
+    client = TestClient(app)
+
+    reply = client.post(
+        f"/api/agents/alpha/inbox/{thread_id}/reply",
+        json={"body": "Acknowledged."},
+        headers={**_headers(auth, "operator"), "Idempotency-Key": "reply-without-port"},
+    )
+
+    assert reply.status_code == 201
+    assert reply.json()["message"]["sender"]["participant_id"] == _OPERATOR_DID

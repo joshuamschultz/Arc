@@ -65,6 +65,8 @@ class MailStore(Protocol):
 
     async def list_messages(self, thread_id: str, **kwargs: Any) -> Any: ...
 
+    async def search(self, owner: Any, query: str, **kwargs: Any) -> Any: ...
+
     async def mark_read(self, message_id: str, *, reader: Any) -> Any: ...
 
     async def reply(self, *args: Any, **kwargs: Any) -> Any: ...
@@ -263,6 +265,9 @@ class AgentMailService:
 
     async def list_messages(self, thread_id: str, *, reader: Any, **kwargs: Any) -> Any:
         return await self._store.list_messages(thread_id, reader=reader, **kwargs)
+
+    async def search(self, owner: Any, query: str, **kwargs: Any) -> Any:
+        return await self._store.search(owner, query, **kwargs)
 
     async def mark_read(self, message_id: str, *, reader: Any) -> Any:
         return await self._store.mark_read(message_id, reader=reader)

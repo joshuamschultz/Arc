@@ -291,14 +291,22 @@ def build_team_post_forwarder(*, service: Any, registry: Any) -> Any | None:
     return forward
 
 
-def build_agent_mail_service(*, transport: Any, store: Any, outbox: Any) -> Any | None:
+def build_agent_mail_service(
+    *, transport: Any, store: Any, outbox: Any, registry: Any
+) -> Any | None:
     """Compose UI mail under the operator identity without exposing key material."""
     identity = _operator_messaging()
     if identity is None:
         return None
-    from arcteam import AgentMailService
+    from arcteam import AgentMailService, RegistryMailAddressBook
 
-    return AgentMailService(transport, store, outbox=outbox, signer=identity.signer)
+    return AgentMailService(
+        transport,
+        store,
+        outbox=outbox,
+        address_book=RegistryMailAddressBook(registry),
+        signer=identity.signer,
+    )
 
 
 async def _no_audience_warning(

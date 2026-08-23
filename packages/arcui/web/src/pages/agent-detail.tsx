@@ -1,15 +1,17 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { motion } from 'motion/react'
 import { ArrowLeft, Plus, FileText, Pencil, Mail } from 'lucide-react'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { FilterPills } from '@/components/filter-pills'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { CreateTaskSheet } from '@/components/create-task-sheet'
 import { fmtSeconds, isBlocked } from '@/lib/tasks'
 import { Button } from '@/components/ui/button'
-import { apiPost } from '@/lib/api'
+import { ApiError, apiPost } from '@/lib/api'
 import { RestartGatewayButton } from '@/components/restart-gateway-button'
 import { StatusDot } from '@/components/status-badge'
 import { StatCard } from '@/components/stat-card'
@@ -43,6 +45,7 @@ import {
   useAgentCapabilities,
   useAgentChannels,
   useAgentInbox,
+  useAgentInboxSearch,
   useAgentInboxThread,
   useAgentConfig,
   useAgentPolicy,
@@ -1551,110 +1554,13 @@ function RunsTab({ agentId }: { agentId: string }) {
   )
 }
 
-/**
- * One inbox thread, rendered like a mail row: an unread dot, a sender/subject
- * label, an optional one-line preview, a right-aligned relative time, and
- * read / responded badges.
- *
- * DATA REALITY: the sessions endpoint (`SessionEntry`, extra="forbid") exposes
- * only `sid` / `path` / `size` / `mtime` — no per-thread sender, body preview,
- * read flag, or responded flag. So the label falls back to the thread id,
- * "unread" is a recency proxy (touched in the last 24h), the preview falls back
- * to the short thread id, and the responded badge only appears when an optional
- * `last_role` / `responded` field is actually present on the object. See the
- * task summary for the backend fields that would make these exact.
- */
-function InboxRow({ s, onOpen }: { s: Dict; onOpen: () => void }) {
-  const sid = String(s.sid ?? '')
-  const label =
-    String(s.counterpart ?? s.from ?? s.sender ?? s.title ?? s.subject ?? '').trim() ||
-    `Thread ${shortId(sid, 10)}`
-  const preview = String(s.preview ?? s.snippet ?? s.last_text ?? '').trim()
-  const when = (s.updated_at ?? s.mtime) as string | number | undefined
-  const rawTs = Number(s.updated_at ?? s.mtime ?? 0)
-  const ms = rawTs < 1e12 ? rawTs * 1000 : rawTs
-  // Stable "now" captured once so the unread check stays pure across re-renders.
-  const [now] = useState(() => Date.now())
-  const unread = ms > 0 && now - ms < 24 * 60 * 60 * 1000
-  // Only claim "responded" when the summary actually carries the signal.
-  const lastRole = s.last_role != null ? String(s.last_role) : null
-  const responded =
-    s.responded != null ? Boolean(s.responded) : lastRole ? lastRole === 'assistant' : null
-
-  return (
-    <li>
-      <button
-        type="button"
-        onClick={onOpen}
-        className="flex w-full items-start gap-3 bg-card px-3 py-2.5 text-left transition-colors hover:bg-muted/40"
-      >
-        <span
-          className={cn(
-            'mt-1.5 size-2 shrink-0 rounded-full',
-            unread ? 'bg-status-online' : 'border border-border bg-transparent',
-          )}
-          aria-hidden
-        />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span
-              className={cn(
-                'min-w-0 flex-1 truncate text-sm text-foreground',
-                unread && 'font-semibold',
-              )}
-            >
-              {label}
-            </span>
-            <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-              {relativeTime(when)}
-            </span>
-          </div>
-          <div className="mt-0.5 flex items-center gap-2">
-            <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-              {preview || (
-                <span className="font-mono text-[11px] text-muted-foreground/70">
-                  {shortId(sid, 20)}
-                </span>
-              )}
-            </span>
-            <span
-              className={cn(
-                'shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide',
-                unread ? 'bg-status-online/15 text-status-online' : 'bg-muted text-muted-foreground',
-              )}
-            >
-              {unread ? 'unread' : 'read'}
-            </span>
-            {responded != null && (
-              <span
-                className={cn(
-                  'shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide',
-                  responded
-                    ? 'bg-muted text-muted-foreground'
-                    : 'bg-status-warning/15 text-status-warning',
-                )}
-              >
-                {responded ? 'replied' : 'awaiting'}
-              </span>
-            )}
-            {s.size != null && (
-              <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/60">
-                {fmtBytes(Number(s.size))}
-              </span>
-            )}
-          </div>
-        </div>
-      </button>
-    </li>
-  )
+function inboxIdempotencyKey(operation: string): string {
+  return `${operation}-${crypto.randomUUID()}`
 }
 
-void InboxRow
-
-/** Inbox — everything arriving at this agent, in one structured place: what is
- *  waiting on a human (approvals, review), where it receives (delivery
- *  channels), and its incoming message threads. */
+/** ArcTeam mail only. Sessions and gateway conversations remain separate tabs. */
 function InboxTab({ agentId }: { agentId: string }) {
+  const queryClient = useQueryClient()
   const roster = useRoster()
   const channelsQ = useAgentChannels(agentId)
   const inboxQ = useAgentInbox(agentId)
@@ -1662,7 +1568,13 @@ function InboxTab({ agentId }: { agentId: string }) {
   const approvalsQ = useApprovals()
   const [operatorMode] = useOperatorMode()
   const [active, setActive] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
+  const [replyBody, setReplyBody] = useState('')
+  const [handoffRecipient, setHandoffRecipient] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [pending, setPending] = useState<string | null>(null)
   const threadQ = useAgentInboxThread(agentId, active)
+  const searchQ = useAgentInboxSearch(agentId, search)
 
   const did = (roster.data?.agents ?? []).find((a) => a.agent_id === agentId)?.did ?? ''
   const approvals = (approvalsQ.data?.approvals ?? []).filter((a) => a.agent_did === did)
@@ -1670,6 +1582,64 @@ function InboxTab({ agentId }: { agentId: string }) {
   const inbox = inboxQ.data?.threads ?? []
   const tasks = (tasksQ.data?.tasks ?? []) as unknown as Dict[]
   const reviewTasks = tasks.filter((t) => String(t.status) === 'review')
+  const activeThread = inbox.find((thread) => thread.thread_id === active) ?? null
+  const recipients =
+    activeThread?.participants.filter(
+      (item) => item.role === 'agent' || item.participant_id === did,
+    ) ?? []
+
+  const refresh = async () => {
+    await queryClient.invalidateQueries({ queryKey: ['agent', agentId, 'inbox'] })
+  }
+
+  const runMutation = async (operation: string, action: () => Promise<void>) => {
+    setPending(operation)
+    setError(null)
+    try {
+      await action()
+      await refresh()
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : 'Inbox action failed')
+    } finally {
+      setPending(null)
+    }
+  }
+
+  const markRead = (messageId: string) =>
+    runMutation(`read:${messageId}`, async () => {
+      await apiPost(`/api/agents/${agentId}/inbox/messages/${encodeURIComponent(messageId)}/read`, {})
+    })
+
+  const sendReply = () => {
+    if (!active || !replyBody.trim()) return
+    void runMutation('reply', async () => {
+      await apiPost(
+        `/api/agents/${agentId}/inbox/${encodeURIComponent(active)}/reply`,
+        { body: replyBody.trim() },
+        { 'Idempotency-Key': inboxIdempotencyKey('reply') },
+      )
+      setReplyBody('')
+    })
+  }
+
+  const createHandoff = () => {
+    if (!active || !handoffRecipient) return
+    void runMutation('handoff', async () => {
+      await apiPost(
+        `/api/agents/${agentId}/inbox/${encodeURIComponent(active)}/handoffs`,
+        { to: [handoffRecipient] },
+        { 'Idempotency-Key': inboxIdempotencyKey('handoff') },
+      )
+    })
+  }
+
+  const resolveHandoff = (handoffId: string, status: 'accepted' | 'declined') =>
+    runMutation(`handoff:${handoffId}`, async () => {
+      await apiPost(
+        `/api/agents/${agentId}/inbox/handoffs/${encodeURIComponent(handoffId)}/resolution`,
+        { status },
+      )
+    })
 
   return (
     <div className="space-y-6">
@@ -1719,6 +1689,43 @@ function InboxTab({ agentId }: { agentId: string }) {
       </Section>
 
       <Section title="Inbox threads">
+        <div className="mb-2 flex max-w-xl gap-2">
+          <Input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search this agent's mail…"
+            aria-label="Search agent mail"
+          />
+          {search && (
+            <Button variant="ghost" size="sm" onClick={() => setSearch('')}>
+              Clear
+            </Button>
+          )}
+        </div>
+        {search.trim() && (
+          <div className="mb-3 rounded-lg border border-border bg-card p-3">
+            <div className="mb-2 text-xs font-medium text-muted-foreground">Search results</div>
+            {searchQ.isLoading ? (
+              <div className="text-sm text-muted-foreground">Searching mail…</div>
+            ) : (searchQ.data?.messages ?? []).length === 0 ? (
+              <div className="text-sm text-muted-foreground">No mail matched this search.</div>
+            ) : (
+              <div className="space-y-2">
+                {(searchQ.data?.messages ?? []).map((message) => (
+                  <button
+                    key={message.message_id}
+                    type="button"
+                    onClick={() => setActive(message.thread_id)}
+                    className="block w-full rounded border border-border/60 p-2 text-left text-sm hover:bg-muted/40"
+                  >
+                    <span className="mr-2 text-xs text-muted-foreground">{message.sender.participant_id}</span>
+                    {message.body}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         {inbox.length === 0 ? (
           <EmptyState
             title="No inbox messages"
@@ -1752,15 +1759,119 @@ function InboxTab({ agentId }: { agentId: string }) {
                   <span className="text-sm font-medium">Thread</span>
                   <Button variant="ghost" size="sm" onClick={() => setActive(null)}>Close</Button>
                 </div>
-                {(threadQ.data?.messages ?? []).map((message) => (
-                  <div key={message.message_id} className="rounded bg-muted/40 p-2 text-sm">
-                    <div className="mb-1 text-xs text-muted-foreground">{message.sender.participant_id}</div>
-                    {message.body}
-                  </div>
-                ))}
-                {(threadQ.data?.handoffs ?? []).length > 0 && (
-                  <div className="text-xs text-muted-foreground">{threadQ.data?.handoffs.length} internal handoff trace(s)</div>
+                {threadQ.isLoading ? (
+                  <div className="text-sm text-muted-foreground">Loading mail…</div>
+                ) : (
+                  (threadQ.data?.messages ?? []).map((message) => (
+                    <div key={message.message_id} className="rounded bg-muted/40 p-2 text-sm">
+                      <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
+                        <span>{message.sender.display_name || message.sender.participant_id}</span>
+                        <span>{relativeTime(message.created_at)}</span>
+                        {operatorMode && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={pending === `read:${message.message_id}`}
+                            onClick={() => markRead(message.message_id)}
+                          >
+                            Mark agent read
+                          </Button>
+                        )}
+                      </div>
+                      <div className="whitespace-pre-wrap">{message.body}</div>
+                      {(message.attachments ?? []).length > 0 && (
+                        <div className="mt-2 font-mono text-xs text-muted-foreground">
+                          {(message.attachments ?? []).join(', ')}
+                        </div>
+                      )}
+                    </div>
+                  ))
                 )}
+                {(threadQ.data?.handoffs ?? []).map((handoff) => {
+                  const id = String(handoff.handoff_id ?? '')
+                  const status = String(handoff.status ?? 'pending')
+                  const resolvedBy = (handoff.resolved_by as Dict | null)?.participant_id
+                  const resolvedActor =
+                    typeof handoff.resolved_actor_did === 'string'
+                      ? handoff.resolved_actor_did
+                      : null
+                  return (
+                    <div key={id} className="rounded border border-border/60 p-2 text-sm">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span>Handoff {id ? shortId(id, 12) : '—'}</span>
+                        <StatusChip value={status} />
+                        {operatorMode && status === 'pending' && id && (
+                          <>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={pending === `handoff:${id}`}
+                              onClick={() => void resolveHandoff(id, 'accepted')}
+                            >
+                              Accept for agent
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled={pending === `handoff:${id}`}
+                              onClick={() => void resolveHandoff(id, 'declined')}
+                            >
+                              Decline
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                      {resolvedActor && (
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          {String(resolvedActor)} recorded {status} for {String(resolvedBy ?? 'the recipient')}.
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+                {operatorMode && (
+                  <div className="space-y-2 border-t border-border pt-3">
+                    <Textarea
+                      value={replyBody}
+                      onChange={(event) => setReplyBody(event.target.value)}
+                      placeholder="Reply as the signed operator…"
+                      aria-label="Reply to mail thread"
+                    />
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button size="sm" disabled={!replyBody.trim() || pending === 'reply'} onClick={sendReply}>
+                        Send reply
+                      </Button>
+                      {recipients.length > 0 && (
+                        <>
+                          <Select value={handoffRecipient} onValueChange={setHandoffRecipient}>
+                            <SelectTrigger className="h-8 w-[210px] text-xs">
+                              <SelectValue placeholder="Handoff recipient…" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {recipients.map((recipient) => (
+                                <SelectItem key={recipient.participant_id} value={recipient.participant_id}>
+                                  {recipient.display_name || recipient.participant_id}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={!handoffRecipient || pending === 'handoff'}
+                            onClick={createHandoff}
+                          >
+                            Create handoff
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Replies are signed by the operator. Handoffs can only target a participant in this mail thread.
+                    </p>
+                  </div>
+                )}
+                {error && <div role="alert" className="text-sm text-status-error">{error}</div>}
               </div>
             )}
           </div>
