@@ -1,6 +1,6 @@
-from __future__ import annotations
+"""Tests for team-agnostic signed knowledge collection mechanics."""
 
-import hashlib
+from __future__ import annotations
 
 import pytest
 from arctrust import AgentIdentity, AuditEvent
@@ -10,28 +10,36 @@ from arcmemory.adapters.shared_knowledge import SharedKnowledgeAdapter
 
 class _Backend:
     def __init__(self) -> None:
-        self.saved = []
+        self.saved: list[object] = []
 
-    async def save(self, draft, access):
-        self.saved.append((draft, access))
+    async def save(self, draft: object, access: object) -> object:
+        del access
+        self.saved.append(draft)
         return type(
-            "Ref", (), {"scope": "shared", "identifier": "team-1", "digest": draft.digest}
+            "Ref", (), {"scope": "shared", "identifier": "collection-1", "digest": draft.digest}
         )()
 
-    async def read(self, reference, access):
-        return {"reference": reference}
+    async def read(self, reference: str, access: object) -> object:
+        return {"reference": reference, "access": access}
 
-    async def search(self, query, access):
-        return [{"query": query}]
+    async def search(self, query: str, access: object) -> list[object]:
+        return [{"query": query, "access": access}]
 
-    async def revoke(self, reference, access):
-        return None
+    async def revoke(self, reference: str, access: object) -> None:
+        del reference, access
 
 
 class _Access:
-    def __init__(self, caller_did: str, clearance: str = "UNCLASSIFIED") -> None:
-        self.caller_did = caller_did
-        self.clearance = clearance
+    caller_did = "did:arc:test:caller"
+    clearance = "UNCLASSIFIED"
+
+
+class _Draft:
+    title = "Shared fact"
+    content = "shared fact"
+    classification = "UNCLASSIFIED"
+    tags = ("alpha",)
+    document_type = "note"
 
 
 class _Sink:
@@ -42,88 +50,64 @@ class _Sink:
         self.events.append(event)
 
 
-def _source(content: str = "shared fact"):
-    digest = "sha256:" + hashlib.sha256(content.encode()).hexdigest()
-    reference = type("Ref", (), {"scope": "personal", "identifier": "p-1", "digest": digest})()
-    return type(
-        "Source",
-        (),
-        {
-            "reference": reference,
-            "digest": digest,
-            "content": content,
-            "classification": "UNCLASSIFIED",
-            "title": "Shared fact",
-            "tags": ("alpha",),
-            "document_type": "note",
-        },
-    )()
-
-
 @pytest.mark.asyncio
-async def test_promotion_verifies_digest_and_delegates_to_injected_shared_backend() -> None:
+async def test_collection_signs_and_delegates_to_the_injected_backend() -> None:
     backend = _Backend()
-    sink = _Sink()
     identity = AgentIdentity.generate("test", "one")
-    adapter = SharedKnowledgeAdapter(
-        backend, agent_did=identity.did, signer=identity, audit_sink=sink
-    )
+    adapter = SharedKnowledgeAdapter(backend, owner_did=identity.did, signer=identity)
 
-    result = await adapter.promote(_source(), _Access(identity.did))
+    result = await adapter.save(_Draft(), _Access())
 
     assert result.scope == "shared"
-    assert backend.saved[0][0].title == "Shared fact"
-    assert backend.saved[0][0].content == "shared fact"
-    assert sink.events[-1].action == "knowledge.promoted"
+    saved = backend.saved[0]
+    assert saved.title == "Shared fact"
+    assert saved.owner_did == identity.did
+    assert saved.signature
 
 
 @pytest.mark.asyncio
-async def test_promotion_rejects_tampered_source_before_backend_call() -> None:
+async def test_collection_rejects_invalid_documents_before_backend_call() -> None:
     backend = _Backend()
     identity = AgentIdentity.generate("test", "one")
-    source = _source()
-    source.content = "tampered"
-    adapter = SharedKnowledgeAdapter(backend, agent_did=identity.did, signer=identity)
+    adapter = SharedKnowledgeAdapter(backend, owner_did=identity.did, signer=identity)
+    draft = _Draft()
+    draft.content = ""
 
-    with pytest.raises(ValueError, match="digest"):
-        await adapter.promote(source, _Access(identity.did))
+    with pytest.raises(ValueError, match="content"):
+        await adapter.save(draft, _Access())
     assert backend.saved == []
 
 
 @pytest.mark.asyncio
-async def test_promotion_requires_agent_clearance_and_personal_source() -> None:
+async def test_collection_does_not_embed_fleet_authorization_policy() -> None:
     backend = _Backend()
     identity = AgentIdentity.generate("test", "one")
-    adapter = SharedKnowledgeAdapter(backend, agent_did=identity.did, signer=identity)
-    access = _Access(AgentIdentity.generate("test", "two").did)
+    adapter = SharedKnowledgeAdapter(backend, owner_did=identity.did, signer=identity)
 
-    with pytest.raises(PermissionError):
-        await adapter.promote(_source(), access)
-    source = _source()
-    source.reference.scope = "shared"
-    with pytest.raises(ValueError, match="personal"):
-        await adapter.promote(source, _Access(identity.did))
-    assert backend.saved == []
+    await adapter.save(_Draft(), _Access())
+
+    assert len(backend.saved) == 1
 
 
 @pytest.mark.asyncio
-async def test_shared_operations_emit_metadata_only_audit_events() -> None:
+async def test_collection_emits_metadata_only_audit_events() -> None:
     backend = _Backend()
     sink = _Sink()
     identity = AgentIdentity.generate("test", "audit")
     adapter = SharedKnowledgeAdapter(
-        backend, agent_did=identity.did, signer=identity, audit_sink=sink
+        backend, owner_did=identity.did, signer=identity, audit_sink=sink
     )
-    access = _Access(identity.did)
 
-    await adapter.read("shared-1", access)
-    await adapter.search("private query", access)
-    await adapter.revoke("shared-1", access)
+    await adapter.save(_Draft(), _Access())
+    await adapter.read("shared-1", _Access())
+    await adapter.search("private query", _Access())
+    await adapter.revoke("shared-1", _Access())
 
     assert [event.action for event in sink.events] == [
-        "knowledge.retrieved",
-        "knowledge.searched",
-        "knowledge.revoked",
+        "knowledge.collection_saved",
+        "knowledge.collection_retrieved",
+        "knowledge.collection_searched",
+        "knowledge.collection_revoked",
     ]
-    assert sink.events[1].payload_hash
-    assert "private query" not in str(sink.events[1].model_dump())
+    assert sink.events[2].payload_hash
+    assert "private query" not in str(sink.events[2].model_dump())

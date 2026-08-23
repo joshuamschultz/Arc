@@ -1,9 +1,4 @@
-"""Signed, filesystem-backed shared knowledge for an Arc fleet.
-
-This adapter deliberately has no ``arcagent`` dependency.  Its only fleet root
-comes from :func:`arctrust.paths.arc_team`; callers cannot supply a document
-path, and every persisted identifier is a digest-derived safe component.
-"""
+"""Fleet-owned signed shared-knowledge persistence and authorization."""
 
 from __future__ import annotations
 
@@ -13,7 +8,9 @@ import contextlib
 import fcntl
 import hashlib
 import json
+import os
 import re
+import tempfile
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -26,21 +23,51 @@ from arctrust.classification import dominates, parse_classification
 from arctrust.identity import did_matches_pubkey
 from arctrust.paths import arc_team
 
-from arcmemory.adapters.shared_knowledge import SharedKnowledgeDraft
-from arcmemory.mdfile import atomic_write_text
-
 _IDENTIFIER_RE = re.compile(r"^[a-f0-9]{16}$")
 
 
 class _Access(Protocol):
-    caller_did: str
-    clearance: str
+    @property
+    def caller_did(self) -> str: ...
+
+    @property
+    def clearance(self) -> str: ...
+
+
+class _Draft(Protocol):
+    @property
+    def title(self) -> str: ...
+
+    @property
+    def content(self) -> str: ...
+
+    @property
+    def classification(self) -> str: ...
+
+    @property
+    def tags(self) -> tuple[str, ...]: ...
+
+    @property
+    def document_type(self) -> str: ...
+
+    @property
+    def digest(self) -> str: ...
+
+    @property
+    def owner_did(self) -> str: ...
+
+    @property
+    def signature(self) -> str: ...
+
+    @property
+    def public_key(self) -> str: ...
+
+    @property
+    def algorithm(self) -> str: ...
 
 
 @dataclass(frozen=True)
 class SharedKnowledgeReference:
-    """Structural implementation of ArcAgent's injected knowledge reference."""
-
     scope: str
     identifier: str
     digest: str
@@ -48,8 +75,6 @@ class SharedKnowledgeReference:
 
 @dataclass(frozen=True)
 class SharedKnowledgeDocument:
-    """One verified shared knowledge document."""
-
     reference: SharedKnowledgeReference
     title: str
     content: str
@@ -59,21 +84,13 @@ class SharedKnowledgeDocument:
 
 @dataclass(frozen=True)
 class SharedKnowledgeHit:
-    """A clearance-filtered lexical search result."""
-
     reference: SharedKnowledgeReference
     title: str
     excerpt: str
 
 
 class FleetSharedKnowledgeBackend:
-    """Persist signed OKF documents below ``arc_team()/shared/knowledge``.
-
-    The signer registry is trust-on-first-use: a DID's first valid signature
-    records its public key atomically; any later key substitution fails closed.
-    Revocations are durable tombstones, so a stale file cannot reappear in read
-    or search results merely because an index is rebuilt.
-    """
+    """Persist a fleet's signed knowledge, membership, and lifecycle decisions."""
 
     def __init__(self, root: Path) -> None:
         self._root = root.resolve()
@@ -85,31 +102,25 @@ class FleetSharedKnowledgeBackend:
 
     @classmethod
     def for_arc_team(cls, base: Path | str | None = None) -> FleetSharedKnowledgeBackend:
-        """Create the backend at Arc's canonical fleet-shared knowledge path."""
         return cls(arc_team(base=base) / "shared" / "knowledge")
 
     @property
     def root(self) -> Path:
-        """Return the canonical shared-knowledge root for diagnostics/tests."""
         return self._root
 
-    async def save(self, draft: SharedKnowledgeDraft, access: _Access) -> SharedKnowledgeReference:
-        """Verify authority, signature, TOFU pinning, then atomically write valid OKF."""
+    async def save(self, draft: _Draft, access: _Access) -> SharedKnowledgeReference:
         return await asyncio.to_thread(self._save, draft, access)
 
     async def read(self, reference: str, access: _Access) -> SharedKnowledgeDocument:
-        """Read a non-revoked, signature-verified document within caller clearance."""
         return await asyncio.to_thread(self._read, reference, access)
 
     async def search(self, query: str, access: _Access) -> list[SharedKnowledgeHit]:
-        """Search readable, non-revoked documents without revealing denied records."""
         return await asyncio.to_thread(self._search, query, access)
 
     async def revoke(self, reference: str, access: _Access) -> None:
-        """Write an atomic owner-authorized revocation tombstone."""
         await asyncio.to_thread(self._revoke, reference, access)
 
-    def _save(self, draft: SharedKnowledgeDraft, access: _Access) -> SharedKnowledgeReference:
+    def _save(self, draft: _Draft, access: _Access) -> SharedKnowledgeReference:
         self._authorize_write(draft, access)
         self._verify_signature(draft)
         self._pin_signer(draft.owner_did, draft.public_key)
@@ -130,7 +141,7 @@ class FleetSharedKnowledgeBackend:
             parse(encoded)
         except OKFValidationError as error:
             raise ValueError("invalid shared OKF knowledge document") from error
-        atomic_write_text(self._document_path(identifier), encoded + "\n")
+        _atomic_write_text(self._document_path(identifier), encoded + "\n")
         self._audit_event("knowledge.saved", identifier, access.caller_did, draft.digest)
         return SharedKnowledgeReference("shared", identifier, draft.digest)
 
@@ -145,20 +156,14 @@ class FleetSharedKnowledgeBackend:
             raise FileNotFoundError("shared knowledge document is unavailable") from error
         metadata = document.metadata
         try:
-            title = str(metadata["title"])
-            content = document.body.strip()
-            classification = str(metadata["arc_classification"])
-            owner_did = str(metadata["arc_owner_did"])
-            digest = str(metadata["arc_content_sha256"])
-            tags = tuple(str(value) for value in metadata["tags"])
-            draft = SharedKnowledgeDraft(
-                title=title,
-                content=content,
-                classification=classification,
-                tags=tags,
+            draft = _StoredDraft(
+                title=str(metadata["title"]),
+                content=document.body.strip(),
+                classification=str(metadata["arc_classification"]),
+                tags=tuple(str(value) for value in metadata["tags"]),
                 document_type=str(metadata["type"]),
-                digest=digest,
-                owner_did=owner_did,
+                digest=str(metadata["arc_content_sha256"]),
+                owner_did=str(metadata["arc_owner_did"]),
                 signature=str(metadata["arc_signature"]),
                 public_key=str(metadata["arc_public_key"]),
                 algorithm=str(metadata["arc_signature_algorithm"]),
@@ -167,15 +172,17 @@ class FleetSharedKnowledgeBackend:
             raise ValueError("malformed shared knowledge frontmatter") from error
         self._verify_signature(draft)
         self._require_pinned_signer(draft.owner_did, draft.public_key)
-        caller_clearance = parse_classification(access.clearance, strict=True)
-        if not dominates(caller_clearance, parse_classification(classification, strict=True)):
+        if not dominates(
+            parse_classification(access.clearance, strict=True),
+            parse_classification(draft.classification, strict=True),
+        ):
             raise PermissionError("knowledge classification exceeds caller clearance")
         return SharedKnowledgeDocument(
-            SharedKnowledgeReference("shared", identifier, digest),
-            title,
-            content,
-            classification,
-            tags,
+            SharedKnowledgeReference("shared", identifier, draft.digest),
+            draft.title,
+            draft.content,
+            draft.classification,
+            draft.tags,
         )
 
     def _search(self, query: str, access: _Access) -> list[SharedKnowledgeHit]:
@@ -187,28 +194,23 @@ class FleetSharedKnowledgeBackend:
                 document = self._read(path.stem, access)
             except (FileNotFoundError, PermissionError, ValueError):
                 continue
-            if query.casefold() not in f"{document.title}\n{document.content}".casefold():
-                continue
-            matches.append(
-                SharedKnowledgeHit(document.reference, document.title, document.content[:160])
-            )
+            if query.casefold() in f"{document.title}\n{document.content}".casefold():
+                matches.append(
+                    SharedKnowledgeHit(document.reference, document.title, document.content[:160])
+                )
         return matches
 
     def _revoke(self, reference: str, access: _Access) -> None:
         document = self._read(reference, access)
-        path = self._document_path(document.reference.identifier)
-        parsed = parse(path.read_bytes(), path=path.as_posix())
-        owner_did = str(parsed.metadata.get("arc_owner_did", ""))
-        if access.caller_did != owner_did:
+        if access.caller_did != self._owner(document.reference.identifier):
             raise PermissionError("only the shared knowledge owner can revoke it")
         payload = {
             "identifier": document.reference.identifier,
             "digest": document.reference.digest,
-            "owner_did": owner_did,
             "revoked_by": access.caller_did,
             "revoked_at": datetime.now(UTC).isoformat(),
         }
-        atomic_write_text(
+        _atomic_write_text(
             self._revocation_path(document.reference.identifier), json.dumps(payload) + "\n"
         )
         self._audit_event(
@@ -218,19 +220,22 @@ class FleetSharedKnowledgeBackend:
             document.reference.digest,
         )
 
-    def _authorize_write(self, draft: SharedKnowledgeDraft, access: _Access) -> None:
+    def _owner(self, identifier: str) -> str:
+        parsed = parse(self._document_path(identifier).read_bytes())
+        return str(parsed.metadata.get("arc_owner_did", ""))
+
+    def _authorize_write(self, draft: _Draft, access: _Access) -> None:
         if access.caller_did != draft.owner_did:
             raise PermissionError("shared knowledge owner does not match caller")
-        caller_clearance = parse_classification(access.clearance, strict=True)
-        document_classification = parse_classification(draft.classification, strict=True)
-        if not dominates(caller_clearance, document_classification):
+        caller = parse_classification(access.clearance, strict=True)
+        document = parse_classification(draft.classification, strict=True)
+        if not dominates(caller, document):
             raise PermissionError("knowledge classification exceeds caller clearance")
-        if not dominates(document_classification, caller_clearance):
+        if not dominates(document, caller):
             raise PermissionError("no-write-down forbids lower-classification shared knowledge")
 
-    def _verify_signature(self, draft: SharedKnowledgeDraft) -> None:
-        content_digest = "sha256:" + hashlib.sha256(draft.content.encode()).hexdigest()
-        if content_digest != draft.digest:
+    def _verify_signature(self, draft: _Draft) -> None:
+        if "sha256:" + hashlib.sha256(draft.content.encode()).hexdigest() != draft.digest:
             raise ValueError("shared knowledge content digest mismatch")
         try:
             public_key = base64.b64decode(draft.public_key, validate=True)
@@ -259,11 +264,10 @@ class FleetSharedKnowledgeBackend:
                 raise PermissionError("shared knowledge TOFU signer key changed")
             if pinned is None:
                 trusted[did] = public_key
-                atomic_write_text(self._trust, json.dumps(trusted, sort_keys=True) + "\n")
+                _atomic_write_text(self._trust, json.dumps(trusted, sort_keys=True) + "\n")
 
     @contextlib.contextmanager
     def _signer_registry_lock(self) -> Iterator[None]:
-        """Serialize first-seen signer decisions across fleet processes."""
         self._root.mkdir(parents=True, exist_ok=True)
         with self._trust_lock.open("a+b") as lock:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
@@ -278,9 +282,7 @@ class FleetSharedKnowledgeBackend:
 
     def _load_trusted_signers(self) -> dict[str, str]:
         try:
-            raw = (
-                json.loads(self._trust.read_text(encoding="utf-8")) if self._trust.exists() else {}
-            )
+            raw = json.loads(self._trust.read_text()) if self._trust.exists() else {}
         except (OSError, ValueError) as error:
             raise ValueError("shared knowledge TOFU registry is malformed") from error
         if not isinstance(raw, dict) or any(
@@ -298,11 +300,11 @@ class FleetSharedKnowledgeBackend:
             "timestamp": datetime.now(UTC).isoformat(),
         }
         event_name = hashlib.sha256(canonical_json(event)).hexdigest()
-        atomic_write_text(
+        _atomic_write_text(
             self._audit / f"{event_name}.json", json.dumps(event, sort_keys=True) + "\n"
         )
 
-    def _identifier(self, draft: SharedKnowledgeDraft) -> str:
+    def _identifier(self, draft: _Draft) -> str:
         basis = f"{draft.owner_did}\0{draft.title}\0{draft.digest}".encode()
         return hashlib.sha256(basis).hexdigest()[:16]
 
@@ -317,6 +319,32 @@ class FleetSharedKnowledgeBackend:
         if not _IDENTIFIER_RE.fullmatch(identifier):
             raise ValueError("invalid shared knowledge identifier")
         return identifier
+
+
+@dataclass(frozen=True)
+class _StoredDraft:
+    title: str
+    content: str
+    classification: str
+    tags: tuple[str, ...]
+    document_type: str
+    digest: str
+    owner_did: str
+    signature: str
+    public_key: str
+    algorithm: str
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.replace(temporary, path)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
 
 
 __all__ = [

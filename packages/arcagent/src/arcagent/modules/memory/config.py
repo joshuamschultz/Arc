@@ -29,10 +29,9 @@ class MemoryConfig(ModuleConfig):
     brain: str = "none"
     tier: str = "personal"
 
-    # Explicit curated documents are independent of the Brain selector.  They
-    # remain off until an operator enables them on the already-installed memory
-    # module, so no parallel module can silently add a fleet write surface.
-    shared_knowledge_enabled: bool = False
+    # Explicit curated documents are independent of the Brain selector. They
+    # remain local to the agent workspace; fleet sharing is an ArcTeam extension.
+    curated_knowledge_enabled: bool = False
 
     # Operator-vetted BYO brain class-paths. Above the personal tier a dotted
     # ``module:Class`` brain is refused unless it appears here (ASI04 sign gate).

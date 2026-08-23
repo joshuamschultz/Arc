@@ -50,8 +50,7 @@ from pathlib import Path
 from typing import Any, NoReturn, cast
 
 from arcagent.brain import Brain, NullBrain, select_brain
-from arcagent.core.telemetry import TelemetryAuditSink
-from arcagent.knowledge import KnowledgeAccess, PersonalKnowledgePort, SharedKnowledgePort
+from arcagent.knowledge import KnowledgeAccess, PersonalKnowledgePort
 from arcagent.modules.memory.config import MemoryConfig
 
 _logger = logging.getLogger("arcagent.modules.memory._runtime")
@@ -80,12 +79,9 @@ class _State:
     bus: Any
     agent_did: str
     active: bool
-    # Explicit curated-knowledge ports are enabled independently from the
-    # automatic Brain. They are None unless the operator enables the known
-    # memory module's `shared_knowledge_enabled` setting.
+    # Explicit curated knowledge remains local to this agent's workspace.
     knowledge_access: KnowledgeAccess | None = None
     personal_knowledge: PersonalKnowledgePort | None = None
-    shared_knowledge: SharedKnowledgePort | None = None
     # Once-per-turn recall cache: query-hash -> injectable text (bounds the
     # spawn double-assembly to a single retrieve).
     recall_cache: dict[int, str] = field(default_factory=dict)
@@ -152,30 +148,13 @@ def configure(
     )
     knowledge_access: KnowledgeAccess | None = None
     personal_knowledge: PersonalKnowledgePort | None = None
-    shared_knowledge: SharedKnowledgePort | None = None
-    if cfg.shared_knowledge_enabled:
-        if identity is None or not getattr(identity, "can_sign", False):
-            raise ValueError("shared knowledge requires a signing agent identity")
+    if cfg.curated_knowledge_enabled:
         clearance = getattr(identity, "clearance", "UNCLASSIFIED")
         clearance_name = getattr(clearance, "name", str(clearance))
-        from arcmemory.adapters import FleetSharedKnowledgeBackend, PersonalKnowledgeAdapter
-        from arcmemory.adapters.shared_knowledge import (
-            SharedKnowledgeAdapter,
-            SharedKnowledgeBackend,
-        )
+        from arcmemory.adapters import PersonalKnowledgeAdapter
 
         knowledge_access = KnowledgeAccess(agent_did, str(clearance_name))
         personal_knowledge = cast(PersonalKnowledgePort, PersonalKnowledgeAdapter(ws, agent_did))
-        shared_backend = cast(SharedKnowledgeBackend, FleetSharedKnowledgeBackend.for_arc_team())
-        shared_knowledge = cast(
-            SharedKnowledgePort,
-            SharedKnowledgeAdapter(
-                shared_backend,
-                agent_did=agent_did,
-                signer=identity,
-                audit_sink=TelemetryAuditSink(telemetry) if telemetry is not None else None,
-            ),
-        )
     new_state = _State(
         config=cfg,
         brain=brain,
@@ -186,7 +165,6 @@ def configure(
         active=not isinstance(brain, NullBrain),
         knowledge_access=knowledge_access,
         personal_knowledge=personal_knowledge,
-        shared_knowledge=shared_knowledge,
     )
     _registry[agent_did] = new_state
     _current_did.set(agent_did)
