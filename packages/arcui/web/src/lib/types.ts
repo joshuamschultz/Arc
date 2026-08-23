@@ -1069,6 +1069,25 @@ export interface ConnectedResourcesResponse {
   items: ConnectedResourceItem[]
 }
 
+/** A proposed profile fact. It remains unavailable to agent profile context
+ * until an operator approves it. */
+export interface ProfileReviewItem {
+  fact_id: string
+  profile_id: string
+  field: string
+  value: string
+  kind: string
+  status: string
+  classification: string
+  source_id: string
+  external_id: string
+  replaces_fact_id: string | null
+}
+
+export interface ProfileReviewsResponse {
+  items: ProfileReviewItem[]
+}
+
 export interface ConnectedSyncStatus {
   connection_id: string
   status: string

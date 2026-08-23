@@ -57,11 +57,31 @@ class _Resource:
     detail: str = ""
 
 
+@dataclass(frozen=True)
+class _Provenance:
+    source: str = "source-7c2"
+    external_id: str = "dropbox:/projects/profile.txt"
+
+
+@dataclass(frozen=True)
+class _Review:
+    fact_id: str = "fact-1"
+    profile_id: str = "user-olivia"
+    field: str = "timezone"
+    value: str = "America/Chicago"
+    kind: str = "inferred"
+    status: str = "pending"
+    classification: str = "unclassified"
+    provenance: _Provenance = _Provenance()
+    replaces_fact_id: str | None = None
+
+
 class _Service:
     def __init__(self) -> None:
         self.staged: tuple[str, tuple[str, ...]] | None = None
         self.action: tuple[str, str] | None = None
         self.resources: tuple[str, ...] | None = None
+        self.review_decision: tuple[str, str] | None = None
 
     async def list_sources(self) -> tuple[_SourceStatus, ...]:
         return (_SourceStatus(),)
@@ -81,6 +101,16 @@ class _Service:
     ) -> tuple[_Resource, ...]:
         self.resources = resource_ids
         return tuple(_Resource(resource_id=resource_id, selected=True) for resource_id in resource_ids)
+
+    async def list_review_items(
+        self, *, status: str | None = None, source_id: str | None = None
+    ) -> tuple[_Review, ...]:
+        item = _Review()
+        return (item,) if status in {None, item.status} and source_id in {None, item.provenance.source} else ()
+
+    async def resolve_review(self, review_id: str, decision: str) -> _Review | None:
+        self.review_decision = (review_id, decision)
+        return _Review(status="approved" if decision == "approve" else "declined") if review_id == "fact-1" else None
 
     async def sync_now(self, connection_id: str) -> bool:
         self.action = ("sync", connection_id)
@@ -195,3 +225,23 @@ def test_resource_scope_is_visible_and_operator_gated() -> None:
     )
     assert selected.status_code == 200
     assert service.resources == ("folder:projects",)
+
+
+def test_profile_review_is_operator_only_and_exposes_provenance() -> None:
+    client, service = _client()
+    path = "/api/agents/olivia/knowledge/profile-reviews?status=pending&source_id=source-7c2"
+    denied = client.get(path, headers={"Authorization": "Bearer viewer"})
+    assert denied.status_code == 403
+    listed = client.get(path, headers={"Authorization": "Bearer operator"})
+    assert listed.status_code == 200
+    item = listed.json()["items"][0]
+    assert item["field"] == "timezone"
+    assert item["source_id"] == "source-7c2"
+
+    resolved = client.post(
+        "/api/agents/olivia/knowledge/profile-reviews/fact-1/approve",
+        headers={"Authorization": "Bearer operator"},
+    )
+    assert resolved.status_code == 200
+    assert resolved.json()["status"] == "approved"
+    assert service.review_decision == ("fact-1", "approve")

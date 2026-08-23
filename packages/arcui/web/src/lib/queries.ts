@@ -26,6 +26,8 @@ import type {
   ChannelsResponse,
   ConnectedSourcesResponse,
   ConnectedResourcesResponse,
+  ProfileReviewsResponse,
+  ProfileReviewItem,
   GatewaysResponse,
   ConfigResponse,
   ConnectedSyncStatusResponse,
@@ -460,6 +462,30 @@ export const useSelectConnectedResources = (agentId: string | null, sourceId: st
       client.invalidateQueries({
         queryKey: ['agent', agentId, 'knowledge', 'connected-sources', sourceId, 'resources'],
       }),
+  })
+}
+
+export const useProfileReviews = (
+  agentId: string | null,
+  status: string,
+  sourceId: string,
+) =>
+  useQuery<ProfileReviewsResponse>({
+    queryKey: ['agent', agentId, 'knowledge', 'profile-reviews', status, sourceId],
+    queryFn: ({ signal }) => {
+      const params = new URLSearchParams({ status })
+      if (sourceId) params.set('source_id', sourceId)
+      return apiGet(`/api/agents/${agentId}/knowledge/profile-reviews?${params}`, signal)
+    },
+    enabled: !!agentId,
+  })
+
+export const useResolveProfileReview = (agentId: string | null) => {
+  const client = useQueryClient()
+  return useMutation<ProfileReviewItem, Error, { factId: string; decision: 'approve' | 'decline' | 'undo' }>({
+    mutationFn: ({ factId, decision }) =>
+      apiPost(`/api/agents/${agentId}/knowledge/profile-reviews/${encodeURIComponent(factId)}/${decision}`),
+    onSuccess: () => client.invalidateQueries({ queryKey: ['agent', agentId, 'knowledge', 'profile-reviews'] }),
   })
 }
 

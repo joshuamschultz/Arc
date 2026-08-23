@@ -170,6 +170,74 @@ def _resource_wire(resource: Any) -> dict[str, Any]:
     }
 
 
+def _review_wire(review: Any) -> dict[str, Any]:
+    provenance = _value(review, "provenance")
+    return {
+        "fact_id": str(_value(review, "fact_id", "")),
+        "profile_id": str(_value(review, "profile_id", "")),
+        "field": str(_value(review, "field", "")),
+        "value": str(_value(review, "value", "")),
+        "kind": str(_value(review, "kind", "")),
+        "status": str(_value(review, "status", "")),
+        "classification": str(_value(review, "classification", "unclassified")),
+        "source_id": str(_value(provenance, "source", "")),
+        "external_id": str(_value(provenance, "external_id", "")),
+        "replaces_fact_id": _value(review, "replaces_fact_id", None),
+    }
+
+
+async def list_profile_reviews(request: Request) -> JSONResponse:
+    """List reviewable profile candidates; this is an operator-only surface."""
+    denied = _operator(request)
+    if denied is not None:
+        return denied
+    service = await _service(request, request.path_params["agent_id"])
+    if service is None:
+        return JSONResponse({"items": []})
+    status = request.query_params.get("status")
+    source_id = request.query_params.get("source_id")
+    items = await service.list_review_items(status=status or None, source_id=source_id or None)
+    return JSONResponse({"items": [_review_wire(item) for item in items]})
+
+
+async def resolve_profile_review(request: Request) -> JSONResponse:
+    """Approve, decline, or undo one profile fact through the runtime review seam."""
+    denied = _operator(request)
+    if denied is not None:
+        return denied
+    agent_id = request.path_params["agent_id"]
+    review_id = request.path_params["review_id"]
+    decision = request.path_params["decision"]
+    if decision not in {"approve", "decline", "undo"}:
+        return JSONResponse(
+            ErrorResponse(error="unsupported review decision").model_dump(), status_code=400
+        )
+    service = await _service(request, agent_id)
+    if service is None:
+        return JSONResponse(
+            ErrorResponse(error="connected-data module unavailable").model_dump(), status_code=503
+        )
+    item = await service.resolve_review(review_id, decision)
+    if item is None:
+        emit_mutation_audit(
+            request,
+            target=f"agent:{agent_id}/profile-review:{review_id}",
+            operation=f"connected_data.profile_review.{decision}",
+            outcome="not_found",
+        )
+        return JSONResponse(
+            ErrorResponse(error="review item not found or not actionable").model_dump(),
+            status_code=404,
+        )
+    emit_mutation_audit(
+        request,
+        target=f"agent:{agent_id}/profile-review:{review_id}",
+        operation=f"connected_data.profile_review.{decision}",
+        outcome="applied",
+    )
+    return JSONResponse(_review_wire(item))
+
+
 async def list_resources(request: Request) -> JSONResponse:
     """List selectable source containers without reading their content."""
     service = await _service(request, request.path_params["agent_id"])
@@ -293,6 +361,16 @@ routes = [
         methods=["POST"],
     ),
     Route(
+        "/api/agents/{agent_id}/knowledge/profile-reviews",
+        list_profile_reviews,
+        methods=["GET"],
+    ),
+    Route(
+        "/api/agents/{agent_id}/knowledge/profile-reviews/{review_id}/{decision}",
+        resolve_profile_review,
+        methods=["POST"],
+    ),
+    Route(
         "/api/agents/{agent_id}/knowledge/sync/{source_id}/{action}",
         sync_action,
         methods=["POST"],
@@ -302,7 +380,9 @@ routes = [
 __all__ = [
     "connected_sources",
     "get_mapping_proposal",
+    "list_profile_reviews",
     "list_resources",
+    "resolve_profile_review",
     "routes",
     "select_resources",
     "stage_mapping",
