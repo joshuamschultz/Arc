@@ -11,6 +11,7 @@ then let the agent retrieve the result.
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 import sqlite3
 from dataclasses import dataclass
@@ -408,12 +409,18 @@ def test_release_gate_provider_matrix_has_each_declared_source_seam() -> None:
     """
 
     from extensions.dropbox.arc_ext_dropbox import DropboxAttachment
+    from extensions.google_workspace.arc_ext_google_workspace.source import GmailSourceAdapter
     from extensions.microsoft365.arc_ext_microsoft365 import source as microsoft_source
     from extensions.postgresql.arc_ext_postgresql import PostgreSQLAttachment
     from extensions.s3.arc_ext_s3 import S3Attachment
 
-    from extensions.google_workspace.arc_ext_google_workspace.source import GmailSourceAdapter
-
+    try:
+        sqlite_source = importlib.import_module("extensions.sqlite.arc_ext_sqlite.source")
+    except ModuleNotFoundError:
+        sqlite_source = None
+    sqlite_adapter = None if sqlite_source is None else getattr(
+        sqlite_source, "SQLiteSourceAdapter", None
+    )
     lifecycle = {
         "dropbox": DropboxAttachment,
         "postgres": PostgreSQLAttachment,
@@ -421,6 +428,7 @@ def test_release_gate_provider_matrix_has_each_declared_source_seam() -> None:
         "gmail": GmailSourceAdapter,
         "outlook": microsoft_source.OutlookSourceAdapter,
         "onedrive": getattr(microsoft_source, "OneDriveSourceAdapter", None),
+        "sqlite": sqlite_adapter,
     }
     missing = [name for name, adapter in lifecycle.items() if adapter is None]
     assert not missing, f"missing connected-data source adapters: {', '.join(missing)}"
@@ -436,3 +444,43 @@ def test_release_gate_provider_matrix_has_each_declared_source_seam() -> None:
                 "close_source",
             )
         ), f"{name} adapter does not implement the source lifecycle"
+
+
+@pytest.mark.asyncio
+async def test_release_gate_sqlite_file_resource_is_reopenable_and_read_only(
+    tmp_path: Path,
+) -> None:
+    """A connected SQLite file is an approved resource, not the agent index DB."""
+
+    module = importlib.import_module("extensions.sqlite.arc_ext_sqlite.source")
+    factory = getattr(module, "build_source_adapter", None)
+    assert callable(factory), "SQLite extension must expose build_source_adapter"
+    database = tmp_path / "customer.sqlite"
+    conn = sqlite3.connect(database)
+    conn.execute("CREATE TABLE customers (id TEXT PRIMARY KEY, name TEXT NOT NULL)")
+    conn.execute("INSERT INTO customers VALUES ('c-1', 'Alpha')")
+    conn.commit()
+    conn.close()
+
+    adapter = factory({"database_path": database})
+    description = await adapter.inspect_source(InspectSource(connection_id="sqlite-alpha"))
+    resources = await adapter.list_source_resources(
+        ListSourceResources(connection_id="sqlite-alpha")
+    )
+    assert description.source_kind == "sqlite"
+    assert [item.resource_id for item in resources] == ["customers"]
+    await adapter.select_source_resources(
+        SelectSourceResources(connection_id="sqlite-alpha", resource_ids=("customers",))
+    )
+    assert (await adapter.sync_source(SyncSource(connection_id="sqlite-alpha"))).next_checkpoint
+    assert await adapter.query("get_record", "customers", {"pk_value": "c-1"}) == {
+        "id": "c-1",
+        "name": "Alpha",
+    }
+    await adapter.close_source()
+
+    reopened = factory({"database_path": database})
+    assert [item.resource_id for item in await reopened.list_source_resources(
+        ListSourceResources(connection_id="sqlite-alpha")
+    )] == ["customers"]
+    await reopened.close_source()
