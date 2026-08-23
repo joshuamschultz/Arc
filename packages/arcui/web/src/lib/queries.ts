@@ -24,6 +24,8 @@ import type {
   AuditEventsResponse,
   BlobFoldersResponse,
   ChannelsResponse,
+  ConnectedSourcesResponse,
+  ConnectedResourcesResponse,
   GatewaysResponse,
   ConfigResponse,
   ConnectedSyncStatusResponse,
@@ -41,6 +43,8 @@ import type {
   InsightsResponse,
   LinksResponse,
   MappingResponse,
+  MappingProposalResponse,
+  MappingStageResponse,
   MappingsResponse,
   MemoryPage,
   MemorySearchResponse,
@@ -363,6 +367,16 @@ export const useSources = (agentId: string | null) =>
     enabled: !!agentId,
   })
 
+/** Operational source inventory. Unlike semantic source entities, this is
+ * populated as soon as an account is connected, before its first ingest. */
+export const useConnectedSources = (agentId: string | null) =>
+  useQuery<ConnectedSourcesResponse>({
+    queryKey: ['agent', agentId, 'knowledge', 'connected-sources'],
+    queryFn: ({ signal }) => apiGet(`/api/agents/${agentId}/knowledge/connected-sources`, signal),
+    enabled: !!agentId,
+    refetchInterval: 10_000,
+  })
+
 export const useConnectedSyncStatus = (agentId: string | null) =>
   useQuery<ConnectedSyncStatusResponse>({
     queryKey: ['agent', agentId, 'knowledge', 'sync-status'],
@@ -381,6 +395,91 @@ export const useSourceMapping = (agentId: string | null, sourceId: string | null
       ),
     enabled: !!agentId && !!sourceId,
   })
+
+export const useMappingProposal = (agentId: string | null, sourceId: string | null) =>
+  useQuery<MappingProposalResponse>({
+    queryKey: ['agent', agentId, 'knowledge', 'connected-sources', sourceId, 'mapping-proposal'],
+    queryFn: ({ signal }) =>
+      apiGet(
+        `/api/agents/${agentId}/knowledge/connected-sources/${encodeURIComponent(sourceId!)}/mapping`,
+        signal,
+      ),
+    enabled: !!agentId && !!sourceId,
+  })
+
+export const useStageSourceMapping = (agentId: string | null, sourceId: string | null) => {
+  const client = useQueryClient()
+  return useMutation<MappingStageResponse, Error, string[]>({
+    mutationFn: (homes) =>
+      apiPost(
+        `/api/agents/${agentId}/knowledge/connected-sources/${encodeURIComponent(sourceId!)}/mapping`,
+        { homes },
+      ),
+    onSuccess: () =>
+      client.invalidateQueries({
+        queryKey: ['agent', agentId, 'knowledge', 'connected-sources', sourceId, 'mapping-proposal'],
+      }),
+  })
+}
+
+export const useConnectedSourceAction = (agentId: string | null, sourceId: string | null) => {
+  const client = useQueryClient()
+  return useMutation<{ status: string; action: string; source_id: string }, Error, string>({
+    mutationFn: (action) =>
+      apiPost(
+        `/api/agents/${agentId}/knowledge/sync/${encodeURIComponent(sourceId!)}/${action}`,
+      ),
+    onSuccess: () =>
+      Promise.all([
+        client.invalidateQueries({ queryKey: ['agent', agentId, 'knowledge', 'connected-sources'] }),
+        client.invalidateQueries({ queryKey: ['agent', agentId, 'knowledge', 'sync-status'] }),
+      ]),
+  })
+}
+
+export const useConnectedResources = (agentId: string | null, sourceId: string | null) =>
+  useQuery<ConnectedResourcesResponse>({
+    queryKey: ['agent', agentId, 'knowledge', 'connected-sources', sourceId, 'resources'],
+    queryFn: ({ signal }) =>
+      apiGet(
+        `/api/agents/${agentId}/knowledge/connected-sources/${encodeURIComponent(sourceId!)}/resources`,
+        signal,
+      ),
+    enabled: !!agentId && !!sourceId,
+  })
+
+export const useSelectConnectedResources = (agentId: string | null, sourceId: string | null) => {
+  const client = useQueryClient()
+  return useMutation<ConnectedResourcesResponse, Error, string[]>({
+    mutationFn: (resourceIds) =>
+      apiPost(
+        `/api/agents/${agentId}/knowledge/connected-sources/${encodeURIComponent(sourceId!)}/resources`,
+        { resource_ids: resourceIds },
+      ),
+    onSuccess: () =>
+      client.invalidateQueries({
+        queryKey: ['agent', agentId, 'knowledge', 'connected-sources', sourceId, 'resources'],
+      }),
+  })
+}
+
+/** Resolve an approval through ArcUI's existing key-backed approval endpoint.
+ * Connected-data mappings intentionally share this path: the source service
+ * stages a hash-bound request, while only this operator route can sign it. */
+export const useResolveApproval = (agentId: string | null, sourceId: string | null) => {
+  const client = useQueryClient()
+  return useMutation<Dict, Error, { approvalId: string; decision: 'approve' | 'deny' }>({
+    mutationFn: ({ approvalId, decision }) =>
+      apiPost(`/api/approvals/${encodeURIComponent(approvalId)}/${decision}`),
+    onSuccess: () =>
+      Promise.all([
+        client.invalidateQueries({
+          queryKey: ['agent', agentId, 'knowledge', 'connected-sources', sourceId, 'mapping-proposal'],
+        }),
+        client.invalidateQueries({ queryKey: ['approvals'] }),
+      ]),
+  })
+}
 
 export const useMappings = (agentId: string | null) =>
   useQuery<MappingsResponse>({

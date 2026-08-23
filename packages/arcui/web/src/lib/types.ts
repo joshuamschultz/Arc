@@ -1015,6 +1015,60 @@ export interface SourcesResponse {
   items: EntityRecord[]
 }
 
+/** One account/source known to the live connected-data coordinator.  This is
+ * deliberately operational metadata only: it contains neither credentials nor
+ * provider cursors/content. */
+export interface ConnectedSourceItem {
+  connection_id: string
+  source_id: string
+  source_kind: string
+  label: string
+  status: string
+  detail: string
+  pages: number
+  bytes_processed: number
+  error_code: string | null
+  last_synced_at: string | null
+  allowed_homes: string[]
+}
+
+export interface ConnectedSourcesResponse {
+  items: ConnectedSourceItem[]
+  status?: string
+}
+
+/** A mapping awaiting the normal signed operator-approval flow. */
+export interface MappingProposalItem {
+  source_id: string
+  homes: string[]
+  status: 'not_staged' | 'pending' | 'approved' | 'denied' | 'expired'
+  approval_id: string | null
+  detail: string
+  allowed_homes: string[]
+}
+
+export interface MappingProposalResponse {
+  item: MappingProposalItem | null
+}
+
+export interface MappingStageResponse {
+  item: MappingProposalItem
+}
+
+/** A selectable container inside a connection (for example Dropbox folder or
+ * an email mailbox/label).  It is metadata only, never document content. */
+export interface ConnectedResourceItem {
+  resource_id: string
+  label: string
+  resource_kind: string
+  selected: boolean
+  detail: string
+}
+
+export interface ConnectedResourcesResponse {
+  items: ConnectedResourceItem[]
+}
+
 export interface ConnectedSyncStatus {
   connection_id: string
   status: string

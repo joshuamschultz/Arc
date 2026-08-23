@@ -52,7 +52,9 @@ class FakeIngest:
 
     async def require_approved_mapping(self, source: SourceDescription) -> MappingPlan:
         self.staged.append("mapping")
-        return MappingPlan(mapping_id="map:source", revision="r1", content_hash="hash")
+        return MappingPlan(
+            mapping_id="map:source", homes=("document",), revision="r1", content_hash="hash"
+        )
 
     async def ingest(
         self,

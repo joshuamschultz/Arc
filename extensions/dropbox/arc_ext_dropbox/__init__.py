@@ -39,12 +39,15 @@ from arcagent.extension.attachment import (
 from arcagent.extension.source import (
     FetchSourceObject,
     InspectSource,
+    ListSourceResources,
+    SelectSourceResources,
     SourceContent,
     SourceDescription,
     SourceError,
     SourceFailureCode,
     SourceObject,
     SourceObjectKind,
+    SourceResource,
     SyncSource,
     SyncSourcePage,
 )
@@ -81,6 +84,7 @@ class DropboxAttachment:
         self._token = ""
         self._token_expiry = 0.0
         self._token_lock = asyncio.Lock()
+        self._source_root = ""
         self._client = httpx.AsyncClient(timeout=_TIMEOUT)
 
     # --- the hook contract ---------------------------------------------------
@@ -209,7 +213,56 @@ class DropboxAttachment:
             source_kind="dropbox",
             account_id=account_id,
             display_name=_account_name(account),
+            root_locator=self._source_root,
         )
+
+    async def list_source_resources(
+        self, request: ListSourceResources
+    ) -> tuple[SourceResource, ...]:
+        """List the root and immediate folders available for operator selection."""
+        del request
+        payload = await self._source_rpc(
+            "/2/files/list_folder", {"path": "", "recursive": False, "limit": 2_000}
+        )
+        entries = payload.get("entries", [])
+        if not isinstance(entries, list):
+            raise SourceError(SourceFailureCode.TRANSIENT, "Dropbox returned invalid resources")
+        resources = [
+            SourceResource(
+                resource_id="root", label="Dropbox root", resource_kind="folder", locator=""
+            )
+        ]
+        resources.extend(
+            SourceResource(
+                resource_id=str(entry.get("id") or entry.get("path_lower") or ""),
+                label=str(entry.get("name") or entry.get("path_display") or "folder"),
+                resource_kind="folder",
+                locator=str(entry.get("path_display") or entry.get("path_lower") or ""),
+            )
+            for entry in entries
+            if isinstance(entry, dict) and entry.get(".tag") == "folder"
+        )
+        return tuple(resource for resource in resources if resource.resource_id)
+
+    async def select_source_resources(self, request: SelectSourceResources) -> None:
+        """Pin one selected subtree; one Dropbox cursor cannot safely merge roots."""
+        if len(request.resource_ids) != 1:
+            raise SourceError(SourceFailureCode.UNSUPPORTED_CONTENT, "select one Dropbox folder")
+        selected = request.resource_ids[0]
+        if selected == "root":
+            self._source_root = ""
+            return
+        resources = await self.list_source_resources(
+            ListSourceResources(connection_id=request.connection_id)
+        )
+        matching = next(
+            (resource for resource in resources if resource.resource_id == selected), None
+        )
+        if matching is None:
+            raise SourceError(
+                SourceFailureCode.NOT_FOUND, "selected Dropbox folder is unavailable"
+            )
+        self._source_root = matching.locator
 
     async def sync_source(self, request: SyncSource) -> SyncSourcePage:
         """Return one initial or incremental page and its opaque Dropbox cursor."""

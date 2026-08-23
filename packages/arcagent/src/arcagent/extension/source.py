@@ -61,6 +61,27 @@ class SourceDescription(_Contract):
     display_name: str = ""
     supports_incremental: bool = True
     supports_deletes: bool = True
+    root_locator: str = ""
+
+
+class SourceResource(_Contract):
+    """One operator-selectable mailbox, label, folder, or source subtree."""
+
+    resource_id: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    resource_kind: str = Field(min_length=1)
+    locator: str = ""
+    selected: bool = False
+    detail: str = ""
+
+
+class ListSourceResources(_Contract):
+    connection_id: str = Field(min_length=1)
+
+
+class SelectSourceResources(_Contract):
+    connection_id: str = Field(min_length=1)
+    resource_ids: tuple[str, ...] = Field(min_length=1)
 
 
 class SyncSource(_Contract):
@@ -129,6 +150,12 @@ class SourceAdapter(Protocol):
 
     async def inspect_source(self, request: InspectSource) -> SourceDescription: ...
 
+    async def list_source_resources(
+        self, request: ListSourceResources
+    ) -> tuple[SourceResource, ...]: ...
+
+    async def select_source_resources(self, request: SelectSourceResources) -> None: ...
+
     async def sync_source(self, request: SyncSource) -> SyncSourcePage: ...
 
     async def fetch_source(self, request: FetchSourceObject) -> SourceContent: ...
@@ -139,6 +166,8 @@ class SourceAdapter(Protocol):
 __all__ = [
     "FetchSourceObject",
     "InspectSource",
+    "ListSourceResources",
+    "SelectSourceResources",
     "SourceAdapter",
     "SourceContent",
     "SourceDescription",
@@ -146,6 +175,7 @@ __all__ = [
     "SourceFailureCode",
     "SourceObject",
     "SourceObjectKind",
+    "SourceResource",
     "SyncSource",
     "SyncSourcePage",
 ]

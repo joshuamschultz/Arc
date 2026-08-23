@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 from importlib import import_module
 from pathlib import Path
 from typing import Any
 
 from arcagent.connected_data import (
     IngestPort,
+    KnowledgeHome,
     MappingDeniedError,
     MappingPendingError,
     MappingPlan,
@@ -21,6 +23,64 @@ from arcagent.extension.source import (
 
 class ConnectedDataUnavailableError(RuntimeError):
     """ArcMemory is not installed, so connected ingestion is unavailable."""
+
+
+class ArcStoreObjectState:
+    """Durable object-version state over ArcStore's injected mutable-plane seam."""
+
+    _COLLECTION = "connected_data_objects"
+
+    def __init__(self, backend: Any, *, actor_did: str) -> None:
+        self._backend = backend
+        self._actor_did = actor_did
+
+    async def get_object_state(self, source_id: str, object_id: str) -> Any | None:
+        row = await self._backend.mutable_read(self._COLLECTION, self._key(source_id, object_id))
+        if row is None:
+            return None
+        module = import_module("arcmemory.connected_data")
+        return module.ConnectedObjectState.model_validate(row["state"])
+
+    async def put_object_state(self, source_id: str, object_id: str, state: Any) -> None:
+        await self._backend.mutable_write(
+            self._COLLECTION,
+            self._key(source_id, object_id),
+            {"state": state.model_dump(mode="json")},
+            actor_did=self._actor_did,
+        )
+
+    @staticmethod
+    def _key(source_id: str, object_id: str) -> str:
+        return hashlib.sha256(f"{source_id}\0{object_id}".encode()).hexdigest()
+
+
+class ArcStoreResourceSelection:
+    """Durable selected source resources, keyed without exposing source locators."""
+
+    _COLLECTION = "connected_data_resources"
+
+    def __init__(self, backend: Any, *, actor_did: str) -> None:
+        self._backend = backend
+        self._actor_did = actor_did
+
+    async def get(self, connection_id: str) -> tuple[str, ...]:
+        row = await self._backend.mutable_read(self._COLLECTION, self._key(connection_id))
+        if row is None:
+            return ()
+        values = row.get("resource_ids", [])
+        return tuple(str(value) for value in values if isinstance(value, str))
+
+    async def put(self, connection_id: str, resource_ids: tuple[str, ...]) -> None:
+        await self._backend.mutable_write(
+            self._COLLECTION,
+            self._key(connection_id),
+            {"resource_ids": list(resource_ids)},
+            actor_did=self._actor_did,
+        )
+
+    @staticmethod
+    def _key(connection_id: str) -> str:
+        return hashlib.sha256(connection_id.encode()).hexdigest()
 
 
 class ArcMemoryIngestAdapter(IngestPort):
@@ -88,9 +148,44 @@ class ArcMemoryIngestAdapter(IngestPort):
             raise MappingDeniedError() from exc
         return MappingPlan(
             mapping_id=mapping.mapping_id,
+            homes=tuple(KnowledgeHome(home) for home in mapping.homes),
             revision=mapping.revision,
             content_hash=mapping.content_hash,
         )
+
+    async def stage_mapping(
+        self, source: SourceDescription, homes: tuple[KnowledgeHome, ...]
+    ) -> str:
+        """Stage a source-compatible mapping through the shared approval store."""
+        service = self._connected_service()
+        module = import_module("arcmemory.connected_data")
+        try:
+            return await service.propose_mapping(
+                self._source_model(module, source), tuple(home.value for home in homes)
+            )
+        except module.SourceMappingPendingError as exc:
+            raise MappingPendingError() from exc
+        except module.SourceMappingDeniedError as exc:
+            raise MappingDeniedError() from exc
+
+    def allowed_homes(self, source: SourceDescription) -> tuple[KnowledgeHome, ...]:
+        """Expose ArcMemory's canonical routing choices without vendor coupling."""
+        service = self._connected_service()
+        module = import_module("arcmemory.connected_data")
+        source_model = self._source_model(module, source)
+        return tuple(KnowledgeHome(home) for home in service.allowed_homes(source_model))
+
+    def canonical_source_id(self, source: SourceDescription) -> str:
+        """Return ArcMemory's stable per-agent source identity for retrieval."""
+        module = import_module("arcmemory.connected_data")
+        return str(module.source_instance_id(self._agent_did, self._source_model(module, source)))
+
+    async def mapping_approval_status(self, approval_id: str) -> str:
+        """Read the generic approval state without accepting caller-supplied authority."""
+        if self._approval_store is None:
+            return "unavailable"
+        row = await self._approval_store.get(approval_id)
+        return "missing" if row is None else str(row.status)
 
     async def ingest(
         self,
@@ -127,7 +222,7 @@ class ArcMemoryIngestAdapter(IngestPort):
         mapping_model = module.ApprovedMapping(
             mapping_id=mapping.mapping_id,
             source_id=module.source_instance_id(self._agent_did, source_model),
-            homes=["document"],
+            homes=list(mapping.homes),
             revision=mapping.revision,
             content_hash=mapping.content_hash,
         )
@@ -142,4 +237,9 @@ def _revision(value: object) -> int | None:
         return None
 
 
-__all__ = ["ArcMemoryIngestAdapter", "ConnectedDataUnavailableError"]
+__all__ = [
+    "ArcMemoryIngestAdapter",
+    "ArcStoreObjectState",
+    "ArcStoreResourceSelection",
+    "ConnectedDataUnavailableError",
+]

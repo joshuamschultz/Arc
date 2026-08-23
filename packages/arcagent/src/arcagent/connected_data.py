@@ -11,6 +11,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from arcagent.extension.source import (
     FetchSourceObject,
+    ListSourceResources,
+    SelectSourceResources,
     SourceAdapter,
     SourceContent,
     SourceDescription,
@@ -18,6 +20,7 @@ from arcagent.extension.source import (
     SourceFailureCode,
     SourceObject,
     SourceObjectKind,
+    SourceResource,
     SyncSource,
     SyncSourcePage,
 )
@@ -36,10 +39,21 @@ class SyncStatus(StrEnum):
     AWAITING_MAPPING = "awaiting_mapping"
 
 
+class KnowledgeHome(StrEnum):
+    """Canonical destination selected by an operator for connected data."""
+
+    MEMORY = "memory"
+    DOCUMENT = "document"
+    DATASTORE = "datastore"
+    BLOB = "blob"
+    PROFILE = "profile"
+
+
 class MappingPlan(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     mapping_id: str = Field(min_length=1, max_length=512)
+    homes: tuple[KnowledgeHome, ...] = Field(min_length=1)
     revision: str = Field(min_length=1, max_length=512)
     content_hash: str = Field(min_length=1, max_length=128)
     metadata: Mapping[str, str] = Field(default_factory=dict)
@@ -168,6 +182,8 @@ class SyncStatePort(Protocol):
         ttl_seconds: float,
     ) -> bool: ...
 
+    async def reset(self, agent_did: str, source_id: str) -> bool: ...
+
 
 AuditCallback = Callable[[str, Mapping[str, Any]], Awaitable[None] | None]
 
@@ -175,10 +191,13 @@ __all__ = [
     "AuditCallback",
     "FetchSourceObject",
     "IngestPort",
+    "KnowledgeHome",
     "LeaseLostError",
+    "ListSourceResources",
     "MappingDeniedError",
     "MappingPendingError",
     "MappingPlan",
+    "SelectSourceResources",
     "SourceAdapter",
     "SourceContent",
     "SourceDescription",
@@ -188,6 +207,7 @@ __all__ = [
     "SourceObject",
     "SourceObjectKind",
     "SourcePage",
+    "SourceResource",
     "SyncError",
     "SyncLease",
     "SyncLimits",

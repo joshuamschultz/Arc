@@ -328,6 +328,26 @@ class PostgresBackend(SourceSyncBackend):
         )
         return str(result) == "UPDATE 1"
 
+    async def source_sync_reset(self, agent_did: str, source_id: str) -> bool:
+        async with self._require_pool().acquire() as connection:
+            async with connection.transaction():
+                result = await connection.execute(
+                    "UPDATE connected_source_sync SET cursor=NULL, status='idle', pages=0, "
+                    "bytes_processed=0, error_code=NULL, updated_at=now() "
+                    "WHERE agent_did=$1 AND source_id=$2 AND "
+                    "(lease_expires_at IS NULL OR lease_expires_at <= now())",
+                    agent_did,
+                    source_id,
+                )
+                if str(result) != "UPDATE 1":
+                    return False
+                await connection.execute(
+                    "DELETE FROM connected_source_pages WHERE agent_did=$1 AND source_id=$2",
+                    agent_did,
+                    source_id,
+                )
+                return True
+
     async def mutable_write(
         self,
         collection: str,

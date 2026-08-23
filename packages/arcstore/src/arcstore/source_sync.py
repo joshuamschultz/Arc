@@ -61,6 +61,7 @@ class SourceSyncBackend(Protocol):
     async def source_sync_renew_lease(
         self, agent_did: str, source_id: str, **kwargs: Any
     ) -> bool: ...
+    async def source_sync_reset(self, agent_did: str, source_id: str) -> bool: ...
 
 
 class InMemorySourceSyncStore:
@@ -197,6 +198,29 @@ class InMemorySourceSyncStore:
             )
             return True
 
+    async def reset(self, agent_did: str, source_id: str) -> bool:
+        """Discard a completed checkpoint only when no worker holds its lease."""
+        key = (agent_did, source_id)
+        async with self._lock:
+            if key in self._leases and self._leases[key].expires_at > self._clock():
+                return False
+            state = self._states.get(key)
+            if state is None:
+                return True
+            self._states[key] = state.model_copy(
+                update={
+                    "cursor": None,
+                    "status": SourceSyncStatus.IDLE,
+                    "pages": 0,
+                    "bytes_processed": 0,
+                    "error_code": None,
+                }
+            )
+            self._pages = {
+                page for page in self._pages if page[:2] != key
+            }
+            return True
+
     def _lease_is_current(
         self, agent_did: str, source_id: str, owner_id: str, fencing_token: int
     ) -> bool:
@@ -239,6 +263,9 @@ class ArcStoreSourceSyncStore:
 
     async def renew_lease(self, agent_did: str, source_id: str, **kwargs: Any) -> bool:
         return await self._backend.source_sync_renew_lease(agent_did, source_id, **kwargs)
+
+    async def reset(self, agent_did: str, source_id: str) -> bool:
+        return await self._backend.source_sync_reset(agent_did, source_id)
 
 
 __all__ = [

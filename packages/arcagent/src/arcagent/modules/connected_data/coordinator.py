@@ -208,6 +208,7 @@ class ConnectedDataCoordinator:
                     SyncSource(
                         connection_id=source.connection_id,
                         checkpoint=cursor,
+                        root_locator=source.root_locator,
                         page_size=limits.page_size,
                     )
                 )

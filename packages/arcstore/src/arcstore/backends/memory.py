@@ -290,6 +290,31 @@ class FakeBackend(SourceSyncBackend):
             ).isoformat()
             return True
 
+    async def source_sync_reset(self, agent_did: str, source_id: str) -> bool:
+        source_key = f"{agent_did}\0{source_id}"
+        async with self._lock:
+            row = self._tables.setdefault("connected_source_sync", {}).get(source_key)
+            if row is None:
+                return True
+            expires = row.get("lease_expires_at")
+            if expires is not None and datetime.fromisoformat(expires) > datetime.now(UTC):
+                return False
+            row.update(
+                {
+                    "cursor": None,
+                    "status": "idle",
+                    "pages": 0,
+                    "bytes_processed": 0,
+                    "error_code": None,
+                }
+            )
+            pages = self._tables.setdefault("connected_source_pages", {})
+            prefix = f"{source_key}\0"
+            for key in tuple(pages):
+                if key.startswith(prefix):
+                    del pages[key]
+            return True
+
     async def mutable_write(
         self,
         collection: str,

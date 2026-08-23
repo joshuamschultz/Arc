@@ -7,18 +7,20 @@ import inspect
 import logging
 import uuid
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, replace
+from typing import Any, Protocol
 
 from arcagent.connected_data import (
     AuditCallback,
     IngestPort,
+    KnowledgeHome,
+    ListSourceResources,
     SourceDescription,
     SyncLimits,
     SyncState,
     SyncStatePort,
 )
-from arcagent.extension.source import InspectSource
+from arcagent.extension.source import InspectSource, SelectSourceResources, SourceResource
 from arcagent.extension.source_catalog import SourceCatalog, SourceRegistration
 from arcagent.modules.connected_data.coordinator import ConnectedDataCoordinator
 
@@ -29,15 +31,44 @@ IngestPortFactory = Callable[
 ]
 
 
+class SourceSelectionStore(Protocol):
+    async def get(self, connection_id: str) -> tuple[str, ...]: ...
+
+    async def put(self, connection_id: str, resource_ids: tuple[str, ...]) -> None: ...
+
+
 @dataclass(frozen=True)
 class SourceRuntimeStatus:
     """Safe source status; credentials and cursors are never surfaced here."""
 
     connection_id: str
     status: str
+    source_id: str = ""
     detail: str = ""
     description: SourceDescription | None = None
     state: SyncState | None = None
+
+
+@dataclass(frozen=True)
+class SourceOperationResult:
+    """Typed, safe outcome for one operator lifecycle request."""
+
+    connection_id: str
+    status: str
+    detail: str = ""
+
+
+@dataclass(frozen=True)
+class MappingProposalStatus:
+    """Safe operator-facing mapping proposal, bound to an approval row."""
+
+    connection_id: str
+    source_id: str
+    allowed_homes: tuple[KnowledgeHome, ...]
+    homes: tuple[KnowledgeHome, ...]
+    approval_id: str
+    approval_status: str = "pending"
+    detail: str = ""
 
 
 class ConnectedDataService:
@@ -52,21 +83,28 @@ class ConnectedDataService:
         ingest_factory: IngestPortFactory | None,
         limits: SyncLimits,
         global_concurrency: int,
+        resource_selection_store_opener: Callable[
+            [], Awaitable[SourceSelectionStore]
+        ] | None = None,
         audit: AuditCallback | None = None,
         interval_seconds: float = 60.0,
     ) -> None:
         self._catalog = catalog
         self._agent_did = agent_did
         self._sync_store_opener = sync_store_opener
+        self._resource_selection_store_opener = resource_selection_store_opener
         self._ingest_factory = ingest_factory
         self._limits = limits
         self._semaphore = asyncio.Semaphore(global_concurrency)
         self._audit = audit
         self._interval = interval_seconds
         self._store: Any = None
+        self._resource_store: SourceSelectionStore | None = None
         self._monitor: asyncio.Task[None] | None = None
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._statuses: dict[str, SourceRuntimeStatus] = {}
+        self._mapping_statuses: dict[str, MappingProposalStatus] = {}
+        self._selected_resources: dict[str, tuple[str, ...]] = {}
         self._paused: set[str] = set()
         self._wake = asyncio.Event()
         self._closed = False
@@ -74,6 +112,7 @@ class ConnectedDataService:
     async def start(self) -> None:
         """Start the monitor; an unavailable optional backend becomes degraded."""
         self._store = await self._open_store()
+        self._resource_store = await self._open_resource_store()
         self._monitor = asyncio.create_task(self._monitor_loop(), name="connected-data-sync")
         self._wake.set()
 
@@ -92,40 +131,49 @@ class ConnectedDataService:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._store = None
+        self._resource_store = None
 
-    async def list_status(self) -> tuple[SourceRuntimeStatus, ...]:
+    async def list_sources(self) -> tuple[SourceRuntimeStatus, ...]:
         """Return safe operational state for UI/operator surfaces."""
-        registrations = await self._catalog.snapshot()
-        known = {entry.connection_id for entry in registrations}
-        return tuple(self._statuses[key] for key in sorted(self._statuses) if key in known)
+        return tuple(
+            self._statuses.get(
+                registration.connection_id,
+                SourceRuntimeStatus(connection_id=registration.connection_id, status="pending"),
+            )
+            for registration in sorted(
+                await self._catalog.snapshot(), key=lambda entry: entry.connection_id
+            )
+        )
 
-    async def sync_now(self, connection_id: str) -> bool:
+    async def sync_now(self, connection_id: str) -> SourceOperationResult:
         """Schedule one source immediately; unknown or paused sources are refused."""
         if connection_id in self._paused:
-            return False
+            return SourceOperationResult(connection_id, "refused", "source_paused")
         registration = await self._find(connection_id)
         if registration is None:
-            return False
+            return SourceOperationResult(connection_id, "not_found")
         self._schedule(registration)
-        return True
+        return SourceOperationResult(connection_id, "scheduled")
 
-    async def pause(self, connection_id: str) -> bool:
+    async def pause(self, connection_id: str) -> SourceOperationResult:
         """Stop future work while preserving the durable checkpoint."""
         if await self._find(connection_id) is None:
-            return False
+            return SourceOperationResult(connection_id, "not_found")
         self._paused.add(connection_id)
-        return True
+        return SourceOperationResult(connection_id, "paused")
 
-    async def resume(self, connection_id: str) -> bool:
+    async def resume(self, connection_id: str) -> SourceOperationResult:
         """Resume a source from its durable checkpoint."""
         if await self._find(connection_id) is None:
-            return False
+            return SourceOperationResult(connection_id, "not_found")
         self._paused.discard(connection_id)
         self._wake.set()
-        return True
+        return SourceOperationResult(connection_id, "scheduled")
 
-    async def revoke(self, connection_id: str) -> bool:
+    async def revoke(self, connection_id: str) -> SourceOperationResult:
         """Remove a source from synchronization and close its adapter."""
+        if await self._find(connection_id) is None:
+            return SourceOperationResult(connection_id, "not_found")
         self._paused.add(connection_id)
         task = self._tasks.pop(connection_id, None)
         if task is not None:
@@ -133,13 +181,145 @@ class ConnectedDataService:
             await asyncio.gather(task, return_exceptions=True)
         self._statuses.pop(connection_id, None)
         await self._catalog.unregister(connection_id)
-        return True
+        return SourceOperationResult(connection_id, "revoked")
+
+    async def reindex(self, connection_id: str) -> SourceOperationResult:
+        """Reset a durable checkpoint, then backfill the current source snapshot."""
+        registration = await self._find(connection_id)
+        if registration is None:
+            return SourceOperationResult(connection_id, "not_found")
+        task = self._tasks.get(connection_id)
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        if self._store is None or not await self._store.reset(self._agent_did, connection_id):
+            return SourceOperationResult(connection_id, "refused", "sync_lease_active")
+        self._schedule(registration)
+        return SourceOperationResult(connection_id, "scheduled")
+
+    async def stage_mapping(
+        self, connection_id: str, *, homes: tuple[KnowledgeHome | str, ...]
+    ) -> MappingProposalStatus | None:
+        """Stage an operator-selected routing proposal for one granted source."""
+        try:
+            selected_homes = tuple(KnowledgeHome(home) for home in homes)
+        except ValueError:
+            return None
+        registration = await self._find(connection_id)
+        if registration is None or self._ingest_factory is None:
+            return None
+        description = await registration.adapter.inspect_source(
+            InspectSource(connection_id=connection_id)
+        )
+        candidate = self._ingest_factory(description)
+        ingest = await candidate if inspect.isawaitable(candidate) else candidate
+        stage = getattr(ingest, "stage_mapping", None)
+        allowed = getattr(ingest, "allowed_homes", None)
+        source_id = _canonical_source_id(ingest, description)
+        if not callable(stage) or not callable(allowed):
+            return None
+        allowed_homes = tuple(allowed(description))
+        if not selected_homes or not set(selected_homes).issubset(allowed_homes):
+            return None
+        approval_id = await stage(description, selected_homes)
+        proposal = MappingProposalStatus(
+            connection_id=connection_id,
+            source_id=source_id,
+            allowed_homes=allowed_homes,
+            homes=selected_homes,
+            approval_id=str(approval_id),
+        )
+        self._mapping_statuses[connection_id] = proposal
+        return proposal
+
+    async def get_mapping_proposal(self, connection_id: str) -> MappingProposalStatus | None:
+        """Return the last staged safe proposal, or source-compatible choices."""
+        staged = self._mapping_statuses.get(connection_id)
+        if staged is not None:
+            registration = await self._find(connection_id)
+            if registration is None or self._ingest_factory is None:
+                return None
+            source = await registration.adapter.inspect_source(
+                InspectSource(connection_id=connection_id)
+            )
+            candidate = self._ingest_factory(source)
+            ingest = await candidate if inspect.isawaitable(candidate) else candidate
+            status = getattr(ingest, "mapping_approval_status", None)
+            if not callable(status) or not staged.approval_id:
+                return staged
+            return replace(staged, approval_status=await status(staged.approval_id))
+        registration = await self._find(connection_id)
+        if registration is None or self._ingest_factory is None:
+            return None
+        description = await registration.adapter.inspect_source(
+            InspectSource(connection_id=connection_id)
+        )
+        candidate = self._ingest_factory(description)
+        ingest = await candidate if inspect.isawaitable(candidate) else candidate
+        allowed = getattr(ingest, "allowed_homes", None)
+        if not callable(allowed):
+            return None
+        return MappingProposalStatus(
+            connection_id=connection_id,
+            source_id=_canonical_source_id(ingest, description),
+            allowed_homes=tuple(allowed(description)),
+            homes=(),
+            approval_id="",
+            approval_status="not_staged",
+        )
+
+    async def list_resources(self, connection_id: str) -> tuple[SourceResource, ...]:
+        """List resources the granted source explicitly permits an operator to select."""
+        registration = await self._find(connection_id)
+        if registration is None:
+            return ()
+        resources = await registration.adapter.list_source_resources(
+            ListSourceResources(connection_id=connection_id)
+        )
+        selected = self._selected_resources.get(connection_id)
+        if selected is None and self._resource_store is not None:
+            selected = await self._resource_store.get(connection_id)
+        return tuple(
+            resource.model_copy(update={"selected": resource.resource_id in set(selected or ())})
+            for resource in resources
+        )
+
+    async def select_resources(
+        self, connection_id: str, *, resource_ids: tuple[str, ...]
+    ) -> tuple[SourceResource, ...]:
+        """Validate and apply an explicit resource selection before synchronization."""
+        registration = await self._find(connection_id)
+        if registration is None:
+            return ()
+        available = await self.list_resources(connection_id)
+        allowed = {resource.resource_id for resource in available}
+        if not resource_ids or not set(resource_ids).issubset(allowed):
+            return tuple(
+                resource.model_copy(update={"detail": "invalid_resource_selection"})
+                for resource in available
+            )
+        await registration.adapter.select_source_resources(
+            SelectSourceResources(connection_id=connection_id, resource_ids=resource_ids)
+        )
+        self._selected_resources[connection_id] = resource_ids
+        if self._resource_store is not None:
+            await self._resource_store.put(connection_id, resource_ids)
+        return tuple(
+            resource.model_copy(update={"selected": resource.resource_id in set(resource_ids)})
+            for resource in available
+        )
 
     async def _monitor_loop(self) -> None:
         while not self._closed:
             registrations = await self._catalog.snapshot()
             for registration in registrations:
                 if registration.connection_id not in self._paused:
+                    self._statuses.setdefault(
+                        registration.connection_id,
+                        SourceRuntimeStatus(
+                            connection_id=registration.connection_id, status="inspecting"
+                        ),
+                    )
                     self._schedule(registration)
             try:
                 await asyncio.wait_for(self._wake.wait(), timeout=self._interval)
@@ -183,11 +363,24 @@ class ConnectedDataService:
             if self._ingest_factory is None:
                 self._set_degraded(connection_id, "ingest_port_unavailable")
                 return
+            selected = self._selected_resources.get(connection_id)
+            if selected is None and self._resource_store is not None:
+                selected = await self._resource_store.get(connection_id)
+            if selected:
+                await registration.adapter.select_source_resources(
+                    SelectSourceResources(connection_id=connection_id, resource_ids=selected)
+                )
             description = await registration.adapter.inspect_source(
                 InspectSource(connection_id=connection_id)
             )
             candidate = self._ingest_factory(description)
             ingest = await candidate if inspect.isawaitable(candidate) else candidate
+            self._statuses[connection_id] = SourceRuntimeStatus(
+                connection_id=connection_id,
+                source_id=_canonical_source_id(ingest, description),
+                status="syncing",
+                description=description,
+            )
             result = await ConnectedDataCoordinator(
                 registration.adapter,
                 ingest,
@@ -201,6 +394,7 @@ class ConnectedDataService:
             )
             self._statuses[connection_id] = SourceRuntimeStatus(
                 connection_id=connection_id,
+                source_id=_canonical_source_id(ingest, description),
                 status=result.status.value,
                 description=description,
                 state=result,
@@ -215,6 +409,15 @@ class ConnectedDataService:
             _logger.warning("connected-data ArcStore backend unavailable", exc_info=True)
             return None
 
+    async def _open_resource_store(self) -> SourceSelectionStore | None:
+        if self._resource_selection_store_opener is None:
+            return None
+        try:
+            return await self._resource_selection_store_opener()
+        except Exception:
+            _logger.warning("connected-data resource selection store unavailable", exc_info=True)
+            return None
+
     async def _find(self, connection_id: str) -> SourceRegistration | None:
         for registration in await self._catalog.snapshot():
             if registration.connection_id == connection_id:
@@ -227,4 +430,15 @@ class ConnectedDataService:
         )
 
 
-__all__ = ["ConnectedDataService", "IngestPortFactory", "SourceRuntimeStatus"]
+def _canonical_source_id(ingest: IngestPort, description: SourceDescription) -> str:
+    canonical = getattr(ingest, "canonical_source_id", None)
+    return str(canonical(description)) if callable(canonical) else ""
+
+
+__all__ = [
+    "ConnectedDataService",
+    "IngestPortFactory",
+    "MappingProposalStatus",
+    "SourceOperationResult",
+    "SourceRuntimeStatus",
+]

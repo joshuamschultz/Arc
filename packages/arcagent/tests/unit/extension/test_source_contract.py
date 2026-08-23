@@ -5,11 +5,14 @@ from __future__ import annotations
 from arcagent.extension.source import (
     FetchSourceObject,
     InspectSource,
+    ListSourceResources,
+    SelectSourceResources,
     SourceAdapter,
     SourceContent,
     SourceDescription,
     SourceObject,
     SourceObjectKind,
+    SourceResource,
     SyncSource,
     SyncSourcePage,
 )
@@ -35,6 +38,14 @@ class _Source:
             ),
             next_checkpoint=request.checkpoint or "cursor",
         )
+
+    async def list_source_resources(
+        self, request: ListSourceResources
+    ) -> tuple[SourceResource, ...]:
+        return (SourceResource(resource_id="root", label="Root", resource_kind="folder"),)
+
+    async def select_source_resources(self, request: SelectSourceResources) -> None:
+        return None
 
     async def fetch_source(self, request: FetchSourceObject) -> SourceContent:
         return SourceContent(
