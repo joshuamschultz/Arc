@@ -662,3 +662,20 @@ async def test_a_text_command_that_exited_non_zero_is_still_an_error(
 
     assert result.outcome.value == "error"
     assert "could not read secret" in result.content
+
+
+async def test_the_child_never_inherits_stdin(
+    cli: CliAttachment, spawn: _SpawnRecorder
+) -> None:
+    """A spawned CLI must not be able to block on the service's stdin.
+
+    Unset ``stdin`` means the child INHERITS the parent's. A vendor CLI that
+    prompts (a confirmation, a missing field, an editor) then blocks until the
+    tool deadline instead of failing: `jira_create_issue` and
+    `jira_transition_issue` both died on the 30s cap this way, taking the whole
+    nightly workflow down, while the same commands run by hand with
+    ``< /dev/null`` returned in under three seconds.
+    """
+    await cli.invoke("create_issue", {"title": "hello"})
+
+    assert spawn.spawns[-1].kwargs.get("stdin") is asyncio.subprocess.DEVNULL

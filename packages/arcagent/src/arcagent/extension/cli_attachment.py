@@ -344,6 +344,12 @@ class CliAttachment:
             env=scrubbed_environment(
                 {name: secret.reveal() for name, secret in self._env.items()}
             ),
+            # No inherited stdin, ever. A vendor CLI that decides to prompt — a
+            # confirmation, a missing required field, an editor — would otherwise
+            # block on the service's stdin until the tool deadline and report a
+            # timeout instead of its own error. Closed stdin turns that hang into
+            # the CLI's immediate, readable refusal.
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
