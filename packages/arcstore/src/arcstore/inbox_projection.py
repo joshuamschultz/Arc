@@ -196,6 +196,38 @@ class DurableInboxService:
             classification_max=classification_max,
         )
 
+    async def search(
+        self,
+        owner: Participant,
+        query: str,
+        *,
+        limit: int = 50,
+        classification_max: str = "UNCLASSIFIED",
+    ) -> tuple[Message, ...]:
+        """Search only messages in threads the owner is authorized to read."""
+        needle = query.strip().casefold()
+        if not needle:
+            raise ValueError("search query is required")
+        _, threads, _ = await self.list_threads(
+            owner, limit=max(limit, 100), classification_max=classification_max
+        )
+        matches: list[Message] = []
+        for thread in threads:
+            page = await self.list_messages(
+                thread.thread_id,
+                reader=owner,
+                limit=100,
+                classification_max=classification_max,
+            )
+            for message in page.items:
+                if needle in message.body.casefold() or needle in (
+                    thread.subject or ""
+                ).casefold():
+                    matches.append(message)
+                    if len(matches) >= limit:
+                        return tuple(matches)
+        return tuple(matches)
+
     async def get_thread(
         self,
         thread_id: str,

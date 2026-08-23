@@ -204,7 +204,8 @@ class PostgresMailOutbox:
             rows = await connection.fetch(
                 """WITH ready AS (
                     SELECT event_id FROM mail_outbox
-                    WHERE status='pending' AND available_at <= now()
+                    WHERE (status='pending' OR (status='leased' AND lease_until <= now()))
+                      AND available_at <= now()
                     ORDER BY available_at, created_at FOR UPDATE SKIP LOCKED LIMIT $1
                 ) UPDATE mail_outbox AS m SET status='leased', lease_owner=$2,
                     lease_until=now() + ($3::int * interval '1 second'), attempts=attempts+1

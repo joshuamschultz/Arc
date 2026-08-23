@@ -49,6 +49,7 @@ from arcui.routes.agent_detail.connect_telegram import connect_telegram_route
 from arcui.routes.agent_detail.files_write import put_file_write
 from arcui.routes.agent_detail.inbox import (
     get_inbox_messages,
+    get_inbox_search,
     get_inbox_threads,
     post_inbox_handoff,
     post_inbox_handoff_resolution,
@@ -125,6 +126,7 @@ routes = [
     Route("/api/agents/{id}/sessions", get_sessions, methods=["GET"]),
     Route("/api/agents/{id}/sessions/{sid}", get_session_replay, methods=["GET"]),
     Route("/api/agents/{id}/inbox", get_inbox_threads, methods=["GET"]),
+    Route("/api/agents/{id}/inbox/search", get_inbox_search, methods=["GET"]),
     Route(
         "/api/agents/{id}/inbox/handoffs/{handoff_id}/resolution",
         post_inbox_handoff_resolution,

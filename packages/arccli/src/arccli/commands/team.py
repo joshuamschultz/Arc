@@ -741,41 +741,36 @@ async def _signer_for(registry: Any, sender_ref: str) -> Any:
 def _send(args: argparse.Namespace) -> None:
     """Send a signed message to one or more targets (REQ-012, REQ-030)."""
     from arcteam.messenger import MessagingService
-    from arcteam.types import Message, MsgType, Priority
-
     root = _get_root(args)
     sender: str = args.sender
     targets = _split_csv(args.to)
     refs = _split_csv(args.refs) if getattr(args, "refs", None) else []
-    msg_type: str | None = getattr(args, "type", None)
-    priority: str | None = getattr(args, "priority", None)
 
     async def _run() -> Any:
         _, registry, audit, backend = await _build_service(root)
         try:
             signer = await _signer_for(registry, sender)
             svc = MessagingService(backend, registry, audit, signer=signer)
-            message = Message(
-                sender=sender,
-                to=targets,
-                body=args.body,
-                msg_type=MsgType(msg_type) if msg_type else MsgType.INFO,
-                priority=Priority(priority) if priority else Priority.NORMAL,
-                action_required=bool(getattr(args, "action", False)),
-                refs=refs,
-                thread_id=getattr(args, "thread_id", None),
-            )
-            sent = await svc.send(message)
             inbox, inbox_backend = await _durable_inbox_service()
             try:
-                from arcstore.inbox_projection import participant
+                from arcstore.mail_outbox import PostgresMailOutbox
+                from arcteam.mail import AgentMailService, MailSendRequest
 
-                await inbox.record_event(
-                    event_id=sent.id,
-                    sender=participant(sender),
-                    recipients=tuple(participant(target) for target in targets),
-                    body=sent.body,
-                    external_thread_id=sent.thread_id,
+                sent = await AgentMailService(
+                    svc,
+                    inbox,
+                    outbox=PostgresMailOutbox(inbox_backend),
+                    signer=signer,
+                ).send(
+                    MailSendRequest(
+                        sender=sender,
+                        to=tuple(targets),
+                        body=args.body,
+                        thread_id=getattr(args, "thread_id", None),
+                        attachments=tuple(refs),
+                        idempotency_key=getattr(args, "idempotency_key", None)
+                        or f"cli-{os.getpid()}-{id(args)}",
+                    )
                 )
             finally:
                 await inbox_backend.stop()
@@ -784,7 +779,7 @@ def _send(args: argparse.Namespace) -> None:
             await _shutdown(backend)
 
     sent = asyncio.run(_run())
-    _write(f"Sent: {sent.id} (seq={sent.seq})")
+    _write(f"Sent: {sent.message_id} ({sent.status})")
 
 
 def _inbox(args: argparse.Namespace) -> None:
@@ -802,11 +797,20 @@ def _inbox(args: argparse.Namespace) -> None:
                 participant(sender),
                 limit=limit,
             )
+            if getattr(args, "search", None):
+                return await service.search(participant(sender), args.search, limit=limit), None
             return threads, cursor
         finally:
             await backend.stop()
 
     result, cursor = asyncio.run(_run())
+    if getattr(args, "search", None):
+        if use_json:
+            _print_json({"messages": [item.model_dump(mode="json") for item in result]})
+        else:
+            for item in result:
+                _print_message(item)
+        return
     if use_json:
         _print_json(
             {
@@ -1196,11 +1200,15 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--action", action="store_true", help="Mark action required.")
     p.add_argument("--refs", default=None, help="Comma-separated references.")
     p.add_argument("--thread-id", dest="thread_id", default=None, help="Thread id (for replies).")
+    p.add_argument(
+        "--idempotency-key", default=None, help="Stable retry key for durable delivery."
+    )
 
     # inbox
     p = subs.add_parser("inbox", help="Check inbox across subscribed streams.")
     p.add_argument("--sender", required=True, help="Whose inbox to poll.")
     p.add_argument("--limit", type=int, default=10, help="Max messages per stream.")
+    p.add_argument("--search", default=None, help="Authorized body/subject search query.")
 
     # read
     p = subs.add_parser("read", help="Read channel or DM history.")

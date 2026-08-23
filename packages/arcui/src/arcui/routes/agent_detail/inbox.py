@@ -101,6 +101,26 @@ async def get_inbox_messages(request: Request) -> JSONResponse:
     )
 
 
+async def get_inbox_search(request: Request) -> JSONResponse:
+    """Search an agent inbox through the same authorized durable service."""
+    service, reader = _service(request), _reader(request)
+    if service is None:
+        return JSONResponse({"error": "durable_inbox_unavailable"}, status_code=503)
+    if reader is None:
+        return JSONResponse({"error": "agent_not_found"}, status_code=404)
+    query = request.query_params.get("q", "")
+    try:
+        messages = await service.search(
+            reader,
+            query,
+            limit=_limit(request),
+            classification_max=_clearance(request),
+        )
+    except (PermissionError, ValueError) as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return JSONResponse({"messages": [message.model_dump(mode="json") for message in messages]})
+
+
 async def post_inbox_read(request: Request) -> JSONResponse:
     """Record a reader-specific receipt; viewers cannot mutate mailbox state."""
     if getattr(request.state, "role", None) != "operator":
