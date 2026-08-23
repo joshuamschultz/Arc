@@ -75,3 +75,35 @@ def test_accumulator_preserves_terminal_metadata() -> None:
     response = accumulator.build()
 
     assert response.metadata == {"request_signature": "sig"}
+
+
+@pytest.mark.parametrize("fragments", [(), ("",), ("", ""), ("   ",)])
+def test_accumulator_reads_absent_arguments_as_an_empty_object(
+    fragments: tuple[str, ...],
+) -> None:
+    """A zero-argument tool call streams no argument text — that is not malformed.
+
+    Providers emit no ``arguments`` delta (or an empty one) for a tool taking
+    no parameters. Treating the empty accumulation as a JSON decode failure
+    killed the whole run: one such call ended a 13-minute workflow node with
+    "streamed tool call arguments are malformed".
+    """
+    accumulator = StreamAccumulator(model="test-model")
+    accumulator.add(Delta(tool_call=ToolCallDelta(index=0, id="call-a", name="ping")))
+    for fragment in fragments:
+        accumulator.add(Delta(tool_call=ToolCallDelta(index=0, arguments=fragment)))
+
+    response = accumulator.build()
+
+    assert [(call.name, call.arguments) for call in response.tool_calls] == [("ping", {})]
+
+
+def test_accumulator_still_rejects_genuinely_malformed_arguments() -> None:
+    """Truncated or non-object JSON remains a protocol error, not a silent {}."""
+    accumulator = StreamAccumulator(model="test-model")
+    accumulator.add(
+        Delta(tool_call=ToolCallDelta(index=0, id="call-a", name="tool", arguments='{"a":'))
+    )
+
+    with pytest.raises(ArcLLMStreamProtocolError, match="malformed"):
+        accumulator.build()

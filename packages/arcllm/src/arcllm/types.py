@@ -261,7 +261,13 @@ class StreamAccumulator:
     def _build_tool_call(self, index: int, parts: _ToolCallParts) -> ToolCall:
         if parts.id is None or parts.name is None:
             raise ArcLLMStreamProtocolError("streamed tool call is incomplete")
-        raw_arguments = "".join(parts.arguments)
+        # A tool that takes no parameters streams no argument text at all (or a
+        # single empty fragment). That is a well-formed zero-argument call, not
+        # a decode failure — reading it as one ended whole runs on the first
+        # such call.
+        raw_arguments = "".join(parts.arguments).strip()
+        if not raw_arguments:
+            return ToolCall(id=parts.id, name=parts.name, arguments={})
         try:
             arguments = json.loads(raw_arguments)
         except json.JSONDecodeError as exc:
