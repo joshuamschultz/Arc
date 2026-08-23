@@ -33,7 +33,7 @@ from arcokf import OKFValidationError, validate
 from arcprompt import load_stock
 
 from arcagent.modules.workpad import _runtime
-from arcagent.tools._decorator import hook
+from arcagent.tools._decorator import hook, tool
 from arcagent.utils.audit import safe_audit
 from arcagent.utils.model_helpers import get_eval_model, spawn_background
 from arcagent.utils.sanitizer import sanitize_text
@@ -171,6 +171,66 @@ def _drain_transcript(st: _runtime._State) -> str:
     return text
 
 
+# -- Agent-requested rewrite ---------------------------------------------
+
+# The notes are one tool argument, not a file: a bound keeps a single call from
+# smuggling an entire replacement cockpit past the maintainer's judgement.
+_MAX_NOTES_CHARS = 4000
+
+
+@tool(
+    name="workpad_update",
+    description=(
+        "Request an immediate curated rewrite of context.md — your working "
+        "memory. context.md is maintained FOR you and is deliberately not "
+        "writable with file tools; pass what to add, correct, or drop, and "
+        "the maintainer rewrites the whole cockpit now."
+    ),
+    classification="state_modifying",
+    capability_tags=["workpad"],
+    when_to_use=(
+        "Update or clean up context.md (your scratchpad): close finished "
+        "loops, correct stale entries, or capture a new open loop right away "
+        "instead of waiting for the automatic cadence."
+    ),
+)
+async def workpad_update(notes: str) -> str:
+    """Run the context.md maintainer now, with the agent's notes as input.
+
+    The protected-file guard stays intact: the agent never writes the file.
+    The same eval-model persona, sanitizer, size cap, and atomic write produce
+    it — the notes only join the maintainer's evidence, alongside the
+    accumulated activity window (drained here exactly as the cadence path
+    drains it, so nothing is double-counted later).
+    """
+    st = _runtime.state()
+    model = _eval_model()
+    if model is None:
+        return "workpad maintainer unavailable: no eval model is configured"
+    clipped = sanitize_text(notes, max_length=_MAX_NOTES_CHARS, truncation_suffix="…")
+    transcript_text = _drain_transcript(st)
+    st.last_maintenance_ts = time.time()
+    st.runs_at_last_maintenance = st.run_count
+    st.persist()
+    await safe_audit(
+        st.telemetry,
+        "workpad.requested",
+        {"run_count": st.run_count, "notes_chars": len(clipped)},
+        logger=_logger,
+    )
+    try:
+        written = await perform_maintenance(st, model, transcript_text, agent_notes=clipped)
+    except Exception as exc:  # reason: report failure to the agent, never crash the turn
+        _logger.warning("agent-requested workpad rewrite failed", exc_info=True)
+        return f"context.md rewrite failed: {exc}"
+    if not written:
+        return "context.md left unchanged: the maintainer produced no content"
+    return (
+        "context.md rewritten by the maintainer with your notes applied. "
+        "It reloads into your prompt at the start of your next run."
+    )
+
+
 # -- Maintenance ---------------------------------------------------------
 
 
@@ -182,7 +242,9 @@ async def _safe_maintain(st: _runtime._State, model: Any, transcript_text: str) 
         _logger.warning("workpad maintenance failed", exc_info=True)
 
 
-async def perform_maintenance(st: _runtime._State, model: Any, transcript_text: str) -> bool:
+async def perform_maintenance(
+    st: _runtime._State, model: Any, transcript_text: str, *, agent_notes: str = ""
+) -> bool:
     """Rewrite ``context.md`` from its current content + recent activity.
 
     Returns whether the file was written. Empty/whitespace model output leaves the
@@ -194,7 +256,7 @@ async def perform_maintenance(st: _runtime._State, model: Any, transcript_text: 
     result = await arcrun.run_oneshot(
         model,
         system=load_stock("arcagent", "context_maintainer_system"),
-        user=_render_input(current, transcript_text),
+        user=_render_input(current, transcript_text, agent_notes=agent_notes),
         max_tokens=None,
     )
     new_md = (result.content or "").strip()
@@ -216,19 +278,26 @@ async def perform_maintenance(st: _runtime._State, model: Any, transcript_text: 
     return True
 
 
-def _render_input(current_context: str, transcript_text: str) -> str:
+def _render_input(current_context: str, transcript_text: str, *, agent_notes: str = "") -> str:
     """Render the maintainer's user turn: current file + recent activity.
 
     Today's date is supplied because the model has no clock: asked to stamp the
     file it invents one, and a wrong date makes every staleness judgement in the
     prompt wrong with it.
     """
+    notes_block = (
+        "THE AGENT'S OWN CURATION REQUEST for this rewrite (apply where it "
+        f"matches reality per your rules):\n{agent_notes.strip()}\n\n"
+        if agent_notes.strip()
+        else ""
+    )
     return (
         f"Today's date is {date.today().isoformat()}.\n\n"
         "CURRENT context.md (may be empty):\n"
         f"{current_context.strip() or '(empty)'}\n\n"
         "RECENT SESSION ACTIVITY since the last update:\n"
         f"{transcript_text.strip() or '(none)'}\n\n"
+        f"{notes_block}"
         "Rewrite context.md now per your maintenance rules. Output ONLY the full "
         "updated context.md content — no preamble, no explanation, no code fences."
     )
@@ -248,4 +317,5 @@ __all__ = [
     "drain_on_shutdown",
     "perform_maintenance",
     "track_runs",
+    "workpad_update",
 ]
