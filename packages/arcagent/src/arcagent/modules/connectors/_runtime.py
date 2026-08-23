@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from arctrust import AgentIdentity
 
     from arcagent.core.tool_registry import ToolRegistry
+    from arcagent.extension.source_catalog import SourceCatalog
 
 
 @dataclass
@@ -61,6 +62,7 @@ class _State:
     tier: str = "personal"
     policy_pipeline: Any = None
     human_gate: Any = None
+    source_catalog: SourceCatalog | None = None
 
     @property
     def agent_dir(self) -> Path:
@@ -102,6 +104,7 @@ def configure(
     tier: str = "personal",
     policy_pipeline: Any = None,
     human_gate: Any = None,
+    source_catalog: SourceCatalog | None = None,
 ) -> None:
     """Bind module state for the CURRENT asyncio task. Called once at agent startup."""
     cfg = config if isinstance(config, ConnectorsConfig) else ConnectorsConfig(**(config or {}))
@@ -118,6 +121,7 @@ def configure(
             tier=tier,
             policy_pipeline=policy_pipeline,
             human_gate=human_gate,
+            source_catalog=source_catalog,
         )
     )
 

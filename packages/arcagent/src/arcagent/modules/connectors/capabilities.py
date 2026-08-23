@@ -97,6 +97,8 @@ class _PreparedRegistry:
     def __init__(self, registry: ToolRegistry) -> None:
         self.tools: dict[str, Any] = {}
         self.policy = registry.policy
+        self.sources: dict[str, Any] = {}
+        self.unsupported_sources: set[str] = set()
 
     def register(self, tool: Any) -> None:
         self.tools[tool.name] = tool
@@ -148,6 +150,9 @@ class Connectors:
                 registry.unregister(name)
         self._registered = ()
         self._registry = None
+        state = _runtime.state()
+        if state.source_catalog is not None:
+            await state.source_catalog.close()
         if self._state_store is not None:
             await self._state_store.close()
         self._state_store = None
@@ -171,6 +176,16 @@ class Connectors:
         prepared = _PreparedRegistry(registry)
         await self._attach(state, prepared)
         accepted = registry.replace_owned(set(self._registered), list(prepared.tools.values()))
+        state = _runtime.state()
+        if state.source_catalog is not None:
+            for registration in await state.source_catalog.snapshot():
+                if registration.connection_id not in prepared.sources:
+                    if registration.connection_id in prepared.unsupported_sources:
+                        await state.source_catalog.unregister(registration.connection_id)
+                    elif registration.connection_id not in _granted_source_ids(state):
+                        await state.source_catalog.unregister(registration.connection_id)
+            for connection_id, adapter in prepared.sources.items():
+                await state.source_catalog.register(connection_id, adapter)
         self._registered = tuple(sorted(accepted))
         self._revision += 1
         return ConnectorReconcileResult(
@@ -369,7 +384,21 @@ async def _attach_one(
         len(report.registered),
         len(report.denied),
     )
+    source_adapter_factory = getattr(connection, "source_adapter", None)
+    source_adapter = source_adapter_factory() if callable(source_adapter_factory) else None
+    if isinstance(ctx.registry, _PreparedRegistry) and state.source_catalog is not None:
+        if source_adapter is None:
+            ctx.registry.unsupported_sources.add(instance)
+        else:
+            ctx.registry.sources[instance] = source_adapter
     return report.registered
+
+
+def _granted_source_ids(state: _runtime._State) -> set[str]:
+    try:
+        return set(ConnectionRegistry(state.arc_dir).granted_to(state.agent_dir.name))
+    except ExtensionError:
+        return set()
 
 
 async def _load_bundle(ctx: _AttachContext, extension: str) -> LoadedExtension:

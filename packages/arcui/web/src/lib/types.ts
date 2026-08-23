@@ -1015,6 +1015,20 @@ export interface SourcesResponse {
   items: EntityRecord[]
 }
 
+export interface ConnectedSyncStatus {
+  connection_id: string
+  status: string
+  detail: string
+  pages: number
+  bytes_processed: number
+  error_code: string | null
+}
+
+export interface ConnectedSyncStatusResponse {
+  items: ConnectedSyncStatus[]
+  status?: string
+}
+
 export interface MappingsResponse {
   items: SourceMappingItem[]
 }

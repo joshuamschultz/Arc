@@ -26,6 +26,7 @@ import type {
   ChannelsResponse,
   GatewaysResponse,
   ConfigResponse,
+  ConnectedSyncStatusResponse,
   DailyNoteDetail,
   DailyNotesResponse,
   DatastoreQueryResponse,
@@ -360,6 +361,14 @@ export const useSources = (agentId: string | null) =>
     queryKey: ['agent', agentId, 'knowledge', 'sources'],
     queryFn: ({ signal }) => apiGet(`/api/agents/${agentId}/knowledge/sources`, signal),
     enabled: !!agentId,
+  })
+
+export const useConnectedSyncStatus = (agentId: string | null) =>
+  useQuery<ConnectedSyncStatusResponse>({
+    queryKey: ['agent', agentId, 'knowledge', 'sync-status'],
+    queryFn: ({ signal }) => apiGet(`/api/agents/${agentId}/knowledge/sync`, signal),
+    enabled: !!agentId,
+    refetchInterval: 10_000,
   })
 
 export const useSourceMapping = (agentId: string | null, sourceId: string | null) =>

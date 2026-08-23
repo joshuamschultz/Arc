@@ -54,6 +54,7 @@ from arcui.routes import cancellations as cancellations_routes
 from arcui.routes import capability_imports as capability_imports_routes
 from arcui.routes import chat_ws as chat_ws_routes
 from arcui.routes import config as config_routes
+from arcui.routes import connected_data as connected_data_routes
 from arcui.routes import connectors as connectors_routes
 from arcui.routes import cost_efficiency as cost_efficiency_routes
 from arcui.routes import export as export_routes
@@ -268,6 +269,7 @@ def create_app(
         *chat_ws_routes.routes,
         *attachments_routes.routes,
         *knowledge_routes.routes,
+        *connected_data_routes.routes,
         *agents_routes.routes,
         *agent_sessions_routes.routes,
         *agent_detail_routes.routes,

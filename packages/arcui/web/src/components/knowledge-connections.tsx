@@ -20,6 +20,7 @@ import { JsonBlock } from '@/components/json-block'
 import { EmptyState, QueryState } from '@/components/states'
 import {
   useBlobFolders,
+  useConnectedSyncStatus,
   useDatastoreQuery,
   useDatastoreTables,
   useDocuments,
@@ -233,9 +234,19 @@ function SourceDetail({
 
 function SourcesSection({ agentId }: { agentId: string }) {
   const sources = useSources(agentId)
+  const sync = useConnectedSyncStatus(agentId)
   const [selected, setSelected] = useState<EntityRecord | null>(null)
   return (
     <div className="space-y-3">
+      {sync.data?.items.length ? (
+        <div className="flex flex-wrap gap-2">
+          {sync.data.items.map((item) => (
+            <Chip key={item.connection_id}>
+              {item.connection_id}: {item.status}
+            </Chip>
+          ))}
+        </div>
+      ) : null}
       <QueryState
         query={sources}
         isEmpty={(d) => d.items.length === 0}

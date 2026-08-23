@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, Generic, Protocol, TypeVar, runtime_checkable
@@ -15,6 +15,7 @@ from arcagent.core.config import EvalConfig, LLMConfig
 from arcagent.core.module_bus import ModuleBus
 from arcagent.core.telemetry import AgentTelemetry
 from arcagent.core.tool_registry import ToolRegistry
+from arcagent.extension.source_catalog import SourceCatalog
 from arcagent.tools._egress import EgressProxy
 
 
@@ -40,6 +41,7 @@ class RuntimeDependencies:
     human_gate: Any
     agent_run_fn: Callable[..., Awaitable[Any]]
     arcstore_opener: Callable[[], Awaitable[Any]] | None = None
+    source_catalog: SourceCatalog = field(default_factory=SourceCatalog)
 
     def select_for(
         self, configure: Callable[..., None], module_config: dict[str, Any]
@@ -88,6 +90,7 @@ class DependencyKey(Enum):
     OPERATOR_SIGNER = "operator_signer"
     AGENT_RUN_FN = "agent_run_fn"
     ARCSTORE_OPENER = "arcstore_opener"
+    SOURCE_CATALOG = "source_catalog"
 
 
 class RuntimeModule(Protocol):
