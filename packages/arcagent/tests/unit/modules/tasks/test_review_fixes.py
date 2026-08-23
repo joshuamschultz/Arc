@@ -95,7 +95,7 @@ class TestLiveServicesUseRealOperatorSigner:
         async def fake_make_backend(url: str) -> Any:
             return MemoryBackend()
 
-        monkeypatch.setattr("arcagent.core.arcteam_bootstrap.make_backend", fake_make_backend)
+        monkeypatch.setattr("arcteam.composition.make_backend", fake_make_backend)
 
         identity = AgentIdentity.generate(org="local", agent_type="agent")
         operator_signer = make_operator_signer()

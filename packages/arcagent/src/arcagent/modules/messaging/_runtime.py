@@ -29,7 +29,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from arcagent.core import arcteam_bootstrap
 from arcagent.modules.messaging.config import MessagingConfig
 
 if TYPE_CHECKING:
@@ -134,6 +133,7 @@ def configure(
             "or an ephemeral key (fail-closed)"
         )
 
+    from arcteam import composition as arcteam_composition
     from arcteam.audit import AuditLogger
     from arcteam.digest import DigestStore
     from arcteam.messenger import MessagingService
@@ -165,7 +165,7 @@ def configure(
         backend,
         registry,
         audit,
-        signer=arcteam_bootstrap.message_signer(identity),
+        signer=arcteam_composition.message_signer(identity),
     )
 
     _state_var.set(
@@ -198,6 +198,7 @@ async def ensure_live_backend() -> None:
         st.live_backend_ready = True
         return
 
+    from arcteam import composition as arcteam_composition
     from arcteam.audit import AuditLogger
     from arcteam.digest import DigestStore
     from arcteam.messenger import MessagingService
@@ -207,7 +208,7 @@ async def ensure_live_backend() -> None:
     # make_backend degrades an unreachable NATS to an in-memory backend (with a
     # single warning) rather than raising. When it did, keep the in-memory
     # services built by configure() instead of rebuilding over a fresh backend.
-    backend = await arcteam_bootstrap.make_backend(st.config.nats_url)
+    backend = await arcteam_composition.make_backend(st.config.nats_url)
     if isinstance(backend, MemoryBackend):
         st.live_backend_ready = True
         return
@@ -219,7 +220,7 @@ async def ensure_live_backend() -> None:
         backend,
         st.registry,
         audit,
-        signer=arcteam_bootstrap.message_signer(st.identity),
+        signer=arcteam_composition.message_signer(st.identity),
     )
     st.digests = DigestStore(backend)
     st.live_backend_ready = True

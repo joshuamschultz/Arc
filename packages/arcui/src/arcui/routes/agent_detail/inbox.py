@@ -14,7 +14,9 @@ from arcui.routes.agent_detail._common import _agent_did
 
 
 def _service(request: Request) -> Any | None:
-    return getattr(request.app.state, "inbox_service", None)
+    # The Agent Inbox is an ArcTeam capability.  Gateway sessions and a bare
+    # ArcUI process do not provide a mailbox by accident.
+    return getattr(request.app.state, "agent_mail", None)
 
 
 def _reader(request: Request) -> Any | None:

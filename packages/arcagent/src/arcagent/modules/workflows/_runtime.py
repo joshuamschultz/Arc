@@ -229,7 +229,7 @@ async def refresh_roster(nats_url: str = "") -> None:
             from arcteam.audit import AuditLogger
             from arcteam.registry import EntityRegistry
 
-            from arcagent.core.arcteam_bootstrap import make_backend
+            from arcteam.composition import make_backend
 
             backend = await make_backend(url)
             audit = AuditLogger(backend, st.operator_signer)

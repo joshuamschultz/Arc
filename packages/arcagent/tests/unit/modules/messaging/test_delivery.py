@@ -277,7 +277,7 @@ class TestInboxLoopPush:
 
         from arcteam.types import Message
 
-        from arcagent.core import arcteam_bootstrap as _bootstrap
+        from arcteam import composition as _bootstrap
 
         ident = _identity()
         _runtime.configure(

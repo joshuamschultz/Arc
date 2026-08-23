@@ -20,6 +20,7 @@ from arcteam.types import (
     MAX_BODY_BYTES,
     Channel,
     Cursor,
+    DeliveryKind,
     Entity,
     Message,
     generate_message_id,
@@ -346,7 +347,8 @@ class MessagingService:
 
         # Auto-assign fields
         now = datetime.now(UTC).isoformat()
-        message.id = generate_message_id()
+        if not message.id:
+            message.id = generate_message_id()
         message.ts = now
 
         # Threading: caller sets thread_id for replies; new messages self-reference.
@@ -366,11 +368,24 @@ class MessagingService:
         # Serialize once before the loop (not per-target)
         base_dict = message.model_dump()
 
-        # Route to each target
+        if message.delivery_kind is DeliveryKind.MAIL:
+            if not message.to and not message.cc and not message.bcc:
+                raise ValueError("mail requires at least one recipient")
+            mail_targets = (*message.to, *message.cc, *message.bcc)
+            if any(
+                (target.startswith("@") or target.startswith("agent://") or target.startswith("user://"))
+                is False
+                for target in mail_targets
+            ):
+                raise ValueError("mail recipients must be agent:// or user:// addresses")
+
+        # Route to each target.  A mail envelope is deliberately separate from
+        # channel chat: its recipient copies are the only records eligible for
+        # the AgentMail/Inbox projection.
         streams_written: list[str] = []
         channel_names: list[str] = []
         last_seq = 0
-        for target in message.to:
+        for target in (*message.to, *message.cc, *message.bcc):
             # `@handle` is sugar for addressing an entity's inbox. Resolve it
             # (raising UnknownHandle for an unknown handle, e.g. @ghost) and
             # normalize to the agent URI so routing stays name-based.
@@ -409,6 +424,9 @@ class MessagingService:
             await self._enforce_no_write_down(message, scheme, name, uri, entities)
 
             msg_dict = {**base_dict}
+            if message.delivery_kind is DeliveryKind.MAIL:
+                # BCC is routing metadata, never recipient-visible content.
+                msg_dict["bcc"] = []
             seq, _offset = await self._backend.append_auto_seq(
                 STREAMS_COLLECTION,
                 stream,

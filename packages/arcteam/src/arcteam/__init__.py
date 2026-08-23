@@ -8,6 +8,7 @@ from arcteam.config import TeamConfig
 from arcteam.files import TeamFileStore
 from arcteam.memory.config import TeamMemoryConfig
 from arcteam.memory.service import TeamMemoryService
+from arcteam.mail import AgentMailService, MailSendRequest, MailSendResult, mail_participant
 from arcteam.messenger import MessagingService, RetryableDeliveryError
 from arcteam.registry import EntityRegistry
 from arcteam.storage import MemoryBackend, StorageBackend
@@ -16,6 +17,7 @@ from arcteam.types import (
     AuditRecord,
     Channel,
     Cursor,
+    DeliveryKind,
     Entity,
     EntityStatus,
     EntityType,
@@ -27,14 +29,19 @@ from arcteam.types import (
 __all__ = [
     "AuditLogger",
     "AuditRecord",
+    "AgentMailService",
     "Channel",
     "Cursor",
+    "DeliveryKind",
     "Entity",
     "EntityRegistry",
     "EntityStatus",
     "EntityType",
     "MemoryBackend",
     "Message",
+    "MailSendRequest",
+    "MailSendResult",
+    "mail_participant",
     "MessagingService",
     "MsgType",
     "NatsBackend",

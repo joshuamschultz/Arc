@@ -133,7 +133,6 @@ class GatewayRunner:
         pairing_store: Any | None = None,
         user_allowlist: set[str] | None = None,
         session_epoch_db_path: Path | None = None,
-        inbox_service: Any | None = None,
     ) -> None:
         """Initialise GatewayRunner.
 
@@ -165,7 +164,6 @@ class GatewayRunner:
             pairing_store=pairing_store,
             user_allowlist=user_allowlist,
             session_epoch_db_path=session_epoch_db_path,
-            inbox_service=inbox_service,
         )
         self._failed_adapters: dict[str, FailedAdapter] = {}
         self._adapter_index: dict[str, BasePlatformAdapter] = {a.name: a for a in self._adapters}

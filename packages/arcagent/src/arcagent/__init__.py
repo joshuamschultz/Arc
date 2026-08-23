@@ -55,7 +55,6 @@ from arcagent.connections import (
 )
 from arcagent.core.agent import ArcAgent
 from arcagent.core.agent_security import operator_key_path
-from arcagent.core.arcteam_bootstrap import make_backend
 from arcagent.core.config import ArcAgentConfig, SecurityConfig, deep_merge, load_config
 from arcagent.core.errors import (
     ArcAgentError,
@@ -235,7 +234,6 @@ __all__ = [
     "list_gated",
     "load_config",
     "load_signature",
-    "make_backend",
     "make_spawn_tool",
     "manifest_dict",
     "model_config_path",

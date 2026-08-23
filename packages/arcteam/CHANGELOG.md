@@ -7,12 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added the ArcTeam-owned AgentMail seam with signed mail envelopes, durable-before-NATS
+  composition, explicit pending delivery, stable threading and attachment references.
+
 ### Changed
 
 - Documented the agreed removable fleet direction (`arcteam → arcagent` and
-  `arcteam → arcmemory`) and marked the current reverse ArcAgent
-  messaging/knowledge bootstrap as an alpha migration gap. No composition
-  implementation or package dependency changed.
+  `arcteam → arcmemory`). Agent mail composition now follows this direction;
+  shared-knowledge composition remains an alpha migration gap.
 
 ## [0.8.0] - 2026-08-22
 

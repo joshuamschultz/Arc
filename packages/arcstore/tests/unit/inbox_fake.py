@@ -157,6 +157,7 @@ class FakeInboxRepository:
         sender: Participant,
         recipients: tuple[Participant, ...],
         body: str,
+        attachments: tuple[str, ...] = (),
         reply_to_id: str | None = None,
         trace: TraceMetadata | None = None,
         message_id: str | None = None,
@@ -179,6 +180,7 @@ class FakeInboxRepository:
                 sender=sender,
                 recipients=recipients,
                 body=body,
+                attachments=attachments,
                 reply_to_id=reply_to_id,
                 trace=trace or TraceMetadata(classification=thread.classification),
                 message_id=message_id,
@@ -189,6 +191,7 @@ class FakeInboxRepository:
                 sender=sender,
                 recipients=recipients,
                 body=body,
+                attachments=attachments,
                 reply_to_id=reply_to_id,
                 trace=trace or TraceMetadata(classification=thread.classification),
             )

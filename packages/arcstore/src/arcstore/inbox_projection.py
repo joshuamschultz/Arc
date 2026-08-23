@@ -78,6 +78,7 @@ class DurableInboxService:
         sender: Participant,
         recipients: Iterable[Participant],
         body: str,
+        attachments: Iterable[str] = (),
         external_thread_id: str | None = None,
         subject: str | None = None,
         reply_to_event_id: str | None = None,
@@ -89,6 +90,7 @@ class DurableInboxService:
             sender=sender,
             recipients=tuple(recipients),
             body=body,
+            attachments=tuple(attachments),
             external_thread_id=external_thread_id,
             subject=subject,
             reply_to_event_id=reply_to_event_id,
@@ -118,6 +120,7 @@ class DurableInboxService:
         sender = event.sender
         recipient_list = event.recipients
         body = event.body
+        attachments = event.attachments
         external_thread_id = event.external_thread_id
         subject = event.subject
         reply_to_event_id = event.reply_to_event_id
@@ -138,17 +141,19 @@ class DurableInboxService:
                 classification=classification,
                 thread_id=_stable_id("thread", inbox.inbox_id, external_thread_id or event_id),
             )
-            reply_to_id = (
-                _stable_id("message", inbox.inbox_id, reply_to_event_id)
-                if reply_to_event_id is not None
-                else None
-            )
+            if reply_to_event_id is None:
+                reply_to_id = None
+            elif reply_to_event_id.startswith("message_"):
+                reply_to_id = reply_to_event_id
+            else:
+                reply_to_id = _stable_id("message", inbox.inbox_id, reply_to_event_id)
             copies.append(
                 await self._repository.append_message(
                     thread.thread_id,
                     sender=sender,
                     recipients=recipient_list,
                     body=body,
+                    attachments=attachments,
                     reply_to_id=reply_to_id,
                     trace=trace or TraceMetadata(classification=classification),
                     message_id=_stable_id("message", inbox.inbox_id, event_id),
@@ -188,6 +193,20 @@ class DurableInboxService:
             reader_id=reader.participant_id,
             cursor=cursor,
             limit=limit,
+            classification_max=classification_max,
+        )
+
+    async def get_thread(
+        self,
+        thread_id: str,
+        *,
+        reader_id: str,
+        classification_max: str = "UNCLASSIFIED",
+    ) -> Thread:
+        """Read one authorized mail thread without exposing session state."""
+        return await self._repository.get_thread(
+            thread_id,
+            reader_id=reader_id,
             classification_max=classification_max,
         )
 

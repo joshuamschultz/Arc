@@ -9,9 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Documented that the optional ArcTeam messaging/shared-knowledge bootstrap is
-  a known reverse-dependency alpha gap, not completed fleet composition. No
-  agent runtime behavior changed.
+- Removed the ArcAgent-core team bootstrap; optional fleet composition now belongs to ArcTeam.
+- Direct agent mail is distinguished from channel chat before inbox projection.
 
 ## [0.19.0] - 2026-08-22
 

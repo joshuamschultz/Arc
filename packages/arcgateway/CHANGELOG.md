@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Gateway sessions no longer project operator turns into the Agent Inbox; session history and
+  agent mail are separate surfaces.
+
 ## [0.4.0] - 2026-08-22
 
 - Incremental sanitized delivery across web, Slack, Telegram and Mattermost with

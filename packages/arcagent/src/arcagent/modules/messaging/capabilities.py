@@ -530,6 +530,10 @@ async def _persist_team_event(
     recipient_ids: tuple[str, ...] = (),
 ) -> None:
     """Project a verified team event into Postgres without blocking messaging."""
+    # Only explicit mail envelopes belong in Agent Inbox.  Channel chat and
+    # operator-originated turns remain in their own transport/session views.
+    if str(getattr(message, "delivery_kind", "chat")) != "mail":
+        return
     try:
         from arcstore.inbox import ParticipantRole, TraceMetadata
         from arcstore.inbox_projection import participant
@@ -547,6 +551,7 @@ async def _persist_team_event(
                 participant(str(target), role=ParticipantRole.AGENT) for target in targets
             ),
             body=str(message.body),
+            attachments=tuple(str(item) for item in getattr(message, "attachments", ())),
             external_thread_id=str(message.thread_id or message.id),
             trace=TraceMetadata(classification=str(message.classification)),
         )
@@ -647,6 +652,13 @@ async def messaging_send(
             priority=Priority(priority),
             thread_id=thread_id,
             action_required=action_required,
+            delivery_kind=(
+                "mail"
+                if all(
+                    target.startswith(("agent://", "user://", "@")) for target in targets
+                )
+                else "chat"
+            ),
             classification=sender_floor,
             # One step further from the human who started this. A reply sent
             # from inside a woken turn inherits its depth so a mention chain

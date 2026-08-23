@@ -7,7 +7,7 @@ import logging
 import pytest
 from arctrust import AgentIdentity
 
-from arcagent.core import arcteam_bootstrap as _bootstrap
+from arcteam import composition as _bootstrap
 
 
 def _full_identity() -> AgentIdentity:

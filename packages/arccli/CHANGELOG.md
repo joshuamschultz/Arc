@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Workflow team backend composition now resolves through ArcTeam's public composition seam.
+
 ## [0.9.0] - 2026-08-22
 
 - Native streamed agent output and reliable attached/headless ArcFlow commands.

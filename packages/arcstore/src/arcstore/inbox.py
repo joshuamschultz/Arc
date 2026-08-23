@@ -135,6 +135,7 @@ class Message(_Contract):
     sender: Participant
     recipients: tuple[Participant, ...] = Field(min_length=1)
     body: str = Field(min_length=1)
+    attachments: tuple[str, ...] = ()
     reply_to_id: str | None = None
     trace: TraceMetadata = Field(default_factory=TraceMetadata)
     created_at: datetime = Field(default_factory=_now)
@@ -255,6 +256,7 @@ class InboxRepository(Protocol):
         sender: Participant,
         recipients: tuple[Participant, ...],
         body: str,
+        attachments: tuple[str, ...] = (),
         reply_to_id: str | None = None,
         trace: TraceMetadata | None = None,
         message_id: str | None = None,

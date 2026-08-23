@@ -23,7 +23,7 @@ src/arcagent/
     config.py  config_loading.py       # 3-file split: arcagent/arcllm/arcrun sibling chains
     tool_registry.py  tool_policy.py  tool_policy_bridge.py
     session_internal/   # ContextManager, SessionManager
-    model_manager.py  telemetry.py  arcteam_bootstrap.py  vault/  …
+    model_manager.py  telemetry.py  vault/  …
   modules/              # Independent modules — tasks, workflows, connectors, memory, skills,
                         #   scheduler, proactive, planning, policy, messaging, browser, web,
                         #   voice, session, user_profile, workpad, progress, runcontrol, pulse

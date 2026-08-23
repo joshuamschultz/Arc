@@ -45,6 +45,13 @@ class Priority(StrEnum):
     CRITICAL = "critical"
 
 
+class DeliveryKind(StrEnum):
+    """Transport intent; chat/channel traffic is never an inbox mail item."""
+
+    CHAT = "chat"
+    MAIL = "mail"
+
+
 # URI scheme pattern: scheme://name
 _URI_PATTERN = re.compile(r"^(agent|user|channel|role)://([a-zA-Z0-9_-]+)$")
 
@@ -120,6 +127,12 @@ class Message(BaseModel):
     sender: str
     to: list[str]
     thread_id: str | None = None
+    delivery_kind: DeliveryKind = DeliveryKind.CHAT
+    subject: str | None = None
+    cc: list[str] = Field(default_factory=list)
+    bcc: list[str] = Field(default_factory=list)
+    attachments: list[str] = Field(default_factory=list)
+    idempotency_key: str | None = None
     # How many agent turns this message descends from. A human's post is 0; a
     # message an agent sends from inside a woken turn is its parent's hop + 1.
     # Receivers stop activating at a bounded depth, so a mention chain between

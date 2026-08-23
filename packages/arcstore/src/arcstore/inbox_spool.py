@@ -32,6 +32,7 @@ class ProjectionEvent(BaseModel):
     sender: Participant
     recipients: tuple[Participant, ...] = Field(min_length=1)
     body: str = Field(min_length=1)
+    attachments: tuple[str, ...] = ()
     external_thread_id: str | None = None
     subject: str | None = None
     reply_to_event_id: str | None = None

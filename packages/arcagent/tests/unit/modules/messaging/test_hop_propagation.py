@@ -32,7 +32,7 @@ pytestmark = pytest.mark.asyncio
 
 
 async def _configure(tmp_path: Path) -> Any:
-    from arcagent.core import arcteam_bootstrap as bootstrap
+    from arcteam import composition as bootstrap
 
     ident = AgentIdentity.generate(org="local", agent_type="agent")
     _runtime.configure(

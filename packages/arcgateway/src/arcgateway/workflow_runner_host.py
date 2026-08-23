@@ -217,12 +217,12 @@ async def _team_bindings(key_path: Path) -> tuple[Any, Any]:
     one that says plainly it cannot.
     """
     try:
-        import arcagent
+        from arcteam.composition import make_backend
         from arcteam.workflow.identity import RunnerIdentity
         from arcteam.workflow.stores import build_team_bindings
 
         identity = RunnerIdentity.load(key_path)
-        team_backend = await arcagent.make_backend(_nats_url())
+        team_backend = await make_backend(_nats_url())
         owners, narrator = await build_team_bindings(
             backend=team_backend,
             operator_signer=_operator_signer(key_path),

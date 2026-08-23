@@ -397,7 +397,6 @@ def create_app(
             embedded_gateway = await build_for_embedded(
                 team_root,
                 gateway_config,
-                inbox_service=starlette_app.state.inbox_service,
                 attachment_scanner_factory=attachment_scanner_factory,
             )
             starlette_app.state.embedded_gateway = embedded_gateway
@@ -458,6 +457,17 @@ def create_app(
                 logger.exception("lifespan: embedded messaging construction failed")
                 resolved_service, resolved_registry, built_backend = None, None, None
         starlette_app.state.messaging_service = resolved_service
+        if resolved_service is not None and starlette_app.state.inbox_service is not None:
+            try:
+                from arcteam import AgentMailService
+
+                starlette_app.state.agent_mail = AgentMailService(
+                    resolved_service, starlette_app.state.inbox_service
+                )
+            except ImportError:
+                starlette_app.state.agent_mail = None
+        else:
+            starlette_app.state.agent_mail = None
         # COMP-005: channel-management routes resolve agent refs to DIDs
         # through this registry. None when no service is wired — the mutation
         # routes then report the same explicit unavailable error as the reads.
@@ -608,6 +618,7 @@ def create_app(
     # collection; the surface that parks a stop request for a per-agent watcher.
     app.state.cancel_store = CancelStore(task_store_backend)
     app.state.inbox_service = inbox_service
+    app.state.agent_mail = None
     app.state.inbox_clearance = inbox_clearance
     # Ingest policy (ADR-019 tier = stringency): may operator-authored task
     # text carry URLs/emails? Federal → False (default, secure-by-default);

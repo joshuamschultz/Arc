@@ -3,7 +3,7 @@
 The live surface is the decorator-form capability set in
 :mod:`arcagent.modules.messaging.capabilities` (hooks, tools, and the durable
 PUSH inbox loop), wired through :mod:`arcagent.modules.messaging._runtime` and
-the shared :mod:`arcagent.core.arcteam_bootstrap`. arcteam owns the messaging;
+the shared :mod:`arcteam.composition`. arcteam owns the messaging;
 this package owns *which* identity signs and *which* substrate carries traffic.
 """
 
