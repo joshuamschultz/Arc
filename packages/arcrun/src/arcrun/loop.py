@@ -16,6 +16,7 @@ from arcrun.capabilities import CapabilityProvider, provider_tools
 from arcrun.checkpoint import LoopCheckpoint, apply_checkpoint
 from arcrun.dynamic.seal import RunSeal
 from arcrun.events import EventBus
+from arcrun.ledger import ToolExecutionLedger
 from arcrun.registry import ToolRegistry
 from arcrun.sandbox import Sandbox
 from arcrun.state import Injection, RunDeadlineExceededError, RunState, RunWorkCancelledError
@@ -57,6 +58,7 @@ def _build_state(
     seal: RunSeal | None = None,
     stream_event: Callable[[str, dict[str, Any]], None] | None = None,
     deadline: float | None = None,
+    tool_ledger: ToolExecutionLedger | None = None,
 ) -> tuple[RunState, Sandbox]:
     """Shared setup for run() and run_async()."""
     # A caller (e.g. the task dispatcher) may pin the run id so it can link the
@@ -107,6 +109,7 @@ def _build_state(
         max_consecutive_errors=max_consecutive_errors,
         stream_event=stream_event,
         deadline=deadline,
+        tool_ledger=tool_ledger,
     )
 
     # SPEC-043 REQ-003/004 — deterministic resume. The registry is rebuilt from
@@ -166,6 +169,7 @@ async def run(
     on_handle: Callable[[RunHandle], None] | None = None,
     stream_event: Callable[[str, dict[str, Any]], None] | None = None,
     deadline: float | None = None,
+    tool_ledger: ToolExecutionLedger | None = None,
 ) -> LoopResult:
     """Blocking entry point. Runs until task complete, a breaker trip, or resume.
 
@@ -206,6 +210,7 @@ async def run(
         seal=seal,
         stream_event=stream_event,
         deadline=deadline,
+        tool_ledger=tool_ledger,
     )
     if on_handle is not None:
         on_handle(handle)
@@ -328,6 +333,7 @@ async def run_async(
     seal: RunSeal | None = None,
     stream_event: Callable[[str, dict[str, Any]], None] | None = None,
     deadline: float | None = None,
+    tool_ledger: ToolExecutionLedger | None = None,
 ) -> RunHandle:
     """Non-blocking entry point. Returns handle for steering."""
     state, sandbox_obj = _build_state(
@@ -359,6 +365,7 @@ async def run_async(
         seal=seal,
         stream_event=stream_event,
         deadline=deadline,
+        tool_ledger=tool_ledger,
     )
 
     # ``create_task`` snapshots the current context, so binding the correlation

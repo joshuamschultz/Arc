@@ -24,6 +24,12 @@ from arcrun.capabilities import (
 from arcrun.checkpoint import LoopCheckpoint, apply_checkpoint, to_checkpoint
 from arcrun.dynamic.seal import RunSeal, SealBroken, SealSigner
 from arcrun.events import GENESIS_PREV_HASH, ChainVerificationResult, Event, EventBus, verify_chain
+from arcrun.ledger import (
+    ToolExecutionIntent,
+    ToolExecutionLedger,
+    ToolExecutionOutcome,
+    ToolLedgerEntry,
+)
 from arcrun.loop import (
     RunHandle,
     StructuredCallError,
@@ -136,6 +142,10 @@ __all__ = [
     "ToolCallDelta",
     "ToolContext",
     "ToolEndEvent",
+    "ToolExecutionIntent",
+    "ToolExecutionLedger",
+    "ToolExecutionOutcome",
+    "ToolLedgerEntry",
     "ToolRegistry",
     "ToolResultBlock",
     "ToolStartEvent",

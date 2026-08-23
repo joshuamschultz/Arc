@@ -34,6 +34,7 @@ from arcrun._messages import SystemPrompt
 from arcrun.capabilities import CapabilityProvider
 from arcrun.dynamic.seal import RunSeal
 from arcrun.events import Event
+from arcrun.ledger import ToolExecutionLedger
 from arcrun.types import LoopResult, SandboxConfig, Tool
 
 if TYPE_CHECKING:
@@ -204,6 +205,7 @@ async def run_stream(
     on_handle: Callable[[RunHandle], None] | None = None,
     deadline: float | None = None,
     delivery_queue_size: int = 128,
+    tool_ledger: ToolExecutionLedger | None = None,
 ) -> AsyncIterator[StreamEvent]:
     """Run the agent loop and stream events as they occur.
 
@@ -392,6 +394,7 @@ async def run_stream(
                 on_handle=_on_handle,
                 stream_event=_on_stream_event,
                 deadline=deadline,
+                tool_ledger=tool_ledger,
             )
             loop_future.set_result(result)
         except Exception as exc:  # reason: partial stream must have a typed terminal

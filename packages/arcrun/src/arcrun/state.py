@@ -17,6 +17,7 @@ from arcrun._messages import content_text, user_message
 from arcrun.checkpoint import LoopCheckpoint
 from arcrun.dynamic.seal import RunSeal
 from arcrun.events import EventBus
+from arcrun.ledger import ToolExecutionLedger
 from arcrun.registry import ToolRegistry
 
 #: How much of a held message's text rides its ``message.injected`` audit event.
@@ -102,6 +103,7 @@ class RunState:
     cancel_reason: str = ""
     deadline: float | None = None
     active_work: set[asyncio.Future[Any]] = field(default_factory=set)
+    tool_ledger: ToolExecutionLedger | None = None
     steer_queue: asyncio.Queue[Injection] = field(default_factory=lambda: asyncio.Queue(maxsize=16))
     followup_queue: asyncio.Queue[Injection] = field(
         default_factory=lambda: asyncio.Queue(maxsize=16)

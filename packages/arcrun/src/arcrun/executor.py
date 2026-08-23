@@ -12,6 +12,7 @@ import arcllm
 import jsonschema
 
 from arcrun._messages import tool_result
+from arcrun.ledger import ToolExecutionIntent, ToolExecutionOutcome, tool_invocation_key
 from arcrun.sandbox import Sandbox
 from arcrun.state import RunState
 from arcrun.types import ParentRunContext, ToolContext
@@ -73,6 +74,30 @@ async def execute_tool_call(
     except jsonschema.ValidationError as ve:
         return tool_result(tc.id, f"Error: invalid params — {ve.message}"), False
 
+    invocation_key: str | None = None
+    if state.tool_ledger is not None:
+        invocation_key = tool_invocation_key(state.run_id, tc.id, tc.name, tc.arguments)
+        intent = ToolExecutionIntent(
+            invocation_key=invocation_key,
+            run_id=state.run_id,
+            tool_call_id=tc.id,
+            tool_name=tc.name,
+            arguments_digest=args_digest or "",
+        )
+        try:
+            entry = await state.await_work(state.tool_ledger.begin(intent))
+        except Exception as exc:
+            message = f"Error: tool ledger unavailable: {type(exc).__name__}"
+            return tool_result(tc.id, message), False
+        if entry.status == "completed" and entry.outcome is not None:
+            bus.emit("tool.replayed", {"name": tc.name, "invocation_key": invocation_key})
+            return tool_result(tc.id, entry.outcome.content), entry.outcome.success
+        if entry.status != "new":
+            bus.emit(
+                "tool.reconciliation_required", {"name": tc.name, "invocation_key": invocation_key}
+            )
+            return tool_result(tc.id, "Error: prior tool intent requires reconciliation"), False
+
     ctx = ToolContext(
         run_id=state.run_id,
         tool_call_id=tc.id,
@@ -125,6 +150,18 @@ async def execute_tool_call(
         return tool_result(tc.id, f"Error: {type(exc).__name__}: {truncated}"), False
 
     duration_ms = (time.time() - tool_start) * 1000
+    if state.tool_ledger is not None and invocation_key is not None:
+        try:
+            await state.await_work(
+                state.tool_ledger.complete(
+                    ToolExecutionOutcome(
+                        invocation_key=invocation_key, content=result, success=True
+                    )
+                )
+            )
+        except Exception as exc:
+            message = f"Error: tool outcome not durable: {type(exc).__name__}"
+            return tool_result(tc.id, message), False
     result_digest, result_size = _digest_and_size(result)
     end_data: dict[str, Any] = {
         "name": tc.name,
