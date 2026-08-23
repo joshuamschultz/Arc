@@ -48,6 +48,27 @@ async def test_postgres_rejects_ambiguous_or_malformed_timestamps(
             )
 
 
+async def test_postgres_query_accepts_iso_string_ts_gte(
+    postgres_backend: ArcStoreBackend,
+) -> None:
+    """The seam contract passes ``ts_gte`` as an ISO-8601 string (arcui windows)."""
+    old_key, new_key = f"pg-{uuid4().hex}", f"pg-{uuid4().hex}"
+    await postgres_backend.upsert(
+        "llm_calls",
+        old_key,
+        {"kind": "llm_call", "actor_did": _ACTOR, "ts": "2026-08-20T00:00:00Z"},
+    )
+    await postgres_backend.upsert(
+        "llm_calls",
+        new_key,
+        {"kind": "llm_call", "actor_did": _ACTOR, "ts": "2026-08-22T00:00:00Z"},
+    )
+    rows = await postgres_backend.query("llm_calls", ts_gte="2026-08-21T00:00:00+00:00")
+    keys = {row["record_id"] for row in rows}
+    assert new_key in keys
+    assert old_key not in keys
+
+
 async def test_postgres_cas_serializes_cross_row_claim_guard(
     postgres_backend: ArcStoreBackend,
 ) -> None:

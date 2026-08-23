@@ -100,8 +100,8 @@ class PostgresBackend:
         clauses: list[str] = []
         params: list[Any] = []
         if ts_gte is not None:
-            params.append(ts_gte)
-            clauses.append(f"ts >= ${len(params)}::timestamptz")
+            params.append(_timestamp(ts_gte))
+            clauses.append(f"ts >= ${len(params)}")
         for field, value in (where or {}).items():
             params.extend([field, None if value is None else str(value)])
             if value is None:
