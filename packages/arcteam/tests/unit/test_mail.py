@@ -5,8 +5,10 @@ from typing import Any
 
 import pytest
 from arcstore.inbox import Participant, ParticipantRole, Thread
+from arcstore.inbox_projection import DurableInboxService
 from arcstore.mail_outbox import MailOutbox
 from arctrust import AgentIdentity
+from packages.arcstore.tests.unit.inbox_fake import FakeInboxRepository
 
 from arcteam.crypto import MessageSigner, verify_message
 from arcteam.mail import AgentMailService, MailDeliveryWorker, MailSendRequest
@@ -200,12 +202,11 @@ class _ReplyStore(_Store):
         super().__init__(outbox)
         self._thread = Thread(
             thread_id="thread-existing",
+            conversation_id="conversation-existing",
             inbox_id="inbox-sender",
             participants=(
                 Participant(participant_id=sender, role=ParticipantRole.AGENT),
-                Participant(
-                    participant_id="did:arc:local:agent/beta", role=ParticipantRole.AGENT
-                ),
+                Participant(participant_id="did:arc:local:agent/beta", role=ParticipantRole.AGENT),
             ),
             subject="handoff",
         )
@@ -242,5 +243,49 @@ async def test_reply_uses_the_atomic_outbox_instead_of_the_inbox_delivery_port(
     )
 
     assert reply == "durable-reply"
-    assert store.events[-1]["external_thread_id"] == "thread-existing"
+    assert store.events[-1]["external_thread_id"] == "conversation-existing"
     assert len(outbox.pending()) == 1
+
+
+@pytest.mark.asyncio
+async def test_reply_translates_another_mailbox_local_ids_to_canonical_mail_identity(
+    tmp_path: Path,
+) -> None:
+    identity = _identity()
+    beta_did = "did:arc:local:agent/beta"
+    outbox = MailOutbox(tmp_path / "mail-outbox.jsonl")
+    durable = DurableInboxService(FakeInboxRepository())
+    service = AgentMailService(
+        _Transport(),
+        durable,
+        outbox=outbox,
+        address_book=_AddressBook(identity),
+        signer=MessageSigner.from_identity(identity),
+    )
+    await service.send(_request(identity))
+    operator = Participant(participant_id=identity.did, role=ParticipantRole.AGENT)
+    beta = Participant(participant_id=beta_did, role=ParticipantRole.AGENT)
+    _, beta_threads, _ = await durable.list_threads(beta)
+    beta_thread = beta_threads[0]
+    beta_messages = await durable.list_messages(beta_thread.thread_id, reader=beta)
+    parent = beta_messages.items[0]
+
+    reply = await service.reply(
+        beta_thread.thread_id,
+        sender=operator,
+        body="review complete",
+        reply_to_id=parent.message_id,
+        idempotency_key="reply-from-operator",
+    )
+
+    _, operator_threads, _ = await durable.list_threads(operator)
+    operator_thread = operator_threads[0]
+    assert beta_thread.thread_id != operator_thread.thread_id
+    assert beta_thread.conversation_id == operator_thread.conversation_id
+    assert reply.thread_id == operator_thread.thread_id
+    operator_messages = await durable.list_messages(operator_thread.thread_id, reader=operator)
+    beta_messages = await durable.list_messages(beta_thread.thread_id, reader=beta)
+    assert operator_messages.items[-1].reply_to_id == operator_messages.items[0].message_id
+    assert beta_messages.items[-1].reply_to_id == beta_messages.items[0].message_id
+    assert operator_messages.items[-1].reply_to_event_id == parent.event_id
+    assert beta_messages.items[-1].reply_to_event_id == parent.event_id

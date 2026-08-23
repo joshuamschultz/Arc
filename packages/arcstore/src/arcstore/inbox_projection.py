@@ -147,11 +147,10 @@ class DurableInboxService:
                 subject=subject,
                 classification=classification,
                 thread_id=_stable_id("thread", inbox.inbox_id, external_thread_id or event_id),
+                conversation_id=external_thread_id or event_id,
             )
             if reply_to_event_id is None:
                 reply_to_id = None
-            elif reply_to_event_id.startswith("message_"):
-                reply_to_id = reply_to_event_id
             else:
                 reply_to_id = _stable_id("message", inbox.inbox_id, reply_to_event_id)
             copies.append(
@@ -162,6 +161,8 @@ class DurableInboxService:
                     body=body,
                     attachments=attachments,
                     reply_to_id=reply_to_id,
+                    event_id=event_id,
+                    reply_to_event_id=reply_to_event_id,
                     trace=trace or TraceMetadata(classification=classification),
                     message_id=_stable_id("message", inbox.inbox_id, event_id),
                 )
@@ -247,6 +248,20 @@ class DurableInboxService:
         return await self._repository.get_thread(
             thread_id,
             reader_id=reader_id,
+            classification_max=classification_max,
+        )
+
+    async def get_message(
+        self,
+        message_id: str,
+        *,
+        reader: Participant,
+        classification_max: str = "UNCLASSIFIED",
+    ) -> Message:
+        """Read one authorized message and expose its canonical mail event identity."""
+        return await self._repository.get_message(
+            message_id,
+            reader_id=reader.participant_id,
             classification_max=classification_max,
         )
 

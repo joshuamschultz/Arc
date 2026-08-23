@@ -81,6 +81,7 @@ class PostgresInboxRepository:
         subject: str | None = None,
         classification: str = "UNCLASSIFIED",
         thread_id: str | None = None,
+        conversation_id: str | None = None,
     ) -> Thread:
         thread = Thread(
             inbox_id=inbox_id,
@@ -88,6 +89,7 @@ class PostgresInboxRepository:
             subject=subject,
             classification=classification,
             thread_id=thread_id or _id("thread"),
+            conversation_id=conversation_id,
         )
         async with self._pool.acquire() as connection:
             async with connection.transaction():
@@ -122,6 +124,24 @@ class PostgresInboxRepository:
                 raise PermissionError("reader clearance is insufficient for this thread")
             unread_count = await self._unread_count(connection, thread_id, reader_id)
         return thread.model_copy(update={"unread_count": unread_count})
+
+    async def get_message(
+        self,
+        message_id: str,
+        *,
+        reader_id: str,
+        classification_max: str = "UNCLASSIFIED",
+    ) -> Message:
+        clearance = _level(classification_max)
+        async with self._pool.acquire() as connection:
+            message = await self._get_message(connection, message_id)
+            thread = await self._get_thread(connection, message.thread_id)
+            _require_participant(thread, reader_id)
+            if not dominates(clearance, _level(thread.classification)):
+                raise PermissionError("reader clearance is insufficient for this message")
+            if not _message_visible_to(message, reader_id):
+                raise PermissionError("reader cannot access this message")
+        return message
 
     async def list_threads(
         self,
@@ -185,6 +205,8 @@ class PostgresInboxRepository:
         body: str,
         attachments: tuple[str, ...] = (),
         reply_to_id: str | None = None,
+        event_id: str | None = None,
+        reply_to_event_id: str | None = None,
         trace: TraceMetadata | None = None,
         message_id: str | None = None,
     ) -> Message:
@@ -208,6 +230,8 @@ class PostgresInboxRepository:
                     body=body,
                     attachments=attachments,
                     reply_to_id=reply_to_id,
+                    event_id=event_id,
+                    reply_to_event_id=reply_to_event_id,
                     trace=trace or TraceMetadata(classification=thread.classification),
                 )
                 if message.trace.classification != thread.classification:
@@ -278,8 +302,10 @@ class PostgresInboxRepository:
                     if not dominates(_level(stored_inbox.classification), _level(classification)):
                         raise ValueError("mail classification exceeds inbox classification")
                     thread_id = stable("thread", inbox_id, external_thread_id or event_id)
+                    conversation_id = external_thread_id or event_id
                     thread = Thread(
                         thread_id=thread_id,
+                        conversation_id=conversation_id,
                         inbox_id=inbox_id,
                         participants=participants,
                         subject=subject,
@@ -295,15 +321,16 @@ class PostgresInboxRepository:
                         thread.updated_at,
                     )
                     stored_thread = await self._get_thread(connection, thread_id, for_update=True)
-                    _require_thread_contract(stored_thread, participants, classification, subject)
+                    _require_thread_contract(
+                        stored_thread, participants, classification, subject, conversation_id
+                    )
                     message_id = stable("message", inbox_id, event_id)
                     reply_to_id = None
                     if reply_to_event_id:
-                        reply_to_id = (
-                            reply_to_event_id
-                            if reply_to_event_id.startswith("message_")
-                            else stable("message", inbox_id, reply_to_event_id)
-                        )
+                        reply_to_id = stable("message", inbox_id, reply_to_event_id)
+                        parent = await self._get_message(connection, reply_to_id)
+                        if parent.thread_id != stored_thread.thread_id:
+                            raise ValueError("reply_to_event_id must reference this conversation")
                     message = Message(
                         message_id=message_id,
                         thread_id=stored_thread.thread_id,
@@ -312,6 +339,8 @@ class PostgresInboxRepository:
                         body=body,
                         attachments=attachments,
                         reply_to_id=reply_to_id,
+                        event_id=event_id,
+                        reply_to_event_id=reply_to_event_id,
                         trace=trace or TraceMetadata(classification=stored_thread.classification),
                     )
                     result = await connection.execute(
@@ -610,6 +639,7 @@ def _require_thread_contract(
     participants: tuple[Participant, ...],
     classification: str,
     subject: str | None,
+    conversation_id: str,
 ) -> None:
     """Reject an idempotency-key collision that changes a mail thread's authority."""
     if {item.participant_id for item in thread.participants} != {
@@ -620,6 +650,8 @@ def _require_thread_contract(
         raise ValueError("existing mail thread has different classification")
     if thread.subject != subject:
         raise ValueError("existing mail thread has different subject")
+    if thread.conversation_id != conversation_id:
+        raise ValueError("existing mail thread has different conversation identity")
 
 
 def _message_visible_to(message: Message, reader_id: str) -> bool:

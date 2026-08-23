@@ -100,6 +100,7 @@ class Thread(_Contract):
     """A conversation with stable identity independent of execution sessions."""
 
     thread_id: str = Field(default_factory=lambda: _id("thread"), min_length=1)
+    conversation_id: str | None = Field(default=None, min_length=1)
     inbox_id: str = Field(min_length=1)
     participants: tuple[Participant, ...] = Field(min_length=1)
     subject: str | None = Field(default=None, min_length=1)
@@ -131,12 +132,14 @@ class Message(_Contract):
     """A message with reply and per-recipient read relationships."""
 
     message_id: str = Field(default_factory=lambda: _id("message"), min_length=1)
+    event_id: str | None = Field(default=None, min_length=1)
     thread_id: str = Field(min_length=1)
     sender: Participant
     recipients: tuple[Participant, ...] = Field(min_length=1)
     body: str = Field(min_length=1)
     attachments: tuple[str, ...] = ()
     reply_to_id: str | None = None
+    reply_to_event_id: str | None = Field(default=None, min_length=1)
     trace: TraceMetadata = Field(default_factory=TraceMetadata)
     created_at: datetime = Field(default_factory=_now)
     read_receipts: tuple[ReadReceipt, ...] = ()
@@ -236,6 +239,7 @@ class InboxRepository(Protocol):
         subject: str | None = None,
         classification: str = "UNCLASSIFIED",
         thread_id: str | None = None,
+        conversation_id: str | None = None,
     ) -> Thread: ...
 
     async def get_thread(
@@ -245,6 +249,14 @@ class InboxRepository(Protocol):
         reader_id: str,
         classification_max: str = "UNCLASSIFIED",
     ) -> Thread: ...
+
+    async def get_message(
+        self,
+        message_id: str,
+        *,
+        reader_id: str,
+        classification_max: str = "UNCLASSIFIED",
+    ) -> Message: ...
 
     async def list_threads(
         self,
@@ -265,6 +277,8 @@ class InboxRepository(Protocol):
         body: str,
         attachments: tuple[str, ...] = (),
         reply_to_id: str | None = None,
+        event_id: str | None = None,
+        reply_to_event_id: str | None = None,
         trace: TraceMetadata | None = None,
         message_id: str | None = None,
     ) -> Message: ...

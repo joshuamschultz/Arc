@@ -78,6 +78,7 @@ class FakeInboxRepository:
         subject: str | None = None,
         classification: str = "UNCLASSIFIED",
         thread_id: str | None = None,
+        conversation_id: str | None = None,
     ) -> Thread:
         inbox = await self.get_inbox(inbox_id)
         if thread_id is not None and thread_id in self.threads:
@@ -90,6 +91,8 @@ class FakeInboxRepository:
                 raise ValueError("existing mail thread has different classification")
             if existing.subject != subject:
                 raise ValueError("existing mail thread has different subject")
+            if existing.conversation_id != conversation_id:
+                raise ValueError("existing mail thread has different conversation identity")
             return existing
         thread = (
             Thread(
@@ -98,6 +101,7 @@ class FakeInboxRepository:
                 subject=subject,
                 classification=classification,
                 thread_id=thread_id,
+                conversation_id=conversation_id,
             )
             if thread_id is not None
             else Thread(
@@ -105,6 +109,7 @@ class FakeInboxRepository:
                 participants=participants,
                 subject=subject,
                 classification=classification,
+                conversation_id=conversation_id,
             )
         )
         if not dominates(_level(inbox.classification), _level(thread.classification)):
@@ -124,6 +129,25 @@ class FakeInboxRepository:
         if _level(thread.classification) > _level(classification_max):
             raise PermissionError("reader clearance is insufficient for this thread")
         return thread.model_copy(update={"unread_count": self._unread_count(thread_id, reader_id)})
+
+    async def get_message(
+        self,
+        message_id: str,
+        *,
+        reader_id: str,
+        classification_max: str = "UNCLASSIFIED",
+    ) -> Message:
+        message = self._message(message_id)
+        thread = self._thread(message.thread_id)
+        self._require_participant(thread, reader_id)
+        if _level(thread.classification) > _level(classification_max):
+            raise PermissionError("reader clearance is insufficient for this message")
+        if not (
+            message.sender.participant_id == reader_id
+            or reader_id in {item.participant_id for item in message.recipients}
+        ):
+            raise PermissionError("reader cannot access this message")
+        return message
 
     async def list_threads(
         self,
@@ -171,6 +195,8 @@ class FakeInboxRepository:
         body: str,
         attachments: tuple[str, ...] = (),
         reply_to_id: str | None = None,
+        event_id: str | None = None,
+        reply_to_event_id: str | None = None,
         trace: TraceMetadata | None = None,
         message_id: str | None = None,
     ) -> Message:
@@ -194,6 +220,8 @@ class FakeInboxRepository:
                 body=body,
                 attachments=attachments,
                 reply_to_id=reply_to_id,
+                event_id=event_id,
+                reply_to_event_id=reply_to_event_id,
                 trace=trace or TraceMetadata(classification=thread.classification),
                 message_id=message_id,
             )
@@ -205,6 +233,8 @@ class FakeInboxRepository:
                 body=body,
                 attachments=attachments,
                 reply_to_id=reply_to_id,
+                event_id=event_id,
+                reply_to_event_id=reply_to_event_id,
                 trace=trace or TraceMetadata(classification=thread.classification),
             )
         )
@@ -257,6 +287,7 @@ class FakeInboxRepository:
                     subject=subject,
                     classification=classification,
                     thread_id=thread_id,
+                    conversation_id=external_thread_id or event_id,
                 )
                 message_id = (
                     "message_"
@@ -277,6 +308,8 @@ class FakeInboxRepository:
                             if reply_to_event_id
                             else None
                         ),
+                        event_id=event_id,
+                        reply_to_event_id=reply_to_event_id,
                         trace=trace,
                         message_id=message_id,
                     )

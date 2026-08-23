@@ -59,6 +59,8 @@ class MailStore(Protocol):
 
     async def get_thread(self, thread_id: str, **kwargs: Any) -> Any: ...
 
+    async def get_message(self, message_id: str, **kwargs: Any) -> Any: ...
+
     async def list_threads(self, owner: Any, **kwargs: Any) -> Any: ...
 
     async def list_messages(self, thread_id: str, **kwargs: Any) -> Any: ...
@@ -215,8 +217,8 @@ class AgentMailService:
         recipients = (*request.to, *request.cc)
         recipient_dids = await _resolve_all(self._address_book, recipients)
         event_id = _stable_id("message", request.sender_did, request.idempotency_key)
-        thread_id = request.thread_id or _stable_id(
-            "thread", request.sender_did, request.idempotency_key
+        conversation_id = request.thread_id or _stable_id(
+            "conversation", request.sender_did, request.idempotency_key
         )
         envelope = Message(
             id=event_id,
@@ -226,7 +228,7 @@ class AgentMailService:
             delivery_kind=DeliveryKind.MAIL,
             subject=request.subject,
             body=request.body,
-            thread_id=thread_id,
+            thread_id=conversation_id,
             refs=list(request.attachments),
             attachments=list(request.attachments),
             idempotency_key=request.idempotency_key,
@@ -239,7 +241,7 @@ class AgentMailService:
             "recipients": tuple(_participant(item) for item in recipient_dids),
             "body": request.body,
             "attachments": request.attachments,
-            "external_thread_id": thread_id,
+            "external_thread_id": conversation_id,
             "subject": request.subject,
             "reply_to_event_id": request.reply_to_id,
             "trace": _trace(request.classification),
@@ -252,7 +254,7 @@ class AgentMailService:
         ).deliver_once()
         return MailSendResult(
             message_id=event_id,
-            thread_id=thread_id,
+            thread_id=conversation_id,
             status="sent" if event_id in delivered else "pending",
         )
 
@@ -287,7 +289,22 @@ class AgentMailService:
         )
         if not recipients:
             raise ValueError("a reply requires another participant")
-        event_id = _stable_id("message", thread_id, sender.participant_id, idempotency_key)
+        conversation_id = thread.conversation_id
+        if conversation_id is None:
+            raise ValueError("mail thread has no canonical conversation identity")
+        reply_to_event_id = None
+        if reply_to_id is not None:
+            parent = await self._store.get_message(
+                reply_to_id,
+                reader=sender,
+                classification_max=classification_max,
+            )
+            if parent.thread_id != thread_id:
+                raise ValueError("reply_to_id must reference the selected thread")
+            if parent.event_id is None:
+                raise ValueError("reply target has no canonical mail event identity")
+            reply_to_event_id = parent.event_id
+        event_id = _stable_id("message", conversation_id, sender.participant_id, idempotency_key)
         transport_recipients = await _resolve_addresses(self._address_book, recipients)
         envelope = Message(
             id=event_id,
@@ -296,7 +313,7 @@ class AgentMailService:
             delivery_kind=DeliveryKind.MAIL,
             subject=thread.subject,
             body=body,
-            thread_id=thread_id,
+            thread_id=conversation_id,
             idempotency_key=idempotency_key,
             classification=thread.classification,
         )
@@ -306,9 +323,9 @@ class AgentMailService:
             sender=sender,
             recipients=recipients,
             body=body,
-            external_thread_id=thread_id,
+            external_thread_id=conversation_id,
             subject=thread.subject,
-            reply_to_event_id=reply_to_id,
+            reply_to_event_id=reply_to_event_id,
             trace=_trace(thread.classification),
             envelope=envelope.model_dump(mode="json"),
         )
