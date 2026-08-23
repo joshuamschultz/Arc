@@ -8,6 +8,7 @@ from pathlib import Path
 from arcgateway.team_roster import RosterEntry
 from arcstore.inbox import Handoff, Message, ParticipantRole
 from arcstore.inbox_projection import DurableInboxService, participant
+from arcteam.crypto import MessageSigner
 from arcteam.mail import AgentMailService
 from packages.arcstore.tests.unit.inbox_fake import FakeInboxRepository
 from starlette.applications import Starlette
@@ -18,7 +19,8 @@ from arcui.auth import AuthConfig, AuthMiddleware
 from arcui.routes.agent_detail import routes
 
 _AGENT_DID = "did:arc:test:agent"
-_HUMAN_DID = "did:arc:test:human"
+_OPERATOR_DID = "did:arc:test:operator"
+_OPERATOR_SEED = b"\x22" * 32
 
 
 class _DeliveryPort:
@@ -45,7 +47,11 @@ def _app() -> tuple[Starlette, AuthConfig, DurableInboxService]:
     app.state.auth_config = auth
     app.state.audit = UIAuditLogger(enabled=False)
     app.state.inbox_service = service
-    app.state.agent_mail = AgentMailService(_MailTransport(), service)
+    app.state.agent_mail = AgentMailService(
+        _MailTransport(),
+        service,
+        signer=MessageSigner(did=_OPERATOR_DID, private_key=_OPERATOR_SEED),
+    )
     app.state.inbox_clearance = "UNCLASSIFIED"
     app.state.roster_provider = lambda: [
         RosterEntry(
@@ -76,7 +82,7 @@ def _seed(service: DurableInboxService) -> tuple[str, str]:
     async def run() -> tuple[str, str]:
         await service.record_event(
             event_id="event-1",
-            sender=participant(_HUMAN_DID, role=ParticipantRole.HUMAN),
+            sender=participant(_OPERATOR_DID, role=ParticipantRole.HUMAN),
             recipients=(participant(_AGENT_DID),),
             body="Can you review this?",
             external_thread_id="platform-thread-1",
@@ -121,7 +127,7 @@ def test_inbox_routes_authenticate_and_support_thread_reply_read_and_handoff() -
     assert read.status_code == 200
     handoff = client.post(
         f"{base}/{thread_id}/handoffs",
-        json={"to": [_HUMAN_DID], "source_message_id": message_id},
+        json={"to": [_OPERATOR_DID], "source_message_id": message_id},
         headers={**_headers(auth, "operator"), "Idempotency-Key": "handoff-1"},
     )
     assert handoff.status_code == 201
