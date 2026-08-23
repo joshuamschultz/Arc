@@ -200,3 +200,45 @@ async def test_editing_one_file_does_not_report_the_others_missing(multifile_pla
         actor=actor,
     )
     assert not result.errors, f"edit wrongly rejected: {result.errors}"
+
+
+async def test_run_detail_path_names_what_ran_not_what_was_skipped(tmp_path: Path) -> None:
+    """path_taken lists executed nodes; the Run's own journal only mirrors skips/gates.
+
+    Echoing that journal raw once rendered a run whose path_taken named exactly
+    the branch that did NOT run (and omitted every node that did).
+    """
+
+    class _Entity:
+        did = "did:arc:test:sales"
+
+    class _Registry:
+        async def get(self, handle: str) -> Any:
+            return _Entity() if handle == "sales" else None
+
+    OperatorKey.generate().save(tmp_path / "operator" / "operator.key")
+    bundle = tmp_path / "workflows" / "onboarding"
+    bundle.mkdir(parents=True)
+    (bundle / "workflow.toml").write_text(_DEFINITION, encoding="utf-8")
+    backend = FakeBackend()
+    await backend.start()
+    runner = build_workflow_runner(
+        tier="personal",
+        task_store_backend=backend,
+        runner_key_path=tmp_path / "operator" / "operator.key",
+        workspace_root=tmp_path,
+        registry=_Registry(),
+    )
+    plane = build_dashboard_plane(runner=runner)
+    try:
+        actor = OperatorActor(did="did:arc:ui:operator", session_id="s1")
+        started = await plane.run_workflow("onboarding", {}, actor=actor)
+        assert started.value is not None
+        run_id = started.value["run_id"]
+
+        detail = await plane.get_run(run_id, actor=actor)
+    finally:
+        await backend.stop()
+
+    assert detail is not None
+    assert detail["path_taken"] == ["collect"]

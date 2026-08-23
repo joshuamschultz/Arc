@@ -214,15 +214,22 @@ async def get_session_replay(request: Request) -> JSONResponse:
 
     messages = _parse_jsonl(content.content)
     total = len(messages)
-    start = (page - 1) * page_size
-    end = start + page_size
+    if request.query_params.get("tail") in ("1", "true"):
+        # A chat preload wants the NEWEST turns. Page 1 is the oldest slice,
+        # so preloading it froze long conversations at their beginning —
+        # everything past row page_size looked lost while sitting in the jsonl.
+        window = messages[-page_size:]
+        page = max(1, -(-total // page_size))
+    else:
+        start = (page - 1) * page_size
+        window = messages[start : start + page_size]
     return JSONResponse(
         SessionReplayResponse(
             sid=sid,
             page=page,
             page_size=page_size,
             total=total,
-            messages=messages[start:end],
+            messages=window,
         ).model_dump(mode="json")
     )
 

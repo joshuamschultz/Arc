@@ -54,8 +54,10 @@ export function useChatSession(agentId: string | null) {
     async (agent: string, sid: string) => {
       if (historyLoaded.current) return
       try {
+        // tail=1: the NEWEST 200 turns. Page 1 is the oldest slice, which froze
+        // long conversations at their beginning and made recent messages look lost.
         const data = await apiGet<SessionReplayResponse>(
-          `/api/agents/${agent}/sessions/${sid}?page_size=200`,
+          `/api/agents/${agent}/sessions/${sid}?page_size=200&tail=1`,
         )
         if (historyLoaded.current) return
         // The session log interleaves real chat turns (role=user/assistant with

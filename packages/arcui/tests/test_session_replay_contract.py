@@ -287,3 +287,22 @@ def test_replay_tolerates_a_malformed_line(tmp_path: Path) -> None:
     body = client.get(f"/api/agents/{_AGENT}/sessions/session-001", headers=_viewer(auth)).json()
 
     assert body["total"] == len(_TEXT_TURNS)
+
+
+def test_replay_tail_returns_the_newest_slice(tmp_path: Path) -> None:
+    """``tail=1`` returns the LAST page_size turns — what a chat preload needs.
+
+    Page 1 is the oldest slice, so a preload that requested it froze long
+    conversations at their beginning: every message after row page_size looked
+    lost while sitting safely in the jsonl.
+    """
+    team = _build_team_dir(tmp_path)
+    app, auth = _make_app(team)
+    client = TestClient(app)
+
+    tail = client.get(
+        f"/api/agents/{_AGENT}/sessions/session-001?page_size=2&tail=1", headers=_viewer(auth)
+    ).json()
+
+    assert tail["total"] == 3
+    assert [m["content"] for m in tail["messages"]] == ["hello", "go"]

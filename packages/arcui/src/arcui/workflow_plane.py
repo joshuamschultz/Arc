@@ -137,7 +137,6 @@ class DashboardWorkflowPlane:
         detail = _run_summary(run)
         detail["workflow_id"] = run.workflow_id
         detail["version"] = run.workflow_version
-        detail["path_taken"] = [entry.node_id for entry in run.path_taken]
         # Per-node state comes from the task rows — they carry the live status,
         # the row id a gate is resolved by, and the per-node run id that opens
         # the existing execution timeline. The Run's trace adds what has no row
@@ -167,6 +166,21 @@ class DashboardWorkflowPlane:
         # node was reached and resolved (a router that routed) — surface it as
         # done, not "pending", so a resolved router doesn't read as still running
         # while its chosen downstream node already ran.
+        # The Run's own path journal mirrors only what has no task row —
+        # skipped branches and resolved gates — so "path taken" must come from
+        # the task rows (a task row exists only for a reached node; untaken
+        # branches never materialize), plus any non-skipped journal entry (a
+        # router that routed). Echoing the raw journal here once rendered a
+        # run whose path_taken named exactly the branch that did NOT run.
+        ran = sorted(
+            nodes.values(),
+            key=lambda node: str(node.get("started_at") or "9999"),
+        )
+        taken = [str(node["node_id"]) for node in ran]
+        for entry in run.path_taken:
+            if entry.outcome != "skipped" and entry.node_id not in taken:
+                taken.append(entry.node_id)
+        detail["path_taken"] = taken
         for entry in run.path_taken:
             if entry.node_id in nodes:
                 continue
