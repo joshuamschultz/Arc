@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
@@ -28,6 +29,7 @@ class MailSendRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     sender: str = Field(min_length=1)
+    sender_did: str = Field(min_length=1)
     to: tuple[str, ...] = Field(min_length=1)
     cc: tuple[str, ...] = ()
     bcc: tuple[str, ...] = ()
@@ -76,13 +78,54 @@ class MailTransport(Protocol):
     async def send(self, message: Message) -> Message: ...
 
 
+class MailAddressBook(Protocol):
+    """Resolve transport addresses to the DIDs used by durable mail records."""
+
+    async def did_for(self, address: str) -> str: ...
+
+    async def address_for(self, did: str) -> str: ...
+
+
+class RegistryMailAddressBook:
+    """DID/address resolver backed by ArcTeam's public entity registry."""
+
+    def __init__(self, registry: Any) -> None:
+        self._registry = registry
+
+    async def did_for(self, address: str) -> str:
+        from arcteam.registry import resolve_ref
+
+        return resolve_ref(await self._registry.list_entities(), address)
+
+    async def address_for(self, did: str) -> str:
+        from arcteam.types import EntityType
+
+        entity = await self._registry.get(did)
+        if entity is None:
+            raise ValueError(f"unknown mail participant: {did}")
+        scheme = "agent" if entity.type is EntityType.AGENT else "user"
+        return f"{scheme}://{entity.handle}"
+
+
 class MailDeliveryWorker:
     """Drain durable mail envelopes with bounded exponential retry."""
 
-    def __init__(self, outbox: Any, transport: MailTransport, *, worker_id: str) -> None:
+    def __init__(
+        self,
+        outbox: Any,
+        transport: MailTransport,
+        *,
+        worker_id: str,
+        max_attempts: int = 5,
+        on_dead_letter: Callable[[Any, Exception], Awaitable[None]] | None = None,
+    ) -> None:
+        if max_attempts < 1:
+            raise ValueError("max_attempts must be positive")
         self._outbox = outbox
         self._transport = transport
         self._worker_id = worker_id
+        self._max_attempts = max_attempts
+        self._on_dead_letter = on_dead_letter
 
     async def deliver_once(self, *, limit: int = 100) -> tuple[str, ...]:
         delivered: list[str] = []
@@ -93,19 +136,44 @@ class MailDeliveryWorker:
             try:
                 await self._transport.send(Message.model_validate(entry.envelope))
             except Exception as exc:  # reason: leave durable work pending
+                if entry.attempts >= self._max_attempts:
+                    result = self._outbox.dead_letter(
+                        self._worker_id, entry.event_id, reason=type(exc).__name__
+                    )
+                    if inspect.isawaitable(result):
+                        result = await result
+                    if not result:
+                        _logger.error("agent mail dead-letter lease lost: %s", entry.event_id)
+                        continue
+                    await self._notify_dead_letter(entry, exc)
+                    continue
                 delay = min(300.0, float(2 ** min(entry.attempts, 8)))
                 result = self._outbox.nack(
                     self._worker_id, entry.event_id, retry_after_seconds=delay
                 )
                 if inspect.isawaitable(result):
-                    await result
+                    result = await result
+                if not result:
+                    _logger.error("agent mail retry lease lost: %s", entry.event_id)
+                    continue
                 _logger.warning("agent mail delivery deferred: %s", type(exc).__name__)
             else:
                 result = self._outbox.ack(self._worker_id, entry.event_id)
                 if inspect.isawaitable(result):
-                    await result
-                delivered.append(entry.event_id)
+                    result = await result
+                if result:
+                    delivered.append(entry.event_id)
+                else:
+                    _logger.error("agent mail acknowledgement lease lost: %s", entry.event_id)
         return tuple(delivered)
+
+    async def _notify_dead_letter(self, entry: Any, error: Exception) -> None:
+        if self._on_dead_letter is None:
+            return
+        try:
+            await self._on_dead_letter(entry, error)
+        except Exception:  # reason: terminal state is durable before advisory notification
+            _logger.exception("agent mail dead-letter notification failed: %s", entry.event_id)
 
 
 def _stable_id(prefix: str, *parts: str) -> str:
@@ -121,29 +189,34 @@ class AgentMailService:
         transport: MailTransport,
         store: MailStore,
         *,
-        outbox: Any | None = None,
+        outbox: Any,
+        address_book: MailAddressBook,
         worker_id: str = "arc-team-mail",
-        signer: MessageSigner | None = None,
+        signer: MessageSigner,
     ) -> None:
         self._transport = transport
         self._store = store
         self._outbox = outbox
+        self._address_book = address_book
         self._worker_id = worker_id
         self._signer = signer
 
     @property
-    def sender_did(self) -> str | None:
+    def sender_did(self) -> str:
         """Return the configured signing DID without exposing key material."""
-        return self._signer.did if self._signer is not None else None
+        return self._signer.did
 
     async def send(self, request: MailSendRequest) -> MailSendResult:
         """Persist mail before NATS delivery and report delivery failures as pending."""
         if request.bcc:
             raise ValueError("bcc is not supported until recipient-private durable copies exist")
+        if request.sender_did != self._signer.did:
+            raise PermissionError("mail sender DID does not match the configured signer")
         recipients = (*request.to, *request.cc)
-        event_id = _stable_id("message", request.sender, request.idempotency_key)
+        recipient_dids = await _resolve_all(self._address_book, recipients)
+        event_id = _stable_id("message", request.sender_did, request.idempotency_key)
         thread_id = request.thread_id or _stable_id(
-            "thread", request.sender, request.idempotency_key
+            "thread", request.sender_did, request.idempotency_key
         )
         envelope = Message(
             id=event_id,
@@ -162,8 +235,8 @@ class AgentMailService:
         self._sign_envelope(envelope)
         projection = {
             "event_id": event_id,
-            "sender": _participant(request.sender),
-            "recipients": tuple(_participant(item) for item in recipients),
+            "sender": _participant(request.sender_did),
+            "recipients": tuple(_participant(item) for item in recipient_dids),
             "body": request.body,
             "attachments": request.attachments,
             "external_thread_id": thread_id,
@@ -171,21 +244,9 @@ class AgentMailService:
             "reply_to_event_id": request.reply_to_id,
             "trace": _trace(request.classification),
         }
-        atomic = getattr(self._store, "record_event_with_outbox", None)
-        if self._outbox is not None and atomic is not None:
-            await atomic(**projection, envelope=envelope.model_dump(mode="json"))
-        else:
-            await self._store.record_event(**projection)
-        if self._outbox is None:
-            try:
-                sent = await self._transport.send(envelope)
-            except Exception:  # reason: durable record remains available for retry
-                return MailSendResult(message_id=event_id, thread_id=thread_id, status="pending")
-            return MailSendResult(message_id=sent.id, thread_id=thread_id, status="sent")
-        if atomic is None:
-            result = self._outbox.enqueue(event_id, envelope.model_dump(mode="json"))
-            if inspect.isawaitable(result):
-                await result
+        await self._store.record_event_with_outbox(
+            **projection, envelope=envelope.model_dump(mode="json")
+        )
         delivered = await MailDeliveryWorker(
             self._outbox, self._transport, worker_id=self._worker_id
         ).deliver_once()
@@ -214,6 +275,8 @@ class AgentMailService:
         idempotency_key: str,
         classification_max: str = "UNCLASSIFIED",
     ) -> Any:
+        if sender.participant_id != self._signer.did:
+            raise PermissionError("mail sender DID does not match the configured signer")
         thread = await self._store.get_thread(
             thread_id,
             reader_id=sender.participant_id,
@@ -225,18 +288,11 @@ class AgentMailService:
         if not recipients:
             raise ValueError("a reply requires another participant")
         event_id = _stable_id("message", thread_id, sender.participant_id, idempotency_key)
-        message = await self._store.reply(
-            thread_id,
-            sender=sender,
-            body=body,
-            reply_to_id=reply_to_id,
-            idempotency_key=idempotency_key,
-            classification_max=classification_max,
-        )
+        transport_recipients = await _resolve_addresses(self._address_book, recipients)
         envelope = Message(
             id=event_id,
             sender=sender.participant_id,
-            to=[item.participant_id for item in recipients],
+            to=list(transport_recipients),
             delivery_kind=DeliveryKind.MAIL,
             subject=thread.subject,
             body=body,
@@ -245,24 +301,24 @@ class AgentMailService:
             classification=thread.classification,
         )
         self._sign_envelope(envelope)
-        if self._outbox is not None:
-            result = self._outbox.enqueue(event_id, envelope.model_dump(mode="json"))
-            if inspect.isawaitable(result):
-                await result
-            await MailDeliveryWorker(
-                self._outbox, self._transport, worker_id=self._worker_id
-            ).deliver_once()
-        else:
-            try:
-                await self._transport.send(envelope)
-            except Exception as exc:  # reason: durable reply remains available for redelivery
-                _logger.warning("agent mail reply delivery pending: %s", type(exc).__name__)
-        return message
+        copies = await self._store.record_event_with_outbox(
+            event_id=event_id,
+            sender=sender,
+            recipients=recipients,
+            body=body,
+            external_thread_id=thread_id,
+            subject=thread.subject,
+            reply_to_event_id=reply_to_id,
+            trace=_trace(thread.classification),
+            envelope=envelope.model_dump(mode="json"),
+        )
+        await MailDeliveryWorker(
+            self._outbox, self._transport, worker_id=self._worker_id
+        ).deliver_once()
+        return copies[0]
 
     def _sign_envelope(self, envelope: Message) -> None:
         """Sign before persistence so an outbox edit cannot become new mail."""
-        if self._signer is None:
-            return
         envelope.ts = envelope.ts or datetime.now(UTC).isoformat()
         envelope.signer_did = self._signer.did
         envelope.nonce = new_nonce()
@@ -295,10 +351,33 @@ def _trace(classification: str) -> Any:
     return TraceMetadata(classification=classification)
 
 
+async def _resolve_all(
+    address_book: MailAddressBook, addresses: tuple[str, ...]
+) -> tuple[str, ...]:
+    resolved_items: list[str] = []
+    for address in addresses:
+        resolved_items.append(await address_book.did_for(address))
+    resolved = tuple(resolved_items)
+    if len(set(resolved)) != len(resolved):
+        raise ValueError("mail recipients must resolve to distinct DIDs")
+    return resolved
+
+
+async def _resolve_addresses(
+    address_book: MailAddressBook, participants: tuple[Any, ...]
+) -> tuple[str, ...]:
+    addresses: list[str] = []
+    for participant in participants:
+        addresses.append(await address_book.address_for(participant.participant_id))
+    return tuple(addresses)
+
+
 __all__ = [
     "AgentMailService",
+    "MailAddressBook",
     "MailDeliveryWorker",
     "MailSendRequest",
     "MailSendResult",
+    "RegistryMailAddressBook",
     "mail_participant",
 ]

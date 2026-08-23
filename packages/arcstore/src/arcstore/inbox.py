@@ -169,6 +169,7 @@ class Handoff(_Contract):
     created_at: datetime = Field(default_factory=_now)
     status: HandoffStatus = HandoffStatus.PENDING
     resolved_by: Participant | None = None
+    resolved_actor_did: str | None = None
     resolved_at: datetime | None = None
 
     @model_validator(mode="after")
@@ -178,9 +179,15 @@ class Handoff(_Contract):
         ):
             raise ValueError("handoff recipients must have unique IDs")
         if self.status is HandoffStatus.PENDING:
-            if self.resolved_by is not None or self.resolved_at is not None:
+            if (
+                self.resolved_by is not None
+                or self.resolved_actor_did is not None
+                or self.resolved_at is not None
+            ):
                 raise ValueError("a pending handoff cannot have a resolution")
-        elif self.resolved_by is None or self.resolved_at is None:
+        elif (
+            self.resolved_by is None or self.resolved_actor_did is None or self.resolved_at is None
+        ):
             raise ValueError("a resolved handoff requires actor and timestamp")
         return self
 
@@ -305,6 +312,7 @@ class InboxRepository(Protocol):
         handoff_id: str,
         *,
         recipient: Participant,
+        actor_did: str,
         status: HandoffStatus,
     ) -> Handoff: ...
 

@@ -274,6 +274,9 @@ class PostgresInboxRepository:
                         _model_json(inbox),
                         inbox.created_at,
                     )
+                    stored_inbox = await self._get_inbox(connection, inbox_id)
+                    if not dominates(_level(stored_inbox.classification), _level(classification)):
+                        raise ValueError("mail classification exceeds inbox classification")
                     thread_id = stable("thread", inbox_id, external_thread_id or event_id)
                     thread = Thread(
                         thread_id=thread_id,
@@ -291,6 +294,8 @@ class PostgresInboxRepository:
                         _model_json(thread),
                         thread.updated_at,
                     )
+                    stored_thread = await self._get_thread(connection, thread_id, for_update=True)
+                    _require_thread_contract(stored_thread, participants, classification, subject)
                     message_id = stable("message", inbox_id, event_id)
                     reply_to_id = None
                     if reply_to_event_id:
@@ -301,13 +306,13 @@ class PostgresInboxRepository:
                         )
                     message = Message(
                         message_id=message_id,
-                        thread_id=thread_id,
+                        thread_id=stored_thread.thread_id,
                         sender=sender,
                         recipients=recipients,
                         body=body,
                         attachments=attachments,
                         reply_to_id=reply_to_id,
-                        trace=trace or TraceMetadata(classification=classification),
+                        trace=trace or TraceMetadata(classification=stored_thread.classification),
                     )
                     result = await connection.execute(
                         "INSERT INTO inbox_messages(message_id,thread_id,payload,created_at) "
@@ -319,7 +324,7 @@ class PostgresInboxRepository:
                         message.created_at,
                     )
                     if str(result).endswith("1"):
-                        updated = thread.model_copy(
+                        updated = stored_thread.model_copy(
                             update={
                                 "updated_at": message.created_at,
                                 "last_message_id": message_id,
@@ -460,10 +465,13 @@ class PostgresInboxRepository:
         handoff_id: str,
         *,
         recipient: Participant,
+        actor_did: str,
         status: HandoffStatus,
     ) -> Handoff:
         if status is HandoffStatus.PENDING:
             raise ValueError("handoff must be accepted or declined")
+        if not actor_did.startswith("did:"):
+            raise ValueError("handoff resolution actor must be a DID")
         async with self._pool.acquire() as connection:
             async with connection.transaction():
                 handoff = await self._get_handoff(connection, handoff_id, for_update=True)
@@ -472,11 +480,20 @@ class PostgresInboxRepository:
                 }:
                     raise PermissionError("only an addressed recipient can resolve a handoff")
                 if handoff.status is not HandoffStatus.PENDING:
-                    if handoff.status is status and handoff.resolved_by == recipient:
+                    if (
+                        handoff.status is status
+                        and handoff.resolved_by == recipient
+                        and handoff.resolved_actor_did == actor_did
+                    ):
                         return handoff
                     raise ValueError("handoff is already resolved")
                 updated = handoff.model_copy(
-                    update={"status": status, "resolved_by": recipient, "resolved_at": _now()}
+                    update={
+                        "status": status,
+                        "resolved_by": recipient,
+                        "resolved_actor_did": actor_did,
+                        "resolved_at": _now(),
+                    }
                 )
                 await connection.execute(
                     "UPDATE inbox_handoffs SET payload=$1::jsonb WHERE handoff_id=$2",
@@ -586,6 +603,23 @@ def _participant_match(participant_id: str) -> str:
 def _require_participant(thread: Thread, reader_id: str) -> None:
     if reader_id not in {item.participant_id for item in thread.participants}:
         raise PermissionError("reader must participate in the thread")
+
+
+def _require_thread_contract(
+    thread: Thread,
+    participants: tuple[Participant, ...],
+    classification: str,
+    subject: str | None,
+) -> None:
+    """Reject an idempotency-key collision that changes a mail thread's authority."""
+    if {item.participant_id for item in thread.participants} != {
+        item.participant_id for item in participants
+    }:
+        raise ValueError("existing mail thread has different participants")
+    if thread.classification != classification:
+        raise ValueError("existing mail thread has different classification")
+    if thread.subject != subject:
+        raise ValueError("existing mail thread has different subject")
 
 
 def _message_visible_to(message: Message, reader_id: str) -> bool:

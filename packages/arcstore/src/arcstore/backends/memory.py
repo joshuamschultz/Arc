@@ -627,7 +627,8 @@ class FakeBackend(SourceSyncBackend):
             raise ValueError("limit must be positive")
         async with self._lock:
             rows = [
-                row for row in self._tables.get(MAIL_OUTBOX_TABLE, {}).values()
+                row
+                for row in self._tables.get(MAIL_OUTBOX_TABLE, {}).values()
                 if row["status"] == "pending"
                 or (row["status"] == "leased" and row.get("lease_until", 0) <= time.monotonic())
             ][:limit]
@@ -658,6 +659,19 @@ class FakeBackend(SourceSyncBackend):
                 return False
             row["status"] = "pending"
             row.pop("lease_owner", None)
+            return True
+
+    async def dead_letter_mail(self, consumer_id: str, event_id: str, *, reason: str) -> bool:
+        if not reason:
+            raise ValueError("dead-letter reason is required")
+        async with self._lock:
+            row = self._tables.get(MAIL_OUTBOX_TABLE, {}).get(event_id)
+            if row is None or row.get("lease_owner") != consumer_id:
+                return False
+            row["status"] = "dead_lettered"
+            row["failure_reason"] = reason
+            row.pop("lease_owner", None)
+            row.pop("lease_until", None)
             return True
 
     def _update_if_locked(

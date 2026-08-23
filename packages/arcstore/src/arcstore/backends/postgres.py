@@ -843,6 +843,21 @@ class PostgresBackend(SourceSyncBackend):
             )
         return str(result).endswith("1")
 
+    async def dead_letter_mail(self, consumer_id: str, event_id: str, *, reason: str) -> bool:
+        """Terminally retain a leased mail envelope after bounded retries."""
+        if not reason:
+            raise ValueError("dead-letter reason is required")
+        async with self._require_pool().acquire() as connection:
+            result = await connection.execute(
+                "UPDATE mail_outbox SET status='dead_lettered', failure_reason=$1, "
+                "dead_lettered_at=now(), lease_owner=NULL, lease_until=NULL "
+                "WHERE event_id=$2 AND lease_owner=$3 AND status='leased'",
+                reason,
+                event_id,
+                consumer_id,
+            )
+        return str(result).endswith("1")
+
     async def _update_if(
         self,
         connection: Any,

@@ -741,6 +741,7 @@ async def _signer_for(registry: Any, sender_ref: str) -> Any:
 def _send(args: argparse.Namespace) -> None:
     """Send a signed message to one or more targets (REQ-012, REQ-030)."""
     from arcteam.messenger import MessagingService
+
     root = _get_root(args)
     sender: str = args.sender
     targets = _split_csv(args.to)
@@ -754,16 +755,18 @@ def _send(args: argparse.Namespace) -> None:
             inbox, inbox_backend = await _durable_inbox_service()
             try:
                 from arcstore.mail_outbox import PostgresMailOutbox
-                from arcteam.mail import AgentMailService, MailSendRequest
+                from arcteam.mail import AgentMailService, MailSendRequest, RegistryMailAddressBook
 
                 sent = await AgentMailService(
                     svc,
                     inbox,
                     outbox=PostgresMailOutbox(inbox_backend),
+                    address_book=RegistryMailAddressBook(registry),
                     signer=signer,
                 ).send(
                     MailSendRequest(
                         sender=sender,
+                        sender_did=signer.did,
                         to=tuple(targets),
                         body=args.body,
                         thread_id=getattr(args, "thread_id", None),
@@ -785,23 +788,30 @@ def _send(args: argparse.Namespace) -> None:
 def _inbox(args: argparse.Namespace) -> None:
     """List the sender's durable, restart-safe inbox threads."""
     sender: str = args.sender
+    root = _get_root(args)
     limit: int = getattr(args, "limit", 10)
     use_json: bool = getattr(args, "use_json", False)
 
     async def _run() -> Any:
         from arcstore.inbox_projection import participant
 
+        _, registry, _, team_backend = await _build_service(root)
         service, backend = await _durable_inbox_service()
         try:
+            entity = await registry.get(sender)
+            if entity is None:
+                raise ValueError(f"unknown mail owner: {sender}")
+            owner = participant(entity.did)
             _, threads, cursor = await service.list_threads(
-                participant(sender),
+                owner,
                 limit=limit,
             )
             if getattr(args, "search", None):
-                return await service.search(participant(sender), args.search, limit=limit), None
+                return await service.search(owner, args.search, limit=limit), None
             return threads, cursor
         finally:
             await backend.stop()
+            await _shutdown(team_backend)
 
     result, cursor = asyncio.run(_run())
     if getattr(args, "search", None):
@@ -862,16 +872,22 @@ def _thread(args: argparse.Namespace) -> None:
     """Show durable thread messages chronologically (REQ-012)."""
     thread_id: str = args.thread_id
     sender: str = args.sender
+    root = _get_root(args)
     use_json: bool = getattr(args, "use_json", False)
 
     async def _run() -> Any:
         service, backend = await _durable_inbox_service()
+        _, registry, _, team_backend = await _build_service(root)
         try:
             from arcstore.inbox_projection import participant
 
-            return await service.list_messages(thread_id, reader=participant(sender))
+            entity = await registry.get(sender)
+            if entity is None:
+                raise ValueError(f"unknown mail owner: {sender}")
+            return await service.list_messages(thread_id, reader=participant(entity.did))
         finally:
             await backend.stop()
+            await _shutdown(team_backend)
 
     messages = asyncio.run(_run())
     if use_json:

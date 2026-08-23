@@ -241,8 +241,46 @@ class TestSendSigned:
         def _open_inbox_repository(_backend: object) -> FakeInboxRepository:
             return repository
 
+        class _RepositoryOutbox:
+            def __init__(self, _backend: object) -> None:
+                self._leased: set[str] = set()
+
+            async def claim(self, _worker: str, *, limit: int = 100) -> tuple[Any, ...]:
+                from arcstore.mail_outbox import MailOutboxEntry
+
+                entries = [
+                    MailOutboxEntry(event_id=event_id, envelope=envelope, attempts=1)
+                    for event_id, envelope in repository.mail_outbox.items()
+                    if event_id not in self._leased
+                ][:limit]
+                self._leased.update(entry.event_id for entry in entries)
+                return tuple(entries)
+
+            async def ack(self, _worker: str, event_id: str) -> bool:
+                if event_id not in self._leased:
+                    return False
+                self._leased.remove(event_id)
+                repository.mail_outbox.pop(event_id, None)
+                return True
+
+            async def nack(
+                self, _worker: str, event_id: str, *, retry_after_seconds: float
+            ) -> bool:
+                if retry_after_seconds < 0 or event_id not in self._leased:
+                    return False
+                self._leased.remove(event_id)
+                return True
+
+            async def dead_letter(self, _worker: str, event_id: str, *, reason: str) -> bool:
+                if not reason or event_id not in self._leased:
+                    return False
+                self._leased.remove(event_id)
+                repository.mail_outbox.pop(event_id, None)
+                return True
+
         monkeypatch.setattr("arcstore.backends.open_backend", _open_backend)
         monkeypatch.setattr("arcstore.backends.PostgresInboxRepository", _open_inbox_repository)
+        monkeypatch.setattr("arcstore.mail_outbox.PostgresMailOutbox", _RepositoryOutbox)
         return repository
 
     def test_send_signs_outgoing_message(
@@ -257,7 +295,7 @@ class TestSendSigned:
         # Register the addressee too. Sending to an unregistered handle is now
         # refused rather than written to a stream nobody reads (SPEC-065 T-945,
         # REQ-313); this test is about the signature, so give it a real peer.
-        _create_agent(tmp_path, "receiver")
+        receiver_did = _create_agent(tmp_path, "receiver")
 
         _send(
             argparse.Namespace(
@@ -280,6 +318,10 @@ class TestSendSigned:
         assert stored[0]["sig"] != ""
         assert stored[0]["signer_did"] == sender_did
         assert len(durable_inbox.messages) == 2  # sender + receiver inbox copies
+        assert {inbox.owner.participant_id for inbox in durable_inbox.inboxes.values()} == {
+            sender_did,
+            receiver_did,
+        }
 
     def test_read_and_thread_return_message(
         self,
@@ -292,7 +334,7 @@ class TestSendSigned:
         monkeypatch.setenv("HOME", str(tmp_path))
         _create_agent(tmp_path, "sender")
         # See above: an unregistered addressee is now refused (T-945 / REQ-313).
-        _create_agent(tmp_path, "receiver")
+        receiver_did = _create_agent(tmp_path, "receiver")
         _send(
             argparse.Namespace(
                 root=None,
@@ -309,7 +351,7 @@ class TestSendSigned:
         receiver_inbox = next(
             inbox
             for inbox in durable_inbox.inboxes.values()
-            if inbox.owner.participant_id == "agent://receiver"
+            if inbox.owner.participant_id == receiver_did
         )
         receiver_thread = next(
             thread

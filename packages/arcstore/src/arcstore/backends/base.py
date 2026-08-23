@@ -255,5 +255,7 @@ class ArcStoreBackend(Protocol):
         self, consumer_id: str, event_id: str, *, retry_after_seconds: float
     ) -> bool: ...
 
+    async def dead_letter_mail(self, consumer_id: str, event_id: str, *, reason: str) -> bool: ...
+
 
 StorageBackend = ArcStoreBackend

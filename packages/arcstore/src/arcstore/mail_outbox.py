@@ -105,6 +105,23 @@ class MailOutbox:
         )
         return True
 
+    def dead_letter(self, consumer_id: str, event_id: str, *, reason: str) -> bool:
+        """Terminally retain a failed envelope outside the delivery queue."""
+        if not reason:
+            raise ValueError("dead-letter reason is required")
+        lease = self._lease(event_id)
+        if lease is None or lease[0] != consumer_id:
+            return False
+        self._append(
+            {
+                "operation": "dead_letter",
+                "event_id": event_id,
+                "consumer_id": consumer_id,
+                "reason": reason,
+            }
+        )
+        return True
+
     def pending(self) -> tuple[MailOutboxEntry, ...]:
         return tuple(self._snapshot()[0].values())
 
@@ -159,7 +176,7 @@ class MailOutbox:
                             update={"available_at": datetime.fromisoformat(item["available_at"])}
                         )
                         leases.pop(event_id, None)
-                    elif operation == "ack":
+                    elif operation in {"ack", "dead_letter"}:
                         entries.pop(event_id, None)
                         leases.pop(event_id, None)
             except (KeyError, TypeError, ValueError, json.JSONDecodeError):
@@ -210,6 +227,9 @@ class PostgresMailOutbox:
                 consumer_id, event_id, retry_after_seconds=retry_after_seconds
             )
         )
+
+    async def dead_letter(self, consumer_id: str, event_id: str, *, reason: str) -> bool:
+        return bool(await self._backend.dead_letter_mail(consumer_id, event_id, reason=reason))
 
 
 __all__ = ["MailOutbox", "MailOutboxEntry", "PostgresMailOutbox"]

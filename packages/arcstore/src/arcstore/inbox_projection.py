@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Iterable
-from typing import Protocol, runtime_checkable
+from typing import Protocol, cast, runtime_checkable
 
 from arcstore.inbox import (
     Handoff,
@@ -108,7 +108,7 @@ class DurableInboxService:
         method = getattr(self._repository, "record_event_with_outbox", None)
         if method is None:
             raise RuntimeError("atomic inbox/outbox repository seam is unavailable")
-        return await method(**kwargs)
+        return cast(tuple[Message, ...], await method(**kwargs))
 
     async def retry_pending_projections(self) -> tuple[str, ...]:
         """Replay all persisted but unacknowledged projections after an outage/restart."""
@@ -227,9 +227,10 @@ class DurableInboxService:
                 classification_max=classification_max,
             )
             for message in page.items:
-                if needle in message.body.casefold() or needle in (
-                    thread.subject or ""
-                ).casefold():
+                if (
+                    needle in message.body.casefold()
+                    or needle in (thread.subject or "").casefold()
+                ):
                     matches.append(message)
                     if len(matches) >= limit:
                         return tuple(matches)
@@ -324,6 +325,7 @@ class DurableInboxService:
         handoff_id: str,
         *,
         recipient: Participant,
+        actor_did: str,
         status: HandoffStatus,
     ) -> Handoff:
         """Allow only an addressed recipient to accept or decline a pending handoff."""
@@ -332,7 +334,7 @@ class DurableInboxService:
         if self._delivery_port is None:
             raise RuntimeError("inbox delivery port is unavailable")
         handoff = await self._repository.resolve_handoff(
-            handoff_id, recipient=recipient, status=status
+            handoff_id, recipient=recipient, actor_did=actor_did, status=status
         )
         await self._delivery_port.deliver_handoff_resolution(handoff)
         return handoff

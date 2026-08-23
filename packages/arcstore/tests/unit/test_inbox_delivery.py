@@ -173,16 +173,24 @@ async def test_handoff_is_woken_then_only_recipient_can_resolve_idempotently() -
         await service.resolve_handoff(
             handoff.handoff_id,
             recipient=operator,
+            actor_did="did:arc:operator:one",
             status=HandoffStatus.ACCEPTED,
         )
     accepted = await service.resolve_handoff(
-        handoff.handoff_id, recipient=recipient, status=HandoffStatus.ACCEPTED
+        handoff.handoff_id,
+        recipient=recipient,
+        status=HandoffStatus.ACCEPTED,
+        actor_did="did:arc:operator:one",
     )
     assert accepted.status is HandoffStatus.ACCEPTED
     assert accepted.resolved_by == recipient
+    assert accepted.resolved_actor_did == "did:arc:operator:one"
     assert (
         await service.resolve_handoff(
-            handoff.handoff_id, recipient=recipient, status=HandoffStatus.ACCEPTED
+            handoff.handoff_id,
+            recipient=recipient,
+            status=HandoffStatus.ACCEPTED,
+            actor_did="did:arc:operator:one",
         )
         == accepted
     )

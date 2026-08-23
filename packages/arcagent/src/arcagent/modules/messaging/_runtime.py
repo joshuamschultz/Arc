@@ -93,6 +93,7 @@ class _State:
     # SPEC-068 D4d — per-channel breaker around the relevance gate.
     channel_breakers: dict[str, Any] = field(default_factory=dict)
     inbox_service: Any = None
+    mail_service: Any = None
     inbox_backend: Any = None
     inbox_init_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -246,11 +247,36 @@ async def ensure_durable_inbox() -> Any | None:
         return st.inbox_service
 
 
+async def ensure_agent_mail() -> Any:
+    """Compose agent-originated mail over the atomic ArcStore/NATS seams."""
+    st = state()
+    if st.mail_service is not None:
+        return st.mail_service
+    inbox = await ensure_durable_inbox()
+    if inbox is None or st.inbox_backend is None:
+        raise RuntimeError("durable AgentMail requires an ArcStore backend")
+    from arcstore.mail_outbox import PostgresMailOutbox
+    from arcteam import AgentMailService, RegistryMailAddressBook, composition
+
+    signer = composition.message_signer(st.identity)
+    if signer is None:
+        raise RuntimeError("durable AgentMail requires the agent signing identity")
+    st.mail_service = AgentMailService(
+        st.svc,
+        inbox,
+        outbox=PostgresMailOutbox(st.inbox_backend),
+        address_book=RegistryMailAddressBook(st.registry),
+        signer=signer,
+    )
+    return st.mail_service
+
+
 async def close_durable_inbox() -> None:
     """Release the module-owned ArcStore backend when the agent stops."""
     st = state()
     backend, st.inbox_backend = st.inbox_backend, None
     st.inbox_service = None
+    st.mail_service = None
     if backend is not None:
         await backend.stop()
 

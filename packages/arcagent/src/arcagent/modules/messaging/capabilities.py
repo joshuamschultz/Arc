@@ -629,7 +629,7 @@ async def messaging_send(
     ``msg_type`` must be one of: info, request, task, result, alert, ack.
     ``priority`` must be one of: low, normal, high, critical.
     """
-    from arcteam.types import Message, MsgType, Priority
+    from arcteam.types import DeliveryKind, Message, MsgType, Priority
 
     st = _runtime.state()
     try:
@@ -644,6 +644,35 @@ async def messaging_send(
         # floor; the messenger's no-write-down gate then refuses any recipient
         # who cannot receive it. Default UNCLASSIFIED clearance = no change.
         sender_floor = st.identity.clearance.name if st.identity is not None else "UNCLASSIFIED"
+        is_mail = st.arcstore_opener is not None and all(
+            target.startswith(("agent://", "user://", "@")) for target in targets
+        )
+        if is_mail:
+            from arcteam import MailSendRequest
+
+            if st.identity is None:
+                return json.dumps({"error": "agent mail requires an agent signing identity"})
+            mail = await _runtime.ensure_agent_mail()
+            sent = await mail.send(
+                MailSendRequest(
+                    sender=st.config.entity_id,
+                    sender_did=st.identity.did,
+                    to=tuple(targets),
+                    body=body,
+                    thread_id=thread_id,
+                    classification=sender_floor,
+                    idempotency_key=f"tool-{time.time_ns()}",
+                )
+            )
+            _logger.info("Sent durable mail %s to %s", sent.message_id, to)
+            return json.dumps(
+                {
+                    "id": sent.message_id,
+                    "thread_id": sent.thread_id,
+                    "status": sent.status,
+                }
+            )
+
         msg = Message(
             sender=st.config.entity_id,
             to=targets,
@@ -652,13 +681,7 @@ async def messaging_send(
             priority=Priority(priority),
             thread_id=thread_id,
             action_required=action_required,
-            delivery_kind=(
-                "mail"
-                if all(
-                    target.startswith(("agent://", "user://", "@")) for target in targets
-                )
-                else "chat"
-            ),
+            delivery_kind=DeliveryKind.CHAT,
             classification=sender_floor,
             # One step further from the human who started this. A reply sent
             # from inside a woken turn inherits its depth so a mention chain

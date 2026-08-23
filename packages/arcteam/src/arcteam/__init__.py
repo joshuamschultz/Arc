@@ -6,9 +6,15 @@ from arcteam.audit import AuditLogger
 from arcteam.backends.nats import NatsBackend
 from arcteam.config import TeamConfig
 from arcteam.files import TeamFileStore
+from arcteam.mail import (
+    AgentMailService,
+    MailSendRequest,
+    MailSendResult,
+    RegistryMailAddressBook,
+    mail_participant,
+)
 from arcteam.memory.config import TeamMemoryConfig
 from arcteam.memory.service import TeamMemoryService
-from arcteam.mail import AgentMailService, MailSendRequest, MailSendResult, mail_participant
 from arcteam.messenger import MessagingService, RetryableDeliveryError
 from arcteam.registry import EntityRegistry
 from arcteam.storage import MemoryBackend, StorageBackend
@@ -27,9 +33,9 @@ from arcteam.types import (
 )
 
 __all__ = [
+    "AgentMailService",
     "AuditLogger",
     "AuditRecord",
-    "AgentMailService",
     "Channel",
     "Cursor",
     "DeliveryKind",
@@ -37,15 +43,15 @@ __all__ = [
     "EntityRegistry",
     "EntityStatus",
     "EntityType",
-    "MemoryBackend",
-    "Message",
     "MailSendRequest",
     "MailSendResult",
-    "mail_participant",
+    "MemoryBackend",
+    "Message",
     "MessagingService",
     "MsgType",
     "NatsBackend",
     "Priority",
+    "RegistryMailAddressBook",
     "RetryableDeliveryError",
     "StorageBackend",
     "Team",
@@ -54,4 +60,5 @@ __all__ = [
     "TeamMemoryConfig",
     "TeamMemoryService",
     "TeamStore",
+    "mail_participant",
 ]

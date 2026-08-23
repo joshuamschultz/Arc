@@ -81,7 +81,16 @@ class FakeInboxRepository:
     ) -> Thread:
         inbox = await self.get_inbox(inbox_id)
         if thread_id is not None and thread_id in self.threads:
-            return self.threads[thread_id]
+            existing = self.threads[thread_id]
+            if {item.participant_id for item in existing.participants} != {
+                item.participant_id for item in participants
+            }:
+                raise ValueError("existing mail thread has different participants")
+            if existing.classification != classification:
+                raise ValueError("existing mail thread has different classification")
+            if existing.subject != subject:
+                raise ValueError("existing mail thread has different subject")
+            return existing
         thread = (
             Thread(
                 inbox_id=inbox_id,
@@ -233,10 +242,15 @@ class FakeInboxRepository:
             all_participants = tuple(dict.fromkeys((sender, *recipients)))
             for owner in all_participants:
                 inbox_id = "inbox_" + hashlib.sha256(owner.participant_id.encode()).hexdigest()
-                inbox = await self.create_inbox(owner, classification=classification, inbox_id=inbox_id)
-                thread_id = "thread_" + hashlib.sha256(
-                    f"{inbox_id}\x1f{external_thread_id or event_id}".encode()
-                ).hexdigest()
+                inbox = await self.create_inbox(
+                    owner, classification=classification, inbox_id=inbox_id
+                )
+                thread_id = (
+                    "thread_"
+                    + hashlib.sha256(
+                        f"{inbox_id}\x1f{external_thread_id or event_id}".encode()
+                    ).hexdigest()
+                )
                 thread = await self.create_thread(
                     inbox.inbox_id,
                     all_participants,
@@ -244,9 +258,10 @@ class FakeInboxRepository:
                     classification=classification,
                     thread_id=thread_id,
                 )
-                message_id = "message_" + hashlib.sha256(
-                    f"{inbox.inbox_id}\x1f{event_id}".encode()
-                ).hexdigest()
+                message_id = (
+                    "message_"
+                    + hashlib.sha256(f"{inbox.inbox_id}\x1f{event_id}".encode()).hexdigest()
+                )
                 copies.append(
                     await self.append_message(
                         thread.thread_id,
@@ -255,7 +270,8 @@ class FakeInboxRepository:
                         body=body,
                         attachments=attachments,
                         reply_to_id=(
-                            "message_" + hashlib.sha256(
+                            "message_"
+                            + hashlib.sha256(
                                 f"{inbox.inbox_id}\x1f{reply_to_event_id}".encode()
                             ).hexdigest()
                             if reply_to_event_id
@@ -365,6 +381,7 @@ class FakeInboxRepository:
         handoff_id: str,
         *,
         recipient: Participant,
+        actor_did: str,
         status: HandoffStatus,
     ) -> Handoff:
         handoff = self.handoffs[handoff_id]
@@ -372,14 +389,25 @@ class FakeInboxRepository:
             item.participant_id for item in handoff.to_participants
         }:
             raise PermissionError("only an addressed recipient can resolve a handoff")
+        if not actor_did.startswith("did:"):
+            raise ValueError("handoff resolution actor must be a DID")
         if handoff.status is not HandoffStatus.PENDING:
-            if handoff.status is status and handoff.resolved_by == recipient:
+            if (
+                handoff.status is status
+                and handoff.resolved_by == recipient
+                and handoff.resolved_actor_did == actor_did
+            ):
                 return handoff
             raise ValueError("handoff is already resolved")
         if status is HandoffStatus.PENDING:
             raise ValueError("handoff must be accepted or declined")
         updated = handoff.model_copy(
-            update={"status": status, "resolved_by": recipient, "resolved_at": _now()}
+            update={
+                "status": status,
+                "resolved_by": recipient,
+                "resolved_actor_did": actor_did,
+                "resolved_at": _now(),
+            }
         )
         self.handoffs[handoff_id] = updated
         return updated
