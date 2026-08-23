@@ -432,6 +432,15 @@ function SourceDetail({
 function SourcesSection({ agentId }: { agentId: string }) {
   const sources = useConnectedSources(agentId)
   const [selected, setSelected] = useState<ConnectedSourceItem | null>(null)
+  if (sources.data?.status === 'degraded') {
+    return (
+      <EmptyState
+        icon={<Plug className="size-5" />}
+        title="Knowledge sync is not installed"
+        description="This agent can use connector tools, but its connected-data module is unavailable. Enable and install connected_data, then restart the agent."
+      />
+    )
+  }
   return (
     <div className="space-y-3">
       <QueryState

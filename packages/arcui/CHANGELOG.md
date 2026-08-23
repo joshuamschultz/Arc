@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Knowledge distinguishes an unavailable connected-data runtime from a
+  genuinely empty source catalog and gives the operator an actionable remedy.
+
 ## [0.5.1] - 2026-08-23
 
 - Knowledge → Connections now operates the full connected-source lifecycle:

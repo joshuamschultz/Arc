@@ -20,6 +20,7 @@ def main() -> int:
     tests = [
         "packages/arcagent/tests/e2e/test_connected_data_release_gate.py",
         "packages/arcui/tests/test_connected_data_routes.py",
+        "packages/arccli/tests/test_create_scaffold_connectors.py",
     ]
     if os.environ.get("ARC_RELEASE_GATE_POSTGRES") == "1":
         if not os.environ.get("ARCSTORE_TEST_POSTGRES_DSN"):

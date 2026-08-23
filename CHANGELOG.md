@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fixed the connected-account/Knowledge split: newly scaffolded agents now
+  enable the removable `connected_data` module alongside `connectors`, and
+  ArcUI reports a missing sync module instead of claiming there are no sources.
+
 ### Unattended-automation reliability
 
 - **Scenario grants (`arctrust`)** — an operator can approve a recurring

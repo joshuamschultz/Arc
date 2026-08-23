@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- New agent configs enable `connected_data` with `connectors`, ensuring granted
+  external sources are enrolled into Knowledge rather than remaining tool-only.
+
 - Workflow team backend composition now resolves through ArcTeam's public composition seam.
 - `arc team send`, `arc team inbox --search`, and `arc team thread` now use the
   signed durable AgentMail service with canonical conversation IDs and

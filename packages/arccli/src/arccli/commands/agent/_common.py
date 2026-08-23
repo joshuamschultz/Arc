@@ -441,6 +441,16 @@ extensions_root = ""  # ONE bundle root; empty = search <arc_dir>/extensions,
                       # $ARC_EXTENSIONS_ROOT, then ~/.arc/extensions
 data_dir = ""         # empty defers to arcstore.resolve_data_dir (approved tool contracts)
 
+[modules.connected_data]
+enabled = true
+priority = 100
+
+[modules.connected_data.config]
+# Enrol every granted connector source into ArcMemory. Without this removable
+# layer connector tools still work, but Knowledge cannot map, index or sync them.
+interval_seconds = 60.0
+global_concurrency = 4
+
 [modules.runcontrol]
 enabled = true
 priority = 100

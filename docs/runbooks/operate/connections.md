@@ -6,6 +6,18 @@ Connections are deployment-wide credentials with deny-by-default, per-agent
 grants. ArcUI and ArcCLI call the same typed connector service using the
 extension's canonical coordinate; display names are presentation only.
 
+!!! note "Existing agents created before connected-data enrollment"
+    If a connection works as an agent tool but does not appear under
+    **Knowledge → Connections**, install the removable sync layer for that
+    agent and restart it:
+
+    ```bash
+    arc module install --from-source connected_data --agent <agent-id>
+    ```
+
+    Enterprise and federal installations should stage the signed
+    `connected_data` bundle and omit `--from-source`.
+
 ## Configure
 
 ```bash

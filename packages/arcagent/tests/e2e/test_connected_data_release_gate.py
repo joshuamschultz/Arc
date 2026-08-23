@@ -447,6 +447,22 @@ def test_release_gate_provider_matrix_has_each_declared_source_seam() -> None:
 
 
 @pytest.mark.asyncio
+async def test_dropbox_native_connection_is_enrollable_as_a_knowledge_source() -> None:
+    """The working tool attachment itself must also satisfy the source catalog seam."""
+    from arcagent.extension.native_attachment import NativeAttachment
+
+    attachment = NativeAttachment(
+        "extensions.dropbox.arc_ext_dropbox",
+        {"app_key": "app", "app_secret": "secret", "refresh_token": "refresh"},
+    )
+    source = attachment.source_adapter()
+
+    assert source is not None
+    assert source.__class__.__name__ == "DropboxAttachment"
+    await source.close_source()
+
+
+@pytest.mark.asyncio
 async def test_release_gate_sqlite_file_resource_is_reopenable_and_read_only(
     tmp_path: Path,
 ) -> None:

@@ -37,6 +37,16 @@ def test_default_config_declares_connectors_module_enabled() -> None:
     assert connectors["config"]["data_dir"] == ""
 
 
+def test_default_config_enrolls_connections_in_connected_data() -> None:
+    """A working connector must also be discoverable from Knowledge by default."""
+    parsed = tomllib.loads(render_agent_config(name="scaffold-agent"))
+
+    connected_data = parsed["modules"]["connected_data"]
+
+    assert connected_data["enabled"] is True
+    assert connected_data["config"]["interval_seconds"] == 60.0
+
+
 def test_default_config_connectors_block_round_trips_through_real_config_model() -> None:
     """The generated [modules.connectors] table must satisfy the real models.
 
