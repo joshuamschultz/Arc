@@ -53,6 +53,26 @@ class ProvenanceStore:
             Provenance(source=row[0], external_id=row[1], classification=row[2]) for row in rows
         ]
 
+    def remove(self, source: str, external_id: str) -> int:
+        """Remove one source-object claim and its orphaned canonical item."""
+        conn = self._db.connect()
+        rows = conn.execute(
+            "SELECT item_id FROM item_provenances WHERE source=? AND external_id=?",
+            (source, external_id),
+        ).fetchall()
+        for (item_id,) in rows:
+            conn.execute(
+                "DELETE FROM item_provenances WHERE item_id=? AND source=? AND external_id=?",
+                (item_id, source, external_id),
+            )
+            remaining = conn.execute(
+                "SELECT 1 FROM item_provenances WHERE item_id=? LIMIT 1", (item_id,)
+            ).fetchone()
+            if remaining is None:
+                conn.execute("DELETE FROM items WHERE item_id=?", (item_id,))
+        conn.commit()
+        return len(rows)
+
     def readable_provenances(
         self, item_id: str, *, clearance: Classification, strict: bool
     ) -> list[Provenance]:

@@ -421,6 +421,8 @@ class SourceMapping(BaseModel):
 
     source_id: str
     homes: list[str] = Field(default_factory=list)
+    revision: str = ""
+    content_hash: str = ""
 
 
 class Provenance(BaseModel):

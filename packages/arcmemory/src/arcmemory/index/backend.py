@@ -79,6 +79,10 @@ class IndexBackend(Protocol):
         """Remove every chunk/fts/vec row for ``scope`` (rebuild's wipe step)."""
         ...
 
+    async def delete_object(self, scope: str, object_id: str) -> None:
+        """Remove exactly one object's chunk membership from ``scope``."""
+        ...
+
     async def vec_search(self, scope: str, query_embedding: list[float]) -> list[str]:
         """Scope-filtered cosine search; best match first. ``[]`` when unavailable."""
         ...
@@ -177,6 +181,23 @@ class SqliteIndexBackend:
                 )
         conn.execute("DELETE FROM fts_chunks WHERE scope=?", (scope,))
         conn.execute("DELETE FROM chunks WHERE scope=?", (scope,))
+        conn.commit()
+
+    async def delete_object(self, scope: str, object_id: str) -> None:
+        conn = self._db.connect()
+        pattern = object_id + "#%"
+        ids = [
+            row[0]
+            for row in conn.execute(
+                "SELECT chunk_id FROM chunks WHERE scope=? AND chunk_id LIKE ?",
+                (scope, pattern),
+            ).fetchall()
+        ]
+        if self.vec_available and ids:
+            placeholders = ",".join("?" for _ in ids)
+            conn.execute(f"DELETE FROM vec0 WHERE chunk_id IN ({placeholders})", ids)  # noqa: S608
+        conn.execute("DELETE FROM fts_chunks WHERE scope=? AND chunk_id LIKE ?", (scope, pattern))
+        conn.execute("DELETE FROM chunks WHERE scope=? AND chunk_id LIKE ?", (scope, pattern))
         conn.commit()
 
     async def vec_search(self, scope: str, query_embedding: list[float]) -> list[str]:
@@ -371,6 +392,15 @@ class PostgresIndexBackend:
         pool = await self._pool()
         async with pool.acquire() as conn:
             await conn.execute("DELETE FROM chunks WHERE scope=$1", scope)
+
+    async def delete_object(self, scope: str, object_id: str) -> None:
+        pool = await self._pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM chunks WHERE scope=$1 AND chunk_id LIKE $2",
+                scope,
+                object_id + "#%",
+            )
 
     async def vec_search(self, scope: str, query_embedding: list[float]) -> list[str]:
         """Scope-filtered cosine ANN via the pgvector ``<=>`` operator, nearest first."""

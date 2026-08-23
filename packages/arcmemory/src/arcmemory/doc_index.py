@@ -100,6 +100,12 @@ class DocIndex:
             )
         return len(chunks)
 
+    async def delete_object(self, source_id: str, agent_did: str, object_id: str) -> None:
+        """Delete exactly one object's chunks while retaining sibling objects."""
+        scope = doc_scope(agent_did, source_id)
+        backend = open_index_backend(self._cfg.index_backend, db=self._db)
+        await backend.delete_object(scope.key, object_id)
+
     async def index_collection(
         self,
         source_id: str,

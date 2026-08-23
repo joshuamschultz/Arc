@@ -30,6 +30,21 @@ from arcmemory.brain import ArcMemoryBrain
 from arcmemory.capture import FastCapture
 from arcmemory.collection_index import CollectionIndexStore
 from arcmemory.config import MemoryConfig, Tier
+from arcmemory.connected_data import (
+    ApprovedMapping,
+    ConnectedDataService,
+    ConnectedObject,
+    ConnectedObjectError,
+    ConnectedObjectOrderError,
+    ConnectedObjectState,
+    ConnectedObjectStatePort,
+    ConnectedObjectTooLargeError,
+    ConnectedSource,
+    InMemoryObjectState,
+    SourceContent,
+    SourceMappingDeniedError,
+    SourceMappingPendingError,
+)
 from arcmemory.consolidate import Consolidator
 from arcmemory.db import MemoryDB, sqlite_vec_loadable
 from arcmemory.degrade import reset_degrade_warnings, semantic_degraded
@@ -111,12 +126,21 @@ __version__ = "0.9.0"
 __all__ = [
     "ACLViolation",
     "AgenticResult",
+    "ApprovedMapping",
     "ArcLLMDistiller",
     "ArcLLMEmbedder",
     "ArcMemoryBrain",
     "Bundle",
     "CollectionIndexStore",
     "Confidence",
+    "ConnectedDataService",
+    "ConnectedObject",
+    "ConnectedObjectError",
+    "ConnectedObjectOrderError",
+    "ConnectedObjectState",
+    "ConnectedObjectStatePort",
+    "ConnectedObjectTooLargeError",
+    "ConnectedSource",
     "ConsolidationResult",
     "Consolidator",
     "CrossSessionVisibility",
@@ -137,6 +161,7 @@ __all__ = [
     "FactExtraction",
     "FastCapture",
     "GroupMerge",
+    "InMemoryObjectState",
     "IndexRebuilder",
     "Insight",
     "InsightBundle",
@@ -167,6 +192,9 @@ __all__ = [
     "SemanticStore",
     "SessionACL",
     "Situation",
+    "SourceContent",
+    "SourceMappingDeniedError",
+    "SourceMappingPendingError",
     "StoreReport",
     "StructuralIndex",
     "StructuralResult",

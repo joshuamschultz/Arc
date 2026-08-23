@@ -12,6 +12,7 @@ destructive overwrite (SemanticStore.write_fact).
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from arcstore.approvals import ApprovalStore, PendingApproval
@@ -23,9 +24,17 @@ from arcmemory.types import SourceMapping
 _TOOL = "memory.map_source"
 
 
-def mapping_call_hash(source_id: str, homes: list[str]) -> str:
-    """Content hash over ``source_id`` + sorted ``homes`` -- the approval's call_hash."""
-    return content_hash(f"{source_id}:{','.join(sorted(homes))}")
+def mapping_call_hash(
+    source_id: str,
+    homes: list[str],
+    *,
+    revision: str = "",
+    content_hash_value: str = "",
+) -> str:
+    """Hash the complete mapping proposal used as the approval call binding."""
+    return content_hash(
+        "\0".join((source_id, ",".join(sorted(homes)), revision, content_hash_value))
+    )
 
 
 async def stage_mapping_proposal(
@@ -34,6 +43,7 @@ async def stage_mapping_proposal(
     approval_store: ApprovalStore,
     agent_did: str,
     agent_label: str = "",
+    expires_in_seconds: float = 86_400.0,
 ) -> str:
     """Write a SPEC-035 pending row for ``proposal``. Returns the pending row id.
 
@@ -41,31 +51,63 @@ async def stage_mapping_proposal(
     is resolved ``approved`` -- see :func:`approved_mapping`.
     """
     await approval_store.start()
+    call_hash = mapping_call_hash(
+        proposal.source_id,
+        proposal.homes,
+        revision=proposal.revision,
+        content_hash_value=proposal.content_hash,
+    )
+    for existing in await approval_store.list():
+        if existing.call_hash != call_hash:
+            continue
+        if (
+            existing.arguments.get("revision", "") == proposal.revision
+            and existing.arguments.get("content_hash", "") == proposal.content_hash
+        ):
+            return existing.id
     pending = PendingApproval(
         id=str(uuid4()),
         agent_did=agent_did,
         agent_label=agent_label,
         tool=_TOOL,
         legs=[],
-        call_hash=mapping_call_hash(proposal.source_id, proposal.homes),
-        arguments={"source_id": proposal.source_id, "homes": ",".join(proposal.homes)},
+        call_hash=call_hash,
+        arguments={
+            "source_id": proposal.source_id,
+            "homes": ",".join(proposal.homes),
+            "revision": proposal.revision,
+            "content_hash": proposal.content_hash,
+        },
         provenance=[],
+        expires_at=(datetime.now(UTC) + timedelta(seconds=expires_in_seconds)).isoformat(),
     )
     created = await approval_store.create(pending)
     return created.id
 
 
 async def approved_mapping(
-    source_id: str, homes: list[str], *, approval_store: ApprovalStore
+    source_id: str,
+    homes: list[str],
+    *,
+    approval_store: ApprovalStore,
+    revision: str = "",
+    content_hash_value: str = "",
 ) -> bool:
     """True iff a pending row with this call_hash exists AND is ``approved``.
 
     Fail-closed: pending, denied, expired, or never-staged all return False.
     """
     await approval_store.start()
-    target = mapping_call_hash(source_id, homes)
+    target = mapping_call_hash(
+        source_id, homes, revision=revision, content_hash_value=content_hash_value
+    )
     approved = await approval_store.list(status="approved")
-    return any(row.call_hash == target for row in approved)
+    now = datetime.now(UTC)
+    return any(
+        row.call_hash == target
+        and (row.expires_at is None or datetime.fromisoformat(row.expires_at) > now)
+        for row in approved
+    )
 
 
 def commit_mapping(mapping: SourceMapping, *, store: SemanticStore) -> None:
@@ -81,6 +123,17 @@ def commit_mapping(mapping: SourceMapping, *, store: SemanticStore) -> None:
         ",".join(mapping.homes),
         entity_type="mapping",
     )
+    if mapping.revision:
+        store.write_fact(
+            f"mapping-{mapping.source_id}", "revision", mapping.revision, entity_type="mapping"
+        )
+    if mapping.content_hash:
+        store.write_fact(
+            f"mapping-{mapping.source_id}",
+            "content_hash",
+            mapping.content_hash,
+            entity_type="mapping",
+        )
 
 
 def load_committed_mapping(source_id: str, *, store: SemanticStore) -> SourceMapping | None:
@@ -95,7 +148,13 @@ def load_committed_mapping(source_id: str, *, store: SemanticStore) -> SourceMap
     if fact is None:
         return None
     homes = [home for home in fact.value.split(",") if home]
-    return SourceMapping(source_id=source_id, homes=homes)
+    values = {item.predicate: item.value for item in entity.facts}
+    return SourceMapping(
+        source_id=source_id,
+        homes=homes,
+        revision=values.get("revision", ""),
+        content_hash=values.get("content_hash", ""),
+    )
 
 
 __all__ = [
