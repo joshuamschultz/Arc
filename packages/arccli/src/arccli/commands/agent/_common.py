@@ -240,12 +240,18 @@ priority = 100
 brain = "arcmemory"          # none | arcmemory | auto | module:Class
 tier = "{tier}"            # memory-dynamics stringency tier
 brain_allowlist = []         # operator-vetted BYO brain class-paths (above personal)
+curated_knowledge_enabled = false  # explicit curated documents, independent of the brain
 embed_backend = "local"      # local (arcllm offline model) | none (BM25 + graph only)
 embed_model = ""             # empty → arcllm default (all-MiniLM-L6-v2)
 distill_provider = "anthropic"  # consolidation distiller provider (empty = no-op)
 distill_model = "claude-sonnet-4-5-20250929"  # distiller model
 top_k = 5                    # recall count at assemble_prompt
 budget = 1024                # recall token budget
+# knowledge_budget = 2048    # separate cap on curated documents; unset reuses `budget`
+proactive_enabled = true          # emit agent:moment and subscribe for proactive recall
+proactive_decision_point = false  # opt-in mid-loop recall at the pre-plan site
+decision_point_pre_tool = false   # finer, costlier site: every tool call
+working_set_enabled = true        # keep a per-session working set so recall follows the topic
 consolidate_event_threshold = 20      # fire consolidation after N events
 consolidate_idle_seconds = 900.0      # fire after idle seconds
 consolidate_interval_seconds = 3600.0  # time-based cadence floor
@@ -259,6 +265,21 @@ consolidate_interval_seconds = 3600.0  # time-based cadence floor
 #   gamma = 0.5                              # confidence growth per corroboration
 #   forget_floor = 0.05                      # edge weight below which links decay away
 #   struct_trigger_min = 0.7                 # structural-recall trigger match floor
+
+[modules.memory.config.backend]
+# Opaque settings forwarded verbatim to the selected brain's build_brain().
+# The backend validates them; this module never reads a key. The convenience
+# fields above (embed_*, distill_*, dynamics) are folded in here automatically.
+
+[modules.session]
+enabled = true
+priority = 100
+
+[modules.session.config]
+# Watches the session JSONL index so a resumed conversation finds its history.
+# The core [session] block above governs retention; this is the watcher.
+enabled = true          # module-config mirror of the [modules.session] load gate
+poll_interval = 30.0    # seconds between JSONL polls
 
 [modules.workpad]
 enabled = true
@@ -286,6 +307,8 @@ coalesce_seconds = 1.5    # wait this long so a burst of agents is one message
 min_gap_seconds = 10      # floor between ordinary lines; results ignore it
 max_lines_per_run = 12    # hard ceiling on messages about one run
 max_step_chars = 90       # model-written stage names are cut to this
+heartbeat_after_seconds = 45   # a plain run says "still working" only after this long
+heartbeat_every_seconds = 45   # floor between two "still working" milestones
 
 [modules.user_profile]
 enabled = false
@@ -325,13 +348,32 @@ tier = "{tier}"           # adapter tier
 classify_outcomes = false   # consult eval-LLM OutcomeClassifier at post_plan
 sweep_poll_seconds = 3600.0  # curator lifecycle-sweep poll cadence
 adapter_allowlist = []      # operator-vetted BYO adapter class-paths
-# [modules.skills.improver] block is forwarded verbatim to arcskill ImproverConfig.
+
+[modules.skills.config.improver]
+# Forwarded verbatim to the arcskill ImproverConfig (change_bound / lifecycle /
+# thresholds). Empty keeps that package's own defaults.
+
+[modules.planning]
+enabled = false
+priority = 100
+
+[modules.planning.config]
+# Plan-Execute (SPEC-040/043): decompose a request into a step DAG instead of
+# one straight ReAct loop. Off by default — the loop strategy is chosen per turn
+# and a standing planner is agency the operator opts into.
+enabled = false         # module-config mirror of the [modules.planning] load gate
+max_replans = 3         # bound the replan ceiling so a plan can never run away
+concurrent = false      # true dispatches the whole ready DAG frontier at once
+max_parallel = 8        # branches dispatched at once when `concurrent` is set
+# max_tokens = 200000   # aggregate plan budget, sliced onto per-step ceilings
+# max_cost_usd = 5.0    # aggregate plan cost ceiling
 
 [modules.pulse]
 enabled = false
 priority = 100
 
 [modules.pulse.config]
+enabled = true              # module-config mirror of the [modules.pulse] load gate
 interval_seconds = 600      # pulse tick interval (>= 10)
 pulse_file = "pulse.md"     # checks-definition file
 state_file = "pulse-state.json"  # state file
@@ -342,6 +384,7 @@ enabled = false
 priority = 100
 
 [modules.proactive.config]
+enabled = true              # module-config mirror of the [modules.proactive] load gate
 leader = "noop"             # noop | redis | k8s (leader election backend)
 identity = ""               # empty = agent name / hostname
 redis_url = ""
@@ -354,6 +397,7 @@ enabled = true
 priority = 100
 
 [modules.scheduler.config]
+enabled = true                 # module-config mirror of the [modules.scheduler] load gate
 min_interval_seconds = 60      # schedule interval floor
 max_schedules = 50            # max schedules
 max_prompt_length = 500       # max scheduled-prompt chars
@@ -385,12 +429,31 @@ priority = 100
 [modules.messaging.config]
 # Join the shared team bus. ensure_live_backend degrades to an in-memory
 # backend (with a warning) if no server is reachable, so a solo agent still runs.
+enabled = true                # module-config mirror of the [modules.messaging] load gate
 entity_id = ""                # registry entity id (empty = agent name)
 entity_name = ""              # registry entity name
+entity_role = ""              # one-line role published on the roster
 nats_url = "nats://127.0.0.1:4222"  # NATS JetStream url; empty → in-memory backend
 auto_ack = true               # auto-ack on tool read
 max_messages_per_poll = 20    # per-poll message cap
 roster_ttl_seconds = 60.0     # team roster cache TTL
+# Un-addressed channel posts are ranked so only agents holding something
+# relevant pay a full turn. @mentions and critical priority skip the router.
+channel_route = true          # rank an un-addressed post instead of waking everyone
+route_top_k = 2               # how many agents one post may wake
+route_ambiguity_margin = 0.25  # relative gap below which the router breaks the tie
+route_timeout_seconds = 5.0   # deadline on the tiebreak, so a hung provider can't block
+route_failure_threshold = 5   # failures before the per-channel breaker opens
+route_base_wait_seconds = 30.0  # breaker backoff base
+route_embed_backend = ""      # "" = lexical-only (BM25); local | provider adds dense recall
+route_embed_model = ""
+route_embed_base_url = ""
+# Backstop for a question the fast path missed (cooldown, cap, open breaker).
+sweep_enabled = true
+sweep_after_seconds = 180.0   # how long a message waits before it counts as missed
+sweep_max_per_tick = 3
+channel_answer_cap = 2        # how many members may answer ONE un-addressed post
+channel_cooldown_seconds = 60.0
 
 [modules.tasks]
 enabled = true
@@ -399,6 +462,7 @@ priority = 100
 [modules.tasks.config]
 # Mission Control (SPEC-056): a per-agent task list plus a shared team board.
 # nats_url mirrors messaging so assign_task can resolve @handles.
+enabled = true               # module-config mirror of the [modules.tasks] load gate
 dispatch = true              # execute assigned tasks so workflow nodes progress by default
 nats_url = "nats://127.0.0.1:4222"  # shared arcteam registry url (@handle resolution)
 default_max_attempts = 3     # retry ceiling (1 disables retry)
@@ -407,6 +471,7 @@ task_timeout_seconds = 0.0   # per-run wall-clock cap (0 = unbounded)
 stuck_reclaim_seconds = 300.0  # orphaned in_progress reclaim threshold
 routing = true               # auto-route ownerless tasks to least-loaded agent
 notify = true                # operator/assignee notifications on transitions
+max_run_capability_legs = 16  # lethal-trifecta legs ONE workflow run may accumulate
 
 [modules.workflows]
 enabled = true
@@ -416,12 +481,14 @@ priority = 100
 # ArcFlow (SPEC-061): named, signed workflow definitions this agent can author
 # from conversation and run. Declared here because an undeclared module sits
 # dead fleet-wide — the builder tools never register and nothing says why.
+enabled = true               # module-config mirror of the [modules.workflows] load gate
 workflows_dir = "workflows"  # bundle root, relative to the deployment config dir
 nats_url = "nats://127.0.0.1:4222"  # team bus; gives authoring a real agent roster
 max_workflows = 50           # quota, checked before any validation work (LLM10)
 max_nodes = 200              # per-definition node ceiling
 max_inline_text_length = 2000  # ceiling on inline free text a builder tool accepts
 max_repair_attempts = 3      # bounded self-repair before asking the human
+max_file_bytes = 32768       # ceiling on one companion file (a prompt or a JSON schema)
 
 [modules.connectors]
 enabled = true
@@ -448,8 +515,19 @@ priority = 100
 [modules.connected_data.config]
 # Enrol every granted connector source into ArcMemory. Without this removable
 # layer connector tools still work, but Knowledge cannot map, index or sync them.
-interval_seconds = 60.0
-global_concurrency = 4
+interval_seconds = 60.0      # how often a granted source is polled for changes
+global_concurrency = 4       # sources this agent syncs at once
+
+[modules.connected_data.config.limits]
+# Per-sync ceilings. A connected account is untrusted input on someone else's
+# infrastructure, so one sync can never run away (LLM10).
+max_pages = 1000
+max_bytes = 67108864         # 64 MiB
+max_seconds = 900.0
+max_concurrency = 8          # pages fetched in parallel within ONE sync
+page_size = 200
+retries = 2
+retry_backoff_seconds = 0.25
 
 [modules.runcontrol]
 enabled = true
@@ -461,6 +539,7 @@ priority = 100
 # run. ``arc stop`` and the arcui cancel route WRITE cancel requests regardless,
 # but a fleet agent needs THIS block for the watcher that APPLIES them — so an
 # agent can be stopped without SSHing the box.
+enabled = true               # module-config mirror of the [modules.runcontrol] load gate
 data_dir = ""                # empty defers to arcstore.resolve_data_dir (shared store)
 stale_ttl_seconds = 300      # age out a cancel request that never matches a live run
 
@@ -494,6 +573,7 @@ enabled = false
 priority = 100
 
 [modules.voice.config]
+enabled = true                   # module-config mirror of the [modules.voice] load gate
 tier = "{tier}"                # drives air_gap / redact_pii defaults
 stt_provider = "whisper_cpp"     # whisper_cpp | whisper_api
 tts_provider = "piper"           # piper | elevenlabs

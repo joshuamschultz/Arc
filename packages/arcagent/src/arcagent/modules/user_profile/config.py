@@ -7,10 +7,12 @@ across environments.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import ConfigDict, Field
+
+from arcagent.core.module_config import ModuleConfig
 
 
-class UserProfileConfig(BaseModel):
+class UserProfileConfig(ModuleConfig):
     """Configuration for the UserProfile module.
 
     Attributes:
@@ -30,4 +32,4 @@ class UserProfileConfig(BaseModel):
     tombstone_dir: str = "tombstone_events"
     schema_version: int = 1
 
-    model_config = {"frozen": True, "extra": "forbid"}
+    model_config = ConfigDict(frozen=True, extra="forbid")

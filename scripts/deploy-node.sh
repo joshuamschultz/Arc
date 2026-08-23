@@ -459,6 +459,12 @@ for AGENT_NAME in "${AGENT_NAMES[@]}"; do
     "$TEAM_ROOT/$AGENT_NAME/arcagent.toml" --provider "$PROVIDER" --model "${AGENT_MODEL#*/}"
   "$VENV_PY" "$OVERLAYS" arcstore-config \
     "$TEAM_ROOT/$AGENT_NAME/arcagent.toml" --credential-ref "${ARCSTORE_DATABASE_CREDENTIAL_REF:-}"
+  # An agent created three releases ago has none of the settings added since:
+  # the module runs its default and there is no line in the file to find or
+  # change. This adds every setting the current scaffold declares and this file
+  # lacks — additively, so an operator's value is never overwritten. Idempotent,
+  # and it prints what it added so a behavior change is visible in the log.
+  "$ARC_BIN" agent config "$TEAM_ROOT/$AGENT_NAME" --sync
   "$ARC_BIN" agent build "$TEAM_ROOT/$AGENT_NAME" --check
 done
 

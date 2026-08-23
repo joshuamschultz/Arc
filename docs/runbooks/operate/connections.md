@@ -18,6 +18,10 @@ extension's canonical coordinate; display names are presentation only.
     Enterprise and federal installations should stage the signed
     `connected_data` bundle and omit `--from-source`.
 
+    If the agent's `arcagent.toml` has no `[modules.connected_data]` block at
+    all, bring the whole file up to the current scaffold first — see
+    [Agent config drift](agent-config-drift.md).
+
 ## Configure
 
 ```bash

@@ -234,9 +234,7 @@ async def _team_bindings(arc_dir: Path) -> tuple[Any, Any]:
 
     try:
         return await build_team_bindings(
-            backend=await make_backend(
-                os.environ.get(_NATS_URL_ENV, "nats://127.0.0.1:4222")
-            ),
+            backend=await make_backend(os.environ.get(_NATS_URL_ENV, "nats://127.0.0.1:4222")),
             operator_signer=resolve_operator_signer(),
             identity=RunnerIdentity.load(operator_key_path(arc_dir)),
         )

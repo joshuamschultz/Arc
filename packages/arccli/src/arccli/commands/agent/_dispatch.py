@@ -103,9 +103,26 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--with-code-exec", dest="with_code_exec", action="store_true")
 
     # config
-    p = subs.add_parser("config", help="Show agent configuration.")
+    p = subs.add_parser("config", help="Show or sync agent configuration.")
     p.add_argument("path", nargs="?", default=".", help="Agent directory (default: .)")
     p.add_argument("--json", dest="json", action="store_true", help="Output as JSON.")
+    p.add_argument(
+        "--sync",
+        action="store_true",
+        help="Add every setting the current scaffold declares and this config lacks. "
+        "Existing values are never changed.",
+    )
+    p.add_argument(
+        "--team-root",
+        dest="team_root",
+        help="Sync every agent under this team root instead of one directory.",
+    )
+    p.add_argument(
+        "--dry-run",
+        dest="dry_run",
+        action="store_true",
+        help="With --sync: report what would be added and write nothing.",
+    )
 
     # memory
     p = subs.add_parser("memory", help="Straight database view of stored memory.")
