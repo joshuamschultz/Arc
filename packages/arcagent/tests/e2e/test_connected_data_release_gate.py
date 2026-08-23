@@ -397,3 +397,42 @@ async def test_release_gate_mail_adapters_expose_resources_and_versioned_message
     assert resources and resources[0].resource_id
     assert page.objects[0].object_id == "m-1"
     assert content.content == b"launch"
+
+
+def test_release_gate_provider_matrix_has_each_declared_source_seam() -> None:
+    """Every Alpha connector must expose the same source lifecycle contract.
+
+    Outlook and OneDrive intentionally remain separate source instances even
+    though Microsoft grants one MCP attachment.  This assertion is the release
+    tripwire for accidentally shipping only the Outlook half of that grant.
+    """
+
+    from extensions.dropbox.arc_ext_dropbox import DropboxAttachment
+    from extensions.microsoft365.arc_ext_microsoft365 import source as microsoft_source
+    from extensions.postgresql.arc_ext_postgresql import PostgreSQLAttachment
+    from extensions.s3.arc_ext_s3 import S3Attachment
+
+    from extensions.google_workspace.arc_ext_google_workspace.source import GmailSourceAdapter
+
+    lifecycle = {
+        "dropbox": DropboxAttachment,
+        "postgres": PostgreSQLAttachment,
+        "s3": S3Attachment,
+        "gmail": GmailSourceAdapter,
+        "outlook": microsoft_source.OutlookSourceAdapter,
+        "onedrive": getattr(microsoft_source, "OneDriveSourceAdapter", None),
+    }
+    missing = [name for name, adapter in lifecycle.items() if adapter is None]
+    assert not missing, f"missing connected-data source adapters: {', '.join(missing)}"
+    for name, adapter in lifecycle.items():
+        assert all(
+            hasattr(adapter, method)
+            for method in (
+                "inspect_source",
+                "list_source_resources",
+                "select_source_resources",
+                "sync_source",
+                "fetch_source",
+                "close_source",
+            )
+        ), f"{name} adapter does not implement the source lifecycle"
