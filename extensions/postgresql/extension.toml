@@ -1,0 +1,41 @@
+[extension]
+name = "postgresql"
+display_name = "PostgreSQL / Supabase"
+version = "1.0.0"
+description = "Connect an approved PostgreSQL or Supabase database for typed read-only agent retrieval."
+attachment = "native"
+tier_floor = "personal"
+
+[config.native]
+entrypoint = "arc_ext_postgresql"
+
+[[secrets]]
+name = "database_url"
+prompt = "A read-only PostgreSQL/Supabase connection URL. Arc keeps it in the vault and never exposes it to agents."
+format = "api_token"
+
+[tools]
+allow = ["postgres_schema", "postgres_get", "postgres_find", "postgres_list"]
+
+[[tools.declared]]
+name = "postgres_schema"
+description = "List approved PostgreSQL schemas and tables."
+classification = "read_only"
+
+[[tools.declared]]
+name = "postgres_get"
+description = "Get one record by primary key from an approved PostgreSQL table."
+classification = "read_only"
+
+[[tools.declared]]
+name = "postgres_find"
+description = "Find records by equality in an approved PostgreSQL column."
+classification = "read_only"
+
+[[tools.declared]]
+name = "postgres_list"
+description = "List a bounded set of records from an approved PostgreSQL table."
+classification = "read_only"
+
+[approval]
+default = "outbound"

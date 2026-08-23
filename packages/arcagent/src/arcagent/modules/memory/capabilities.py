@@ -107,6 +107,24 @@ async def inject_recall(ctx: Any) -> None:
     merged = _merge_recall(text, proactive)
     if merged:
         sections["recall"] = merged
+    profile = await _approved_profile_context(st)
+    if profile:
+        sections["profile"] = profile
+
+
+async def _approved_profile_context(st: _runtime._State) -> str:
+    """Inject only reviewed facts for the agent profile, framed as untrusted data."""
+    try:
+        module = __import__("arcmemory.profile", fromlist=["ProfileReviewStore", "ReviewStatus"])
+    except ImportError:
+        return ""
+    store = module.ProfileReviewStore(st.workspace, agent_did=st.agent_did)
+    facts = await store.list(status=module.ReviewStatus.APPROVED, profile_id=st.agent_did)
+    if not facts:
+        return ""
+    return _frame_untrusted(
+        [(f"profile:{fact.field}", f"{fact.field}: {fact.value}") for fact in facts]
+    )
 
 
 async def _query_recall(st: _runtime._State, ctx: Any, query: str) -> str:
@@ -644,7 +662,10 @@ def _render_doc_hits(query: str, hits: list[Any]) -> str:
     ),
 )
 async def datastore_query(
-    source: str, op: str, table: str, args: dict[str, Any] | None = None
+    source: str | None,
+    op: str,
+    table: str,
+    args: dict[str, Any] | None = None,
 ) -> str:
     """Query a connected structured datastore. Graceful when none is wired."""
     st = _runtime.state()
@@ -655,12 +676,89 @@ async def datastore_query(
         return "Datastore query is not available for this agent."
     if not await _acl_allows("memory.search", st.agent_did):
         return "No datastore results found."
-    result = await query(source, op, table, args or {}, caller_did=st.agent_did)
+    sources = (source,) if source else await _approved_datastore_sources()
+    results = [
+        await query(source_id, op, table, args or {}, caller_did=st.agent_did)
+        for source_id in sources
+    ]
+    result = [item for item in results if item is not None]
     await _audit(
         "memory.datastore_query",
-        {"source": source, "op": op, "table": table, "hit": result is not None, "tool": True},
+        {"source": source or "auto", "op": op, "table": table, "hit": bool(result), "tool": True},
     )
     return _render_datastore_result(result)
+
+
+async def _approved_datastore_sources() -> tuple[str, ...]:
+    """Resolve approved datastore ids internally so the model never guesses hashes."""
+    try:
+        runtime = __import__("arcagent.modules.connected_data._runtime", fromlist=["state"])
+        service = runtime.state().service
+    except RuntimeError:
+        return ()
+    if service is None:
+        return ()
+    candidates = await service.list_sources()
+    approved: list[str] = []
+    for candidate in candidates:
+        if candidate.description is None or candidate.description.source_kind != "postgres":
+            continue
+        proposal = await service.get_mapping_proposal(candidate.connection_id)
+        if proposal is not None and proposal.approval_status == "approved" and candidate.source_id:
+            approved.append(candidate.source_id)
+    return tuple(approved)
+
+
+@tool(
+    name="connected_sources",
+    description="Discover healthy, operator-approved connected data by kind and capability.",
+    classification="read_only",
+    when_to_use="Before querying connected data when the source kind is not obvious.",
+)
+async def connected_sources() -> str:
+    """Show safe connected-source capabilities without returning credentials or ids."""
+    try:
+        runtime = __import__("arcagent.modules.connected_data._runtime", fromlist=["state"])
+        service = runtime.state().service
+    except RuntimeError:
+        service = None
+    if service is None:
+        return "No connected sources are available."
+    descriptions: list[str] = []
+    for status in await service.list_sources():
+        source = status.description
+        if source is None:
+            continue
+        proposal = await service.get_mapping_proposal(status.connection_id)
+        homes = ", ".join(home.value for home in proposal.homes) if proposal else "not mapped"
+        descriptions.append(
+            f"- {source.display_name or source.source_kind}: {source.source_kind}; "
+            f"status={status.status}; homes={homes}"
+        )
+    return "\n".join(descriptions) if descriptions else "No connected sources are available."
+
+
+@tool(
+    name="profile_context",
+    description="Read approved profile context; pending suggestions are excluded.",
+    classification="read_only",
+)
+async def profile_context(profile_id: str | None = None) -> str:
+    """Return approved profile context only, data-framed before it reaches the model."""
+    st = _runtime.state()
+    if not st.active:
+        return "Memory is not enabled for this agent."
+    target = profile_id or st.agent_did
+    try:
+        module = __import__("arcmemory.profile", fromlist=["ProfileReviewStore", "ReviewStatus"])
+    except ImportError:
+        return "Profile context is not available for this agent."
+    facts = await module.ProfileReviewStore(st.workspace, agent_did=st.agent_did).list(
+        status=module.ReviewStatus.APPROVED, profile_id=target
+    )
+    return _frame_untrusted(
+        [(f"profile:{fact.field}", f"{fact.field}: {fact.value}") for fact in facts]
+    )
 
 
 def _render_datastore_result(result: object) -> str:
@@ -821,6 +919,7 @@ __all__ = [
     "capture_respond",
     "capture_tool",
     "capture_user",
+    "connected_sources",
     "consolidate_poll_once",
     "datastore_query",
     "document_search",
@@ -830,4 +929,5 @@ __all__ = [
     "memory_consolidate_loop",
     "memory_search",
     "on_agent_moment",
+    "profile_context",
 ]

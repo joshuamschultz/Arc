@@ -206,6 +206,42 @@ class ArcMemoryIngestAdapter(IngestPort):
             return await review.undo(review_id)
         raise ValueError("invalid review decision")
 
+    async def profile_context(self, profile_id: str, *, clearance: str = "unclassified") -> Any:
+        """Return only operator-approved profile facts through the review port."""
+        return await self._connected_service().review_port.context(profile_id, clearance=clearance)
+
+    async def profile_recall(
+        self, profile_id: str, query: str, *, clearance: str = "unclassified"
+    ) -> list[Any]:
+        """Recall only approved profile facts; pending proposals cannot surface."""
+        return await self._connected_service().review_port.recall(
+            profile_id, query, clearance=clearance
+        )
+
+    async def register_datastore(
+        self, source: SourceDescription, adapter: Any, mapping: MappingPlan
+    ) -> None:
+        """Attach an approved source-owned datastore port to the active Brain.
+
+        ArcAgent never imports an ArcMemory type here.  A structural source adapter
+        supplies ``datastore_port`` and the selected Brain supplies
+        ``register_datastore``; either missing seam is an unavailable capability,
+        never a fallback that copies database rows into agent memory.
+        """
+        if KnowledgeHome.DATASTORE not in mapping.homes:
+            return
+        get_port = getattr(adapter, "datastore_port", None)
+        if not callable(get_port):
+            raise MappingDeniedError("selected datastore mapping has no datastore port")
+        runtime = import_module("arcagent.modules.memory._runtime")
+        brain = runtime.state().brain
+        register = getattr(brain, "register_datastore", None)
+        if not callable(register):
+            raise ConnectedDataUnavailableError("active memory backend has no datastore port")
+        datastore = await get_port()
+        source_id = self.canonical_source_id(source)
+        await register(source_id, datastore, caller_did=self._agent_did)
+
     async def ingest(
         self,
         source: SourceDescription,

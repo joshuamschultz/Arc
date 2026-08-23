@@ -26,9 +26,7 @@ from arcagent.modules.connected_data.coordinator import ConnectedDataCoordinator
 
 _logger = logging.getLogger("arcagent.modules.connected_data.service")
 
-IngestPortFactory = Callable[
-    [SourceDescription], IngestPort | Awaitable[IngestPort]
-]
+IngestPortFactory = Callable[[SourceDescription], IngestPort | Awaitable[IngestPort]]
 
 
 class SourceSelectionStore(Protocol):
@@ -83,9 +81,8 @@ class ConnectedDataService:
         ingest_factory: IngestPortFactory | None,
         limits: SyncLimits,
         global_concurrency: int,
-        resource_selection_store_opener: Callable[
-            [], Awaitable[SourceSelectionStore]
-        ] | None = None,
+        resource_selection_store_opener: Callable[[], Awaitable[SourceSelectionStore]]
+        | None = None,
         audit: AuditCallback | None = None,
         interval_seconds: float = 60.0,
     ) -> None:
@@ -322,6 +319,26 @@ class ConnectedDataService:
         adapter = await self._first_ingest_adapter()
         resolve = getattr(adapter, "resolve_review", None) if adapter is not None else None
         return None if not callable(resolve) else await resolve(review_id, decision)
+
+    async def profile_context(
+        self, profile_id: str, *, clearance: str = "unclassified"
+    ) -> Any | None:
+        """Read approved profile context through the optional ingest seam."""
+        adapter = await self._first_ingest_adapter()
+        context = getattr(adapter, "profile_context", None) if adapter is not None else None
+        return None if not callable(context) else await context(profile_id, clearance=clearance)
+
+    async def profile_recall(
+        self, profile_id: str, query: str, *, clearance: str = "unclassified"
+    ) -> tuple[Any, ...]:
+        """Search approved profile facts through the optional ingest seam."""
+        adapter = await self._first_ingest_adapter()
+        recall = getattr(adapter, "profile_recall", None) if adapter is not None else None
+        return (
+            ()
+            if not callable(recall)
+            else tuple(await recall(profile_id, query, clearance=clearance))
+        )
 
     async def _monitor_loop(self) -> None:
         while not self._closed:

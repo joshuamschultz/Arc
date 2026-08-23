@@ -1,0 +1,51 @@
+[extension]
+name = "s3"
+display_name = "S3 / MinIO"
+version = "1.0.0"
+description = "Connect an approved S3-compatible bucket for bounded blob and document ingestion."
+attachment = "native"
+tier_floor = "personal"
+
+[config.native]
+entrypoint = "arc_ext_s3"
+
+[[secrets]]
+name = "access_key_id"
+prompt = "An S3/MinIO access key with read-only list/get permission for the intended buckets."
+sensitive = false
+
+[[secrets]]
+name = "secret_access_key"
+prompt = "The matching S3/MinIO secret key. Arc keeps it in the vault and never exposes it to agents."
+format = "api_token"
+
+[[secrets]]
+name = "session_token"
+prompt = "Optional STS role-session token; leave empty for a vault-backed long-lived credential."
+format = "api_token"
+
+[[secrets]]
+name = "region"
+prompt = "The bucket region (for example us-east-1)."
+sensitive = false
+
+[[secrets]]
+name = "endpoint_url"
+prompt = "The S3 endpoint URL; use AWS's standard endpoint or a MinIO-compatible endpoint."
+sensitive = false
+
+[tools]
+allow = ["s3_list", "s3_read"]
+
+[[tools.declared]]
+name = "s3_list"
+description = "List object names under an approved S3 bucket prefix."
+classification = "read_only"
+
+[[tools.declared]]
+name = "s3_read"
+description = "Read a bounded object from an approved S3 bucket prefix."
+classification = "read_only"
+
+[approval]
+default = "outbound"

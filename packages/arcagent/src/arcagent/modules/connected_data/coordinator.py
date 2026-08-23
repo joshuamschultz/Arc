@@ -83,6 +83,7 @@ class ConnectedDataCoordinator:
                 started,
                 cancel_event,
             )
+            await self._register_live_datastore(source, mapping, chosen, started, cancel_event)
             cursor, pages, processed = current.cursor, 0, 0
             while True:
                 self._check_cancel(cancel_event)
@@ -283,6 +284,28 @@ class ConnectedDataCoordinator:
         except ExceptionGroup as errors:
             raise errors.exceptions[0] from None
         return page_bytes
+
+    async def _register_live_datastore(
+        self,
+        source: SourceDescription,
+        mapping: MappingPlan,
+        limits: SyncLimits,
+        started: float,
+        cancel_event: asyncio.Event | None,
+    ) -> None:
+        """Register a selected live datastore only after its exact mapping is approved.
+
+        The source and ingest seams keep this structural: document/blob sources do
+        not implement the hook, while a datastore implementation owns both its
+        credentials and its read-only port.  Database rows are never copied through
+        the document synchronizer merely to make them searchable.
+        """
+        register = getattr(self._ingest, "register_datastore", None)
+        if register is None:
+            return
+        await self._retry_call(
+            lambda: register(source, self._source, mapping), limits, started, cancel_event
+        )
 
     async def _retry_call(
         self,
