@@ -36,9 +36,19 @@ authorized started members, can reload one member, and detaches all attached
 tools on stop. A solo agent continues to work without ArcTeam, with fleet
 functionality simply absent.
 
-AgentMail's signed durable-outbox P0 seam is available to composed services,
-but this runbook does not claim a supervised production delivery worker or final
-UI/CLI mail workflow; those remain remediation work.
+AgentMail is the durable agent-to-agent mail path. The ArcStore PostgreSQL
+transaction writes the participant inbox copies and signed transport outbox
+together; the ArcUI lifespan starts a supervised leased delivery worker that
+retries with bounded backoff and records dead letters after the attempt limit.
+`arc team send`, `arc team inbox --search`, and `arc team thread` use the same
+service. The Agent Inbox controls in ArcUI require the operator role and are
+audited; gateway operator/external sessions never appear in this inbox.
+
+The message's canonical conversation ID is stable across participant copies.
+Local thread and message IDs remain owner-scoped and must be read through the
+recipient's authorization boundary. A `pending` send means the durable outbox
+commit succeeded but NATS acknowledgement is still outstanding; it is safe to
+retry with the same idempotency key.
 
 ## 1. Create each agent
 

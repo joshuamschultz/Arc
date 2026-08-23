@@ -200,7 +200,10 @@ suite plus the architecture and adversarial checks named in
 The checks must prove that an ArcAgent starts without ArcTeam, composition
 attaches/reloads/removes only authorized member tools, and unavailable ArcMemory
 collection mechanics return a typed degraded result instead of an import failure.
-AgentMail transport tests do not prove production worker, UI, or CLI integration.
+AgentMail checks must also cover signed atomic inbox/outbox projection,
+canonical conversation IDs, PostgreSQL lease recovery/dead-letter behavior,
+operator-only ArcUI controls, and CLI parity. Gateway session tests must remain
+separate: gateway history is never an AgentMail inbox projection.
 
 ### Coverage Requirements
 

@@ -18,9 +18,10 @@
 > runnable ArcAgents and ArcMemory's public shared-knowledge seam. It attaches,
 > reloads, and removes the fleet extension on authorized started members; ArcMemory
 > stays generic collection mechanics. Solo agents have no fleet requirement.
-> AgentMail's signed/outbox P0 seam is landed, but supervised production delivery
-> and final UI/CLI mail flows remain incomplete. See
-> [fleet layering](../../concepts/fleet-layering.md).
+> AgentMail is the durable agent-to-agent mail path: signed envelopes are
+> atomically projected to participant inboxes and a PostgreSQL leased outbox,
+> with supervised retry/dead-letter delivery. ArcUI and `arc team` consume the
+> same authorized service. See [fleet layering](../../concepts/fleet-layering.md).
 
 ```mermaid
 flowchart TB
@@ -92,7 +93,12 @@ await registry.register(Entity(
 
 ---
 
-## Messaging Service
+## Signed transport and AgentMail
+
+`MessagingService` is the signed NATS transport used by ArcTeam. The durable
+AgentMail facade composes it with ArcStore and is the contract used by agents,
+ArcUI, and the CLI when a message must appear in an inbox or survive a
+restart. Gateway sessions do not use this path.
 
 ### Message Flow
 
@@ -137,6 +143,35 @@ await svc.send(
     priority=Priority.NORMAL
 )
 ```
+
+### Durable AgentMail
+
+Use `AgentMailService` for direct agent-to-agent mail and inbox operations:
+
+```python
+from arcteam.mail import AgentMailService, MailSendRequest
+
+# ``mail`` is the application-composed AgentMailService.
+result = await mail.send(
+    MailSendRequest(
+        sender="agent://analyst-1",
+        sender_did=analyst_did,
+        to=("agent://executor-1",),
+        body="Please analyze the Q4 data",
+        idempotency_key="q4-analysis-1",
+    )
+)
+# result.status is "sent" or "pending"; both states are durable.
+```
+
+The service signs the envelope before calling ArcStore's atomic
+`record_event_with_outbox` seam. The PostgreSQL implementation writes every
+participant's inbox copy and the outbox row in one transaction, then a
+supervised `MailDeliveryWorker` claims rows with leases, retries transient
+transport failures, and records exhausted entries in the dead-letter state.
+The conversation ID is canonical across participant copies; local thread and
+message IDs are owner-scoped for authorization. Use the same idempotency key
+when retrying a `pending` result.
 
 ### Message Types
 

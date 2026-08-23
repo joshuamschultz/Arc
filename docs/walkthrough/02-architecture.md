@@ -125,9 +125,12 @@ generic knowledge mechanics.
 ArcTeam now owns the shared-knowledge extension lifecycle: it attaches tools to
 authorized started members, reloads one attachment, and removes them at stop.
 ArcMemory remains the optional generic collection seam. The base ArcTeam wheel
-keeps these imports lazy so a solo agent stays removable. AgentMail's signed
-outbox seam is P0 only; supervised production delivery and final UI/CLI flows
-remain open. The architecture rule and operational split are documented in
+keeps these imports lazy so a solo agent stays removable. AgentMail is the
+durable ArcTeam mail seam: signed envelopes are atomically projected through
+ArcStore's PostgreSQL inbox/outbox transaction and delivered by a supervised
+leased worker with retry and dead-letter handling. ArcUI's operator-only inbox
+controls and `arc team` durable mail commands consume that same service. The
+architecture rule and operational split are documented in
 [Fleet layering and removable composition](../concepts/fleet-layering.md).
 
 ### The one narrowed exception

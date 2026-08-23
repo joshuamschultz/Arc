@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 - Agent Inbox routes now require the optional ArcTeam mail facade and never read gateway sessions.
+- Completed the operator-only durable Agent Inbox journey: authorized thread
+  listing/search, message reads, replies, and handoff create/resolve controls
+  use canonical conversation IDs and emit mutation audit events. The server
+  composes the PostgreSQL leased mail outbox and supervised retry/dead-letter
+  worker during its lifecycle.
 
 ## [0.5.0] - 2026-08-22
 

@@ -240,10 +240,10 @@ Manage arcteam entity registries, channels, and messaging.
 | `arc team create <id> --channel <c>` | Create a team with a required default channel and optional members | `arc team create mfg --channel ops --members agent-1,agent-2` |
 | `arc team add-member <id> <member>` | Add a member to an existing team | `arc team add-member mfg agent-3` |
 | `arc team remove-member <id> <member>` | Remove a member from a team | `arc team remove-member mfg agent-3` |
-| `arc team send` | Send a signed message (`--sender`, `--to`, `--body` required; `--type`, `--priority`, `--action`, `--refs`, `--thread-id` optional) | `arc team send --sender agent://agent-1 --to agent://agent-2 --body "status?"` |
-| `arc team inbox --sender <ref>` | Check inbox across subscribed streams | `arc team inbox --sender agent://agent-1 --limit 20` |
+| `arc team send` | Send signed durable AgentMail (`--sender`, `--to`, `--body` required; `--refs`, `--thread-id`, `--idempotency-key` optional) | `arc team send --sender agent://agent-1 --to agent://agent-2 --body "status?" --idempotency-key status-1` |
+| `arc team inbox --sender <ref>` | List the sender's durable inbox threads; add `--search` for authorized body/subject search | `arc team inbox --sender agent://agent-1 --limit 20 --search status` |
 | `arc team read --sender <ref>` | Read channel or DM history | `arc team read --sender agent://agent-1 --channel ops --limit 50` |
-| `arc team thread <id> --stream <s>` | View a message thread | `arc team thread abc123 --stream ops` |
+| `arc team thread <id> --sender <ref>` | View a durable AgentMail thread through the participant's authorization boundary | `arc team thread thread_123 --sender agent://agent-1` |
 | `arc team up <id>` | Boot each team member as a supervised `arc agent serve` daemon | `arc team up mfg` |
 | `arc team down <id>` | Stop a running team's member daemons | `arc team down mfg` |
 | `arc team serve <team_root>` | Start NATS + register + serve the dashboard for a folder of agents | `arc team serve ./agents --port 8420` |

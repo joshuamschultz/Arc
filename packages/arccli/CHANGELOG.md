@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 - Workflow team backend composition now resolves through ArcTeam's public composition seam.
+- `arc team send`, `arc team inbox --search`, and `arc team thread` now use the
+  signed durable AgentMail service with canonical conversation IDs and
+  PostgreSQL outbox delivery. Sender signing is resolved from the selected
+  agent identity; the CLI cannot impersonate another agent or use the operator
+  signer as a sender.
 
 ## [0.9.0] - 2026-08-22
 

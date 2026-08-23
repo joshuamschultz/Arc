@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### AgentMail completion
+
+- ArcTeam AgentMail now signs envelopes before an atomic PostgreSQL inbox/outbox
+  transaction, preserves one canonical conversation ID across participant
+  inboxes, and drains a leased outbox with bounded retries and dead-letter
+  handling.
+- ArcUI exposes the operator-only durable inbox controls (search, read, reply,
+  and handoff resolution), while `arc team` provides matching durable send,
+  inbox, search, and thread commands. ArcGateway sessions remain separate and
+  are never projected into the agent inbox.
+
 ## [0.4.0] - 2026-08-22
 
 First alpha release candidate: the runtime is PostgreSQL-native, streaming end

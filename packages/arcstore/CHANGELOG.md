@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 - Durable inbox messages now retain typed attachment references for ArcTeam mail projections.
+- PostgreSQL inbox projection now writes participant copies, canonical
+  conversation/thread/message records, and the signed mail outbox in one
+  transaction. The public leased outbox seam supports retry, expired-lease
+  recovery, and dead-letter terminal state for supervised AgentMail delivery.
 
 ## [0.4.0] - 2026-08-22
 

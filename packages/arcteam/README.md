@@ -94,9 +94,18 @@ detaches the extension. A missing ArcMemory collection produces a typed
 unavailability result rather than a fallback shared store. See the authoritative
 [fleet-layering guide](../../docs/concepts/fleet-layering.md).
 
-`AgentMailService` now signs envelopes before durable outbox enqueue and returns
-an explicit `sent` or `pending` result. The P0 Python seam is landed; supervised
-production worker lifecycle and final UI/CLI mail workflows are still pending.
+`AgentMailService` signs envelopes before an atomic ArcStore inbox/outbox write
+and returns an explicit `sent` or `pending` result. The PostgreSQL composition
+uses a leased outbox with bounded retries and dead-letter handling; ArcUI starts
+the supervised delivery worker with the service lifecycle, and `arc team`
+uses the same durable service for send, inbox, search, and thread reads.
+Conversation IDs are canonical across all participant inbox copies, while each
+inbox retains its own access-controlled thread/message IDs.
+
+The ArcUI Agent Inbox is an operator surface: it lists/searches durable agent
+mail, marks messages read, replies, and creates/resolves handoffs through the
+operator-authenticated routes. Gateway chat sessions are not projected into
+this inbox and are documented separately as external/operator conversations.
 
 The audit chain is signed with the **operator's** key (the audit authority, resolved via
 `arctrust`/`arccli`'s operator-key custody), never a team member's own DID, so no agent can

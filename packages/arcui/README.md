@@ -46,6 +46,7 @@ What makes `arcui` the definitive real-time agent observability dashboard:
 - **Two-token role separation** — Viewer token (read-only) and operator token (mutations); prevents unauthorized config changes
 - **In-place mutations** — Edit config, tasks, channels, files, and prompts directly from the dashboard; all changes audited
 - **HITL approvals** — Approve gated tool calls and skill installations from the UI; full context provided
+- **Durable Agent Inbox** — Operator-only thread search, read receipts, replies, and handoff create/resolve controls over ArcTeam mail; gateway sessions are not projected here
 
 ### **Multi-Layer Interface**
 - **Business-first navigation** — Work, Govern, Watch, Advanced, System sections (2027 control-plane redesign); technical names only in detail views
@@ -247,7 +248,7 @@ The dashboard is a React single-page app with path-based routing. Bookmark a rou
 |------|------|--------|
 | Home | `/home` | Today landing — fleet at a glance, recent activity, open loops |
 | Fleet | `/agents` | `/api/team/roster` — status / current action / signed-today cards |
-| Agent Detail | `/agents/:id/:tab` | Per-agent tabs: Overview · Identity · Sessions · LLM · Skills · Tools · Tasks · Schedules · Policy · Prompts · Connect · Trust · Knowledge · Runs · Inbox |
+| Agent Detail | `/agents/:id/:tab` | Per-agent tabs: Overview · Identity · Sessions · LLM · Skills · Tools · Tasks · Schedules · Policy · Prompts · Connect · Trust · Knowledge · Runs · Inbox (durable AgentMail) |
 | Chat | `/messages` | Slack-style agent chat (`/ws/chat/{id}`), inline HITL approvals, team channels (`/ws/team`) |
 | Tasks | `/tasks` | Mission Control kanban + per-status filters (`/api/team/tasks`) |
 | Approvals | `/approvals` | Pending trifecta / gate approvals with full request context |

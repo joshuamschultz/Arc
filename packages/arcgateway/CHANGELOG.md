@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Gateway sessions no longer project operator turns into the Agent Inbox; session history and
   agent mail are separate surfaces.
+- Agent-to-agent mail remains entirely ArcTeam-owned. Gateway adapters deliver
+  external/operator conversations through gateway session identity and never
+  create or mutate AgentMail inbox threads.
 
 ## [0.4.0] - 2026-08-22
 

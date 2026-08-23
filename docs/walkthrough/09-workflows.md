@@ -338,6 +338,14 @@ pull cursors. **Failure/retry:** durable consumers resume from their last ack
 after a restart; `RetryableDeliveryError` leaves a message unacked for
 redelivery.
 
+For inbox semantics, the ArcTeam `AgentMailService` composes this transport
+with ArcStore's durable inbox projection and PostgreSQL leased outbox. It signs
+before the atomic inbox/outbox write, preserves one canonical conversation ID
+across participant copies, and lets the supervised delivery worker retry or
+dead-letter transport failures. ArcUI's inbox is operator-only and `arc team`
+uses the same service for send, inbox/search, and thread reads. ArcGateway
+session history is a separate plane and is never projected into AgentMail.
+
 Every entity (agent or human) is a DID-keyed row in `EntityRegistry`
 (`packages/arcteam/src/arcteam/registry.py:77`) — the sole address resolver.
 `resolve_ref()` turns any of `did:...`, `@handle`, `agent://handle`,

@@ -171,7 +171,7 @@ arc agent run my-agent "Analyze this" --context ./report.md --json
 
 | Group | Purpose |
 |---|---|
-| **`arc team`** | Team messaging (Slack for agents) — create, add-member, remove-member, up, down, serve, send, inbox, read, thread, channels, register, entities, status, config, init, memory-status, backfill-workspaces |
+| **`arc team`** | Fleet coordination — signed NATS channels/DMs plus durable AgentMail send, inbox/search, and thread reads; create, add-member, remove-member, up, down, serve, send, inbox, read, thread, channels, register, entities, status, config, init, memory-status, backfill-workspaces |
 | **`arc task`** | Mission Control task system (SPEC-056) — create, list, edit, assign, complete, talk |
 | **`arc ui`** | Multi-agent dashboard — start, tail |
 | **`arc tui`** | Terminal viewpoint onto a served agent (soft-registered by `arctui` when installed) |
@@ -305,9 +305,10 @@ arc team backfill-workspaces                                    # sync workspace
 
 # -- Messaging --
 arc team send --sender agent://procurement --to ops --body "PO-2026-0412 received" --action
-arc team read --sender agent://lead --channel ops --limit 50   # or --dm <handle>
-arc team inbox --sender agent://procurement
-arc team thread --stream ops <thread_id>
+arc team read --sender agent://lead --channel ops --limit 50   # raw channel/DM transport history
+arc team inbox --sender agent://procurement --limit 20           # durable AgentMail threads
+arc team inbox --sender agent://procurement --search "PO-2026"  # authorized body/subject search
+arc team thread <thread_id> --sender agent://procurement        # durable thread, owner-scoped read
 
 # === Tasks (Mission Control, SPEC-056) ===
 arc task create "Draft the Q3 report" --actor @lead --priority high  # unowned -> team backlog

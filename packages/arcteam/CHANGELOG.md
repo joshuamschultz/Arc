@@ -16,8 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Shared-knowledge composition is now ArcTeam-owned: it attaches, reloads, and
   detaches the optional ArcMemory-backed fleet extension on authorized members.
-- AgentMail's signed durable-outbox P0 seam is documented as landed; supervised
-  production delivery and final UI/CLI mail workflows remain open.
+- AgentMail is now the complete durable agent-to-agent mail path: envelopes are
+  signed before an atomic ArcStore inbox/outbox write, canonical conversation
+  IDs span every participant copy, and the PostgreSQL leased outbox supports
+  bounded retry and dead-letter handling.
+- ArcUI's Agent Inbox and `arc team` durable send/inbox-search/thread commands
+  consume the same authorized service. Gateway operator/external sessions stay
+  on their own plane and are never projected into AgentMail.
 
 ## [0.8.0] - 2026-08-22
 

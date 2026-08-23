@@ -2,7 +2,7 @@
 
 ArcTeam is the optional fleet layer. It composes multiple standalone ArcAgents;
 it is not part of an individual agent's nucleus. This page records the landed
-alpha composition contract and its remaining AgentMail delivery limits.
+alpha composition contract, including durable AgentMail delivery.
 
 ## The direction
 
@@ -81,11 +81,21 @@ before NATS delivery. It is not ArcMemory's generic index/search engine. The
 durable store is authoritative for a task transition; mail is a wakeup/narration
 signal and cannot make a durable state change appear to have happened.
 
-AgentMail P0 is a public ArcTeam Python seam: it creates a signed envelope,
-persists it to an injected `MailOutbox`, reports `sent` or `pending`, and drains
-claimed entries with bounded retry. It is not yet a supervised production worker
-service, nor is it final UI or CLI mail integration. Those gaps remain explicit
-until their remediation lands.
+AgentMail is a public ArcTeam seam: it creates and signs an envelope, then uses
+the ArcStore atomic inbox/outbox operation so participant inbox copies and the
+transport record commit together. The PostgreSQL outbox is leased with
+`SKIP LOCKED`, recovers expired leases after a crash, retries with bounded
+backoff, and moves exhausted entries to a durable dead-letter state. ArcUI
+starts the supervised `MailDeliveryWorker` for the application lifetime; a
+send reports `sent` only after transport acknowledgement and `pending` when
+durable delivery remains queued.
+
+The envelope's `conversation_id` is the canonical cross-inbox identity. Each
+participant still receives an access-controlled local thread/message copy, so
+one participant cannot use another participant's local IDs to bypass policy.
+The CLI and ArcUI use the same durable service, with sender signing resolved
+from the selected agent identity. ArcUI mutations are operator-only and
+audited; the operator signer is not accepted as an agent sender.
 
 ## Zero-trust rules
 
@@ -108,9 +118,10 @@ workspace or lower-clearance store.
 
 Shared-knowledge composition is landed: ArcAgent exposes public extension
 attach/detach operations, ArcTeam owns attachment lifecycle and fleet policy,
-and ArcMemory stays optional collection mechanics. AgentMail P0's outbox path
-is also landed, but production worker supervision and final UI/CLI mail paths
-are not. Do not represent the latter as operationally complete.
+and ArcMemory stays optional collection mechanics. AgentMail's production
+worker, PostgreSQL outbox/DLQ, ArcUI controls, and CLI parity are also landed.
+Do not conflate these durable agent-mail records with ArcGateway session
+history: they are separate planes and have separate authorization boundaries.
 
 For the landed components, validate the seams with:
 
