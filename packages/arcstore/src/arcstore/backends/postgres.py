@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import Mapping, Sequence
@@ -24,6 +25,43 @@ _logger = logging.getLogger("arcstore.backends.postgres")
 _ORDER_BY = frozenset({"ts", "ts ASC", "ts DESC"})
 
 
+class _SharedPool:
+    """One migrated asyncpg pool and the number of backends holding it."""
+
+    def __init__(self, pool: Any) -> None:
+        self.pool = pool
+        self.holders = 0
+
+
+# One pool per DSN per process. Every store in every agent module constructs
+# its own PostgresBackend; without sharing, a six-agent node opens dozens of
+# pools and exhausts PostgreSQL's connection slots — a self-inflicted
+# resource-exhaustion outage (ASI08/LLM10). The registry is connection
+# infrastructure, not application state: backends keep their independent
+# start/stop contract, and the last stop() for a DSN closes its pool.
+_SHARED_POOLS: dict[str, _SharedPool] = {}
+_SHARED_POOLS_LOOP: int | None = None
+_SHARED_POOLS_LOCK: asyncio.Lock | None = None
+
+
+def _pools_lock() -> asyncio.Lock:
+    """The registry lock for the running event loop.
+
+    Locks and pools both bind to the loop that created them, and one process
+    can run several loops over its lifetime (each CLI ``asyncio.run``, test
+    harnesses). A registry built under a dead loop is unusable, so a new loop
+    starts from an empty registry; the abandoned connections close when the
+    process exits or the server reaps them.
+    """
+    global _SHARED_POOLS_LOOP, _SHARED_POOLS_LOCK
+    loop_id = id(asyncio.get_running_loop())
+    if _SHARED_POOLS_LOOP != loop_id or _SHARED_POOLS_LOCK is None:
+        _SHARED_POOLS.clear()
+        _SHARED_POOLS_LOOP = loop_id
+        _SHARED_POOLS_LOCK = asyncio.Lock()
+    return _SHARED_POOLS_LOCK
+
+
 class PostgresBackend:
     """The one production ArcStore backend; all state lives in PostgreSQL."""
 
@@ -32,16 +70,28 @@ class PostgresBackend:
             settings.postgres_settings() if isinstance(settings, ArcStoreConfig) else settings
         )
         self._pool: Any | None = None
+        self._shared: _SharedPool | None = None
 
     async def start(self) -> None:
         if self._pool is not None:
             return
+        dsn = self._settings.dsn.get_secret_value()
+        async with _pools_lock():
+            shared = _SHARED_POOLS.get(dsn)
+            if shared is None:
+                shared = _SharedPool(await self._create_migrated_pool(dsn))
+                _SHARED_POOLS[dsn] = shared
+            shared.holders += 1
+            self._shared = shared
+            self._pool = shared.pool
+
+    async def _create_migrated_pool(self, dsn: str) -> Any:
         try:
             import asyncpg
         except ImportError as exc:
             raise RuntimeError("ArcStore requires the asyncpg PostgreSQL driver") from exc
-        self._pool = await asyncpg.create_pool(
-            dsn=self._settings.dsn.get_secret_value(),
+        pool = await asyncpg.create_pool(
+            dsn=dsn,
             min_size=self._settings.pool_min_size,
             max_size=self._settings.pool_max_size,
             command_timeout=self._settings.command_timeout,
@@ -50,17 +100,27 @@ class PostgresBackend:
             ssl=self._settings.ssl_mode not in {"disable", "prefer"},
         )
         try:
-            async with self._pool.acquire() as connection:
+            async with pool.acquire() as connection:
                 async with connection.transaction():
                     await migrate(connection)
         except Exception:
-            await self.stop()
+            await pool.close()
             raise
+        return pool
 
     async def stop(self) -> None:
-        if self._pool is not None:
-            await self._pool.close()
+        if self._pool is None:
+            return
+        dsn = self._settings.dsn.get_secret_value()
+        async with _pools_lock():
             self._pool = None
+            shared, self._shared = self._shared, None
+            if shared is None:  # pragma: no cover - start() always pairs the handle
+                return
+            shared.holders -= 1
+            if shared.holders <= 0 and _SHARED_POOLS.get(dsn) is shared:
+                del _SHARED_POOLS[dsn]
+                await shared.pool.close()
 
     async def upsert(self, table: str, key: str, row: dict[str, Any]) -> None:
         await self.upsert_many(table, [(key, row)])

@@ -69,6 +69,40 @@ async def test_postgres_query_accepts_iso_string_ts_gte(
     assert old_key not in keys
 
 
+async def test_postgres_backends_share_one_pool_per_dsn() -> None:
+    """N backend instances on one DSN must hold one pool, not N (ASI08/LLM10).
+
+    A process builds a backend per store per agent module; without sharing, a
+    six-agent node exhausts PostgreSQL's connection slots and every store-backed
+    feature fails at once.
+    """
+    import os
+
+    dsn = os.environ.get("ARCSTORE_TEST_DATABASE_URL")
+    if not dsn:
+        pytest.skip("ARCSTORE_TEST_DATABASE_URL is required for PostgreSQL integration tests")
+    from pydantic import SecretStr
+
+    from arcstore.config import ArcStoreConfig
+
+    settings = ArcStoreConfig().postgres_settings(SecretStr(dsn))
+    first, second = PostgresBackend(settings), PostgresBackend(settings)
+    await first.start()
+    await second.start()
+    try:
+        assert first._pool is second._pool
+        await second.stop()
+        # The survivor still works after a sibling released its handle.
+        key = f"pg-{uuid4().hex}"
+        await first.upsert(
+            "llm_calls", key, {"kind": "llm_call", "actor_did": _ACTOR, "ts": "2026-08-22T00:00:00Z"}
+        )
+        assert await first.query("llm_calls", where={"record_id": key})
+    finally:
+        await first.stop()
+    assert first._pool is None
+
+
 async def test_postgres_cas_serializes_cross_row_claim_guard(
     postgres_backend: ArcStoreBackend,
 ) -> None:
