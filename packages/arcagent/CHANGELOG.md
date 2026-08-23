@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-08-23
+
+- A spawned CLI never inherits stdin. `create_subprocess_exec` piped
+  stdout/stderr but left stdin unset, so a vendor CLI that decided to prompt
+  blocked on the service's stdin until the tool deadline and reported a timeout
+  instead of its own error. `stdin=DEVNULL` makes that an immediate refusal.
+- `workpad_update` lets an agent request an immediate curated rewrite of its own
+  `context.md` through the guarded maintainer, closing the agency gap the
+  protected-file guard created without weakening it.
+- `validate_module_configs` statically validates every enabled module's config
+  against its declared model; `arc agent build --check` now runs it on the
+  merged config, so schema drift fails the deploy gate instead of killing the
+  agent at first load.
+
 ### Added
 
 - A restart-safe connected-data coordinator and removable source-adapter seam

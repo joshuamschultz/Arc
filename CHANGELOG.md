@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Unattended-automation reliability
+
+- **Scenario grants (`arctrust`)** — an operator can approve a recurring
+  automated scenario once (agent + tool + waived composition + automated
+  `origin` + `connection`) instead of re-approving every call. One-shot grants
+  bind to a call hash, so nightly workflows re-prompted a sleeping operator and
+  died on the tool deadline. Interactive work carries no `origin` and is still
+  gated per call.
+- **Zero-argument streamed tool calls (`arcllm`)** — a tool taking no parameters
+  streams no argument text; `json.loads("")` raised
+  `ArcLLMStreamProtocolError` and killed the whole run on the first such call,
+  burning every retry the same way. Empty accumulated arguments now build `{}`;
+  truncated or non-object JSON still raises.
+- **Spawned CLIs no longer inherit stdin (`arcagent`)** — a vendor CLI that
+  decides to prompt blocked on the service's stdin until the tool deadline and
+  reported a timeout instead of its own error. `stdin=DEVNULL` turns that hang
+  into an immediate, readable refusal.
+
+
 ### Connected data completion
 
 - Completed the Alpha provider matrix: SQLite, PostgreSQL/Supabase, Dropbox,

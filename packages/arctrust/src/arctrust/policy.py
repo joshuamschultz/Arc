@@ -120,6 +120,41 @@ class ApprovalGrant(BaseModel):
     signature: bytes
 
 
+class ScenarioGrant(BaseModel):
+    """Operator-signed standing approval for one recurring automated scenario.
+
+    An :class:`ApprovalGrant` binds to a call hash, so it is spent the moment
+    the arguments change. That is right for a human at a keyboard and fatal for
+    unattended automation: every night's issue is a different call, so a nightly
+    workflow re-prompts an operator who is asleep and dies on the tool deadline.
+
+    A scenario grant binds instead to the five facts that make an action *the
+    same scenario* each time it recurs — the acting agent, the tool, the
+    forbidden composition being waived, the automated driver, and the external
+    connection. Everything else (arguments, session, run id) is free to vary.
+
+    ``origin`` is what keeps this enterprise-safe: it names a non-interactive
+    driver (``workflow:<id>``, ``schedule:<id>``). Interactive work carries no
+    origin and therefore matches no grant, so a waiver earned by automation
+    never silently covers a free-form chat request.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    agent_did: str
+    tool_name: str
+    #: The forbidden composition this grant waives — and only this one.
+    composition: frozenset[str]
+    #: The automated driver, e.g. ``workflow:nightly-meeting-ingest``.
+    origin: str
+    #: The external connection reached, e.g. ``jira``.
+    connection: str
+    approver_did: str
+    public_key: bytes
+    algorithm: str = "ed25519"
+    signature: bytes
+
+
 class ToolCall(BaseModel):
     """Immutable request to invoke a tool.
 
@@ -271,6 +306,23 @@ class PolicyContext(BaseModel):
     Defaults ``None`` so existing constructions stay valid; populated by
     arcagent at dispatch. The ClassificationLayer fails closed above personal
     when this is absent under a configured pipeline (SPEC-038 REQ-023).
+    """
+
+    origin: str | None = None
+    """The non-interactive driver of this call, e.g. ``workflow:<id>``.
+
+    ``None`` means interactive (a human in chat). Only a named origin can match
+    a :class:`ScenarioGrant`, so a standing waiver never covers ad-hoc work.
+    """
+
+    connection: str | None = None
+    """The external connection this call reaches, e.g. ``jira``."""
+
+    scenario_grants: tuple[ScenarioGrant, ...] = ()
+    """Operator-signed standing grants, loaded by arcagent from durable storage.
+
+    arctrust does no I/O: the caller supplies the candidates and this module
+    verifies them, exactly as it does for clearance and session capabilities.
     """
 
     session_capabilities: frozenset[str] | None = None
@@ -514,6 +566,103 @@ def sign_approval_for_hash(call_hash: str, operator: ApprovalAuthority) -> Appro
     )
 
 
+def scenario_key(
+    *,
+    agent_did: str,
+    tool_name: str,
+    composition: frozenset[str],
+    origin: str,
+    connection: str,
+) -> str:
+    """Canonical identity of one scenario — stable, order-independent.
+
+    The same string is what a grant signs over, what durable storage dedups on,
+    and what an operator surface shows when it asks "always allow this?".
+    """
+    return json.dumps(
+        {
+            "agent_did": agent_did,
+            "tool_name": tool_name,
+            "composition": sorted(composition),
+            "origin": origin,
+            "connection": connection,
+        },
+        sort_keys=True,
+    )
+
+
+def sign_scenario_grant(
+    *,
+    operator: ApprovalAuthority,
+    agent_did: str,
+    tool_name: str,
+    composition: frozenset[str],
+    origin: str,
+    connection: str,
+) -> ScenarioGrant:
+    """Mint a standing grant for one scenario under the operator's own identity."""
+    key = scenario_key(
+        agent_did=agent_did,
+        tool_name=tool_name,
+        composition=composition,
+        origin=origin,
+        connection=connection,
+    )
+    return ScenarioGrant(
+        agent_did=agent_did,
+        tool_name=tool_name,
+        composition=composition,
+        origin=origin,
+        connection=connection,
+        approver_did=operator.did,
+        public_key=operator.public_key,
+        algorithm=getattr(operator, "algorithm", "ed25519"),
+        signature=operator.sign(key.encode("utf-8")),
+    )
+
+
+def verify_scenario_grant(
+    grant: ScenarioGrant,
+    *,
+    agent_did: str,
+    tool_name: str,
+    composition: frozenset[str],
+    origin: str | None,
+    connection: str | None,
+) -> bool:
+    """Whether ``grant`` stands for exactly this scenario. Fail-closed.
+
+    Every field must match — a grant never widens. ``origin``/``connection`` of
+    ``None`` (interactive work, or a call reaching no registered connection)
+    matches nothing, so the waiver cannot leak out of the automation it was
+    approved for.
+    """
+    if origin is None or connection is None:
+        return False
+    if grant.approver_did == agent_did:  # ASI09 — no self-approval, ever.
+        return False
+    if (
+        grant.agent_did != agent_did
+        or grant.tool_name != tool_name
+        or grant.composition != composition
+        or grant.origin != origin
+        or grant.connection != connection
+    ):
+        return False
+    if not did_matches_pubkey(grant.approver_did, grant.public_key):
+        return False
+    key = scenario_key(
+        agent_did=grant.agent_did,
+        tool_name=grant.tool_name,
+        composition=grant.composition,
+        origin=grant.origin,
+        connection=grant.connection,
+    )
+    return verify_signature(
+        grant.algorithm, key.encode("utf-8"), grant.signature, grant.public_key
+    )
+
+
 def verify_approval(call: ToolCall, approval: ApprovalGrant) -> bool:
     """Whether ``approval`` is a valid one-shot operator grant for ``call``.
 
@@ -618,6 +767,27 @@ class GlobalLayer:
                 return combo
         return None
 
+    def _standing_grant_covers(
+        self, call: ToolCall, ctx: PolicyContext, matched: frozenset[str]
+    ) -> bool:
+        """Whether an operator's standing grant already covers this scenario.
+
+        Checked only after the one-shot path fails, and only against the
+        composition actually matched — approving one combination never waives a
+        different one that happens to appear later.
+        """
+        return any(
+            verify_scenario_grant(
+                grant,
+                agent_did=call.agent_did,
+                tool_name=call.tool_name,
+                composition=matched,
+                origin=ctx.origin,
+                connection=ctx.connection,
+            )
+            for grant in ctx.scenario_grants
+        )
+
     async def evaluate(self, call: ToolCall, ctx: PolicyContext) -> Decision:
         reason = self._deny_rules.get(call.tool_name)
         now_us = _now_us()
@@ -632,8 +802,10 @@ class GlobalLayer:
 
         union = set(call.capability_tags) | set(ctx.session_capabilities or frozenset())
         matched = self._first_forbidden(union)
-        if matched is not None and not (
-            call.approval is not None and verify_approval(call, call.approval)
+        if (
+            matched is not None
+            and not (call.approval is not None and verify_approval(call, call.approval))
+            and not self._standing_grant_covers(call, ctx, matched)
         ):
             return Decision.deny(
                 layer=self.name,

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-08-23
+
+- A zero-argument streamed tool call is no longer treated as malformed. A tool
+  taking no parameters streams no argument text, and `json.loads("")` raised
+  `ArcLLMStreamProtocolError`, killing the entire run on the first such call.
+  Empty accumulated arguments now build `{}`; truncated or non-object JSON
+  still raises.
+
 ## [0.9.0] - 2026-08-22
 
 - Native Anthropic and hardened OpenAI SSE streaming, including parallel tool

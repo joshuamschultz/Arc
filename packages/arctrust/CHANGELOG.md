@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-08-23
+
+### Scenario grants — standing approval for unattended automation
+
+- `arctrust.policy` gains `ScenarioGrant`, `scenario_key`, `sign_scenario_grant`
+  and `verify_scenario_grant`. A one-shot `ApprovalGrant` binds to a call hash
+  and is spent when arguments change, so an unattended workflow re-prompted an
+  operator who was asleep and died on the tool deadline. A scenario grant binds
+  instead to the five facts that make an action the same scenario each time it
+  recurs: agent, tool, the waived composition, the automated `origin`, and the
+  `connection`.
+- `GlobalLayer` consults standing grants only after the one-shot path fails, and
+  only against the composition actually matched — approving one combination
+  never waives another.
+- `origin` keeps this enterprise-safe: only a named non-interactive driver
+  (`workflow:<id>`, `schedule:<id>`) can match. Interactive chat carries no
+  origin, so a waiver earned by automation never covers an ad-hoc request.
+- Self-approval stays impossible (ASI09), grants never travel to another
+  agent/tool/workflow/connection, and every scenario-granted allow is still
+  audited. arctrust verifies only; candidate grants arrive on
+  `PolicyContext.scenario_grants`, supplied by arcagent from durable storage.
+
 ## [0.11.0] - 2026-08-22
 
 - Trust seams now cover uploaded capabilities, shared knowledge promotion,

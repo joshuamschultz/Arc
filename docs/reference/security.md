@@ -159,6 +159,56 @@ sequenceDiagram
     Pipeline-->>Agent: ALLOW (one-shot, this call only)
 ```
 
+### Scenario Grants — approving unattended automation
+
+An `ApprovalGrant` binds to a **call hash**, so it is spent the moment the
+arguments change. That is exactly right for a human at a keyboard and fatal for
+automation: every night's issue is a different call, so a nightly workflow
+re-prompts an operator who is asleep and dies on the tool deadline. Leaving the
+composition open instead is not an option above the personal tier.
+
+A **`ScenarioGrant`** resolves that without widening the gate. It binds to the
+five facts that make an action *the same scenario* each time it recurs:
+
+| Field | Meaning |
+|---|---|
+| `agent_did` | Which agent acts. |
+| `tool_name` | Which tool it calls. |
+| `composition` | Which forbidden combination is waived — and only that one. |
+| `origin` | The **non-interactive driver**, e.g. `workflow:nightly-meeting-ingest`. |
+| `connection` | Which external connection is reached, e.g. `jira`. |
+
+Arguments, session id, and run id are free to vary; everything above must match
+exactly. The grant is signed by the operator over the canonical
+`scenario_key(...)`, and `verify_scenario_grant` is fail-closed on every field.
+
+**`origin` is what keeps this enterprise-safe.** Only a named automated driver
+can match a grant. Interactive work carries no origin, so a waiver earned by a
+workflow never silently covers a free-form chat request — the asymmetry is
+deliberate: pre-approval applies where the human cannot be present, and ad-hoc
+agency stays gated.
+
+Invariants, all enforced in `arctrust.policy`:
+
+- **No self-approval (ASI09).** `approver_did == agent_did` fails, as with one-shot grants.
+- **No widening.** A grant waives the composition it names; a different combination appearing later is still denied.
+- **No travel.** Another agent, tool, workflow, or connection is a different scenario.
+- **No I/O in the leaf.** arctrust verifies; arcagent loads candidate grants from durable storage and supplies them on `PolicyContext.scenario_grants`, exactly as it supplies clearance and session capabilities.
+- **Still audited.** A scenario-granted allow is an ordinary policy decision and emits like any other — a standing grant removes the prompt, never the record.
+
+```python
+from arctrust import sign_scenario_grant
+
+grant = sign_scenario_grant(
+    operator=operator_identity,             # never the agent's own key
+    agent_did=agent.did,
+    tool_name="jira_create_issue",
+    composition=frozenset({"external_comms", "private_data"}),
+    origin="workflow:nightly-meeting-ingest",
+    connection="jira",
+)
+```
+
 ---
 
 ## Pillar 4 — Audit

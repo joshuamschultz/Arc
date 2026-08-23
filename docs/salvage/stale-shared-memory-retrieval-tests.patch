@@ -1,0 +1,93 @@
+diff --git a/packages/arcagent/tests/unit/modules/memory/test_shared_knowledge_tools.py b/packages/arcagent/tests/unit/modules/memory/test_shared_knowledge_tools.py
+index c52a4021..173c32af 100644
+--- a/packages/arcagent/tests/unit/modules/memory/test_shared_knowledge_tools.py
++++ b/packages/arcagent/tests/unit/modules/memory/test_shared_knowledge_tools.py
+@@ -11,6 +11,7 @@
+     knowledge_retrieve,
+     knowledge_save,
+     knowledge_search,
++    memory_search,
+ )
+ 
+ 
+@@ -22,6 +23,11 @@ def audit_event(self, event: str, detail: dict) -> None:
+         self.events.append((event, detail))
+ 
+ 
++class _PersonalBrain:
++    async def retrieve(self, _query: str, **_kwargs: object) -> str:
++        return '<memory-result source="personal">Personal recall.</memory-result>'
++
++
+ @pytest.fixture(autouse=True)
+ def _reset() -> None:
+     _runtime.reset()
+@@ -128,3 +134,68 @@ async def test_knowledge_retrieve_applies_configured_model_budget(monkeypatch, t
+     assert retrieved.endswith("</knowledge-document>")
+     stored = (tmp_path / "agent" / "knowledge" / f"{identifier}.md").read_text()
+     assert len(stored) > 100_000
++
++
++@pytest.mark.asyncio
++async def test_default_shared_knowledge_is_composed_into_normal_memory_search_after_restart(
++    monkeypatch, tmp_path
++) -> None:
++    monkeypatch.setenv("ARC_TEAM_ROOT", str(tmp_path / "fleet"))
++    from arcmemory.adapters import FleetSharedKnowledgeBackend
++
++    FleetSharedKnowledgeBackend.for_arc_team().root.mkdir(parents=True)
++    publisher = AgentIdentity.generate("test", "shared-publisher")
++    _runtime.configure(
++        config={}, workspace=tmp_path / "publisher", agent_did=publisher.did, identity=publisher
++    )
++    saved = await knowledge_save("personal", "Release", "Use the shared release procedure.")
++    personal_identifier = saved.removesuffix(".").split()[-1]
++    await knowledge_promote(personal_identifier)
++
++    _runtime.reset()
++    reader = AgentIdentity.generate("test", "shared-reader")
++    _runtime.configure(
++        config={}, workspace=tmp_path / "reader", agent_did=reader.did, identity=reader
++    )
++    state = _runtime.state()
++    state.brain = _PersonalBrain()
++    state.active = True
++
++    recalled = await memory_search("release procedure")
++
++    assert "Personal recall." in recalled
++    assert "Use the shared release procedure." in recalled
++    assert 'source="shared:' in recalled
++
++    _runtime.reset()
++    _runtime.configure(
++        config={}, workspace=tmp_path / "reader", agent_did=reader.did, identity=reader
++    )
++    state = _runtime.state()
++    state.brain = _PersonalBrain()
++    state.active = True
++    assert "Use the shared release procedure." in await memory_search("release procedure")
++
++
++@pytest.mark.asyncio
++async def test_normal_memory_search_keeps_personal_recall_when_shared_storage_is_absent(
++    monkeypatch, tmp_path
++) -> None:
++    monkeypatch.setenv("ARC_TEAM_ROOT", str(tmp_path / "fleet"))
++    telemetry = _Telemetry()
++    identity = AgentIdentity.generate("test", "no-shared-store")
++    _runtime.configure(
++        config={},
++        telemetry=telemetry,
++        workspace=tmp_path / "agent",
++        agent_did=identity.did,
++        identity=identity,
++    )
++    state = _runtime.state()
++    state.brain = _PersonalBrain()
++    state.active = True
++
++    recalled = await memory_search("anything")
++
++    assert recalled == '<memory-result source="personal">Personal recall.</memory-result>'
++    assert any(event == "memory.shared_recall_degraded" for event, _ in telemetry.events)

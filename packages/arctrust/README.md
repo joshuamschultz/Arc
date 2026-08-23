@@ -65,6 +65,7 @@ What makes `arctrust` the cryptographic foundation for accountable agents:
 - **Deny-by-default** — `PolicyPipeline` blocks everything not explicitly allowed
 - **Fail-closed** — Security failures block operations; never degrade to insecure state
 - **Classification labels** — Tag data with sensitivity levels; enforce no-read-up policy
+- **Scenario grants** — Approve a recurring *automated* scenario once so unattended workflows finish, without ever widening the gate for interactive work
 
 ### **Audit Infrastructure**
 - **WORM sink** — Write-once-read-many audit log; tamper evidence built in
@@ -255,6 +256,32 @@ A completed trifecta always requires a human. Approvals are operator-signed
 (never the agent's own DID) and reachable via arcui, arccli, or the owner's
 paired channel. Owner-identity pairing and per-tier URL trust resolution are
 formalized in the arctrust user-identity spec.
+
+**Standing approval for automation (`ScenarioGrant`):**
+
+A one-shot `ApprovalGrant` binds to a call hash, so it is spent as soon as the
+arguments change — correct for a human at a keyboard, fatal for a nightly
+workflow that would re-prompt an operator who is asleep. A `ScenarioGrant`
+binds instead to the five facts that make an action *the same scenario* each
+time it recurs, so it survives changing arguments without widening the gate:
+
+| Field | Meaning |
+|---|---|
+| `agent_did` | which agent acts |
+| `tool_name` | which tool it calls |
+| `composition` | which forbidden combination is waived — and only that one |
+| `origin` | the **non-interactive driver**, e.g. `workflow:nightly-meeting-ingest` |
+| `connection` | which external connection is reached, e.g. `jira` |
+
+`origin` is what keeps it enterprise-safe: only a named automated driver can
+match a grant, so interactive chat — which carries no origin — is never covered
+by a waiver earned by a workflow. Self-approval remains impossible (ASI09), a
+grant never travels to another agent/tool/workflow/connection, and every
+scenario-granted allow is still audited like any other decision.
+
+arctrust verifies; it never loads. Candidate grants arrive on
+`PolicyContext.scenario_grants`, supplied by arcagent from durable storage —
+the same seam that carries clearance and session capabilities into the leaf.
 
 ### Artifact Signing (`arctrust.artifact`)
 

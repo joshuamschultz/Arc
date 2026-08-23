@@ -22,6 +22,8 @@ src/arctrust/
   signer.py           # Signer seam — in-process / vault-transit, ed25519 / ecdsa-p256
   fips.py             # FIPS gate (signing + encryption)
   policy.py           # PolicyPipeline, Decision, ToolCall — first-DENY, fail-closed
+                      #   + ScenarioGrant: standing approval for one recurring
+                      #     automated scenario (agent/tool/composition/origin/connection)
   classification.py   # Classification ladder + no-read-up helpers
   audit.py            # AuditEvent, sinks (WormSink), emit(), verify_chain
   audit_cipher.py     # RecordCipher — seals WORM record content at rest (D-577)
@@ -57,6 +59,11 @@ Docs: `packages/arctrust/README.md`, repo `docs/trust-model.md`. Four Pillars (A
 - `paths.py` resolves the environment **per call**, never at import: `ARC_CONFIG_DIR`
   is routinely exported after the module loads.
 - Identity, Sign, Authorize, Audit belong here — do not reimplement upstairs.
+- **Grants are verified here, never loaded here.** `ScenarioGrant` candidates
+  arrive on `PolicyContext.scenario_grants` from arcagent, like clearance and
+  session capabilities. A standing grant must stay narrow (all five scenario
+  fields match exactly), must never match interactive work (`origin=None`), and
+  must never permit self-approval (ASI09).
 - Operator key ≠ agent identity; keep that distinction sharp.
 - Anything hashed for signing must go through `canonical_json` (or the established artifact path), not ad-hoc dumps.
 

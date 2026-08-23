@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-08-23
+
 - Knowledge → Connections now operates the full connected-source lifecycle:
   resource selection, mapping approval, sync/pause/resume/reindex/revoke,
   document search, typed datastore lookup, blob browsing, provenance, profile
