@@ -12,7 +12,12 @@ import arcllm
 import jsonschema
 
 from arcrun._messages import tool_result
-from arcrun.ledger import ToolExecutionIntent, ToolExecutionOutcome, tool_invocation_key
+from arcrun.ledger import (
+    CanonicalToolArgumentsError,
+    ToolExecutionIntent,
+    ToolExecutionOutcome,
+    tool_invocation_key,
+)
 from arcrun.sandbox import Sandbox
 from arcrun.state import RunState
 from arcrun.types import ParentRunContext, ToolContext
@@ -76,7 +81,11 @@ async def execute_tool_call(
 
     invocation_key: str | None = None
     if state.tool_ledger is not None:
-        invocation_key = tool_invocation_key(state.run_id, tc.id, tc.name, tc.arguments)
+        try:
+            invocation_key = tool_invocation_key(state.run_id, tc.id, tc.name, tc.arguments)
+        except CanonicalToolArgumentsError as exc:
+            bus.emit("tool.error", {"name": tc.name, "error": type(exc).__name__})
+            return tool_result(tc.id, "Error: tool arguments are not canonical JSON"), False
         intent = ToolExecutionIntent(
             invocation_key=invocation_key,
             run_id=state.run_id,
@@ -88,14 +97,18 @@ async def execute_tool_call(
             entry = await state.await_work(state.tool_ledger.begin(intent))
         except Exception as exc:
             message = f"Error: tool ledger unavailable: {type(exc).__name__}"
+            bus.emit("tool.error", {"name": tc.name, "error": type(exc).__name__})
             return tool_result(tc.id, message), False
         if entry.status == "completed" and entry.outcome is not None:
             bus.emit("tool.replayed", {"name": tc.name, "invocation_key": invocation_key})
+            bus.emit("tool.end", {"name": tc.name, "replayed": True})
+            state.tool_calls_made += 1
             return tool_result(tc.id, entry.outcome.content), entry.outcome.success
         if entry.status != "new":
             bus.emit(
                 "tool.reconciliation_required", {"name": tc.name, "invocation_key": invocation_key}
             )
+            bus.emit("tool.error", {"name": tc.name, "error": "reconciliation_required"})
             return tool_result(tc.id, "Error: prior tool intent requires reconciliation"), False
 
     ctx = ToolContext(
@@ -161,6 +174,7 @@ async def execute_tool_call(
             )
         except Exception as exc:
             message = f"Error: tool outcome not durable: {type(exc).__name__}"
+            bus.emit("tool.error", {"name": tc.name, "error": type(exc).__name__})
             return tool_result(tc.id, message), False
     result_digest, result_size = _digest_and_size(result)
     end_data: dict[str, Any] = {

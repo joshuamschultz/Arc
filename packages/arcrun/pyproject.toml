@@ -53,6 +53,7 @@ consider_namespace_packages = true
 pythonpath = ["../.."]
 markers = [
     "slow: live-runtime tests (real docker / Firecracker) excluded from the fast unit run",
+    "reliability_nightly: deterministic 10k-run non-live reliability profile",
     "requires_docker: needs a reachable Docker daemon; skipped locally, required in CI",
 ]
 

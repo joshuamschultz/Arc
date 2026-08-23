@@ -57,12 +57,15 @@ async def test_completed_outcome_replays_without_duplicate_side_effect() -> None
     first = await execute_tool_call(
         arcllm.ToolCall(id="call-1", name="write", arguments={}), _state(ledger, tool), Sandbox(None, EventBus("s"))
     )
+    replay_state = _state(ledger, tool)
     replay = await execute_tool_call(
-        arcllm.ToolCall(id="call-1", name="write", arguments={}), _state(ledger, tool), Sandbox(None, EventBus("s2"))
+        arcllm.ToolCall(id="call-1", name="write", arguments={}), replay_state, Sandbox(None, EventBus("s2"))
     )
 
     assert first[1] is replay[1] is True
     assert side_effects == 1
+    assert replay_state.tool_calls_made == 1
+    assert [event.type for event in replay_state.event_bus.events][-1] == "tool.end"
 
 
 @pytest.mark.asyncio
@@ -85,3 +88,8 @@ async def test_crash_after_intent_fails_closed_on_resume() -> None:
     )
     assert ok is False
     assert side_effects == 0
+
+
+def test_non_json_arguments_are_refused_without_identity_collision() -> None:
+    with pytest.raises(ValueError, match="canonical JSON"):
+        tool_invocation_key("run", "call", "tool", {"value": object()})
