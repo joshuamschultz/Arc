@@ -243,7 +243,12 @@ async def test_continuation_preserves_etag_versions_and_content_classification(
     assert second.objects[0].version == "new-etag"
     assert second.objects[0].content_hash == "new-etag"
     assert second.objects[0].metadata["classification"] == "internal"
-    assert client.list_calls[1]["ContinuationToken"] == "next-token"
+    continuation_calls = [
+        call for call in client.list_calls if call.get("ContinuationToken") == "next-token"
+    ]
+    assert continuation_calls == [
+        {"Bucket": "alpha", "Prefix": "docs/", "MaxKeys": 10, "ContinuationToken": "next-token"}
+    ]
 
 
 async def test_completed_inventory_diff_emits_tombstones_for_deleted_objects(
