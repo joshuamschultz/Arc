@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 from uuid import uuid4
 
+from arctrust.audit import AuditEvent, AuditSink, emit
 from arctrust.classification import dominates, parse_classification
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -106,8 +107,16 @@ class ReviewPort(Protocol):
 class ProfileReviewStore:
     """Workspace-local implementation of the reviewed profile-fact port."""
 
-    def __init__(self, workspace: Path) -> None:
+    def __init__(
+        self,
+        workspace: Path,
+        *,
+        agent_did: str = "",
+        audit_sink: AuditSink | None = None,
+    ) -> None:
         self._root = Path(workspace) / "memory" / "profile_reviews"
+        self._agent_did = agent_did
+        self._audit = audit_sink
 
     async def submit(
         self,
@@ -131,6 +140,7 @@ class ProfileReviewStore:
             classification=classification,
         )
         await asyncio.to_thread(self._write, fact)
+        self._emit("submit", fact)
         return fact
 
     async def list(
@@ -138,16 +148,20 @@ class ProfileReviewStore:
     ) -> list_type[ProfileFact]:
         """List candidate facts, optionally narrowed by decision and profile."""
         facts = await asyncio.to_thread(self._read_all)
-        return [
+        matches = [
             fact
             for fact in facts
             if (status is None or fact.status == status)
             and (profile_id is None or fact.profile_id == profile_id)
         ]
+        self._emit("list", target=profile_id or "", count=len(matches))
+        return matches
 
     async def get(self, fact_id: str) -> ProfileFact | None:
         """Fetch one candidate by opaque id."""
-        return await asyncio.to_thread(self._read, fact_id)
+        fact = await asyncio.to_thread(self._read, fact_id)
+        self._emit("get", fact, target=fact_id)
+        return fact
 
     async def approve(self, fact_id: str) -> ProfileFact | None:
         """Approve a pending fact and supersede the current same-field value."""
@@ -165,6 +179,7 @@ class ProfileReviewStore:
             }
         )
         await asyncio.to_thread(self._write, approved)
+        self._emit("approve", approved)
         return approved
 
     async def decline(self, fact_id: str) -> ProfileFact | None:
@@ -174,6 +189,7 @@ class ProfileReviewStore:
             return None
         declined = fact.model_copy(update={"status": ReviewStatus.DECLINED})
         await asyncio.to_thread(self._write, declined)
+        self._emit("decline", declined)
         return declined
 
     async def undo(self, fact_id: str) -> ProfileFact | None:
@@ -189,6 +205,7 @@ class ProfileReviewStore:
                 )
         undone = fact.model_copy(update={"status": ReviewStatus.UNDONE})
         await asyncio.to_thread(self._write, undone)
+        self._emit("undo", undone)
         return undone
 
     async def context(self, profile_id: str, *, clearance: str = "unclassified") -> ProfileContext:
@@ -201,24 +218,28 @@ class ProfileReviewStore:
         inferred = {
             fact.field: fact.value for fact in facts if fact.kind is ProfileFactKind.INFERRED
         }
-        return ProfileContext(
+        context = ProfileContext(
             profile_id=profile_id,
             static=static,
             dynamic=dynamic,
             inferred=inferred,
             facts=facts,
         )
+        self._emit("context", target=profile_id, count=len(facts))
+        return context
 
     async def recall(
         self, profile_id: str, query: str, *, clearance: str = "unclassified"
     ) -> list_type[ProfileFact]:
         """Text-match approved readable profile facts; no candidate ever surfaces."""
         needle = query.casefold()
-        return [
+        matches = [
             fact
             for fact in await self._approved_readable(profile_id, clearance)
             if needle in f"{fact.field} {fact.value}".casefold()
         ]
+        self._emit("recall", target=profile_id, count=len(matches))
+        return matches
 
     async def _current_for_field(self, candidate: ProfileFact) -> ProfileFact | None:
         facts = await self.list(status=ReviewStatus.APPROVED, profile_id=candidate.profile_id)
@@ -259,6 +280,31 @@ class ProfileReviewStore:
             except (OSError, ValueError):
                 continue
         return facts
+
+    def _emit(
+        self,
+        action: str,
+        fact: ProfileFact | None = None,
+        *,
+        target: str = "",
+        count: int | None = None,
+    ) -> None:
+        if self._audit is None or not self._agent_did:
+            return
+        resolved_target = target or (fact.profile_id if fact is not None else "")
+        payload = fact.fact_id if fact is not None else resolved_target
+        extra = {"count": count} if count is not None else {}
+        emit(
+            AuditEvent(
+                actor_did=self._agent_did,
+                action=f"memory.profile_review.{action}",
+                target=resolved_target,
+                outcome="allow",
+                payload_hash=hashlib.sha256(payload.encode("utf-8")).hexdigest(),
+                extra=extra,
+            ),
+            self._audit,
+        )
 
 
 __all__ = [

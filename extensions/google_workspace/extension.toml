@@ -113,6 +113,8 @@ same release's checksums.txt. [artifact] pins all four Arc can install for you.
 [tools]
 allow = [
   "google_gmail_labels",
+  "google_gmail_messages",
+  "google_gmail_message",
   "google_gmail_draft",
   "google_gmail_send",
   "google_drive_list",
@@ -124,6 +126,16 @@ allow = [
 [[tools.declared]]
 name = "google_gmail_labels"
 description = "List the Gmail labels on an account."
+classification = "read_only"
+
+[[tools.declared]]
+name = "google_gmail_messages"
+description = "List Gmail messages for connected-data indexing."
+classification = "read_only"
+
+[[tools.declared]]
+name = "google_gmail_message"
+description = "Read one Gmail message for connected-data indexing."
 classification = "read_only"
 
 [[tools.declared]]
@@ -169,6 +181,33 @@ default = "outbound"
 binary = "gog"
 probe_argv = ["--version"]
 install_instruction = "See [[host_requires]] in this bundle's extension.toml."
+
+[config.source]
+entrypoint = "arc_ext_google_workspace.source"
+
+[[config.cli.commands]]
+tool = "google_gmail_messages"
+argv = ["gmail", "messages", "list", "--json", "--readonly", "--wrap-untrusted", "--no-input"]
+description = "List Gmail messages for connected-data indexing."
+classification = "read_only"
+
+[[config.cli.commands.arguments]]
+name = "label"
+flag = "--label"
+
+[[config.cli.commands.arguments]]
+name = "limit"
+flag = "--max"
+
+[[config.cli.commands]]
+tool = "google_gmail_message"
+argv = ["gmail", "messages", "get", "--json", "--readonly", "--wrap-untrusted", "--no-input"]
+description = "Read one Gmail message for connected-data indexing."
+classification = "read_only"
+
+[[config.cli.commands.arguments]]
+name = "id"
+flag = "--id"
 
 # Every read command carries --readonly and --gmail-no-send: the binary refuses a
 # mutating API call from inside, so a read verb cannot become a write one even if

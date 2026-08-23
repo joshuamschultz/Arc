@@ -135,15 +135,13 @@ class ConnectedDataService:
 
     async def list_sources(self) -> tuple[SourceRuntimeStatus, ...]:
         """Return safe operational state for UI/operator surfaces."""
-        return tuple(
-            self._statuses.get(
-                registration.connection_id,
-                SourceRuntimeStatus(connection_id=registration.connection_id, status="pending"),
-            )
-            for registration in sorted(
-                await self._catalog.snapshot(), key=lambda entry: entry.connection_id
-            )
+        registrations = sorted(
+            await self._catalog.snapshot(), key=lambda entry: entry.connection_id
         )
+        for registration in registrations:
+            if registration.connection_id not in self._statuses:
+                await self._inspect_registration(registration)
+        return tuple(self._statuses[registration.connection_id] for registration in registrations)
 
     async def sync_now(self, connection_id: str) -> SourceOperationResult:
         """Schedule one source immediately; unknown or paused sources are refused."""
@@ -309,6 +307,22 @@ class ConnectedDataService:
             for resource in available
         )
 
+    async def list_review_items(
+        self, *, status: str | None = None, source_id: str | None = None
+    ) -> tuple[Any, ...]:
+        """Read provenance-bearing profile candidates through the ingest port seam."""
+        adapter = await self._first_ingest_adapter()
+        list_items = getattr(adapter, "list_review_items", None) if adapter is not None else None
+        if not callable(list_items):
+            return ()
+        return tuple(await list_items(status=status, source_id=source_id))
+
+    async def resolve_review(self, review_id: str, decision: str) -> Any | None:
+        """Apply an operator-authenticated review decision through the typed seam."""
+        adapter = await self._first_ingest_adapter()
+        resolve = getattr(adapter, "resolve_review", None) if adapter is not None else None
+        return None if not callable(resolve) else await resolve(review_id, decision)
+
     async def _monitor_loop(self) -> None:
         while not self._closed:
             registrations = await self._catalog.snapshot()
@@ -399,6 +413,42 @@ class ConnectedDataService:
                 description=description,
                 state=result,
             )
+
+    async def _inspect_registration(self, registration: SourceRegistration) -> None:
+        """Populate the safe descriptor before the operator sees a blank source row."""
+        connection_id = registration.connection_id
+        try:
+            description = await registration.adapter.inspect_source(
+                InspectSource(connection_id=connection_id)
+            )
+            source_id = ""
+            if self._ingest_factory is not None:
+                candidate = self._ingest_factory(description)
+                ingest = await candidate if inspect.isawaitable(candidate) else candidate
+                source_id = _canonical_source_id(ingest, description)
+            self._statuses[connection_id] = SourceRuntimeStatus(
+                connection_id=connection_id,
+                source_id=source_id,
+                status="awaiting_mapping",
+                description=description,
+            )
+        except Exception:
+            self._statuses[connection_id] = SourceRuntimeStatus(
+                connection_id=connection_id, status="failed", detail="source_inspection_failed"
+            )
+
+    async def _first_ingest_adapter(self) -> IngestPort | None:
+        if self._ingest_factory is None:
+            return None
+        registrations = await self._catalog.snapshot()
+        if not registrations:
+            return None
+        registration = registrations[0]
+        source = await registration.adapter.inspect_source(
+            InspectSource(connection_id=registration.connection_id)
+        )
+        candidate = self._ingest_factory(source)
+        return await candidate if inspect.isawaitable(candidate) else candidate
 
     async def _open_store(self) -> Any:
         if self._sync_store_opener is None:

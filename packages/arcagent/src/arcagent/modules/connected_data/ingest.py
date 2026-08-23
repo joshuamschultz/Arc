@@ -187,6 +187,25 @@ class ArcMemoryIngestAdapter(IngestPort):
         row = await self._approval_store.get(approval_id)
         return "missing" if row is None else str(row.status)
 
+    async def list_review_items(
+        self, *, status: str | None = None, source_id: str | None = None
+    ) -> list[Any]:
+        """Expose ArcMemory's reviewed-profile seam without leaking its implementation."""
+        del source_id
+        module = import_module("arcmemory.profile")
+        review_status = None if status is None else module.ReviewStatus(status)
+        return await self._connected_service().review_port.list(status=review_status)
+
+    async def resolve_review(self, review_id: str, decision: str) -> Any | None:
+        review = self._connected_service().review_port
+        if decision == "approve":
+            return await review.approve(review_id)
+        if decision == "decline":
+            return await review.decline(review_id)
+        if decision == "undo":
+            return await review.undo(review_id)
+        raise ValueError("invalid review decision")
+
     async def ingest(
         self,
         source: SourceDescription,

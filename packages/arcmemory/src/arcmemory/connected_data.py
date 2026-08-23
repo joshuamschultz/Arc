@@ -202,7 +202,9 @@ class ConnectedDataService:
         self._db = MemoryDB(self._workspace)
         self._embedder = embedder
         self._object_state = object_state or InMemoryObjectState()
-        self._reviews = review_port or ProfileReviewStore(self._workspace)
+        self._reviews = review_port or ProfileReviewStore(
+            self._workspace, agent_did=self._agent_did, audit_sink=self._audit
+        )
 
     def _source_id(self, source: ConnectedSource) -> str:
         return source_instance_id(self._agent_did, source)

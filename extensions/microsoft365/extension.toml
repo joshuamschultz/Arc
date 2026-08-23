@@ -173,6 +173,9 @@ argv = [
 ]
 client_name = "arc"
 
+[config.source]
+entrypoint = "arc_ext_microsoft365.source"
+
 [config.mcp.resilience]
 timeout_seconds = 60.0
 max_attempts = 3

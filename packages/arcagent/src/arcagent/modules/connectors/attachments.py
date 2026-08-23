@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import importlib
 import sys
 from collections.abc import Iterator, Mapping
 from pathlib import Path
@@ -18,6 +19,7 @@ from arcagent.extension.manifest import ExtensionManifest
 from arcagent.extension.mcp_policy import McpResilience, McpToolPolicy
 from arcagent.extension.native_attachment import NativeAttachment
 from arcagent.extension.secrets import Secret
+from arcagent.extension.source import SourceAdapter
 from arcagent.modules.connectors.credential_placement import (
     placement_environment,
     unplaced_secrets,
@@ -69,6 +71,34 @@ class _McpConfig(BaseModel):
     tools: dict[str, McpToolPolicy] = Field(default_factory=dict)
 
 
+class _SourceConfig(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    entrypoint: str
+
+
+class _SourceEnabledAttachment:
+    """Preserve an attachment's interactive hook while exposing its source adapter."""
+
+    def __init__(self, delegate: ExtensionAttachment, source: SourceAdapter) -> None:
+        self._delegate = delegate
+        self._source = source
+
+    def requirements(self) -> Any:
+        return self._delegate.requirements()
+
+    async def probe(self) -> Any:
+        return await self._delegate.probe()
+
+    async def describe_tools(self) -> Any:
+        return await self._delegate.describe_tools()
+
+    async def invoke(self, tool: str, args: dict[str, Any]) -> Any:
+        return await self._delegate.invoke(tool, args)
+
+    def source_adapter(self) -> SourceAdapter:
+        return self._source
+
+
 def build_attachment(
     manifest: ExtensionManifest, bundle: Path, secrets: Mapping[str, Secret]
 ) -> ExtensionAttachment:
@@ -92,7 +122,7 @@ def build_attachment(
                 unplaced=unplaced,
             )
         declared = _CliConfig.model_validate(manifest.config.get("cli", {}))
-        return CliAttachment(
+        attachment = CliAttachment(
             binary=declared.binary,
             commands=declared.commands,
             probe_argv=declared.probe_argv,
@@ -101,6 +131,7 @@ def build_attachment(
             env=placement_environment(manifest, secrets),
             values=visible_values(manifest, secrets),
         )
+        return _with_source_adapter(manifest, bundle, attachment)
     if kind == "mcp":
         from arcagent.extension.mcp_attachment import McpAttachment, StdioTransport
 
@@ -128,13 +159,30 @@ def build_attachment(
             ),
             install_instruction=mcp_config.install_instruction,
         )
-        return McpAttachment(
+        attachment = McpAttachment(
             transport,
             tools=mcp_config.tools,
             resilience=mcp_config.resilience,
             client_name=mcp_config.client_name,
         )
+        return _with_source_adapter(manifest, bundle, attachment)
     raise _refuse(f"unknown attachment kind {kind!r}", attachment=kind)
+
+
+def _with_source_adapter(
+    manifest: ExtensionManifest, bundle: Path, attachment: ExtensionAttachment
+) -> ExtensionAttachment:
+    source_config = manifest.config.get("source")
+    if source_config is None:
+        return attachment
+    entrypoint = _SourceConfig.model_validate(source_config).entrypoint
+    with _importable(bundle):
+        module = importlib.import_module(entrypoint)
+        factory = getattr(module, "build_source_adapter", None)
+        source = factory({"attachment": attachment}) if callable(factory) else None
+    if not isinstance(source, SourceAdapter):
+        raise _refuse("source entrypoint did not return a SourceAdapter", entrypoint=entrypoint)
+    return _SourceEnabledAttachment(attachment, source)
 
 
 __all__ = ["build_attachment", "placement_environment", "visible_values"]
