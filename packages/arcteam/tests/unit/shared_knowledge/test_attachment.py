@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import builtins
+
 import pytest
 from arcmemory.adapters.personal_knowledge import PersonalKnowledgeAdapter
 from arctrust import AgentIdentity
@@ -50,3 +52,34 @@ async def test_attachment_exposes_shared_lifecycle_tools_and_composes_promotion(
 
     assert promoted.outcome.value == "ok"
     assert "Rotate the key." in retrieved.content
+
+
+@pytest.mark.asyncio
+async def test_attachment_reports_a_degraded_capability_when_arcmemory_is_absent(
+    monkeypatch, tmp_path
+) -> None:
+    identity = AgentIdentity.generate("test", "missing-memory")
+    access = _Access(identity)
+    personal = PersonalKnowledgeAdapter(tmp_path / "agent", identity.did)
+    personal_ref = await personal.save(_Draft(), access)
+    attachment = SharedKnowledgeAttachment(
+        FleetSharedKnowledgeService.for_arc_team(tmp_path),
+        personal_knowledge=personal,
+        access=access,
+        signer=identity,
+    )
+    import_module = builtins.__import__
+
+    def reject_arcmemory(name: str, *args: object, **kwargs: object) -> object:
+        if name == "arcmemory.adapters.shared_knowledge":
+            raise ImportError("arcmemory absent")
+        return import_module(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", reject_arcmemory)
+
+    result = await attachment.invoke(
+        "shared_knowledge_promote", {"reference": personal_ref.identifier}
+    )
+
+    assert result.outcome.value == "error"
+    assert "unavailable" in result.content
