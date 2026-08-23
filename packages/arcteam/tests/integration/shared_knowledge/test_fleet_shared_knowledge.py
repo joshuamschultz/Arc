@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import arcagent
 import pytest
 from arcmemory.adapters.personal_knowledge import PersonalKnowledgeAdapter
 from arctrust import AgentIdentity
 
-from arcteam.shared_knowledge import FleetSharedKnowledgeService
+from arcteam.shared_knowledge import (
+    ComposedSharedKnowledgeAgent,
+    FleetSharedKnowledgeComposition,
+    FleetSharedKnowledgeService,
+)
+from arcteam.team import Team
 
 
 class _Access:
@@ -64,3 +70,77 @@ async def test_no_read_up_and_revocation_fail_closed(tmp_path) -> None:
     await service.revoke(shared_ref.identifier, owner_access)
     with pytest.raises(FileNotFoundError, match="revoked"):
         await service.read(shared_ref.identifier, owner_access)
+
+
+def _agent_config(tmp_path, name: str) -> arcagent.ArcAgentConfig:
+    return arcagent.ArcAgentConfig.model_validate(
+        {
+            "agent": {
+                "name": name,
+                "org": "test",
+                "type": "executor",
+                "workspace": str(tmp_path / name / "workspace"),
+            },
+            "llm": {"model": "test/model"},
+            "identity": {"key_dir": str(tmp_path / name / "keys")},
+            "telemetry": {"enabled": False},
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_composition_installs_reloads_and_removes_tools_on_two_started_agents(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc"))
+    publisher = arcagent.ArcAgent(_agent_config(tmp_path, "publisher"))
+    reader = arcagent.ArcAgent(_agent_config(tmp_path, "reader"))
+    await publisher.startup()
+    await reader.startup()
+    try:
+        shared_names = {
+            "shared_knowledge_promote",
+            "shared_knowledge_retrieve",
+            "shared_knowledge_search",
+            "shared_knowledge_revoke",
+        }
+        assert not shared_names & {tool.name for tool in publisher.registered_tools}
+        assert not shared_names & {tool.name for tool in reader.registered_tools}
+
+        publisher_access = arcagent.KnowledgeAccess(publisher.did, "UNCLASSIFIED")
+        reader_access = arcagent.KnowledgeAccess(reader.did, "UNCLASSIFIED")
+        publisher_personal = PersonalKnowledgeAdapter(
+            tmp_path / "publisher-personal", publisher.did
+        )
+        reader_personal = PersonalKnowledgeAdapter(tmp_path / "reader-personal", reader.did)
+        team = Team(
+            id="team:test",
+            name="test",
+            members=[publisher.did, reader.did],
+            default_channel="channel://test",
+        )
+        composition = FleetSharedKnowledgeComposition(
+            team, FleetSharedKnowledgeService.for_arc_team(tmp_path)
+        )
+        members = [
+            ComposedSharedKnowledgeAgent(
+                publisher, publisher_personal, publisher_access, publisher.extension_signer
+            ),
+            ComposedSharedKnowledgeAgent(
+                reader, reader_personal, reader_access, reader.extension_signer
+            ),
+        ]
+
+        await composition.start(members)
+        assert shared_names <= {tool.name for tool in publisher.registered_tools}
+        assert shared_names <= {tool.name for tool in reader.registered_tools}
+
+        await composition.reload(members[0])
+        assert shared_names <= {tool.name for tool in publisher.registered_tools}
+
+        await composition.stop(members)
+        assert not shared_names & {tool.name for tool in publisher.registered_tools}
+        assert not shared_names & {tool.name for tool in reader.registered_tools}
+    finally:
+        await publisher.shutdown()
+        await reader.shutdown()

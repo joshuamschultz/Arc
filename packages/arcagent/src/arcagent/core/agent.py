@@ -51,6 +51,7 @@ from arcagent.core.agent_dispatch import dispatch_stream
 from arcagent.core.agent_lifecycle import setup_capabilities
 from arcagent.core.background_tasks import BackgroundTaskSupervisor
 from arcagent.core.config import ArcAgentConfig
+from arcagent.core.errors import ExtensionError
 from arcagent.core.model_manager import (
     create_arcllm_bridge,
     create_arcrun_bridge,
@@ -66,8 +67,10 @@ from arcagent.core.session_internal.capability_ledger import (
 )
 from arcagent.core.telemetry import AgentTelemetry
 from arcagent.core.tool_policy import build_pipeline
-from arcagent.core.tool_registry import RegisteredTool, ToolRegistry
+from arcagent.core.tool_registry import RegisteredTool, ToolRegistry, ToolTransport
 from arcagent.core.vault_resolver import _validate_vault_backend, create_vault_resolver
+from arcagent.extension import ExtensionAttachment
+from arcagent.extension.bridge import BridgeReport, CapabilityBridge
 from arcagent.streaming import (
     DeliveryStreamEvent,
     DeliveryTerminalEvent,
@@ -112,6 +115,24 @@ class _LifecycleState(Enum):
     STARTING = "starting"
     STARTED = "started"
     STOPPING = "stopping"
+
+
+class _ExtensionSigner:
+    """Narrow signing capability supplied to a verified external attachment."""
+
+    def __init__(self, identity: AgentIdentity) -> None:
+        self._identity = identity
+
+    @property
+    def public_key(self) -> bytes:
+        return self._identity.public_key
+
+    @property
+    def algorithm(self) -> str:
+        return self._identity.algorithm
+
+    def sign(self, message: bytes) -> bytes:
+        return self._identity.sign(message)
 
 
 __all__ = [
@@ -164,6 +185,7 @@ class ArcAgent:
         self._witness: WitnessAnchor | None = None
         self._bus: ModuleBus | None = None
         self._tool_registry: ToolRegistry | None = None
+        self._attached_extension_tools: dict[str, set[str]] = {}
         self._context: ContextManager | None = None
         # Keyed pool of sessions — one SessionManager per conversation
         # (a Slack thread, a UI tab, an agent-to-agent channel, a CLI key).
@@ -1203,6 +1225,16 @@ class ArcAgent:
         return self._identity.did if self._identity is not None else ""
 
     @property
+    def extension_signer(self) -> Signer:
+        """A narrow signing capability for an already-attached extension."""
+        if self._identity is None:
+            raise ExtensionError(
+                code="AGENT_NOT_STARTED",
+                message="extensions require a started agent identity",
+            )
+        return _ExtensionSigner(self._identity)
+
+    @property
     def skills(self) -> list[SkillEntry]:
         """All registered skill entries."""
         if self._capability_registry is None:
@@ -1221,6 +1253,42 @@ class ArcAgent:
         if self._tool_registry is None:
             return []
         return list(self._tool_registry.tools.values())
+
+    async def attach_extension(
+        self, extension_id: str, attachment: ExtensionAttachment
+    ) -> BridgeReport:
+        """Install one external attachment through the governed tool registry."""
+        if not extension_id.strip():
+            raise ExtensionError(code="EXTENSION_ID_REQUIRED", message="extension id is required")
+        async with self._lifecycle_lock:
+            registry = self._tool_registry
+            if self._lifecycle_state is not _LifecycleState.STARTED or registry is None:
+                raise ExtensionError(
+                    code="AGENT_NOT_STARTED",
+                    message="extensions can only attach to a started agent",
+                )
+            specs = await attachment.describe_tools()
+            bridge = CapabilityBridge(
+                registry=registry,
+                attachment=attachment,
+                transport=ToolTransport.NATIVE,
+                source=f"extension:{extension_id}",
+            )
+            report = bridge.replace_owned(
+                self._attached_extension_tools.get(extension_id, set()), specs
+            )
+            self._attached_extension_tools[extension_id] = set(report.registered)
+            return report
+
+    async def detach_extension(self, extension_id: str) -> tuple[str, ...]:
+        """Remove every tool contributed by one external attachment."""
+        async with self._lifecycle_lock:
+            registry = self._tool_registry
+            names = self._attached_extension_tools.pop(extension_id, set())
+            if registry is None or not names:
+                return ()
+            registry.replace_owned(names, [])
+            return tuple(sorted(names))
 
     async def shutdown(self) -> None:
         """Reverse-order teardown of all components.
@@ -1303,6 +1371,7 @@ class ArcAgent:
                     await bounded("closing LLM model", model.close())
                 self._model = None
             finally:
+                self._attached_extension_tools.clear()
                 self._runtime_bindings.clear()
                 self._run_coordinator.clear()
                 self._run_finalizers.clear()

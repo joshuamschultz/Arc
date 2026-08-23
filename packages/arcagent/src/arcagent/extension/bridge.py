@@ -132,6 +132,20 @@ class CapabilityBridge:
                 denied.append(spec.name)
         return BridgeReport(registered=tuple(registered), denied=tuple(denied))
 
+    def replace_owned(self, owned_names: set[str], specs: Iterable[ToolSpec]) -> BridgeReport:
+        """Atomically replace one attachment's governed tool contribution."""
+        replacements: list[RegisteredTool] = []
+        denied: list[str] = []
+        for spec in specs:
+            if self._allow is not None and spec.name not in self._allow:
+                denied.append(spec.name)
+                continue
+            replacements.append(self._to_registered_tool(spec))
+        accepted = self._registry.replace_owned(owned_names, replacements)
+        registered = tuple(tool.name for tool in replacements if tool.name in accepted)
+        denied.extend(tool.name for tool in replacements if tool.name not in accepted)
+        return BridgeReport(registered=registered, denied=tuple(denied))
+
     def _to_registered_tool(self, spec: ToolSpec) -> RegisteredTool:
         """Translate one spec, carrying the fields the trifecta gate reads."""
         return RegisteredTool(
