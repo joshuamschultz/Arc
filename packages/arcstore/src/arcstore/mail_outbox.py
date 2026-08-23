@@ -79,9 +79,7 @@ class MailOutbox:
                 consumer_id,
                 now + timedelta(seconds=self._lease_seconds),
             )
-        return tuple(
-            item.model_copy(update={"attempts": item.attempts + 1}) for item in claimed
-        )
+        return tuple(item.model_copy(update={"attempts": item.attempts + 1}) for item in claimed)
 
     def ack(self, consumer_id: str, event_id: str) -> bool:
         lease = self._lease(event_id)
@@ -195,7 +193,8 @@ class PostgresMailOutbox:
         rows = await self._backend.claim_mail(consumer_id, limit=limit)
         return tuple(
             MailOutboxEntry(
-                event_id=row["event_id"], envelope=dict(row["envelope"]),
+                event_id=row["event_id"],
+                envelope=dict(row["envelope"]),
                 attempts=row["attempts"],
                 available_at=row.get("available_at") or datetime.now(UTC),
             )
@@ -203,11 +202,13 @@ class PostgresMailOutbox:
         )
 
     async def ack(self, consumer_id: str, event_id: str) -> bool:
-        return await self._backend.ack_mail(consumer_id, event_id)
+        return bool(await self._backend.ack_mail(consumer_id, event_id))
 
     async def nack(self, consumer_id: str, event_id: str, *, retry_after_seconds: float) -> bool:
-        return await self._backend.nack_mail(
-            consumer_id, event_id, retry_after_seconds=retry_after_seconds
+        return bool(
+            await self._backend.nack_mail(
+                consumer_id, event_id, retry_after_seconds=retry_after_seconds
+            )
         )
 
 
