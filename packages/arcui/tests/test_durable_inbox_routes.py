@@ -8,6 +8,7 @@ from pathlib import Path
 from arcgateway.team_roster import RosterEntry
 from arcstore.inbox import Handoff, Message, ParticipantRole
 from arcstore.inbox_projection import DurableInboxService, participant
+from arcteam.mail import AgentMailService
 from packages.arcstore.tests.unit.inbox_fake import FakeInboxRepository
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
@@ -31,6 +32,11 @@ class _DeliveryPort:
         pass
 
 
+class _MailTransport:
+    async def send(self, message: object) -> object:
+        return message
+
+
 def _app() -> tuple[Starlette, AuthConfig, DurableInboxService]:
     auth = AuthConfig({"viewer_token": "viewer", "operator_token": "operator"})
     service = DurableInboxService(FakeInboxRepository(), delivery_port=_DeliveryPort())
@@ -39,6 +45,7 @@ def _app() -> tuple[Starlette, AuthConfig, DurableInboxService]:
     app.state.auth_config = auth
     app.state.audit = UIAuditLogger(enabled=False)
     app.state.inbox_service = service
+    app.state.agent_mail = AgentMailService(_MailTransport(), service)
     app.state.inbox_clearance = "UNCLASSIFIED"
     app.state.roster_provider = lambda: [
         RosterEntry(

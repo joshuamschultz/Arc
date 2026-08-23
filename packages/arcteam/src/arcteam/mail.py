@@ -9,11 +9,14 @@ Operator gateway sessions and channel chat never enter this service.
 from __future__ import annotations
 
 import hashlib
+import logging
 from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from arcteam.types import DeliveryKind, Message
+
+_logger = logging.getLogger("arcteam.mail")
 
 
 class MailSendRequest(BaseModel):
@@ -146,14 +149,13 @@ class AgentMailService:
         if not recipients:
             raise ValueError("a reply requires another participant")
         event_id = _stable_id("message", thread_id, sender.participant_id, idempotency_key)
-        copies = await self._store.record_event(
-            event_id=event_id,
+        message = await self._store.reply(
+            thread_id,
             sender=sender,
-            recipients=recipients,
             body=body,
-            external_thread_id=thread_id,
-            reply_to_event_id=reply_to_id,
-            trace=_trace(thread.classification),
+            reply_to_id=reply_to_id,
+            idempotency_key=idempotency_key,
+            classification_max=classification_max,
         )
         envelope = Message(
             id=event_id,
@@ -168,9 +170,9 @@ class AgentMailService:
         )
         try:
             await self._transport.send(envelope)
-        except Exception:  # reason: durable reply remains available for redelivery
-            pass
-        return copies[0]
+        except Exception as exc:  # reason: durable reply remains available for redelivery
+            _logger.warning("agent mail reply delivery pending: %s", type(exc).__name__)
+        return message
 
     async def create_handoff(self, *args: Any, **kwargs: Any) -> Any:
         return await self._store.create_handoff(*args, **kwargs)

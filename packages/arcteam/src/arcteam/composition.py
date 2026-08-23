@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from arctrust import AgentIdentity
+
     from arcteam.crypto import MessageSigner
     from arcteam.storage import StorageBackend
     from arcteam.types import Entity
@@ -45,7 +46,9 @@ async def make_backend(nats_url: str) -> StorageBackend:
     try:
         return await NatsBackend.connect(nats_url)
     except errors as exc:
-        _logger.warning("NATS unavailable at configured endpoint: %s", exc)
+        _logger.warning(
+            "NATS unavailable at configured endpoint; using the in-memory bus: %s", exc
+        )
         return MemoryBackend()
 
 
