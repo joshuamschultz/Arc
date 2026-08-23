@@ -3,9 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
-from arcteam.mail import AgentMailService, MailSendRequest
 from arcstore.mail_outbox import MailOutbox
+from arctrust import AgentIdentity
+
+from arcteam.crypto import MessageSigner, verify_message
+from arcteam.mail import AgentMailService, MailSendRequest
+from arcteam.types import Message
 
 
 class _Store:
@@ -80,3 +83,19 @@ async def test_mail_outbox_replays_after_transport_restart(tmp_path: Path) -> No
         pending.message_id,
         replayed.message_id,
     ]
+
+
+@pytest.mark.asyncio
+async def test_mail_is_signed_before_it_enters_the_durable_outbox(tmp_path: Path) -> None:
+    identity = AgentIdentity.generate("test", "mail-sender")
+    outbox = MailOutbox(tmp_path / "mail-outbox.jsonl")
+    await AgentMailService(
+        _Transport(fail=True),
+        _Store(),
+        outbox=outbox,
+        signer=MessageSigner.from_identity(identity),
+    ).send(_request(sender=identity.did))
+
+    envelope = Message.model_validate(outbox.pending()[0].envelope)
+    assert envelope.signer_did == identity.did
+    assert verify_message(envelope, identity.public_key) is True

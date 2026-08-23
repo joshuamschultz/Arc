@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from arcstore.mail_outbox import MailOutbox
 from pydantic import BaseModel, ConfigDict, Field
 
+from arcteam.crypto import MessageSigner, new_nonce, sign_message
 from arcteam.types import DeliveryKind, Message
 
 _logger = logging.getLogger("arcteam.mail")
@@ -112,11 +114,13 @@ class AgentMailService:
         *,
         outbox: MailOutbox | None = None,
         worker_id: str = "arc-team-mail",
+        signer: MessageSigner | None = None,
     ) -> None:
         self._transport = transport
         self._store = store
         self._outbox = outbox
         self._worker_id = worker_id
+        self._signer = signer
 
     async def send(self, request: MailSendRequest) -> MailSendResult:
         """Persist mail before NATS delivery and report delivery failures as pending."""
@@ -152,6 +156,7 @@ class AgentMailService:
             idempotency_key=request.idempotency_key,
             classification=request.classification,
         )
+        self._sign_envelope(envelope)
         if self._outbox is None:
             try:
                 sent = await self._transport.send(envelope)
@@ -217,6 +222,7 @@ class AgentMailService:
             idempotency_key=idempotency_key,
             classification=thread.classification,
         )
+        self._sign_envelope(envelope)
         if self._outbox is not None:
             self._outbox.enqueue(event_id, envelope.model_dump(mode="json"))
             await MailDeliveryWorker(
@@ -228,6 +234,15 @@ class AgentMailService:
             except Exception as exc:  # reason: durable reply remains available for redelivery
                 _logger.warning("agent mail reply delivery pending: %s", type(exc).__name__)
         return message
+
+    def _sign_envelope(self, envelope: Message) -> None:
+        """Sign before persistence so an outbox edit cannot become new mail."""
+        if self._signer is None:
+            return
+        envelope.ts = envelope.ts or datetime.now(UTC).isoformat()
+        envelope.signer_did = self._signer.did
+        envelope.nonce = new_nonce()
+        sign_message(envelope, self._signer.private_key)
 
     async def create_handoff(self, *args: Any, **kwargs: Any) -> Any:
         return await self._store.create_handoff(*args, **kwargs)
