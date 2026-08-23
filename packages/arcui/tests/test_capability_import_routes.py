@@ -58,6 +58,15 @@ def _archive(*entries: tuple[str, bytes]) -> bytes:
     return buffer.getvalue()
 
 
+def _folder_archive() -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for directory in ("portable/", "portable/skills/", "portable/skills/imported/"):
+            archive.writestr(directory, b"")
+        archive.writestr("portable/skills/imported/SKILL.md", _SKILL)
+    return buffer.getvalue()
+
+
 def _client(tmp_path: Path) -> tuple[TestClient, Path, _Audit]:
     workspace = tmp_path / "ada" / "workspace"
     workspace.mkdir(parents=True)
@@ -113,6 +122,19 @@ def test_upload_returns_review_evidence_without_activating_capabilities(tmp_path
     assert listed.status_code == 200
     assert listed.json()["imports"][0]["import_id"] == body["import_id"]
     assert "source" not in listed.json()["imports"][0]
+
+
+def test_browser_upload_accepts_a_normal_zipped_folder(tmp_path: Path) -> None:
+    client, _, _ = _client(tmp_path)
+
+    response = client.post(
+        "/api/agents/ada/capability-imports",
+        headers={"Authorization": "Bearer viewer"},
+        files={"file": ("portable.zip", _folder_archive(), "application/zip")},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["skills"] == ["imported"]
 
 
 def test_upload_rejects_unsafe_archive_without_creating_staging(tmp_path: Path) -> None:

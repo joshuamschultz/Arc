@@ -52,6 +52,32 @@ def test_intake_extracts_only_supported_layout_to_content_addressed_roots(tmp_pa
     assert stat.S_IMODE(result.quarantine_path.stat().st_mode) == 0o600
 
 
+def test_intake_accepts_normal_folder_zip_with_directories_and_one_wrapper(
+    tmp_path: Path,
+) -> None:
+    archive_path = tmp_path / "portable.zip"
+    with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for directory in (
+            "portable/",
+            "portable/skills/",
+            "portable/skills/imported/",
+            "portable/skills/imported/references/",
+            "portable/tools/",
+        ):
+            archive.writestr(directory, b"")
+        archive.writestr("portable/skills/imported/SKILL.md", _skill())
+        archive.writestr("portable/skills/imported/references/guide.md", b"guide")
+        archive.writestr("portable/tools/hello.py", b"x")
+
+    result = intake(archive_path, tmp_path / "agent" / "capabilities")
+
+    assert [entry.path for entry in result.files] == [
+        "skills/imported/SKILL.md",
+        "skills/imported/references/guide.md",
+        "tools/hello.py",
+    ]
+
+
 def test_intake_is_deterministic_for_same_archive(tmp_path: Path) -> None:
     archive = _zip(
         tmp_path / "capabilities.zip",

@@ -141,6 +141,7 @@ def _preflight_zip(
                 candidates.append(_Candidate(path, info.file_size, info.compress_size, info))
     except (OSError, zipfile.BadZipFile, NotImplementedError) as exc:
         raise CapabilityImportSourceError("unreadable ZIP source") from exc
+    candidates = _strip_single_wrapper(candidates)
     _check_count(candidates, limits)
     return candidates, _file_digest(source), source.stat().st_size
 
@@ -190,8 +191,30 @@ def _reject_zip_special(info: zipfile.ZipInfo) -> None:
     kind = stat.S_IFMT(mode)
     if info.flag_bits & 0x1:
         raise CapabilityImportSourceError("encrypted ZIP entries are not accepted")
+    if info.is_dir():
+        if kind not in (0, stat.S_IFDIR):
+            raise CapabilityImportSourceError("ZIP contains a non-regular file entry")
+        return
     if kind not in (0, stat.S_IFREG):
         raise CapabilityImportSourceError("ZIP contains a non-regular file entry")
+
+
+def _strip_single_wrapper(candidates: list[_Candidate]) -> list[_Candidate]:
+    """Accept the one top-level folder produced by ordinary ZIP applications."""
+    if not candidates or any(len(candidate.path.parts) < 2 for candidate in candidates):
+        return candidates
+    roots = {candidate.path.parts[0] for candidate in candidates}
+    if len(roots) != 1 or next(iter(roots)) in {"skills", "tools"}:
+        return candidates
+    return [
+        _Candidate(
+            PurePosixPath(*candidate.path.parts[1:]),
+            candidate.size,
+            candidate.compressed_size,
+            candidate.source,
+        )
+        for candidate in candidates
+    ]
 
 
 def _check_zip_limits(info: zipfile.ZipInfo, limits: CapabilityImportLimits) -> None:
