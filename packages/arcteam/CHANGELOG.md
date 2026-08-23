@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Documented the agreed removable fleet direction (`arcteam → arcagent` and
+  `arcteam → arcmemory`) and marked the current reverse ArcAgent
+  messaging/knowledge bootstrap as an alpha migration gap. No composition
+  implementation or package dependency changed.
+
 ## [0.8.0] - 2026-08-22
 
 - ArcFlow headless service, attached CLI completion, durable runner leases,

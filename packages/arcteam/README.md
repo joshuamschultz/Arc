@@ -26,7 +26,8 @@ Think of it as a tiny Slack-for-agents:
 - 🧭 **ArcFlow workflows** — named, signed, deterministic node graphs (SPEC-061)
 - 🪵 **Operator-signed audit chain** — every operation tamper-evident and non-repudiable
 - 💾 **Pluggable storage** — NATS JetStream for production, in-memory for tests
-- 🧠 **Team memory** — per-entity memory index with dirty tracking
+- 🧠 **Legacy team memory** — currently shipped compatibility surface; not the
+  permanent generic knowledge layer
 
 > 🛡️ **Every message audited. Asymmetrically signed chain. Per-entity DIDs. No shared credentials.**
 
@@ -79,10 +80,17 @@ flowchart TB
     arcteam --> arctrust[arctrust<br/>sign · audit]:::leaf
 ```
 
-`arcteam` sits at the **coordination / workflows** layer. It depends **down** on `arcstore`
-(the durable tasks/runs substrate ArcFlow instantiates onto) and `arctrust` (the signing
-primitive and audit-event schema). It never imports **up** into `arcagent`, `arcrun`, `arcui`,
-`arccli`, or `arcgateway`.
+`arcteam` currently sits at the **coordination / workflows** layer. The published wheel depends
+on `arcstore` (the durable tasks/runs substrate ArcFlow instantiates onto) and `arctrust` (the
+signing primitive and audit-event schema). This is not yet the agreed fleet composition graph.
+
+The alpha target is `arcteam → arcagent` and `arcteam → arcmemory` through public typed
+contracts: ArcTeam composes standalone agents, agent inboxes, fleet tools/skills, and
+shared-knowledge governance, while ArcMemory retains generic knowledge mechanics. The current
+optional ArcAgent messaging/knowledge integration imports ArcTeam and constructs a fleet shared
+backend in the reverse direction. That is a known migration gap, not a supported boundary or a
+reason to build new work on the reverse edge. See the authoritative
+[fleet-layering guide](../../docs/concepts/fleet-layering.md).
 
 The audit chain is signed with the **operator's** key (the audit authority, resolved via
 `arctrust`/`arccli`'s operator-key custody), never a team member's own DID, so no agent can
@@ -99,7 +107,7 @@ pip install arcteam            # pulls arcstore + arctrust
 
 ---
 
-## 🧪 Quick Example
+## 🧪 Transport quick example
 
 ```python
 from arcteam import MessagingService, EntityRegistry, Entity, EntityType, Message, MsgType, Priority

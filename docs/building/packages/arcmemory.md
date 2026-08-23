@@ -12,14 +12,23 @@
 > PostgreSQL/pgvector index implements the same removable index port, and signed
 > knowledge can be explicitly promoted from personal scope to
 > `arc_team()/shared/knowledge`. See the package
-> [README](../../../packages/arcmemory/README.md#personal-and-fleet-shared-knowledge)
-> and [setup guide](../../../packages/arcmemory/SETUP.md).
+> [README](https://github.com/joshuamschultz/Arc/blob/main/packages/arcmemory/README.md#personal-and-fleet-shared-knowledge)
+> and [setup guide](https://github.com/joshuamschultz/Arc/blob/main/packages/arcmemory/SETUP.md).
 
 `arcmemory` provides **dual-speed memory** for agents:
 - **Episodic memory** - Recent events, high recall
 - **Entity graph** - Persistent facts about people/things
 - **Daily log** - Long-term archival storage
 - **Memory queries** - Semantic search over memory
+
+> **Fleet boundary:** ArcMemory is team-agnostic. It owns canonical knowledge
+> documents, index/embed/search/provenance/revoke mechanics, and the public
+> knowledge backend contracts. ArcTeam supplies fleet membership, promotion
+> authorization, shared lifecycle, and backend policy through those contracts;
+> neither package may reach into the other's internals. The composition is an
+> agreed alpha direction, not a claim that the current ArcTeam wheel has already
+> declared an ArcMemory dependency. See
+> [fleet layering](../../concepts/fleet-layering.md).
 
 ```mermaid
 flowchart TB

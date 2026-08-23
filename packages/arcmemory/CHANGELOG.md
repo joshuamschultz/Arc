@@ -6,6 +6,12 @@ versioning.
 
 ## [Unreleased]
 
+### Changed
+
+- Documented the team-agnostic knowledge boundary and identified the current
+  ArcAgent-owned shared-knowledge bootstrap as an alpha refactor gap. No
+  knowledge contract, package dependency, or runtime behavior changed.
+
 ## [0.9.0] — 2026-08-22
 
 ### Added

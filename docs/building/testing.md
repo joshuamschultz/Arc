@@ -192,6 +192,16 @@ def mock_llm():
 
 ## Quality Gates
 
+### Fleet-boundary checks
+
+For a change at the ArcTeam/ArcAgent/ArcMemory seam, run the relevant package
+suite plus the architecture and adversarial checks named in
+[Fleet layering and removable composition](../concepts/fleet-layering.md).
+The checks must prove that an ArcAgent starts without ArcTeam and that an
+unavailable fleet capability returns a typed degraded result instead of an
+import failure. Do not use a passing NATS transport test as proof that the
+unlanded ArcTeam composition migration is complete.
+
 ### Coverage Requirements
 
 | Package | Minimum Coverage |

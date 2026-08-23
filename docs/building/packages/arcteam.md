@@ -14,6 +14,15 @@
 - **Task distribution** - Durable task coordination
 - **Pluggable backends** - NATS, in-memory, custom
 
+> **Alpha boundary:** ArcTeam is the future outer composition layer for
+> independently runnable ArcAgents and ArcMemory's public shared-knowledge
+> seam. The current `arcteam` wheel still ships its transport, registry, audit,
+> and workflow components without those package dependencies, and ArcAgent's
+> optional messaging module currently imports ArcTeam lazily. This page does
+> not treat that transitional reverse integration as the desired architecture.
+> See [fleet layering](../../concepts/fleet-layering.md) for the ownership and
+> removal rules.
+
 ```mermaid
 flowchart TB
     classDef team fill:#0073FE,stroke:#0055BC,color:#FFFFFF
@@ -253,7 +262,14 @@ class MyBackend(StorageBackend):
 
 ---
 
-## Team Memory
+## Legacy team-memory surface
+
+`arcteam.memory` remains in the current alpha source tree and is listed below
+because it is a landed public surface. Do not extend it as the permanent
+knowledge layer. Generic store/index/embed/search/provenance/revoke/OKF
+mechanics belong to ArcMemory; ArcTeam's role is fleet authorization,
+membership, promotion policy, lifecycle, and the shared backend it provides at
+the public seam.
 
 ```python
 from arcteam.memory import TeamMemoryService
@@ -435,4 +451,3 @@ Every operation is signed by the **operator's key**, not the agent's, ensuring n
 | `TeamMemoryConfig` | Team memory configuration. All fields have defaults. |
 | `TeamMemoryService` | Shared team knowledge graph. |
 | `TeamStore` | Persist and mutate teams on a :class:`StorageBackend`, auditing each op. |
-

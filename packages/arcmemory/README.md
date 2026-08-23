@@ -140,7 +140,20 @@ agentic sleep pass. With none of them, the example above still runs.
 
 ## Personal and fleet-shared knowledge
 
-Enable shared knowledge through the existing memory module:
+ArcMemory owns the knowledge mechanics: canonical/OKF documents, explicit
+scope, store/index/embed/search/provenance/revoke contracts, and
+classification checks. ArcTeam is the intended owner of fleet membership,
+promotion authorization, shared lifecycle, and the backend it supplies through
+those public contracts. It must not make an agent's workspace or private memory
+global.
+
+> **Alpha status:** the current ArcAgent memory runtime constructs the fleet
+> shared-knowledge backend and exposes the fleet tools, so its integration runs
+> in the reverse direction. This is a known refactor gap, not the completed
+> ArcTeam composition design. The operations below are landed; do not infer that
+> the target package boundary has already shipped.
+
+The currently available tools use explicit scope:
 
 ```toml
 [modules.memory.config]
@@ -155,13 +168,17 @@ shared_knowledge_enabled = true
 | `knowledge_promote(reference)` | Copy a signed personal record into fleet scope |
 | `knowledge_revoke(scope, reference)` | Revoke without erasing the audit trail |
 
-Fleet records live at the canonical `arc_team()/shared/knowledge` path and are
-valid OKF documents. Promotion verifies the personal record, signs the shared
-copy with the owning agent identity, pins the signer, enforces classification
-and no-write-down rules, and emits audit. It does not make an agent's private
-workspace or memory global.
+The current shared backend writes valid OKF records at
+`arc_team()/shared/knowledge`. Promotion verifies the personal record, signs
+the shared copy with the owning agent identity, pins the signer, enforces
+classification and no-write-down rules, and emits audit. It does not make an
+agent's private workspace or memory global. The final fleet integration must
+move the authorization and lifecycle decision to ArcTeam while preserving this
+typed operation contract.
 
-See [SETUP.md](SETUP.md#5-signed-fleet-shared-knowledge) for deployment checks.
+See [SETUP.md](SETUP.md#5-signed-fleet-shared-knowledge) and the repository
+[fleet-layering guide](../../docs/concepts/fleet-layering.md) for deployment
+checks and the architecture status.
 
 ---
 

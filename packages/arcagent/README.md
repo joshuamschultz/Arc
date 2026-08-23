@@ -33,6 +33,17 @@ It wraps the lower layers (`arcrun` for the loop, `arcllm` for the model, `arctr
 
 > 🛡️ **Identity required. Tools deny-by-default. Every action audited. Sessions on disk you can read.**
 
+### Fleet alpha status
+
+An ArcAgent is headless and must start without ArcTeam. The current optional
+messaging and shared-knowledge integration lazily imports ArcTeam and constructs
+the fleet shared backend from ArcAgent. That is a known reverse-dependency
+refactor gap, not the approved fleet architecture. The target has ArcTeam
+compose standalone agents and consume ArcMemory through public seams; until
+that lands, unavailable fleet capabilities must degrade explicitly rather than
+making a solo agent fail to import. See
+[fleet layering](../../docs/concepts/fleet-layering.md).
+
 ---
 
 ## ⭐ Top Features

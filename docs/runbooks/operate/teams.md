@@ -22,6 +22,21 @@ start` process serving a roster of agents, organized into a team with
 channels. Validated with a live four-agent fleet (executive assistant,
 coder, marketer, trader) on the same box that also routes Telegram DMs.
 
+## Boundary before bring-up
+
+This runbook describes the currently landed operational path. Its NATS-backed
+mailboxes are signed agent mail, not operator/external sessions: ArcGateway owns
+the latter and ArcTeam owns the former. A message must be verified and
+replay-checked before it can enter an agent inbox, and a teammate's message gets
+a sender-scoped agent session rather than sharing an operator session.
+
+The agreed package direction is ArcTeam composing standalone ArcAgents and
+using ArcMemory only through public shared-knowledge seams. The current
+ArcTeam wheel does not yet declare those dependencies and the existing optional
+ArcAgent messaging bootstrap points in the reverse direction. Do not use this
+runbook as evidence that the composition migration has landed; a solo agent
+continues to work without ArcTeam, with fleet functionality unavailable.
+
 ## 1. Create each agent
 
 ```bash

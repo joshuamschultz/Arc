@@ -32,6 +32,21 @@ arcgateway   arcui
 - `arcagent` knows about neither, and must run headless without them.
 - Modules and extensions plug into `arcagent` through explicit typed contracts, never by reversing these arrows.
 
+### Fleet composition is an outer, removable layer
+
+The alpha fleet direction is **`arcteam → arcagent`** and **`arcteam → arcmemory`**.
+ArcTeam composes independently runnable ArcAgent instances; it owns fleet membership,
+agent mail/inboxes, shared-knowledge governance, and fleet-level tool/skill composition.
+ArcMemory owns team-agnostic knowledge mechanics behind its public typed seams. Neither
+`arcagent` nor `arcmemory` may import `arcteam`, and ArcTeam must not reach into either
+package's internals.
+
+This is an architectural requirement for new work, not evidence that every transitional
+alpha integration already has the target dependency metadata. Until an implementation
+lands, document that gap explicitly; do not reverse the arrows to accommodate it. An
+ArcAgent without ArcTeam must start and run normally, with only fleet capabilities
+unavailable through a typed degraded result.
+
 The boundary is enforced, not merely documented:
 `packages/arcagent/tests/architecture/test_dependency_boundaries.py` fails the
 build on a deep import across it, and the arcui seam guard in
