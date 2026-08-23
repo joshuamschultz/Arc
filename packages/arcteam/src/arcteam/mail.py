@@ -12,9 +12,8 @@ import hashlib
 import logging
 from typing import Any, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field
-
 from arcstore.mail_outbox import MailOutbox
+from pydantic import BaseModel, ConfigDict, Field
 
 from arcteam.types import DeliveryKind, Message
 

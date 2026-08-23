@@ -139,7 +139,6 @@ class MailOutbox:
         records, _ = read_complete_segments(self._path, 0)
         entries: dict[str, MailOutboxEntry] = {}
         leases: dict[str, tuple[str, datetime]] = {}
-        now = datetime.now(UTC)
         for raw in records:
             try:
                 item = json.loads(raw)
