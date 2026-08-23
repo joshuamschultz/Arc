@@ -144,6 +144,7 @@ nav:
           - Azure OpenAI: runbooks/deploy/azure-openai.md
           - Voice air-gap: runbooks/deploy/voice-air-gap.md
       - Operate:
+          - Connections and connected data: runbooks/operate/connections.md
           - Teams: runbooks/operate/teams.md
           - Tasks: runbooks/operate/tasks.md
           - Agent features: runbooks/operate/agent-features.md

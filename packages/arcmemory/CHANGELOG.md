@@ -6,6 +6,15 @@ versioning.
 
 ## [Unreleased]
 
+### Added
+
+- Connected-source ingestion destinations for memory, extracted/chunked
+  documents, live datastores, blob inventories and review-gated profile facts,
+  with exact mapping approvals, provenance, idempotent object versions and
+  deletion reconciliation.
+- Connected-document lifecycle/search and profile review operations. Only
+  approved profile facts are recallable; decline and undo revoke context use.
+
 ### Changed
 
 - Shared knowledge is now composed by ArcTeam; ArcMemory retains the generic

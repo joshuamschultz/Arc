@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A restart-safe connected-data coordinator and removable source-adapter seam
+  for SQLite, PostgreSQL/Supabase, Dropbox, OneDrive, S3-compatible stores,
+  Gmail and Outlook, including resource selection, exact mapping approval,
+  bounded retries, durable cursors, leases, fencing and tombstones.
+- Agent retrieval tools for connected document search and bounded typed
+  datastore reads, plus approved profile facts in prompt context.
+
 ### Changed
 
 - Removed the ArcAgent-core team bootstrap; optional fleet composition now belongs to ArcTeam.

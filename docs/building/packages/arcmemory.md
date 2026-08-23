@@ -125,6 +125,32 @@ for entry in daily:
 
 ---
 
+## Connected-source ingestion
+
+ArcMemory is the vendor-neutral destination layer for connected data. ArcAgent's
+optional coordinator supplies canonical source objects; ArcMemory verifies the
+exact operator-approved mapping and writes only the selected homes:
+
+| Home | ArcMemory behavior |
+|---|---|
+| `memory` | captures source observations for consolidation and recall |
+| `document` | extracts supported media, chunks it, writes provenance and indexes each chunk |
+| `datastore` | registers a live read-only datastore port; transactional rows are not copied into RAG |
+| `blob` | maintains a folder/object ontology and reconciles deletion tombstones |
+| `profile` | stages inferred facts for operator review; only approved facts are recallable |
+
+Mappings are content-bound approvals, not mutable preferences. Resource
+selection happens before sync, object versions make replay idempotent, and
+deletions remove stale document/blob membership. `index.md` is a normal supported
+document: it is extracted and indexed with provenance rather than treated as an
+instruction or trusted control file.
+
+For provider setup, resource selection, lifecycle operations, agent tool shapes
+and the release gate, use the [connected-data operator
+runbook](../../runbooks/operate/connections.md#connected-data-from-grant-to-agent-retrieval).
+
+---
+
 ## Memory Operations
 
 ### Indexing

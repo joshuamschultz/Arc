@@ -72,6 +72,9 @@ What makes `arcstore` the most reliable foundation for agent operations:
 - **PostgreSQL foundation** — One durable database with ACID guarantees, connection pooling, and
   the same adapter for local PostgreSQL and Supabase
 - **Cross-package consistency** — Every Arc package uses the same storage layer; unified query interface across all operational data
+- **Connected-source coordination** — durable cursors, leases, fencing tokens,
+  selected resources and object versions make synchronization restart-safe and
+  prevent stale workers from committing progress
 
 ### **Task System Support**
 - **Frontier materialization** — `mutable_create_batch` builds cross-owner task frontiers atomically

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Knowledge → Connections now operates the full connected-source lifecycle:
+  resource selection, mapping approval, sync/pause/resume/reindex/revoke,
+  document search, typed datastore lookup, blob browsing, provenance, profile
+  review and index-health diagnosis.
 - Agent Inbox routes now require the optional ArcTeam mail facade and never read gateway sessions.
 - Completed the operator-only durable Agent Inbox journey: authorized thread
   listing/search, message reads, replies, and handoff create/resolve controls

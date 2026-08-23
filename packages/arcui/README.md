@@ -47,6 +47,10 @@ What makes `arcui` the definitive real-time agent observability dashboard:
 - **In-place mutations** — Edit config, tasks, channels, files, and prompts directly from the dashboard; all changes audited
 - **HITL approvals** — Approve gated tool calls and skill installations from the UI; full context provided
 - **Durable Agent Inbox** — Operator-only thread search, read receipts, replies, and handoff create/resolve controls over ArcTeam mail; gateway sessions are not projected here
+- **Connected knowledge operations** — select source resources and mapping
+  destinations, approve mappings, sync/pause/resume/reindex/revoke, search
+  documents, query approved datastores, browse blob inventory, review profile
+  facts, inspect provenance and diagnose index health
 
 ### **Multi-Layer Interface**
 - **Business-first navigation** — Work, Govern, Watch, Advanced, System sections (2027 control-plane redesign); technical names only in detail views

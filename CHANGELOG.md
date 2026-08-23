@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Connected data completion
+
+- Completed the Alpha provider matrix: SQLite, PostgreSQL/Supabase, Dropbox,
+  OneDrive, S3-compatible stores, Gmail and Outlook now contribute canonical
+  connected sources with explicit resource selection and durable incremental
+  synchronization.
+- Added approval-bound routing to memory, document, datastore, blob and profile
+  destinations; source tombstones remove stale indexed state and reindex resets
+  the durable cursor.
+- Agents can search connected documents, issue bounded typed reads against
+  approved live datastores and receive only operator-approved profile facts.
+  ArcUI provides mapping, sync lifecycle, document search, datastore lookup,
+  blob inventory, provenance, profile-review and index-health controls.
+- Added `scripts/run_connected_data_release_gate.py`, including an opt-in live
+  PostgreSQL contract that refuses a requested-but-missing test DSN.
+
 ### AgentMail completion
 
 - ArcTeam AgentMail now signs envelopes before an atomic PostgreSQL inbox/outbox

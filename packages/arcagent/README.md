@@ -87,6 +87,10 @@ These are the standout capabilities that make `arcagent` best-in-class for produ
   of truth
 - **One contract everywhere** — ArcUI and ArcCLI use the same canonical connector
   coordinates and report `applied` versus `activation_pending` honestly
+- **Connected-data runtime** — approved SQLite, PostgreSQL/Supabase, Dropbox,
+  OneDrive, S3-compatible, Gmail and Outlook sources synchronize selected
+  resources through durable cursors; agents use `document_search`, bounded
+  read-only `datastore_query`, and approved profile context
 
 See the [connections operations
 runbook](../../docs/runbooks/operate/connections.md) for setup, activation and

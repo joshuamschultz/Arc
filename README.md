@@ -34,6 +34,13 @@ durable inboxes and approvals, reliable ArcFlow runners, live connector
 convergence, signed ZIP capability intake, PDF message attachments, OKF workspace
 documents, and signed personal-to-fleet knowledge promotion.
 
+Connected accounts now become usable agent knowledge through an
+operator-approved pipeline. The Alpha matrix covers SQLite,
+PostgreSQL/Supabase, Dropbox, OneDrive, S3-compatible stores, Gmail and Outlook;
+agents receive governed document search, typed read-only datastore queries and
+approved profile recall. See the [connected-data operator
+runbook](docs/runbooks/operate/connections.md#connected-data-from-grant-to-agent-retrieval).
+
 Arc assumes an attacker may already have local process or filesystem access.
 Authority therefore comes from verified identity, signatures, authorization and
 audit—not possession of a path, socket, database row or runtime entry point. Run

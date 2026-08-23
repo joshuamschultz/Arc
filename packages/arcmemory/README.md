@@ -72,6 +72,10 @@ What makes `arcmemory` fundamentally different from vector-only memory systems:
   pgvector is an optional implementation of the same typed index contract
 - **Knowledge-scope seam** — Personal and fleet-shared knowledge use one tool
   surface; scope is explicit, never an implicit global
+- **Connected-source destinations** — vendor-neutral mappings route synchronized
+  objects to memory, documents, live datastores, blob inventories or a
+  review-gated profile; exact approvals, provenance and tombstones prevent stale
+  or unapproved content from entering recall
 
 ### **Failure Handling**
 - **Graceful degradation** — No embedder → BM25 + graph fallback; no LLM → deterministic pipeline
