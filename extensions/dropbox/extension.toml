@@ -37,6 +37,9 @@ description = "Browse, read, and write the files in a Dropbox account."
 attachment = "native"
 tier_floor = "personal"
 
+[knowledge]
+mode = "source"
+
 [config.native]
 entrypoint = "arc_ext_dropbox"
 

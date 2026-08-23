@@ -37,6 +37,9 @@ description = "Read and draft Gmail, list Drive files, and check Google Calendar
 attachment = "cli"
 tier_floor = "personal"
 
+[knowledge]
+mode = "source"
+
 # Pinned to one exact build and one digest PER PLATFORM (REQ-290), each taken
 # from the release's own checksums.txt. Keyed by platform because a sha256
 # describes the bytes of one asset: a single digest matched the fleet's
@@ -115,6 +118,7 @@ allow = [
   "google_gmail_labels",
   "google_gmail_messages",
   "google_gmail_message",
+  "google_gmail_history",
   "google_gmail_draft",
   "google_gmail_send",
   "google_drive_list",
@@ -136,6 +140,11 @@ classification = "read_only"
 [[tools.declared]]
 name = "google_gmail_message"
 description = "Read one Gmail message for connected-data indexing."
+classification = "read_only"
+
+[[tools.declared]]
+name = "google_gmail_history"
+description = "Read incremental Gmail mailbox changes for connected-data indexing."
 classification = "read_only"
 
 [[tools.declared]]
@@ -199,6 +208,10 @@ flag = "--label"
 name = "limit"
 flag = "--max"
 
+[[config.cli.commands.arguments]]
+name = "page_token"
+flag = "--page-token"
+
 [[config.cli.commands]]
 tool = "google_gmail_message"
 argv = ["gmail", "messages", "get", "--json", "--readonly", "--wrap-untrusted", "--no-input"]
@@ -208,6 +221,28 @@ classification = "read_only"
 [[config.cli.commands.arguments]]
 name = "id"
 flag = "--id"
+
+[[config.cli.commands]]
+tool = "google_gmail_history"
+argv = ["gmail", "history", "list", "--json", "--readonly", "--wrap-untrusted", "--no-input"]
+description = "List incremental Gmail history for connected-data indexing."
+classification = "read_only"
+
+[[config.cli.commands.arguments]]
+name = "label"
+flag = "--label"
+
+[[config.cli.commands.arguments]]
+name = "limit"
+flag = "--max"
+
+[[config.cli.commands.arguments]]
+name = "page_token"
+flag = "--page-token"
+
+[[config.cli.commands.arguments]]
+name = "start_history_id"
+flag = "--start-history-id"
 
 # Every read command carries --readonly and --gmail-no-send: the binary refuses a
 # mutating API call from inside, so a read verb cannot become a write one even if

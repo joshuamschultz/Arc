@@ -8,6 +8,7 @@ delta the reload acts on, and the runtime configure/teardown + task-local bindin
 
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -17,7 +18,7 @@ import pytest
 
 from arcagent.capabilities.capability_loader import CapabilityLoader
 from arcagent.core import agent_lifecycle
-from arcagent.core.config import EvalConfig, LLMConfig, ModuleEntry
+from arcagent.core.config import EvalConfig, LLMConfig, ModuleEntry, load_config
 from arcagent.core.runtime_dependencies import RuntimeBinding, RuntimeDependencies
 
 
@@ -60,6 +61,7 @@ def _fake_agent(tmp_path: Path, *, modules: dict[str, ModuleEntry]) -> Any:
         _config_path=tmp_path / "arcagent.toml",
         _runtime_bindings=[],
         reload=AsyncMock(return_value="reloaded"),
+        reload_or_raise=AsyncMock(return_value="reloaded"),
     )
 
 
@@ -159,6 +161,115 @@ async def test_enable_configures_the_runtime_and_binds_and_reloads(
 
 
 @pytest.mark.asyncio
+async def test_persistent_enable_survives_restart_and_preserves_module_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _enabled_by_config(monkeypatch)
+    agent = _fake_agent(tmp_path, modules={"web": ModuleEntry(enabled=False, priority=7)})
+    agent._config_path.write_text(
+        "[agent]\nname = 'Olivia'\n\n[modules.web]\npriority = 7\n"
+        "\n[modules.web.config]\ninterval_seconds = 90\n",
+        encoding="utf-8",
+    )
+
+    class _Runtime:
+        def configure(self, **_kwargs: Any) -> None: ...
+
+        def state(self) -> object:
+            return "STATE"
+
+        def bind(self, state: object) -> None:
+            del state
+
+    monkeypatch.setattr(agent_lifecycle, "load_module_runtime", lambda _n: _Runtime())
+
+    await agent_lifecycle.enable_module_persisted(agent, "web")
+
+    persisted = tomllib.loads(agent._config_path.read_text(encoding="utf-8"))
+    assert persisted["modules"]["web"] == {
+        "enabled": True,
+        "priority": 7,
+        "config": {"interval_seconds": 90},
+    }
+    assert load_config(agent._config_path).modules["web"].enabled is True
+
+
+@pytest.mark.asyncio
+async def test_persistent_enable_rolls_back_config_and_memory_on_runtime_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _enabled_by_config(monkeypatch)
+    agent = _fake_agent(tmp_path, modules={})
+    original = "[agent]\nname = 'Olivia'\n"
+    agent._config_path.write_text(original, encoding="utf-8")
+
+    class _Runtime:
+        def configure(self, **_kwargs: Any) -> None:
+            raise RuntimeError("module setup failed")
+
+    monkeypatch.setattr(agent_lifecycle, "load_module_runtime", lambda _n: _Runtime())
+
+    with pytest.raises(RuntimeError, match="Module 'web' configuration failed"):
+        await agent_lifecycle.enable_module_persisted(agent, "web")
+
+    assert agent._config_path.read_text(encoding="utf-8") == original
+    assert "web" not in agent._config.modules
+    assert agent._capability_loader.set_module_roots.call_args.args[1] == []
+
+
+@pytest.mark.asyncio
+async def test_persistent_enable_never_starts_runtime_when_config_write_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    agent = _fake_agent(tmp_path, modules={})
+    agent._config_path.write_text("[agent]\nname = 'Olivia'\n", encoding="utf-8")
+    runtime = MagicMock()
+    monkeypatch.setattr(agent_lifecycle, "load_module_runtime", lambda _n: runtime)
+
+    def fail_persist(_path: Path, _name: str) -> str:
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(agent_lifecycle, "persist_module_enabled", fail_persist)
+
+    with pytest.raises(OSError, match="disk unavailable"):
+        await agent_lifecycle.enable_module_persisted(agent, "web")
+
+    assert "web" not in agent._config.modules
+    runtime.configure.assert_not_called()
+    agent.reload.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_persistent_enable_rolls_back_live_bindings_when_reload_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _enabled_by_config(monkeypatch)
+    agent = _fake_agent(tmp_path, modules={})
+    original = "[agent]\nname = 'Olivia'\n"
+    agent._config_path.write_text(original, encoding="utf-8")
+    agent.reload.side_effect = RuntimeError("capability reload failed")
+
+    class _Runtime:
+        def configure(self, **_kwargs: Any) -> None: ...
+
+        def state(self) -> object:
+            return "STATE"
+
+        def bind(self, state: object) -> None:
+            del state
+
+    monkeypatch.setattr(agent_lifecycle, "load_module_runtime", lambda _n: _Runtime())
+
+    with pytest.raises(RuntimeError, match="capability reload failed"):
+        await agent_lifecycle.enable_module_persisted(agent, "web")
+
+    assert agent._config_path.read_text(encoding="utf-8") == original
+    assert "web" not in agent._config.modules
+    assert agent._runtime_bindings == []
+    assert agent._capability_loader.set_module_roots.call_args.args[1] == []
+
+
+@pytest.mark.asyncio
 async def test_disable_tears_down_the_runtime_drops_binding_and_reloads(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -215,3 +326,25 @@ async def test_no_op_when_already_in_the_requested_state(
     assert "already" in result
     agent.reload.assert_not_awaited()
     agent._capability_loader.set_module_roots.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_persistent_enable_repairs_an_enabled_but_degraded_module(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _enabled_by_config(monkeypatch)
+    entry = ModuleEntry(enabled=True)
+    agent = _fake_agent(tmp_path, modules={"connected_data": entry})
+    agent._capability_registry = SimpleNamespace(
+        get_capability=AsyncMock(return_value=SimpleNamespace(setup_done=False))
+    )
+    calls: list[bool] = []
+
+    async def repair(_agent: Any, _name: str, *, enabled: bool) -> str:
+        calls.append(enabled)
+        return "repaired"
+
+    monkeypatch.setattr(agent_lifecycle, "set_module_enabled", repair)
+
+    assert await agent_lifecycle.enable_module_persisted(agent, "connected_data") == "repaired"
+    assert calls == [False, True]

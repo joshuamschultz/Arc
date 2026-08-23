@@ -16,7 +16,7 @@ from starlette.routing import Route
 
 from arcui.audit import emit_mutation_audit
 from arcui.routes.agent_detail._common import _agent_did
-from arcui.schemas import ErrorResponse
+from arcui.schemas import ConnectedDataActivationResponse, ErrorResponse
 
 _HOMES = frozenset({"document", "memory", "profile", "blob", "datastore"})
 
@@ -100,6 +100,53 @@ async def connected_sources(request: Request) -> JSONResponse:
     if service is None:
         return JSONResponse({"items": [], "status": "degraded"})
     return JSONResponse({"items": [_status_wire(item) for item in await service.list_sources()]})
+
+
+async def activate_connected_data(request: Request) -> JSONResponse:
+    """Enable the installed Knowledge module for one existing agent.
+
+    This is deliberately an ArcUI operator action over ArcAgent's public
+    hot-swap seam. It never writes an agent TOML file or reaches into module
+    runtime state; the agent owns activation, persistence, teardown and reload.
+    """
+    denied = _operator(request)
+    if denied is not None:
+        return denied
+    agent_id = request.path_params["agent_id"]
+    agent = _agent(request, agent_id)
+    activate = getattr(agent, "enable_module_persisted", None)
+    if agent is None or not callable(activate):
+        emit_mutation_audit(
+            request,
+            target=f"agent:{agent_id}",
+            operation="connected_data.activate",
+            outcome="not_found",
+        )
+        return JSONResponse(
+            ErrorResponse(error="agent is not available").model_dump(), status_code=404
+        )
+    try:
+        detail = await activate("connected_data")
+    except Exception:  # Public module activation must never leak runtime topology to the browser.
+        emit_mutation_audit(
+            request,
+            target=f"agent:{agent_id}",
+            operation="connected_data.activate",
+            outcome="error",
+        )
+        return JSONResponse(
+            ErrorResponse(error="connected-data module could not be activated").model_dump(),
+            status_code=503,
+        )
+    emit_mutation_audit(
+        request,
+        target=f"agent:{agent_id}",
+        operation="connected_data.activate",
+        outcome="applied",
+    )
+    return JSONResponse(
+        ConnectedDataActivationResponse(status="activated", detail=str(detail)).model_dump()
+    )
 
 
 async def sync_status(request: Request) -> JSONResponse:
@@ -335,6 +382,11 @@ async def sync_action(request: Request) -> JSONResponse:
 
 routes = [
     Route(
+        "/api/agents/{agent_id}/knowledge/connected-data/activate",
+        activate_connected_data,
+        methods=["POST"],
+    ),
+    Route(
         "/api/agents/{agent_id}/knowledge/connected-sources",
         connected_sources,
         methods=["GET"],
@@ -378,6 +430,7 @@ routes = [
 ]
 
 __all__ = [
+    "activate_connected_data",
     "connected_sources",
     "get_mapping_proposal",
     "list_profile_reviews",

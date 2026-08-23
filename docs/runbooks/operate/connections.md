@@ -92,6 +92,10 @@ source errors rather than being silently skipped.
 | S3-compatible / MinIO | buckets and prefixes | blob, document | blob inventory plus `document_search` for extractable objects |
 | Gmail | labels/mailbox | memory, document | memory capture and `document_search` over messages |
 | Outlook | mail folders | memory, document | memory capture and `document_search` over messages |
+| Confluence | spaces | document | `document_search` over full page bodies |
+| GitHub | repositories | document | `document_search` over issue and pull-request bodies |
+| Jira | projects | document | `document_search` over full issue descriptions and metadata |
+| Readwise Reader | library locations and tags | document | `document_search` over saved document content |
 
 SQLite and PostgreSQL/Supabase are live, read-only datastore adapters: Arc
 introspects only selected tables and exposes bounded `get_record`, `find` and
@@ -126,6 +130,33 @@ the fact from recall.
 - **Gmail:** install the pinned `gog` binary and run `gog auth add` as a person on
   the host. The OAuth refresh token stays in the platform keyring. Select the
   mailbox or labels after granting the Google Workspace connection.
+- **Confluence, GitHub, Jira and Readwise Reader:** connect and grant the account
+  on **Connections**, then use the per-agent **Configure & sync** action on that
+  same card. Select the spaces, repositories, projects, library locations or
+  tags the agent may index; approve the mapping; and run the first sync.
+
+Connecting an account grants its interactive tools; it does not silently copy
+all account data into an agent. The connection card is the start of the governed
+Knowledge journey: enable sync if needed, select the least-privilege resource
+set, approve its destination, sync, then verify retrieval in **Documents**.
+1Password is intentionally excluded because vault items are credentials rather
+than knowledge documents and must never enter embedding or retrieval indexes.
+
+### Sync cadence
+
+Connected sources synchronize continuously while their agent is running. The
+schedule is owned by ArcAgent's removable module, not ArcMemory:
+
+```toml
+[modules.connected_data]
+enabled = true
+interval_seconds = 60
+```
+
+The default is every 60 seconds. Change `interval_seconds` in that agent's
+`arcagent.toml`; use **Sync now** for an immediate run. Provider rate limits and
+temporary failures back off without advancing the durable cursor, so the next
+successful run resumes rather than skipping data.
 
 Provider-specific pinned artifacts, scopes and secret prompts are the signed
 `extension.toml` manifests under `extensions/`; those manifests are the source

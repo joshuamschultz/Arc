@@ -29,6 +29,20 @@ from arcagent.extension.attachment import (
     ToolResult,
     ToolSpec,
 )
+from arcagent.extension.source import (
+    FetchSourceObject,
+    InspectSource,
+    ListSourceResources,
+    SelectSourceResources,
+    SourceContent,
+    SourceDataShape,
+    SourceDescription,
+    SourceObject,
+    SourceObjectKind,
+    SourceResource,
+    SyncSource,
+    SyncSourcePage,
+)
 
 #: Seconds any one Confluence request may take before it is abandoned.
 _TIMEOUT: Final = 30.0
@@ -46,6 +60,7 @@ class ConfluenceAttachment:
         self._base_url = base_url.rstrip("/")
         self._email = email
         self._api_token = api_token
+        self._selected_spaces: tuple[str, ...] = ()
 
     # --- the hook contract ---------------------------------------------------
 
@@ -147,6 +162,124 @@ class ConfluenceAttachment:
         except (httpx.HTTPError, ValueError) as exc:
             return _error(tool, f"confluence call failed: {exc}")
 
+    async def inspect_source(self, request: InspectSource) -> SourceDescription:
+        """Describe this account as a document source without exposing credentials."""
+        await self._get(f"{_API}/space", {"limit": "1"})
+        return SourceDescription(
+            connection_id=request.connection_id,
+            display_name=f"Confluence ({self._base_url})",
+            source_kind="confluence",
+            account_id=self._base_url,
+            data_shape=SourceDataShape.DOCUMENT,
+            supports_incremental=False,
+            supports_deletes=False,
+        )
+
+    async def list_source_resources(
+        self, request: ListSourceResources
+    ) -> tuple[SourceResource, ...]:
+        del request
+        results = await self._list_spaces_all()
+        return tuple(
+            SourceResource(
+                resource_id=str(space.get("key", "")),
+                label=str(space.get("name") or space.get("key") or "Space"),
+                resource_kind="space",
+                locator=str(space.get("key", "")),
+            )
+            for space in results
+            if isinstance(space, dict) and space.get("key")
+        )
+
+    async def select_source_resources(self, request: SelectSourceResources) -> None:
+        resources = await self.list_source_resources(
+            ListSourceResources(connection_id=request.connection_id)
+        )
+        available = {item.resource_id for item in resources}
+        if not request.resource_ids or not set(request.resource_ids).issubset(available):
+            raise ValueError("invalid Confluence space selection")
+        self._selected_spaces = request.resource_ids
+
+    async def sync_source(self, request: SyncSource) -> SyncSourcePage:
+        start = int(request.checkpoint or "0")
+        cql = "type=page"
+        if self._selected_spaces:
+            quoted = ",".join(f'"{key}"' for key in self._selected_spaces)
+            cql += f" and space in ({quoted})"
+        body = await self._get(
+            f"{_API}/content/search",
+            {
+                "cql": cql,
+                "limit": str(request.page_size),
+                "start": str(start),
+                "expand": "version,space",
+            },
+        )
+        results = body.get("results", [])
+        objects = tuple(_source_page(page) for page in results if isinstance(page, dict))
+        next_start = start + len(objects)
+        links = body.get("_links", {})
+        has_more = isinstance(links, dict) and bool(links.get("next"))
+        total = body.get("totalSize")
+        if isinstance(total, int):
+            has_more = next_start < total
+        elif len(objects) >= request.page_size and not has_more:
+            raise ValueError("Confluence page omitted pagination metadata")
+        return SyncSourcePage(
+            objects=objects,
+            next_checkpoint=str(next_start) if has_more else "0",
+            has_more=has_more,
+        )
+
+    async def _list_spaces_all(self) -> list[dict[str, Any]]:
+        """Walk every visible space, refusing a provider page cap as completion."""
+        start = 0
+        spaces: list[dict[str, Any]] = []
+        while start <= 100_000:
+            body = await self._get(
+                f"{_API}/space", {"limit": "200", "start": str(start)}
+            )
+            page = [item for item in body.get("results", []) if isinstance(item, dict)]
+            spaces.extend(page)
+            links = body.get("_links", {})
+            total = body.get("totalSize")
+            has_more = bool(isinstance(links, dict) and links.get("next"))
+            if isinstance(total, int):
+                has_more = start + len(page) < total
+            elif len(page) >= 200 and not has_more:
+                raise ValueError("Confluence space page omitted pagination metadata")
+            if not has_more:
+                return spaces
+            if not page:
+                raise ValueError("Confluence returned an empty page with more results")
+            start += len(page)
+        raise ValueError("Confluence space collection exceeds the safe synchronization bound")
+
+    async def fetch_source(self, request: FetchSourceObject) -> SourceContent:
+        page = await self._get(
+            f"{_API}/content/{_segment(request.object_id)}",
+            {"expand": "body.storage,version,space"},
+        )
+        body = page.get("body", {})
+        storage = body.get("storage", {}) if isinstance(body, dict) else {}
+        content = str(storage.get("value", "")).encode()
+        fetched_version = page.get("version", {})
+        number = fetched_version.get("number") if isinstance(fetched_version, dict) else None
+        if str(number or "1") != request.version:
+            raise ValueError("Confluence page changed during fetch")
+        if len(content) > request.max_bytes:
+            raise ValueError("Confluence page exceeds byte limit")
+        return SourceContent(
+            object_id=request.object_id,
+            version=request.version,
+            content=content,
+            media_type="text/html",
+            metadata={},
+        )
+
+    async def close_source(self) -> None:
+        """No-op: this adapter creates a bounded client per request."""
+
     # --- verbs ----------------------------------------------------------------
 
     async def _dispatch(self, tool: str, args: dict[str, Any]) -> str:
@@ -217,6 +350,25 @@ class ConfluenceAttachment:
         """Which of the three credentials this attachment does not have."""
         held = {"base_url": self._base_url, "email": self._email, "api_token": self._api_token}
         return sorted(name for name, value in held.items() if not value)
+
+
+def _source_page(page: dict[str, Any]) -> SourceObject:
+    version = page.get("version", {})
+    number = version.get("number") if isinstance(version, dict) else None
+    page_id = str(page.get("id") or "")
+    return SourceObject(
+        object_id=page_id,
+        locator=str(page.get("_links", {}).get("webui") or page_id),
+        kind=SourceObjectKind.FILE,
+        version=str(number or page.get("version") or "1"),
+        modified_at=str(version.get("when") or "") if isinstance(version, dict) else None,
+        media_type="text/html",
+        metadata={
+            **page,
+            "classification": "unclassified",
+            "revision": int(number) if isinstance(number, int) else 1,
+        },
+    )
 
 
 def _refused(status: int, base_url: str) -> str:

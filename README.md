@@ -36,7 +36,8 @@ documents, and signed personal-to-fleet knowledge promotion.
 
 Connected accounts now become usable agent knowledge through an
 operator-approved pipeline. The Alpha matrix covers SQLite,
-PostgreSQL/Supabase, Dropbox, OneDrive, S3-compatible stores, Gmail and Outlook;
+PostgreSQL/Supabase, Dropbox, OneDrive, S3-compatible stores, Gmail, Outlook,
+Confluence, GitHub, Jira and Readwise Reader;
 agents receive governed document search, typed read-only datastore queries and
 approved profile recall. See the [connected-data operator
 runbook](docs/runbooks/operate/connections.md#connected-data-from-grant-to-agent-retrieval).

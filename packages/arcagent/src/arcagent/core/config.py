@@ -32,9 +32,14 @@ Dicts deep-merge across layers; lists and scalars are replaced.
 from __future__ import annotations
 
 import logging
+import os
+import stat
+import tempfile
+import tomllib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import tomlkit
 from arctrust import ValidatorsConfig
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -759,3 +764,79 @@ def load_config(path: Path = Path("arcagent.toml")) -> ArcAgentConfig:
             message=f"Config validation failed: {exc}",
             details={"path": str(path), "errors": str(exc)},
         ) from exc
+
+
+def persist_module_enabled(path: Path, name: str) -> str:
+    """Atomically persist an enabled module while preserving the agent's TOML.
+
+    Returns the exact prior document so the caller can restore it if live
+    activation fails. The lifecycle owns that transaction; this helper owns only
+    the safe configuration-path mutation.
+    """
+    original = path.read_text(encoding="utf-8")
+    try:
+        document = tomlkit.parse(original)
+    except tomlkit.exceptions.ParseError as exc:
+        raise ConfigError(
+            code="CONFIG_PARSE",
+            message="Agent config could not be parsed",
+            details={"path": str(path)},
+        ) from exc
+    if "modules" not in document:
+        document["modules"] = tomlkit.table()
+    modules = document["modules"]
+    if not isinstance(modules, tomlkit.items.Table):
+        raise ConfigError(
+            code="CONFIG_MODULES_INVALID",
+            message="Agent modules configuration is invalid",
+            details={"path": str(path)},
+        )
+    if name not in modules:
+        modules[name] = tomlkit.table()
+    module = modules[name]
+    if not isinstance(module, tomlkit.items.Table):
+        raise ConfigError(
+            code="CONFIG_MODULE_INVALID",
+            message="Agent module configuration is invalid",
+            details={"path": str(path), "module": name},
+        )
+    module["enabled"] = True
+    rendered = tomlkit.dumps(document)
+    try:
+        tomllib.loads(rendered)
+    except tomllib.TOMLDecodeError as exc:
+        raise ConfigError(
+            code="CONFIG_SERIALIZATION",
+            message="Agent module configuration could not be serialized",
+            details={"path": str(path), "module": name},
+        ) from exc
+    _atomic_replace_config(path, rendered)
+    return original
+
+
+def restore_config(path: Path, original: str) -> None:
+    """Restore an exact agent-config snapshot after a failed live activation."""
+    _atomic_replace_config(path, original)
+
+
+def _atomic_replace_config(path: Path, content: str) -> None:
+    """Replace one existing regular config file without widening its mode."""
+    path_info = path.lstat()
+    if not stat.S_ISREG(path_info.st_mode):
+        raise OSError("agent config path is not a regular file")
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        os.fchmod(fd, stat.S_IMODE(path_info.st_mode))
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise

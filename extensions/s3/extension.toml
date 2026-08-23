@@ -6,6 +6,9 @@ description = "Connect an approved S3-compatible bucket for bounded blob and doc
 attachment = "native"
 tier_floor = "personal"
 
+[knowledge]
+mode = "source"
+
 [config.native]
 entrypoint = "arc_ext_s3"
 

@@ -226,10 +226,9 @@ async def _build_live_services(
     the shared ``arcteam.composition.message_signer``.
     """
     from arcteam.audit import AuditLogger
+    from arcteam.composition import make_backend, message_signer
     from arcteam.messenger import MessagingService
     from arcteam.registry import EntityRegistry
-
-    from arcteam.composition import make_backend, message_signer
 
     backend = await make_backend(nats_url)
     audit = AuditLogger(backend, operator_signer)

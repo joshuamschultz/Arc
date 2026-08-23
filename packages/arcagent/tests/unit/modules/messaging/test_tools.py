@@ -15,6 +15,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from arcteam import composition as _bootstrap
 from arctrust import AgentIdentity
 from packages.arcagent.tests.unit.modules.messaging.conftest import (
     make_config_dict,
@@ -22,7 +23,6 @@ from packages.arcagent.tests.unit.modules.messaging.conftest import (
     make_peer_entity,
 )
 
-from arcteam import composition as _bootstrap
 from arcagent.modules.messaging import _runtime
 from arcagent.modules.messaging.capabilities import (
     list_team_files,

@@ -603,6 +603,17 @@ class ArcMemoryBrain:
         self._datastores[source_id] = datastore
         self._datastore_classification[source_id] = classification
 
+    async def unregister_datastore(self, source_id: str, *, caller_did: str = "") -> bool:
+        """Detach a revoked datastore so it cannot be queried through this Brain."""
+        if not await self._guard("datastore.unregister", caller_did=caller_did, target=source_id):
+            return False
+        self._datastores.pop(source_id, None)
+        self._datastore_classification.pop(source_id, None)
+        SemanticStore(self._workspace, self._graph, self._scope(None).key).remove(
+            f"source-{source_id}"
+        )
+        return True
+
     async def register_sqlite_datastore(
         self,
         source_id: str,

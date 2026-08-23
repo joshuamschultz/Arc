@@ -227,9 +227,8 @@ async def refresh_roster(nats_url: str = "") -> None:
         if st.registry is None:
             st.roster_attempted = True
             from arcteam.audit import AuditLogger
-            from arcteam.registry import EntityRegistry
-
             from arcteam.composition import make_backend
+            from arcteam.registry import EntityRegistry
 
             backend = await make_backend(url)
             audit = AuditLogger(backend, st.operator_signer)

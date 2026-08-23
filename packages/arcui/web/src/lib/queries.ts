@@ -24,6 +24,7 @@ import type {
   AuditEventsResponse,
   BlobFoldersResponse,
   ChannelsResponse,
+  ConnectedDataActivationResponse,
   ConnectedSourcesResponse,
   ConnectedResourcesResponse,
   ProfileReviewsResponse,
@@ -378,6 +379,18 @@ export const useConnectedSources = (agentId: string | null) =>
     enabled: !!agentId,
     refetchInterval: 10_000,
   })
+
+/** Operator mutation that enables the installed Knowledge module on an existing agent. */
+export const useActivateConnectedData = (agentId: string | null) => {
+  const client = useQueryClient()
+  return useMutation<ConnectedDataActivationResponse, Error, void>({
+    mutationFn: () => apiPost(`/api/agents/${agentId}/knowledge/connected-data/activate`),
+    onSuccess: () =>
+      client.invalidateQueries({
+        queryKey: ['agent', agentId, 'knowledge', 'connected-sources'],
+      }),
+  })
+}
 
 export const useConnectedSyncStatus = (agentId: string | null) =>
   useQuery<ConnectedSyncStatusResponse>({

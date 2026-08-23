@@ -429,9 +429,22 @@ function SourceDetail({
   )
 }
 
-function SourcesSection({ agentId }: { agentId: string }) {
+function SourcesSection({
+  agentId,
+  initialConnectionId,
+}: {
+  agentId: string
+  initialConnectionId?: string | null
+}) {
   const sources = useConnectedSources(agentId)
   const [selected, setSelected] = useState<ConnectedSourceItem | null>(null)
+  const [initialOpen, setInitialOpen] = useState(true)
+  const initialSource = sources.data?.items.find(
+    (source) =>
+      source.connection_id === initialConnectionId ||
+      source.connection_id.startsWith(`${initialConnectionId}:`),
+  )
+  const openedSource = selected ?? (initialOpen ? initialSource : null) ?? null
   if (sources.data?.status === 'degraded') {
     return (
       <EmptyState
@@ -475,8 +488,13 @@ function SourcesSection({ agentId }: { agentId: string }) {
       </QueryState>
       <SourceDetail
         agentId={agentId}
-        source={selected}
-        onOpenChange={(o) => !o && setSelected(null)}
+        source={openedSource}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelected(null)
+            setInitialOpen(false)
+          }
+        }}
       />
     </div>
   )
@@ -971,7 +989,13 @@ function HealthSection({ agentId }: { agentId: string }) {
  *  agent's connected data sources — sources and their routing, indexed
  *  documents, connected datastores, blob folders, item provenance, and the
  *  honest index-health probe. */
-export function ConnectionsBrowser({ agentId }: { agentId: string }) {
+export function ConnectionsBrowser({
+  agentId,
+  initialConnectionId,
+}: {
+  agentId: string
+  initialConnectionId?: string | null
+}) {
   const [section, setSection] = useState<Section>('sources')
   return (
     <Tabs value={section} onValueChange={(v) => setSection(v as Section)} className="space-y-4">
@@ -983,7 +1007,7 @@ export function ConnectionsBrowser({ agentId }: { agentId: string }) {
         ))}
       </TabsList>
       <TabsContent value="sources">
-        <SourcesSection agentId={agentId} />
+        <SourcesSection agentId={agentId} initialConnectionId={initialConnectionId} />
       </TabsContent>
       <TabsContent value="documents">
         <DocumentsSection agentId={agentId} />

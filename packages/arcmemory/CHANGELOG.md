@@ -6,6 +6,12 @@ versioning.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-08-23
+
+- Confluence, GitHub, Jira and Readwise Reader are recognized as governed
+  document sources and use the same approved indexing/retrieval pipeline as
+  Dropbox and OneDrive.
+
 ### Added
 
 - Connected-source ingestion destinations for memory, extracted/chunked

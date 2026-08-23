@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-23
+
+- Connected-source state is now source-queryable and safe under concurrent
+  ingestion; purge removes sync state atomically and advances a durable source
+  generation fence so stale workers and approvals cannot reactivate data.
+
 ## [0.4.1] - 2026-08-23
 
 - Added durable connected-source sync state and object state, including

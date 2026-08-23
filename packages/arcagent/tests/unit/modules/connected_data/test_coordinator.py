@@ -49,6 +49,7 @@ class FakeIngest:
         self.staged: list[str] = []
         self.ingested: list[str] = []
         self.fail = False
+        self.snapshots: list[frozenset[str]] = []
 
     async def require_approved_mapping(self, source: SourceDescription) -> MappingPlan:
         self.staged.append("mapping")
@@ -66,6 +67,15 @@ class FakeIngest:
         if self.fail:
             raise RuntimeError("temporary ingest outage")
         self.ingested.append(source_object.object_id)
+
+    async def complete_snapshot(
+        self,
+        source: SourceDescription,
+        object_ids: frozenset[str],
+        mapping: MappingPlan,
+    ) -> None:
+        del source, mapping
+        self.snapshots.append(object_ids)
 
 
 def page(*ids: str, cursor: str) -> SyncSourcePage:
@@ -100,6 +110,23 @@ async def test_mapping_is_a_gate_and_cursor_follows_ingest() -> None:
 
 
 @pytest.mark.asyncio
+async def test_full_snapshot_reconciles_only_after_every_page_succeeds() -> None:
+    source = FakeSource([page("a", "b", cursor="c1"), page("c", cursor="")])
+    ingest = FakeIngest()
+    await ConnectedDataCoordinator(source, ingest, InMemorySourceSyncStore()).run(
+        SourceDescription(
+            connection_id="source",
+            source_kind="test",
+            account_id="account",
+            supports_incremental=False,
+        ),
+        agent_did="did:a",
+        owner_id="worker",
+    )
+    assert ingest.snapshots == [frozenset({"a", "b", "c"})]
+
+
+@pytest.mark.asyncio
 async def test_failed_ingest_does_not_advance_cursor() -> None:
     source = FakeSource([page("a", cursor="c1")])
     ingest = FakeIngest()
@@ -113,6 +140,7 @@ async def test_failed_ingest_does_not_advance_cursor() -> None:
             limits=SyncLimits(retries=0),
         )
     assert (await store.get_state("did:a", "source")).cursor is None
+    assert ingest.snapshots == []
 
 
 @pytest.mark.asyncio

@@ -6,10 +6,10 @@ import asyncio
 from collections.abc import AsyncIterator
 
 import pytest
+from arcstore.inbox_projection import DurableInboxService, participant
 from packages.arcstore.tests.unit.inbox_fake import FakeInboxRepository
 
 from arcgateway.executor import Delta, InboundEvent
-from arcstore.inbox_projection import DurableInboxService, participant
 from arcgateway.session import SessionRouter
 
 

@@ -1,8 +1,9 @@
-"""Gmail mailbox source adapter over the already-authorized ``gog`` attachment."""
+"""Gmail source adapter over the already-authorized ``gog`` attachment."""
 
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from arcagent.extension.source import (
@@ -11,6 +12,7 @@ from arcagent.extension.source import (
     ListSourceResources,
     SelectSourceResources,
     SourceContent,
+    SourceDataShape,
     SourceDescription,
     SourceError,
     SourceFailureCode,
@@ -21,9 +23,11 @@ from arcagent.extension.source import (
     SyncSourcePage,
 )
 
+_CURSOR_VERSION = 1
+
 
 class GmailSourceAdapter:
-    """Read bounded Gmail messages through declared read-only connector verbs."""
+    """Synchronize a selected label through Gmail list and history cursors."""
 
     def __init__(self, attachment: Any) -> None:
         self._attachment = attachment
@@ -34,9 +38,10 @@ class GmailSourceAdapter:
             connection_id=request.connection_id,
             source_kind="gmail",
             account_id="gmail-account",
+            data_shape=SourceDataShape.MAIL,
             display_name="Gmail",
-            supports_incremental=False,
-            supports_deletes=False,
+            supports_incremental=True,
+            supports_deletes=True,
             root_locator=self._selected,
         )
 
@@ -86,20 +91,16 @@ class GmailSourceAdapter:
         self._selected = request.resource_ids[0]
 
     async def sync_source(self, request: SyncSource) -> SyncSourcePage:
-        if request.checkpoint is not None:
-            return SyncSourcePage(next_checkpoint=request.checkpoint, has_more=False)
-        result = await self._attachment.invoke(
-            "google_gmail_messages",
-            {"label": request.root_locator or self._selected, "limit": str(request.page_size)},
-        )
-        messages = _json(result.content).get("messages", [])
-        objects = tuple(_message_object(item) for item in messages if isinstance(item, dict))
-        return SyncSourcePage(objects=objects, next_checkpoint="snapshot-1", has_more=False)
+        cursor = _cursor(request.checkpoint)
+        label = request.root_locator or self._selected
+        if cursor is None or cursor["mode"] == "snapshot":
+            return await self._sync_snapshot(request, label, cursor)
+        return await self._sync_history(request, label, cursor)
 
     async def fetch_source(self, request: FetchSourceObject) -> SourceContent:
         result = await self._attachment.invoke("google_gmail_message", {"id": request.object_id})
         payload = _json(result.content)
-        version = str(payload.get("historyId") or payload.get("internalDate") or "1")
+        version = _revision(payload)
         if version != request.version:
             raise SourceError(
                 SourceFailureCode.VERSION_CHANGED, "Gmail message changed during fetch"
@@ -114,6 +115,91 @@ class GmailSourceAdapter:
     async def close_source(self) -> None:
         return None
 
+    async def _sync_snapshot(
+        self, request: SyncSource, label: str, cursor: dict[str, str] | None
+    ) -> SyncSourcePage:
+        arguments: dict[str, str] = {"label": label, "limit": str(request.page_size)}
+        if cursor is not None and (token := cursor.get("page_token")):
+            arguments["page_token"] = token
+        result = await self._attachment.invoke("google_gmail_messages", arguments)
+        payload = _json(result.content)
+        objects = await self._message_objects(payload.get("messages", []))
+        page_token = str(payload.get("nextPageToken") or "")
+        if page_token:
+            return SyncSourcePage(
+                objects=objects,
+                next_checkpoint=_encode_cursor("snapshot", page_token=page_token),
+                has_more=True,
+            )
+        history_id = _revision_or_none(payload) or _latest_revision(objects)
+        if history_id is None:
+            return SyncSourcePage(objects=objects, next_checkpoint=_encode_cursor("snapshot"))
+        return SyncSourcePage(
+            objects=objects,
+            next_checkpoint=_encode_cursor("history", history_id=history_id),
+        )
+
+    async def _sync_history(
+        self, request: SyncSource, label: str, cursor: dict[str, str]
+    ) -> SyncSourcePage:
+        arguments: dict[str, str] = {
+            "label": label,
+            "limit": str(request.page_size),
+            "start_history_id": cursor["history_id"],
+        }
+        if token := cursor.get("page_token"):
+            arguments["page_token"] = token
+        result = await self._attachment.invoke("google_gmail_history", arguments)
+        payload = _json(result.content)
+        objects = await self._history_objects(payload.get("history", []))
+        next_history = _revision(payload) if payload.get("historyId") else cursor["history_id"]
+        page_token = str(payload.get("nextPageToken") or "")
+        return SyncSourcePage(
+            objects=objects,
+            next_checkpoint=_encode_cursor(
+                "history", history_id=next_history, page_token=page_token or None
+            ),
+            has_more=bool(page_token),
+        )
+
+    async def _message_objects(self, messages: Any) -> tuple[SourceObject, ...]:
+        if not isinstance(messages, list):
+            raise SourceError(SourceFailureCode.TRANSIENT, "Gmail returned invalid message list")
+        objects: list[SourceObject] = []
+        for message in messages:
+            if not isinstance(message, dict) or not (message_id := str(message.get("id") or "")):
+                raise SourceError(
+                    SourceFailureCode.TRANSIENT, "Gmail returned a message without an id"
+                )
+            objects.append(_message_object(await self._message(message_id)))
+        return tuple(objects)
+
+    async def _history_objects(self, history: Any) -> tuple[SourceObject, ...]:
+        if not isinstance(history, list):
+            raise SourceError(SourceFailureCode.TRANSIENT, "Gmail returned invalid history")
+        objects: dict[str, SourceObject] = {}
+        for change in history:
+            if not isinstance(change, dict):
+                continue
+            revision = _revision(change)
+            for message_id in _deleted_message_ids(change):
+                objects[message_id] = _deleted_object(message_id, revision)
+            for message_id in _changed_message_ids(change):
+                try:
+                    objects[message_id] = _message_object(await self._message(message_id))
+                except SourceError as error:
+                    if error.code is not SourceFailureCode.NOT_FOUND:
+                        raise
+                    objects[message_id] = _deleted_object(message_id, revision)
+        return tuple(objects.values())
+
+    async def _message(self, message_id: str) -> dict[str, Any]:
+        result = await self._attachment.invoke("google_gmail_message", {"id": message_id})
+        payload = _json(result.content)
+        if not payload.get("id"):
+            raise SourceError(SourceFailureCode.NOT_FOUND, "Gmail message is unavailable")
+        return payload
+
 
 def build_source_adapter(context: dict[str, Any]) -> GmailSourceAdapter:
     return GmailSourceAdapter(context["attachment"])
@@ -123,15 +209,93 @@ def _message_object(message: dict[str, Any]) -> SourceObject:
     object_id = str(message.get("id") or "")
     if not object_id:
         raise SourceError(SourceFailureCode.TRANSIENT, "Gmail returned a message without an id")
-    version = str(message.get("historyId") or message.get("internalDate") or "1")
+    version = _revision(message)
     return SourceObject(
         object_id=object_id,
         locator=str(message.get("threadId") or object_id),
         kind=SourceObjectKind.FILE,
         version=version,
         media_type="text/plain",
-        metadata={"classification": "unclassified"},
+        metadata={"classification": "unclassified", "revision": int(version)},
     )
+
+
+def _deleted_object(object_id: str, version: str) -> SourceObject:
+    return SourceObject(
+        object_id=object_id,
+        locator=object_id,
+        kind=SourceObjectKind.DELETED,
+        version=version,
+        deleted=True,
+        metadata={"classification": "unclassified", "revision": int(version)},
+    )
+
+
+def _changed_message_ids(change: dict[str, Any]) -> tuple[str, ...]:
+    values: list[str] = []
+    for field in ("messagesAdded", "labelsAdded", "labelsRemoved"):
+        for entry in change.get(field, []):
+            if isinstance(entry, dict) and isinstance(entry.get("message"), dict):
+                message_id = str(entry["message"].get("id") or "")
+                if message_id:
+                    values.append(message_id)
+    return tuple(dict.fromkeys(values))
+
+
+def _deleted_message_ids(change: dict[str, Any]) -> tuple[str, ...]:
+    values: list[str] = []
+    for entry in change.get("messagesDeleted", []):
+        if isinstance(entry, dict) and isinstance(entry.get("message"), dict):
+            message_id = str(entry["message"].get("id") or "")
+            if message_id:
+                values.append(message_id)
+    return tuple(values)
+
+
+def _cursor(value: str | None) -> dict[str, str] | None:
+    if value is None:
+        return None
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise SourceError(
+            SourceFailureCode.CHECKPOINT_INVALID, "invalid Gmail checkpoint"
+        ) from exc
+    if not isinstance(parsed, dict) or parsed.get("v") != _CURSOR_VERSION:
+        raise SourceError(SourceFailureCode.CHECKPOINT_INVALID, "invalid Gmail checkpoint")
+    mode = parsed.get("mode")
+    if mode not in {"snapshot", "history"}:
+        raise SourceError(SourceFailureCode.CHECKPOINT_INVALID, "invalid Gmail checkpoint")
+    cursor = {key: str(item) for key, item in parsed.items() if isinstance(item, (str, int))}
+    if mode == "history" and not cursor.get("history_id"):
+        raise SourceError(SourceFailureCode.CHECKPOINT_INVALID, "invalid Gmail checkpoint")
+    return cursor
+
+
+def _encode_cursor(mode: str, **values: str | None) -> str:
+    payload = {"v": _CURSOR_VERSION, "mode": mode}
+    payload.update({key: value for key, value in values.items() if value})
+    return json.dumps(payload, separators=(",", ":"), sort_keys=True)
+
+
+def _revision(value: dict[str, Any]) -> str:
+    raw = str(value.get("historyId") or value.get("internalDate") or value.get("id") or "")
+    digits = "".join(re.findall(r"\d+", raw))
+    if not digits:
+        raise SourceError(SourceFailureCode.TRANSIENT, "Gmail returned no numeric revision")
+    return str(int(digits))
+
+
+def _revision_or_none(value: dict[str, Any]) -> str | None:
+    try:
+        return _revision(value)
+    except SourceError:
+        return None
+
+
+def _latest_revision(objects: tuple[SourceObject, ...]) -> str | None:
+    revisions = [int(item.version) for item in objects if item.version and item.version.isdigit()]
+    return str(max(revisions)) if revisions else None
 
 
 def _json(value: str) -> dict[str, Any]:

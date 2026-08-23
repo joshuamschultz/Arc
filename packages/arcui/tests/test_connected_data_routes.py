@@ -152,6 +152,48 @@ def _client() -> tuple[TestClient, _Service]:
     return TestClient(app), service
 
 
+def test_activate_connected_data_is_operator_gated_and_uses_persistent_agent_seam() -> None:
+    client, _service = _client()
+    agent = client.app.state.embedded_agent_cache["did:arc:olivia"]
+    calls: list[str] = []
+
+    async def enable_module(name: str) -> str:
+        calls.append(name)
+        return "module 'connected_data' enabled"
+
+    agent.enable_module_persisted = enable_module
+    path = "/api/agents/olivia/knowledge/connected-data/activate"
+
+    denied = client.post(path, headers={"Authorization": "Bearer viewer"})
+    assert denied.status_code == 403
+    assert calls == []
+
+    activated = client.post(path, headers={"Authorization": "Bearer operator"})
+    assert activated.status_code == 200
+    assert activated.json() == {
+        "status": "activated",
+        "detail": "module 'connected_data' enabled",
+    }
+    assert calls == ["connected_data"]
+
+
+def test_activate_connected_data_hides_runtime_failure() -> None:
+    client, _service = _client()
+    agent = client.app.state.embedded_agent_cache["did:arc:olivia"]
+
+    async def enable_module(name: str) -> str:
+        del name
+        raise RuntimeError("missing module at /sensitive/runtime/path")
+
+    agent.enable_module_persisted = enable_module
+    response = client.post(
+        "/api/agents/olivia/knowledge/connected-data/activate",
+        headers={"Authorization": "Bearer operator"},
+    )
+    assert response.status_code == 503
+    assert response.json() == {"error": "connected-data module could not be activated"}
+
+
 def test_connected_sources_exposes_connected_account_before_ingest() -> None:
     client, _service = _client()
     response = client.get("/api/agents/olivia/knowledge/connected-sources", headers={"Authorization": "Bearer viewer"})

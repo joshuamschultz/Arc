@@ -85,6 +85,7 @@ class ConnectedDataCoordinator:
             )
             await self._register_live_datastore(source, mapping, chosen, started, cancel_event)
             cursor, pages, processed = current.cursor, 0, 0
+            snapshot_ids: set[str] = set()
             while True:
                 self._check_cancel(cancel_event)
                 self._check_deadline(started, chosen)
@@ -99,6 +100,7 @@ class ConnectedDataCoordinator:
                 if pages >= chosen.max_pages:
                     raise SyncError("page limit exceeded")
                 page = await self._fetch_with_retry(source, cursor, chosen, started, cancel_event)
+                snapshot_ids.update(item.object_id for item in page.objects if not item.deleted)
                 page_bytes = await self._ingest_page(
                     source,
                     page,
@@ -124,6 +126,15 @@ class ConnectedDataCoordinator:
                 pages, processed, cursor = pages + 1, processed + page_bytes, page.next_checkpoint
                 if not page.has_more:
                     break
+            if not source.supports_incremental:
+                await self._retry_call(
+                    lambda: self._ingest.complete_snapshot(
+                        source, frozenset(snapshot_ids), mapping
+                    ),
+                    chosen,
+                    started,
+                    cancel_event,
+                )
             await self._set_status(
                 agent_did,
                 source_id,

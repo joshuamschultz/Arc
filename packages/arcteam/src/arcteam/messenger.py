@@ -381,7 +381,7 @@ class MessagingService:
 
         # Route to each target.  A mail envelope is deliberately separate from
         # channel chat: its recipient copies are the only records eligible for
-        # the AgentMail/Inbox projection.
+        # the durable inbox projection.
         streams_written: list[str] = []
         channel_names: list[str] = []
         last_seq = 0

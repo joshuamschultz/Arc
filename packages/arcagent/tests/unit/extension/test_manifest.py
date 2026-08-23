@@ -577,3 +577,21 @@ def test_a_bundle_that_declares_none_still_renders_something() -> None:
     )
 
     assert manifest.extension.label == "acme_corp"
+
+
+def test_knowledge_declaration_exposes_source_mode() -> None:
+    manifest = load_manifest(
+        '[extension]\nname = "acme_corp"\nversion = "1.0.0"\nattachment = "cli"\n'
+        '[knowledge]\nmode = "source"\n',
+        tier=Tier.PERSONAL,
+    )
+    assert manifest.knowledge.mode == "source"
+
+
+def test_non_indexable_knowledge_declaration_requires_threat_reason() -> None:
+    with pytest.raises(ValidationError, match="require a reason"):
+        load_manifest(
+            '[extension]\nname = "vault"\nversion = "1.0.0"\nattachment = "cli"\n'
+            '[knowledge]\nmode = "non_indexable"\n',
+            tier=Tier.PERSONAL,
+        )

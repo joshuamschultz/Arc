@@ -190,6 +190,7 @@ async def test_delta_paging_preserves_drive_item_identity_updates_moves_and_tomb
     assert first.has_more
     assert first.objects[0].object_id == "drive-a:item-1"
     assert first.objects[0].version == "etag-v1"
+    assert isinstance(first.objects[0].metadata["revision"], int)
     assert first.objects[0].metadata["classification"] == "internal"
     assert second.objects[0].object_id == "drive-a:item-1"
     assert second.objects[0].version == "etag-v2"

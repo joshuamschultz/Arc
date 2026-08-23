@@ -201,7 +201,7 @@ class PostgresBackend(SourceSyncBackend):
     async def source_sync_get_state(self, agent_did: str, source_id: str) -> dict[str, Any]:
         async with self._require_pool().acquire() as connection:
             row = await connection.fetchrow(
-                "SELECT agent_did, source_id, cursor, status, pages, bytes_processed, fencing_token, error_code "  # noqa: E501
+                "SELECT agent_did, source_id, cursor, status, pages, bytes_processed, fencing_token, generation, error_code "  # noqa: E501
                 "FROM connected_source_sync WHERE agent_did=$1 AND source_id=$2",
                 agent_did,
                 source_id,
@@ -214,6 +214,7 @@ class PostgresBackend(SourceSyncBackend):
                 "pages": 0,
                 "bytes_processed": 0,
                 "fencing_token": 0,
+                "generation": 1,
             }
         return dict(row)
 
@@ -225,8 +226,8 @@ class PostgresBackend(SourceSyncBackend):
         async with self._require_pool().acquire() as connection:
             async with connection.transaction():
                 row = await connection.fetchrow(
-                    "INSERT INTO connected_source_sync(agent_did, source_id, status, lease_owner, lease_expires_at, fencing_token) "  # noqa: E501
-                    "VALUES ($1, $2, 'running', $3, now() + ($4 * interval '1 second'), 1) "
+                    "INSERT INTO connected_source_sync(agent_did, source_id, status, lease_owner, lease_expires_at, fencing_token, generation) "  # noqa: E501
+                    "VALUES ($1, $2, 'running', $3, now() + ($4 * interval '1 second'), 1, 1) "
                     "ON CONFLICT(agent_did, source_id) DO UPDATE SET status='running', lease_owner=$3, "  # noqa: E501
                     "lease_expires_at=now() + ($4 * interval '1 second'), fencing_token=connected_source_sync.fencing_token + 1, updated_at=now() "  # noqa: E501
                     "WHERE connected_source_sync.lease_expires_at IS NULL OR connected_source_sync.lease_expires_at <= now() OR connected_source_sync.lease_owner=$3 "  # noqa: E501
@@ -343,6 +344,35 @@ class PostgresBackend(SourceSyncBackend):
                     return False
                 await connection.execute(
                     "DELETE FROM connected_source_pages WHERE agent_did=$1 AND source_id=$2",
+                    agent_did,
+                    source_id,
+                )
+                return True
+
+    async def source_sync_purge(self, agent_did: str, source_id: str) -> bool:
+        async with self._require_pool().acquire() as connection:
+            async with connection.transaction():
+                locked = await connection.fetchrow(
+                    "SELECT lease_expires_at FROM connected_source_sync "
+                    "WHERE agent_did=$1 AND source_id=$2 FOR UPDATE",
+                    agent_did,
+                    source_id,
+                )
+                if locked is not None and locked["lease_expires_at"] is not None:
+                    if locked["lease_expires_at"] > datetime.now(UTC):
+                        return False
+                await connection.execute(
+                    "DELETE FROM connected_source_pages WHERE agent_did=$1 AND source_id=$2",
+                    agent_did,
+                    source_id,
+                )
+                await connection.execute(
+                    "INSERT INTO connected_source_sync(agent_did, source_id, generation) "
+                    "VALUES($1, $2, 2) ON CONFLICT(agent_did, source_id) DO UPDATE SET "
+                    "cursor=NULL, status='idle', pages=0, bytes_processed=0, error_code=NULL, "
+                    "lease_owner=NULL, lease_expires_at=NULL, "
+                    "generation=connected_source_sync.generation+1, "
+                    "updated_at=now()",
                     agent_did,
                     source_id,
                 )

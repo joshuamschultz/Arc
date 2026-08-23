@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from arcteam import composition as _bootstrap
 from arctrust import AgentIdentity
 from arctrust.classification import Classification
 from packages.arcagent.tests.unit.modules.messaging.conftest import (
@@ -20,7 +21,6 @@ from packages.arcagent.tests.unit.modules.messaging.conftest import (
     make_operator_signer,
 )
 
-from arcteam import composition as _bootstrap
 from arcagent.modules.messaging import _runtime
 from arcagent.modules.messaging.capabilities import messaging_send
 

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 from arcagent.extension.source import (
     FetchSourceObject,
@@ -11,6 +13,7 @@ from arcagent.extension.source import (
     ListSourceResources,
     SelectSourceResources,
     SourceContent,
+    SourceDataShape,
     SourceDescription,
     SourceError,
     SourceFailureCode,
@@ -32,9 +35,10 @@ class OutlookSourceAdapter:
             connection_id=request.connection_id,
             source_kind="outlook",
             account_id="microsoft365-account",
+            data_shape=SourceDataShape.MAIL,
             display_name="Microsoft 365 Mail",
             supports_incremental=False,
-            supports_deletes=False,
+            supports_deletes=True,
             root_locator=self._folder,
         )
 
@@ -69,22 +73,34 @@ class OutlookSourceAdapter:
         self._folder = request.resource_ids[0]
 
     async def sync_source(self, request: SyncSource) -> SyncSourcePage:
-        if request.checkpoint is not None:
-            return SyncSourcePage(next_checkpoint=request.checkpoint, has_more=False)
+        cursor = _outlook_cursor(request.checkpoint)
+        skip = 0 if cursor is None or cursor["complete"] else cursor["skip"]
         result = await self._attachment.invoke(
             "list-mail-messages",
-            {"folder": request.root_locator or self._folder, "top": request.page_size},
+            {
+                "folder": request.root_locator or self._folder,
+                "top": request.page_size,
+                "skip": skip,
+            },
         )
-        messages = _json(result.content).get("value", [])
+        payload = _json(result.content)
+        messages = payload.get("value", [])
         objects = tuple(_object(value) for value in messages if isinstance(value, dict))
-        return SyncSourcePage(objects=objects, next_checkpoint="snapshot-1", has_more=False)
+        next_skip = _next_skip(payload.get("@odata.nextLink"))
+        if next_skip is None:
+            return SyncSourcePage(objects=objects, next_checkpoint=_outlook_checkpoint(0, True))
+        return SyncSourcePage(
+            objects=objects,
+            next_checkpoint=_outlook_checkpoint(next_skip, False),
+            has_more=True,
+        )
 
     async def fetch_source(self, request: FetchSourceObject) -> SourceContent:
         result = await self._attachment.invoke(
             "get-mail-message", {"message_id": request.object_id}
         )
         item = _json(result.content)
-        version = str(item.get("changeKey") or item.get("lastModifiedDateTime") or "1")
+        version = _outlook_version(item)
         if version != request.version:
             raise SourceError(
                 SourceFailureCode.VERSION_CHANGED, "Outlook message changed during fetch"
@@ -120,6 +136,7 @@ class OneDriveSourceAdapter:
             connection_id=request.connection_id,
             source_kind="onedrive",
             account_id=self._account or "microsoft365-onedrive-account",
+            data_shape=SourceDataShape.DOCUMENT,
             display_name="Microsoft OneDrive",
             supports_incremental=self._graph is not None,
             supports_deletes=self._graph is not None,
@@ -149,7 +166,12 @@ class OneDriveSourceAdapter:
                     [dict(item, _drive_id=drive_id) for item in children.get("value", [])]
                 )
         else:
-            result = await self._attachment.invoke("list-folder-files", {"folder": "root"})
+            attachment = self._attachment
+            if attachment is None:
+                raise SourceError(
+                    SourceFailureCode.TRANSIENT, "OneDrive attachment is unavailable"
+                )
+            result = await attachment.invoke("list-folder-files", {"folder": "root"})
             values = _json(result.content).get("value", _json(result.content).get("files", []))
             resources = [
                 SourceResource(resource_id="root", label="OneDrive root", resource_kind="folder")
@@ -195,7 +217,10 @@ class OneDriveSourceAdapter:
             )
         if request.checkpoint is not None:
             return SyncSourcePage(next_checkpoint=request.checkpoint, has_more=False)
-        result = await self._attachment.invoke(
+        attachment = self._attachment
+        if attachment is None:
+            raise SourceError(SourceFailureCode.TRANSIENT, "OneDrive attachment is unavailable")
+        result = await attachment.invoke(
             "list-folder-files", {"folder": request.root_locator or self._folder}
         )
         values = _json(result.content).get("value", _json(result.content).get("files", []))
@@ -245,7 +270,10 @@ class OneDriveSourceAdapter:
                     )
                 },
             )
-        result = await self._attachment.invoke("get-onedrive-file", {"file_id": request.object_id})
+        attachment = self._attachment
+        if attachment is None:
+            raise SourceError(SourceFailureCode.TRANSIENT, "OneDrive attachment is unavailable")
+        result = await attachment.invoke("get-onedrive-file", {"file_id": request.object_id})
         item = _json(result.content)
         version = str(item.get("eTag") or item.get("lastModifiedDateTime") or "1")
         if version != request.version:
@@ -277,13 +305,19 @@ class OneDriveSourceAdapter:
     async def _graph_request(self, method: str, path: str) -> dict[str, Any]:
         response = await self._graph_response(method, path)
         try:
-            return response.json()
+            payload = response.json()
         finally:
             await response.aclose()
+        if not isinstance(payload, dict):
+            raise SourceError(SourceFailureCode.TRANSIENT, "Microsoft Graph returned invalid JSON")
+        return payload
 
     async def _graph_response(self, method: str, path: str) -> Any:
+        graph = self._graph
+        if graph is None:
+            raise SourceError(SourceFailureCode.TRANSIENT, "Microsoft Graph client is unavailable")
         try:
-            response = await self._graph.request(method, path)
+            response = await graph.request(method, path)
         except Exception as exc:
             status = int(getattr(exc, "status_code", 0))
             code = (
@@ -330,18 +364,91 @@ def _object(value: dict[str, Any]) -> SourceObject:
     identifier = str(value.get("id") or "")
     if not identifier:
         raise SourceError(SourceFailureCode.TRANSIENT, "Outlook returned a message without an id")
+    deleted = "@removed" in value or "deleted" in value
+    version = _outlook_version(value)
     return SourceObject(
         object_id=identifier,
         locator=str(value.get("conversationId") or identifier),
-        kind=SourceObjectKind.FILE,
-        version=str(value.get("changeKey") or value.get("lastModifiedDateTime") or "1"),
-        media_type="text/plain",
+        kind=SourceObjectKind.DELETED if deleted else SourceObjectKind.FILE,
+        version=version,
+        deleted=deleted,
+        media_type=None if deleted else "text/plain",
         metadata={
             "classification": str(
                 value.get("fileSystemInfo", {}).get("classification") or "unclassified"
-            )
+            ),
+            "revision": _outlook_revision(value),
         },
     )
+
+
+def _outlook_cursor(value: str | None) -> dict[str, int | bool] | None:
+    if value is None:
+        return None
+    try:
+        payload = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise SourceError(
+            SourceFailureCode.CHECKPOINT_INVALID, "invalid Outlook checkpoint"
+        ) from exc
+    if (
+        not isinstance(payload, dict)
+        or payload.get("v") != 1
+        or not isinstance(payload.get("skip"), int)
+        or payload["skip"] < 0
+        or not isinstance(payload.get("complete"), bool)
+    ):
+        raise SourceError(SourceFailureCode.CHECKPOINT_INVALID, "invalid Outlook checkpoint")
+    return {"skip": payload["skip"], "complete": payload["complete"]}
+
+
+def _outlook_checkpoint(skip: int, complete: bool) -> str:
+    return json.dumps({"v": 1, "skip": skip, "complete": complete}, separators=(",", ":"))
+
+
+def _next_skip(value: Any) -> int | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        raw = parse_qs(urlparse(value).query).get("$skip", [None])[0]
+        return int(raw) if raw is not None and int(raw) >= 0 else None
+    except ValueError:
+        raise SourceError(
+            SourceFailureCode.CHECKPOINT_INVALID, "invalid Outlook page cursor"
+        ) from None
+
+
+def _outlook_version(value: dict[str, Any]) -> str:
+    change_key = str(value.get("changeKey") or "")
+    return change_key or str(_outlook_revision(value))
+
+
+def _outlook_revision(value: dict[str, Any]) -> int:
+    timestamp = str(value.get("lastModifiedDateTime") or "")
+    if timestamp:
+        try:
+            parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            return max(1, int(parsed.astimezone(UTC).timestamp() * 1_000_000))
+        except ValueError:
+            pass
+    digits = "".join(
+        character for character in str(value.get("changeKey") or "") if character.isdigit()
+    )
+    return max(1, int(digits)) if digits else 1
+
+
+def _onedrive_revision(value: dict[str, Any]) -> int:
+    timestamp = str(value.get("lastModifiedDateTime") or "")
+    if timestamp:
+        try:
+            parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            return max(1, int(parsed.astimezone(UTC).timestamp() * 1_000_000))
+        except ValueError:
+            pass
+    digits = "".join(
+        character for character in str(value.get("eTag") or "") if character.isdigit()
+    )
+    return max(1, int(digits)) if digits else 1
 
 
 def _onedrive_object(value: dict[str, Any], drive_id: str = "") -> SourceObject:
@@ -363,7 +470,8 @@ def _onedrive_object(value: dict[str, Any], drive_id: str = "") -> SourceObject:
         metadata={
             "classification": str(
                 value.get("fileSystemInfo", {}).get("classification") or "unclassified"
-            )
+            ),
+            "revision": _onedrive_revision(value),
         },
     )
 

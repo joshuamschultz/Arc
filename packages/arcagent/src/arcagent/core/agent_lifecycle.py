@@ -28,7 +28,7 @@ from arcprompt import load_stock
 
 from arcagent.capabilities.capability_loader import CapabilityLoader
 from arcagent.capabilities.capability_registry import CapabilityRegistry
-from arcagent.core.config import ModuleEntry
+from arcagent.core.config import ModuleEntry, persist_module_enabled, restore_config
 from arcagent.core.module_bus import EventContext
 from arcagent.core.module_discovery import active_modules, module_root, module_statuses
 from arcagent.core.runtime_dependencies import (
@@ -362,7 +362,8 @@ async def set_module_enabled(agent: ArcAgent, name: str, *, enabled: bool) -> st
         raise RuntimeError("Module hot-swap requires a started agent")
 
     if enabled == (name in active_modules(agent._config)):
-        return f"module {name!r} already {'enabled' if enabled else 'disabled'}"
+        if not enabled or await _module_lifecycle_healthy(agent, name):
+            return f"module {name!r} already {'enabled' if enabled else 'disabled'}"
 
     entry = agent._config.modules.get(name) or ModuleEntry()
     if enabled:
@@ -386,7 +387,93 @@ async def set_module_enabled(agent: ArcAgent, name: str, *, enabled: bool) -> st
         agent._config.modules[name] = entry.model_copy(update={"enabled": False})
 
     loader.set_module_roots(agent._config_path.parent.resolve(), active_modules(agent._config))
-    return await agent.reload()
+    result = await agent.reload()
+    if enabled:
+        await _start_module_lifecycle(agent, name)
+    return result
+
+
+async def enable_module_persisted(agent: ArcAgent, name: str) -> str:
+    """Enable an installed module live and persist the operator's choice.
+
+    ``set_module_enabled`` intentionally remains a runtime control primitive.
+    This adjacent public lifecycle operation makes an operator-facing enable
+    durable and restores both disk and in-memory state if activation fails.
+    """
+    existing = agent._config.modules.get(name)
+    if existing is not None and existing.enabled:
+        if await _module_lifecycle_healthy(agent, name):
+            return f"module {name!r} already enabled"
+        try:
+            await set_module_enabled(agent, name, enabled=False)
+            return await set_module_enabled(agent, name, enabled=True)
+        except Exception:
+            agent._config.modules[name] = existing
+            loader = agent._capability_loader
+            if loader is not None:
+                loader.set_module_roots(
+                    agent._config_path.parent.resolve(), active_modules(agent._config)
+                )
+            raise
+    prior_bindings = list(agent._runtime_bindings)
+    original_config = persist_module_enabled(agent._config_path, name)
+    try:
+        return await set_module_enabled(agent, name, enabled=True)
+    except Exception:
+        await _rollback_persisted_enable(agent, name, existing, prior_bindings)
+        try:
+            restore_config(agent._config_path, original_config)
+        except OSError:
+            _logger.exception("Could not restore agent config after module activation failure")
+        raise
+
+
+async def _rollback_persisted_enable(
+    agent: ArcAgent,
+    name: str,
+    existing: ModuleEntry | None,
+    prior_bindings: list[RuntimeBinding[Any]],
+) -> None:
+    """Undo an incomplete persistent enable before restoring its config snapshot."""
+    if existing is None:
+        agent._config.modules.pop(name, None)
+    else:
+        agent._config.modules[name] = existing
+    agent._runtime_bindings[:] = prior_bindings
+    loader = agent._capability_loader
+    if loader is None:
+        return
+    loader.set_module_roots(agent._config_path.parent.resolve(), active_modules(agent._config))
+    try:
+        await agent.reload_or_raise()
+    except Exception:
+        _logger.exception("Could not reload agent after module activation rollback")
+
+
+async def _module_lifecycle_healthy(agent: ArcAgent, name: str) -> bool:
+    """Treat enabled-but-unstarted modules as degraded, never as a success."""
+    registry = getattr(agent, "_capability_registry", None)
+    if registry is None:
+        return True
+    entry = await registry.get_capability(name)
+    return entry is not None and entry.setup_done
+
+
+async def _start_module_lifecycle(agent: ArcAgent, name: str) -> None:
+    """Start the one newly loaded module capability after transactional reload."""
+    registry = getattr(agent, "_capability_registry", None)
+    if registry is None:
+        return
+    entry = await registry.get_capability(name)
+    if entry is None:
+        raise RuntimeError(f"Enabled module {name!r} did not register a capability")
+    if entry.setup_done:
+        return
+    setup = getattr(entry.instance, "setup", None)
+    if not callable(setup):
+        raise RuntimeError(f"Enabled module {name!r} has no lifecycle setup")
+    await setup(None)
+    entry.setup_done = True
 
 
 def _warn_config_without_folder(agent: ArcAgent) -> None:

@@ -100,7 +100,7 @@ class _SourceEnabledAttachment:
 
 
 class _MultiSourceEnabledAttachment(_SourceEnabledAttachment):
-    """One grant may expose isolated source streams such as Outlook and OneDrive."""
+    """One grant may expose multiple isolated document and message streams."""
 
     def __init__(self, delegate: ExtensionAttachment, sources: dict[str, SourceAdapter]) -> None:
         first = next(iter(sources.values()))

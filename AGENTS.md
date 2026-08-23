@@ -93,6 +93,22 @@ If a feature cannot be deleted from the tree without breaking unrelated behavior
 or cannot be replaced while preserving its input/output contract, it is not
 properly seamed and must not merge. See `docs/concepts/seam-model.md`.
 
+#### A data connection is not complete when its tools work
+
+Every connection to a data-bearing system must implement both independent seams:
+
+1. interactive tools for direct agent actions; and
+2. the canonical connected-source lifecycle for Knowledge discovery, resource
+   selection, mapping approval, incremental sync/reindex/revoke, provenance and
+   agent retrieval.
+
+The connection card must show Knowledge status for every granted agent and offer
+the complete configure-and-sync journey. Shipping tool calls without enrollment,
+or an adapter without a usable ArcUI/ArcCLI path, is incomplete. Contract tests
+must start from a real granted connection and prove it becomes searchable agent
+knowledge. A genuinely non-indexable security system must declare that explicitly
+with a threat-model reason; it must never silently disappear from Knowledge.
+
 
 ### 3. One resolver per Arc-home path
 

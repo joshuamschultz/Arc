@@ -29,7 +29,7 @@ from arcmemory.index.backend import IndexBackend, open_index_backend
 from arcmemory.index.rebuild import Embedder, embed_or_none
 from arcmemory.index.source import SourceChunk
 from arcmemory.index.surface import SurfaceIndex
-from arcmemory.security import content_hash
+from arcmemory.security import content_hash, dominating_classification
 from arcmemory.types import Recall, Scope
 
 
@@ -106,6 +106,16 @@ class DocIndex:
         backend = open_index_backend(self._cfg.index_backend, db=self._db)
         await backend.delete_object(scope.key, object_id)
 
+    async def delete_source(self, source_id: str, agent_did: str) -> None:
+        """Delete every indexed chunk in one connected source's isolated pool."""
+        backend = open_index_backend(self._cfg.index_backend, db=self._db)
+        await backend.delete_scope(doc_scope(agent_did, source_id).key)
+
+    async def delete_collection_index(self, source_id: str, agent_did: str) -> None:
+        """Remove the source inventory document after its final object disappears."""
+        backend = open_index_backend(self._cfg.index_backend, db=self._db)
+        await backend.delete_object(doc_scope(agent_did, source_id).key, f"index:{source_id}")
+
     async def index_collection(
         self,
         source_id: str,
@@ -118,11 +128,14 @@ class DocIndex:
         self.sync_collection_index(collection_root)
         index_path = index_store.index_path
         if index_path.exists() and validate_collection_index(index_path).valid:
+            index_classification = dominating_classification(
+                [chunk.classification for chunk in chunks]
+            )
             index_chunk = SourceChunk(
                 chunk_id=f"index:{source_id}",
                 source_path=index_path.as_posix(),
                 text=index_path.read_text(encoding="utf-8"),
-                classification="",
+                classification=index_classification,
                 mtime=index_path.stat().st_mtime,
             )
             chunks = [*chunks, index_chunk]
@@ -163,11 +176,7 @@ class DocIndex:
             audit_sink=self._audit,
         )
         result = await surface.search(query, top_k=top_k)
-        hits = [
-            await self._to_hit(backend, scope, source_id, recall)
-            for recall in result.recalls
-            if not recall.source.startswith("index:")
-        ]
+        hits = [await self._to_hit(backend, scope, source_id, recall) for recall in result.recalls]
         return await self._maybe_rerank(query, hits)
 
     async def _to_hit(

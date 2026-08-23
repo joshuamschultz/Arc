@@ -181,13 +181,19 @@ def _refused(exc: ExtensionError) -> JSONResponse:
 
 
 def _row(
-    instance: str, connection: Connection, labels: Mapping[str, str] | None = None
+    instance: str,
+    connection: Connection,
+    labels: Mapping[str, str] | None = None,
+    knowledge: Mapping[str, tuple[str, str]] | None = None,
 ) -> ConnectorInstance:
     """One listing row, carrying the grant list that decides who may use it."""
+    mode, reason = (knowledge or {}).get(connection.extension, ("", ""))
     return ConnectorInstance(
         instance=instance,
         extension=connection.extension,
         extension_display_name=(labels or {}).get(connection.extension, connection.extension),
+        knowledge_mode=mode,
+        knowledge_reason=reason,
         approval=connection.approval,
         agents=list(connection.agents),
     )
@@ -210,6 +216,18 @@ def _labels(connections: Connections) -> dict[str, str]:
     except ExtensionError:
         # A listing must not fail because a bundle directory is unreadable; the
         # coordinate is a correct, if plainer, answer.
+        return {}
+
+
+def _knowledge_metadata(connections: Connections) -> dict[str, tuple[str, str]]:
+    """Return manifest-declared Knowledge mode and reason by extension coordinate."""
+    try:
+        return {
+            entry.name: (entry.knowledge_mode, entry.knowledge_reason)
+            for entry in connections.catalog()
+            if not entry.error
+        }
+    except ExtensionError:
         return {}
 
 
@@ -342,6 +360,8 @@ def _catalog_entry(
         display_name=entry.display_name or entry.name,
         version=entry.version,
         description=entry.description,
+        knowledge_mode=entry.knowledge_mode,
+        knowledge_reason=entry.knowledge_reason,
         attachment=entry.attachment,
         tier_floor=entry.tier_floor,
         approval_default=entry.approval_default,
@@ -393,12 +413,15 @@ async def get_connections(request: Request) -> JSONResponse:
         connections = _connections(request)
         defined = connections.connections()
         labels = _labels(connections)
+        knowledge = _knowledge_metadata(connections)
     except ExtensionError as exc:
         return _refused(exc)
 
     return JSONResponse(
         ConnectionsResponse(
-            connections=[_row(name, cfg, labels) for name, cfg in sorted(defined.items())],
+            connections=[
+                _row(name, cfg, labels, knowledge) for name, cfg in sorted(defined.items())
+            ],
             extensions_roots=[str(root) for root in connections.world.extension_roots],
         ).model_dump(mode="json")
     )
@@ -419,12 +442,15 @@ async def get_agent_connectors(request: Request) -> JSONResponse:
         connections = _connections(request)
         granted = connections.registry.granted_to(agent_dir.name)
         labels = _labels(connections)
+        knowledge = _knowledge_metadata(connections)
     except ExtensionError as exc:
         return _refused(exc)
 
     return JSONResponse(
         AgentConnectorsResponse(
-            instances=[_row(name, cfg, labels) for name, cfg in sorted(granted.items())],
+            instances=[
+                _row(name, cfg, labels, knowledge) for name, cfg in sorted(granted.items())
+            ],
             extensions_roots=[str(root) for root in connections.world.extension_roots],
         ).model_dump(mode="json")
     )
@@ -617,7 +643,13 @@ async def _change_grant(request: Request, *, granting: bool) -> JSONResponse:
     connection = mutation.connection
     if connection is None:
         return _error("connector grant did not produce a connection", 500)
-    body = _row(instance, connection, _labels(_connections(request))).model_dump(mode="json")
+    current = _connections(request)
+    body = _row(
+        instance,
+        connection,
+        _labels(current),
+        _knowledge_metadata(current),
+    ).model_dump(mode="json")
     body["activations"] = _activation_payload(mutation.activations)
     return JSONResponse(body)
 

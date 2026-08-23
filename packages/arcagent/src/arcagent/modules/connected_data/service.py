@@ -34,6 +34,8 @@ class SourceSelectionStore(Protocol):
 
     async def put(self, connection_id: str, resource_ids: tuple[str, ...]) -> None: ...
 
+    async def delete(self, connection_id: str) -> None: ...
+
 
 @dataclass(frozen=True)
 class SourceRuntimeStatus:
@@ -101,6 +103,7 @@ class ConnectedDataService:
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._statuses: dict[str, SourceRuntimeStatus] = {}
         self._mapping_statuses: dict[str, MappingProposalStatus] = {}
+        self._descriptions: dict[str, SourceDescription] = {}
         self._selected_resources: dict[str, tuple[str, ...]] = {}
         self._paused: set[str] = set()
         self._wake = asyncio.Event()
@@ -166,15 +169,28 @@ class ConnectedDataService:
         return SourceOperationResult(connection_id, "scheduled")
 
     async def revoke(self, connection_id: str) -> SourceOperationResult:
-        """Remove a source from synchronization and close its adapter."""
-        if await self._find(connection_id) is None:
+        """Purge a source before removing its registration and durable state."""
+        registration = await self._find(connection_id)
+        if registration is None:
             return SourceOperationResult(connection_id, "not_found")
         self._paused.add(connection_id)
-        task = self._tasks.pop(connection_id, None)
-        if task is not None:
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+        await self._cancel(connection_id)
+        ingest, description = await self._ingest_for(registration, use_cached=True)
+        if ingest is None or description is None:
+            return SourceOperationResult(connection_id, "refused", "ingest_port_unavailable")
+        try:
+            if self._store is None or not await self._store.purge(self._agent_did, connection_id):
+                return SourceOperationResult(connection_id, "refused", "sync_lease_active")
+            await ingest.purge_source(description)
+            if self._resource_store is not None:
+                await self._resource_store.delete(connection_id)
+        except Exception:
+            _logger.exception("connected-data source purge failed: %s", connection_id)
+            return SourceOperationResult(connection_id, "refused", "source_purge_failed")
         self._statuses.pop(connection_id, None)
+        self._mapping_statuses.pop(connection_id, None)
+        self._selected_resources.pop(connection_id, None)
+        self._descriptions.pop(connection_id, None)
         await self._catalog.unregister(connection_id)
         return SourceOperationResult(connection_id, "revoked")
 
@@ -183,12 +199,19 @@ class ConnectedDataService:
         registration = await self._find(connection_id)
         if registration is None:
             return SourceOperationResult(connection_id, "not_found")
-        task = self._tasks.get(connection_id)
-        if task is not None and not task.done():
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+        self._paused.add(connection_id)
+        await self._cancel(connection_id)
+        ingest, description = await self._ingest_for(registration)
+        if ingest is None or description is None:
+            return SourceOperationResult(connection_id, "refused", "ingest_port_unavailable")
+        try:
+            await ingest.reset_source(description)
+        except Exception:
+            _logger.exception("connected-data source reset failed: %s", connection_id)
+            return SourceOperationResult(connection_id, "refused", "source_reset_failed")
         if self._store is None or not await self._store.reset(self._agent_did, connection_id):
             return SourceOperationResult(connection_id, "refused", "sync_lease_active")
+        self._paused.discard(connection_id)
         self._schedule(registration)
         return SourceOperationResult(connection_id, "scheduled")
 
@@ -203,11 +226,12 @@ class ConnectedDataService:
         registration = await self._find(connection_id)
         if registration is None or self._ingest_factory is None:
             return None
-        description = await registration.adapter.inspect_source(
+        raw_description = await registration.adapter.inspect_source(
             InspectSource(connection_id=connection_id)
         )
-        candidate = self._ingest_factory(description)
+        candidate = self._ingest_factory(raw_description)
         ingest = await candidate if inspect.isawaitable(candidate) else candidate
+        description = await self._describe(registration, ingest)
         stage = getattr(ingest, "stage_mapping", None)
         allowed = getattr(ingest, "allowed_homes", None)
         source_id = _canonical_source_id(ingest, description)
@@ -234,11 +258,12 @@ class ConnectedDataService:
             registration = await self._find(connection_id)
             if registration is None or self._ingest_factory is None:
                 return None
-            source = await registration.adapter.inspect_source(
+            raw_source = await registration.adapter.inspect_source(
                 InspectSource(connection_id=connection_id)
             )
-            candidate = self._ingest_factory(source)
+            candidate = self._ingest_factory(raw_source)
             ingest = await candidate if inspect.isawaitable(candidate) else candidate
+            await self._describe(registration, ingest)
             status = getattr(ingest, "mapping_approval_status", None)
             if not callable(status) or not staged.approval_id:
                 return staged
@@ -246,11 +271,12 @@ class ConnectedDataService:
         registration = await self._find(connection_id)
         if registration is None or self._ingest_factory is None:
             return None
-        description = await registration.adapter.inspect_source(
+        raw_description = await registration.adapter.inspect_source(
             InspectSource(connection_id=connection_id)
         )
-        candidate = self._ingest_factory(description)
+        candidate = self._ingest_factory(raw_description)
         ingest = await candidate if inspect.isawaitable(candidate) else candidate
+        description = await self._describe(registration, ingest)
         allowed = getattr(ingest, "allowed_homes", None)
         if not callable(allowed):
             return None
@@ -401,11 +427,13 @@ class ConnectedDataService:
                 await registration.adapter.select_source_resources(
                     SelectSourceResources(connection_id=connection_id, resource_ids=selected)
                 )
-            description = await registration.adapter.inspect_source(
+            raw_description = await registration.adapter.inspect_source(
                 InspectSource(connection_id=connection_id)
             )
-            candidate = self._ingest_factory(description)
+            candidate = self._ingest_factory(raw_description)
             ingest = await candidate if inspect.isawaitable(candidate) else candidate
+            description = await self._with_generation(raw_description, ingest)
+            self._descriptions[connection_id] = description
             self._statuses[connection_id] = SourceRuntimeStatus(
                 connection_id=connection_id,
                 source_id=_canonical_source_id(ingest, description),
@@ -442,7 +470,9 @@ class ConnectedDataService:
             if self._ingest_factory is not None:
                 candidate = self._ingest_factory(description)
                 ingest = await candidate if inspect.isawaitable(candidate) else candidate
+                description = await self._with_generation(description, ingest)
                 source_id = _canonical_source_id(ingest, description)
+            self._descriptions[connection_id] = description
             self._statuses[connection_id] = SourceRuntimeStatus(
                 connection_id=connection_id,
                 source_id=source_id,
@@ -466,6 +496,37 @@ class ConnectedDataService:
         )
         candidate = self._ingest_factory(source)
         return await candidate if inspect.isawaitable(candidate) else candidate
+
+    async def _ingest_for(
+        self, registration: SourceRegistration, *, use_cached: bool = False
+    ) -> tuple[IngestPort | None, SourceDescription | None]:
+        if self._ingest_factory is None:
+            return None, None
+        try:
+            description = (
+                self._descriptions.get(registration.connection_id) if use_cached else None
+            )
+            if description is None:
+                description = await registration.adapter.inspect_source(
+                    InspectSource(connection_id=registration.connection_id)
+                )
+            candidate = self._ingest_factory(description)
+            ingest = await candidate if inspect.isawaitable(candidate) else candidate
+            if not use_cached:
+                description = await self._with_generation(description, ingest)
+                self._descriptions[registration.connection_id] = description
+            return ingest, description
+        except Exception:
+            _logger.exception(
+                "connected-data source inspection failed: %s", registration.connection_id
+            )
+            return None, None
+
+    async def _cancel(self, connection_id: str) -> None:
+        task = self._tasks.pop(connection_id, None)
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
     async def _open_store(self) -> Any:
         if self._sync_store_opener is None:
@@ -495,6 +556,26 @@ class ConnectedDataService:
         self._statuses[connection_id] = SourceRuntimeStatus(
             connection_id=connection_id, status="degraded", detail=detail
         )
+
+    async def _describe(
+        self, registration: SourceRegistration, ingest: IngestPort
+    ) -> SourceDescription:
+        description = await registration.adapter.inspect_source(
+            InspectSource(connection_id=registration.connection_id)
+        )
+        description = await self._with_generation(description, ingest)
+        self._descriptions[registration.connection_id] = description
+        return description
+
+    @staticmethod
+    async def _with_generation(
+        description: SourceDescription, ingest: IngestPort
+    ) -> SourceDescription:
+        generation = getattr(ingest, "source_generation", None)
+        if not callable(generation):
+            return description
+        value = await generation(description)
+        return description.model_copy(update={"generation": int(value)})
 
 
 def _canonical_source_id(ingest: IngestPort, description: SourceDescription) -> str:

@@ -256,6 +256,12 @@ class ArcAgent:
 
         return await set_module_enabled(self, name, enabled=enabled)
 
+    async def enable_module_persisted(self, name: str) -> str:
+        """Enable one installed module now and after future agent restarts."""
+        from arcagent.core.agent_lifecycle import enable_module_persisted
+
+        return await enable_module_persisted(self, name)
+
     async def reconcile_connectors(self) -> Any:
         """Refresh this started agent's connector tools from durable grants.
 
@@ -1181,6 +1187,13 @@ class ArcAgent:
         replace for background tasks, last-wins for tools/skills),
         re-bridges the new tool set, and re-subscribes hooks.
         """
+        return await self._reload_capabilities(fail_on_errors=False)
+
+    async def reload_or_raise(self) -> str:
+        """Reload capability roots and reject an invalid candidate transactionally."""
+        return await self._reload_capabilities(fail_on_errors=True)
+
+    async def _reload_capabilities(self, *, fail_on_errors: bool) -> str:
         from arcagent.core.agent_lifecycle import (
             bridge_capability_hooks_to_bus,
             bridge_capability_tools_to_registry,
@@ -1204,6 +1217,8 @@ class ArcAgent:
                 # A reload is a transaction: an invalid candidate is useful
                 # diagnostic output, never permission to damage the working set.
                 rendered: str = diff.render()
+                if fail_on_errors:
+                    raise RuntimeError("Capability reload rejected invalid candidate")
                 return rendered
 
             await loader.commit_reload(prepared)

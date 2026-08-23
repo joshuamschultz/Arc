@@ -88,7 +88,8 @@ These are the standout capabilities that make `arcagent` best-in-class for produ
 - **One contract everywhere** — ArcUI and ArcCLI use the same canonical connector
   coordinates and report `applied` versus `activation_pending` honestly
 - **Connected-data runtime** — approved SQLite, PostgreSQL/Supabase, Dropbox,
-  OneDrive, S3-compatible, Gmail and Outlook sources synchronize selected
+  OneDrive, S3-compatible, Gmail, Outlook, Confluence, GitHub, Jira and Readwise
+  Reader sources synchronize selected
   resources through durable cursors; agents use `document_search`, bounded
   read-only `datastore_query`, and approved profile context
 

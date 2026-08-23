@@ -147,7 +147,7 @@ class ScenarioGrant(BaseModel):
     composition: frozenset[str]
     #: The automated driver, e.g. ``workflow:nightly-meeting-ingest``.
     origin: str
-    #: The external connection reached, e.g. ``jira``.
+    #: The external connection reached, e.g. ``ticketing_primary``.
     connection: str
     approver_did: str
     public_key: bytes
@@ -316,7 +316,7 @@ class PolicyContext(BaseModel):
     """
 
     connection: str | None = None
-    """The external connection this call reaches, e.g. ``jira``."""
+    """The external connection this call reaches, e.g. ``ticketing_primary``."""
 
     scenario_grants: tuple[ScenarioGrant, ...] = ()
     """Operator-signed standing grants, loaded by arcagent from durable storage.

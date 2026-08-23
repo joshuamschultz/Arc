@@ -13,7 +13,9 @@ from arcmemory.connected_data import (
     ConnectedObjectError,
     ConnectedObjectOrderError,
     ConnectedSource,
+    ConnectedSourceShape,
     SourceContent,
+    SourceMappingDeniedError,
     SourceMappingPendingError,
 )
 
@@ -23,6 +25,7 @@ def _source(*, account_id: str = "account") -> ConnectedSource:
         connection_id="dropbox",
         account_id=account_id,
         source_kind="dropbox",
+        data_shape=ConnectedSourceShape.DOCUMENT,
     )
 
 
@@ -95,6 +98,94 @@ async def test_approved_mapping_ingests_and_is_searchable(tmp_path: Path) -> Non
 
 
 @pytest.mark.asyncio
+async def test_purge_source_removes_retrievable_documents_and_mapping(tmp_path: Path) -> None:
+    approval = ApprovalStore(FakeBackend())
+    service = _service(tmp_path, approval)
+    source = _source()
+    with pytest.raises(SourceMappingPendingError):
+        await service.require_approved_mapping(source)
+    pending = (await approval.list())[0]
+    await approval.resolve(pending.id, status="approved", actor_did="did:operator")
+    mapping = await service.require_approved_mapping(source)
+    await service.ingest(
+        source,
+        ConnectedObject(
+            object_id="confidential-report",
+            locator="/reports/confidential.txt",
+            version="1",
+            media_type="text/plain",
+            classification="unclassified",
+        ),
+        SourceContent(
+            object_id="confidential-report",
+            version="1",
+            media_type="text/plain",
+            content=b"revoke this searchable source content",
+        ),
+        mapping,
+    )
+    assert await service.document_search("searchable source", source)
+
+    await service.purge_source(source)
+
+    assert await service.document_search("searchable source", source) == []
+    assert not (tmp_path / "memory" / "connected" / mapping.source_id).exists()
+
+
+class _GenerationState:
+    def __init__(self) -> None:
+        self.generation = 1
+
+    async def get_object_state(self, source_id: str, object_id: str):  # type: ignore[no-untyped-def]
+        del source_id, object_id
+        return None
+
+    async def put_object_state(self, source_id: str, object_id: str, state):  # type: ignore[no-untyped-def]
+        del source_id, object_id, state
+
+    async def list_object_ids(self, source_id: str) -> list[str]:
+        del source_id
+        return []
+
+    async def clear_source(self, source_id: str) -> None:
+        del source_id
+
+    async def source_generation(self, connection_id: str) -> int:
+        del connection_id
+        return self.generation
+
+
+@pytest.mark.asyncio
+async def test_reconnect_requires_a_new_mapping_approval_after_generation_fence(tmp_path: Path) -> None:
+    approval = ApprovalStore(FakeBackend())
+    generation = _GenerationState()
+    service = ConnectedDataService(
+        tmp_path,
+        "did:arc:agent",
+        approval_store=approval,
+        object_state=generation,
+        config=MemoryConfig(doc_chunk_tokens=32),
+    )
+    original = _source()
+    with pytest.raises(SourceMappingPendingError):
+        await service.require_approved_mapping(original)
+    old_pending = (await approval.list())[0]
+    await approval.resolve(old_pending.id, status="approved", actor_did="did:operator")
+    assert (await service.require_approved_mapping(original)).mapping_id == old_pending.id
+
+    await service.purge_source(original)
+    generation.generation = 2
+    with pytest.raises(SourceMappingDeniedError):
+        await service.require_approved_mapping(original)
+    with pytest.raises(SourceMappingPendingError):
+        await service.require_approved_mapping(original.model_copy(update={"generation": 2}))
+
+    pending = await approval.list()
+    assert len(pending) == 2
+    assert pending[0].id != old_pending.id
+
+
+@pytest.mark.asyncio
 async def test_update_shrink_removes_old_chunks_and_delete_removes_object(tmp_path: Path) -> None:
     approval = ApprovalStore(FakeBackend())
     service = _service(tmp_path, approval)
@@ -144,6 +235,37 @@ async def test_update_shrink_removes_old_chunks_and_delete_removes_object(tmp_pa
         mapping,
     )
     assert not any("new only" in hit.text for hit in await service.document_search("new", source))
+
+
+@pytest.mark.asyncio
+async def test_complete_snapshot_removes_missing_object_and_allows_restore(tmp_path: Path) -> None:
+    approval = ApprovalStore(FakeBackend())
+    service = _service(tmp_path, approval)
+    source = _source()
+    with pytest.raises(SourceMappingPendingError):
+        await service.require_approved_mapping(source)
+    pending = (await approval.list())[0]
+    await approval.resolve(pending.id, status="approved", actor_did="did:operator")
+    mapping = await service.require_approved_mapping(source)
+    obj = ConnectedObject(
+        object_id="gone",
+        locator="/gone.txt",
+        version="1",
+        media_type="text/plain",
+        classification="unclassified",
+        revision=1,
+    )
+    content = SourceContent(
+        object_id="gone", version="1", media_type="text/plain", content=b"vanishing text"
+    )
+    await service.ingest(source, obj, content, mapping)
+    assert await service.document_search("vanishing", source)
+
+    await service.complete_snapshot(source, frozenset(), mapping)
+    assert not await service.document_search("vanishing", source)
+
+    await service.ingest(source, obj, content, mapping)
+    assert await service.document_search("vanishing", source)
 
 
 @pytest.mark.asyncio

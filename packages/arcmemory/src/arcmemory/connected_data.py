@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import shutil
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
@@ -40,6 +41,16 @@ from arcmemory.stores.semantic import SemanticStore
 from arcmemory.types import MemoryHome, Provenance, Scope, SourceMapping, SourceRecord
 
 
+class ConnectedSourceShape(StrEnum):
+    """Vendor-neutral data shape used to route a source into ArcMemory."""
+
+    DOCUMENT = "document"
+    MAIL = "mail"
+    DATASTORE = "datastore"
+    BLOB = "blob"
+    PROFILE = "profile"
+
+
 class ConnectedSource(BaseModel):
     """Vendor-neutral connected-source identity and capabilities."""
 
@@ -48,8 +59,10 @@ class ConnectedSource(BaseModel):
     connection_id: str = Field(min_length=1)
     account_id: str = Field(min_length=1)
     source_kind: str = Field(min_length=1)
+    data_shape: ConnectedSourceShape = ConnectedSourceShape.DOCUMENT
     supports_incremental: bool = True
     supports_deletes: bool = True
+    generation: int = Field(default=1, ge=1)
 
 
 class ConnectedObject(BaseModel):
@@ -132,6 +145,10 @@ class ConnectedObjectStatePort(Protocol):
         self, source_id: str, object_id: str, state: ConnectedObjectState
     ) -> None: ...
 
+    async def list_object_ids(self, source_id: str) -> list[str]: ...
+
+    async def clear_source(self, source_id: str) -> None: ...
+
 
 class InMemoryObjectState:
     """Non-durable test default; restart-safe deployments inject ArcStore state."""
@@ -148,6 +165,22 @@ class InMemoryObjectState:
         self, source_id: str, object_id: str, state: ConnectedObjectState
     ) -> None:
         self._states[(source_id, object_id)] = state
+
+    async def list_object_ids(self, source_id: str) -> list[str]:
+        return [
+            object_id
+            for (stored_source, object_id) in self._states
+            if stored_source == source_id
+        ]
+
+    async def clear_source(self, source_id: str) -> None:
+        self._states = {
+            key: value for key, value in self._states.items() if key[0] != source_id
+        }
+
+    async def source_generation(self, connection_id: str) -> int:
+        del connection_id
+        return 1
 
 
 class SourceMappingPendingError(RuntimeError):
@@ -176,7 +209,9 @@ class ConnectedObjectOrderError(ConnectedObjectError):
 
 def source_instance_id(agent_did: str, source: ConnectedSource) -> str:
     """Return a collision-resistant, non-secret source-instance identifier."""
-    raw = "\0".join((agent_did, source.connection_id, source.account_id))
+    raw = "\0".join(
+        (agent_did, source.connection_id, source.account_id, str(source.generation))
+    )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -212,16 +247,15 @@ class ConnectedDataService:
 
     def allowed_homes(self, source: ConnectedSource) -> tuple[MemoryHome, ...]:
         """Return destinations compatible with a source without vendor coupling."""
-        kind = source.source_kind.lower()
-        if kind in {"email", "gmail", "outlook", "imap", "mail"}:
+        if source.data_shape is ConnectedSourceShape.MAIL:
             return (MemoryHome.MEMORY, MemoryHome.DOCUMENT)
-        if kind in {"database", "postgres", "mysql", "sqlite", "datastore"}:
+        if source.data_shape is ConnectedSourceShape.DATASTORE:
             return (MemoryHome.DATASTORE, MemoryHome.PROFILE)
-        if kind in {"profile", "crm"}:
+        if source.data_shape is ConnectedSourceShape.PROFILE:
             return (MemoryHome.PROFILE, MemoryHome.DOCUMENT)
-        if kind in {"blob", "s3", "gcs", "azure_blob"}:
+        if source.data_shape is ConnectedSourceShape.BLOB:
             return (MemoryHome.BLOB, MemoryHome.DOCUMENT)
-        if kind in {"dropbox", "docs", "document", "onedrive", "drive"}:
+        if source.data_shape is ConnectedSourceShape.DOCUMENT:
             return (MemoryHome.DOCUMENT,)
         return ()
 
@@ -238,6 +272,7 @@ class ConnectedDataService:
                 "connection_id": source.connection_id,
                 "homes": [home.value for home in selected],
                 "source_kind": source.source_kind,
+                "data_shape": source.data_shape.value,
                 "supports_deletes": source.supports_deletes,
                 "supports_incremental": source.supports_incremental,
             },
@@ -267,6 +302,7 @@ class ConnectedDataService:
 
     async def require_approved_mapping(self, source: ConnectedSource) -> ApprovedMapping:
         """Load an exact active approval, or stage one safe default proposal."""
+        await self._require_current_generation(source)
         source_id = self._source_id(source)
         register = SemanticStore(
             self._workspace,
@@ -328,6 +364,7 @@ class ConnectedDataService:
         mapping: ApprovedMapping,
     ) -> None:
         """Safely replace one object version after verifying its exact mapping."""
+        await self._require_current_generation(source)
         proposal = self._proposal(source, tuple(mapping.homes))
         if (
             mapping.source_id != proposal.source_id
@@ -345,7 +382,7 @@ class ConnectedDataService:
             self._audit_object(source_id, source_object, "skipped", "invalid_classification")
             raise ConnectedObjectError("connected object classification is invalid") from exc
         prior = await self._object_state.get_object_state(source_id, source_object.object_id)
-        if prior is not None:
+        if prior is not None and not prior.deleted:
             if prior.version == source_object.version:
                 return
             if (
@@ -376,6 +413,8 @@ class ConnectedDataService:
             )
             if prior is not None and prior.path:
                 await index.index_collection(source_id, self._agent_did, root, [])
+                if not any(path.name != "index.md" for path in root.glob("*.md")):
+                    await index.delete_collection_index(source_id, self._agent_did)
             EpisodicStore(self._db, self._workspace).delete(
                 Scope(agent_did=self._agent_did).key,
                 deterministic_event_id(source_id, source_object.object_id),
@@ -476,6 +515,84 @@ class ConnectedDataService:
             ),
         )
         self._audit_object(source_id, source_object, "indexed")
+
+    async def reset_source(self, source: ConnectedSource) -> None:
+        """Clear a source snapshot while preserving its approved mapping."""
+        await self._clear_source(source, remove_mapping=False)
+
+    async def complete_snapshot(
+        self,
+        source: ConnectedSource,
+        object_ids: frozenset[str],
+        mapping: ApprovedMapping,
+    ) -> None:
+        """Delete active objects absent from one fully successful source snapshot."""
+        await self._require_current_generation(source)
+        proposal = self._proposal(source, tuple(mapping.homes))
+        if (
+            mapping.source_id != proposal.source_id
+            or mapping.revision != proposal.revision
+            or mapping.content_hash != proposal.content_hash
+            or not await self._mapping_is_approved(mapping)
+        ):
+            raise SourceMappingDeniedError()
+        source_id = self._source_id(source)
+        for object_id in await self._object_state.list_object_ids(source_id):
+            prior = await self._object_state.get_object_state(source_id, object_id)
+            if prior is None or prior.deleted or object_id in object_ids:
+                continue
+            await self.ingest(
+                source,
+                ConnectedObject(
+                    object_id=object_id,
+                    locator=object_id,
+                    version=f"snapshot-deleted:{prior.version}",
+                    deleted=True,
+                    classification="UNCLASSIFIED",
+                    revision=None if prior.revision is None else prior.revision + 1,
+                ),
+                None,
+                mapping,
+            )
+
+    async def purge_source(self, source: ConnectedSource) -> None:
+        """Irreversibly remove every retrievable artifact of a disconnected source."""
+        await self._clear_source(source, remove_mapping=True)
+
+    async def _clear_source(self, source: ConnectedSource, *, remove_mapping: bool) -> None:
+        source_id = self._source_id(source)
+        index = DocIndex(
+            self._db,
+            self._workspace,
+            self._config,
+            embedder=self._embedder,
+            audit_sink=self._audit,
+        )
+        await index.delete_source(source_id, self._agent_did)
+        for object_id in await self._object_state.list_object_ids(source_id):
+            EpisodicStore(self._db, self._workspace).delete(
+                Scope(agent_did=self._agent_did).key,
+                deterministic_event_id(source_id, object_id),
+            )
+        await self._reviews.revoke_all_for_source(source_id)
+        ProvenanceStore(self._db).remove_source(source_id)
+        await asyncio.to_thread(shutil.rmtree, self._document_root(source_id), True)
+        await asyncio.to_thread(shutil.rmtree, self._blob_inventory_root(source_id), True)
+        await self._object_state.clear_source(source_id)
+        store = SemanticStore(self._workspace, WeightedGraph(self._db), self._agent_did)
+        for slug in self.blob_folders(source):
+            store.remove(slug)
+        if remove_mapping:
+            store.remove(f"source-{source_id}")
+            store.remove(f"mapping-{source_id}")
+
+    async def _require_current_generation(self, source: ConnectedSource) -> None:
+        """Reject a stale worker after disconnect/reconnect has fenced its source."""
+        generation = getattr(self._object_state, "source_generation", None)
+        if not callable(generation):
+            return
+        if await generation(source.connection_id) != source.generation:
+            raise SourceMappingDeniedError("source incarnation is no longer active")
 
     @property
     def review_port(self) -> ReviewPort:
@@ -837,6 +954,7 @@ __all__ = [
     "ConnectedObjectStatePort",
     "ConnectedObjectTooLargeError",
     "ConnectedSource",
+    "ConnectedSourceShape",
     "DocumentStatus",
     "InMemoryObjectState",
     "SourceContent",

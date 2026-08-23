@@ -417,7 +417,13 @@ def test_the_pinned_download_is_the_executable_rather_than_an_archive() -> None:
         assert not build.url.endswith((".zip", ".tar.gz", ".tgz"))
 
 
-def test_this_bundle_ships_no_transport_code_of_its_own() -> None:
-    """The whole point: Atlassian's client owns the wire, so we own none of it."""
-    assert sorted(path.name for path in BUNDLE.iterdir()) == ["extension.toml", "skills"]
-    assert not list(BUNDLE.rglob("*.py"))
+def test_this_bundle_ships_no_network_transport_of_its_own() -> None:
+    """The source adapter uses the authorized CLI and owns no network transport."""
+    assert sorted(path.name for path in BUNDLE.iterdir()) == [
+        "arc_ext_jira",
+        "extension.toml",
+        "skills",
+    ]
+    assert sorted(path.relative_to(BUNDLE).as_posix() for path in BUNDLE.rglob("*.py")) == [
+        "arc_ext_jira/__init__.py"
+    ]

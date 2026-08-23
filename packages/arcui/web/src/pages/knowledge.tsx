@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { BookOpen } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
 import { QueryState, EmptyState } from '@/components/states'
@@ -33,15 +34,16 @@ const TABS = [
 ]
 
 export function KnowledgePage() {
+  const [searchParams] = useSearchParams()
   const roster = useRoster()
   const agents = (roster.data?.agents ?? []).filter((a) => !a.hidden)
-  const [picked, setPicked] = useState<string | null>(null)
+  const [picked, setPicked] = useState<string | null>(searchParams.get('agent'))
   const agentId = picked ?? agents[0]?.agent_id ?? null
   const setAgentId = setPicked
 
   const query = useKnowledge(agentId)
   const [selectedEntitySlug, setSelectedEntitySlug] = useState<string | null>(null)
-  const [tab, setTab] = useState('overview')
+  const [tab, setTab] = useState(searchParams.get('tab') ?? 'overview')
 
   const focusEntity = (slug: string) => {
     setSelectedEntitySlug(slug)
@@ -124,7 +126,10 @@ export function KnowledgePage() {
           </TabsContent>
 
           <TabsContent value="connections" className="flex-1 overflow-auto p-6">
-            <ConnectionsBrowser agentId={agentId} />
+            <ConnectionsBrowser
+              agentId={agentId}
+              initialConnectionId={searchParams.get('connection')}
+            />
           </TabsContent>
 
           <TabsContent value="memories" className="flex-1 overflow-auto p-6">

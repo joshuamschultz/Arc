@@ -33,6 +33,10 @@ description = "Look up items in a 1Password vault and resolve a secret when one 
 attachment = "cli"
 tier_floor = "personal"
 
+[knowledge]
+mode = "non_indexable"
+reason = "Password vault records are secrets; indexing them would create a searchable exfiltration surface."
+
 # NO `[artifact]`, and that is a decision rather than an omission. 1Password
 # publishes `op` through its own apt/brew/msi channels and a per-platform zip
 # whose digests it does not publish beside the download, so there is nothing here

@@ -5,9 +5,8 @@ from __future__ import annotations
 import logging
 
 import pytest
-from arctrust import AgentIdentity
-
 from arcteam import composition as _bootstrap
+from arctrust import AgentIdentity
 
 
 def _full_identity() -> AgentIdentity:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from arcstore.backends.memory import FakeBackend
 from arcstore.source_sync import InMemorySourceSyncStore
 
 from arcagent.connected_data import KnowledgeHome, MappingPendingError, MappingPlan, SyncLimits
@@ -10,11 +11,13 @@ from arcagent.extension.source import (
     FetchSourceObject,
     InspectSource,
     SourceContent,
+    SourceDataShape,
     SourceDescription,
     SyncSource,
     SyncSourcePage,
 )
 from arcagent.extension.source_catalog import SourceCatalog
+from arcagent.modules.connected_data.ingest import ArcStoreObjectState
 from arcagent.modules.connected_data.service import ConnectedDataService
 
 
@@ -29,6 +32,7 @@ class FakeSource:
             connection_id=request.connection_id,
             source_kind="test",
             account_id="account",
+            data_shape=SourceDataShape.DOCUMENT,
         )
 
     async def sync_source(self, request: SyncSource) -> SyncSourcePage:
@@ -111,6 +115,7 @@ class _SnapshotSource:
             connection_id=request.connection_id,
             source_kind="email",
             account_id="mailbox",
+            data_shape=SourceDataShape.MAIL,
         )
 
     async def sync_source(self, request: SyncSource) -> SyncSourcePage:
@@ -148,6 +153,8 @@ class _ApprovalGatedIngest:
         self.approved = False
         self.ingested: list[str] = []
         self.stage_calls: list[tuple[KnowledgeHome, ...]] = []
+        self.reset_calls = 0
+        self.purge_calls = 0
 
     async def require_approved_mapping(self, source: SourceDescription) -> MappingPlan:
         if not self.approved:
@@ -174,6 +181,12 @@ class _ApprovalGatedIngest:
 
     def canonical_source_id(self, source: SourceDescription) -> str:
         return "source-mailbox"
+
+    async def reset_source(self, source: SourceDescription) -> None:
+        self.reset_calls += 1
+
+    async def purge_source(self, source: SourceDescription) -> None:
+        self.purge_calls += 1
 
 
 @pytest.mark.asyncio
@@ -226,6 +239,111 @@ async def test_mapping_gate_then_approval_backfill_and_restart_checkpoint() -> N
     await _wait_for_status(restarted, "complete")
     assert ingest.ingested == ["message-1"]
     await restarted.close()
+
+
+@pytest.mark.asyncio
+async def test_revoke_purges_before_unregistering_source() -> None:
+    catalog = SourceCatalog()
+    source = _SnapshotSource()
+    await catalog.register("mail", source)
+    ingest = _ApprovalGatedIngest()
+    service = ConnectedDataService(
+        catalog,
+        agent_did="did:agent",
+        sync_store_opener=lambda: _ready(InMemorySourceSyncStore()),
+        ingest_factory=lambda _: ingest,
+        limits=SyncLimits(),
+        global_concurrency=1,
+    )
+    await service.start()
+    result = await service.revoke("mail")
+    await service.close()
+    assert result.status == "revoked"
+    assert ingest.purge_calls == 1
+    assert await catalog.snapshot() == ()
+
+
+class _InterleavingObjectBackend(FakeBackend):
+    """Force both object writes to overlap like concurrent page ingestion."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._object_writes = 0
+        self._both_writes_started = asyncio.Event()
+
+    async def mutable_write(self, collection, key, value, **kwargs):  # type: ignore[no-untyped-def]
+        if collection == "connected_data_objects":
+            self._object_writes += 1
+            if self._object_writes == 2:
+                self._both_writes_started.set()
+            await self._both_writes_started.wait()
+        await super().mutable_write(collection, key, value, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_object_state_source_index_survives_forced_interleaving() -> None:
+    """No read-modify-write list may lose an object under concurrent ingestion."""
+    from arcmemory.connected_data import ConnectedObjectState
+
+    state = ArcStoreObjectState(_InterleavingObjectBackend(), actor_did="did:agent")
+    await asyncio.gather(
+        state.put_object_state("source", "first", ConnectedObjectState(version="1")),
+        state.put_object_state("source", "second", ConnectedObjectState(version="1")),
+    )
+
+    assert await state.list_object_ids("source") == ["first", "second"]
+
+
+@pytest.mark.asyncio
+async def test_reindex_resets_artifacts_before_scheduling_snapshot() -> None:
+    catalog = SourceCatalog()
+    await catalog.register("mail", _SnapshotSource())
+    ingest = _ApprovalGatedIngest()
+    state = InMemorySourceSyncStore()
+    service = ConnectedDataService(
+        catalog,
+        agent_did="did:agent",
+        sync_store_opener=lambda: _ready(state),
+        ingest_factory=lambda _: ingest,
+        limits=SyncLimits(),
+        global_concurrency=1,
+    )
+    await service.start()
+
+    result = await service.reindex("mail")
+
+    await service.close()
+    assert result.status == "scheduled"
+    assert ingest.reset_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_revoke_fails_closed_when_source_purge_fails() -> None:
+    class _FailingPurge(_ApprovalGatedIngest):
+        async def purge_source(self, source: SourceDescription) -> None:
+            raise RuntimeError("purge failed")
+
+    catalog = SourceCatalog()
+    await catalog.register("mail", _SnapshotSource())
+    service = ConnectedDataService(
+        catalog,
+        agent_did="did:agent",
+        sync_store_opener=lambda: _ready(InMemorySourceSyncStore()),
+        ingest_factory=lambda _: _FailingPurge(),
+        limits=SyncLimits(),
+        global_concurrency=1,
+    )
+    await service.start()
+
+    result = await service.revoke("mail")
+
+    await service.close()
+    assert result.status == "refused"
+    assert (await catalog.snapshot())[0].connection_id == "mail"
+
+
+async def _ready(value: InMemorySourceSyncStore) -> InMemorySourceSyncStore:
+    return value
 
 
 async def _wait_for_status(service: ConnectedDataService, expected: str) -> None:

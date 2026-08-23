@@ -97,6 +97,8 @@ class ReviewPort(Protocol):
 
     async def revoke_source(self, source: str, external_id: str) -> int: ...
 
+    async def revoke_all_for_source(self, source: str) -> int: ...
+
     async def context(
         self, profile_id: str, *, clearance: str = "unclassified"
     ) -> ProfileContext: ...
@@ -239,6 +241,19 @@ class ProfileReviewStore:
             await asyncio.to_thread(self._write, revoked)
             changed += 1
         self._emit("revoke_source", target=source, count=changed)
+        return changed
+
+    async def revoke_all_for_source(self, source: str) -> int:
+        """Revoke every candidate sourced from a disconnected connection."""
+        external_ids = {
+            fact.provenance.external_id
+            for fact in await self.list()
+            if fact.provenance.source == source
+        }
+        changed = 0
+        for external_id in external_ids:
+            changed += await self.revoke_source(source, external_id)
+        self._emit("revoke_all_for_source", target=source, count=changed)
         return changed
 
     async def context(self, profile_id: str, *, clearance: str = "unclassified") -> ProfileContext:

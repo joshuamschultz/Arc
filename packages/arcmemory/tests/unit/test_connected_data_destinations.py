@@ -12,6 +12,7 @@ from arcmemory.connected_data import (
     ConnectedDataService,
     ConnectedObject,
     ConnectedSource,
+    ConnectedSourceShape,
     SourceContent,
     SourceMappingDeniedError,
 )
@@ -22,6 +23,23 @@ from arcmemory.stores.semantic import SemanticStore
 from arcmemory.types import MemoryHome, Scope
 
 _DID = "did:arc:destination-test"
+
+
+@pytest.mark.parametrize(
+    "source_kind", ["confluence", "github", "jira", "readwise_reader"]
+)
+def test_collaboration_sources_are_document_mappable(
+    workspace: Path, source_kind: str
+) -> None:
+    service = ConnectedDataService(workspace, _DID, approval_store=None)
+    source = ConnectedSource(
+        connection_id=source_kind,
+        account_id="account",
+        source_kind=source_kind,
+        data_shape=ConnectedSourceShape.DOCUMENT,
+    )
+
+    assert service.allowed_homes(source) == (MemoryHome.DOCUMENT,)
 
 
 async def _approve(
@@ -41,7 +59,12 @@ async def test_exact_approved_subset_is_preserved_for_email_memory(
     """An approval for memory-only must not be revalidated as memory+document."""
     approval = ApprovalStore(FakeBackend())
     service = ConnectedDataService(workspace, _DID, approval_store=approval)
-    source = ConnectedSource(connection_id="mail", account_id="inbox", source_kind="email")
+    source = ConnectedSource(
+        connection_id="mail",
+        account_id="inbox",
+        source_kind="email",
+        data_shape=ConnectedSourceShape.MAIL,
+    )
     mapping = await _approve(service, source, ("memory",))
 
     assert mapping.homes == [MemoryHome.MEMORY]
@@ -61,6 +84,8 @@ async def test_exact_approved_subset_is_preserved_for_email_memory(
     scope = Scope(agent_did=_DID)
     assert EpisodicStore(service._db, workspace).count(scope.key) == 1
     assert not (workspace / "memory" / "connected").exists()
+    await service.reset_source(source)
+    assert EpisodicStore(service._db, workspace).count(scope.key) == 0
 
 
 async def test_blob_route_builds_ontology_and_document_route_is_searchable(
@@ -68,7 +93,12 @@ async def test_blob_route_builds_ontology_and_document_route_is_searchable(
 ) -> None:
     approval = ApprovalStore(FakeBackend())
     service = ConnectedDataService(workspace, _DID, approval_store=approval)
-    source = ConnectedSource(connection_id="s3", account_id="bucket", source_kind="blob")
+    source = ConnectedSource(
+        connection_id="s3",
+        account_id="bucket",
+        source_kind="blob",
+        data_shape=ConnectedSourceShape.BLOB,
+    )
     mapping = await _approve(service, source, ("blob", "document"))
 
     await service.ingest(
@@ -92,6 +122,9 @@ async def test_blob_route_builds_ontology_and_document_route_is_searchable(
     assert service.blob_folders(source)
     assert (await service.delete_document(source, "reports/q1.txt")).name == "MISSING"
     assert (await service.document_status(source, "reports/q1.txt")).name == "MISSING"
+    await service.purge_source(source)
+    assert service.blob_folders(source) == []
+    assert await service.document_search("quarterly revenue", source) == []
 
 
 async def test_blob_inventory_reconciles_counts_and_tombstones_stale_folders(
@@ -99,7 +132,12 @@ async def test_blob_inventory_reconciles_counts_and_tombstones_stale_folders(
 ) -> None:
     approval = ApprovalStore(FakeBackend())
     service = ConnectedDataService(workspace, _DID, approval_store=approval)
-    source = ConnectedSource(connection_id="s3", account_id="bucket", source_kind="blob")
+    source = ConnectedSource(
+        connection_id="s3",
+        account_id="bucket",
+        source_kind="blob",
+        data_shape=ConnectedSourceShape.BLOB,
+    )
     mapping = await _approve(service, source, ("blob",))
     for object_id in ("reports/a.txt", "reports/b.txt", "archive/c.txt"):
         await service.ingest(
@@ -141,7 +179,12 @@ async def test_blob_inventory_reconciles_counts_and_tombstones_stale_folders(
 async def test_delete_removes_all_destination_state_including_memory(workspace: Path) -> None:
     approval = ApprovalStore(FakeBackend())
     service = ConnectedDataService(workspace, _DID, approval_store=approval)
-    source = ConnectedSource(connection_id="mail", account_id="inbox", source_kind="email")
+    source = ConnectedSource(
+        connection_id="mail",
+        account_id="inbox",
+        source_kind="email",
+        data_shape=ConnectedSourceShape.MAIL,
+    )
     mapping = await _approve(service, source, ("memory", "document"))
     current = ConnectedObject(
         object_id="message-1",
@@ -172,7 +215,12 @@ async def test_delete_removes_all_destination_state_including_memory(workspace: 
 async def test_invalid_mapping_home_is_refused_before_any_write(workspace: Path) -> None:
     approval = ApprovalStore(FakeBackend())
     service = ConnectedDataService(workspace, _DID, approval_store=approval)
-    source = ConnectedSource(connection_id="db", account_id="erp", source_kind="database")
+    source = ConnectedSource(
+        connection_id="db",
+        account_id="erp",
+        source_kind="database",
+        data_shape=ConnectedSourceShape.DATASTORE,
+    )
 
     with pytest.raises(SourceMappingDeniedError):
         await service.propose_mapping(source, ("document",))
@@ -181,7 +229,12 @@ async def test_invalid_mapping_home_is_refused_before_any_write(workspace: Path)
 async def test_profile_destination_stages_provenance_fact_for_review(workspace: Path) -> None:
     approval = ApprovalStore(FakeBackend())
     service = ConnectedDataService(workspace, _DID, approval_store=approval)
-    source = ConnectedSource(connection_id="crm", account_id="workspace", source_kind="profile")
+    source = ConnectedSource(
+        connection_id="crm",
+        account_id="workspace",
+        source_kind="profile",
+        data_shape=ConnectedSourceShape.PROFILE,
+    )
     mapping = await _approve(service, source, ("profile",))
 
     await service.ingest(
@@ -212,7 +265,12 @@ async def test_profile_preflight_refuses_all_writes_when_metadata_is_invalid(
 ) -> None:
     approval = ApprovalStore(FakeBackend())
     service = ConnectedDataService(workspace, _DID, approval_store=approval)
-    source = ConnectedSource(connection_id="crm", account_id="workspace", source_kind="profile")
+    source = ConnectedSource(
+        connection_id="crm",
+        account_id="workspace",
+        source_kind="profile",
+        data_shape=ConnectedSourceShape.PROFILE,
+    )
     mapping = await _approve(service, source, ("document", "profile"))
 
     with pytest.raises(Exception, match="profile"):
@@ -238,7 +296,12 @@ async def test_tombstone_revokes_profile_fact_and_document_status_is_missing(
 ) -> None:
     approval = ApprovalStore(FakeBackend())
     service = ConnectedDataService(workspace, _DID, approval_store=approval)
-    source = ConnectedSource(connection_id="crm", account_id="workspace", source_kind="profile")
+    source = ConnectedSource(
+        connection_id="crm",
+        account_id="workspace",
+        source_kind="profile",
+        data_shape=ConnectedSourceShape.PROFILE,
+    )
     mapping = await _approve(service, source, ("profile",))
     current = ConnectedObject(
         object_id="olivia-role",

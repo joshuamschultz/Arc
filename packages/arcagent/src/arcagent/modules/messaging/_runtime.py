@@ -254,13 +254,13 @@ async def ensure_agent_mail() -> Any:
         return st.mail_service
     inbox = await ensure_durable_inbox()
     if inbox is None or st.inbox_backend is None:
-        raise RuntimeError("durable AgentMail requires an ArcStore backend")
+        raise RuntimeError("durable inbox delivery requires a storage backend")
     from arcstore.mail_outbox import PostgresMailOutbox
     from arcteam import AgentMailService, RegistryMailAddressBook, composition
 
     signer = composition.message_signer(st.identity)
     if signer is None:
-        raise RuntimeError("durable AgentMail requires the agent signing identity")
+        raise RuntimeError("durable inbox delivery requires the agent signing identity")
     st.mail_service = AgentMailService(
         st.svc,
         inbox,

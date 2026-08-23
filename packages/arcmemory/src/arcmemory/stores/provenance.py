@@ -73,6 +73,22 @@ class ProvenanceStore:
         conn.commit()
         return len(rows)
 
+    def remove_source(self, source: str) -> int:
+        """Remove every claim from a disconnected source and orphaned items."""
+        conn = self._db.connect()
+        rows = conn.execute(
+            "SELECT DISTINCT item_id FROM item_provenances WHERE source=?", (source,)
+        ).fetchall()
+        conn.execute("DELETE FROM item_provenances WHERE source=?", (source,))
+        for (item_id,) in rows:
+            remaining = conn.execute(
+                "SELECT 1 FROM item_provenances WHERE item_id=? LIMIT 1", (item_id,)
+            ).fetchone()
+            if remaining is None:
+                conn.execute("DELETE FROM items WHERE item_id=?", (item_id,))
+        conn.commit()
+        return len(rows)
+
     def readable_provenances(
         self, item_id: str, *, clearance: Classification, strict: bool
     ) -> list[Provenance]:

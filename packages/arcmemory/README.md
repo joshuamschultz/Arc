@@ -540,7 +540,7 @@ uv run --no-sync pytest packages/arcmemory/tests
 - **Coverage:** 91%
 - **Type check:** `mypy --strict` clean
 - **Lint:** `ruff check` clean
-- **Version:** `0.9.0`, **alpha** — API may still shift
+- **Version:** `0.10.0`, **alpha** — API may still shift
 
 All SPEC-041 phases have landed (zero-LLM capture, surface + structural recall, the agentic
 sleep pass with signed memory tools + pipeline fallback, nightly hygiene, search-before-write

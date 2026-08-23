@@ -185,7 +185,7 @@ class SqliteIndexBackend:
 
     async def delete_object(self, scope: str, object_id: str) -> None:
         conn = self._db.connect()
-        pattern = object_id + "#%"
+        pattern = object_id if object_id.startswith("index:") else object_id + "#%"
         ids = [
             row[0]
             for row in conn.execute(
@@ -395,11 +395,12 @@ class PostgresIndexBackend:
 
     async def delete_object(self, scope: str, object_id: str) -> None:
         pool = await self._pool()
+        pattern = object_id if object_id.startswith("index:") else object_id + "#%"
         async with pool.acquire() as conn:
             await conn.execute(
                 "DELETE FROM chunks WHERE scope=$1 AND chunk_id LIKE $2",
                 scope,
-                object_id + "#%",
+                pattern,
             )
 
     async def vec_search(self, scope: str, query_embedding: list[float]) -> list[str]:

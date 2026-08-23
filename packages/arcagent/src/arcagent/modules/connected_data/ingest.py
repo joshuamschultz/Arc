@@ -29,6 +29,7 @@ class ArcStoreObjectState:
     """Durable object-version state over ArcStore's injected mutable-plane seam."""
 
     _COLLECTION = "connected_data_objects"
+    _DESCRIPTION_COLLECTION = "connected_data_source_descriptions"
 
     def __init__(self, backend: Any, *, actor_did: str) -> None:
         self._backend = backend
@@ -45,13 +46,69 @@ class ArcStoreObjectState:
         await self._backend.mutable_write(
             self._COLLECTION,
             self._key(source_id, object_id),
-            {"state": state.model_dump(mode="json")},
+            {
+                "source_id": source_id,
+                "object_id": object_id,
+                "state": state.model_dump(mode="json"),
+            },
+            actor_did=self._actor_did,
+        )
+
+    async def list_object_ids(self, source_id: str) -> list[str]:
+        rows = await self._backend.mutable_query(
+            self._COLLECTION, where={"source_id": source_id}
+        )
+        return sorted(
+            {
+                row["object_id"]
+                for row in rows
+                if isinstance(row.get("object_id"), str)
+            }
+        )
+
+    async def clear_source(self, source_id: str) -> None:
+        object_ids = await self.list_object_ids(source_id)
+        for object_id in object_ids:
+            await self._backend.mutable_delete(
+                self._COLLECTION, self._key(source_id, object_id), actor_did=self._actor_did
+            )
+
+    async def source_generation(self, connection_id: str) -> int:
+        """Read the sync store's durable incarnation fence for one connection."""
+        row = await self._backend.source_sync_get_state(self._actor_did, connection_id)
+        generation = row.get("generation", 1)
+        return generation if isinstance(generation, int) and generation >= 1 else 1
+
+    async def put_source_description(self, connection_id: str, value: dict[str, Any]) -> None:
+        await self._backend.mutable_write(
+            self._DESCRIPTION_COLLECTION,
+            self._source_key(connection_id),
+            {"connection_id": connection_id, "description": value},
+            actor_did=self._actor_did,
+        )
+
+    async def get_source_description(self, connection_id: str) -> dict[str, Any] | None:
+        row = await self._backend.mutable_read(
+            self._DESCRIPTION_COLLECTION, self._source_key(connection_id)
+        )
+        value = None if row is None else row.get("description")
+        return value if isinstance(value, dict) else None
+
+    async def delete_source_description(self, connection_id: str) -> None:
+        await self._backend.mutable_delete(
+            self._DESCRIPTION_COLLECTION,
+            self._source_key(connection_id),
             actor_did=self._actor_did,
         )
 
     @staticmethod
     def _key(source_id: str, object_id: str) -> str:
         return hashlib.sha256(f"{source_id}\0{object_id}".encode()).hexdigest()
+
+    @staticmethod
+    def _source_key(connection_id: str) -> str:
+        return hashlib.sha256(connection_id.encode()).hexdigest()
+
 
 
 class ArcStoreResourceSelection:
@@ -76,6 +133,11 @@ class ArcStoreResourceSelection:
             self._key(connection_id),
             {"resource_ids": list(resource_ids)},
             actor_did=self._actor_did,
+        )
+
+    async def delete(self, connection_id: str) -> None:
+        await self._backend.mutable_delete(
+            self._COLLECTION, self._key(connection_id), actor_did=self._actor_did
         )
 
     @staticmethod
@@ -132,9 +194,37 @@ class ArcMemoryIngestAdapter(IngestPort):
             connection_id=source.connection_id,
             account_id=source.account_id,
             source_kind=source.source_kind,
+            data_shape=source.data_shape.value,
             supports_incremental=source.supports_incremental,
             supports_deletes=source.supports_deletes,
+            generation=source.generation,
         )
+
+    async def source_generation(self, source: SourceDescription) -> int:
+        """Read the durable incarnation number without exposing ArcStore upstream."""
+        get_generation = getattr(self._object_state, "source_generation", None)
+        if not callable(get_generation):
+            return source.generation
+        return int(await get_generation(source.connection_id))
+
+    async def remember_source(self, source: SourceDescription) -> None:
+        """Persist a credential-free descriptor needed to purge after restart/revoke."""
+        put = getattr(self._object_state, "put_source_description", None)
+        if callable(put):
+            await put(source.connection_id, source.model_dump(mode="json"))
+
+    async def remembered_source(self, connection_id: str) -> SourceDescription | None:
+        """Load the last safe descriptor without touching a now-revoked provider."""
+        get = getattr(self._object_state, "get_source_description", None)
+        if not callable(get):
+            return None
+        value = await get(connection_id)
+        return None if value is None else SourceDescription.model_validate(value)
+
+    async def forget_source(self, connection_id: str) -> None:
+        delete = getattr(self._object_state, "delete_source_description", None)
+        if callable(delete):
+            await delete(connection_id)
 
     async def require_approved_mapping(self, source: SourceDescription) -> MappingPlan:
         """Return only an exact approved mapping; pending/denied fail closed."""
@@ -286,6 +376,41 @@ class ArcMemoryIngestAdapter(IngestPort):
             content_hash=mapping.content_hash,
         )
         await service.ingest(source_model, object_model, content_model, mapping_model)
+
+    async def reset_source(self, source: SourceDescription) -> None:
+        """Clear retrievable source artifacts without discarding approved routing."""
+        module = import_module("arcmemory.connected_data")
+        await self._connected_service().reset_source(self._source_model(module, source))
+
+    async def complete_snapshot(
+        self,
+        source: SourceDescription,
+        object_ids: frozenset[str],
+        mapping: MappingPlan,
+    ) -> None:
+        """Remove objects absent from a successfully completed full snapshot."""
+        module = import_module("arcmemory.connected_data")
+        source_model = self._source_model(module, source)
+        mapping_model = module.ApprovedMapping(
+            mapping_id=mapping.mapping_id,
+            source_id=module.source_instance_id(self._agent_did, source_model),
+            homes=list(mapping.homes),
+            revision=mapping.revision,
+            content_hash=mapping.content_hash,
+        )
+        await self._connected_service().complete_snapshot(
+            source_model, object_ids, mapping_model
+        )
+
+    async def purge_source(self, source: SourceDescription) -> None:
+        """Remove source artifacts and its mapping on connection revocation."""
+        module = import_module("arcmemory.connected_data")
+        await self._connected_service().purge_source(self._source_model(module, source))
+        runtime = import_module("arcagent.modules.memory._runtime")
+        brain = runtime.state().brain
+        unregister = getattr(brain, "unregister_datastore", None)
+        if callable(unregister):
+            await unregister(self.canonical_source_id(source), caller_did=self._agent_did)
 
 
 def _revision(value: object) -> int | None:

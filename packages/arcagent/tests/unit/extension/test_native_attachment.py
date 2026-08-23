@@ -38,8 +38,11 @@ from arcagent.extension.native_attachment import NATIVE_ENTRYPOINT_ATTR, NativeA
 from arcagent.extension.source import (
     FetchSourceObject,
     InspectSource,
+    ListSourceResources,
+    SelectSourceResources,
     SourceContent,
     SourceDescription,
+    SourceResource,
     SyncSource,
     SyncSourcePage,
 )
@@ -76,6 +79,15 @@ class _FakeSourceDelegate(_FakeDelegate):
             source_kind="fake",
             account_id="account",
         )
+
+    async def list_source_resources(
+        self, request: ListSourceResources
+    ) -> tuple[SourceResource, ...]:
+        del request
+        return ()
+
+    async def select_source_resources(self, request: SelectSourceResources) -> None:
+        del request
 
     async def sync_source(self, request: SyncSource) -> SyncSourcePage:
         return SyncSourcePage(next_checkpoint=request.checkpoint or "initial")

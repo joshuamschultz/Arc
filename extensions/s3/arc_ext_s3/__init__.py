@@ -65,21 +65,29 @@ class S3Attachment:
     def requirements(self) -> list[Requirement]:
         return [
             Requirement(
-                RequirementKind.CREDENTIAL, "access_key_id", instruction="Read-only S3 access key"
+                kind=RequirementKind.CREDENTIAL,
+                name="access_key_id",
+                instruction="Read-only S3 access key",
             ),
             Requirement(
-                RequirementKind.CREDENTIAL,
-                "secret_access_key",
+                kind=RequirementKind.CREDENTIAL,
+                name="secret_access_key",
                 instruction="Read-only S3 secret key",
             ),
             Requirement(
-                RequirementKind.CREDENTIAL,
-                "session_token",
+                kind=RequirementKind.CREDENTIAL,
+                name="session_token",
                 instruction="Optional STS role-session token",
             ),
-            Requirement(RequirementKind.CREDENTIAL, "region", instruction="S3 bucket region"),
             Requirement(
-                RequirementKind.CREDENTIAL, "endpoint_url", instruction="S3 or MinIO endpoint URL"
+                kind=RequirementKind.CREDENTIAL,
+                name="region",
+                instruction="S3 bucket region",
+            ),
+            Requirement(
+                kind=RequirementKind.CREDENTIAL,
+                name="endpoint_url",
+                instruction="S3 or MinIO endpoint URL",
             ),
         ]
 
@@ -328,7 +336,8 @@ class S3Attachment:
         except self._transient_errors as exc:
             raise SourceError(SourceFailureCode.TRANSIENT, "S3 request failed") from exc
         except self._client_errors as exc:
-            metadata = exc.response.get("ResponseMetadata", {})
+            response = getattr(exc, "response", {})
+            metadata = response.get("ResponseMetadata", {})
             code = str(metadata.get("HTTPStatusCode", ""))
             retry_after = _retry_after(metadata) if code == "429" else None
             failure = (
@@ -425,6 +434,7 @@ def _source_object(bucket: str, item: dict[str, Any]) -> SourceObject:
     if not key:
         raise SourceError(SourceFailureCode.TRANSIENT, "S3 returned an object without a key")
     version = _version(item)
+    last_modified = item.get("LastModified")
     return SourceObject(
         object_id=f"{bucket}:{key}",
         locator=f"s3://{bucket}/{key}",
@@ -432,9 +442,7 @@ def _source_object(bucket: str, item: dict[str, Any]) -> SourceObject:
         version=version,
         content_hash=str(item.get("ETag") or "").strip('"') or None,
         size=int(item.get("Size", 0)),
-        modified_at=item.get("LastModified").isoformat()
-        if item.get("LastModified") is not None
-        else None,
+        modified_at=last_modified.isoformat() if last_modified is not None else None,
         media_type=str(
             item.get("ContentType") or mimetypes.guess_type(key)[0] or "application/octet-stream"
         ),

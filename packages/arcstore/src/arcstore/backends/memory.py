@@ -147,6 +147,7 @@ class FakeBackend(SourceSyncBackend):
                     "pages": 0,
                     "bytes_processed": 0,
                     "fencing_token": 0,
+                    "generation": 1,
                 }
             )
 
@@ -168,6 +169,7 @@ class FakeBackend(SourceSyncBackend):
                     "pages": 0,
                     "bytes_processed": 0,
                     "fencing_token": 0,
+                    "generation": 1,
                 },
             )
             expires = row.get("lease_expires_at")
@@ -206,6 +208,7 @@ class FakeBackend(SourceSyncBackend):
                     "pages": 0,
                     "bytes_processed": 0,
                     "fencing_token": 0,
+                    "generation": 1,
                 },
             )
             expires = row.get("lease_expires_at")
@@ -249,6 +252,7 @@ class FakeBackend(SourceSyncBackend):
                     "pages": 0,
                     "bytes_processed": 0,
                     "fencing_token": 0,
+                    "generation": 1,
                 },
             )
             if (
@@ -308,6 +312,31 @@ class FakeBackend(SourceSyncBackend):
                     "error_code": None,
                 }
             )
+            pages = self._tables.setdefault("connected_source_pages", {})
+            prefix = f"{source_key}\0"
+            for key in tuple(pages):
+                if key.startswith(prefix):
+                    del pages[key]
+            return True
+
+    async def source_sync_purge(self, agent_did: str, source_id: str) -> bool:
+        source_key = f"{agent_did}\0{source_id}"
+        async with self._lock:
+            row = self._tables.setdefault("connected_source_sync", {}).get(source_key)
+            if row is not None:
+                expires = row.get("lease_expires_at")
+                if expires is not None and datetime.fromisoformat(expires) > datetime.now(UTC):
+                    return False
+            prior_generation = 1 if row is None else int(row.get("generation", 1))
+            self._tables["connected_source_sync"][source_key] = {
+                "agent_did": agent_did,
+                "source_id": source_id,
+                "status": "idle",
+                "pages": 0,
+                "bytes_processed": 0,
+                "fencing_token": 0 if row is None else int(row.get("fencing_token", 0)),
+                "generation": prior_generation + 1,
+            }
             pages = self._tables.setdefault("connected_source_pages", {})
             prefix = f"{source_key}\0"
             for key in tuple(pages):

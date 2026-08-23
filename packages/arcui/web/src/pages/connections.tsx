@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Cable,
   LogIn,
@@ -8,6 +9,7 @@ import {
   ShieldCheck,
   Trash2,
   TriangleAlert,
+  BookOpen,
 } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
 import { OperatorModeToggle } from '@/components/operator-mode-toggle'
@@ -21,17 +23,20 @@ import { Button } from '@/components/ui/button'
 import { QueryState, EmptyState } from '@/components/states'
 import { useOperatorMode } from '@/hooks/use-operator-mode'
 import {
+  useActivateConnectedData,
   useApproveConnector,
   useConnections,
   useConnectorCatalog,
   useConnectorDoctor,
   useConnectorAuthorization,
+  useConnectedSources,
   useProbeConnector,
   useRemoveConnector,
   useRoster,
 } from '@/lib/queries'
 import type { Agent, CatalogBundle, ConnectorInstance } from '@/lib/types'
 import { cn } from '@/lib/utils'
+import { agentLabel, grantName } from '@/lib/agent-names'
 
 // `status` is whatever `arc connector doctor` prints, so this reads the row's
 // verdict rather than switching on a closed set the CLI does not promise.
@@ -208,6 +213,33 @@ function ConnectionCard({
         />
       </div>
 
+      <div className="space-y-2 border-t border-border px-4 py-3">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+          Knowledge sync
+        </p>
+        {inst.knowledge_mode === 'non_indexable' ? (
+          <p className="text-[11px] text-muted-foreground">
+            Not indexable: {inst.knowledge_reason}
+          </p>
+        ) : inst.agents.length === 0 ? (
+          <p className="text-[11px] text-muted-foreground">Grant this connection to an agent first.</p>
+        ) : (
+          <div className="flex flex-wrap gap-1.5">
+            {inst.agents.map((holder) => {
+              const agent = agents.find((candidate) => grantName(candidate) === holder)
+              return agent ? (
+                <ConnectionKnowledgeAction
+                  key={holder}
+                  agent={agent}
+                  connectionId={inst.instance}
+                  operatorMode={operatorMode}
+                />
+              ) : null
+            })}
+          </div>
+        )}
+      </div>
+
       <div className="flex flex-wrap items-center gap-1.5 border-t border-border px-4 py-3">
         <Button variant="ghost" size="xs" onClick={() => setShowDoctor(!showDoctor)}>
           <Stethoscope /> {showDoctor ? 'Hide doctor' : 'Doctor'}
@@ -325,6 +357,71 @@ function ConnectionCard({
         </div>
       )}
     </div>
+  )
+}
+
+function ConnectionKnowledgeAction({
+  agent,
+  connectionId,
+  operatorMode,
+}: {
+  agent: Agent
+  connectionId: string
+  operatorMode: boolean
+}) {
+  const navigate = useNavigate()
+  const agentId = agent.agent_id ?? grantName(agent)
+  const sources = useConnectedSources(agentId)
+  const activate = useActivateConnectedData(agentId)
+  const enrolled = sources.data?.items.some(
+    (source) => source.connection_id === connectionId || source.connection_id.startsWith(`${connectionId}:`),
+  )
+  const unavailable = sources.data?.status === 'degraded'
+  const label = agentLabel(agent)
+
+  return (
+    <Button
+      variant={enrolled ? 'outline' : 'secondary'}
+      size="xs"
+      disabled={
+        sources.isLoading ||
+        activate.isPending ||
+        (unavailable && !operatorMode) ||
+        (!unavailable && !enrolled)
+      }
+      onClick={() => {
+        if (unavailable) {
+          activate.mutate(undefined, {
+            onSuccess: () =>
+              navigate(
+                `/knowledge?agent=${encodeURIComponent(agentId)}&tab=connections&connection=${encodeURIComponent(connectionId)}`,
+              ),
+          })
+          return
+        }
+        navigate(`/knowledge?agent=${encodeURIComponent(agentId)}&tab=connections&connection=${encodeURIComponent(connectionId)}`)
+      }}
+      title={
+        unavailable
+          ? operatorMode
+            ? `Enable Knowledge sync for ${label}`
+            : `Operator controls are required to enable Knowledge sync for ${label}`
+          : enrolled
+            ? `Choose resources, approve mapping, and sync ${connectionId} for ${label}`
+            : `${connectionId} is not yet available to ${label}'s Knowledge module`
+      }
+    >
+      <BookOpen />
+      {activate.isPending
+        ? `${label}: enabling…`
+        : sources.isLoading
+          ? `${label}: checking…`
+          : unavailable
+            ? `${label}: enable sync`
+          : enrolled
+            ? `${label}: configure & sync`
+            : `${label}: not indexable`}
+    </Button>
   )
 }
 

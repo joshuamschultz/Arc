@@ -41,6 +41,7 @@ from arcmemory.connected_data import (
     ConnectedObjectStatePort,
     ConnectedObjectTooLargeError,
     ConnectedSource,
+    ConnectedSourceShape,
     DocumentStatus,
     InMemoryObjectState,
     SourceContent,
@@ -132,7 +133,7 @@ from arcmemory.types import (
     confidence_from_hits,
 )
 
-__version__ = "0.9.0"
+__version__ = "0.10.0"
 
 __all__ = [
     "ACLViolation",
@@ -153,6 +154,7 @@ __all__ = [
     "ConnectedObjectStatePort",
     "ConnectedObjectTooLargeError",
     "ConnectedSource",
+    "ConnectedSourceShape",
     "ConsolidationResult",
     "Consolidator",
     "CrossSessionVisibility",

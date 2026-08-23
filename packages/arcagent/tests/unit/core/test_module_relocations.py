@@ -15,6 +15,7 @@ import pytest
 
 def test_relocated_symbols_import_from_new_homes() -> None:
     from arcteam.composition import make_backend, message_signer
+
     from arcagent.core.module_config import ModuleConfig
     from arcagent.core.vault import resolve_secret
     from arcagent.utils.file_handler import FileHandler

@@ -360,6 +360,19 @@ class ApprovalPolicy(_ManifestModel):
     default: Literal["none", "outbound", "all"] = "outbound"
 
 
+class KnowledgeDeclaration(_ManifestModel):
+    """How a connector participates in the canonical Knowledge lifecycle."""
+
+    mode: Literal["source", "non_indexable"]
+    reason: str = ""
+
+    @model_validator(mode="after")
+    def _non_indexable_needs_reason(self) -> KnowledgeDeclaration:
+        if self.mode == "non_indexable" and not self.reason.strip():
+            raise ValueError("non_indexable knowledge declarations require a reason")
+        return self
+
+
 #: A bundle field named inside a declared command. Deliberately narrow — the same
 #: shape a ``[[secrets]]`` name has — so nothing else in a command reads as one.
 _PLACEHOLDER = re.compile(r"\{([a-z][a-z0-9_]*)\}")
@@ -395,6 +408,9 @@ class ExtensionManifest(_ManifestModel):
     requires: list[str] = Field(default_factory=list)
     tools: ToolPolicy = Field(default_factory=ToolPolicy)
     approval: ApprovalPolicy = Field(default_factory=ApprovalPolicy)
+    knowledge: KnowledgeDeclaration = Field(
+        default_factory=lambda: KnowledgeDeclaration(mode="source")
+    )
     config: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("config")
@@ -528,6 +544,7 @@ __all__ = [
     "ExtensionHeader",
     "ExtensionManifest",
     "HostRequirement",
+    "KnowledgeDeclaration",
     "PlatformArtifact",
     "SecretRequirement",
     "ToolPolicy",

@@ -33,6 +33,7 @@ class SourceSyncState(BaseModel):
     pages: int = Field(default=0, ge=0)
     bytes_processed: int = Field(default=0, ge=0)
     fencing_token: int = Field(default=0, ge=0)
+    generation: int = Field(default=1, ge=1)
     error_code: str | None = None
 
 
@@ -62,6 +63,7 @@ class SourceSyncBackend(Protocol):
         self, agent_did: str, source_id: str, **kwargs: Any
     ) -> bool: ...
     async def source_sync_reset(self, agent_did: str, source_id: str) -> bool: ...
+    async def source_sync_purge(self, agent_did: str, source_id: str) -> bool: ...
 
 
 class InMemorySourceSyncStore:
@@ -221,6 +223,29 @@ class InMemorySourceSyncStore:
             }
             return True
 
+    async def purge(self, agent_did: str, source_id: str) -> bool:
+        """Fence an old source incarnation when no worker owns its lease."""
+        key = (agent_did, source_id)
+        async with self._lock:
+            if key in self._leases and self._leases[key].expires_at > self._clock():
+                return False
+            state = self._states.get(
+                key, SourceSyncState(agent_did=agent_did, source_id=source_id)
+            )
+            self._leases.pop(key, None)
+            self._states[key] = state.model_copy(
+                update={
+                    "cursor": None,
+                    "status": SourceSyncStatus.IDLE,
+                    "pages": 0,
+                    "bytes_processed": 0,
+                    "error_code": None,
+                    "generation": state.generation + 1,
+                }
+            )
+            self._pages = {page for page in self._pages if page[:2] != key}
+            return True
+
     def _lease_is_current(
         self, agent_did: str, source_id: str, owner_id: str, fencing_token: int
     ) -> bool:
@@ -266,6 +291,9 @@ class ArcStoreSourceSyncStore:
 
     async def reset(self, agent_did: str, source_id: str) -> bool:
         return await self._backend.source_sync_reset(agent_did, source_id)
+
+    async def purge(self, agent_did: str, source_id: str) -> bool:
+        return await self._backend.source_sync_purge(agent_did, source_id)
 
 
 __all__ = [

@@ -12,9 +12,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from arcmemory.config import MemoryConfig
+from arcmemory.connected_data import ConnectedDataService, ConnectedSource, source_instance_id
 from arcmemory.db import MemoryDB
 from arcmemory.doc_index import DocHit, DocIndex, doc_scope
 from arcmemory.index.source import SourceChunk
+from arcmemory.mdfile import render_document
 
 _AGENT_DID = "did:arc:doc-test-agent"
 
@@ -148,3 +150,57 @@ async def test_document_search_returns_empty_when_doc_search_disabled(
     hits = await index.document_search("revenue", _AGENT_DID, source_id="dropbox", top_k=10)
 
     assert hits == []
+
+
+async def test_connected_okf_index_uses_dominating_classification_in_federal_retrieval(
+    workspace: Path, db: MemoryDB, embedder
+) -> None:
+    source = ConnectedSource(
+        connection_id="dropbox",
+        account_id="account-1",
+        source_kind="dropbox",
+    )
+    source_id = source_instance_id(_AGENT_DID, source)
+    collection = workspace / "memory" / "connected" / source_id
+    collection.mkdir(parents=True)
+    document = collection / "public.md"
+    document.write_text(
+        render_document(
+            {
+                "type": "ConnectedDocument",
+                "title": "Orchid routing guide",
+                "classification": "unclassified",
+            },
+            "The orchid collection routes release documents.",
+        ),
+        encoding="utf-8",
+    )
+    federal = MemoryConfig.for_tier("federal")
+    index = DocIndex(db, workspace, federal, embedder=embedder)
+    chunks = [
+        _chunk("public:c0", document.as_posix(), "public orchid content"),
+        SourceChunk(
+            chunk_id="secret:c0",
+            source_path="dropbox://restricted/secret.txt",
+            text="restricted orchid content",
+            classification="secret",
+            mtime=1001.0,
+        ),
+    ]
+
+    await index.index_collection(source_id, _AGENT_DID, collection, chunks)
+    service = ConnectedDataService(
+        workspace,
+        _AGENT_DID,
+        approval_store=None,
+        config=federal,
+        embedder=embedder,
+    )
+
+    low_hits = await service.document_search("orchid", source, clearance="unclassified")
+    high_hits = await service.document_search("orchid", source, clearance="secret")
+
+    assert not any(hit.chunk_id == f"index:{source_id}" for hit in low_hits)
+    index_hit = next(hit for hit in high_hits if hit.chunk_id == f"index:{source_id}")
+    assert index_hit.classification == "secret"
+    assert index_hit.pointer.endswith("index.md")

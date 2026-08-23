@@ -29,6 +29,7 @@ from arctrust.audit import AuditEvent
 from arcagent.core.errors import ExtensionError
 from arcagent.core.tier import Tier
 from arcagent.extension.attachment import (
+    ExtensionAttachment,
     ProbeResult,
     Requirement,
     ToolOutcome,
@@ -39,6 +40,7 @@ from arcagent.extension.grants import Connection, ConnectionRegistry
 from arcagent.extension.manifest import load_manifest
 from arcagent.extension.mcp_attachment import McpAttachment
 from arcagent.extension.secrets import LocalFileSecretBackend, SecretRef, SecretStore
+from arcagent.extension.source import SourceAdapter
 from arcagent.extension.state import ConnectionStateStore
 from arcagent.modules.connectors.attachments import build_attachment
 from arcagent.modules.connectors.install import (
@@ -157,18 +159,13 @@ def test_microsoft365_mcp_manifest_builds_a_stdio_attachment() -> None:
 
     attachment = build_attachment(manifest, manifest_path.parent, {})
 
-    assert isinstance(attachment, McpAttachment)
-    assert set(attachment._tools) == {
-        "list-mail-messages",
-        "get-mail-message",
-        "list-mail-folders",
-        "send-mail",
-        "list-calendar-events",
-        "get-calendar-view",
-        "create-calendar-event",
-        "list-folder-files",
-        "search-onedrive-files",
-    }
+    assert isinstance(attachment, ExtensionAttachment)
+    assert [(item.kind.value, item.name) for item in attachment.requirements()] == [
+        ("host", "ms-365-mcp-server")
+    ]
+    source_adapters = attachment.source_adapters()
+    assert set(source_adapters) == {"outlook", "onedrive"}
+    assert all(isinstance(source, SourceAdapter) for source in source_adapters.values())
 
 
 class RecordingSink:

@@ -1,4 +1,4 @@
-"""Vendor-neutral seam for incrementally synchronized document and blob sources."""
+"""Vendor-neutral seam for incrementally synchronized connected data sources."""
 
 from __future__ import annotations
 
@@ -18,6 +18,16 @@ class SourceObjectKind(StrEnum):
     FILE = "file"
     FOLDER = "folder"
     DELETED = "deleted"
+
+
+class SourceDataShape(StrEnum):
+    """Vendor-neutral information shape used to choose an ingestion path."""
+
+    DOCUMENT = "document"
+    MAIL = "mail"
+    DATASTORE = "datastore"
+    BLOB = "blob"
+    PROFILE = "profile"
 
 
 class SourceFailureCode(StrEnum):
@@ -58,10 +68,12 @@ class SourceDescription(_Contract):
     connection_id: str
     source_kind: str
     account_id: str
+    data_shape: SourceDataShape = SourceDataShape.DOCUMENT
     display_name: str = ""
     supports_incremental: bool = True
     supports_deletes: bool = True
     root_locator: str = ""
+    generation: int = Field(default=1, ge=1)
 
 
 class SourceResource(_Contract):
@@ -170,6 +182,7 @@ __all__ = [
     "SelectSourceResources",
     "SourceAdapter",
     "SourceContent",
+    "SourceDataShape",
     "SourceDescription",
     "SourceError",
     "SourceFailureCode",

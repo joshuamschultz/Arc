@@ -51,35 +51,35 @@ class SharedKnowledgeAttachment:
         return []
 
     async def probe(self) -> Any:
-        from arcagent.extension.attachment import ProbeResult
+        import arcagent
 
-        return ProbeResult(reachable=True, tools=await self.describe_tools())
+        return arcagent.ProbeResult(reachable=True, tools=await self.describe_tools())
 
     async def describe_tools(self) -> list[Any]:
-        from arcagent.extension.attachment import ToolSpec
+        import arcagent
 
         return [
-            ToolSpec(
+            arcagent.ToolSpec(
                 name="shared_knowledge_promote",
                 description="Promote owned personal knowledge to the signed fleet collection.",
                 input_schema=_schema({"reference": {"type": "string"}}, ["reference"]),
                 capability_tags=["knowledge", "fleet"],
             ),
-            ToolSpec(
+            arcagent.ToolSpec(
                 name="shared_knowledge_retrieve",
                 description="Retrieve one authorized fleet knowledge document.",
                 input_schema=_schema({"reference": {"type": "string"}}, ["reference"]),
                 classification="read_only",
                 capability_tags=["knowledge", "fleet"],
             ),
-            ToolSpec(
+            arcagent.ToolSpec(
                 name="shared_knowledge_search",
                 description="Search fleet knowledge visible at the caller's clearance.",
                 input_schema=_schema({"query": {"type": "string"}}, ["query"]),
                 classification="read_only",
                 capability_tags=["knowledge", "fleet"],
             ),
-            ToolSpec(
+            arcagent.ToolSpec(
                 name="shared_knowledge_revoke",
                 description="Revoke an owned fleet knowledge document.",
                 input_schema=_schema({"reference": {"type": "string"}}, ["reference"]),
@@ -88,7 +88,7 @@ class SharedKnowledgeAttachment:
         ]
 
     async def invoke(self, tool: str, args: dict[str, Any]) -> Any:
-        from arcagent.extension.attachment import ToolOutcome, ToolResult
+        import arcagent
 
         try:
             if tool == "shared_knowledge_promote":
@@ -117,14 +117,20 @@ class SharedKnowledgeAttachment:
                 await self._service.revoke(reference, self._access)
                 content = f"Revoked shared knowledge {reference}."
             else:
-                return ToolResult(
-                    tool=tool, outcome=ToolOutcome.ERROR, content="unknown shared tool"
+                return arcagent.ToolResult(
+                    tool=tool,
+                    outcome=arcagent.ToolOutcome.ERROR,
+                    content="unknown shared tool",
                 )
         except SharedKnowledgeUnavailableError as error:
-            return ToolResult(tool=tool, outcome=ToolOutcome.ERROR, content=str(error))
+            return arcagent.ToolResult(
+                tool=tool, outcome=arcagent.ToolOutcome.ERROR, content=str(error)
+            )
         except (FileNotFoundError, PermissionError, ValueError) as error:
-            return ToolResult(tool=tool, outcome=ToolOutcome.ERROR, content=str(error))
-        return ToolResult(tool=tool, content=content)
+            return arcagent.ToolResult(
+                tool=tool, outcome=arcagent.ToolOutcome.ERROR, content=str(error)
+            )
+        return arcagent.ToolResult(tool=tool, content=content)
 
 
 def _schema(properties: dict[str, object], required: list[str]) -> dict[str, object]:

@@ -45,7 +45,7 @@ from pydantic import ValidationError
 
 from arcagent.core.errors import ExtensionError
 from arcagent.core.tier import Tier
-from arcagent.extension.manifest import ExtensionHeader, load_manifest
+from arcagent.extension.manifest import ExtensionHeader, ExtensionManifest, load_manifest
 
 _logger = logging.getLogger("arcagent.extension.catalog")
 
@@ -151,6 +151,8 @@ class ExtensionResolution:
         version: The manifest's declared version. Empty unless the manifest was read.
         description: The manifest's one-line description, written for a person
             choosing from a list. Empty unless the manifest was read.
+        knowledge_mode: Whether this connector is a source or explicitly not indexable.
+        knowledge_reason: Operator-facing reason when the connector is not indexable.
         error: Why this directory is not a usable bundle. Empty when it is one.
     """
 
@@ -160,6 +162,8 @@ class ExtensionResolution:
     display_name: str = ""
     version: str = ""
     description: str = ""
+    knowledge_mode: str = ""
+    knowledge_reason: str = ""
     error: str = ""
 
 
@@ -291,14 +295,16 @@ class ExtensionCatalog:
             return replace(entry, error=f"{path.name!r} escapes the root {root}")
         try:
             validate_extension_name(path.name)
-            header = _read_header(path, self._tier)
+            manifest = _read_manifest(path, self._tier)
         except (OSError, ValueError, ValidationError, ExtensionError) as exc:
             return replace(entry, error=f"{type(exc).__name__}: {exc}")
         return replace(
             entry,
-            display_name=header.label,
-            version=header.version,
-            description=header.description,
+            display_name=manifest.extension.label,
+            version=manifest.extension.version,
+            description=manifest.extension.description,
+            knowledge_mode=manifest.knowledge.mode,
+            knowledge_reason=manifest.knowledge.reason,
         )
 
     def _judge_unlisted(self, name: str) -> None:
@@ -350,6 +356,12 @@ def _read_header(bundle: Path, tier: Tier) -> ExtensionHeader:
     """The ``[extension]`` table of one bundle, through the shipped parser."""
     text = (bundle / MANIFEST_NAME).read_text(encoding="utf-8")
     return load_manifest(text, tier=tier).extension
+
+
+def _read_manifest(bundle: Path, tier: Tier) -> ExtensionManifest:
+    """Read one validated bundle manifest for catalog metadata."""
+    text = (bundle / MANIFEST_NAME).read_text(encoding="utf-8")
+    return load_manifest(text, tier=tier)
 
 
 __all__ = [

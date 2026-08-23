@@ -34,6 +34,7 @@ from arcagent.extension.source import (
     ListSourceResources,
     SelectSourceResources,
     SourceContent,
+    SourceDataShape,
     SourceDescription,
     SourceObject,
     SourceObjectKind,
@@ -78,6 +79,9 @@ class _MutableProvider:
             connection_id=request.connection_id,
             source_kind=self.source_kind,
             account_id=f"{self.source_kind}-account",
+            data_shape=(
+                SourceDataShape.BLOB if self.source_kind == "blob" else SourceDataShape.DOCUMENT
+            ),
             display_name=f"Mock {self.source_kind}",
             root_locator="inbox",
         )
@@ -295,6 +299,7 @@ async def test_release_gate_sql_schema_and_profile_review_are_agent_safe(tmp_pat
         ConnectedDataService,
         ConnectedObject,
         ConnectedSource,
+        ConnectedSourceShape,
         SourceContent,
     )
     from arcmemory.datastore import SqliteDatastorePort
@@ -317,6 +322,7 @@ async def test_release_gate_sql_schema_and_profile_review_are_agent_safe(tmp_pat
     service = ConnectedDataService(tmp_path / "profile", _DID, approval_store=approval)
     profile_source = ConnectedSource(
         connection_id="crm-alpha", account_id="crm-account", source_kind="profile"
+        , data_shape=ConnectedSourceShape.PROFILE
     )
     await service.propose_mapping(profile_source, ("profile",))
     pending_mapping = (await approval.list())[0]

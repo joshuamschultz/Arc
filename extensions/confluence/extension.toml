@@ -46,10 +46,13 @@
 [extension]
 name = "confluence"
 display_name = "Confluence"
-version = "1.0.0"
+version = "1.1.0"
 description = "Search, read, and write Confluence pages in your team's spaces."
 attachment = "native"
 tier_floor = "personal"
+
+[knowledge]
+mode = "source"
 
 [config.native]
 entrypoint = "arc_ext_confluence"

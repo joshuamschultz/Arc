@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed the connected-account/Knowledge split: newly scaffolded agents now
   enable the removable `connected_data` module alongside `connectors`, and
   ArcUI reports a missing sync module instead of claiming there are no sources.
+- Connected-account cards now show Knowledge enrollment for every granted
+  agent, can activate the removable sync module on existing agents, and open
+  the exact source workflow for resource selection, mapping approval and sync.
+- Added document-source adapters for Confluence, GitHub, Jira and Readwise
+  Reader, completing the Knowledge path for every data-bearing Alpha connector;
+  1Password remains deliberately non-indexable secret material.
+- Gmail, Outlook and OneDrive now continue from provider cursors after their
+  first run, including changed/deleted records; every document provider pages
+  beyond its first result limit instead of silently truncating an account.
+- Background source and datastore reads revalidate the current agent grant
+  before and after provider I/O and emit content-safe audit events. Revocation
+  purges indexed state, selections, mappings and registered datastores; durable
+  source generations prevent stale workers or old approvals from restoring it.
+- Connector manifests now declare a typed Knowledge mode and reason. ArcUI can
+  distinguish a deliberately non-indexable connector from a broken adapter.
 
 ### Unattended-automation reliability
 

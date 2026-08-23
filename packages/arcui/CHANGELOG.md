@@ -7,8 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-23
+
 - Knowledge distinguishes an unavailable connected-data runtime from a
   genuinely empty source catalog and gives the operator an actionable remedy.
+- Every connected-account card now shows per-agent Knowledge status. Operators
+  can enable sync on an existing agent and continue directly into resource
+  selection, mapping approval and first sync.
 
 ## [0.5.1] - 2026-08-23
 

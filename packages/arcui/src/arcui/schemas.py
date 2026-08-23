@@ -49,6 +49,15 @@ class ErrorResponse(BaseModel):
     error: str
 
 
+class ConnectedDataActivationResponse(BaseModel):
+    """Body of the operator-only connected-data module activation route."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: str
+    detail: str
+
+
 # ---------------------------------------------------------------------------
 # Agent detail — config / files
 # ---------------------------------------------------------------------------
@@ -697,6 +706,8 @@ class ConnectorCatalogEntry(BaseModel):
     display_name: str
     version: str
     description: str
+    knowledge_mode: str
+    knowledge_reason: str
     attachment: str
     tier_floor: str
     approval_default: str
@@ -745,6 +756,8 @@ class ConnectorInstance(BaseModel):
     #: What to call ``extension`` in front of a person. Falls back to the
     #: coordinate for a bundle that declares none, never blank.
     extension_display_name: str
+    knowledge_mode: str = ""
+    knowledge_reason: str = ""
     approval: str
     agents: list[str]
 

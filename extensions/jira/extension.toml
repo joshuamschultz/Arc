@@ -22,10 +22,13 @@
 [extension]
 name = "jira"
 display_name = "Jira"
-version = "2.0.0"
+version = "2.1.0"
 description = "Search, read, create, comment on, and transition Jira issues."
 attachment = "cli"
 tier_floor = "personal"
+
+[knowledge]
+mode = "source"
 
 # Atlassian publishes `acli` as the executable itself rather than inside an
 # archive, and — unlike `gh` — publishes NO versioned URL and NO checksums file:
@@ -198,6 +201,9 @@ default = "outbound"
 binary = "acli"
 probe_argv = ["--version"]
 install_instruction = "See [[host_requires]] in this bundle's extension.toml."
+
+[config.source]
+entrypoint = "arc_ext_jira"
 
 # `--json` is in every argv below and it is NOT cosmetic. On a data command `acli`
 # prints `Authenticated site: <site>` to STDOUT before its payload, and a

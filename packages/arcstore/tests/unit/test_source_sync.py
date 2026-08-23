@@ -6,7 +6,7 @@ from arcstore.source_sync import InMemorySourceSyncStore
 
 
 @pytest.mark.asyncio
-async def test_schema_head_3_upgrades_to_source_sync_v4() -> None:
+async def test_schema_head_3_upgrades_to_source_sync_and_generation_fence() -> None:
     from arcstore.migrations import migrate
 
     executed: list[str] = []
@@ -20,6 +20,7 @@ async def test_schema_head_3_upgrades_to_source_sync_v4() -> None:
 
     await migrate(Connection())
     assert any("connected_source_sync" in sql and "agent_did" in sql for sql in executed)
+    assert any("generation" in sql for sql in executed)
     assert any("VALUES ($1)" in sql for sql in executed)
 
 
@@ -107,3 +108,11 @@ async def test_expired_lease_rejects_commit() -> None:
     assert not await store.set_status(
         "did:a", "source", "failed", owner_id="one", fencing_token=lease.fencing_token
     )
+
+
+@pytest.mark.asyncio
+async def test_purge_advances_durable_source_generation() -> None:
+    store = InMemorySourceSyncStore()
+    assert (await store.get_state("did:a", "source")).generation == 1
+    assert await store.purge("did:a", "source")
+    assert (await store.get_state("did:a", "source")).generation == 2

@@ -443,7 +443,7 @@ def _install(
     return client.post(
         "/api/connections",
         json={
-            "extension": _EXTENSION,
+                "extension": _EXTENSION,
             "instance": instance,
             "agents": [_AGENT] if agents is None else agents,
             "secrets": {"api_token": _SENTINEL} if secrets is None else secrets,
@@ -563,7 +563,9 @@ def test_install_goes_through_the_real_path_and_persists(world: Path) -> None:
             "extension": _EXTENSION,
             # The bundle this test writes declares no display_name, so the row
             # falls back to the coordinate — never to a blank.
-            "extension_display_name": _EXTENSION,
+                "extension_display_name": _EXTENSION,
+                "knowledge_mode": "source",
+                "knowledge_reason": "",
             "approval": "outbound",
             "agents": [_AGENT],
         }

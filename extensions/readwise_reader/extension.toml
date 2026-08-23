@@ -17,10 +17,13 @@
 [extension]
 name = "readwise_reader"
 display_name = "Readwise Reader"
-version = "1.0.0"
+version = "1.1.0"
 description = "Search your Readwise Reader library, read saved documents, and save new URLs."
 attachment = "cli"
 tier_floor = "personal"
+
+[knowledge]
+mode = "source"
 
 # The published npm tarball, digest computed over the artifact itself. Keyed
 # `any` because an npm tarball is the same bytes on every machine, and carrying
@@ -143,6 +146,9 @@ default = "outbound"
 binary = "readwise"
 probe_argv = ["--version"]
 install_instruction = "See [[host_requires]] in this bundle's extension.toml."
+
+[config.source]
+entrypoint = "arc_ext_readwise_reader"
 
 [[config.cli.commands]]
 tool = "readwise_search_documents"

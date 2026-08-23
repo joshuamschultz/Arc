@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-08-23
+
+- Added authorized connected-source adapters for Confluence spaces, GitHub
+  repositories, Jira projects and Readwise Reader libraries. Each adapter
+  exposes selectable resources and bounded snapshot synchronization through the
+  same vendor-neutral source contract as Dropbox, Gmail and OneDrive.
+- New agent scaffolds enable the removable `connected_data` module, and runtime
+  module activation is persisted for existing agents.
+
 ## [0.20.0] - 2026-08-23
 
 - A spawned CLI never inherits stdin. `create_subprocess_exec` piped

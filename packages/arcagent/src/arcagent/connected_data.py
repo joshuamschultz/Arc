@@ -134,6 +134,17 @@ class IngestPort(Protocol):
         mapping: MappingPlan,
     ) -> None: ...
 
+    async def complete_snapshot(
+        self,
+        source: SourceDescription,
+        object_ids: frozenset[str],
+        mapping: MappingPlan,
+    ) -> None: ...
+
+    async def reset_source(self, source: SourceDescription) -> None: ...
+
+    async def purge_source(self, source: SourceDescription) -> None: ...
+
 
 @runtime_checkable
 class SyncStatePort(Protocol):
@@ -183,6 +194,8 @@ class SyncStatePort(Protocol):
     ) -> bool: ...
 
     async def reset(self, agent_did: str, source_id: str) -> bool: ...
+
+    async def purge(self, agent_did: str, source_id: str) -> bool: ...
 
 
 AuditCallback = Callable[[str, Mapping[str, Any]], Awaitable[None] | None]

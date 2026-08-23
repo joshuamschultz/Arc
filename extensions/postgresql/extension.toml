@@ -6,6 +6,9 @@ description = "Connect an approved PostgreSQL or Supabase database for typed rea
 attachment = "native"
 tier_floor = "personal"
 
+[knowledge]
+mode = "source"
+
 [config.native]
 entrypoint = "arc_ext_postgresql"
 

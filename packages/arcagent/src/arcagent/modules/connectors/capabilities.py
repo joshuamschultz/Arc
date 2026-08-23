@@ -80,6 +80,7 @@ from arcagent.modules.connectors.install import (
     connector_env_file,
     resolve_secrets,
 )
+from arcagent.modules.connectors.source_authorization import SourceAuthorizationBinding
 from arcagent.tools._decorator import capability
 
 _logger = logging.getLogger("arcagent.modules.connectors.capabilities")
@@ -185,7 +186,7 @@ class Connectors:
                     elif registration.connection_id.split(":", 1)[0] not in _granted_source_ids(
                         state
                     ):
-                        await state.source_catalog.unregister(registration.connection_id)
+                        await _revoke_connected_source(state, registration.connection_id)
             for connection_id, adapter in prepared.sources.items():
                 await state.source_catalog.register(connection_id, adapter)
         self._registered = tuple(sorted(accepted))
@@ -398,7 +399,14 @@ async def _attach_one(
         else:
             for suffix, source_adapter in adapters.items():
                 connection_id = instance if not suffix else f"{instance}:{suffix}"
-                ctx.registry.sources[connection_id] = source_adapter
+                ctx.registry.sources[connection_id] = SourceAuthorizationBinding(
+                    source_adapter,
+                    connection_id=connection_id,
+                    agent_did=state.identity.did,
+                    tier=state.tier,
+                    grant_active=lambda: _source_grant_active(state, instance),
+                    audit_sink=_audit_sink(state.telemetry),
+                )
     return report.registered
 
 
@@ -407,6 +415,52 @@ def _granted_source_ids(state: _runtime._State) -> set[str]:
         return set(ConnectionRegistry(state.arc_dir).granted_to(state.agent_dir.name))
     except ExtensionError:
         return set()
+
+
+async def _source_grant_active(state: _runtime._State, instance: str) -> bool:
+    """Re-read the operator-owned grant so revocation beats eventual reconcile."""
+    try:
+        granted = await asyncio.to_thread(
+            ConnectionRegistry(state.arc_dir).granted_to,
+            state.agent_dir.name,
+        )
+    except ExtensionError:
+        return False
+    return instance in granted
+
+
+async def _revoke_connected_source(state: _runtime._State, connection_id: str) -> None:
+    """Purge indexed knowledge before dropping a revoked source registration.
+
+    An authorization binding denies provider reads immediately, but that alone
+    cannot revoke already-indexed content.  The connected-data service owns the
+    durable purge and incarnation fence, so reconcile leaves the source present
+    (and therefore denied) until that service confirms the purge.
+    """
+    try:
+        from arcagent.modules.connected_data import _runtime as connected_runtime
+
+        service = connected_runtime.state().service
+    except (ImportError, RuntimeError):
+        service = None
+    if service is None:
+        _refused(
+            _audit_sink(state.telemetry),
+            state,
+            "source_revoke_deferred",
+            "connected-data purge service unavailable",
+            instance=connection_id,
+        )
+        return
+    result = await service.revoke(connection_id)
+    if result.status not in {"revoked", "not_found"}:
+        _refused(
+            _audit_sink(state.telemetry),
+            state,
+            "source_revoke_deferred",
+            result.detail or result.status,
+            instance=connection_id,
+        )
 
 
 async def _load_bundle(ctx: _AttachContext, extension: str) -> LoadedExtension:

@@ -275,9 +275,8 @@ class TestInboxLoopPush:
         """
         import asyncio
 
-        from arcteam.types import Message
-
         from arcteam import composition as _bootstrap
+        from arcteam.types import Message
 
         ident = _identity()
         _runtime.configure(

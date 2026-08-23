@@ -844,6 +844,8 @@ export interface CatalogBundle {
   attachment: string
   tier_floor: string
   approval_default: string
+  knowledge_mode: 'source' | 'non_indexable'
+  knowledge_reason: string
   secrets: ConnectorSecret[]
   host_requires: HostRequirement[]
   tools: ConnectorTool[]
@@ -870,6 +872,8 @@ export interface ConnectorInstance {
   extension: string
   /** What to call `extension` in front of a person. Falls back to the coordinate. */
   extension_display_name: string
+  knowledge_mode: '' | 'source' | 'non_indexable'
+  knowledge_reason: string
   approval: string
   agents: string[]
 }
@@ -1035,6 +1039,12 @@ export interface ConnectedSourceItem {
 export interface ConnectedSourcesResponse {
   items: ConnectedSourceItem[]
   status?: string
+}
+
+/** Result of enabling the optional connected-data module for an existing agent. */
+export interface ConnectedDataActivationResponse {
+  status: 'activated'
+  detail: string
 }
 
 /** A mapping awaiting the normal signed operator-approval flow. */

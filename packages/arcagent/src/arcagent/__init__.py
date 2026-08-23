@@ -68,6 +68,7 @@ from arcagent.core.errors import (
 from arcagent.core.module_config import validate_module_configs
 from arcagent.core.module_discovery import discover_modules, module_root
 from arcagent.core.prompt_context import build_prompt_resolver
+from arcagent.extension import ProbeResult, ToolOutcome, ToolResult
 from arcagent.extension.inspect import inspect_extensions
 from arcagent.keys import KeyStatus, KeyStore, default_env_file
 from arcagent.knowledge import (
@@ -203,6 +204,7 @@ __all__ = [
     "KnowledgeRef",
     "ModuleBusError",
     "PersonalKnowledgePort",
+    "ProbeResult",
     "PromotionSource",
     "RootTokenBudget",
     "ScheduleEntry",
@@ -212,6 +214,8 @@ __all__ = [
     "SharedKnowledgePort",
     "Tier",
     "ToolError",
+    "ToolOutcome",
+    "ToolResult",
     "ToolSpec",
     "ToolVetoedError",
     "append_module_scan_roots",

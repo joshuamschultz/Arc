@@ -76,6 +76,8 @@ class CatalogEntry:
     display_name: str = ""
     version: str = ""
     description: str = ""
+    knowledge_mode: str = ""
+    knowledge_reason: str = ""
     error: str = ""
     attachment: str = ""
     tier_floor: str = ""
@@ -108,6 +110,8 @@ def _catalog_entry(resolution: ExtensionResolution, tier: Tier) -> CatalogEntry:
         display_name=resolution.display_name or resolution.name,
         version=resolution.version,
         description=resolution.description,
+        knowledge_mode=resolution.knowledge_mode,
+        knowledge_reason=resolution.knowledge_reason,
         error=resolution.error,
     )
     if resolution.error:
@@ -132,6 +136,8 @@ def _catalog_entry(resolution: ExtensionResolution, tier: Tier) -> CatalogEntry:
         display_name=header.label,
         version=header.version,
         description=header.description,
+        knowledge_mode=manifest.knowledge.mode,
+        knowledge_reason=manifest.knowledge.reason,
         attachment=header.attachment,
         tier_floor=header.tier_floor.value,
         approval_default=manifest.approval.default,
