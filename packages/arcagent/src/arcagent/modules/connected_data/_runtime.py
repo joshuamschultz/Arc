@@ -9,6 +9,7 @@ from typing import Any
 from arcagent.modules.connected_data.config import ConnectedDataConfig
 from arcagent.modules.connected_data.ingest import (
     ArcMemoryIngestAdapter,
+    ArcStoreMappingProposals,
     ArcStoreObjectState,
     ArcStoreResourceSelection,
 )
@@ -23,6 +24,9 @@ class _State:
         self.source_sync_store_opener = kwargs.get("source_sync_store_opener")
         self.arcstore_opener = kwargs.get("arcstore_opener")
         self.resource_selection_store_opener = _resource_selection_store_opener(
+            self.arcstore_opener, self.agent_did
+        )
+        self.mapping_proposal_store_opener = _mapping_proposal_store_opener(
             self.arcstore_opener, self.agent_did
         )
         self.source_catalog = kwargs.get("source_catalog")
@@ -125,6 +129,16 @@ def _resource_selection_store_opener(arcstore_opener: Any, agent_did: str) -> An
 
     async def open_store() -> ArcStoreResourceSelection:
         return ArcStoreResourceSelection(await arcstore_opener(), actor_did=agent_did)
+
+    return open_store
+
+
+def _mapping_proposal_store_opener(arcstore_opener: Any, agent_did: str) -> Any:
+    if arcstore_opener is None:
+        return None
+
+    async def open_store() -> ArcStoreMappingProposals:
+        return ArcStoreMappingProposals(await arcstore_opener(), actor_did=agent_did)
 
     return open_store
 

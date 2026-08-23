@@ -136,6 +136,43 @@ class ArcStoreResourceSelection:
         return hashlib.sha256(connection_id.encode()).hexdigest()
 
 
+class ArcStoreMappingProposals:
+    """Durable staged mapping choices, keyed without exposing source locators.
+
+    The operator picks which homes a connected account may feed, then waits for a
+    signed approval that can take days. Held only in memory, that choice was lost
+    on the next restart and the card read ``not_staged`` again with the pending
+    approval still outstanding.
+    """
+
+    _COLLECTION = "connected_data_mappings"
+
+    def __init__(self, backend: Any, *, actor_did: str) -> None:
+        self._backend = backend
+        self._actor_did = actor_did
+
+    async def get(self, connection_id: str) -> dict[str, Any] | None:
+        row = await self._backend.mutable_read(self._COLLECTION, self._key(connection_id))
+        return dict(row) if isinstance(row, dict) else None
+
+    async def put(self, connection_id: str, proposal: dict[str, Any]) -> None:
+        await self._backend.mutable_write(
+            self._COLLECTION,
+            self._key(connection_id),
+            dict(proposal),
+            actor_did=self._actor_did,
+        )
+
+    async def delete(self, connection_id: str) -> None:
+        await self._backend.mutable_delete(
+            self._COLLECTION, self._key(connection_id), actor_did=self._actor_did
+        )
+
+    @staticmethod
+    def _key(connection_id: str) -> str:
+        return hashlib.sha256(connection_id.encode()).hexdigest()
+
+
 class ArcMemoryIngestAdapter(IngestPort):
     """Translate the canonical source seam to optional ArcMemory primitives."""
 
@@ -412,6 +449,7 @@ def _revision(value: object) -> int | None:
 
 __all__ = [
     "ArcMemoryIngestAdapter",
+    "ArcStoreMappingProposals",
     "ArcStoreObjectState",
     "ArcStoreResourceSelection",
     "ConnectedDataUnavailableError",

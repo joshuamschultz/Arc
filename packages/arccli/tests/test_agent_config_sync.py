@@ -59,7 +59,7 @@ def test_sync_adds_missing_module_and_settings(stale_agent: Path) -> None:
     merged = tomllib.loads((stale_agent / "arcagent.toml").read_text(encoding="utf-8"))
     connected = merged["modules"]["connected_data"]
     assert connected["enabled"] is True
-    assert connected["config"]["interval_seconds"] == 60.0
+    assert connected["config"]["interval_seconds"] == 3600.0
     assert "working_set_enabled" in merged["modules"]["memory"]["config"]
     assert "modules.connected_data" in result.added
 

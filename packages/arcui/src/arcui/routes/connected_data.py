@@ -360,7 +360,17 @@ async def select_resources(request: Request) -> JSONResponse:
         return JSONResponse(
             ErrorResponse(error="connected-data module unavailable").model_dump(), status_code=503
         )
-    resources = await service.select_resources(source_id, resource_ids=tuple(resource_ids))
+    try:
+        resources = await service.select_resources(source_id, resource_ids=tuple(resource_ids))
+    except arcagent.SourceUnreachableError:
+        emit_mutation_audit(
+            request,
+            target=f"agent:{agent_id}/source:{source_id}",
+            operation="connected_data.select_resources",
+            outcome="error",
+            detail="source_unreachable",
+        )
+        return _unreachable(source_id)
     emit_mutation_audit(
         request,
         target=f"agent:{agent_id}/source:{source_id}",

@@ -44,7 +44,7 @@ def test_default_config_enrolls_connections_in_connected_data() -> None:
     connected_data = parsed["modules"]["connected_data"]
 
     assert connected_data["enabled"] is True
-    assert connected_data["config"]["interval_seconds"] == 60.0
+    assert connected_data["config"]["interval_seconds"] == 3600.0
 
 
 def test_default_config_connectors_block_round_trips_through_real_config_model() -> None:

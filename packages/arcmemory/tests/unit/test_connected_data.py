@@ -29,12 +29,14 @@ def _source(*, account_id: str = "account") -> ConnectedSource:
     )
 
 
-def _service(workspace: Path, approval: ApprovalStore) -> ConnectedDataService:
+def _service(
+    workspace: Path, approval: ApprovalStore, *, tier: str = "personal"
+) -> ConnectedDataService:
     return ConnectedDataService(
         workspace,
         "did:arc:agent",
         approval_store=approval,
-        config=MemoryConfig(doc_chunk_tokens=32),
+        config=MemoryConfig(doc_chunk_tokens=32, tier=tier),
     )
 
 
@@ -271,7 +273,7 @@ async def test_complete_snapshot_removes_missing_object_and_allows_restore(tmp_p
 @pytest.mark.asyncio
 async def test_missing_classification_and_opaque_reordering_fail_closed(tmp_path: Path) -> None:
     approval = ApprovalStore(FakeBackend())
-    service = _service(tmp_path, approval)
+    service = _service(tmp_path, approval, tier="federal")
     source = _source()
     with pytest.raises(SourceMappingPendingError):
         await service.require_approved_mapping(source)
@@ -306,3 +308,38 @@ async def test_missing_classification_and_opaque_reordering_fail_closed(tmp_path
             SourceContent(object_id="report", version="opaque-0", content=b"stale"),
             mapping,
         )
+
+
+@pytest.mark.asyncio
+async def test_an_unlabelled_object_ingests_below_federal(tmp_path: Path) -> None:
+    """No connector labels its objects, so strict everywhere meant sync never ran.
+
+    Federal fails closed on a missing label (the test above). Personal and
+    enterprise read it as UNCLASSIFIED, the same as every other classification
+    read in this service — otherwise the first object of every connected account
+    is refused and the source is permanently `failed`.
+    """
+    approval = ApprovalStore(FakeBackend())
+    service = _service(tmp_path, approval)
+    source = _source()
+    with pytest.raises(SourceMappingPendingError):
+        await service.require_approved_mapping(source)
+    pending = (await approval.list())[0]
+    await approval.resolve(pending.id, status="approved", actor_did="did:operator")
+    mapping = await service.require_approved_mapping(source)
+
+    await service.ingest(
+        source,
+        ConnectedObject(
+            object_id="report",
+            locator="/reports/report.txt",
+            version="opaque-1",
+            media_type="text/plain",
+            classification="",
+            revision=1,
+        ),
+        SourceContent(object_id="report", version="opaque-1", content=b"hello"),
+        mapping,
+    )
+
+    assert await service.document_search("hello", source)

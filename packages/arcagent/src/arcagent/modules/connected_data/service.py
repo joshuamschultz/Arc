@@ -37,6 +37,14 @@ class SourceSelectionStore(Protocol):
     async def delete(self, connection_id: str) -> None: ...
 
 
+class MappingProposalStore(Protocol):
+    async def get(self, connection_id: str) -> dict[str, Any] | None: ...
+
+    async def put(self, connection_id: str, proposal: dict[str, Any]) -> None: ...
+
+    async def delete(self, connection_id: str) -> None: ...
+
+
 class SourceUnreachableError(RuntimeError):
     """A granted source could not be read — the provider refused or was unreachable.
 
@@ -100,13 +108,16 @@ class ConnectedDataService:
         global_concurrency: int,
         resource_selection_store_opener: Callable[[], Awaitable[SourceSelectionStore]]
         | None = None,
+        mapping_proposal_store_opener: Callable[[], Awaitable[MappingProposalStore]]
+        | None = None,
         audit: AuditCallback | None = None,
-        interval_seconds: float = 60.0,
+        interval_seconds: float = 3600.0,
     ) -> None:
         self._catalog = catalog
         self._agent_did = agent_did
         self._sync_store_opener = sync_store_opener
         self._resource_selection_store_opener = resource_selection_store_opener
+        self._mapping_proposal_store_opener = mapping_proposal_store_opener
         self._ingest_factory = ingest_factory
         self._limits = limits
         self._semaphore = asyncio.Semaphore(global_concurrency)
@@ -114,6 +125,7 @@ class ConnectedDataService:
         self._interval = interval_seconds
         self._store: Any = None
         self._resource_store: SourceSelectionStore | None = None
+        self._mapping_store: MappingProposalStore | None = None
         self._monitor: asyncio.Task[None] | None = None
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._statuses: dict[str, SourceRuntimeStatus] = {}
@@ -128,6 +140,7 @@ class ConnectedDataService:
         """Start the monitor; an unavailable optional backend becomes degraded."""
         self._store = await self._open_store()
         self._resource_store = await self._open_resource_store()
+        self._mapping_store = await self._open_mapping_store()
         self._monitor = asyncio.create_task(self._monitor_loop(), name="connected-data-sync")
         self._wake.set()
 
@@ -199,6 +212,8 @@ class ConnectedDataService:
             await ingest.purge_source(description)
             if self._resource_store is not None:
                 await self._resource_store.delete(connection_id)
+            if self._mapping_store is not None:
+                await self._mapping_store.delete(connection_id)
         except Exception:
             _logger.exception("connected-data source purge failed: %s", connection_id)
             return SourceOperationResult(connection_id, "refused", "source_purge_failed")
@@ -262,11 +277,21 @@ class ConnectedDataService:
             approval_id=str(approval_id),
         )
         self._mapping_statuses[connection_id] = proposal
+        if self._mapping_store is not None:
+            await self._mapping_store.put(
+                connection_id,
+                {
+                    "source_id": proposal.source_id,
+                    "allowed_homes": [str(home) for home in proposal.allowed_homes],
+                    "homes": [str(home) for home in proposal.homes],
+                    "approval_id": proposal.approval_id,
+                },
+            )
         return proposal
 
     async def get_mapping_proposal(self, connection_id: str) -> MappingProposalStatus | None:
         """Return the last staged safe proposal, or source-compatible choices."""
-        staged = self._mapping_statuses.get(connection_id)
+        staged = await self._staged_proposal(connection_id)
         if staged is not None:
             registration = await self._find(connection_id)
             if registration is None or self._ingest_factory is None:
@@ -332,9 +357,13 @@ class ConnectedDataService:
                 resource.model_copy(update={"detail": "invalid_resource_selection"})
                 for resource in available
             )
-        await registration.adapter.select_source_resources(
-            SelectSourceResources(connection_id=connection_id, resource_ids=resource_ids)
-        )
+        try:
+            await registration.adapter.select_source_resources(
+                SelectSourceResources(connection_id=connection_id, resource_ids=resource_ids)
+            )
+        except Exception as exc:
+            _logger.warning("connected-data resource selection failed: %s", connection_id)
+            raise SourceUnreachableError(connection_id) from exc
         self._selected_resources[connection_id] = resource_ids
         if self._resource_store is not None:
             await self._resource_store.put(connection_id, resource_ids)
@@ -558,6 +587,37 @@ class ConnectedDataService:
         except Exception:
             _logger.warning("connected-data resource selection store unavailable", exc_info=True)
             return None
+
+    async def _open_mapping_store(self) -> MappingProposalStore | None:
+        if self._mapping_proposal_store_opener is None:
+            return None
+        try:
+            return await self._mapping_proposal_store_opener()
+        except Exception:
+            _logger.warning("connected-data mapping proposal store unavailable", exc_info=True)
+            return None
+
+    async def _staged_proposal(self, connection_id: str) -> MappingProposalStatus | None:
+        """The operator's staged choice, from memory or the durable store."""
+        staged = self._mapping_statuses.get(connection_id)
+        if staged is not None or self._mapping_store is None:
+            return staged
+        row = await self._mapping_store.get(connection_id)
+        if row is None:
+            return None
+        try:
+            restored = MappingProposalStatus(
+                connection_id=connection_id,
+                source_id=str(row.get("source_id", "")),
+                allowed_homes=tuple(row.get("allowed_homes", ())),
+                homes=tuple(row.get("homes", ())),
+                approval_id=str(row.get("approval_id", "")),
+            )
+        except (TypeError, ValueError):
+            _logger.warning("connected-data staged mapping unreadable: %s", connection_id)
+            return None
+        self._mapping_statuses[connection_id] = restored
+        return restored
 
     async def _find(self, connection_id: str) -> SourceRegistration | None:
         for registration in await self._catalog.snapshot():

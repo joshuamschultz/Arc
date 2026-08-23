@@ -377,7 +377,13 @@ class ConnectedDataService:
             raise SourceMappingDeniedError()
         source_id = self._source_id(source)
         try:
-            parse_classification(source_object.classification, strict=True)
+            # Strict is the federal posture, matching every other classification
+            # read in this service. Hardcoded here it refused every object from a
+            # connector that labels nothing — which is every connector at personal
+            # tier, so no connected source could ever finish a sync.
+            parse_classification(
+                source_object.classification, strict=self._config.tier == "federal"
+            )
         except ValueError as exc:
             self._audit_object(source_id, source_object, "skipped", "invalid_classification")
             raise ConnectedObjectError("connected object classification is invalid") from exc

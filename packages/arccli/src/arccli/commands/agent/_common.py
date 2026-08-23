@@ -515,7 +515,7 @@ priority = 100
 [modules.connected_data.config]
 # Enrol every granted connector source into ArcMemory. Without this removable
 # layer connector tools still work, but Knowledge cannot map, index or sync them.
-interval_seconds = 60.0      # how often a granted source is polled for changes
+interval_seconds = 3600.0    # how often a granted source is polled for changes
 global_concurrency = 4       # sources this agent syncs at once
 
 [modules.connected_data.config.limits]

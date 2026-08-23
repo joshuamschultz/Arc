@@ -27,6 +27,7 @@ class ConnectedData:
             sync_store_opener=state.source_sync_store_opener,
             ingest_factory=state.ingest_port_factory,
             resource_selection_store_opener=state.resource_selection_store_opener,
+            mapping_proposal_store_opener=state.mapping_proposal_store_opener,
             limits=state.config.limits,
             global_concurrency=state.config.global_concurrency,
             audit=_audit(state.telemetry),

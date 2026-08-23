@@ -100,3 +100,77 @@ async def test_the_typed_refusal_names_the_source_and_keeps_the_cause() -> None:
 
     assert "personal_dropbox" in str(raised.value)
     assert raised.value.__cause__ is cause
+
+
+class _Store:
+    """A durable store, standing in for the arcstore-backed one."""
+
+    def __init__(self) -> None:
+        self.rows: dict[str, dict[str, Any]] = {}
+
+    async def get(self, connection_id: str) -> dict[str, Any] | None:
+        return self.rows.get(connection_id)
+
+    async def put(self, connection_id: str, proposal: dict[str, Any]) -> None:
+        self.rows[connection_id] = dict(proposal)
+
+    async def delete(self, connection_id: str) -> None:
+        self.rows.pop(connection_id, None)
+
+
+@pytest.mark.asyncio
+async def test_a_staged_mapping_choice_outlives_the_process() -> None:
+    """The operator picks homes, then waits days for a signed approval.
+
+    Held only in memory that choice died with the process, and the card read
+    ``not_staged`` again while the approval was still pending.
+    """
+    store = _Store()
+    store.rows["personal_dropbox"] = {
+        "source_id": "abc123",
+        "allowed_homes": ["document"],
+        "homes": ["document"],
+        "approval_id": "approval-1",
+    }
+    service = ConnectedDataService(
+        agent_did="did:arc:test:agent",
+        catalog=_Catalog(()),
+        ingest_factory=lambda description: object(),
+        sync_store_opener=None,
+        resource_selection_store_opener=None,
+        mapping_proposal_store_opener=lambda: _ready(store),
+        limits=SyncLimits(),
+        global_concurrency=1,
+    )
+    await service.start()
+    try:
+        restored = await service._staged_proposal("personal_dropbox")
+    finally:
+        await service.close()
+
+    assert restored is not None
+    assert restored.homes == ("document",)
+    assert restored.approval_id == "approval-1"
+
+
+async def _ready(store: _Store) -> _Store:
+    return store
+
+
+@pytest.mark.asyncio
+async def test_an_unstaged_source_stays_unstaged() -> None:
+    service = ConnectedDataService(
+        agent_did="did:arc:test:agent",
+        catalog=_Catalog(()),
+        ingest_factory=lambda description: object(),
+        sync_store_opener=None,
+        resource_selection_store_opener=None,
+        mapping_proposal_store_opener=lambda: _ready(_Store()),
+        limits=SyncLimits(),
+        global_concurrency=1,
+    )
+    await service.start()
+    try:
+        assert await service._staged_proposal("personal_dropbox") is None
+    finally:
+        await service.close()
