@@ -31,6 +31,7 @@ from arcstore.cancellations import CancelStore
 from arcstore.config import ArcStoreConfig, resolve_data_dir
 from arcstore.inbox_projection import DurableInboxService
 from arcstore.inbox_spool import InboxProjectionSpool
+from arcstore.mail_outbox import MailOutbox, PostgresMailOutbox
 from arcstore.tasks import TaskStore
 from pydantic import SecretStr
 from starlette.applications import Starlette
@@ -367,11 +368,17 @@ def create_app(
             await task_store_backend.start()
         except Exception:  # reason: fail-open — dashboard still serves
             logger.exception("lifespan: task_store backend failed to start; writes will fail")
+        inbox_data_dir = data_dir if data_dir is not None else resolve_data_dir()
+        mail_outbox = (
+            PostgresMailOutbox(task_store_backend)
+            if isinstance(task_store_backend, PostgresBackend)
+            else MailOutbox(inbox_data_dir / "mail-outbox.jsonl")
+        )
+        starlette_app.state.mail_outbox = mail_outbox
         if starlette_app.state.inbox_service is None and isinstance(
             task_store_backend, PostgresBackend
         ):
             try:
-                inbox_data_dir = data_dir if data_dir is not None else resolve_data_dir()
                 starlette_app.state.inbox_service = DurableInboxService(
                     PostgresInboxRepository(task_store_backend),
                     delivery_port=inbox_delivery_port,
@@ -459,15 +466,31 @@ def create_app(
         starlette_app.state.messaging_service = resolved_service
         if resolved_service is not None and starlette_app.state.inbox_service is not None:
             try:
-                from arcteam import AgentMailService
+                from arcui.messaging import build_agent_mail_service
 
-                starlette_app.state.agent_mail = AgentMailService(
-                    resolved_service, starlette_app.state.inbox_service
+                starlette_app.state.agent_mail = build_agent_mail_service(
+                    transport=resolved_service,
+                    store=starlette_app.state.inbox_service,
+                    outbox=mail_outbox,
                 )
             except ImportError:
                 starlette_app.state.agent_mail = None
         else:
             starlette_app.state.agent_mail = None
+        mail_worker_task: asyncio.Task[None] | None = None
+        if starlette_app.state.agent_mail is not None:
+            from arcteam.mail import MailDeliveryWorker
+
+            worker = MailDeliveryWorker(
+                mail_outbox, resolved_service, worker_id="arcui-agent-mail"
+            )
+
+            async def _drain_mail() -> None:
+                while True:
+                    await worker.deliver_once()
+                    await asyncio.sleep(0.5)
+
+            mail_worker_task = asyncio.create_task(_drain_mail(), name="arcui-agent-mail")
         # COMP-005: channel-management routes resolve agent refs to DIDs
         # through this registry. None when no service is wired — the mutation
         # routes then report the same explicit unavailable error as the reads.
@@ -514,6 +537,10 @@ def create_app(
         try:
             yield
         finally:
+            if mail_worker_task is not None:
+                mail_worker_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await mail_worker_task
             if approval_dispatcher is not None:
                 await approval_dispatcher.stop()
             if observer_task is not None:
@@ -619,6 +646,7 @@ def create_app(
     app.state.cancel_store = CancelStore(task_store_backend)
     app.state.inbox_service = inbox_service
     app.state.agent_mail = None
+    app.state.mail_outbox = None
     app.state.inbox_clearance = inbox_clearance
     # Ingest policy (ADR-019 tier = stringency): may operator-authored task
     # text carry URLs/emails? Federal → False (default, secure-by-default);

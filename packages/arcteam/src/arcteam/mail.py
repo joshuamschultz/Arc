@@ -9,11 +9,11 @@ Operator gateway sessions and channel chat never enter this service.
 from __future__ import annotations
 
 import hashlib
+import inspect
 import logging
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
-from arcstore.mail_outbox import MailOutbox
 from pydantic import BaseModel, ConfigDict, Field
 
 from arcteam.crypto import MessageSigner, new_nonce, sign_message
@@ -77,24 +77,31 @@ class MailTransport(Protocol):
 class MailDeliveryWorker:
     """Drain durable mail envelopes with bounded exponential retry."""
 
-    def __init__(self, outbox: MailOutbox, transport: MailTransport, *, worker_id: str) -> None:
+    def __init__(self, outbox: Any, transport: MailTransport, *, worker_id: str) -> None:
         self._outbox = outbox
         self._transport = transport
         self._worker_id = worker_id
 
     async def deliver_once(self, *, limit: int = 100) -> tuple[str, ...]:
         delivered: list[str] = []
-        for entry in self._outbox.claim(self._worker_id, limit=limit):
+        claimed = self._outbox.claim(self._worker_id, limit=limit)
+        if inspect.isawaitable(claimed):
+            claimed = await claimed
+        for entry in claimed:
             try:
                 await self._transport.send(Message.model_validate(entry.envelope))
             except Exception as exc:  # reason: leave durable work pending
                 delay = min(300.0, float(2 ** min(entry.attempts, 8)))
-                self._outbox.nack(
+                result = self._outbox.nack(
                     self._worker_id, entry.event_id, retry_after_seconds=delay
                 )
+                if inspect.isawaitable(result):
+                    await result
                 _logger.warning("agent mail delivery deferred: %s", type(exc).__name__)
             else:
-                self._outbox.ack(self._worker_id, entry.event_id)
+                result = self._outbox.ack(self._worker_id, entry.event_id)
+                if inspect.isawaitable(result):
+                    await result
                 delivered.append(entry.event_id)
         return tuple(delivered)
 
@@ -112,7 +119,7 @@ class AgentMailService:
         transport: MailTransport,
         store: MailStore,
         *,
-        outbox: MailOutbox | None = None,
+        outbox: Any | None = None,
         worker_id: str = "arc-team-mail",
         signer: MessageSigner | None = None,
     ) -> None:
@@ -121,6 +128,11 @@ class AgentMailService:
         self._outbox = outbox
         self._worker_id = worker_id
         self._signer = signer
+
+    @property
+    def sender_did(self) -> str | None:
+        """Return the configured signing DID without exposing key material."""
+        return self._signer.did if self._signer is not None else None
 
     async def send(self, request: MailSendRequest) -> MailSendResult:
         """Persist mail before NATS delivery and report delivery failures as pending."""
@@ -163,7 +175,9 @@ class AgentMailService:
             except Exception:  # reason: durable record remains available for retry
                 return MailSendResult(message_id=event_id, thread_id=thread_id, status="pending")
             return MailSendResult(message_id=sent.id, thread_id=thread_id, status="sent")
-        self._outbox.enqueue(event_id, envelope.model_dump(mode="json"))
+        result = self._outbox.enqueue(event_id, envelope.model_dump(mode="json"))
+        if inspect.isawaitable(result):
+            await result
         delivered = await MailDeliveryWorker(
             self._outbox, self._transport, worker_id=self._worker_id
         ).deliver_once()
@@ -224,7 +238,9 @@ class AgentMailService:
         )
         self._sign_envelope(envelope)
         if self._outbox is not None:
-            self._outbox.enqueue(event_id, envelope.model_dump(mode="json"))
+            result = self._outbox.enqueue(event_id, envelope.model_dump(mode="json"))
+            if inspect.isawaitable(result):
+                await result
             await MailDeliveryWorker(
                 self._outbox, self._transport, worker_id=self._worker_id
             ).deliver_once()

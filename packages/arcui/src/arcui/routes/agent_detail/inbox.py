@@ -24,6 +24,12 @@ def _reader(request: Request) -> Any | None:
     return participant(did) if did else None
 
 
+def _operator_sender(service: Any) -> Any | None:
+    """Resolve the explicit operator participant; never reuse the agent DID."""
+    did = getattr(service, "sender_did", None)
+    return participant(did, role=ParticipantRole.HUMAN) if isinstance(did, str) and did else None
+
+
 def _clearance(request: Request) -> str:
     return str(getattr(request.app.state, "inbox_clearance", "UNCLASSIFIED"))
 
@@ -129,6 +135,9 @@ async def post_inbox_reply(request: Request) -> JSONResponse:
         return JSONResponse({"error": "durable_inbox_unavailable"}, status_code=503)
     if reader is None:
         return JSONResponse({"error": "agent_not_found"}, status_code=404)
+    sender = _operator_sender(service)
+    if sender is None:
+        return JSONResponse({"error": "operator_mail_identity_unavailable"}, status_code=503)
     try:
         payload = await request.json()
     except Exception:
@@ -147,7 +156,7 @@ async def post_inbox_reply(request: Request) -> JSONResponse:
     try:
         message = await service.reply(
             thread_id,
-            sender=reader,
+            sender=sender,
             body=body,
             reply_to_id=reply_to_id,
             idempotency_key=idempotency_key,

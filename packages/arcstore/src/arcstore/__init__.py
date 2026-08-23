@@ -44,7 +44,7 @@ from arcstore.inbox import (
 )
 from arcstore.inbox_projection import DurableInboxService, InboxDeliveryPort
 from arcstore.inbox_spool import InboxProjectionSpool, ProjectionEvent
-from arcstore.mail_outbox import MailOutbox, MailOutboxEntry
+from arcstore.mail_outbox import MailOutbox, MailOutboxEntry, PostgresMailOutbox
 from arcstore.records import SpoolRecord
 from arcstore.source_sync import (
     ArcStoreSourceSyncStore,
@@ -74,6 +74,7 @@ __all__ = [
     "MessagePage",
     "MailOutbox",
     "MailOutboxEntry",
+    "PostgresMailOutbox",
     "PageInfo",
     "Participant",
     "ParticipantRole",

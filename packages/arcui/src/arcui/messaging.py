@@ -291,6 +291,16 @@ def build_team_post_forwarder(*, service: Any, registry: Any) -> Any | None:
     return forward
 
 
+def build_agent_mail_service(*, transport: Any, store: Any, outbox: Any) -> Any | None:
+    """Compose UI mail under the operator identity without exposing key material."""
+    identity = _operator_messaging()
+    if identity is None:
+        return None
+    from arcteam import AgentMailService
+
+    return AgentMailService(transport, store, outbox=outbox, signer=identity.signer)
+
+
 async def _no_audience_warning(
     service: Any, registry: Any, channel: str, operator_did: str
 ) -> str | None:
@@ -326,4 +336,9 @@ async def _no_audience_warning(
     return f"Nobody is in #{channel} yet — add members so they can reply."
 
 
-__all__ = ["TeamPostRefusedError", "build_messaging_service", "build_team_post_forwarder"]
+__all__ = [
+    "TeamPostRefusedError",
+    "build_agent_mail_service",
+    "build_messaging_service",
+    "build_team_post_forwarder",
+]
