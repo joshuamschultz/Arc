@@ -125,8 +125,12 @@ log "Verifying deployment..."
 ACTIVE="$(remote "readlink \$HOME/.arc/runtime/current | xargs basename")"
 ok "active runtime: $ACTIVE"
 
-remote "curl -fsS --max-time 5 http://localhost:$UI_PORT/api/health >/dev/null" \
-  || fail "health check failed on :$UI_PORT"
+# Application startup (six agents, memory backends) takes well over the old
+# single-probe window — poll until the lifespan finishes or two minutes pass.
+remote "for _ in $(seq 1 24); do
+  curl -fsS --max-time 5 http://localhost:$UI_PORT/api/health >/dev/null && exit 0
+  sleep 5
+done; exit 1" || fail "health check failed on :$UI_PORT after 120s"
 ok "health: 200"
 
 # Fleet: deploy-node.sh already gates a hollow node — it runs `arc agent build
