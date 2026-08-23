@@ -37,6 +37,21 @@ class SourceSelectionStore(Protocol):
     async def delete(self, connection_id: str) -> None: ...
 
 
+class SourceUnreachableError(RuntimeError):
+    """A granted source could not be read — the provider refused or was unreachable.
+
+    The background sync loop already treats this as a degraded source. The
+    operator-facing reads could not: they let the adapter's own exception escape
+    to the HTTP boundary, where a read timeout or an expired credential became
+    an opaque 500 on the mapping screen. Typed here so the boundary can say
+    which source failed and that retrying is the remedy.
+    """
+
+    def __init__(self, connection_id: str) -> None:
+        super().__init__(f"source {connection_id} could not be inspected")
+        self.connection_id = connection_id
+
+
 @dataclass(frozen=True)
 class SourceRuntimeStatus:
     """Safe source status; credentials and cursors are never surfaced here."""
@@ -226,9 +241,7 @@ class ConnectedDataService:
         registration = await self._find(connection_id)
         if registration is None or self._ingest_factory is None:
             return None
-        raw_description = await registration.adapter.inspect_source(
-            InspectSource(connection_id=connection_id)
-        )
+        raw_description = await self._inspect(registration)
         candidate = self._ingest_factory(raw_description)
         ingest = await candidate if inspect.isawaitable(candidate) else candidate
         description = await self._describe(registration, ingest)
@@ -258,9 +271,7 @@ class ConnectedDataService:
             registration = await self._find(connection_id)
             if registration is None or self._ingest_factory is None:
                 return None
-            raw_source = await registration.adapter.inspect_source(
-                InspectSource(connection_id=connection_id)
-            )
+            raw_source = await self._inspect(registration)
             candidate = self._ingest_factory(raw_source)
             ingest = await candidate if inspect.isawaitable(candidate) else candidate
             await self._describe(registration, ingest)
@@ -271,9 +282,7 @@ class ConnectedDataService:
         registration = await self._find(connection_id)
         if registration is None or self._ingest_factory is None:
             return None
-        raw_description = await registration.adapter.inspect_source(
-            InspectSource(connection_id=connection_id)
-        )
+        raw_description = await self._inspect(registration)
         candidate = self._ingest_factory(raw_description)
         ingest = await candidate if inspect.isawaitable(candidate) else candidate
         description = await self._describe(registration, ingest)
@@ -294,9 +303,13 @@ class ConnectedDataService:
         registration = await self._find(connection_id)
         if registration is None:
             return ()
-        resources = await registration.adapter.list_source_resources(
-            ListSourceResources(connection_id=connection_id)
-        )
+        try:
+            resources = await registration.adapter.list_source_resources(
+                ListSourceResources(connection_id=connection_id)
+            )
+        except Exception as exc:
+            _logger.warning("connected-data resource listing failed: %s", connection_id)
+            raise SourceUnreachableError(connection_id) from exc
         selected = self._selected_resources.get(connection_id)
         if selected is None and self._resource_store is not None:
             selected = await self._resource_store.get(connection_id)
@@ -557,12 +570,27 @@ class ConnectedDataService:
             connection_id=connection_id, status="degraded", detail=detail
         )
 
+    async def _inspect(self, registration: SourceRegistration) -> Any:
+        """Inspect a source, turning a provider failure into a typed refusal.
+
+        The adapter runs third-party code against someone else's service, so it
+        can raise anything at all. Every operator-facing read goes through here
+        so none of them can hand a raw provider exception to a caller.
+        """
+        try:
+            return await registration.adapter.inspect_source(
+                InspectSource(connection_id=registration.connection_id)
+            )
+        except Exception as exc:
+            _logger.warning(
+                "connected-data source inspection failed: %s", registration.connection_id
+            )
+            raise SourceUnreachableError(registration.connection_id) from exc
+
     async def _describe(
         self, registration: SourceRegistration, ingest: IngestPort
     ) -> SourceDescription:
-        description = await registration.adapter.inspect_source(
-            InspectSource(connection_id=registration.connection_id)
-        )
+        description = await self._inspect(registration)
         description = await self._with_generation(description, ingest)
         self._descriptions[registration.connection_id] = description
         return description

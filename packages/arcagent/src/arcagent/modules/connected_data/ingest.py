@@ -55,16 +55,8 @@ class ArcStoreObjectState:
         )
 
     async def list_object_ids(self, source_id: str) -> list[str]:
-        rows = await self._backend.mutable_query(
-            self._COLLECTION, where={"source_id": source_id}
-        )
-        return sorted(
-            {
-                row["object_id"]
-                for row in rows
-                if isinstance(row.get("object_id"), str)
-            }
-        )
+        rows = await self._backend.mutable_query(self._COLLECTION, where={"source_id": source_id})
+        return sorted({row["object_id"] for row in rows if isinstance(row.get("object_id"), str)})
 
     async def clear_source(self, source_id: str) -> None:
         object_ids = await self.list_object_ids(source_id)
@@ -108,7 +100,6 @@ class ArcStoreObjectState:
     @staticmethod
     def _source_key(connection_id: str) -> str:
         return hashlib.sha256(connection_id.encode()).hexdigest()
-
 
 
 class ArcStoreResourceSelection:
@@ -398,9 +389,7 @@ class ArcMemoryIngestAdapter(IngestPort):
             revision=mapping.revision,
             content_hash=mapping.content_hash,
         )
-        await self._connected_service().complete_snapshot(
-            source_model, object_ids, mapping_model
-        )
+        await self._connected_service().complete_snapshot(source_model, object_ids, mapping_model)
 
     async def purge_source(self, source: SourceDescription) -> None:
         """Remove source artifacts and its mapping on connection revocation."""

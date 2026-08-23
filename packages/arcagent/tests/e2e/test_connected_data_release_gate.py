@@ -170,9 +170,7 @@ async def _wait(service: ConnectedDataService, expected: str) -> None:
     raise AssertionError(f"source never reached {expected}: {await service.list_sources()}")
 
 
-async def _wait_cursor(
-    state: InMemorySourceSyncStore, *, expected: str, source_id: str
-) -> None:
+async def _wait_cursor(state: InMemorySourceSyncStore, *, expected: str, source_id: str) -> None:
     for _ in range(300):
         if (await state.get_state(_DID, source_id)).cursor == expected:
             return
@@ -321,8 +319,10 @@ async def test_release_gate_sql_schema_and_profile_review_are_agent_safe(tmp_pat
     approval = ApprovalStore(FakeBackend())
     service = ConnectedDataService(tmp_path / "profile", _DID, approval_store=approval)
     profile_source = ConnectedSource(
-        connection_id="crm-alpha", account_id="crm-account", source_kind="profile"
-        , data_shape=ConnectedSourceShape.PROFILE
+        connection_id="crm-alpha",
+        account_id="crm-account",
+        source_kind="profile",
+        data_shape=ConnectedSourceShape.PROFILE,
     )
     await service.propose_mapping(profile_source, ("profile",))
     pending_mapping = (await approval.list())[0]
@@ -386,7 +386,9 @@ async def test_release_gate_mail_adapters_expose_resources_and_versioned_message
         adapter = OutlookSourceAdapter(Attachment())
         expected_kind = "outlook"
 
-    description = await adapter.inspect_source(InspectSource(connection_id=f"{adapter_kind}-alpha"))
+    description = await adapter.inspect_source(
+        InspectSource(connection_id=f"{adapter_kind}-alpha")
+    )
     resources = await adapter.list_source_resources(
         ListSourceResources(connection_id=description.connection_id)
     )
@@ -424,8 +426,8 @@ def test_release_gate_provider_matrix_has_each_declared_source_seam() -> None:
         sqlite_source = importlib.import_module("extensions.sqlite.arc_ext_sqlite.source")
     except ModuleNotFoundError:
         sqlite_source = None
-    sqlite_adapter = None if sqlite_source is None else getattr(
-        sqlite_source, "SQLiteSourceAdapter", None
+    sqlite_adapter = (
+        None if sqlite_source is None else getattr(sqlite_source, "SQLiteSourceAdapter", None)
     )
     lifecycle = {
         "dropbox": DropboxAttachment,
@@ -502,7 +504,10 @@ async def test_release_gate_sqlite_file_resource_is_reopenable_and_read_only(
     await adapter.close_source()
 
     reopened = factory({"database_path": database})
-    assert [item.resource_id for item in await reopened.list_source_resources(
-        ListSourceResources(connection_id="sqlite-alpha")
-    )] == ["customers"]
+    assert [
+        item.resource_id
+        for item in await reopened.list_source_resources(
+            ListSourceResources(connection_id="sqlite-alpha")
+        )
+    ] == ["customers"]
     await reopened.close_source()

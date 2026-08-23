@@ -63,11 +63,16 @@ export function KnowledgePage() {
                 <SelectValue placeholder="Select agent" />
               </SelectTrigger>
               <SelectContent>
-                {agents.map((a) => (
-                  <SelectItem key={a.agent_id} value={a.agent_id ?? ''}>
-                    {a.display_name || a.name || a.agent_id}
-                  </SelectItem>
-                ))}
+                {/* An agent with no id cannot be selected, and Radix throws on an
+                    empty Select value — which takes the whole page down rather than
+                    dropping one unusable row. */}
+                {agents
+                  .filter((a): a is typeof a & { agent_id: string } => Boolean(a.agent_id))
+                  .map((a) => (
+                    <SelectItem key={a.agent_id} value={a.agent_id}>
+                      {a.display_name || a.name || a.agent_id}
+                    </SelectItem>
+                  ))}
               </SelectContent>
             </Select>
           </>

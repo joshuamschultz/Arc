@@ -102,4 +102,5 @@ async def _close(registration: SourceRegistration) -> None:
             "source adapter close failed: %s", registration.connection_id, exc_info=True
         )
 
+
 __all__ = ["SourceCatalog", "SourceRegistration"]

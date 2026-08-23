@@ -1,9 +1,9 @@
-import { useState } from 'react'
-import { KeyRound } from 'lucide-react'
-import { PageHeader } from '@/components/page-header'
-import { OperatorModeToggle } from '@/components/operator-mode-toggle'
-import { ContextNote } from '@/components/hitl'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { useState } from "react";
+import { KeyRound } from "lucide-react";
+import { PageHeader } from "@/components/page-header";
+import { OperatorModeToggle } from "@/components/operator-mode-toggle";
+import { ContextNote } from "@/components/hitl";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select,
   SelectContent,
@@ -11,45 +11,50 @@ import {
   SelectSeparator,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
-import { EmptyState } from '@/components/states'
-import { KeysPanel } from '@/components/keys-panel'
-import { ConfigFilePanel } from '@/components/settings-view/config-file-panel'
-import { useOperatorMode } from '@/hooks/use-operator-mode'
-import { useRoster } from '@/lib/queries'
+} from "@/components/ui/select";
+import { EmptyState } from "@/components/states";
+import { KeysPanel } from "@/components/keys-panel";
+import { ConfigFilePanel } from "@/components/settings-view/config-file-panel";
+import { useOperatorMode } from "@/hooks/use-operator-mode";
+import { useRoster } from "@/lib/queries";
 
 // The three per-agent config files, one editor tab each.
 const CONFIG_FILES = [
-  { key: 'arcllm', label: 'ArcLLM' },
-  { key: 'arcrun', label: 'ArcRun' },
-  { key: 'arcagent', label: 'ArcAgent' },
-] as const
+  { key: "arcllm", label: "ArcLLM" },
+  { key: "arcrun", label: "ArcRun" },
+  { key: "arcagent", label: "ArcAgent" },
+] as const;
 
 // gateway.toml exists only fleet-wide — it configures which chat surfaces this
 // deployment has and who is allowed to talk to them, so there is no per-agent
 // counterpart to layer over. It appears as a fourth tab under System only.
-const SYSTEM_ONLY_FILES = [{ key: 'gateway', label: 'Gateway' }] as const
+const SYSTEM_ONLY_FILES = [{ key: "gateway", label: "Gateway" }] as const;
 
 // Sentinel scope: the fleet-wide `~/.arc` files that per-agent files layer over.
-const SYSTEM_SCOPE = '__system__'
+const SYSTEM_SCOPE = "__system__";
 
 export function SettingsPage() {
-  const roster = useRoster()
-  const agents = (roster.data?.agents ?? []).filter((a) => !a.hidden)
-  const [picked, setPicked] = useState<string | null>(null)
-  const scope = picked ?? agents[0]?.agent_id ?? null
-  const isSystem = scope === SYSTEM_SCOPE
-  const [operatorMode] = useOperatorMode()
+  const roster = useRoster();
+  const agents = (roster.data?.agents ?? []).filter((a) => !a.hidden);
+  const [picked, setPicked] = useState<string | null>(null);
+  const scope = picked ?? agents[0]?.agent_id ?? null;
+  const isSystem = scope === SYSTEM_SCOPE;
+  const [operatorMode] = useOperatorMode();
 
-  const visibleFiles = isSystem ? [...CONFIG_FILES, ...SYSTEM_ONLY_FILES] : [...CONFIG_FILES]
+  const visibleFiles = isSystem
+    ? [...CONFIG_FILES, ...SYSTEM_ONLY_FILES]
+    : [...CONFIG_FILES];
 
-  const currentAgent = agents.find((a) => a.agent_id === scope)
+  const currentAgent = agents.find((a) => a.agent_id === scope);
   const scopeName = isSystem
-    ? 'System (~/.arc)'
-    : currentAgent?.display_name || currentAgent?.name || currentAgent?.agent_id || 'agent'
+    ? "System (~/.arc)"
+    : currentAgent?.display_name ||
+      currentAgent?.name ||
+      currentAgent?.agent_id ||
+      "agent";
   const description = isSystem
-    ? 'Fleet-wide settings in ~/.arc. Each agent can layer its own values over these.'
-    : `Settings for ${scopeName}. These layer over the fleet-wide System defaults.`
+    ? "Fleet-wide settings in ~/.arc. Each agent can layer its own values over these."
+    : `Settings for ${scopeName}. These layer over the fleet-wide System defaults.`;
 
   return (
     <div className="flex h-full flex-col">
@@ -59,18 +64,22 @@ export function SettingsPage() {
         actions={
           <>
             <OperatorModeToggle />
-            <Select value={scope ?? ''} onValueChange={setPicked}>
+            <Select value={scope ?? ""} onValueChange={setPicked}>
               <SelectTrigger className="w-52">
                 <SelectValue placeholder="Select scope" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value={SYSTEM_SCOPE}>System (~/.arc)</SelectItem>
                 {agents.length > 0 && <SelectSeparator />}
-                {agents.map((a) => (
-                  <SelectItem key={a.agent_id} value={a.agent_id ?? ''}>
-                    {a.display_name || a.name || a.agent_id}
-                  </SelectItem>
-                ))}
+                {agents
+                  .filter((a): a is typeof a & { agent_id: string } =>
+                    Boolean(a.agent_id),
+                  )
+                  .map((a) => (
+                    <SelectItem key={a.agent_id} value={a.agent_id}>
+                      {a.display_name || a.name || a.agent_id}
+                    </SelectItem>
+                  ))}
               </SelectContent>
             </Select>
           </>
@@ -84,7 +93,10 @@ export function SettingsPage() {
           />
         </div>
       ) : (
-        <Tabs defaultValue="arcllm" className="flex flex-1 flex-col overflow-hidden">
+        <Tabs
+          defaultValue="arcllm"
+          className="flex flex-1 flex-col overflow-hidden"
+        >
           <div className="border-b border-border px-6">
             <TabsList className="my-2">
               {visibleFiles.map((f) => (
@@ -99,7 +111,11 @@ export function SettingsPage() {
             </TabsList>
           </div>
           {visibleFiles.map((f) => (
-            <TabsContent key={f.key} value={f.key} className="flex-1 overflow-auto p-6">
+            <TabsContent
+              key={f.key}
+              value={f.key}
+              className="flex-1 overflow-auto p-6"
+            >
               <ConfigFilePanel
                 system={isSystem}
                 agentId={scope}
@@ -125,10 +141,10 @@ export function SettingsPage() {
                 </div>
               </div>
               <ContextNote tone="info">
-                Keys are fleet-wide — stored in{' '}
-                <span className="font-mono">~/.arc/.env</span> and shared by every agent, whichever
-                scope is selected above. A key is never shown back to you; this panel only reports
-                whether one is set.
+                Keys are fleet-wide — stored in{" "}
+                <span className="font-mono">~/.arc/.env</span> and shared by
+                every agent, whichever scope is selected above. A key is never
+                shown back to you; this panel only reports whether one is set.
               </ContextNote>
               <KeysPanel editable={operatorMode} />
             </div>
@@ -136,5 +152,5 @@ export function SettingsPage() {
         </Tabs>
       )}
     </div>
-  )
+  );
 }

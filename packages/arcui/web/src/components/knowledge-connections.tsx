@@ -132,11 +132,17 @@ function SourceSelect({
         <SelectValue placeholder={placeholder} />
       </SelectTrigger>
       <SelectContent>
-        {items.map((s) => (
-          <SelectItem key={s.connection_id} value={s.source_id}>
-            {s.label || s.connection_id}
-          </SelectItem>
-        ))}
+        {/* A source whose inspection failed carries no source_id, and every call
+            below is keyed by it. Radix also throws on an empty Select value, so an
+            unaddressable source is left out of the picker rather than crashing the
+            page — the connection card still shows it, with its failure. */}
+        {items
+          .filter((s) => Boolean(s.source_id))
+          .map((s) => (
+            <SelectItem key={s.connection_id} value={s.source_id}>
+              {s.label || s.connection_id}
+            </SelectItem>
+          ))}
       </SelectContent>
     </Select>
   )

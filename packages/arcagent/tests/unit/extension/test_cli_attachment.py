@@ -664,9 +664,7 @@ async def test_a_text_command_that_exited_non_zero_is_still_an_error(
     assert "could not read secret" in result.content
 
 
-async def test_the_child_never_inherits_stdin(
-    cli: CliAttachment, spawn: _SpawnRecorder
-) -> None:
+async def test_the_child_never_inherits_stdin(cli: CliAttachment, spawn: _SpawnRecorder) -> None:
     """A spawned CLI must not be able to block on the service's stdin.
 
     Unset ``stdin`` means the child INHERITS the parent's. A vendor CLI that

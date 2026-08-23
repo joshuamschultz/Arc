@@ -105,6 +105,13 @@ function SelectItem({
   children,
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Item>) {
+  // Radix reserves the empty string for "cleared", so an item carrying one
+  // throws — and the throw escapes to the router, replacing the whole page with
+  // a stack trace over a single unselectable row. A row with no value cannot be
+  // chosen anyway, so it is dropped here rather than taken to mean the page is
+  // broken. Call sites that know WHY an id is missing should still filter, and
+  // say so.
+  if (!props.value) return null
   return (
     <SelectPrimitive.Item
       data-slot="select-item"

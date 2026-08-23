@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import arcagent
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
@@ -19,6 +20,23 @@ from arcui.routes.agent_detail._common import _agent_did
 from arcui.schemas import ConnectedDataActivationResponse, ErrorResponse
 
 _HOMES = frozenset({"document", "memory", "profile", "blob", "datastore"})
+
+
+def _unreachable(source_id: str) -> JSONResponse:
+    """A provider that would not answer is a 503 an operator can act on.
+
+    Reading a source runs third-party code against someone else's service. Left
+    to propagate, an expired token or a read timeout reached the browser as an
+    opaque 500 on the mapping screen, with the remedy — retry, or reconnect the
+    account — nowhere in sight.
+    """
+    return JSONResponse(
+        ErrorResponse(
+            error=f"source {source_id} could not be read — the provider did not answer. "
+            "Retry, or reconnect the account if it keeps failing."
+        ).model_dump(),
+        status_code=503,
+    )
 
 
 def _agent(request: Request, agent_id: str) -> Any | None:
@@ -162,7 +180,11 @@ async def get_mapping_proposal(request: Request) -> JSONResponse:
     service = await _service(request, request.path_params["agent_id"])
     if service is None:
         return JSONResponse({"item": None, "status": "degraded"})
-    proposal = await service.get_mapping_proposal(request.path_params["source_id"])
+    source_id = request.path_params["source_id"]
+    try:
+        proposal = await service.get_mapping_proposal(source_id)
+    except arcagent.SourceUnreachableError:
+        return _unreachable(source_id)
     return JSONResponse({"item": _proposal_wire(proposal)})
 
 
@@ -195,7 +217,17 @@ async def stage_mapping(request: Request) -> JSONResponse:
         return JSONResponse(
             ErrorResponse(error="connected-data module unavailable").model_dump(), status_code=503
         )
-    proposal = await service.stage_mapping(source_id, homes=tuple(homes))
+    try:
+        proposal = await service.stage_mapping(source_id, homes=tuple(homes))
+    except arcagent.SourceUnreachableError:
+        emit_mutation_audit(
+            request,
+            target=f"agent:{agent_id}/source:{source_id}",
+            operation="connected_data.stage_mapping",
+            outcome="error",
+            detail="source_unreachable",
+        )
+        return _unreachable(source_id)
     wire = _proposal_wire(proposal)
     emit_mutation_audit(
         request,
@@ -290,7 +322,11 @@ async def list_resources(request: Request) -> JSONResponse:
     service = await _service(request, request.path_params["agent_id"])
     if service is None:
         return JSONResponse({"items": []})
-    items = await service.list_resources(request.path_params["source_id"])
+    source_id = request.path_params["source_id"]
+    try:
+        items = await service.list_resources(source_id)
+    except arcagent.SourceUnreachableError:
+        return _unreachable(source_id)
     return JSONResponse({"items": [_resource_wire(item) for item in items]})
 
 
