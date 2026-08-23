@@ -10,6 +10,7 @@ from arcagent.modules.connected_data.service import (
     ConnectedDataService,
     MappingProposalStatus,
     SourceOperationResult,
+    SourceRefusedError,
     SourceRuntimeStatus,
     SourceUnreachableError,
 )
@@ -22,6 +23,7 @@ __all__ = [
     "ConnectedDataUnavailableError",
     "MappingProposalStatus",
     "SourceOperationResult",
+    "SourceRefusedError",
     "SourceRuntimeStatus",
     "SourceUnreachableError",
 ]

@@ -13,7 +13,8 @@ from typing import Any
 import pytest
 
 from arcagent.connected_data import SyncLimits
-from arcagent.modules.connected_data import SourceUnreachableError
+from arcagent.extension.source import SourceError, SourceFailureCode
+from arcagent.modules.connected_data import SourceRefusedError, SourceUnreachableError
 from arcagent.modules.connected_data.service import ConnectedDataService
 
 
@@ -174,3 +175,56 @@ async def test_an_unstaged_source_stays_unstaged() -> None:
         assert await service._staged_proposal("personal_dropbox") is None
     finally:
         await service.close()
+
+
+class _RefusingAdapter:
+    """An adapter that understood the request and said no."""
+
+    def __init__(self, error: SourceError) -> None:
+        self._error = error
+
+    async def inspect_source(self, _request: Any) -> Any:
+        raise self._error
+
+    async def list_source_resources(self, _request: Any) -> Any:
+        raise self._error
+
+    async def select_source_resources(self, _request: Any) -> None:
+        raise self._error
+
+
+def _refusing_service() -> ConnectedDataService:
+    error = SourceError(SourceFailureCode.UNSUPPORTED_CONTENT, "select one folder")
+    registration = _Registration("personal_dropbox", _RefusingAdapter(error))
+    return ConnectedDataService(
+        agent_did="did:arc:test:agent",
+        catalog=_Catalog((registration,)),
+        ingest_factory=lambda description: object(),
+        sync_store_opener=None,
+        resource_selection_store_opener=None,
+        limits=SyncLimits(),
+        global_concurrency=1,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_keeps_the_adapters_own_words() -> None:
+    """"Select one folder" is the remedy; flattened to an outage it is lost."""
+    service = _refusing_service()
+
+    with pytest.raises(SourceRefusedError) as raised:
+        await service.list_resources("personal_dropbox")
+
+    assert raised.value.detail == "select one folder"
+    assert raised.value.code == SourceFailureCode.UNSUPPORTED_CONTENT
+    assert "select one folder" in str(raised.value)
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_is_not_reported_as_unreachable() -> None:
+    """Retrying a refusal changes nothing, so the two must not share a message."""
+    service = _refusing_service()
+
+    with pytest.raises(SourceRefusedError):
+        await service.stage_mapping("personal_dropbox", homes=("document",))
+    assert not issubclass(SourceRefusedError, SourceUnreachableError)

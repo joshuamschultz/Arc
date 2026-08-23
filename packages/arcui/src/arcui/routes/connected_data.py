@@ -22,6 +22,19 @@ from arcui.schemas import ConnectedDataActivationResponse, ErrorResponse
 _HOMES = frozenset({"document", "memory", "profile", "blob", "datastore"})
 
 
+def _refused(error: Any) -> JSONResponse:
+    """A source that understood the request and said no.
+
+    Retrying changes nothing, so this is the operator's to fix and the adapter's
+    own message is the instruction — "select one folder" must reach the person
+    clicking, not be flattened into a generic outage.
+    """
+    return JSONResponse(
+        ErrorResponse(error=str(error)).model_dump(),
+        status_code=400,
+    )
+
+
 def _unreachable(source_id: str) -> JSONResponse:
     """A provider that would not answer is a 503 an operator can act on.
 
@@ -183,6 +196,8 @@ async def get_mapping_proposal(request: Request) -> JSONResponse:
     source_id = request.path_params["source_id"]
     try:
         proposal = await service.get_mapping_proposal(source_id)
+    except arcagent.SourceRefusedError as refusal:
+        return _refused(refusal)
     except arcagent.SourceUnreachableError:
         return _unreachable(source_id)
     return JSONResponse({"item": _proposal_wire(proposal)})
@@ -219,6 +234,8 @@ async def stage_mapping(request: Request) -> JSONResponse:
         )
     try:
         proposal = await service.stage_mapping(source_id, homes=tuple(homes))
+    except arcagent.SourceRefusedError as refusal:
+        return _refused(refusal)
     except arcagent.SourceUnreachableError:
         emit_mutation_audit(
             request,
@@ -325,6 +342,8 @@ async def list_resources(request: Request) -> JSONResponse:
     source_id = request.path_params["source_id"]
     try:
         items = await service.list_resources(source_id)
+    except arcagent.SourceRefusedError as refusal:
+        return _refused(refusal)
     except arcagent.SourceUnreachableError:
         return _unreachable(source_id)
     return JSONResponse({"items": [_resource_wire(item) for item in items]})
@@ -362,6 +381,15 @@ async def select_resources(request: Request) -> JSONResponse:
         )
     try:
         resources = await service.select_resources(source_id, resource_ids=tuple(resource_ids))
+    except arcagent.SourceRefusedError as refusal:
+        emit_mutation_audit(
+            request,
+            target=f"agent:{agent_id}/source:{source_id}",
+            operation="connected_data.select_resources",
+            outcome="error",
+            detail="source_refused",
+        )
+        return _refused(refusal)
     except arcagent.SourceUnreachableError:
         emit_mutation_audit(
             request,

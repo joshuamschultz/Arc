@@ -92,7 +92,7 @@ from arcagent.modules.capability_import.models import (
     CapabilityImportStatus,
 )
 from arcagent.modules.capability_import.service import CapabilityImportService
-from arcagent.modules.connected_data import SourceUnreachableError
+from arcagent.modules.connected_data import SourceRefusedError, SourceUnreachableError
 from arcagent.modules.scheduler.models import ScheduleEntry, ScheduleMetadata, generate_schedule_id
 from arcagent.modules.scheduler.store import ScheduleStore
 from arcagent.modules.session.identity_graph import IdentityGraph
@@ -213,6 +213,7 @@ __all__ = [
     "ScheduleStore",
     "SecurityConfig",
     "SharedKnowledgePort",
+    "SourceRefusedError",
     "SourceUnreachableError",
     "Tier",
     "ToolError",

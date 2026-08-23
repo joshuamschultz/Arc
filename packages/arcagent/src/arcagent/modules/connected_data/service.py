@@ -20,7 +20,12 @@ from arcagent.connected_data import (
     SyncState,
     SyncStatePort,
 )
-from arcagent.extension.source import InspectSource, SelectSourceResources, SourceResource
+from arcagent.extension.source import (
+    InspectSource,
+    SelectSourceResources,
+    SourceError,
+    SourceResource,
+)
 from arcagent.extension.source_catalog import SourceCatalog, SourceRegistration
 from arcagent.modules.connected_data.coordinator import ConnectedDataCoordinator
 
@@ -43,6 +48,22 @@ class MappingProposalStore(Protocol):
     async def put(self, connection_id: str, proposal: dict[str, Any]) -> None: ...
 
     async def delete(self, connection_id: str) -> None: ...
+
+
+class SourceRefusedError(RuntimeError):
+    """The source understood the request and rejected it.
+
+    Distinct from unreachable: nothing is wrong with the connection and retrying
+    changes nothing. The adapter's own words carry the remedy — a document store
+    that can only follow one root says so — so they are kept and shown rather
+    than flattened into "the provider did not answer".
+    """
+
+    def __init__(self, connection_id: str, code: str, detail: str) -> None:
+        super().__init__(detail or f"source {connection_id} refused the request")
+        self.connection_id = connection_id
+        self.code = code
+        self.detail = detail
 
 
 class SourceUnreachableError(RuntimeError):
@@ -332,6 +353,8 @@ class ConnectedDataService:
             resources = await registration.adapter.list_source_resources(
                 ListSourceResources(connection_id=connection_id)
             )
+        except SourceError as exc:
+            raise SourceRefusedError(connection_id, str(exc.code), exc.detail) from exc
         except Exception as exc:
             _logger.warning("connected-data resource listing failed: %s", connection_id)
             raise SourceUnreachableError(connection_id) from exc
@@ -361,6 +384,8 @@ class ConnectedDataService:
             await registration.adapter.select_source_resources(
                 SelectSourceResources(connection_id=connection_id, resource_ids=resource_ids)
             )
+        except SourceError as exc:
+            raise SourceRefusedError(connection_id, str(exc.code), exc.detail) from exc
         except Exception as exc:
             _logger.warning("connected-data resource selection failed: %s", connection_id)
             raise SourceUnreachableError(connection_id) from exc
@@ -641,6 +666,10 @@ class ConnectedDataService:
             return await registration.adapter.inspect_source(
                 InspectSource(connection_id=registration.connection_id)
             )
+        except SourceError as exc:
+            raise SourceRefusedError(
+                registration.connection_id, str(exc.code), exc.detail
+            ) from exc
         except Exception as exc:
             _logger.warning(
                 "connected-data source inspection failed: %s", registration.connection_id
