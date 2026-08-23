@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import time
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from arctrust.audit import AuditEvent, emit
 
-from arcstore.backends.base import APPROVAL_OUTBOX_TABLE
+from arcstore.backends.base import APPROVAL_OUTBOX_TABLE, MAIL_OUTBOX_TABLE
 from arcstore.mutation_fence import (
     RUNNER_LEASE_COLLECTION,
     RUNNER_LEASE_KEY,
@@ -606,6 +607,56 @@ class FakeBackend(SourceSyncBackend):
                 return False
             row["status"] = "delivered"
             row["rejected"] = True
+            row.pop("lease_owner", None)
+            return True
+
+    async def enqueue_mail(self, event_id: str, envelope: dict[str, Any]) -> None:
+        async with self._lock:
+            self._tables.setdefault(MAIL_OUTBOX_TABLE, {}).setdefault(
+                event_id,
+                {
+                    "event_id": event_id,
+                    "envelope": copy.deepcopy(envelope),
+                    "status": "pending",
+                    "attempts": 0,
+                },
+            )
+
+    async def claim_mail(self, consumer_id: str, *, limit: int = 100) -> list[dict[str, Any]]:
+        if limit < 1:
+            raise ValueError("limit must be positive")
+        async with self._lock:
+            rows = [
+                row for row in self._tables.get(MAIL_OUTBOX_TABLE, {}).values()
+                if row["status"] == "pending"
+                or (row["status"] == "leased" and row.get("lease_until", 0) <= time.monotonic())
+            ][:limit]
+            for row in rows:
+                row["status"] = "leased"
+                row["lease_owner"] = consumer_id
+                row["lease_until"] = time.monotonic() + 60
+                row["attempts"] += 1
+            return [copy.deepcopy(row) for row in rows]
+
+    async def ack_mail(self, consumer_id: str, event_id: str) -> bool:
+        async with self._lock:
+            row = self._tables.get(MAIL_OUTBOX_TABLE, {}).get(event_id)
+            if row is None or row.get("lease_owner") != consumer_id:
+                return False
+            row["status"] = "delivered"
+            row.pop("lease_owner", None)
+            return True
+
+    async def nack_mail(
+        self, consumer_id: str, event_id: str, *, retry_after_seconds: float
+    ) -> bool:
+        if retry_after_seconds < 0:
+            raise ValueError("retry delay must not be negative")
+        async with self._lock:
+            row = self._tables.get(MAIL_OUTBOX_TABLE, {}).get(event_id)
+            if row is None or row.get("lease_owner") != consumer_id:
+                return False
+            row["status"] = "pending"
             row.pop("lease_owner", None)
             return True
 

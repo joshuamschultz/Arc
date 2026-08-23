@@ -2,7 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from arcstore.mail_outbox import MailOutbox
+from arcstore.backends.memory import FakeBackend
+from arcstore.mail_outbox import MailOutbox, PostgresMailOutbox
 
 
 def test_outbox_claim_ack_is_idempotent_and_restart_safe(tmp_path: Path) -> None:
@@ -35,3 +36,16 @@ def test_outbox_rejects_invalid_claim_inputs(tmp_path: Path) -> None:
         outbox.claim("", limit=1)
     with pytest.raises(ValueError):
         outbox.claim("worker", limit=0)
+
+
+@pytest.mark.asyncio
+async def test_backend_outbox_uses_public_arcstore_seam_and_reclaims_expired_lease() -> None:
+    backend = FakeBackend()
+    outbox = PostgresMailOutbox(backend)
+    await outbox.enqueue("mail-1", {"id": "mail-1"})
+    first = await outbox.claim("worker-a")
+    assert [item.event_id for item in first] == ["mail-1"]
+    assert await outbox.ack("worker-b", "mail-1") is False
+    backend._tables["mail_outbox"]["mail-1"]["lease_until"] = 0
+    second = await outbox.claim("worker-b")
+    assert [item.event_id for item in second] == ["mail-1"]

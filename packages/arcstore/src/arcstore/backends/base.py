@@ -29,6 +29,7 @@ SKILL_BODIES_TABLE = "skill_candidate_bodies"
 # one collection per directory entity (tasks, entities, teams, channels, ...).
 MUTABLE_RECORDS_TABLE = "mutable_records"
 APPROVAL_OUTBOX_TABLE = "approval_outbox"
+MAIL_OUTBOX_TABLE = "mail_outbox"
 
 STORE_TABLES = frozenset(
     (
@@ -37,6 +38,7 @@ STORE_TABLES = frozenset(
         SKILL_CANDIDATES_TABLE,
         SKILL_BODIES_TABLE,
         APPROVAL_OUTBOX_TABLE,
+        MAIL_OUTBOX_TABLE,
     )
 )
 
@@ -242,6 +244,16 @@ class ArcStoreBackend(Protocol):
     ) -> bool: ...
 
     async def reject_outbox(self, consumer_id: str, event_id: str) -> bool: ...
+
+    async def enqueue_mail(self, event_id: str, envelope: dict[str, Any]) -> None: ...
+
+    async def claim_mail(self, consumer_id: str, *, limit: int = 100) -> list[dict[str, Any]]: ...
+
+    async def ack_mail(self, consumer_id: str, event_id: str) -> bool: ...
+
+    async def nack_mail(
+        self, consumer_id: str, event_id: str, *, retry_after_seconds: float
+    ) -> bool: ...
 
 
 StorageBackend = ArcStoreBackend

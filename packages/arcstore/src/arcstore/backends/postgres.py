@@ -782,6 +782,67 @@ class PostgresBackend(SourceSyncBackend):
             )
         return str(result).endswith("1")
 
+    async def enqueue_mail(self, event_id: str, envelope: dict[str, Any]) -> None:
+        """Public typed seam for the Agent Mail outbox adapter."""
+        async with self._require_pool().acquire() as connection:
+            await connection.execute(
+                "INSERT INTO mail_outbox(event_id, envelope) VALUES ($1, $2::jsonb) "
+                "ON CONFLICT(event_id) DO NOTHING",
+                event_id,
+                _json(envelope),
+            )
+
+    async def claim_mail(self, consumer_id: str, *, limit: int = 100) -> list[dict[str, Any]]:
+        statement = """
+            WITH ready AS (
+                SELECT event_id FROM mail_outbox
+                WHERE (status='pending' OR (status='leased' AND lease_until <= now()))
+                  AND available_at <= now()
+                ORDER BY available_at, created_at FOR UPDATE SKIP LOCKED LIMIT $1
+            )
+            UPDATE mail_outbox AS m SET status='leased', lease_owner=$2,
+                lease_until=now() + interval '60 seconds', attempts=attempts+1
+            FROM ready WHERE m.event_id=ready.event_id
+            RETURNING m.event_id, m.envelope, m.attempts, m.available_at
+        """
+        async with self._require_pool().acquire() as connection:
+            async with connection.transaction():
+                rows = await connection.fetch(statement, limit, consumer_id)
+        return [
+            {
+                "event_id": row["event_id"],
+                "envelope": _as_dict(row["envelope"]),
+                "attempts": row["attempts"],
+                "available_at": row["available_at"],
+            }
+            for row in rows
+        ]
+
+    async def ack_mail(self, consumer_id: str, event_id: str) -> bool:
+        async with self._require_pool().acquire() as connection:
+            result = await connection.execute(
+                "UPDATE mail_outbox SET status='delivered', delivered_at=now(), "
+                "lease_owner=NULL, lease_until=NULL WHERE event_id=$1 AND lease_owner=$2 "
+                "AND status='leased'",
+                event_id,
+                consumer_id,
+            )
+        return str(result).endswith("1")
+
+    async def nack_mail(
+        self, consumer_id: str, event_id: str, *, retry_after_seconds: float
+    ) -> bool:
+        async with self._require_pool().acquire() as connection:
+            result = await connection.execute(
+                "UPDATE mail_outbox SET status='pending', available_at=now() + "
+                "$1::double precision * interval '1 second', lease_owner=NULL, "
+                "lease_until=NULL WHERE event_id=$2 AND lease_owner=$3 AND status='leased'",
+                retry_after_seconds,
+                event_id,
+                consumer_id,
+            )
+        return str(result).endswith("1")
+
     async def _update_if(
         self,
         connection: Any,
