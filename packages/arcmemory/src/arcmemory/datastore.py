@@ -14,7 +14,10 @@ SQL string to execute verbatim (enforced by
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
+from contextlib import closing
+from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from pydantic import BaseModel
@@ -234,16 +237,45 @@ class SqliteDatastorePort:
     """
 
     def __init__(self, conn: sqlite3.Connection) -> None:
-        self._store = SqliteDatastore(conn)
+        rows = conn.execute("PRAGMA database_list").fetchall()
+        main_row = next((row for row in rows if row[1] == "main"), None)
+        path = str(main_row[2]) if main_row is not None else ""
+        self._uri = self._read_only_uri(path) if path and path != ":memory:" else ""
+        self._snapshot = None if self._uri else conn.serialize()
 
     async def introspect(self) -> DatastoreOntology:
-        return self._store.introspect()
+        return await asyncio.to_thread(self._introspect)
 
     async def persist_ontology(self, store: SemanticStore) -> None:
-        self._store.persist_ontology(store)
+        await asyncio.to_thread(self._persist_ontology, store)
 
     async def query(self, op: str, table: str, args: dict[str, object]) -> object:
-        return self._store.query(op, table, args)
+        return await asyncio.to_thread(self._query, op, table, args)
+
+    def _introspect(self) -> DatastoreOntology:
+        with closing(self._open()) as conn:
+            return SqliteDatastore(conn).introspect()
+
+    def _persist_ontology(self, store: SemanticStore) -> None:
+        with closing(self._open()) as conn:
+            SqliteDatastore(conn).persist_ontology(store)
+
+    def _query(self, op: str, table: str, args: dict[str, object]) -> object:
+        with closing(self._open()) as conn:
+            return SqliteDatastore(conn).query(op, table, args)
+
+    def _open(self) -> sqlite3.Connection:
+        if self._uri:
+            return sqlite3.connect(self._uri, uri=True)
+        conn = sqlite3.connect(":memory:")
+        if self._snapshot is None:
+            raise RuntimeError("SQLite datastore snapshot is unavailable")
+        conn.deserialize(self._snapshot)
+        return conn
+
+    @staticmethod
+    def _read_only_uri(path: str) -> str:
+        return f"{Path(path).as_uri()}?mode=ro"
 
 
 __all__ = [

@@ -80,6 +80,11 @@ def walk_blob_source(
             )
         slugs.append(slug)
 
+    prefix = f"blob-{source_id}-"
+    stale_slugs = [slug for slug in store.slugs() if slug.startswith(prefix) and slug not in slugs]
+    for stale_slug in stale_slugs:
+        store.remove(stale_slug)
+
     return slugs
 
 

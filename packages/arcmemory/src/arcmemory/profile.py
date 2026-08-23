@@ -95,6 +95,8 @@ class ReviewPort(Protocol):
 
     async def undo(self, fact_id: str) -> ProfileFact | None: ...
 
+    async def revoke_source(self, source: str, external_id: str) -> int: ...
+
     async def context(
         self, profile_id: str, *, clearance: str = "unclassified"
     ) -> ProfileContext: ...
@@ -207,6 +209,37 @@ class ProfileReviewStore:
         await asyncio.to_thread(self._write, undone)
         self._emit("undo", undone)
         return undone
+
+    async def revoke_source(self, source: str, external_id: str) -> int:
+        """Revoke every candidate derived from a tombstoned source object."""
+        facts = await self.list()
+        matches = [
+            fact
+            for fact in facts
+            if fact.provenance.source == source and fact.provenance.external_id == external_id
+        ]
+        match_ids = {fact.fact_id for fact in matches}
+        changed = 0
+        for fact in matches:
+            if fact.status is ReviewStatus.APPROVED:
+                if fact.replaces_fact_id not in match_ids and fact.replaces_fact_id is not None:
+                    replaced = await self.get(fact.replaces_fact_id)
+                    if replaced is not None and replaced.status is ReviewStatus.SUPERSEDED:
+                        await asyncio.to_thread(
+                            self._write,
+                            replaced.model_copy(update={"status": ReviewStatus.APPROVED}),
+                        )
+                revoked = fact.model_copy(update={"status": ReviewStatus.UNDONE})
+            elif fact.status is ReviewStatus.PENDING:
+                revoked = fact.model_copy(update={"status": ReviewStatus.DECLINED})
+            elif fact.status is ReviewStatus.SUPERSEDED:
+                revoked = fact.model_copy(update={"status": ReviewStatus.UNDONE})
+            else:
+                continue
+            await asyncio.to_thread(self._write, revoked)
+            changed += 1
+        self._emit("revoke_source", target=source, count=changed)
+        return changed
 
     async def context(self, profile_id: str, *, clearance: str = "unclassified") -> ProfileContext:
         """Return only approved, clearance-permitted current profile facts."""

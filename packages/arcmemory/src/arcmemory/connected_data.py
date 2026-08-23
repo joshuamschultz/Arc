@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from datetime import UTC, datetime
@@ -217,7 +218,7 @@ class ConnectedDataService:
         if kind in {"database", "postgres", "mysql", "sqlite", "datastore"}:
             return (MemoryHome.DATASTORE, MemoryHome.PROFILE)
         if kind in {"profile", "crm"}:
-            return (MemoryHome.PROFILE,)
+            return (MemoryHome.PROFILE, MemoryHome.DOCUMENT)
         if kind in {"blob", "s3", "gcs", "azure_blob"}:
             return (MemoryHome.BLOB, MemoryHome.DOCUMENT)
         if kind in {"dropbox", "docs", "document", "onedrive", "drive"}:
@@ -379,6 +380,8 @@ class ConnectedDataService:
                 Scope(agent_did=self._agent_did).key,
                 deterministic_event_id(source_id, source_object.object_id),
             )
+            await self._reviews.revoke_source(source_id, source_object.object_id)
+            await self._remove_blob_object(source_id, source_object.object_id)
             ProvenanceStore(self._db).remove(source_id, source_object.object_id)
             await self._object_state.put_object_state(
                 source_id,
@@ -421,6 +424,7 @@ class ConnectedDataService:
             tier=self._config.tier,
             audit_sink=self._audit,
         )
+        profile_candidate = self._profile_candidate(source_object, mapping.homes)
         digest = content_hash(clean)
         path = self._document_path(source_id, source_object.object_id)
         if MemoryHome.DOCUMENT in mapping.homes:
@@ -448,9 +452,11 @@ class ConnectedDataService:
                 ],
             )
         if MemoryHome.PROFILE in mapping.homes:
-            await self._stage_profile_fact(source_id, source_object, clean)
+            if profile_candidate is None:
+                raise ConnectedObjectError("profile destination was not preflighted")
+            await self._stage_profile_fact(source_id, source_object, clean, profile_candidate)
         if MemoryHome.BLOB in mapping.homes:
-            self._record_blob_object(source_id, source_object)
+            await self._record_blob_object(source_id, source_object)
         ProvenanceStore(self._db).remove(source_id, source_object.object_id)
         ProvenanceStore(self._db).record(
             digest,
@@ -476,10 +482,12 @@ class ConnectedDataService:
         """The typed operator-review seam for provenance-bearing profile facts."""
         return self._reviews
 
-    async def _stage_profile_fact(
-        self, source_id: str, source_object: ConnectedObject, text: str
-    ) -> None:
-        """Stage, never apply, one source-provided profile fact for review."""
+    def _profile_candidate(
+        self, source_object: ConnectedObject, homes: list[MemoryHome]
+    ) -> tuple[str, str, ProfileFactKind] | None:
+        """Validate every profile destination requirement before any sink writes."""
+        if MemoryHome.PROFILE not in homes:
+            return None
         profile_id = source_object.metadata.get("profile_id", "")
         field = source_object.metadata.get("profile_field", "")
         kind_value = source_object.metadata.get("profile_kind", ProfileFactKind.INFERRED.value)
@@ -491,6 +499,17 @@ class ConnectedDataService:
             kind = ProfileFactKind(kind_value)
         except ValueError as exc:
             raise ConnectedObjectError("profile_kind is invalid") from exc
+        return profile_id, field, kind
+
+    async def _stage_profile_fact(
+        self,
+        source_id: str,
+        source_object: ConnectedObject,
+        text: str,
+        candidate: tuple[str, str, ProfileFactKind],
+    ) -> None:
+        """Stage, never apply, one source-provided profile fact for review."""
+        profile_id, field, kind = candidate
         await self._reviews.submit(
             profile_id=profile_id,
             field=field,
@@ -552,21 +571,54 @@ class ConnectedDataService:
             for position, chunk in enumerate(chunks)
         ]
 
-    def _record_blob_object(self, source_id: str, source_object: ConnectedObject) -> None:
-        """Update the bounded folder/type ontology for one blob object."""
+    async def _record_blob_object(self, source_id: str, source_object: ConnectedObject) -> None:
+        """Persist one object in the source inventory and reconcile folder facts."""
+        await asyncio.to_thread(self._write_blob_object, source_id, source_object)
+        await asyncio.to_thread(self._reconcile_blob_inventory, source_id)
+
+    async def _remove_blob_object(self, source_id: str, object_id: str) -> None:
+        """Remove a tombstoned object before reconciling source folder ontology."""
+        path = self._blob_inventory_path(source_id, object_id)
+        await asyncio.to_thread(path.unlink, missing_ok=True)
+        await asyncio.to_thread(self._reconcile_blob_inventory, source_id)
+
+    def _write_blob_object(self, source_id: str, source_object: ConnectedObject) -> None:
+        blob = BlobObject(
+            path=source_object.locator.lstrip("/"),
+            mime=source_object.media_type,
+            classification=source_object.classification,
+        )
+        atomic_write_text(
+            self._blob_inventory_path(source_id, source_object.object_id),
+            blob.model_dump_json() + "\n",
+        )
+
+    def _reconcile_blob_inventory(self, source_id: str) -> None:
+        """Rebuild source folder facts from its complete live object inventory."""
+        inventory = self._blob_inventory_root(source_id)
+        objects: list[BlobObject] = []
+        if inventory.is_dir():
+            for path in sorted(inventory.glob("*.json")):
+                try:
+                    objects.append(
+                        BlobObject.model_validate_json(path.read_text(encoding="utf-8"))
+                    )
+                except (OSError, ValueError):
+                    continue
         store = SemanticStore(self._workspace, WeightedGraph(self._db), self._agent_did)
         walk_blob_source(
-            [
-                BlobObject(
-                    path=source_object.locator.lstrip("/"),
-                    mime=source_object.media_type,
-                    classification=source_object.classification,
-                )
-            ],
+            objects,
             source_id=source_id,
             store=store,
             now=datetime.now(UTC).isoformat(),
         )
+
+    def _blob_inventory_path(self, source_id: str, object_id: str) -> Path:
+        object_key = hashlib.sha256(object_id.encode("utf-8")).hexdigest()
+        return self._blob_inventory_root(source_id) / f"{object_key}.json"
+
+    def _blob_inventory_root(self, source_id: str) -> Path:
+        return self._workspace / "memory" / "blob_inventory" / source_id
 
     async def list_documents(self, source: ConnectedSource) -> list[ConnectedDocument]:
         """Return this source's indexed document inventory without exposing bodies."""
@@ -606,6 +658,36 @@ class ConnectedDataService:
         """Get one inventory row by source object id, never returning the body."""
         documents = await self.list_documents(source)
         return next((document for document in documents if document.object_id == object_id), None)
+
+    async def document_status(self, source: ConnectedSource, object_id: str) -> DocumentStatus:
+        """Return indexed/missing state without exposing a document body."""
+        return (
+            DocumentStatus.INDEXED
+            if await self.get_document(source, object_id) is not None
+            else DocumentStatus.MISSING
+        )
+
+    async def delete_document(self, source: ConnectedSource, object_id: str) -> DocumentStatus:
+        """Remove one extracted document's index/file while preserving other destinations."""
+        source_id = self._source_id(source)
+        document = await self.get_document(source, object_id)
+        await DocIndex(
+            self._db,
+            self._workspace,
+            self._config,
+            embedder=self._embedder,
+            audit_sink=self._audit,
+        ).delete_object(source_id, self._agent_did, object_id)
+        if document is not None:
+            (self._workspace / document.path).unlink(missing_ok=True)
+        state = await self._object_state.get_object_state(source_id, object_id)
+        if state is not None:
+            await self._object_state.put_object_state(
+                source_id,
+                object_id,
+                state.model_copy(update={"path": ""}),
+            )
+        return DocumentStatus.MISSING
 
     async def reindex_document(self, source: ConnectedSource, object_id: str) -> bool:
         """Rebuild exactly one document's chunks from its canonical extracted text."""

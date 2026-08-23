@@ -90,5 +90,23 @@ def test_folder_slugs_are_written_as_entity_files_for_tagging(
         assert slug.startswith("blob-dropbox-")
 
 
+def test_reconcile_removes_stale_folder_after_source_inventory_shrinks(
+    workspace: Path, db: MemoryDB
+) -> None:
+    store = _store(workspace, db)
+    walk_blob_source(_mixed_objects(), source_id="dropbox", store=store)
+
+    walk_blob_source(
+        [BlobObject(path="reports/2026/q1.pdf", mime="application/pdf")],
+        source_id="dropbox",
+        store=store,
+    )
+
+    assert len([slug for slug in store.slugs() if slug.startswith("blob-dropbox-")]) == 1
+    entity = store.read(next(slug for slug in store.slugs() if "reports" in slug))
+    assert entity is not None
+    assert {fact.predicate: fact.value for fact in entity.facts}["file_count"] == "1"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

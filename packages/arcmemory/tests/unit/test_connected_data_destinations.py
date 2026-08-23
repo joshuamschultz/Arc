@@ -15,8 +15,10 @@ from arcmemory.connected_data import (
     SourceContent,
     SourceMappingDeniedError,
 )
+from arcmemory.index.graph import WeightedGraph
 from arcmemory.profile import ProfileFactKind, ReviewStatus
 from arcmemory.stores.episodic import EpisodicStore
+from arcmemory.stores.semantic import SemanticStore
 from arcmemory.types import MemoryHome, Scope
 
 _DID = "did:arc:destination-test"
@@ -88,6 +90,52 @@ async def test_blob_route_builds_ontology_and_document_route_is_searchable(
     docs = await service.list_documents(source)
     assert len(docs) == 1 and docs[0].object_id == "reports/q1.txt"
     assert service.blob_folders(source)
+    assert (await service.delete_document(source, "reports/q1.txt")).name == "MISSING"
+    assert (await service.document_status(source, "reports/q1.txt")).name == "MISSING"
+
+
+async def test_blob_inventory_reconciles_counts_and_tombstones_stale_folders(
+    workspace: Path,
+) -> None:
+    approval = ApprovalStore(FakeBackend())
+    service = ConnectedDataService(workspace, _DID, approval_store=approval)
+    source = ConnectedSource(connection_id="s3", account_id="bucket", source_kind="blob")
+    mapping = await _approve(service, source, ("blob",))
+    for object_id in ("reports/a.txt", "reports/b.txt", "archive/c.txt"):
+        await service.ingest(
+            source,
+            ConnectedObject(
+                object_id=object_id,
+                locator=object_id,
+                version="1",
+                media_type="text/plain",
+                classification="unclassified",
+                revision=1,
+            ),
+            SourceContent(object_id=object_id, version="1", content=b"inventory"),
+            mapping,
+        )
+    reports = next(slug for slug in service.blob_folders(source) if "reports" in slug)
+    store = SemanticStore(workspace, WeightedGraph(service._db), _DID)
+    entity = store.read(reports)
+    assert entity is not None
+    assert {fact.predicate: fact.value for fact in entity.facts}["file_count"] == "2"
+
+    await service.ingest(
+        source,
+        ConnectedObject(
+            object_id="archive/c.txt",
+            locator="archive/c.txt",
+            version="2",
+            media_type="text/plain",
+            classification="unclassified",
+            revision=2,
+            deleted=True,
+        ),
+        None,
+        mapping,
+    )
+    assert all("archive" not in slug for slug in service.blob_folders(source))
 
 
 async def test_delete_removes_all_destination_state_including_memory(workspace: Path) -> None:
@@ -157,3 +205,65 @@ async def test_profile_destination_stages_provenance_fact_for_review(workspace: 
     assert (await service.review_port.context("olivia")).static == {}
     await service.review_port.approve(pending[0].fact_id)
     assert (await service.review_port.context("olivia")).static["role"] == "product designer"
+
+
+async def test_profile_preflight_refuses_all_writes_when_metadata_is_invalid(
+    workspace: Path,
+) -> None:
+    approval = ApprovalStore(FakeBackend())
+    service = ConnectedDataService(workspace, _DID, approval_store=approval)
+    source = ConnectedSource(connection_id="crm", account_id="workspace", source_kind="profile")
+    mapping = await _approve(service, source, ("document", "profile"))
+
+    with pytest.raises(Exception, match="profile"):
+        await service.ingest(
+            source,
+            ConnectedObject(
+                object_id="bad-profile",
+                locator="crm://bad-profile",
+                version="1",
+                media_type="text/plain",
+                classification="unclassified",
+            ),
+            SourceContent(object_id="bad-profile", version="1", content=b"should not persist"),
+            mapping,
+        )
+
+    assert await service.list_documents(source) == []
+    assert EpisodicStore(service._db, workspace).count(Scope(agent_did=_DID).key) == 0
+
+
+async def test_tombstone_revokes_profile_fact_and_document_status_is_missing(
+    workspace: Path,
+) -> None:
+    approval = ApprovalStore(FakeBackend())
+    service = ConnectedDataService(workspace, _DID, approval_store=approval)
+    source = ConnectedSource(connection_id="crm", account_id="workspace", source_kind="profile")
+    mapping = await _approve(service, source, ("profile",))
+    current = ConnectedObject(
+        object_id="olivia-role",
+        locator="crm://olivia/role",
+        version="1",
+        media_type="text/plain",
+        classification="unclassified",
+        revision=1,
+        metadata={"profile_id": "olivia", "profile_field": "role"},
+    )
+    await service.ingest(
+        source,
+        current,
+        SourceContent(object_id="olivia-role", version="1", content=b"designer"),
+        mapping,
+    )
+    fact = (await service.review_port.list(status=ReviewStatus.PENDING))[0]
+    await service.review_port.approve(fact.fact_id)
+    await service.ingest(
+        source,
+        current.model_copy(update={"version": "2", "revision": 2, "deleted": True}),
+        None,
+        mapping,
+    )
+
+    assert (await service.review_port.context("olivia")).inferred == {}
+    assert (await service.review_port.get(fact.fact_id)).status.name == "UNDONE"
+    assert (await service.document_status(source, "olivia-role")).name == "MISSING"

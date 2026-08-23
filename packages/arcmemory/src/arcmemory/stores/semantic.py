@@ -361,6 +361,15 @@ class SemanticStore:
         CollectionIndexStore(removed.parent.parent).remove_document(removed)
         return True
 
+    def remove(self, slug: str) -> bool:
+        """Remove one entity card and its collection-index entry."""
+        path = self.path_for(slug)
+        if not path.exists():
+            return False
+        path.unlink()
+        CollectionIndexStore(path.parent.parent).remove_document(path)
+        return True
+
     def add_link(self, src_slug: str, dst_slug: str) -> bool:
         """Create a directed wiki-link edge and record it in ``src``'s frontmatter.
 
