@@ -34,15 +34,39 @@ from arcagent.extension.attachment import (
 from arcagent.extension.manifest import ExtensionManifest, load_manifest
 from arcagent.extension.point import ExtensionPoint
 from arcagent.extension.select import select_extension
+from arcagent.extension.source import (
+    FetchSourceObject,
+    InspectSource,
+    SourceAdapter,
+    SourceContent,
+    SourceDescription,
+    SourceError,
+    SourceFailureCode,
+    SourceObject,
+    SourceObjectKind,
+    SyncSource,
+    SyncSourcePage,
+)
 
 __all__ = [
     "Classification",
     "ExtensionAttachment",
     "ExtensionManifest",
     "ExtensionPoint",
+    "FetchSourceObject",
+    "InspectSource",
     "ProbeResult",
     "Requirement",
     "RequirementKind",
+    "SourceAdapter",
+    "SourceContent",
+    "SourceDescription",
+    "SourceError",
+    "SourceFailureCode",
+    "SourceObject",
+    "SourceObjectKind",
+    "SyncSource",
+    "SyncSourcePage",
     "ToolOutcome",
     "ToolResult",
     "ToolSpec",

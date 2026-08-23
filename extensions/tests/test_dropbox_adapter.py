@@ -12,6 +12,7 @@ the request the shipped adapter actually built.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -22,6 +23,15 @@ import pytest
 from arcagent.core.tier import Tier
 from arcagent.extension.manifest import load_manifest
 from arcagent.extension.secrets import Secret
+from arcagent.extension.source import (
+    FetchSourceObject,
+    InspectSource,
+    SourceAdapter,
+    SourceError,
+    SourceFailureCode,
+    SourceObjectKind,
+    SyncSource,
+)
 from arcagent.modules.connectors.install import build_attachment
 
 _BUNDLE = Path(__file__).resolve().parents[1] / "dropbox"
@@ -32,7 +42,7 @@ def _attachment() -> Any:
     manifest = load_manifest(
         (_BUNDLE / "extension.toml").read_text(encoding="utf-8"), tier=Tier.PERSONAL
     )
-    return build_attachment(
+    wrapper: Any = build_attachment(
         manifest,
         _BUNDLE,
         {
@@ -41,6 +51,7 @@ def _attachment() -> Any:
             "refresh_token": Secret("refresh-abcd"),
         },
     )
+    return wrapper._delegate
 
 
 class _Recorder:
@@ -157,3 +168,246 @@ async def test_a_traversal_path_is_refused_before_any_request(recorder: _Recorde
 
     assert result.outcome == "error"
     assert "invalid Dropbox path" in result.content
+
+
+def _mock_attachment(
+    monkeypatch: pytest.MonkeyPatch, handler: Callable[[httpx.Request], httpx.Response]
+) -> Any:
+    real = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda *a, **k: real(*a, **{**k, "transport": httpx.MockTransport(handler)}),
+    )
+    return _attachment()
+
+
+async def test_source_sync_maps_initial_and_incremental_pages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        calls.append(url)
+        if url == "https://api.dropbox.com/oauth2/token":
+            return httpx.Response(200, json={"access_token": _TOKEN, "expires_in": 3600})
+        if url.endswith("/2/files/list_folder"):
+            return httpx.Response(
+                200,
+                json={
+                    "entries": [
+                        {
+                            ".tag": "file",
+                            "id": "id:one",
+                            "path_display": "/one.pdf",
+                            "rev": "r1",
+                            "content_hash": "hash1",
+                            "size": 12,
+                        }
+                    ],
+                    "cursor": "c1",
+                    "has_more": True,
+                },
+            )
+        if url.endswith("/2/files/list_folder/continue"):
+            assert json.loads(request.content) == {"cursor": "c1"}
+            return httpx.Response(
+                200,
+                json={
+                    "entries": [
+                        {".tag": "deleted", "path_lower": "/old.pdf"},
+                        {
+                            ".tag": "file",
+                            "id": "id:one",
+                            "path_display": "/moved.pdf",
+                            "rev": "r2",
+                        },
+                    ],
+                    "cursor": "c2",
+                    "has_more": False,
+                },
+            )
+        return httpx.Response(404)
+
+    attachment = _mock_attachment(monkeypatch, handler)
+    assert isinstance(attachment, SourceAdapter)
+    first = await attachment.sync_source(SyncSource(connection_id="dbx:a", page_size=50))
+    second = await attachment.sync_source(
+        SyncSource(connection_id="dbx:a", checkpoint=first.next_checkpoint)
+    )
+    await attachment.close_source()
+
+    assert first.has_more and first.next_checkpoint == "c1"
+    assert first.objects[0].object_id == "id:one"
+    assert first.objects[0].media_type == "application/pdf"
+    assert second.next_checkpoint == "c2"
+    assert second.objects[0].kind is SourceObjectKind.DELETED
+    assert second.objects[1].object_id == "id:one"
+    assert calls.count("https://api.dropbox.com/oauth2/token") == 1
+
+
+async def test_binary_fetch_preserves_bytes_and_refuses_a_changed_revision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    binary = b"%PDF-\x00\xffcontent"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == "https://api.dropbox.com/oauth2/token":
+            return httpx.Response(200, json={"access_token": _TOKEN, "expires_in": 3600})
+        return httpx.Response(
+            200,
+            headers={
+                "Dropbox-API-Result": json.dumps(
+                    {
+                        "id": "id:pdf",
+                        "rev": "r2",
+                        "path_display": "/report.pdf",
+                        "content_hash": "hash2",
+                    }
+                )
+            },
+            content=binary,
+        )
+
+    attachment = _mock_attachment(monkeypatch, handler)
+    content = await attachment.fetch_source(
+        FetchSourceObject(connection_id="dbx:a", object_id="id:pdf", version="r2", max_bytes=50)
+    )
+    with pytest.raises(SourceError) as changed:
+        await attachment.fetch_source(
+            FetchSourceObject(connection_id="dbx:a", object_id="id:pdf", version="r1")
+        )
+    await attachment.close_source()
+
+    assert content.content == binary
+    assert content.media_type == "application/pdf"
+    assert changed.value.code is SourceFailureCode.VERSION_CHANGED
+
+
+async def test_retry_is_bounded_and_a_401_refreshes_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token_mints = 0
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls, token_mints
+        if str(request.url) == "https://api.dropbox.com/oauth2/token":
+            token_mints += 1
+            return httpx.Response(
+                200, json={"access_token": f"token-{token_mints}", "expires_in": 3600}
+            )
+        calls += 1
+        if calls == 1:
+            return httpx.Response(401)
+        if calls == 2:
+            return httpx.Response(429, headers={"Retry-After": "0"})
+        return httpx.Response(
+            200,
+            json={"account_id": "dbid:a", "email": "a@example.com"},
+        )
+
+    attachment = _mock_attachment(monkeypatch, handler)
+    description = await attachment.inspect_source(InspectSource(connection_id="dbx:a"))
+    await attachment.close_source()
+
+    assert description.account_id == "dbid:a"
+    assert token_mints == 2
+    assert calls == 3
+
+
+async def test_checkpoint_reset_is_typed(monkeypatch: pytest.MonkeyPatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == "https://api.dropbox.com/oauth2/token":
+            return httpx.Response(200, json={"access_token": _TOKEN, "expires_in": 3600})
+        return httpx.Response(409, json={"error_summary": "reset/invalid_cursor"})
+
+    attachment = _mock_attachment(monkeypatch, handler)
+    with pytest.raises(SourceError) as raised:
+        await attachment.sync_source(SyncSource(connection_id="dbx:a", checkpoint="stale"))
+    await attachment.close_source()
+    assert raised.value.code is SourceFailureCode.CHECKPOINT_INVALID
+
+
+@pytest.mark.parametrize(
+    ("status", "code"),
+    [(429, SourceFailureCode.RATE_LIMITED), (503, SourceFailureCode.TRANSIENT)],
+)
+async def test_retry_budget_is_bounded(
+    monkeypatch: pytest.MonkeyPatch, status: int, code: SourceFailureCode
+) -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        if str(request.url) == "https://api.dropbox.com/oauth2/token":
+            return httpx.Response(200, json={"access_token": _TOKEN, "expires_in": 3600})
+        calls += 1
+        return httpx.Response(status, headers={"Retry-After": "0"})
+
+    attachment = _mock_attachment(monkeypatch, handler)
+    with pytest.raises(SourceError) as raised:
+        await attachment.inspect_source(InspectSource(connection_id="dbx:a"))
+    await attachment.close_source()
+
+    assert raised.value.code is code
+    assert calls == 3
+
+
+async def test_binary_fetch_enforces_the_byte_ceiling(monkeypatch: pytest.MonkeyPatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == "https://api.dropbox.com/oauth2/token":
+            return httpx.Response(200, json={"access_token": _TOKEN, "expires_in": 3600})
+        return httpx.Response(
+            200,
+            headers={
+                "Dropbox-API-Result": json.dumps(
+                    {"id": "id:large", "rev": "r1", "path_display": "/large.bin"}
+                )
+            },
+            content=b"0123456789",
+        )
+
+    attachment = _mock_attachment(monkeypatch, handler)
+    with pytest.raises(SourceError) as raised:
+        await attachment.fetch_source(
+            FetchSourceObject(
+                connection_id="dbx:a", object_id="id:large", version="r1", max_bytes=5
+            )
+        )
+    await attachment.close_source()
+    assert raised.value.code is SourceFailureCode.TOO_LARGE
+
+
+async def test_concurrent_connections_and_token_mints_are_isolated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mints: dict[str, int] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == "https://api.dropbox.com/oauth2/token":
+            body = request.content.decode()
+            account = "a" if "refresh-abcd" in body else "b"
+            mints[account] = mints.get(account, 0) + 1
+            return httpx.Response(
+                200, json={"access_token": f"token-{account}", "expires_in": 3600}
+            )
+        token = request.headers["authorization"].removeprefix("Bearer token-")
+        return httpx.Response(
+            200, json={"account_id": f"dbid:{token}", "email": f"{token}@example.com"}
+        )
+
+    first = _mock_attachment(monkeypatch, handler)
+    second = _attachment()
+    second._refresh_token = "refresh-other"
+    results = await asyncio.gather(
+        first.inspect_source(InspectSource(connection_id="dbx:a")),
+        first.inspect_source(InspectSource(connection_id="dbx:a")),
+        second.inspect_source(InspectSource(connection_id="dbx:b")),
+    )
+    await first.close_source()
+    await second.close_source()
+
+    assert [result.account_id for result in results] == ["dbid:a", "dbid:a", "dbid:b"]
+    assert mints == {"a": 1, "b": 1}

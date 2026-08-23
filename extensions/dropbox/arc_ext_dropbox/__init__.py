@@ -21,7 +21,9 @@ body. Both are reached with the same bearer token.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import mimetypes
 import time
 from typing import Any, Final
 
@@ -33,6 +35,18 @@ from arcagent.extension.attachment import (
     ToolOutcome,
     ToolResult,
     ToolSpec,
+)
+from arcagent.extension.source import (
+    FetchSourceObject,
+    InspectSource,
+    SourceContent,
+    SourceDescription,
+    SourceError,
+    SourceFailureCode,
+    SourceObject,
+    SourceObjectKind,
+    SyncSource,
+    SyncSourcePage,
 )
 
 #: Seconds any one Dropbox request may take before it is abandoned.
@@ -52,6 +66,7 @@ _EXPIRY_SLACK: Final = 60.0
 #: A downloaded file is returned as text; anything past this is truncated so a
 #: single large file cannot flood the model's context. The marker names the cut.
 _MAX_DOWNLOAD_CHARS: Final = 100_000
+_MAX_ATTEMPTS: Final = 3
 
 _STRING: Final[dict[str, str]] = {"type": "string"}
 
@@ -65,6 +80,8 @@ class DropboxAttachment:
         self._refresh_token = refresh_token
         self._token = ""
         self._token_expiry = 0.0
+        self._token_lock = asyncio.Lock()
+        self._client = httpx.AsyncClient(timeout=_TIMEOUT)
 
     # --- the hook contract ---------------------------------------------------
 
@@ -179,6 +196,97 @@ class DropboxAttachment:
         except (httpx.HTTPError, ValueError) as exc:
             return _error(tool, f"dropbox call failed: {exc}")
 
+    # --- connected source contract --------------------------------------------
+
+    async def inspect_source(self, request: InspectSource) -> SourceDescription:
+        """Identify the account behind one connection without exposing credentials."""
+        account = await self._source_rpc("/2/users/get_current_account", None)
+        account_id = str(account.get("account_id") or "")
+        if not account_id:
+            raise SourceError(SourceFailureCode.TRANSIENT, "Dropbox returned no account ID")
+        return SourceDescription(
+            connection_id=request.connection_id,
+            source_kind="dropbox",
+            account_id=account_id,
+            display_name=_account_name(account),
+        )
+
+    async def sync_source(self, request: SyncSource) -> SyncSourcePage:
+        """Return one initial or incremental page and its opaque Dropbox cursor."""
+        if request.checkpoint is None:
+            body: dict[str, Any] = {
+                "path": _folder_path(request.root_locator),
+                "recursive": True,
+                "include_deleted": False,
+                "limit": request.page_size,
+            }
+            payload = await self._source_rpc("/2/files/list_folder", body)
+        else:
+            payload = await self._source_rpc(
+                "/2/files/list_folder/continue", {"cursor": request.checkpoint}
+            )
+        cursor = payload.get("cursor")
+        if not isinstance(cursor, str) or not cursor:
+            raise SourceError(SourceFailureCode.TRANSIENT, "Dropbox returned no sync cursor")
+        entries = payload.get("entries", [])
+        if not isinstance(entries, list):
+            raise SourceError(SourceFailureCode.TRANSIENT, "Dropbox returned invalid entries")
+        return SyncSourcePage(
+            objects=tuple(_source_object(entry) for entry in entries if isinstance(entry, dict)),
+            next_checkpoint=cursor,
+            has_more=bool(payload.get("has_more")),
+        )
+
+    async def fetch_source(self, request: FetchSourceObject) -> SourceContent:
+        """Download an exact revision as raw bytes under the caller's byte ceiling."""
+        path = (
+            request.object_id
+            if request.object_id.startswith("id:")
+            else _file_path(request.object_id)
+        )
+        try:
+            response = await self._source_request(
+                "POST",
+                f"{_CONTENT}/2/files/download",
+                headers={"Dropbox-API-Arg": json.dumps({"path": path})},
+                stream=True,
+            )
+        except httpx.HTTPStatusError as exc:
+            raise _source_http_failure(exc.response) from exc
+        except httpx.HTTPError as exc:
+            raise SourceError(SourceFailureCode.TRANSIENT, "Dropbox transport failed") from exc
+        try:
+            metadata = _download_metadata(response)
+            actual_version = str(metadata.get("rev") or "")
+            if actual_version != request.version:
+                raise SourceError(
+                    SourceFailureCode.VERSION_CHANGED,
+                    f"Dropbox object changed from revision {request.version}",
+                )
+            content = bytearray()
+            async for chunk in response.aiter_bytes():
+                content.extend(chunk)
+                if len(content) > request.max_bytes:
+                    raise SourceError(
+                        SourceFailureCode.TOO_LARGE,
+                        f"Dropbox object exceeds {request.max_bytes} bytes",
+                    )
+        finally:
+            await response.aclose()
+        locator = str(metadata.get("path_display") or metadata.get("name") or path)
+        return SourceContent(
+            object_id=str(metadata.get("id") or request.object_id),
+            version=actual_version,
+            media_type=_media_type(locator),
+            content=bytes(content),
+            content_hash=_optional_string(metadata.get("content_hash")),
+            metadata=metadata,
+        )
+
+    async def close_source(self) -> None:
+        """Release the shared connection pool owned by this attachment."""
+        await self._client.aclose()
+
     # --- verbs ----------------------------------------------------------------
 
     async def _dispatch(self, tool: str, args: dict[str, Any]) -> str:
@@ -225,16 +333,11 @@ class DropboxAttachment:
 
     async def _download(self, path: str) -> str:
         """A file's bytes as text, truncated so one large file cannot flood context."""
-        token = await self._access_token()
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            response = await client.post(
-                f"{_CONTENT}/2/files/download",
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Dropbox-API-Arg": json.dumps({"path": path}),
-                },
-            )
-        response.raise_for_status()
+        response = await self._request(
+            "POST",
+            f"{_CONTENT}/2/files/download",
+            headers={"Dropbox-API-Arg": json.dumps({"path": path})},
+        )
         text = response.content.decode("utf-8", errors="replace")
         if len(text) > _MAX_DOWNLOAD_CHARS:
             dropped = len(text) - _MAX_DOWNLOAD_CHARS
@@ -247,37 +350,83 @@ class DropboxAttachment:
         if mode not in ("add", "overwrite"):
             msg = f"upload mode must be 'add' or 'overwrite', not {mode!r}"
             raise ValueError(msg)
-        token = await self._access_token()
         arg = json.dumps(
             {"path": _file_path(str(args["path"])), "mode": mode, "autorename": mode == "add"}
         )
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            response = await client.post(
-                f"{_CONTENT}/2/files/upload",
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Dropbox-API-Arg": arg,
-                    "Content-Type": "application/octet-stream",
-                },
-                content=str(args["content"]).encode("utf-8"),
-            )
+        response = await self._request(
+            "POST",
+            f"{_CONTENT}/2/files/upload",
+            headers={"Dropbox-API-Arg": arg, "Content-Type": "application/octet-stream"},
+            content=str(args["content"]).encode("utf-8"),
+        )
         return _dump(_body(response))
 
     # --- transport -------------------------------------------------------------
 
     async def _rpc(self, path: str, body: dict[str, Any] | None) -> dict[str, Any]:
         """One RPC call to api.dropboxapi.com. A ``None`` body sends the literal null."""
-        token = await self._access_token()
-        async with httpx.AsyncClient(base_url=_API, timeout=_TIMEOUT) as client:
-            response = await client.post(
-                path,
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json",
-                },
-                content="null" if body is None else json.dumps(body),
-            )
+        response = await self._request(
+            "POST",
+            f"{_API}{path}",
+            headers={"Content-Type": "application/json"},
+            content="null" if body is None else json.dumps(body),
+        )
         return _body(response)
+
+    async def _source_rpc(self, path: str, body: dict[str, Any] | None) -> dict[str, Any]:
+        try:
+            return await self._rpc(path, body)
+        except httpx.HTTPStatusError as exc:
+            raise _source_http_failure(exc.response) from exc
+        except httpx.HTTPError as exc:
+            raise SourceError(SourceFailureCode.TRANSIENT, "Dropbox transport failed") from exc
+
+    async def _request(
+        self,
+        method: str,
+        url: str,
+        *,
+        headers: dict[str, str],
+        content: str | bytes | None = None,
+    ) -> httpx.Response:
+        return await self._source_request(method, url, headers=headers, content=content)
+
+    async def _source_request(
+        self,
+        method: str,
+        url: str,
+        *,
+        headers: dict[str, str],
+        content: str | bytes | None = None,
+        stream: bool = False,
+    ) -> httpx.Response:
+        refreshed = False
+        for attempt in range(_MAX_ATTEMPTS):
+            token = await self._access_token()
+            request = self._client.build_request(
+                method,
+                url,
+                headers={"Authorization": f"Bearer {token}", **headers},
+                content=content,
+            )
+            response = await self._client.send(request, stream=stream)
+            if response.status_code == 401 and not refreshed:
+                await response.aclose()
+                self._token = ""
+                refreshed = True
+                continue
+            if response.status_code == 429 or response.status_code >= 500:
+                if attempt + 1 < _MAX_ATTEMPTS:
+                    delay = _retry_after(response, attempt)
+                    await response.aclose()
+                    await asyncio.sleep(delay)
+                    continue
+            if stream and response.is_error:
+                await response.aread()
+                await response.aclose()
+            response.raise_for_status()
+            return response
+        raise SourceError(SourceFailureCode.TRANSIENT, "Dropbox retry budget exhausted")
 
     async def _access_token(self) -> str:
         """A live access token, minted from the refresh token and cached until expiry.
@@ -286,23 +435,23 @@ class DropboxAttachment:
         hours. Caching it means a burst of verbs shares one mint, and the slack
         means a token is renewed before it can die against a skewed clock.
         """
-        if self._token and time.monotonic() < self._token_expiry:
-            return self._token
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            response = await client.post(
+        async with self._token_lock:
+            if self._token and time.monotonic() < self._token_expiry:
+                return self._token
+            response = await self._client.post(
                 _OAUTH_ENDPOINT,
                 data={"grant_type": "refresh_token", "refresh_token": self._refresh_token},
                 auth=(self._app_key, self._app_secret),
             )
-        payload = _body(response)
-        token = payload.get("access_token")
-        if not isinstance(token, str) or not token:
-            msg = "Dropbox returned no access token for the refresh token"
-            raise ValueError(msg)
-        self._token = token
-        lifetime = float(payload.get("expires_in", 14400)) - _EXPIRY_SLACK
-        self._token_expiry = time.monotonic() + lifetime
-        return token
+            payload = _body(response)
+            token = payload.get("access_token")
+            if not isinstance(token, str) or not token:
+                msg = "Dropbox returned no access token for the refresh token"
+                raise ValueError(msg)
+            self._token = token
+            lifetime = float(payload.get("expires_in", 14400)) - _EXPIRY_SLACK
+            self._token_expiry = time.monotonic() + lifetime
+            return token
 
     def _missing(self) -> list[str]:
         """Which of the three credentials this attachment does not have."""
@@ -388,6 +537,89 @@ def _body(response: httpx.Response) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         return {"result": parsed}
     return parsed
+
+
+def _source_object(entry: dict[str, Any]) -> SourceObject:
+    """Translate Dropbox metadata into the canonical source record."""
+    tag = str(entry.get(".tag") or "")
+    locator = str(entry.get("path_display") or entry.get("path_lower") or entry.get("name") or "")
+    if tag == "deleted":
+        return SourceObject(
+            object_id=f"path:{str(entry.get('path_lower') or locator).lower()}",
+            locator=locator,
+            kind=SourceObjectKind.DELETED,
+            deleted=True,
+            metadata=entry,
+        )
+    kind = SourceObjectKind.FOLDER if tag == "folder" else SourceObjectKind.FILE
+    object_id = str(entry.get("id") or f"path:{locator.lower()}")
+    return SourceObject(
+        object_id=object_id,
+        locator=locator,
+        kind=kind,
+        version=_optional_string(entry.get("rev")),
+        content_hash=_optional_string(entry.get("content_hash")),
+        size=_optional_int(entry.get("size")),
+        modified_at=_optional_string(entry.get("server_modified")),
+        media_type=_media_type(locator) if kind is SourceObjectKind.FILE else None,
+        metadata=entry,
+    )
+
+
+def _download_metadata(response: httpx.Response) -> dict[str, Any]:
+    raw = response.headers.get("dropbox-api-result", "")
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise SourceError(
+            SourceFailureCode.TRANSIENT, "Dropbox returned no file metadata"
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise SourceError(SourceFailureCode.TRANSIENT, "Dropbox returned invalid file metadata")
+    return parsed
+
+
+def _source_http_failure(response: httpx.Response) -> SourceError:
+    status = response.status_code
+    if status in (400, 401, 403):
+        return SourceError(SourceFailureCode.AUTH_REQUIRED, "Dropbox authorization was refused")
+    if status == 429:
+        return SourceError(
+            SourceFailureCode.RATE_LIMITED,
+            "Dropbox rate limit persisted after bounded retries",
+            retry_after=_retry_after(response, _MAX_ATTEMPTS - 1),
+        )
+    if status == 409:
+        text = response.text.lower()
+        if "reset" in text or "invalid_cursor" in text:
+            return SourceError(SourceFailureCode.CHECKPOINT_INVALID, "Dropbox cursor is invalid")
+        if "not_found" in text:
+            return SourceError(SourceFailureCode.NOT_FOUND, "Dropbox object was not found")
+    if status >= 500:
+        return SourceError(SourceFailureCode.TRANSIENT, "Dropbox service remained unavailable")
+    return SourceError(SourceFailureCode.TRANSIENT, f"Dropbox refused source request ({status})")
+
+
+def _retry_after(response: httpx.Response, attempt: int) -> float:
+    raw = response.headers.get("retry-after")
+    if raw:
+        try:
+            return min(max(float(raw), 0.0), 30.0)
+        except ValueError:
+            pass
+    return min(0.25 * float(2**attempt), 2.0)
+
+
+def _media_type(locator: str) -> str:
+    return mimetypes.guess_type(locator)[0] or "application/octet-stream"
+
+
+def _optional_string(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _optional_int(value: Any) -> int | None:
+    return value if isinstance(value, int) and value >= 0 else None
 
 
 def _schema(
