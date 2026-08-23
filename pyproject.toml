@@ -251,7 +251,6 @@ consider_namespace_packages = true
 pythonpath = ["."]
 markers = [
     "slow: end-to-end test that starts a real nats-server (skipped when the binary is absent)",
-    "reliability_nightly: deterministic 10k-run non-live reliability profile",
     "requires_docker: needs a reachable Docker daemon; skipped locally, required in CI",
 ]
 
