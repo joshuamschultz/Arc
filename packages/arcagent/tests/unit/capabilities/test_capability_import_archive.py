@@ -78,6 +78,23 @@ def test_intake_accepts_normal_folder_zip_with_directories_and_one_wrapper(
     ]
 
 
+def test_intake_accepts_dos_folder_zip_directory_entries_without_slashes(
+    tmp_path: Path,
+) -> None:
+    archive_path = tmp_path / "windows-folder.zip"
+    with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for directory in ("portable", "portable/skills", "portable/skills/imported"):
+            info = zipfile.ZipInfo(directory)
+            info.create_system = 0
+            info.external_attr = 0x10
+            archive.writestr(info, b"")
+        archive.writestr("portable/skills/imported/SKILL.md", _skill())
+
+    result = intake(archive_path, tmp_path / "agent" / "capabilities")
+
+    assert [entry.path for entry in result.files] == ["skills/imported/SKILL.md"]
+
+
 def test_intake_is_deterministic_for_same_archive(tmp_path: Path) -> None:
     archive = _zip(
         tmp_path / "capabilities.zip",

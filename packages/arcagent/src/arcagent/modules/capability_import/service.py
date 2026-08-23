@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -111,6 +112,13 @@ class CapabilityImportService:
                     if ledger
                     else CapabilityImportStatus.QUARANTINED.value
                 )
+                if status in {
+                    CapabilityImportStatus.REVIEW_READY,
+                    CapabilityImportStatus.PROMOTED,
+                } and not self._review_matches(
+                    self._manifest_from_staging(import_dir), import_dir
+                ):
+                    status = CapabilityImportStatus.MODIFIED
                 rows.append(self._review_from_payload(manifest, status=status))
             except (RuntimeError, TypeError, ValueError, ValidationError):
                 continue
@@ -469,7 +477,10 @@ class CapabilityImportService:
         raise ValueError("capability import manifest changed after review")
 
     def _manifest_from_staging(self, staging_dir: Path) -> CapabilityImportManifest:
-        path = Path(staging_dir) / "import.json"
+        staging = Path(staging_dir)
+        path = staging / "import.json"
+        if staging.is_symlink() or path.is_symlink() or not path.is_file():
+            raise ValueError("capability import manifest is invalid")
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
             return CapabilityImportManifest(
@@ -514,9 +525,22 @@ class CapabilityImportService:
             if not _is_capability(item.path):
                 continue
             source = Path(staging_dir) / item.path
+            _reject_symlinked_parents(source, Path(staging_dir))
+            if source.is_symlink() or not source.is_file():
+                raise ValueError("capability import source is unavailable")
             target = temporary / _target_relative(item.path)
             target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-            content = source.read_bytes()
+            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+            descriptor = os.open(source, flags)
+            try:
+                with os.fdopen(descriptor, "rb") as stream:
+                    descriptor = -1
+                    content = stream.read()
+            finally:
+                if descriptor >= 0:
+                    os.close(descriptor)
+            if len(content) != item.size or hashlib.sha256(content).hexdigest() != item.sha256:
+                raise ValueError("capability import source changed during promotion")
             target.write_bytes(content)
             target.chmod(0o600)
             content.decode("utf-8")

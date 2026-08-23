@@ -126,7 +126,7 @@ def _preflight_zip(
             expanded = 0
             for info in archive.infolist():
                 _reject_zip_special(info)
-                if info.is_dir():
+                if _is_zip_directory(info):
                     _safe_path(info.filename, seen, limits=limits, directory=True)
                     continue
                 path = _safe_path(info.filename, seen, limits=limits)
@@ -191,12 +191,24 @@ def _reject_zip_special(info: zipfile.ZipInfo) -> None:
     kind = stat.S_IFMT(mode)
     if info.flag_bits & 0x1:
         raise CapabilityImportSourceError("encrypted ZIP entries are not accepted")
-    if info.is_dir():
+    if _is_zip_directory(info):
         if kind not in (0, stat.S_IFDIR):
             raise CapabilityImportSourceError("ZIP contains a non-regular file entry")
         return
     if kind not in (0, stat.S_IFREG):
         raise CapabilityImportSourceError("ZIP contains a non-regular file entry")
+
+
+def _is_zip_directory(info: zipfile.ZipInfo) -> bool:
+    """Recognize both slash-marked and DOS directory ZIP entries.
+
+    Explorer-created archives can encode an empty directory with the DOS
+    directory attribute and no trailing slash.  ``ZipInfo.is_dir`` only checks
+    the slash, so treating that entry as a file makes a valid folder archive
+    fail layout validation before its regular children are considered.
+    """
+    dos_attributes = info.external_attr & 0xFFFF
+    return info.is_dir() or (info.create_system == 0 and dos_attributes & 0x10 != 0)
 
 
 def _strip_single_wrapper(candidates: list[_Candidate]) -> list[_Candidate]:

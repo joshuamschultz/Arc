@@ -150,6 +150,25 @@ export function CapabilityImportPanel() {
           </select>
         </label>
 
+        {importer.reviews.length > 0 && (
+          <div className="space-y-2 rounded-md border border-border p-3">
+            <p className="text-xs font-medium text-foreground">Staged imports</p>
+            <div className="flex flex-wrap gap-2">
+              {importer.reviews.map((review) => (
+                <Button
+                  key={review.import_id}
+                  type="button"
+                  size="sm"
+                  variant={importer.review?.import_id === review.import_id ? 'default' : 'outline'}
+                  onClick={() => importer.selectReview(review)}
+                >
+                  {review.skills.concat(review.tools).join(', ') || review.import_id.slice(0, 12)}
+                </Button>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div
           role="button"
           tabIndex={0}

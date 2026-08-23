@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { getToken } from '@/lib/auth'
 
 export interface CapabilityImportReview {
@@ -29,6 +29,7 @@ export type CapabilityImportState =
   | { status: 'review_ready'; review: CapabilityImportReview; error: null }
   | { status: 'promoted'; review: CapabilityImportReview; error: null }
   | { status: 'revoked'; review: CapabilityImportReview; error: null }
+  | { status: 'modified'; review: CapabilityImportReview; error: null }
   | { status: 'rejected'; review: null; error: string }
 
 function authHeaders(): Record<string, string> {
@@ -51,7 +52,49 @@ export function useCapabilityImport(agentId: string | null) {
     review: null,
     error: null,
   })
+  const [reviews, setReviews] = useState<CapabilityImportReview[]>([])
   const abortRef = useRef<AbortController | null>(null)
+
+  const stateForReview = useCallback((review: CapabilityImportReview): CapabilityImportState => {
+    const status = review.status === 'promoted'
+      ? 'promoted'
+      : review.status === 'revoked'
+        ? 'revoked'
+        : review.status === 'modified'
+          ? 'modified'
+          : 'review_ready'
+    return { status, review, error: null }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    if (!agentId) {
+      return () => { cancelled = true }
+    }
+    const load = async () => {
+      try {
+        const response = await fetch(
+          `/api/agents/${encodeURIComponent(agentId)}/capability-imports`,
+          { headers: authHeaders() },
+        )
+        if (!response.ok) throw new Error(await readError(response))
+        const body = (await response.json()) as { imports?: CapabilityImportReview[] }
+        if (cancelled) return
+        const imported = Array.isArray(body.imports) ? body.imports : []
+        setReviews(imported)
+        setState(imported[0] ? stateForReview(imported[0]) : { status: 'idle', review: null, error: null })
+      } catch (error) {
+        if (cancelled) return
+        setState({
+          status: 'rejected',
+          review: null,
+          error: error instanceof Error ? error.message : 'Unable to load capability imports.',
+        })
+      }
+    }
+    void load()
+    return () => { cancelled = true }
+  }, [agentId, stateForReview])
 
   const editRequest = useCallback(
     async (review: CapabilityImportReview, path: string, content?: string) => {
@@ -77,6 +120,7 @@ export function useCapabilityImport(agentId: string | null) {
   const editFile = useCallback(
     async (review: CapabilityImportReview, path: string, content: string) => {
       const updated = (await editRequest(review, path, content)) as CapabilityImportReview
+      setReviews((current) => [updated, ...current.filter((item) => item.import_id !== updated.import_id)])
       setState({ status: 'review_ready', review: updated, error: null })
       return updated
     },
@@ -92,6 +136,7 @@ export function useCapabilityImport(agentId: string | null) {
       )
       if (!response.ok) throw new Error(await readError(response))
       const updated = (await response.json()) as CapabilityImportReview
+      setReviews((current) => [updated, ...current.filter((item) => item.import_id !== updated.import_id)])
       setState({ status: updated.status as 'promoted' | 'revoked', review: updated, error: null })
       return updated
     },
@@ -132,11 +177,9 @@ export function useCapabilityImport(agentId: string | null) {
           signal: controller.signal,
         })
         if (!response.ok) throw new Error(await readError(response))
-        setState({
-          status: 'review_ready',
-          review: (await response.json()) as CapabilityImportReview,
-          error: null,
-        })
+        const review = (await response.json()) as CapabilityImportReview
+        setReviews((current) => [review, ...current.filter((item) => item.import_id !== review.import_id)])
+        setState(stateForReview(review))
       } catch (error) {
         if (controller.signal.aborted) return
         setState({
@@ -146,13 +189,19 @@ export function useCapabilityImport(agentId: string | null) {
         })
       }
     },
-    [agentId],
+    [agentId, stateForReview],
   )
 
   const reset = useCallback(() => {
     abortRef.current?.abort()
+    setReviews([])
     setState({ status: 'idle', review: null, error: null })
   }, [])
 
-  return { ...state, upload, reset, readFile, editFile, promote, revoke }
+  const selectReview = useCallback(
+    (review: CapabilityImportReview) => setState(stateForReview(review)),
+    [stateForReview],
+  )
+
+  return { ...state, reviews, upload, reset, readFile, editFile, promote, revoke, selectReview }
 }

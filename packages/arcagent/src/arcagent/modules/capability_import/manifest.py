@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -62,7 +63,10 @@ def build_manifest(
 
 def verify_manifest(manifest: CapabilityImportManifest, staging_dir: Path) -> bool:
     """Return whether every staged byte still matches its reviewed manifest."""
-    current = _files(staging_dir)
+    try:
+        current = _files(staging_dir)
+    except (OSError, CapabilityImportLayoutError):
+        return False
     return current == manifest.files
 
 
@@ -121,7 +125,17 @@ def _files(staging_dir: Path) -> tuple[CapabilityImportFile, ...]:
     excluded = {"import.json", "capability.bom.cdx.json"}
     entries: list[CapabilityImportFile] = []
     for path in sorted(staging_dir.rglob("*")):
-        if not path.is_file() or path.name in excluded:
+        try:
+            mode = path.lstat().st_mode
+        except OSError as exc:
+            raise CapabilityImportLayoutError("staged capability tree is unreadable") from exc
+        if stat.S_ISDIR(mode):
+            continue
+        if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
+            raise CapabilityImportLayoutError(
+                "staged capability tree contains a non-regular entry"
+            )
+        if path.name in excluded:
             continue
         entries.append(
             CapabilityImportFile(

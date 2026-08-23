@@ -169,6 +169,42 @@ def test_promotion_rejects_modified_staging_without_writing_capabilities(tmp_pat
     assert not (tmp_path / "agent" / "capabilities" / "imported_tool.py").exists()
 
 
+def test_promotion_rejects_symlinked_staged_source_without_writing_capabilities(
+    tmp_path: Path,
+) -> None:
+    config, staging, service, manifest = _setup(tmp_path)
+    source = staging / "tools" / "imported_tool.py"
+    replacement = tmp_path / "replacement.py"
+    replacement.write_bytes(source.read_bytes())
+    source.unlink()
+    source.symlink_to(replacement)
+
+    with pytest.raises(ValueError, match="manifest"):
+        service.promote(
+            staging,
+            target_agent_did=manifest.target_agent_did,
+            operator_did=_DID,
+            signer=InProcessSigner(generate_keypair().private_key),
+            config_path=config,
+        )
+
+    assert not (tmp_path / "agent" / "capabilities" / "imported_tool.py").exists()
+
+
+def test_list_marks_symlinked_staged_source_modified(tmp_path: Path) -> None:
+    _, staging, service, manifest = _setup(tmp_path)
+    source = staging / "tools" / "imported_tool.py"
+    replacement = tmp_path / "replacement.py"
+    replacement.write_bytes(source.read_bytes())
+    source.unlink()
+    source.symlink_to(replacement)
+
+    listed = service.list_reviews()
+
+    assert listed[0].import_id == manifest.import_id
+    assert listed[0].status is CapabilityImportStatus.MODIFIED
+
+
 def test_promotion_rejects_tampered_review_manifest(tmp_path: Path) -> None:
     config, staging, service, manifest = _setup(tmp_path)
     manifest_path = staging / "import.json"
