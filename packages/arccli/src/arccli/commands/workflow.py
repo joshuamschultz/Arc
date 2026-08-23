@@ -668,7 +668,7 @@ def _run_workflow(args: argparse.Namespace) -> None:
         try:
             if args.detach:
                 result = _ok_or_exit(
-                    await plane.run(args.id, input=run_input, actor_did=actor_did)
+                    await plane.run(args.id, input=run_input, actor_did=actor_did, detached=True)
                 )
                 record = result.run
                 assert record is not None  # noqa: S101 — ok=True always carries the run

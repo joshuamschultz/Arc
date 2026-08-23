@@ -241,9 +241,17 @@ class WorkflowRunner:
         input: Mapping[str, Any],  # noqa: A002 — the definition's own vocabulary
         initiator_did: str,
         run_id: str | None = None,
+        detached: bool = False,
     ) -> RunRecord:
-        """Create the Run record, then materialize the first frontier."""
-        await self._require_lease()
+        """Create the Run record, then materialize the first frontier.
+
+        ``detached=True`` only creates the Run row and returns: the lease
+        holder's next tick materializes the frontier. Without it, a CLI or
+        dashboard start would need the singleton lease the live service owns
+        for its whole lifetime — no operator could ever start a run.
+        """
+        if not detached:
+            await self._require_lease()
         # Check the id before it reaches the store, which resolves it against a
         # directory. The store refuses a traversal id itself — this is the
         # boundary check that means that backstop is never the thing that fires.
@@ -299,6 +307,8 @@ class WorkflowRunner:
                 workflow_id=definition.id,
                 version=definition.version,
             )
+        if detached:
+            return run
         return await self.advance(run_id)
 
     async def advance(self, run_id: str) -> RunRecord:

@@ -243,11 +243,16 @@ class WorkflowControlPlane:
         *,
         input: Mapping[str, Any],  # noqa: A002 — the definition's own vocabulary
         actor_did: str,
+        detached: bool = False,
     ) -> ControlPlaneResult:
-        """Start a run. The dashboard, the CLI, and an agent all land here."""
+        """Start a run. The dashboard, the CLI, and an agent all land here.
+
+        ``detached=True`` creates the run without the singleton lease; the
+        lease-holding service runner advances it on its next tick.
+        """
         try:
             record = await self._runner.start_run(
-                workflow_id, input=input, initiator_did=actor_did
+                workflow_id, input=input, initiator_did=actor_did, detached=detached
             )
         except Exception as exc:
             self._emit(
