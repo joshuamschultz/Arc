@@ -140,45 +140,35 @@ agentic sleep pass. With none of them, the example above still runs.
 
 ## Personal and fleet-shared knowledge
 
-ArcMemory owns the knowledge mechanics: canonical/OKF documents, explicit
-scope, store/index/embed/search/provenance/revoke contracts, and
-classification checks. ArcTeam is the intended owner of fleet membership,
-promotion authorization, shared lifecycle, and the backend it supplies through
-those public contracts. It must not make an agent's workspace or private memory
-global.
+ArcMemory owns team-agnostic collection mechanics: canonical/OKF documents,
+explicit scope, store/index/embed/search/provenance/revoke contracts, and
+classification checks. ArcTeam owns membership, promotion authorization,
+shared lifecycle, and the fleet backend through these public contracts. It
+cannot make an agent workspace or private memory global.
 
-> **Alpha status:** the current ArcAgent memory runtime constructs the fleet
-> shared-knowledge backend and exposes the fleet tools, so its integration runs
-> in the reverse direction. This is a known refactor gap, not the completed
-> ArcTeam composition design. The operations below are landed; do not infer that
-> the target package boundary has already shipped.
+`SharedKnowledgeAdapter` is a generic collection adapter, not a fleet service.
+ArcTeam attaches the fleet tools only to authorized started members through its
+extension lifecycle; ArcMemory does not import ArcTeam or expose fleet tools.
+If the optional collection mechanics are absent, ArcTeam reports typed
+unavailability rather than creating a local shared substitute.
 
-The currently available tools use explicit scope:
-
-```toml
-[modules.memory.config]
-shared_knowledge_enabled = true
-```
+The ArcTeam attachment exposes explicit fleet operations:
 
 | Tool | Purpose |
 |---|---|
-| `knowledge_save(scope, ...)` | Save to explicit `personal` or `shared` scope |
-| `knowledge_retrieve(scope, reference)` | Retrieve one verified record |
-| `knowledge_search(scope, query)` | Search within the authorized scope |
-| `knowledge_promote(reference)` | Copy a signed personal record into fleet scope |
-| `knowledge_revoke(scope, reference)` | Revoke without erasing the audit trail |
+| `shared_knowledge_promote(reference)` | Promote owned personal knowledge into the signed fleet collection |
+| `shared_knowledge_retrieve(reference)` | Retrieve one authorized fleet document |
+| `shared_knowledge_search(query)` | Search fleet knowledge at the caller's clearance |
+| `shared_knowledge_revoke(reference)` | Revoke an owned fleet document without erasing audit evidence |
 
-The current shared backend writes valid OKF records at
-`arc_team()/shared/knowledge`. Promotion verifies the personal record, signs
-the shared copy with the owning agent identity, pins the signer, enforces
-classification and no-write-down rules, and emits audit. It does not make an
-agent's private workspace or memory global. The final fleet integration must
-move the authorization and lifecycle decision to ArcTeam while preserving this
-typed operation contract.
+The ArcTeam backend writes valid OKF records at `arc_team()/shared/knowledge`.
+Promotion verifies the personal export, signs and pins the shared record,
+enforces classification and no-write-down rules, and emits audit. It does not
+make an agent's private workspace or memory global.
 
 See [SETUP.md](SETUP.md#5-signed-fleet-shared-knowledge) and the repository
 [fleet-layering guide](../../docs/concepts/fleet-layering.md) for deployment
-checks and the architecture status.
+checks and lifecycle details.
 
 ---
 

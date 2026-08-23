@@ -10,9 +10,8 @@
 
 Arc is a toolkit for building AI agents — programs that can read information, decide what to do, and take actions like a junior employee would — for places that cannot just take an AI vendor's word that everything is fine. A bank, a hospital, a national lab. Every agent gets its own cryptographic ID card, every tool it uses has to be explicitly permitted, and every action it takes is written to a tamper-evident logbook, the same way an accountant's ledger is built so that nobody — including the accountant — can quietly erase an entry. You do not have to take Arc's word for what an agent did; you can read the receipts. That is the entire pitch, and everything else in this repository is in service of it.
 
-For the alpha fleet boundary — including what remains optional for a solo agent,
-the distinction between external sessions and signed agent mail, and the
-current unimplemented composition gap — read
+For the alpha fleet boundary — including what remains optional for a solo agent
+and the distinction between external sessions and signed agent mail — read
 [Fleet layering and removable composition](../concepts/fleet-layering.md)
 before adding a team service.
 

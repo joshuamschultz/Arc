@@ -30,12 +30,15 @@ the latter and ArcTeam owns the former. A message must be verified and
 replay-checked before it can enter an agent inbox, and a teammate's message gets
 a sender-scoped agent session rather than sharing an operator session.
 
-The agreed package direction is ArcTeam composing standalone ArcAgents and
-using ArcMemory only through public shared-knowledge seams. The current
-ArcTeam wheel does not yet declare those dependencies and the existing optional
-ArcAgent messaging bootstrap points in the reverse direction. Do not use this
-runbook as evidence that the composition migration has landed; a solo agent
-continues to work without ArcTeam, with fleet functionality unavailable.
+ArcTeam composes standalone ArcAgents and uses ArcMemory only through public
+shared-knowledge seams. Its composition lifecycle attaches the fleet tools to
+authorized started members, can reload one member, and detaches all attached
+tools on stop. A solo agent continues to work without ArcTeam, with fleet
+functionality simply absent.
+
+AgentMail's signed durable-outbox P0 seam is available to composed services,
+but this runbook does not claim a supervised production delivery worker or final
+UI/CLI mail workflow; those remain remediation work.
 
 ## 1. Create each agent
 

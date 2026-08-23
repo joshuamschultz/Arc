@@ -41,11 +41,11 @@ ArcMemory owns team-agnostic knowledge mechanics behind its public typed seams. 
 `arcagent` nor `arcmemory` may import `arcteam`, and ArcTeam must not reach into either
 package's internals.
 
-This is an architectural requirement for new work, not evidence that every transitional
-alpha integration already has the target dependency metadata. Until an implementation
-lands, document that gap explicitly; do not reverse the arrows to accommodate it. An
-ArcAgent without ArcTeam must start and run normally, with only fleet capabilities
-unavailable through a typed degraded result.
+ArcTeam owns the optional composition lifecycle: it attaches, replaces, and removes
+fleet extensions on already-started member agents through the public attachment seam.
+ArcMemory collection mechanics remain optional; their absence is a typed unavailable
+result, not an import failure. An ArcAgent without ArcTeam starts and runs normally,
+with only fleet capabilities unavailable.
 
 The boundary is enforced, not merely documented:
 `packages/arcagent/tests/architecture/test_dependency_boundaries.py` fails the

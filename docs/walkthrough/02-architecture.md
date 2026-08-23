@@ -40,7 +40,7 @@ placeholders — flagged below, not glossed over.
 | **arcprompt** | `packages/arcprompt/src/arcprompt/` | Editable, signed, inspectable system-prompt store | `arctrust` only | Import anything above it — `arcrun`, `arcagent`, `arcmemory`, and `arcskill` all import *it* |
 | **arcskill** | `packages/arcskill/src/arcskill/` | Verified skill hub: signed install, scan, lock, CRL lifecycle | `arctrust` | Let `arcskill.improver` import `arcagent`, `arcllm`, or `arcmemory` directly — those enter only through injected `Mutator`/`Judge`/`EvalRunner`/`Signer`/`AuditSink` seams |
 | **arcmemory** | `packages/arcmemory/src/arcmemory/` | Dual-speed, four-store, analogical memory: markdown source of truth + disposable SQLite index + an agentic "sleep" consolidation pass | `arctrust`, `arcllm`, `arcprompt`; `arcrun` additively, confined to one `react_adapter.py` | Import `arcagent`, ever — the hard DAG boundary; reimplement its own classification comparator instead of reusing `arctrust`'s |
-| **arcteam** | `packages/arcteam/src/arcteam/` | Alpha fleet coordination: signed agent mail, registry, audit, workflows, and the future composition point for standalone agents | Current wheel: `arctrust`, `arcstore`; agreed direction: `arcagent`, `arcmemory` via public seams | Reverse-import `arcteam` from `arcagent` or `arcmemory`; reach into agent/private-memory internals |
+| **arcteam** | `packages/arcteam/src/arcteam/` | Fleet coordination: signed agent mail, registry, audit, workflows, and optional composition of standalone agents | `arctrust`, `arcstore`; optional `arcagent`/`arcmemory` only through public lazy seams | Reverse-import `arcteam` from `arcagent` or `arcmemory`; reach into agent/private-memory internals |
 | **arcui** | `packages/arcui/src/arcui/` | **Observe** ArcAgent history + limited **Interact** (`/ws/chat`, `/ws/team`) | `arcagent`, `arcstore`, `arcgateway`, `arcteam`, `arctrust`, `arcskill` | Bypass ArcAgent to invoke `arcrun` or `arcllm`; make ArcAgent depend on the UI |
 | **arccli** | `packages/arccli/src/arccli/` | The `arc …` command surface: create/serve/run agents, `arc ui`, `arc store`, `arc team` | `arcllm`, `arcrun`, `arcagent` (as `arc-agent[telegram]`), `arcteam` | Import `click` outside the allowlisted legacy files (see below) |
 | **arctui** | `packages/arctui/src/arctui/` | Terminal UI for Arc (Textual) | `arccli` (as `arccmd`) | — (newest package; no dedicated architecture test yet) |
@@ -122,11 +122,12 @@ instances, fleet mail/inboxes, shared-knowledge governance, and fleet tool/skill
 grants; it does not absorb the agent loop, the agent's private workspace, or
 generic knowledge mechanics.
 
-That direction is not fully implemented at this commit: the ArcTeam package
-metadata still lists no ArcAgent or ArcMemory dependency, while ArcAgent's
-optional messaging integration lazily imports ArcTeam. Treat that as a tracked
-alpha gap, not as a license to add more reverse imports. The architecture rule
-and the operational split are documented in
+ArcTeam now owns the shared-knowledge extension lifecycle: it attaches tools to
+authorized started members, reloads one attachment, and removes them at stop.
+ArcMemory remains the optional generic collection seam. The base ArcTeam wheel
+keeps these imports lazy so a solo agent stays removable. AgentMail's signed
+outbox seam is P0 only; supervised production delivery and final UI/CLI flows
+remain open. The architecture rule and operational split are documented in
 [Fleet layering and removable composition](../concepts/fleet-layering.md).
 
 ### The one narrowed exception

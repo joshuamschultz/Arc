@@ -14,9 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Documented the agreed removable fleet direction (`arcteam → arcagent` and
-  `arcteam → arcmemory`). Agent mail composition now follows this direction;
-  shared-knowledge composition remains an alpha migration gap.
+- Shared-knowledge composition is now ArcTeam-owned: it attaches, reloads, and
+  detaches the optional ArcMemory-backed fleet extension on authorized members.
+- AgentMail's signed durable-outbox P0 seam is documented as landed; supervised
+  production delivery and final UI/CLI mail workflows remain open.
 
 ## [0.8.0] - 2026-08-22
 

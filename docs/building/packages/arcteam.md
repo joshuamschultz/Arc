@@ -14,14 +14,13 @@
 - **Task distribution** - Durable task coordination
 - **Pluggable backends** - NATS, in-memory, custom
 
-> **Alpha boundary:** ArcTeam is the future outer composition layer for
-> independently runnable ArcAgents and ArcMemory's public shared-knowledge
-> seam. The current `arcteam` wheel still ships its transport, registry, audit,
-> and workflow components without those package dependencies, and ArcAgent's
-> optional messaging module currently imports ArcTeam lazily. This page does
-> not treat that transitional reverse integration as the desired architecture.
-> See [fleet layering](../../concepts/fleet-layering.md) for the ownership and
-> removal rules.
+> **Alpha boundary:** ArcTeam is the outer composition layer for independently
+> runnable ArcAgents and ArcMemory's public shared-knowledge seam. It attaches,
+> reloads, and removes the fleet extension on authorized started members; ArcMemory
+> stays generic collection mechanics. Solo agents have no fleet requirement.
+> AgentMail's signed/outbox P0 seam is landed, but supervised production delivery
+> and final UI/CLI mail flows remain incomplete. See
+> [fleet layering](../../concepts/fleet-layering.md).
 
 ```mermaid
 flowchart TB
@@ -262,14 +261,13 @@ class MyBackend(StorageBackend):
 
 ---
 
-## Legacy team-memory surface
+## Team-memory compatibility surface
 
-`arcteam.memory` remains in the current alpha source tree and is listed below
-because it is a landed public surface. Do not extend it as the permanent
-knowledge layer. Generic store/index/embed/search/provenance/revoke/OKF
-mechanics belong to ArcMemory; ArcTeam's role is fleet authorization,
-membership, promotion policy, lifecycle, and the shared backend it provides at
-the public seam.
+`arcteam.memory` remains a landed public compatibility surface. New shared
+knowledge uses ArcTeam's `shared_knowledge` lifecycle and ArcMemory's generic
+collection seam. Generic store/index/embed/search/provenance/revoke/OKF
+mechanics stay in ArcMemory; ArcTeam owns fleet authorization, membership,
+promotion policy, lifecycle, and the shared backend.
 
 ```python
 from arcteam.memory import TeamMemoryService

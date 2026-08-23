@@ -1,9 +1,8 @@
 # Fleet layering and removable composition
 
 ArcTeam is the optional fleet layer. It composes multiple standalone ArcAgents;
-it is not part of an individual agent's nucleus. This page records the alpha
-architecture direction and distinguishes it from the code that is already
-present so operators do not infer a capability from a diagram.
+it is not part of an individual agent's nucleus. This page records the landed
+alpha composition contract and its remaining AgentMail delivery limits.
 
 ## The direction
 
@@ -34,11 +33,31 @@ local tools, skills, sessions, and local memory continue to work.
 | Tools and skills | Knows no fleet | Owns fleet-level installation, grants, routing, and teardown; each agent still verifies and authorizes its own capability use |
 | Tasks, runs, and workflow coordination | Does not own them | Coordinates them over the ArcStore adapter; it does not create another task or index engine |
 
-The current `SharedKnowledgeAdapter` and `SharedKnowledgeBackend` in ArcMemory
-are the relevant mechanics seam: save, read, search, and revoke are explicit
-operations with an explicit access record. ArcTeam is the correct future
-provider of the fleet policy/backend, not a reason to put roster or promotion
-policy into ArcMemory.
+`arcmemory.adapters.shared_knowledge.SharedKnowledgeAdapter` is the generic
+collection seam: save, read, search, and revoke remain explicit operations with
+an explicit access record. ArcTeam now provides the fleet backend and promotion
+service; roster and lifecycle policy do not enter ArcMemory.
+
+## Composition lifecycle and shared tools
+
+`FleetSharedKnowledgeComposition` owns the lifecycle for already-started
+agents. `start()` attaches the `arcteam.shared_knowledge` extension only after
+checking team membership, `reload()` atomically replaces one member's attachment,
+and `stop()` detaches every tool the extension registered. The attachment is
+bridged through ArcAgent's governed tool registry, so its tools still receive
+schema validation, policy, classification/trifecta checks, and audit.
+
+The attached fleet surface is deliberately small:
+
+- `shared_knowledge_promote`
+- `shared_knowledge_retrieve`
+- `shared_knowledge_search`
+- `shared_knowledge_revoke`
+
+If ArcMemory's optional collection mechanics are absent, the fleet service
+returns `SharedKnowledgeUnavailableError`; it does not synthesize a local
+shared store. Without ArcTeam, none of these tools are attached and the agent's
+local memory, tools, skills, identity, and sessions remain usable.
 
 ## Sessions, mail, and adapters
 
@@ -57,10 +76,16 @@ implementation. NATS is an adapter for signed fleet mail, not a store of
 agent-private memory or an authorization source.
 
 ArcStore is a separate adapter role: it is the durable task/run substrate used
-for coordination and observability. It is not an inbox transport, and it is
-not ArcMemory's generic index/search engine. The durable store is authoritative
-for a task transition; mail is a wakeup/narration signal and cannot make a
-durable state change appear to have happened.
+for coordination and observability, and AgentMail can use its durable outbox
+before NATS delivery. It is not ArcMemory's generic index/search engine. The
+durable store is authoritative for a task transition; mail is a wakeup/narration
+signal and cannot make a durable state change appear to have happened.
+
+AgentMail P0 is a public ArcTeam Python seam: it creates a signed envelope,
+persists it to an injected `MailOutbox`, reports `sent` or `pending`, and drains
+claimed entries with bounded retry. It is not yet a supervised production worker
+service, nor is it final UI or CLI mail integration. Those gaps remain explicit
+until their remediation lands.
 
 ## Zero-trust rules
 
@@ -81,14 +106,11 @@ workspace or lower-clearance store.
 
 ## Alpha status and verification
 
-The direction above is agreed architecture, but it is not yet fully reflected
-in the current package metadata and imports. At this commit, ArcTeam ships
-standalone transport/registry/audit/workflow components with no ArcAgent or
-ArcMemory dependency, while ArcAgent's optional messaging integration lazily
-imports ArcTeam. That is a transitional reverse integration, not proof that
-ArcTeam composition has landed. The change that inverts the runtime dependency,
-adds the public composition contracts, and moves fleet governance has not been
-verified by this documentation slice.
+Shared-knowledge composition is landed: ArcAgent exposes public extension
+attach/detach operations, ArcTeam owns attachment lifecycle and fleet policy,
+and ArcMemory stays optional collection mechanics. AgentMail P0's outbox path
+is also landed, but production worker supervision and final UI/CLI mail paths
+are not. Do not represent the latter as operationally complete.
 
 For the landed components, validate the seams with:
 
@@ -99,6 +121,5 @@ uv run pytest packages/arcagent/tests/architecture
 uv run python scripts/run_adversarial_tests.py
 ```
 
-Run the tests relevant to a changed implementation; the command list is not a
-claim that the missing composition layer is implemented. Documentation changes
-can be checked with `uv run mkdocs build --strict` and `git diff --check`.
+Run the tests relevant to a changed implementation. Documentation changes can
+be checked with `uv run mkdocs build --strict` and `git diff --check`.

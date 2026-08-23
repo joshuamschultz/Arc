@@ -26,8 +26,8 @@ Think of it as a tiny Slack-for-agents:
 - 🧭 **ArcFlow workflows** — named, signed, deterministic node graphs (SPEC-061)
 - 🪵 **Operator-signed audit chain** — every operation tamper-evident and non-repudiable
 - 💾 **Pluggable storage** — NATS JetStream for production, in-memory for tests
-- 🧠 **Legacy team memory** — currently shipped compatibility surface; not the
-  permanent generic knowledge layer
+- 🧠 **Shared knowledge composition** — membership-gated lifecycle and signed
+  fleet persistence over ArcMemory's optional collection seam
 
 > 🛡️ **Every message audited. Asymmetrically signed chain. Per-entity DIDs. No shared credentials.**
 
@@ -80,17 +80,23 @@ flowchart TB
     arcteam --> arctrust[arctrust<br/>sign · audit]:::leaf
 ```
 
-`arcteam` currently sits at the **coordination / workflows** layer. The published wheel depends
-on `arcstore` (the durable tasks/runs substrate ArcFlow instantiates onto) and `arctrust` (the
-signing primitive and audit-event schema). This is not yet the agreed fleet composition graph.
+`arcteam` is the optional **coordination / workflows** layer. It owns the
+`arcteam → arcagent` and `arcteam → arcmemory` composition seam through public,
+lazy contracts: ArcTeam composes standalone agents, agent inboxes, fleet
+tools/skills, and shared-knowledge governance; ArcMemory retains generic
+collection mechanics. Its base package still depends on `arcstore` (durable
+tasks/runs and optional mail outbox) and `arctrust` (signing and audit), so a
+solo ArcAgent has no fleet dependency.
 
-The alpha target is `arcteam → arcagent` and `arcteam → arcmemory` through public typed
-contracts: ArcTeam composes standalone agents, agent inboxes, fleet tools/skills, and
-shared-knowledge governance, while ArcMemory retains generic knowledge mechanics. The current
-optional ArcAgent messaging/knowledge integration imports ArcTeam and constructs a fleet shared
-backend in the reverse direction. That is a known migration gap, not a supported boundary or a
-reason to build new work on the reverse edge. See the authoritative
+`FleetSharedKnowledgeComposition.start()` attaches the governed shared tools to
+started team members, `reload()` replaces one member's attachment, and `stop()`
+detaches the extension. A missing ArcMemory collection produces a typed
+unavailability result rather than a fallback shared store. See the authoritative
 [fleet-layering guide](../../docs/concepts/fleet-layering.md).
+
+`AgentMailService` now signs envelopes before durable outbox enqueue and returns
+an explicit `sent` or `pending` result. The P0 Python seam is landed; supervised
+production worker lifecycle and final UI/CLI mail workflows are still pending.
 
 The audit chain is signed with the **operator's** key (the audit authority, resolved via
 `arctrust`/`arccli`'s operator-key custody), never a team member's own DID, so no agent can

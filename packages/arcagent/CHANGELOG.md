@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Removed the ArcAgent-core team bootstrap; optional fleet composition now belongs to ArcTeam.
 - Direct agent mail is distinguished from channel chat before inbox projection.
+- ArcTeam's shared-knowledge extension now attaches through ArcAgent's public
+  lifecycle API; standalone agents remain unaffected when it is absent.
 
 ## [0.19.0] - 2026-08-22
 

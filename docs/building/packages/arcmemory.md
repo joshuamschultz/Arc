@@ -23,11 +23,11 @@
 
 > **Fleet boundary:** ArcMemory is team-agnostic. It owns canonical knowledge
 > documents, index/embed/search/provenance/revoke mechanics, and the public
-> knowledge backend contracts. ArcTeam supplies fleet membership, promotion
-> authorization, shared lifecycle, and backend policy through those contracts;
-> neither package may reach into the other's internals. The composition is an
-> agreed alpha direction, not a claim that the current ArcTeam wheel has already
-> declared an ArcMemory dependency. See
+> collection contracts. ArcTeam supplies fleet membership, promotion authorization,
+> shared lifecycle, and backend policy through those contracts; neither package
+> reaches into the other's internals. The landed composition attaches tools only
+> to authorized started members and degrades with a typed unavailable result if
+> collection mechanics are absent. See
 > [fleet layering](../../concepts/fleet-layering.md).
 
 ```mermaid
