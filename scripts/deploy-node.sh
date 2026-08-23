@@ -361,11 +361,22 @@ else
   fail "ArcStore requires ARCSTORE_DATABASE_URL or ARCSTORE_DATABASE_CREDENTIAL_REF"
 fi
 
-# --- 5c. optional arcmemory pgvector index -------------------------------
-# This legacy opt-in remains separate from ArcStore: it gets a different
-# container, named volume, port, database, and DSN. Enabling it never changes
-# the ArcStore URL above.
+# --- 5c. arcmemory pgvector index -----------------------------------------
+# Deployed nodes default to the postgres memory index: this script provisions
+# the server, so the zero-config sqlite fallback (kept for bare pip installs)
+# would only under-serve a box that has the real thing. An explicit value in
+# ENV_FILE always wins. The index stays separate from ArcStore: different
+# container, named volume, port, database, and DSN.
+if ! grep -q '^ARC_MEMORY_INDEX_BACKEND=' "$ENV_FILE"; then
+  printf 'ARC_MEMORY_INDEX_BACKEND=postgres\n' >> "$ENV_FILE"
+  ok "memory index backend defaulted to postgres in $ENV_FILE"
+fi
 MEMORY_INDEX_BACKEND="$(grep -m1 '^ARC_MEMORY_INDEX_BACKEND=' "$ENV_FILE" | cut -d= -f2- || true)"
+if [ "$MEMORY_INDEX_BACKEND" = "postgres" ] && ! grep -q '^POSTGRES_PASSWORD=' "$ENV_FILE"; then
+  ( umask 077
+    printf 'POSTGRES_PASSWORD=%s\n' "$(openssl rand -hex 32)" >> "$ENV_FILE" )
+  ok "generated POSTGRES_PASSWORD for the memory index"
+fi
 if [ "$MEMORY_INDEX_BACKEND" = "postgres" ]; then
   MEMORY_PASSWORD="$(grep -m1 '^POSTGRES_PASSWORD=' "$ENV_FILE" | cut -d= -f2- || true)"
   [ -n "$MEMORY_PASSWORD" ] || fail \

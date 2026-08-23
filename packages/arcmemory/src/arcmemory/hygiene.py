@@ -332,8 +332,63 @@ def repair_backlinks(store: SemanticStore) -> int:
 __all__ = [
     "DedupReport",
     "GroupMerge",
+    "OkfMigrationReport",
     "StoreReport",
     "dedup_workspace",
     "discover_workspaces",
+    "okf_migrate_workspace",
     "repair_backlinks",
 ]
+
+
+@dataclass(frozen=True)
+class OkfMigrationReport:
+    """What one workspace's OKF migration found (and, with apply, changed)."""
+
+    workspace: Path
+    migrated: tuple[Path, ...]
+    already_valid: int
+    failed: tuple[tuple[Path, str], ...]
+
+
+def okf_migrate_workspace(workspace: Path, *, apply: bool) -> OkfMigrationReport:
+    """Re-render pre-OKF memory documents through the canonical writer.
+
+    ``mdfile`` reads every memory document through the strict OKF parser, so
+    files written before OKF v0.2 (no ``type`` frontmatter, wiki links) fail
+    closed at every read site. The fix is data-side — ``render_document``
+    stamps the type and normalises links — never a looser parser.
+
+    Idempotent: a file that already lints valid is skipped, so re-running on
+    a migrated fleet is a no-op. A file the legacy split cannot parse is
+    reported and left byte-for-byte untouched.
+    """
+    import yaml
+    from arcokf import lint
+
+    migrated: list[Path] = []
+    failed: list[tuple[Path, str]] = []
+    already_valid = 0
+    for path in sorted((workspace / "memory").rglob("*.md")):
+        if ".pruned" in path.parts:
+            continue
+        if lint(path).valid:
+            already_valid += 1
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+            frontmatter: dict[str, object] = {}
+            body = text
+            if text.startswith("---\n"):
+                end = text.find("\n---\n", 4)
+                if end != -1:
+                    loaded = yaml.safe_load(text[4:end])
+                    frontmatter = loaded if isinstance(loaded, dict) else {}
+                    body = text[end + 5 :]
+            rendered = render_document(frontmatter, body)
+            if apply:
+                atomic_write_text(path, rendered)
+            migrated.append(path)
+        except Exception as exc:  # reason: one bad file must not stop the sweep
+            failed.append((path, f"{type(exc).__name__}: {exc}"))
+    return OkfMigrationReport(workspace, tuple(migrated), already_valid, tuple(failed))

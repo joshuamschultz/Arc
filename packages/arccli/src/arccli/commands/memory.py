@@ -49,6 +49,49 @@ _INSTALL_HINT = (
 )
 
 
+def _okf_migrate(args: argparse.Namespace) -> None:
+    """Re-render pre-OKF memory documents through the canonical writer.
+
+    Dry-run by default (reports what would migrate, writes nothing).
+    ``--apply`` rewrites in place. Idempotent: valid files are skipped, so a
+    second run finds nothing to migrate.
+    """
+    from arcmemory.hygiene import okf_migrate_workspace
+
+    apply: bool = args.apply
+    mode = "APPLY" if apply else "dry-run"
+    total_migrated = 0
+    total_failed = 0
+    n_workspaces = 0
+
+    for raw in args.workspaces:
+        root = Path(raw).expanduser()
+        workspaces = discover_workspaces(root)
+        if not workspaces:
+            err(f"  no memory workspace found under {root}")
+            continue
+        for workspace in workspaces:
+            n_workspaces += 1
+            report = okf_migrate_workspace(workspace, apply=apply)
+            _out(
+                f"\n{report.workspace}  ({mode})\n"
+                f"  {len(report.migrated)} migrated, {report.already_valid} already valid, "
+                f"{len(report.failed)} failed"
+            )
+            for path, reason in report.failed:
+                err(f"  FAIL {path}: {reason}")
+            total_migrated += len(report.migrated)
+            total_failed += len(report.failed)
+
+    verb = "migrated" if apply else "to migrate"
+    _out(f"\n{total_migrated} file(s) {verb} across {n_workspaces} workspace(s).")
+    if total_failed:
+        err(f"{total_failed} file(s) could not be parsed — left untouched.")
+        raise SystemExit(1)
+    if apply and total_migrated:
+        _out("Restart each affected agent so its index rebuilds over the rewritten files.")
+
+
 def _dedup(args: argparse.Namespace) -> None:
     """Merge duplicate memory cards into their canonical-slug files.
 
@@ -225,6 +268,21 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Perform the merge and delete variants (default: dry-run).",
     )
+    okf_p = subs.add_parser(
+        "okf-migrate",
+        help="Re-render pre-OKF memory documents through the canonical OKF writer.",
+    )
+    okf_p.add_argument(
+        "workspaces",
+        nargs="+",
+        metavar="<workspace>",
+        help="Dir containing memory/ (or a root to search for nested workspaces).",
+    )
+    okf_p.add_argument(
+        "--apply",
+        action="store_true",
+        help="Rewrite files in place (default: dry-run).",
+    )
     status_p = subs.add_parser(
         "status",
         help="Report whether semantic (vector) recall is live, or degraded to BM25 + graph.",
@@ -266,7 +324,12 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-_SUBCOMMANDS = {"dedup": _dedup, "status": _status, "backend": _backend}
+_SUBCOMMANDS = {
+    "dedup": _dedup,
+    "okf-migrate": _okf_migrate,
+    "status": _status,
+    "backend": _backend,
+}
 
 
 def memory_handler(args: list[str]) -> None:

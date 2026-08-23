@@ -66,6 +66,7 @@ from arcagent.core.errors import (
     ToolError,
     ToolVetoedError,
 )
+from arcagent.core.module_config import validate_module_configs
 from arcagent.core.module_discovery import discover_modules, module_root
 from arcagent.core.prompt_context import build_prompt_resolver
 from arcagent.extension.inspect import inspect_extensions
@@ -255,6 +256,7 @@ __all__ = [
     "tier_rank",
     "tool",
     "trust_bundled_capabilities",
+    "validate_module_configs",
     "validate_skill_folder",
     "verify_file",
     "write_signature",

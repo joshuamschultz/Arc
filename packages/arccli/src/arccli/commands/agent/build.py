@@ -54,6 +54,25 @@ def _run_validation(agent_dir: Path) -> None:
             checks.append(("FAIL", "arcagent.toml: parse error"))
             all_ok = False
             config = {}
+        # Validate module configs against their declared models on the MERGED
+        # view (user-wide overlay + this file) — the exact config the runtime
+        # loads. A key a module's schema no longer accepts otherwise passes
+        # every deploy gate and kills the agent at its first load.
+        try:
+            import arcagent
+
+            merged = arcagent.load_config(config_path)
+            module_errors = arcagent.validate_module_configs(dict(merged.modules))
+        except Exception as exc:
+            checks.append(("FAIL", f"merged config did not validate: {exc}"))
+            all_ok = False
+        else:
+            if module_errors:
+                for error in module_errors:
+                    checks.append(("FAIL", error))
+                all_ok = False
+            else:
+                checks.append(("OK", "module configs match their schemas"))
     else:
         checks.append(("FAIL", "arcagent.toml not found"))
         all_ok = False
