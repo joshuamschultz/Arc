@@ -175,6 +175,65 @@ class TestSignerTrust:
         dlq = await svc.dlq_list()
         assert any(e["meta"].get("dlq_reason") == "bad_signature" for e in dlq)
 
+
+class TestSecurityMetadataTampering:
+    async def test_classification_tampering_is_rejected(self) -> None:
+        backend, registry, audit = await _bootstrap()
+        alice_kp = generate_keypair()
+        await _register(registry, "alice", public_key=alice_kp.public_key.hex())
+        await _register(registry, "bob")
+        sender = MessagingService(
+            backend,
+            registry,
+            audit,
+            signer=MessageSigner("did:arc:local:agent/alice", alice_kp.private_key),
+        )
+        await sender.send(
+            Message(
+                sender="agent://alice",
+                to=["agent://bob"],
+                body="classified",
+            )
+        )
+        stored = await backend.read_stream(STREAMS_COLLECTION, "arc.agent.bob")
+        stored[0]["classification"] = "CUI"
+
+        received = await MessagingService(backend, registry, audit).receive(
+            "arc.agent.bob", "agent://bob"
+        )
+        assert received == []
+        assert any(e["meta"].get("dlq_reason") == "bad_signature" for e in await sender.dlq_list())
+
+    async def test_security_metadata_tampering_is_rejected(self) -> None:
+        backend, registry, audit = await _bootstrap()
+        alice_kp = generate_keypair()
+        await _register(registry, "alice", public_key=alice_kp.public_key.hex())
+        await _register(registry, "bob")
+        sender = MessagingService(
+            backend,
+            registry,
+            audit,
+            signer=MessageSigner("did:arc:local:agent/alice", alice_kp.private_key),
+        )
+        message = Message(
+            sender="agent://alice",
+            to=["agent://bob"],
+            body="urgent",
+            subject="security",
+            priority="high",
+            action_required=True,
+            meta={"classification_basis": "contract"},
+        )
+        await sender.send(message)
+        stored = await backend.read_stream(STREAMS_COLLECTION, "arc.agent.bob")
+        stored[0]["meta"]["classification_basis"] = "public"
+
+        received = await MessagingService(backend, registry, audit).receive(
+            "arc.agent.bob", "agent://bob"
+        )
+        assert received == []
+        assert any(e["meta"].get("dlq_reason") == "bad_signature" for e in await sender.dlq_list())
+
     async def test_signer_without_public_key_rejected(self) -> None:
         backend, registry, audit = await _bootstrap()
         alice_kp = generate_keypair()

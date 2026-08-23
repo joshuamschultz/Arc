@@ -42,6 +42,11 @@ _SIGNED_FIELDS = (
     "body",
     "mentions",
     "refs",
+    # Classification and envelope metadata are security-relevant.  Keeping
+    # them outside the signature lets an intermediary downgrade or alter the
+    # handling policy while preserving an otherwise valid message signature.
+    "classification",
+    "meta",
 )
 
 
