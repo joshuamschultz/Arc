@@ -138,6 +138,19 @@ class TestRetryExhaustion:
             await module.invoke(messages)
         assert inner.invoke.await_count == 7
 
+    async def test_non_rate_limit_honors_its_own_larger_budget(self, messages):
+        config = {
+            "max_retries": 5,
+            "rate_limit_max_retries": 1,
+            "backoff_base_seconds": 0.01,
+            "max_wait_seconds": 1.0,
+        }
+        inner = _make_inner([_api_error(500)] * 6)
+        module = RetryModule(config, inner)
+        with pytest.raises(ArcLLMAPIError):
+            await module.invoke(messages)
+        assert inner.invoke.await_count == 6
+
     async def test_rate_limit_succeeds_within_higher_budget(self, messages):
         """429 errors succeed if they resolve within rate_limit_max_retries."""
         config = {
@@ -381,8 +394,8 @@ class TestRetryAfterHeader:
         mock_sleep.assert_awaited_once_with(5.0)
 
     @patch("arcllm.modules.retry.asyncio.sleep", new_callable=AsyncMock)
-    async def test_retry_after_not_capped_for_429(self, mock_sleep, messages):
-        """429 Retry-After is NOT capped — provider knows when capacity returns."""
+    async def test_retry_after_is_capped_for_429(self, mock_sleep, messages):
+        """429 Retry-After cannot outlive the configured retry wait ceiling."""
         config = {
             "max_retries": 1,
             "rate_limit_max_retries": 2,
@@ -396,8 +409,7 @@ class TestRetryAfterHeader:
         inner = _make_inner([error, _OK_RESPONSE])
         module = RetryModule(config, inner)
         await module.invoke(messages)
-        # Full 10.0s honored, not capped to 3.0
-        mock_sleep.assert_awaited_once_with(10.0)
+        mock_sleep.assert_awaited_once_with(3.0)
 
     @patch("arcllm.modules.retry.asyncio.sleep", new_callable=AsyncMock)
     async def test_retry_after_capped_for_non_429(self, mock_sleep, messages):

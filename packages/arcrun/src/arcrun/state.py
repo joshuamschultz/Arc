@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -19,6 +21,14 @@ from arcrun.registry import ToolRegistry
 
 #: How much of a held message's text rides its ``message.injected`` audit event.
 _HELD_PREVIEW_LEN = 120
+
+
+class RunDeadlineExceededError(TimeoutError):
+    """Raised when a run reaches its absolute monotonic deadline."""
+
+
+class RunWorkCancelledError(Exception):
+    """Raised inside the loop when operator cancellation interrupts active work."""
 
 
 @dataclass(frozen=True)
@@ -90,6 +100,8 @@ class RunState:
     # arcrun records but does not authorize — that policy call is the caller's.
     cancelled_by: str = ""
     cancel_reason: str = ""
+    deadline: float | None = None
+    active_work: set[asyncio.Future[Any]] = field(default_factory=set)
     steer_queue: asyncio.Queue[Injection] = field(default_factory=lambda: asyncio.Queue(maxsize=16))
     followup_queue: asyncio.Queue[Injection] = field(
         default_factory=lambda: asyncio.Queue(maxsize=16)
@@ -149,6 +161,54 @@ class RunState:
     runaway_count: int = 0
     consecutive_tool_errors: int = 0
     stream_event: Callable[[str, dict[str, Any]], None] | None = None
+
+    def remaining_seconds(self) -> float | None:
+        """Return remaining run budget or raise on expiry."""
+        if self.deadline is None:
+            return None
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise RunDeadlineExceededError("run deadline exceeded")
+        return remaining
+
+    async def await_work(self, awaitable: Awaitable[Any]) -> Any:
+        """Await cancellable work inside the one absolute run deadline."""
+        work = asyncio.ensure_future(awaitable)
+        cancelled = asyncio.create_task(self.cancel_event.wait())
+        self.active_work.add(work)
+        try:
+            done, _pending = await asyncio.wait(
+                {work, cancelled},
+                timeout=self.remaining_seconds(),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if work in done:
+                if self.cancel_event.is_set() and work.cancelled():
+                    raise RunWorkCancelledError("run work cancelled")
+                return work.result()
+            work.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await work
+            if cancelled in done:
+                raise RunWorkCancelledError("run work cancelled")
+            raise RunDeadlineExceededError("run deadline exceeded")
+        finally:
+            if not work.done():
+                work.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await work
+            cancelled.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await cancelled
+            self.active_work.discard(work)
+
+    async def cancel_active_work(self) -> None:
+        """Cancel and await all active child operations."""
+        active = tuple(self.active_work)
+        for work in active:
+            work.cancel()
+        if active:
+            await asyncio.gather(*active, return_exceptions=True)
 
     # -- steering: held messages, entered at turn boundaries --------------------
     # The whole of steering lives here, on the state every strategy already holds,

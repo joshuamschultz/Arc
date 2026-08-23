@@ -223,7 +223,12 @@ async def select_strategy(
     from arcrun.strategies.react import accumulate_usage
 
     try:
-        response = await model.invoke(selection_messages, tools=[select_tool])
+        invoke_kwargs: dict[str, Any] = {}
+        if state.deadline is not None:
+            invoke_kwargs["_arc_deadline"] = state.deadline
+        response = await state.await_work(
+            model.invoke(selection_messages, tools=[select_tool], **invoke_kwargs)
+        )
         # Choosing a strategy costs real tokens and real money. Leaving that
         # uncounted would understate every run's usage and hide the spend from
         # the budget breaker, which reads these same counters (LLM10).

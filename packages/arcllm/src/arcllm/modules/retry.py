@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import random
+import time
 import uuid
 from typing import Any
 
@@ -66,12 +67,14 @@ class RetryModule(BaseModule):
 
         last_error: Exception | None = None
         effective_max = self._max_retries
+        deadline = kwargs.pop("_arc_deadline", None)
 
         # Generate a group ID to link all attempts in this retry sequence
         group_id = uuid.uuid4().hex
 
         with self._span("arcllm.retry") as retry_span:
-            for attempt in range(self._rate_limit_max_retries + 1):
+            attempt = 0
+            while True:
                 attrs = {"arcllm.retry.attempt": attempt}
                 # Inject retry metadata so downstream modules (TelemetryModule)
                 # can record which attempt this is and link retry sequences.
@@ -91,7 +94,9 @@ class RetryModule(BaseModule):
                         # Use higher retry budget for rate limits (429)
                         effective_max = self._effective_max_retries(e)
                         if attempt < effective_max:
-                            wait = self._calculate_wait(attempt, e)
+                            wait = self._calculate_wait(attempt, e, deadline=deadline)
+                            if wait <= 0:
+                                break
                             logger.warning(
                                 "Retry attempt %d/%d after %.2fs: %s",
                                 attempt + 1,
@@ -102,10 +107,13 @@ class RetryModule(BaseModule):
                             await asyncio.sleep(wait)
                         else:
                             break
+                attempt += 1
 
             logger.error("All %d retries exhausted: %s", effective_max, last_error)
             retry_span.set_status(StatusCode.ERROR)
-            raise last_error  # type: ignore[misc]  # reason: last_error is Exception | None but the loop above guarantees it's set when we reach here (effective_max > 0)
+            if last_error is None:
+                raise RuntimeError("retry exhausted without a retryable failure")
+            raise last_error
 
     def _effective_max_retries(self, error: Exception) -> int:
         """Return retry budget based on error type.
@@ -125,7 +133,9 @@ class RetryModule(BaseModule):
             return True
         return False
 
-    def _calculate_wait(self, attempt: int, error: Exception | None = None) -> float:
+    def _calculate_wait(
+        self, attempt: int, error: Exception | None = None, *, deadline: float | None = None
+    ) -> float:
         """Calculate wait time with exponential backoff + proportional jitter.
 
         Honors Retry-After header from ArcLLMAPIError when present.
@@ -134,11 +144,11 @@ class RetryModule(BaseModule):
         For other errors, retry-after is capped at max_wait_seconds.
         """
         if isinstance(error, ArcLLMAPIError) and error.retry_after is not None:
-            # Rate limits: trust the provider's retry-after without capping
-            if error.status_code == 429:
-                return error.retry_after
-            return min(error.retry_after, self._max_wait)
-        backoff = self._backoff_base * (2**attempt)
-        jitter = random.uniform(0, backoff)  # noqa: S311 — non-cryptographic jitter
-        wait: float = min(backoff + jitter, self._max_wait)
+            wait = min(error.retry_after, self._max_wait)
+        else:
+            backoff = self._backoff_base * (2**attempt)
+            jitter = random.uniform(0, backoff)  # noqa: S311 — non-cryptographic jitter
+            wait = min(backoff + jitter, self._max_wait)
+        if deadline is not None:
+            return max(0.0, min(wait, deadline - time.monotonic()))
         return wait

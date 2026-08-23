@@ -94,9 +94,11 @@ async def execute_tool_call(
     tool_start = time.time()
     try:
         if timeout is not None:
-            result = await asyncio.wait_for(tool_def.execute(tc.arguments, ctx), timeout=timeout)
+            result = await asyncio.wait_for(
+                state.await_work(tool_def.execute(tc.arguments, ctx)), timeout=timeout
+            )
         else:
-            result = await tool_def.execute(tc.arguments, ctx)
+            result = await state.await_work(tool_def.execute(tc.arguments, ctx))
     except TimeoutError:
         bus.emit(
             "tool.error",

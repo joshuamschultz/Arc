@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import logging
@@ -158,7 +157,7 @@ async def _resolve_approval(tc: Any, state: RunState) -> bool:
     if state.approval_provider is None or tc.name not in state.approval_required_tools:
         return True
     state.event_bus.emit("approval.required", {"tool": tc.name, "tool_call_id": tc.id})
-    grant = await state.approval_provider(tc)
+    grant = await state.await_work(state.approval_provider(tc))
     outcome = "granted" if grant is not None else "denied"
     state.event_bus.emit(f"approval.{outcome}", {"tool": tc.name, "tool_call_id": tc.id})
     return grant is not None
@@ -276,13 +275,15 @@ async def react_loop(
         tools = state.registry.list_schemas()
         # Force tool calling on first turn only, then let LLM decide.
         invoke_kwargs: dict[str, Any] = {}
+        if state.deadline is not None:
+            invoke_kwargs["_arc_deadline"] = state.deadline
         if state.turn_count == 0 and state.tool_choice is not None:
             invoke_kwargs["tool_choice"] = state.tool_choice
         call_start = time.time()
         response = (
             await _stream_model_call(model, messages, tools, state, invoke_kwargs)
             if state.stream_event is not None
-            else await model.invoke(messages, tools=tools, **invoke_kwargs)
+            else await state.await_work(model.invoke(messages, tools=tools, **invoke_kwargs))
         )
         if response is None:
             return _halt_on_cancel(state)
@@ -438,30 +439,16 @@ async def _stream_model_call(
         model=str(getattr(model, "model_name", type(model).__name__))
     )
     if not hasattr(model, "invoke_stream"):
-        return cast(arcllm.LLMResponse, await model.invoke(messages, tools=tools, **invoke_kwargs))
+        return cast(
+            arcllm.LLMResponse,
+            await state.await_work(model.invoke(messages, tools=tools, **invoke_kwargs)),
+        )
     accepted = False
     iterator = model.invoke_stream(messages, tools=tools, **invoke_kwargs).__aiter__()
     try:
         while True:
-            next_delta = asyncio.create_task(anext(iterator))
-            cancelled = asyncio.create_task(state.cancel_event.wait())
-            done, _ = await asyncio.wait(
-                {next_delta, cancelled}, return_when=asyncio.FIRST_COMPLETED
-            )
-            if cancelled in done:
-                next_delta.cancel()
-                try:
-                    await next_delta
-                except asyncio.CancelledError:
-                    pass
-                return None
-            cancelled.cancel()
             try:
-                await cancelled
-            except asyncio.CancelledError:
-                pass
-            try:
-                delta = next_delta.result()
+                delta = await state.await_work(anext(iterator))
             except StopAsyncIteration:
                 break
             accepted = True
@@ -471,7 +458,10 @@ async def _stream_model_call(
     except AttributeError:
         if accepted:
             raise
-        return cast(arcllm.LLMResponse, await model.invoke(messages, tools=tools, **invoke_kwargs))
+        return cast(
+            arcllm.LLMResponse,
+            await state.await_work(model.invoke(messages, tools=tools, **invoke_kwargs)),
+        )
     finally:
         await iterator.aclose()
     return accumulator.build()

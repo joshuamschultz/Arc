@@ -18,7 +18,7 @@ from arcrun.dynamic.seal import RunSeal
 from arcrun.events import EventBus
 from arcrun.registry import ToolRegistry
 from arcrun.sandbox import Sandbox
-from arcrun.state import Injection, RunState
+from arcrun.state import Injection, RunDeadlineExceededError, RunState, RunWorkCancelledError
 from arcrun.strategies import STRATEGIES, available_strategies, select_strategy
 from arcrun.types import LoopResult, SandboxConfig
 
@@ -56,6 +56,7 @@ def _build_state(
     work_dir: Path | None = None,
     seal: RunSeal | None = None,
     stream_event: Callable[[str, dict[str, Any]], None] | None = None,
+    deadline: float | None = None,
 ) -> tuple[RunState, Sandbox]:
     """Shared setup for run() and run_async()."""
     # A caller (e.g. the task dispatcher) may pin the run id so it can link the
@@ -105,6 +106,7 @@ def _build_state(
         max_repeat=max_repeat,
         max_consecutive_errors=max_consecutive_errors,
         stream_event=stream_event,
+        deadline=deadline,
     )
 
     # SPEC-043 REQ-003/004 — deterministic resume. The registry is rebuilt from
@@ -163,6 +165,7 @@ async def run(
     seal: RunSeal | None = None,
     on_handle: Callable[[RunHandle], None] | None = None,
     stream_event: Callable[[str, dict[str, Any]], None] | None = None,
+    deadline: float | None = None,
 ) -> LoopResult:
     """Blocking entry point. Runs until task complete, a breaker trip, or resume.
 
@@ -202,6 +205,7 @@ async def run(
         work_dir=work_dir,
         seal=seal,
         stream_event=stream_event,
+        deadline=deadline,
     )
     if on_handle is not None:
         on_handle(handle)
@@ -323,6 +327,7 @@ async def run_async(
     work_dir: Path | None = None,
     seal: RunSeal | None = None,
     stream_event: Callable[[str, dict[str, Any]], None] | None = None,
+    deadline: float | None = None,
 ) -> RunHandle:
     """Non-blocking entry point. Returns handle for steering."""
     state, sandbox_obj = _build_state(
@@ -353,6 +358,7 @@ async def run_async(
         work_dir=work_dir,
         seal=seal,
         stream_event=stream_event,
+        deadline=deadline,
     )
 
     # ``create_task`` snapshots the current context, so binding the correlation
@@ -386,10 +392,18 @@ async def _select_then_run(
     "stale"): the single largest reason runs did not finish. The terminal here
     carries an ``error`` field so the run reads as failed, not silently ok.
     """
-    strategy_fn = await _select_and_emit(allowed_strategies, model, state)
     try:
+        strategy_fn = await _select_and_emit(allowed_strategies, model, state)
         result: LoopResult = await strategy_fn(model, state, sandbox_obj, max_turns)
         return result
+    except RunWorkCancelledError:
+        from arcrun.strategies.react import _halt_on_cancel
+
+        return _halt_on_cancel(state)
+    except RunDeadlineExceededError:
+        from arcrun.strategies.react import _halt_on_breach
+
+        return _halt_on_breach(state, "deadline")
     except BaseException as exc:
         # A strategy that unwinds early — a model error after retries, a security
         # refusal (SealBroken), a cancel, a bug — otherwise leaves NO terminal and
@@ -397,23 +411,24 @@ async def _select_then_run(
         # did not finish. Emit the universal terminal here IF the strategy did not,
         # then RE-RAISE so the exception still reaches the caller and security
         # refusals still refuse. The terminal fires exactly once either way.
-        if not any(e.type == "loop.complete" for e in state.event_bus.events):
-            _logger.warning(
-                "strategy unwound without a terminal (%s); emitting one so the run finishes",
-                type(exc).__name__,
-            )
-            state.event_bus.emit(
-                "loop.complete",
-                {
-                    "content": None,
-                    "turns": state.turn_count,
-                    "tool_calls": state.tool_calls_made,
-                    "tokens": dict(state.tokens_used),
-                    "cost": state.cost_usd,
-                    "error": type(exc).__name__,
-                    "error_message": str(exc)[:300],
-                },
-            )
+        if any(e.type == "loop.complete" for e in state.event_bus.events):
+            raise
+        _logger.warning(
+            "strategy unwound without a terminal (%s); emitting one so the run finishes",
+            type(exc).__name__,
+        )
+        state.event_bus.emit(
+            "loop.complete",
+            {
+                "content": None,
+                "turns": state.turn_count,
+                "tool_calls": state.tool_calls_made,
+                "tokens": dict(state.tokens_used),
+                "cost": state.cost_usd,
+                "error": type(exc).__name__,
+                "error_message": str(exc)[:300],
+            },
+        )
         raise
 
 
@@ -463,6 +478,7 @@ class RunHandle:
                 except asyncio.QueueEmpty:
                     break
         self._state.cancel_event.set()
+        await self._state.cancel_active_work()
 
     async def result(self) -> LoopResult:
         """Await completion. Returns final result."""

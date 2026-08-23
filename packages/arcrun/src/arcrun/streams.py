@@ -22,9 +22,10 @@ This module is pure arcrun — no LLM calls, no agent state.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import uuid
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -201,6 +202,8 @@ async def run_stream(
     work_dir: Path | None = None,
     seal: RunSeal | None = None,
     on_handle: Callable[[RunHandle], None] | None = None,
+    deadline: float | None = None,
+    delivery_queue_size: int = 128,
 ) -> AsyncIterator[StreamEvent]:
     """Run the agent loop and stream events as they occur.
 
@@ -258,6 +261,9 @@ async def run_stream(
     Returns:
         An async iterator of StreamEvent objects.
     """
+    if delivery_queue_size < 1:
+        raise ValueError("delivery_queue_size must be >= 1")
+
     # Stable run ID for audit correlation. A caller may pin it (the task
     # dispatcher does, so the task links its run before the loop starts); when
     # pinned it is also the loop's id, unifying the stream audit and the loop's
@@ -282,11 +288,33 @@ async def run_stream(
     )
 
     # Queue bridges the synchronous EventBus callbacks into the async iterator
-    queue: asyncio.Queue[StreamEvent | None] = asyncio.Queue()
+    queue: asyncio.Queue[StreamEvent | None] = asyncio.Queue(maxsize=delivery_queue_size)
+    active_handle: RunHandle | None = None
+    accepted_stream_output = False
+    cancellation_tasks: set[asyncio.Task[None]] = set()
+
+    def _enqueue(event: StreamEvent | None) -> None:
+        nonlocal active_handle
+        try:
+            queue.put_nowait(event)
+        except asyncio.QueueFull:
+            if event is None:
+                with contextlib.suppress(asyncio.QueueEmpty):
+                    queue.get_nowait()
+                queue.put_nowait(None)
+                return
+            if active_handle is not None:
+                cancellation = asyncio.create_task(
+                    active_handle.cancel("did:arc:system:stream", "stream consumer too slow")
+                )
+                cancellation_tasks.add(cancellation)
+                cancellation.add_done_callback(cancellation_tasks.discard)
 
     def _on_stream_event(kind: str, data: dict[str, Any]) -> None:
+        nonlocal accepted_stream_output
         if kind == "text":
-            queue.put_nowait(TokenEvent(text=str(data["text"])))
+            accepted_stream_output = True
+            _enqueue(TokenEvent(text=str(data["text"])))
 
     def _on_event(event: Event) -> None:
         """Bridge EventBus events to stream queue.
@@ -298,7 +326,7 @@ async def run_stream(
             on_event(event)
         if event.type == "tool.start":
             name = str(event.data.get("name", ""))
-            queue.put_nowait(ToolStartEvent(name=name))
+            _enqueue(ToolStartEvent(name=name))
             # Emit tool_start UI event for observability
             _emit_ui_run_event(
                 reporter=ui_reporter,
@@ -307,7 +335,7 @@ async def run_stream(
             )
         elif event.type == "tool.end":
             name = str(event.data.get("name", ""))
-            queue.put_nowait(ToolEndEvent(name=name))
+            _enqueue(ToolEndEvent(name=name))
             # Emit tool_end UI event for observability
             _emit_ui_run_event(
                 reporter=ui_reporter,
@@ -321,6 +349,14 @@ async def run_stream(
     loop_future: asyncio.Future[LoopResult] = asyncio.get_event_loop().create_future()
 
     async def _run_loop() -> None:
+        nonlocal active_handle
+
+        def _on_handle(handle: RunHandle) -> None:
+            nonlocal active_handle
+            active_handle = handle
+            if on_handle is not None:
+                on_handle(handle)
+
         try:
             # ``on_handle`` is forwarded to the blocking entry, which exposes its
             # live RunHandle before awaiting the result — the seam that makes this
@@ -353,15 +389,30 @@ async def run_stream(
                 run_id=run_id,
                 work_dir=work_dir,
                 seal=seal,
-                on_handle=on_handle,
+                on_handle=_on_handle,
                 stream_event=_on_stream_event,
+                deadline=deadline,
             )
             loop_future.set_result(result)
-        except Exception as exc:  # reason: fail-open — continue
-            loop_future.set_exception(exc)
+        except Exception as exc:  # reason: partial stream must have a typed terminal
+            if accepted_stream_output:
+                loop_future.set_result(
+                    LoopResult(
+                        content="Run failed after partial streamed output.",
+                        turns=0,
+                        tool_calls_made=0,
+                        tokens_used={},
+                        strategy_used="react",
+                        cost_usd=0.0,
+                        events=[],
+                        completion_payload={"status": "failed", "error": "provider_error"},
+                    )
+                )
+            else:
+                loop_future.set_exception(exc)
         finally:
             # Signal the consumer that the run is done
-            queue.put_nowait(None)
+            _enqueue(None)
 
     return _stream_generator(
         queue,
@@ -370,7 +421,14 @@ async def run_stream(
         stream_run_id=stream_run_id,
         audit_sink=audit_sink,
         ui_reporter=ui_reporter,
+        on_abandon=lambda: _cancel_stream(active_handle),
     )
+
+
+async def _cancel_stream(handle: RunHandle | None) -> None:
+    """Stop a live loop when its async stream consumer abandons it."""
+    if handle is not None:
+        await handle.cancel("did:arc:system:stream", "stream consumer disconnected")
 
 
 async def _stream_generator(
@@ -381,78 +439,75 @@ async def _stream_generator(
     stream_run_id: str,
     audit_sink: Any | None,
     ui_reporter: Any | None,
+    on_abandon: Callable[[], Awaitable[None]],
 ) -> AsyncIterator[StreamEvent]:
     """Yield StreamEvents from the queue until None sentinel, then TurnEndEvent."""
     sequence = 0
     saw_token = False
-    while True:
-        item = await queue.get()
-        if item is None:
-            break
+    try:
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            sequence += 1
+            item.sequence = sequence
+            item.run_id = stream_run_id
+            saw_token = saw_token or isinstance(item, TokenEvent)
+            yield item
+
+        # Await the background task to surface any exceptions
+        await task
+
+        loop_result = loop_future.result()
+        content = loop_result.content or ""
+
+        # A strategy that does not reach the model streaming seam still exposes its
+        # final content as one correct fallback event.
+        if content and not saw_token:
+            sequence += 1
+            yield TokenEvent(text=content, sequence=sequence, run_id=stream_run_id)
+            _emit_ui_run_event(
+                reporter=ui_reporter,
+                event_type="stream_token",
+                data={"text": content, "stream_run_id": stream_run_id},
+            )
+
         sequence += 1
-        item.sequence = sequence
-        item.run_id = stream_run_id
-        saw_token = saw_token or isinstance(item, TokenEvent)
-        yield item
+        turn_end = TurnEndEvent(
+            final_text=content,
+            turns=loop_result.turns,
+            tool_calls_made=loop_result.tool_calls_made,
+            cost_usd=loop_result.cost_usd,
+            tokens_used=dict(loop_result.tokens_used),
+            completion_payload=loop_result.completion_payload,
+            completion_tool=loop_result.completion_tool,
+            sequence=sequence,
+            run_id=stream_run_id,
+        )
+        yield turn_end
 
-    # Await the background task to surface any exceptions
-    await task
-
-    loop_result = loop_future.result()
-    content = loop_result.content or ""
-
-    # A strategy that does not reach the model streaming seam still exposes its
-    # final content as one correct fallback event.
-    # per-word TokenEvents from already-complete content (fake progressive
-    # tokens). For an agentic harness the deliverable is the output, not a typing
-    # effect, so we emit the real final content as ONE block. The structured
-    # events (tool start/end, turn end) and collect()/RunResult contract are
-    # unchanged — one-shot consumers keep working. Real per-token streaming
-    # stays only in ``stream_llm_response`` (out of loop, touches no gate).
-    if content and not saw_token:
-        sequence += 1
-        yield TokenEvent(text=content, sequence=sequence, run_id=stream_run_id)
-        _emit_ui_run_event(
-            reporter=ui_reporter,
-            event_type="stream_token",
-            data={"text": content, "stream_run_id": stream_run_id},
+        _emit_stream_audit(
+            action="stream.end",
+            run_id=stream_run_id,
+            target=f"stream:{stream_run_id[:8]}",
+            outcome="success",
+            extra={"turns": loop_result.turns, "tool_calls_made": loop_result.tool_calls_made},
+            sink=audit_sink,
         )
 
-    sequence += 1
-    turn_end = TurnEndEvent(
-        final_text=content,
-        turns=loop_result.turns,
-        tool_calls_made=loop_result.tool_calls_made,
-        cost_usd=loop_result.cost_usd,
-        tokens_used=dict(loop_result.tokens_used),
-        completion_payload=loop_result.completion_payload,
-        completion_tool=loop_result.completion_tool,
-        sequence=sequence,
-        run_id=stream_run_id,
-    )
-    yield turn_end
-
-    # Emit stream.end AuditEvent after TurnEndEvent is yielded
-    _emit_stream_audit(
-        action="stream.end",
-        run_id=stream_run_id,
-        target=f"stream:{stream_run_id[:8]}",
-        outcome="success",
-        extra={"turns": loop_result.turns, "tool_calls_made": loop_result.tool_calls_made},
-        sink=audit_sink,
-    )
-
-    # Emit stream_end UI event after audit so all bookkeeping is complete
-    _emit_ui_run_event(
-        reporter=ui_reporter,
-        event_type="stream_end",
-        data={
-            "stream_run_id": stream_run_id,
-            "turns": loop_result.turns,
-            "tool_calls_made": loop_result.tool_calls_made,
-            "cost_usd": loop_result.cost_usd,
-        },
-    )
+        _emit_ui_run_event(
+            reporter=ui_reporter,
+            event_type="stream_end",
+            data={
+                "stream_run_id": stream_run_id,
+                "turns": loop_result.turns,
+                "tool_calls_made": loop_result.tool_calls_made,
+                "cost_usd": loop_result.cost_usd,
+            },
+        )
+    finally:
+        if not task.done():
+            await on_abandon()
 
 
 _logger = logging.getLogger("arcrun.streams")

@@ -103,7 +103,9 @@ def make_task_complete_tool() -> Tool:
     )
 
 
-BudgetBreachReason = Literal["max_turns", "max_cost", "max_tokens", "runaway_loop", "error_cascade"]
+BudgetBreachReason = Literal[
+    "max_turns", "max_cost", "max_tokens", "runaway_loop", "error_cascade", "deadline"
+]
 
 _BREACH_SUMMARIES: dict[str, str] = {
     "max_turns": "Turn limit reached before task completed.",
@@ -111,7 +113,13 @@ _BREACH_SUMMARIES: dict[str, str] = {
     "max_tokens": "Token limit reached before task completed.",
     "runaway_loop": "Repeated identical tool call detected — halted as a runaway loop.",
     "error_cascade": "Consecutive tool failures exceeded the cascade threshold — halted.",
+    "deadline": "Run deadline reached before task completed.",
 }
+
+
+def make_failure_args(*, error: str, summary: str) -> TaskCompleteArgs:
+    """Build a typed terminal payload for an unrecoverable run fault."""
+    return TaskCompleteArgs(status="failed", summary=summary, error=error)
 
 
 def make_budget_breach_args(*, reason: BudgetBreachReason) -> TaskCompleteArgs:
@@ -146,5 +154,6 @@ __all__ = [
     "TaskStatus",
     "make_budget_breach_args",
     "make_cancel_args",
+    "make_failure_args",
     "make_task_complete_tool",
 ]
