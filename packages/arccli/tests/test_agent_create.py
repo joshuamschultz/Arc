@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from arcokf import validate
 
 _ARC = Path(__file__).parent.parent.parent.parent / ".venv" / "bin" / "arc"
 
@@ -160,6 +161,13 @@ class TestCreate:
         context = tmp_path / "my-agent" / "workspace" / "context.md"
         assert context.exists()
         assert len(context.read_text().strip()) > 0
+
+    def test_create_root_index_is_reserved_and_not_memory_index(self, tmp_path):
+        _arc("agent", "create", "my-agent", "--dir", str(tmp_path))
+        workspace = tmp_path / "my-agent" / "workspace"
+        index = workspace / "index.md"
+        assert validate(index.read_text(encoding="utf-8"), path="index.md").valid
+        assert not (workspace / "memory").exists()
 
     def test_create_calculator_capability(self, tmp_path):
         _arc("agent", "create", "my-agent", "--dir", str(tmp_path))

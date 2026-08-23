@@ -18,6 +18,7 @@ from itertools import combinations
 from pathlib import Path
 from typing import Protocol
 
+from arcmemory.collection_index import CollectionIndexStore
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
 from arcmemory.degrade import warn_once
@@ -139,6 +140,11 @@ class IndexRebuilder:
         orphaned abstraction-space vector cannot outlive the rebuild that is meant to
         fix it (the next ``trigger_index`` re-embeds the current insight set).
         """
+        # The collection index is a derived routing artifact, so its owning
+        # service refreshes it before this disposable SQLite cache is rebuilt.
+        # A tampered file is replaced from the canonical document inventory;
+        # retrieval never repairs it on its own.
+        CollectionIndexStore(self._mem_dir).sync()
         conn = self._db.connect()
         conn.execute("DELETE FROM fts_chunks")
         conn.execute("DELETE FROM edges")

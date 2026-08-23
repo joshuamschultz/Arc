@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from arcmemory.collection_index import refresh_memory_document
 from arcmemory.mdfile import atomic_write_text, parse_document, render_document
 from arcmemory.slug import canonical_slug
 from arcmemory.types import Confidence, Insight
@@ -48,6 +49,7 @@ class InsightStore:
         body = f"# {insight.id}\n\n## Statement\n{insight.statement}"
         path = self.path_for(insight.id)
         atomic_write_text(path, render_document(frontmatter, body))
+        refresh_memory_document(path)
         return path
 
     def read(self, insight_id: str) -> Insight | None:

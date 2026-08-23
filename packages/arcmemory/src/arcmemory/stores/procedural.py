@@ -23,6 +23,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
+from arcmemory.collection_index import CollectionIndexStore, refresh_memory_document
 from arcmemory.mdfile import atomic_write_text, parse_document, render_document
 from arcmemory.slug import canonical_slug
 from arcmemory.stores.semantic import extract_wiki_links
@@ -196,7 +197,9 @@ def merge_procedures(
         revisions += other.revisions
         if len(other.when_to_use) > len(when_to_use):
             when_to_use = other.when_to_use
-        store.path_for(slug).unlink(missing_ok=True)
+        removed = store.path_for(slug)
+        removed.unlink(missing_ok=True)
+        CollectionIndexStore(removed.parent.parent).remove_document(removed)
 
     merged = Procedure(
         slug=target.slug,
@@ -242,6 +245,7 @@ class ProceduralStore:
         body = f"# {procedure.title}\n\n{when}## Steps\n{steps}"
         path = self.path_for(procedure.slug)
         atomic_write_text(path, render_document(frontmatter, body))
+        refresh_memory_document(path)
         return path
 
     def upsert(

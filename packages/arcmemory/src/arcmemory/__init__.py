@@ -28,6 +28,7 @@ from arcmemory.agent_consolidate import (
 from arcmemory.arcllm_seam import ArcLLMDistiller, ArcLLMEmbedder
 from arcmemory.brain import ArcMemoryBrain
 from arcmemory.capture import FastCapture
+from arcmemory.collection_index import CollectionIndexStore
 from arcmemory.config import MemoryConfig, Tier
 from arcmemory.consolidate import Consolidator
 from arcmemory.db import MemoryDB, sqlite_vec_loadable
@@ -117,6 +118,7 @@ __all__ = [
     "Confidence",
     "ConsolidationResult",
     "Consolidator",
+    "CollectionIndexStore",
     "CrossSessionVisibility",
     "DedupReport",
     "Distiller",

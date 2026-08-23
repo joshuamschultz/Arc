@@ -18,9 +18,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from arcokf import validate_collection_index
 from arctrust.audit import AuditSink
 from pydantic import BaseModel, Field
 
+from arcmemory.collection_index import CollectionIndexStore
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
 from arcmemory.index.backend import IndexBackend, open_index_backend
@@ -97,6 +99,37 @@ class DocIndex:
                 embedding=embeddings[i] if embeddings is not None else None,
             )
         return len(chunks)
+
+    async def index_collection(
+        self,
+        source_id: str,
+        agent_did: str,
+        collection_root: Path,
+        chunks: list[SourceChunk],
+    ) -> int:
+        """Commit a source inventory and index its verified routing document."""
+        index_store = CollectionIndexStore(collection_root)
+        self.sync_collection_index(collection_root)
+        index_path = index_store.index_path
+        if index_path.exists() and validate_collection_index(index_path).valid:
+            index_chunk = SourceChunk(
+                chunk_id=f"index:{source_id}",
+                source_path=index_path.as_posix(),
+                text=index_path.read_text(encoding="utf-8"),
+                classification="",
+                mtime=index_path.stat().st_mtime,
+            )
+            chunks = [*chunks, index_chunk]
+        return await self.index_source(source_id, agent_did, chunks)
+
+    def sync_collection_index(self, collection_root: Path) -> int:
+        """Refresh a connected source's reserved index from its OKF inventory.
+
+        Connector polling remains outside arcmemory; a source adapter calls this
+        after it has committed its canonical documents.  The write is atomic and
+        readers verify the resulting artifact before indexing it.
+        """
+        return CollectionIndexStore(collection_root).sync()
 
     async def document_search(
         self,

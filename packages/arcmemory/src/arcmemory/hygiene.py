@@ -25,6 +25,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
+from arcmemory.collection_index import CollectionIndexStore
 from arcmemory.mdfile import atomic_write_text, parse_document, render_document
 from arcmemory.security import dominating_classification
 from arcmemory.slug import canonical_slug
@@ -272,6 +273,7 @@ def _dedup_store(mem_dir: Path, store: str, *, apply: bool) -> StoreReport:
             atomic_write_text(target, build(canonical, paths))
             for path in variants:
                 path.unlink(missing_ok=True)
+                CollectionIndexStore(path.parent.parent).remove_document(path)
         merges.append(
             GroupMerge(canonical=canonical, sources=[p.name for p in paths], deleted=len(variants))
         )

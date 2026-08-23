@@ -15,6 +15,7 @@ from collections.abc import Iterable, Iterator
 from datetime import datetime
 from pathlib import Path
 
+from arcokf import validate_collection_index
 from pydantic import BaseModel
 
 from arcmemory.mdfile import parse_document
@@ -43,6 +44,25 @@ def iter_source_chunks(
     mem_dir: Path, workspace: Path, events: Iterable[Event]
 ) -> Iterator[SourceChunk]:
     """Yield every curated file chunk (fixed order) then every raw-event chunk."""
+    # ``index.md`` is a derived routing artifact, never part of the inventory it
+    # describes.  A reader may use it only after the owning collection service has
+    # produced a canonical, digest-verified file; tampering therefore degrades to
+    # ordinary document recall instead of becoming trusted instructions.
+    collection_index = mem_dir / "index.md"
+    if validate_collection_index(collection_index, mem_dir).valid:
+        index_text = collection_index.read_text(encoding="utf-8")
+        yield SourceChunk(
+            chunk_id="file:" + collection_index.relative_to(workspace).as_posix(),
+            source_path=collection_index.relative_to(workspace).as_posix(),
+            # Keep the machine comments on disk for verification, but index the
+            # compact human routing lines so one large collection cannot consume
+            # the entire bounded recall budget as a single chunk.
+            text="\n".join(
+                line for line in index_text.splitlines() if line.startswith(("# ", "- ["))
+            ),
+            classification="",
+            mtime=collection_index.stat().st_mtime,
+        )
     for subdir in _SOURCE_SUBDIRS:
         directory = mem_dir / subdir
         if not directory.exists():

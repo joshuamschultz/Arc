@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from arcmemory.collection_index import refresh_memory_document
 from arcmemory.mdfile import atomic_write_text, parse_document, render_document
 from arcmemory.security import dominating_classification
 from arcmemory.slug import canonical_slug
@@ -59,6 +60,7 @@ class EventStore:
         }
         path = self.path_for(event.slug)
         atomic_write_text(path, render_document(frontmatter, _render_body(event)))
+        refresh_memory_document(path)
         return path
 
     def upsert(

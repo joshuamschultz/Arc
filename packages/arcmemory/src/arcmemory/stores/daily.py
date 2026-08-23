@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from arcmemory.collection_index import refresh_memory_document
 from arcmemory.mdfile import atomic_write_text, parse_document, render_document
 from arcmemory.security import dominating_classification
 from arcmemory.types import DaySummary, Event
@@ -80,6 +81,7 @@ class DailyNotesStore:
         path = self.path_for(summary.day)
         frontmatter = {"day": summary.day, "classification": summary.classification}
         atomic_write_text(path, render_document(frontmatter, _render_body(summary)))
+        refresh_memory_document(path)
         return path
 
     def days(self) -> list[str]:

@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 import arcagent
-from arcokf import OKFValidationError, validate
+from arcokf import OKFValidationError, render_collection_index, validate
 from arctrust.paths import dotenv_file, env_file
 
 from arccli.commands._arcllm_surface import (
@@ -94,6 +94,8 @@ _DEFAULT_CONTEXT = """\
 
 Working memory for the agent. Updated during conversations.
 """
+
+_DEFAULT_INDEX = render_collection_index(())
 
 _DEFAULT_CONFIG = """\
 # ArcAgent config — everything EXCEPT LLM-wire (arcllm.toml) and the agentic
@@ -941,6 +943,13 @@ def _scaffold_workspace(agent_dir: Path, name: str) -> None:
             raise OKFValidationError(result.diagnostics)
         context_path.write_text(_DEFAULT_CONTEXT)
 
+    # This root index belongs to the workspace scaffold.  ArcMemory owns a
+    # separate workspace/memory/index.md for curated-memory retrieval; the root
+    # artifact is never treated as that memory index.
+    index_path = workspace / "index.md"
+    if not index_path.exists():
+        index_path.write_text(_DEFAULT_INDEX, encoding="utf-8")
+
     # Per-agent capabilities live at the AGENT root (trusted scan root).
     # Agent-authored capabilities go under workspace/capabilities (untrusted).
     (agent_dir / "capabilities").mkdir(exist_ok=True)
@@ -966,7 +975,7 @@ def _print_scaffold_summary(display_name: str, agent_dir: Path, tier: str = "per
     sys.stdout.write("    capabilities/             # per-agent capabilities (trusted)\n")
     sys.stdout.write("      calculator.py\n")
     sys.stdout.write("    workspace/\n")
-    sys.stdout.write("      identity.md, policy.md, context.md\n")
+    sys.stdout.write("      identity.md, policy.md, context.md, index.md\n")
     sys.stdout.write("      capabilities/          # agent-authored (UNTRUSTED, AST-validated)\n")
     sys.stdout.write("      sessions/              # chat transcripts (JSONL)\n")
     sys.stdout.write("      memory/                # lazily created when a Brain is enabled\n")
