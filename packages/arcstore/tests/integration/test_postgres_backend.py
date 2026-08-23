@@ -286,6 +286,36 @@ async def test_postgres_inbox_idempotent_event_survives_backend_restart(
     assert retry == first
 
 
+async def test_postgres_atomic_inbox_and_mail_outbox_is_idempotent_under_concurrency(
+    postgres_backend: ArcStoreBackend,
+) -> None:
+    """The real adapter commits durable copies and transport work as one event."""
+    assert isinstance(postgres_backend, PostgresBackend)
+    repository = PostgresInboxRepository(postgres_backend)
+    sender = inbox_participant(f"did:arc:agent:{uuid4().hex}")
+    recipient = inbox_participant(f"did:arc:agent:{uuid4().hex}")
+    event_id = f"atomic-{uuid4().hex}"
+    projection = {
+        "event_id": event_id,
+        "sender": sender,
+        "recipients": (recipient,),
+        "body": "one transaction",
+        "external_thread_id": f"thread-{uuid4().hex}",
+        "envelope": {"id": event_id, "sender": sender.participant_id},
+    }
+
+    results = await asyncio.gather(
+        repository.record_event_with_outbox(**projection),
+        repository.record_event_with_outbox(**projection),
+    )
+    assert [message.message_id for message in results[0]] == [
+        message.message_id for message in results[1]
+    ]
+    claimed = await postgres_backend.claim_mail(f"atomic-worker-{uuid4().hex}")
+    matching = [entry for entry in claimed if entry["event_id"] == event_id]
+    assert len(matching) == 1
+
+
 async def test_postgres_v3_indexes_cover_inbox_foreign_keys_and_queries(
     postgres_backend: ArcStoreBackend,
 ) -> None:

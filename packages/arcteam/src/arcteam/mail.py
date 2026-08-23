@@ -53,6 +53,8 @@ class MailSendResult(BaseModel):
 class MailStore(Protocol):
     async def record_event(self, **kwargs: Any) -> tuple[Any, ...]: ...
 
+    async def record_event_with_outbox(self, **kwargs: Any) -> tuple[Any, ...]: ...
+
     async def get_thread(self, thread_id: str, **kwargs: Any) -> Any: ...
 
     async def list_threads(self, owner: Any, **kwargs: Any) -> Any: ...
@@ -143,17 +145,6 @@ class AgentMailService:
         thread_id = request.thread_id or _stable_id(
             "thread", request.sender, request.idempotency_key
         )
-        await self._store.record_event(
-            event_id=event_id,
-            sender=_participant(request.sender),
-            recipients=tuple(_participant(item) for item in recipients),
-            body=request.body,
-            attachments=request.attachments,
-            external_thread_id=thread_id,
-            subject=request.subject,
-            reply_to_event_id=request.reply_to_id,
-            trace=_trace(request.classification),
-        )
         envelope = Message(
             id=event_id,
             sender=request.sender,
@@ -169,15 +160,32 @@ class AgentMailService:
             classification=request.classification,
         )
         self._sign_envelope(envelope)
+        projection = {
+            "event_id": event_id,
+            "sender": _participant(request.sender),
+            "recipients": tuple(_participant(item) for item in recipients),
+            "body": request.body,
+            "attachments": request.attachments,
+            "external_thread_id": thread_id,
+            "subject": request.subject,
+            "reply_to_event_id": request.reply_to_id,
+            "trace": _trace(request.classification),
+        }
+        atomic = getattr(self._store, "record_event_with_outbox", None)
+        if self._outbox is not None and atomic is not None:
+            await atomic(**projection, envelope=envelope.model_dump(mode="json"))
+        else:
+            await self._store.record_event(**projection)
         if self._outbox is None:
             try:
                 sent = await self._transport.send(envelope)
             except Exception:  # reason: durable record remains available for retry
                 return MailSendResult(message_id=event_id, thread_id=thread_id, status="pending")
             return MailSendResult(message_id=sent.id, thread_id=thread_id, status="sent")
-        result = self._outbox.enqueue(event_id, envelope.model_dump(mode="json"))
-        if inspect.isawaitable(result):
-            await result
+        if atomic is None:
+            result = self._outbox.enqueue(event_id, envelope.model_dump(mode="json"))
+            if inspect.isawaitable(result):
+                await result
         delivered = await MailDeliveryWorker(
             self._outbox, self._transport, worker_id=self._worker_id
         ).deliver_once()

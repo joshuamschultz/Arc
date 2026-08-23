@@ -262,6 +262,21 @@ class InboxRepository(Protocol):
         message_id: str | None = None,
     ) -> Message: ...
 
+    async def record_event_with_outbox(
+        self,
+        *,
+        event_id: str,
+        sender: Participant,
+        recipients: tuple[Participant, ...],
+        body: str,
+        attachments: tuple[str, ...] = (),
+        external_thread_id: str | None = None,
+        subject: str | None = None,
+        reply_to_event_id: str | None = None,
+        trace: TraceMetadata | None = None,
+        envelope: dict[str, object],
+    ) -> tuple[Message, ...]: ...
+
     async def list_messages(
         self,
         thread_id: str,

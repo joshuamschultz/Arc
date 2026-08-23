@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -34,6 +35,67 @@ class _Port:
 class _FailingRepository(FakeInboxRepository):
     async def create_inbox(self, *args: object, **kwargs: object):  # type: ignore[no-untyped-def]
         raise ConnectionError("database is down")
+
+
+class _AtomicFailureRepository(FakeInboxRepository):
+    def __init__(self) -> None:
+        super().__init__()
+        self.thread_calls = 0
+
+    async def create_thread(self, *args: object, **kwargs: object):  # type: ignore[no-untyped-def]
+        self.thread_calls += 1
+        if self.thread_calls == 2:
+            raise ConnectionError("transaction aborted")
+        return await super().create_thread(*args, **kwargs)
+
+
+def _mail_projection() -> dict[str, object]:
+    sender = participant("did:arc:agent:sender")
+    recipient = participant("did:arc:agent:recipient")
+    return {
+        "event_id": "event-atomic",
+        "sender": sender,
+        "recipients": (recipient,),
+        "body": "durable",
+        "external_thread_id": "thread-external",
+        "envelope": {"id": "event-atomic", "sender": sender.participant_id},
+    }
+
+
+@pytest.mark.asyncio
+async def test_atomic_projection_rolls_back_inboxes_messages_and_outbox() -> None:
+    repository = _AtomicFailureRepository()
+
+    with pytest.raises(ConnectionError, match="transaction aborted"):
+        await repository.record_event_with_outbox(**_mail_projection())
+
+    assert repository.inboxes == {}
+    assert repository.threads == {}
+    assert repository.messages == {}
+    assert repository.mail_outbox == {}
+
+
+@pytest.mark.asyncio
+async def test_atomic_projection_is_idempotent_and_concurrent_retries_are_single_event() -> None:
+    repository = FakeInboxRepository()
+    projection = _mail_projection()
+    first = await repository.record_event_with_outbox(**projection)
+    retry = await repository.record_event_with_outbox(**projection)
+    concurrent = await asyncio.gather(
+        repository.record_event_with_outbox(**projection),
+        repository.record_event_with_outbox(**projection),
+    )
+
+    assert tuple(message.message_id for message in first) == tuple(
+        message.message_id for message in retry
+    )
+    assert all(
+        tuple(message.message_id for message in result)
+        == tuple(message.message_id for message in first)
+        for result in concurrent
+    )
+    assert tuple(repository.mail_outbox) == ("event-atomic",)
+    assert len(repository.messages) == 2
 
 
 @pytest.mark.asyncio

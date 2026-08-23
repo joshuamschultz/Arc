@@ -103,6 +103,13 @@ class DurableInboxService:
             self._projection_spool.acknowledge(event.event_id)
         return copies
 
+    async def record_event_with_outbox(self, **kwargs: object) -> tuple[Message, ...]:
+        """Atomically persist inbox copies and one signed transport envelope."""
+        method = getattr(self._repository, "record_event_with_outbox", None)
+        if method is None:
+            raise RuntimeError("atomic inbox/outbox repository seam is unavailable")
+        return await method(**kwargs)
+
     async def retry_pending_projections(self) -> tuple[str, ...]:
         """Replay all persisted but unacknowledged projections after an outage/restart."""
         if self._projection_spool is None:

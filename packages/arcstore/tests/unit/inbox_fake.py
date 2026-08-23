@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import base64
 import binascii
+import copy
+import hashlib
 import json
 from datetime import UTC, datetime
 from typing import cast
@@ -43,6 +45,7 @@ class FakeInboxRepository:
         self.threads: dict[str, Thread] = {}
         self.messages: dict[str, Message] = {}
         self.handoffs: dict[str, Handoff] = {}
+        self.mail_outbox: dict[str, dict[str, object]] = {}
 
     async def create_inbox(
         self,
@@ -203,6 +206,70 @@ class FakeInboxRepository:
             update={"updated_at": message.created_at, "last_message_id": message.message_id}
         )
         return message
+
+    async def record_event_with_outbox(
+        self,
+        *,
+        event_id: str,
+        sender: Participant,
+        recipients: tuple[Participant, ...],
+        body: str,
+        attachments: tuple[str, ...] = (),
+        external_thread_id: str | None = None,
+        subject: str | None = None,
+        reply_to_event_id: str | None = None,
+        trace: TraceMetadata | None = None,
+        envelope: dict[str, object],
+    ) -> tuple[Message, ...]:
+        snapshot = (
+            copy.deepcopy(self.inboxes),
+            copy.deepcopy(self.threads),
+            copy.deepcopy(self.messages),
+            copy.deepcopy(self.mail_outbox),
+        )
+        try:
+            copies: list[Message] = []
+            classification = trace.classification if trace else "UNCLASSIFIED"
+            all_participants = tuple(dict.fromkeys((sender, *recipients)))
+            for owner in all_participants:
+                inbox_id = "inbox_" + hashlib.sha256(owner.participant_id.encode()).hexdigest()
+                inbox = await self.create_inbox(owner, classification=classification, inbox_id=inbox_id)
+                thread_id = "thread_" + hashlib.sha256(
+                    f"{inbox_id}\x1f{external_thread_id or event_id}".encode()
+                ).hexdigest()
+                thread = await self.create_thread(
+                    inbox.inbox_id,
+                    all_participants,
+                    subject=subject,
+                    classification=classification,
+                    thread_id=thread_id,
+                )
+                message_id = "message_" + hashlib.sha256(
+                    f"{inbox.inbox_id}\x1f{event_id}".encode()
+                ).hexdigest()
+                copies.append(
+                    await self.append_message(
+                        thread.thread_id,
+                        sender=sender,
+                        recipients=recipients,
+                        body=body,
+                        attachments=attachments,
+                        reply_to_id=(
+                            "message_" + hashlib.sha256(
+                                f"{inbox.inbox_id}\x1f{reply_to_event_id}".encode()
+                            ).hexdigest()
+                            if reply_to_event_id
+                            else None
+                        ),
+                        trace=trace,
+                        message_id=message_id,
+                    )
+                )
+            self.mail_outbox.setdefault(event_id, dict(envelope))
+            return tuple(copies)
+        except Exception:
+            self.inboxes, self.threads, self.messages, self.mail_outbox = snapshot
+            raise
 
     async def list_messages(
         self,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import json
 from datetime import datetime
 from typing import Any, TypeVar
@@ -235,6 +236,110 @@ class PostgresInboxRepository:
                     thread_id,
                 )
         return message
+
+    async def record_event_with_outbox(
+        self,
+        *,
+        event_id: str,
+        sender: Participant,
+        recipients: tuple[Participant, ...],
+        body: str,
+        attachments: tuple[str, ...] = (),
+        external_thread_id: str | None = None,
+        subject: str | None = None,
+        reply_to_event_id: str | None = None,
+        trace: TraceMetadata | None = None,
+        envelope: dict[str, object],
+    ) -> tuple[Message, ...]:
+        """Persist all inbox copies and transport work in one DB transaction."""
+        if not recipients:
+            raise ValueError("at least one recipient is required")
+        participants = tuple(dict.fromkeys((sender, *recipients)))
+        classification = trace.classification if trace else "UNCLASSIFIED"
+
+        def stable(prefix: str, *parts: str) -> str:
+            return prefix + "_" + hashlib.sha256("\x1f".join(parts).encode()).hexdigest()
+
+        copies: list[Message] = []
+        async with self._pool.acquire() as connection:
+            async with connection.transaction():
+                for owner in participants:
+                    inbox_id = stable("inbox", owner.participant_id)
+                    inbox = Inbox(owner=owner, classification=classification, inbox_id=inbox_id)
+                    await connection.execute(
+                        "INSERT INTO inboxes(inbox_id, payload, created_at) "
+                        "VALUES ($1,$2::jsonb,$3) "
+                        "ON CONFLICT(inbox_id) DO NOTHING",
+                        inbox_id,
+                        _model_json(inbox),
+                        inbox.created_at,
+                    )
+                    thread_id = stable("thread", inbox_id, external_thread_id or event_id)
+                    thread = Thread(
+                        thread_id=thread_id,
+                        inbox_id=inbox_id,
+                        participants=participants,
+                        subject=subject,
+                        classification=classification,
+                    )
+                    await connection.execute(
+                        "INSERT INTO inbox_threads(thread_id,inbox_id,payload,updated_at) "
+                        "VALUES ($1,$2,$3::jsonb,$4) "
+                        "ON CONFLICT(thread_id) DO NOTHING",
+                        thread_id,
+                        inbox_id,
+                        _model_json(thread),
+                        thread.updated_at,
+                    )
+                    message_id = stable("message", inbox_id, event_id)
+                    reply_to_id = None
+                    if reply_to_event_id:
+                        reply_to_id = (
+                            reply_to_event_id
+                            if reply_to_event_id.startswith("message_")
+                            else stable("message", inbox_id, reply_to_event_id)
+                        )
+                    message = Message(
+                        message_id=message_id,
+                        thread_id=thread_id,
+                        sender=sender,
+                        recipients=recipients,
+                        body=body,
+                        attachments=attachments,
+                        reply_to_id=reply_to_id,
+                        trace=trace or TraceMetadata(classification=classification),
+                    )
+                    result = await connection.execute(
+                        "INSERT INTO inbox_messages(message_id,thread_id,payload,created_at) "
+                        "VALUES ($1,$2,$3::jsonb,$4) "
+                        "ON CONFLICT(message_id) DO NOTHING",
+                        message_id,
+                        thread_id,
+                        _model_json(message),
+                        message.created_at,
+                    )
+                    if str(result).endswith("1"):
+                        updated = thread.model_copy(
+                            update={
+                                "updated_at": message.created_at,
+                                "last_message_id": message_id,
+                            }
+                        )
+                        await connection.execute(
+                            "UPDATE inbox_threads SET payload=$1::jsonb,updated_at=$2 "
+                            "WHERE thread_id=$3",
+                            _model_json(updated),
+                            updated.updated_at,
+                            thread_id,
+                        )
+                    copies.append(message)
+                await connection.execute(
+                    "INSERT INTO mail_outbox(event_id,envelope) VALUES ($1,$2::jsonb) "
+                    "ON CONFLICT(event_id) DO NOTHING",
+                    event_id,
+                    _json(envelope),
+                )
+        return tuple(copies)
 
     async def list_messages(
         self,
