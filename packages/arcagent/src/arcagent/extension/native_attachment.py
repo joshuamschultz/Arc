@@ -36,6 +36,7 @@ from arcagent.extension.attachment import (
     ToolResult,
     ToolSpec,
 )
+from arcagent.extension.source import SourceAdapter
 
 #: The well-known factory attribute every native-attachment extension module exposes:
 #: ``def build_native_attachment(context: dict[str, Any]) -> ExtensionAttachment``.
@@ -77,6 +78,16 @@ class NativeAttachment:
 
     async def invoke(self, tool: str, args: dict[str, Any]) -> ToolResult:
         return await self._delegate.invoke(tool, args)
+
+    def source_adapter(self) -> SourceAdapter | None:
+        """Expose optional source synchronization without widening the tool hook.
+
+        Interactive tools remain the universal attachment contract. A native
+        extension that also implements the independent source contract can be
+        enrolled by the optional connected-data module; every other extension
+        remains unaffected and removable.
+        """
+        return self._delegate if isinstance(self._delegate, SourceAdapter) else None
 
 
 def _resolve(entrypoint: str, context: dict[str, Any]) -> ExtensionAttachment:

@@ -35,6 +35,14 @@ from arcagent.extension.attachment import (
     ToolSpec,
 )
 from arcagent.extension.native_attachment import NATIVE_ENTRYPOINT_ATTR, NativeAttachment
+from arcagent.extension.source import (
+    FetchSourceObject,
+    InspectSource,
+    SourceContent,
+    SourceDescription,
+    SyncSource,
+    SyncSourcePage,
+)
 
 _ENTRYPOINT = "fake_native_extension_module"
 
@@ -59,6 +67,29 @@ class _FakeDelegate:
     async def invoke(self, tool: str, args: dict[str, Any]) -> ToolResult:
         self.calls.append((tool, dict(args)))
         return ToolResult(tool=tool, outcome=ToolOutcome.OK, content="42")
+
+
+class _FakeSourceDelegate(_FakeDelegate):
+    async def inspect_source(self, request: InspectSource) -> SourceDescription:
+        return SourceDescription(
+            connection_id=request.connection_id,
+            source_kind="fake",
+            account_id="account",
+        )
+
+    async def sync_source(self, request: SyncSource) -> SyncSourcePage:
+        return SyncSourcePage(next_checkpoint=request.checkpoint or "initial")
+
+    async def fetch_source(self, request: FetchSourceObject) -> SourceContent:
+        return SourceContent(
+            object_id=request.object_id,
+            version=request.version,
+            media_type="text/plain",
+            content=b"body",
+        )
+
+    async def close_source(self) -> None:
+        return None
 
 
 def _register_module(
@@ -158,6 +189,26 @@ async def test_invoke_delegates_to_the_extension_and_returns_its_result(
     assert result.outcome is ToolOutcome.OK
     assert result.content == "42"
     assert delegates[0].calls == [("get_item", {"id": "1"})]
+
+
+def test_non_source_delegate_exposes_no_source_adapter(delegates: list[_FakeDelegate]) -> None:
+    attachment = NativeAttachment(_ENTRYPOINT, {})
+
+    assert attachment.source_adapter() is None
+
+
+def test_source_delegate_is_exposed_through_the_generic_optional_seam(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _register_module(
+        monkeypatch,
+        lambda context: _FakeSourceDelegate(context),
+        name="fake_source_extension",
+    )
+
+    attachment = NativeAttachment("fake_source_extension", {})
+
+    assert isinstance(attachment.source_adapter(), _FakeSourceDelegate)
 
 
 # --- fail-closed resolution (ASI04 — no half-built attachment) --------------
