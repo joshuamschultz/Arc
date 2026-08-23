@@ -57,6 +57,10 @@ elif docker ps -a --filter "name=^/${PG_CONTAINER}$" --format '{{.Names}}' | gre
   docker start "$PG_CONTAINER" >/dev/null
   ok "ArcStore PostgreSQL container started: $PG_CONTAINER"
 else
+  CONFLICT="$(docker ps --format '{{.Names}} {{.Ports}}' |
+    awk -v needle=":${PG_PORT}->" 'index($0, needle) { print $1; exit }')"
+  [ -z "$CONFLICT" ] || fail \
+    "cannot create ${PG_CONTAINER}: 127.0.0.1:${PG_PORT} is already published by container ${CONFLICT} — pick a free port via ARCSTORE_PG_PORT and the ARCSTORE_DATABASE_URL port"
   log "creating ArcStore PostgreSQL container $PG_CONTAINER ($PG_IMAGE)..."
   docker run -d --name "$PG_CONTAINER" --restart unless-stopped \
     -e POSTGRES_USER="$PG_USER" \
@@ -64,7 +68,10 @@ else
     -e POSTGRES_DB="$PG_DB" \
     -p "127.0.0.1:${PG_PORT}:5432" \
     -v "${PG_VOLUME}:/var/lib/postgresql/data" \
-    "$PG_IMAGE" >/dev/null
+    "$PG_IMAGE" >/dev/null || {
+    docker rm -f "$PG_CONTAINER" >/dev/null 2>&1 || true
+    fail "ArcStore PostgreSQL container failed to start on 127.0.0.1:${PG_PORT}"
+  }
   ok "ArcStore PostgreSQL container created with durable volume $PG_VOLUME"
 fi
 

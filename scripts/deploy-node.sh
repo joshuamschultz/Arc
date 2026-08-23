@@ -326,6 +326,14 @@ parsed = urlparse(sys.argv[1])
 print(unquote(parsed.password or ""))
 ' "$ARCSTORE_DATABASE_URL")"
   if [[ "$ARCSTORE_DATABASE_URL" == *"@127.0.0.1:"* || "$ARCSTORE_DATABASE_URL" == *"@localhost:"* ]]; then
+    # A DSN already stored in arc.env is authoritative — its port must drive the
+    # container binding, or a pinned non-default port would silently diverge.
+    ARCSTORE_PORT="$("$VENV_PY" -c '
+import sys
+from urllib.parse import urlparse
+
+print(urlparse(sys.argv[1]).port or 5432)
+' "$ARCSTORE_DATABASE_URL")"
     ARCSTORE_DATABASE_PASSWORD="$ARCSTORE_DATABASE_PASSWORD_RUNTIME" \
     ARCSTORE_DATABASE_URL="$ARCSTORE_DATABASE_URL" ARCSTORE_PG_PORT="$ARCSTORE_PORT" \
       ARCSTORE_PYTHON="$VENV_PY" ARCSTORE_REQUIRE_SCHEMA=1 \
@@ -368,6 +376,14 @@ if [ "$MEMORY_INDEX_BACKEND" = "postgres" ]; then
   MEMORY_DB="${MEMORY_DB:-arcmemory}"
   MEMORY_PORT="$(grep -m1 '^ARC_MEMORY_PG_PORT=' "$ENV_FILE" | cut -d= -f2- || true)"
   MEMORY_PORT="${MEMORY_PORT:-5433}"
+  if [ -n "${ARC_MEMORY_PG_DSN:-}" ]; then
+    MEMORY_PORT="$("$VENV_PY" -c '
+import sys
+from urllib.parse import urlparse
+
+print(urlparse(sys.argv[1]).port or 5433)
+' "$ARC_MEMORY_PG_DSN")"
+  fi
   POSTGRES_PASSWORD="$MEMORY_PASSWORD" POSTGRES_USER="$MEMORY_USER" \
     POSTGRES_DB="$MEMORY_DB" ARC_MEMORY_PG_PORT="$MEMORY_PORT" \
     "$RUNTIME_ROOT/scripts/install-memory-postgres.sh"
