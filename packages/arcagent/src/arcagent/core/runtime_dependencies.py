@@ -41,6 +41,7 @@ class RuntimeDependencies:
     human_gate: Any
     agent_run_fn: Callable[..., Awaitable[Any]]
     arcstore_opener: Callable[[], Awaitable[Any]] | None = None
+    source_sync_store_opener: Callable[[], Awaitable[Any]] | None = None
     source_catalog: SourceCatalog = field(default_factory=SourceCatalog)
 
     def select_for(
@@ -90,6 +91,7 @@ class DependencyKey(Enum):
     OPERATOR_SIGNER = "operator_signer"
     AGENT_RUN_FN = "agent_run_fn"
     ARCSTORE_OPENER = "arcstore_opener"
+    SOURCE_SYNC_STORE_OPENER = "source_sync_store_opener"
     SOURCE_CATALOG = "source_catalog"
 
 

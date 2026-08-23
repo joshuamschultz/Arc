@@ -89,7 +89,7 @@ async def test_service_degrades_without_arcstore_or_ingest() -> None:
     service = ConnectedDataService(
         catalog,
         agent_did="did:agent",
-        arcstore_opener=None,
+        sync_store_opener=None,
         ingest_factory=None,
         limits=SyncLimits(),
         global_concurrency=1,

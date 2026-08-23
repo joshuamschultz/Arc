@@ -16,6 +16,7 @@ from arcagent.connected_data import (
     SourceDescription,
     SyncLimits,
     SyncState,
+    SyncStatePort,
 )
 from arcagent.extension.source import InspectSource
 from arcagent.extension.source_catalog import SourceCatalog, SourceRegistration
@@ -47,7 +48,7 @@ class ConnectedDataService:
         catalog: SourceCatalog,
         *,
         agent_did: str,
-        arcstore_opener: Callable[[], Awaitable[Any]] | None,
+        sync_store_opener: Callable[[], Awaitable[SyncStatePort]] | None,
         ingest_factory: IngestPortFactory | None,
         limits: SyncLimits,
         global_concurrency: int,
@@ -56,7 +57,7 @@ class ConnectedDataService:
     ) -> None:
         self._catalog = catalog
         self._agent_did = agent_did
-        self._arcstore_opener = arcstore_opener
+        self._sync_store_opener = sync_store_opener
         self._ingest_factory = ingest_factory
         self._limits = limits
         self._semaphore = asyncio.Semaphore(global_concurrency)
@@ -206,13 +207,10 @@ class ConnectedDataService:
             )
 
     async def _open_store(self) -> Any:
-        if self._arcstore_opener is None:
+        if self._sync_store_opener is None:
             return None
         try:
-            from arcstore.source_sync import ArcStoreSourceSyncStore
-
-            backend = await self._arcstore_opener()
-            return ArcStoreSourceSyncStore(backend)
+            return await self._sync_store_opener()
         except Exception:
             _logger.warning("connected-data ArcStore backend unavailable", exc_info=True)
             return None

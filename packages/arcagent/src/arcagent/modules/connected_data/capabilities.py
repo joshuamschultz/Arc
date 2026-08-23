@@ -24,7 +24,7 @@ class ConnectedData:
         state.service = ConnectedDataService(
             state.source_catalog,
             agent_did=state.agent_did,
-            arcstore_opener=state.arcstore_opener,
+            sync_store_opener=state.source_sync_store_opener,
             ingest_factory=state.ingest_port_factory,
             limits=state.config.limits,
             global_concurrency=state.config.global_concurrency,

@@ -598,6 +598,19 @@ class ArcAgent:
 
         return open_backend
 
+    def _make_source_sync_store_opener(self) -> Callable[[], Awaitable[Any]]:
+        """Compose the optional source-sync adapter at the application boundary."""
+        backend_opener = self._arcstore_opener
+
+        async def open_store() -> Any:
+            if backend_opener is None:
+                raise RuntimeError("ArcStore is unavailable")
+            from arcstore.source_sync import ArcStoreSourceSyncStore
+
+            return ArcStoreSourceSyncStore(await backend_opener())
+
+        return open_store
+
     def _build_approval_channel(self, ttl_seconds: float) -> ApprovalChannel | None:
         """Mechanical operator handoff for the human-approval gate (SPEC-035).
 

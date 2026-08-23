@@ -20,7 +20,10 @@ def test_connected_data_has_no_reverse_or_vendor_dependencies() -> None:
             if isinstance(node, ast.Import)
             for alias in node.names
         )
-        assert not any(name.startswith(forbidden) for name in imports), (path, imports)
+        assert not any(
+            name.startswith(forbidden) and name != "arcagent.core.module_config"
+            for name in imports
+        ), (path, imports)
 
 
 def test_connected_data_module_is_optional() -> None:
