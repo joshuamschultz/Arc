@@ -176,7 +176,7 @@ async def test_datastore_disabled_returns_none_from_query(workspace: Path) -> No
     conn.execute("INSERT INTO widgets VALUES ('w1', 'sprocket')")
     conn.commit()
     off_brain = ArcMemoryBrain(workspace, _DID, config=MemoryConfig(datastore_enabled=False))
-    await off_brain.register_datastore("erp", conn, caller_did=_DID)
+    await off_brain.register_sqlite_datastore("erp", conn, caller_did=_DID)
 
     result = await off_brain.datastore_query(
         "erp", "get_record", "widgets", {"pk_value": "w1"}, caller_did=_DID

@@ -1,4 +1,4 @@
-"""Read-only sqlite datastore ontology + typed query ops (SPEC-073 COMP-008).
+"""Backend-neutral structured-data port plus the optional SQLite adapter.
 
 Dependency-free: introspection uses only stdlib :mod:`sqlite3` PRAGMA calls
 (``table_info`` / ``foreign_key_list``). SQLAlchemy is a future opt-in
@@ -15,7 +15,7 @@ SQL string to execute verbatim (enforced by
 from __future__ import annotations
 
 import sqlite3
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 #: Declared sqlite column types treated as free-text search targets.
 _TEXT_TYPES = ("TEXT", "CHAR", "CLOB", "VARCHAR")
 
-#: query() op name -> the keys of Datastore.query's args dict it consumes.
+#: query() op name -> the keys of the structured-data port's args dict it consumes.
 _KNOWN_OPS = frozenset({"get_record", "find", "list"})
 
 
@@ -59,7 +59,22 @@ def _int_arg(args: dict[str, object], key: str, default: int) -> int:
     return int(value) if isinstance(value, int | float | str) else default
 
 
-class Datastore:
+@runtime_checkable
+class DatastorePort(Protocol):
+    """Typed asynchronous read port for an approved structured data source.
+
+    Implementations own their driver and credentials.  The agent can select an
+    allowlisted operation and schema member, never submit arbitrary SQL.
+    """
+
+    async def introspect(self) -> DatastoreOntology: ...
+
+    async def persist_ontology(self, store: SemanticStore) -> None: ...
+
+    async def query(self, op: str, table: str, args: dict[str, object]) -> object: ...
+
+
+class SqliteDatastore:
     """Read-only sqlite introspection + parameterized, allowlisted read ops.
 
     Accepts a caller-provided connection and never issues writes. Meant for a
@@ -209,3 +224,32 @@ class Datastore:
                 limit=_int_arg(args, "limit", 50),
             )
         return self.list(table, limit=_int_arg(args, "limit", 50))
+
+
+class SqliteDatastorePort:
+    """Optional SQLite implementation of :class:`DatastorePort`.
+
+    SQLite calls remain confined to this adapter.  Network database adapters
+    implement the same async port without changing Brain or agent tools.
+    """
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._store = SqliteDatastore(conn)
+
+    async def introspect(self) -> DatastoreOntology:
+        return self._store.introspect()
+
+    async def persist_ontology(self, store: SemanticStore) -> None:
+        self._store.persist_ontology(store)
+
+    async def query(self, op: str, table: str, args: dict[str, object]) -> object:
+        return self._store.query(op, table, args)
+
+
+__all__ = [
+    "DatastoreOntology",
+    "DatastorePort",
+    "SqliteDatastore",
+    "SqliteDatastorePort",
+    "TableInfo",
+]

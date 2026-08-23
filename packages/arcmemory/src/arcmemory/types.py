@@ -62,6 +62,21 @@ class Confidence(StrEnum):
     KNOWN = "known"
 
 
+class MemoryHome(StrEnum):
+    """ArcMemory's internal destination vocabulary for connected source data.
+
+    This intentionally mirrors, but does not import, the coordinator's wire
+    values.  ArcMemory remains independently installable while rejecting
+    misspelled or unsupported destinations at its own boundary.
+    """
+
+    MEMORY = "memory"
+    DOCUMENT = "document"
+    DATASTORE = "datastore"
+    BLOB = "blob"
+    PROFILE = "profile"
+
+
 class Scope(BaseModel):
     """Per-agent, shared-nothing isolation key.
 
@@ -420,7 +435,7 @@ class SourceMapping(BaseModel):
     """The operator-approved routing of a source to one-or-more homes."""
 
     source_id: str
-    homes: list[str] = Field(default_factory=list)
+    homes: list[MemoryHome] = Field(default_factory=list)
     revision: str = ""
     content_hash: str = ""
 
@@ -458,6 +473,7 @@ __all__ = [
     "IngestResult",
     "Insight",
     "LifeEvent",
+    "MemoryHome",
     "Procedure",
     "Provenance",
     "Recall",

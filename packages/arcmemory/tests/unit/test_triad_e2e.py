@@ -156,7 +156,7 @@ async def test_axis_c_sqlite_datastore_get_record_returns_exact_row(
     sink = RecordingSink()
     brain = ArcMemoryBrain(workspace, _DID, embedder=embedder, audit_sink=sink)
 
-    await brain.register_datastore("erp", _erp_conn(), caller_did=_DID)
+    await brain.register_sqlite_datastore("erp", _erp_conn(), caller_did=_DID)
     row = await brain.datastore_query(
         "erp", "get_record", "invoices", {"pk_value": "001"}, caller_did=_DID
     )
@@ -169,7 +169,7 @@ async def test_axis_c_datastore_query_falsifiable_by_off_switch(workspace: Path,
     off_brain = ArcMemoryBrain(
         workspace, _DID, embedder=embedder, config=MemoryConfig(datastore_enabled=False)
     )
-    await off_brain.register_datastore("erp", _erp_conn(), caller_did=_DID)
+    await off_brain.register_sqlite_datastore("erp", _erp_conn(), caller_did=_DID)
 
     row = await off_brain.datastore_query(
         "erp", "get_record", "invoices", {"pk_value": "001"}, caller_did=_DID
@@ -199,7 +199,7 @@ async def test_all_three_axes_emit_allow_audit_events(workspace: Path, embedder)
         caller_did=_DID,
     )
     await brain.document_search("compliance report", source_id="dropbox", caller_did=_DID)
-    await brain.register_datastore("erp", _erp_conn(), caller_did=_DID)
+    await brain.register_sqlite_datastore("erp", _erp_conn(), caller_did=_DID)
     await brain.datastore_query(
         "erp", "get_record", "invoices", {"pk_value": "001"}, caller_did=_DID
     )

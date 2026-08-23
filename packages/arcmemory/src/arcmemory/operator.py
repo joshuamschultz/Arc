@@ -343,15 +343,15 @@ class MemoryOperator:
         entity = self._semantic(session_id).read(f"source-{source_id}")
         if entity is None:
             return None
-        fact = next((f for f in entity.facts if f.predicate == "datastore_path"), None)
+        fact = next((f for f in entity.facts if f.predicate == "sqlite_path"), None)
         if fact is None:
             return None
         import sqlite3
 
-        from arcmemory.datastore import Datastore
+        from arcmemory.datastore import SqliteDatastore
 
         conn = sqlite3.connect(f"file:{fact.value}?mode=ro", uri=True)
-        return Datastore(conn).query(op, table, args)
+        return SqliteDatastore(conn).query(op, table, args)
 
     def list_insights(self) -> list[Insight]:
         """Every minted insight card, sorted by id (the curated glass-box centerpiece)."""

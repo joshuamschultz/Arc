@@ -132,7 +132,7 @@ def _secret_conn() -> sqlite3.Connection:
 
 async def test_datastore_query_gates_clearance_against_source_label(workspace: Path) -> None:
     brain = ArcMemoryBrain(workspace, _DID, config=MemoryConfig(tier="federal"))
-    await brain.register_datastore("erp", _secret_conn(), classification="secret")
+    await brain.register_sqlite_datastore("erp", _secret_conn(), classification="secret")
 
     # An unclassified clearance may NOT read a secret-registered datastore.
     denied = await brain.datastore_query(

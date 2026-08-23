@@ -163,7 +163,11 @@ class DocIndex:
             audit_sink=self._audit,
         )
         result = await surface.search(query, top_k=top_k)
-        hits = [await self._to_hit(backend, scope, source_id, recall) for recall in result.recalls]
+        hits = [
+            await self._to_hit(backend, scope, source_id, recall)
+            for recall in result.recalls
+            if not recall.source.startswith("index:")
+        ]
         return await self._maybe_rerank(query, hits)
 
     async def _to_hit(

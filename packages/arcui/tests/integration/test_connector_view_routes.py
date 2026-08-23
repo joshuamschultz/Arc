@@ -103,7 +103,7 @@ async def _seed_connector_data(workspace: Path, datastore_path: Path) -> None:
     conn.execute("CREATE TABLE invoices (id TEXT PRIMARY KEY, amount TEXT)")
     conn.execute("INSERT INTO invoices (id, amount) VALUES ('001', '500')")
     conn.commit()
-    await brain.register_datastore(_SOURCE_ID, conn)
+    await brain.register_sqlite_datastore(_SOURCE_ID, conn)
 
 
 def _make_agent_dir(team_root: Path, name: str) -> Path:

@@ -109,7 +109,7 @@ async def test_datastore_query_emits_allow_audit_carrying_caller_did(workspace: 
     conn.execute("CREATE TABLE widgets (id INTEGER PRIMARY KEY, name TEXT)")
     conn.execute("INSERT INTO widgets VALUES (1, 'sprocket')")
     conn.commit()
-    await brain.register_datastore("src-db", conn, caller_did=_DID)
+    await brain.register_sqlite_datastore("src-db", conn, caller_did=_DID)
 
     await brain.datastore_query("src-db", "list", "widgets", {}, caller_did=_DID)
 

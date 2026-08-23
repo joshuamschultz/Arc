@@ -8,6 +8,7 @@ episodic (Phase 2 T-1027 routes memory-home writes through capture).
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 from arctrust.audit import AuditSink
@@ -21,7 +22,7 @@ from arcmemory.index.rebuild import Embedder
 from arcmemory.security import content_hash, sanitize
 from arcmemory.stores.episodic import EpisodicStore
 from arcmemory.stores.semantic import SemanticStore
-from arcmemory.types import Event, IngestResult, Scope, SourceMapping, SourceRecord
+from arcmemory.types import Event, IngestResult, MemoryHome, Scope, SourceMapping, SourceRecord
 
 
 def deterministic_event_id(source_id: str, external_id: str) -> str:
@@ -97,7 +98,7 @@ async def route_batch(
     config: MemoryConfig,
     source_id: str,
     records: list[SourceRecord],
-    homes: list[str],
+    homes: Sequence[str],
     *,
     agent_did: str,
     embedder: Embedder | None = None,
@@ -176,13 +177,13 @@ def propose_mapping(source_id: str, sample: list[SourceRecord] | None) -> Source
 
     Approval gating is Phase 3 (T-1039) -- this returns a proposal only.
     """
-    homes = ["memory"]
+    homes = [MemoryHome.MEMORY]
     for record in sample or []:
         if record.metadata.get("mime") or record.metadata.get("path"):
-            if "document" not in homes:
-                homes.append("document")
-        if record.metadata.get("kind") == "db_row" and "datastore" not in homes:
-            homes.append("datastore")
+            if MemoryHome.DOCUMENT not in homes:
+                homes.append(MemoryHome.DOCUMENT)
+        if record.metadata.get("kind") == "db_row" and MemoryHome.DATASTORE not in homes:
+            homes.append(MemoryHome.DATASTORE)
     return SourceMapping(source_id=source_id, homes=homes)
 
 

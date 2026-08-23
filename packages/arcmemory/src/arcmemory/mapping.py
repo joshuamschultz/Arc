@@ -12,6 +12,7 @@ destructive overwrite (SemanticStore.write_fact).
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -19,14 +20,14 @@ from arcstore.approvals import ApprovalStore, PendingApproval
 
 from arcmemory.security import content_hash
 from arcmemory.stores.semantic import SemanticStore
-from arcmemory.types import SourceMapping
+from arcmemory.types import MemoryHome, SourceMapping
 
 _TOOL = "memory.map_source"
 
 
 def mapping_call_hash(
     source_id: str,
-    homes: list[str],
+    homes: Sequence[str],
     *,
     revision: str = "",
     content_hash_value: str = "",
@@ -87,7 +88,7 @@ async def stage_mapping_proposal(
 
 async def approved_mapping(
     source_id: str,
-    homes: list[str],
+    homes: Sequence[str],
     *,
     approval_store: ApprovalStore,
     revision: str = "",
@@ -147,7 +148,10 @@ def load_committed_mapping(source_id: str, *, store: SemanticStore) -> SourceMap
     fact = next((f for f in entity.facts if f.predicate == "homes"), None)
     if fact is None:
         return None
-    homes = [home for home in fact.value.split(",") if home]
+    try:
+        homes = [MemoryHome(home) for home in fact.value.split(",") if home]
+    except ValueError:
+        return None
     values = {item.predicate: item.value for item in entity.facts}
     return SourceMapping(
         source_id=source_id,

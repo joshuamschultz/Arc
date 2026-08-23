@@ -107,12 +107,12 @@ async def _seed_workspace(workspace: Path, datastore_path: Path) -> None:
     conn.execute("CREATE TABLE invoices (id TEXT PRIMARY KEY, amount TEXT)")
     conn.execute("INSERT INTO invoices (id, amount) VALUES ('001', '500')")
     conn.commit()
-    await brain.register_datastore(_SOURCE_ID, conn)
+    await brain.register_sqlite_datastore(_SOURCE_ID, conn)
 
     mem_conn = sqlite3.connect(":memory:")
     mem_conn.execute("CREATE TABLE widgets (id TEXT PRIMARY KEY)")
     mem_conn.commit()
-    await brain.register_datastore(_MEM_SOURCE_ID, mem_conn)
+    await brain.register_sqlite_datastore(_MEM_SOURCE_ID, mem_conn)
 
 
 @pytest.fixture

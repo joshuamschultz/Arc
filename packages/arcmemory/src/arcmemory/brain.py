@@ -38,7 +38,7 @@ from arcmemory import ingest
 from arcmemory.capture import FastCapture
 from arcmemory.config import MemoryConfig
 from arcmemory.consolidate import Consolidator
-from arcmemory.datastore import Datastore
+from arcmemory.datastore import DatastorePort, SqliteDatastorePort
 from arcmemory.db import MemoryDB
 from arcmemory.detectors import Decision, WindowDedup, WorkingSet, evaluate_moment
 from arcmemory.distill import Distiller
@@ -54,6 +54,7 @@ from arcmemory.stores.semantic import SemanticStore
 from arcmemory.types import (
     ConsolidationResult,
     IngestResult,
+    MemoryHome,
     Recall,
     RecallCard,
     Scope,
@@ -160,7 +161,7 @@ class ArcMemoryBrain:
         # Each source carries the classification it was registered under; a whole
         # connected datastore is one no-read-up unit (its rows aren't per-row labeled),
         # so datastore_query gates the caller's clearance against this label.
-        self._datastores: dict[str, Datastore] = {}
+        self._datastores: dict[str, DatastorePort] = {}
         self._datastore_classification: dict[str, str] = {}
         # Proactive detected-moment recall (SPEC-071): one sliding-window dedup
         # across the brain, plus the per-session prior-cue baseline the
@@ -582,12 +583,12 @@ class ArcMemoryBrain:
     async def register_datastore(
         self,
         source_id: str,
-        conn: sqlite3.Connection,
+        datastore: DatastorePort,
         *,
         classification: str = "unclassified",
         caller_did: str = "",
     ) -> None:
-        """Register a read-only datastore connection; introspect + persist its ontology.
+        """Register an approved structured-data port and persist its ontology.
 
         ``classification`` is the label the whole connected datastore is trusted at
         (set at connect/approval time); :meth:`datastore_query` gates the caller's
@@ -596,30 +597,34 @@ class ArcMemoryBrain:
         """
         if not await self._guard("datastore.register", caller_did=caller_did, target=source_id):
             return
-        datastore = Datastore(conn)
-        datastore.introspect()
         store = SemanticStore(self._workspace, self._graph, self._scope(None).key)
-        datastore.persist_ontology(store)
+        await datastore.introspect()
+        await datastore.persist_ontology(store)
         self._datastores[source_id] = datastore
         self._datastore_classification[source_id] = classification
-        self._persist_reopen_path(source_id, conn, store, classification)
 
-    def _persist_reopen_path(
-        self, source_id: str, conn: sqlite3.Connection, store: SemanticStore, classification: str
+    async def register_sqlite_datastore(
+        self,
+        source_id: str,
+        conn: sqlite3.Connection,
+        *,
+        classification: str = "unclassified",
+        caller_did: str = "",
     ) -> None:
-        """Persist the sqlite main-db file path as a fact, so the operator can reopen
-        this datastore READ-ONLY later. Skipped for an in-memory connection (nothing
-        to reopen) -- degrade, not crash (SPEC-073 A1).
-        """
+        """Register the optional SQLite adapter without shaping the public port."""
+        await self.register_datastore(
+            source_id,
+            SqliteDatastorePort(conn),
+            classification=classification,
+            caller_did=caller_did,
+        )
         rows = conn.execute("PRAGMA database_list").fetchall()
         main_row = next((row for row in rows if row[1] == "main"), None)
         path = str(main_row[2]) if main_row is not None else ""
-        if not path or path == ":memory:":
-            return
-        store.write_fact(f"source-{source_id}", "datastore_path", path, entity_type="source")
-        store.write_fact(
-            f"source-{source_id}", "datastore_classification", classification, entity_type="source"
-        )
+        if path and path != ":memory:":
+            SemanticStore(self._workspace, self._graph, self._scope(None).key).write_fact(
+                f"source-{source_id}", "sqlite_path", path, entity_type="source"
+            )
 
     async def propose_mapping(
         self,
@@ -664,7 +669,7 @@ class ArcMemoryBrain:
         scope = self._scope(session_id)
         store = SemanticStore(self._workspace, self._graph, scope.key)
         committed = load_committed_mapping(source_id, store=store)
-        homes = committed.homes if committed is not None else ["memory"]
+        homes = committed.homes if committed is not None else [MemoryHome.MEMORY]
         return await ingest.route_batch(
             self._db,
             self._workspace,
@@ -742,7 +747,7 @@ class ArcMemoryBrain:
             return None
         if not dominates(clr, resource):
             return None
-        return datastore.query(op, table, args)
+        return await datastore.query(op, table, args)
 
     # -- internals ---------------------------------------------------------
 
