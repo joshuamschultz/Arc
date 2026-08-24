@@ -186,3 +186,26 @@ def test_an_unenveloped_message_is_left_alone() -> None:
     module = importlib.import_module("extensions.google_workspace.arc_ext_google_workspace.source")
 
     assert module._unwrap_message({"id": "abc123"})["id"] == "abc123"
+
+
+@pytest.mark.asyncio
+async def test_gmail_fetches_the_body_from_inside_the_envelope() -> None:
+    """Fetch reads the same envelope the message read does.
+
+    Unwrapping in only one of them left the fetch with no revision at all, so
+    the sync got as far as listing and then died on the first body it pulled.
+    """
+    module = importlib.import_module("extensions.google_workspace.arc_ext_google_workspace.source")
+
+    unwrapped = module._unwrap_message(
+        {
+            "message": {"id": "abc", "historyId": "77"},
+            "body": "the full decoded message text",
+            "snippet": "one line preview",
+        }
+    )
+
+    assert module._revision(unwrapped) == "77"
+    # The body, not the preview: indexing the snippet would make a mail account
+    # searchable only by its previews.
+    assert unwrapped["body"] == "the full decoded message text"

@@ -99,13 +99,15 @@ class GmailSourceAdapter:
 
     async def fetch_source(self, request: FetchSourceObject) -> SourceContent:
         result = await self._attachment.invoke("google_gmail_message", {"id": request.object_id})
-        payload = _payload(result)
+        payload = _unwrap_message(_payload(result))
         version = _revision(payload)
         if version != request.version:
             raise SourceError(
                 SourceFailureCode.VERSION_CHANGED, "Gmail message changed during fetch"
             )
-        body = str(payload.get("snippet") or payload.get("body") or json.dumps(payload)).encode()
+        # The decoded body first: a snippet is one line, and indexing that would
+        # make a mail account searchable only by its previews.
+        body = str(payload.get("body") or payload.get("snippet") or json.dumps(payload)).encode()
         if len(body) > request.max_bytes:
             raise SourceError(SourceFailureCode.TOO_LARGE, "Gmail message exceeds byte limit")
         return SourceContent(
