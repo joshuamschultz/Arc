@@ -746,3 +746,45 @@ async def test_an_ingest_failure_that_is_not_about_one_object_still_fails() -> N
             agent_did="did:a",
             owner_id="worker",
         )
+
+
+class AuthRefusingSource:
+    """A source whose credential has been revoked — only a person can fix it."""
+
+    def __init__(self) -> None:
+        self.attempts = 0
+
+    async def sync_source(self, request: SyncSource) -> SyncSourcePage:
+        self.attempts += 1
+        raise SourceError(
+            SourceFailureCode.AUTH_REQUIRED,
+            'oauth2: "invalid_grant" "Token has been expired or revoked."',
+        )
+
+    async def fetch_source(self, request: FetchSourceObject) -> SourceContent:
+        raise AssertionError("nothing should be fetched")
+
+
+@pytest.mark.asyncio
+async def test_a_revoked_credential_is_reported_as_auth_required_and_not_retried() -> None:
+    """The typed reason must survive the wrap into SyncError.
+
+    Flattened to the generic ``sync_error``, an operator with a dead Google
+    token was told only that something failed — and every surface that could
+    have said "reconnect this account" had nothing to say it with.
+    """
+    source = AuthRefusingSource()
+    store = InMemorySourceSyncStore()
+
+    with pytest.raises(SyncError) as caught:
+        await ConnectedDataCoordinator(source, FakeIngest(), store).run(
+            SourceDescription(connection_id="source", source_kind="test", account_id="account"),
+            agent_did="did:a",
+            owner_id="worker",
+        )
+
+    assert caught.value.code == "auth_required"
+    assert not isinstance(caught.value, TransientSyncError)
+    assert source.attempts == 1, "a revoked credential must not be retried"
+    state = await store.get_state("did:a", "source")
+    assert state.error_code == "auth_required"

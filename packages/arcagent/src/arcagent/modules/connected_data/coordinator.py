@@ -244,7 +244,7 @@ class ConnectedDataCoordinator:
                 )
             except (TransientSyncError, SourceError) as exc:
                 if isinstance(exc, SourceError) and exc.code is not SourceFailureCode.TRANSIENT:
-                    raise SyncError(str(exc)) from exc
+                    raise SyncError(str(exc), code=str(exc.code)) from exc
                 if attempt >= limits.retries:
                     raise TransientSyncError(str(exc), retry_after=exc.retry_after or 0.0) from exc
                 self._check_cancel(cancel_event)
@@ -382,7 +382,7 @@ class ConnectedDataCoordinator:
                 return await operation()
             except (TransientSyncError, SourceError) as exc:
                 if isinstance(exc, SourceError) and exc.code is not SourceFailureCode.TRANSIENT:
-                    raise SyncError(str(exc)) from exc
+                    raise SyncError(str(exc), code=str(exc.code)) from exc
                 if attempt >= limits.retries:
                     raise TransientSyncError(str(exc), retry_after=exc.retry_after or 0.0) from exc
                 self._check_cancel(cancel_event)

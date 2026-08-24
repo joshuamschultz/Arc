@@ -93,11 +93,27 @@ class SyncLease(BaseModel):
 
 
 class SyncError(Exception):
+    """A synchronization failure, carrying WHY when the source said why.
+
+    ``code`` is what an operator surface acts on: "reconnect this account" reads
+    very differently from "we will try again". The adapter seam types its
+    refusals, so a caller that knows the reason must pass it — flattening every
+    non-transient refusal to the generic code told an operator with a revoked
+    Google token only that something failed.
+    """
+
     code = "sync_error"
 
-    def __init__(self, message: str = "connected-data synchronization failed") -> None:
+    def __init__(
+        self,
+        message: str = "connected-data synchronization failed",
+        *,
+        code: str | None = None,
+    ) -> None:
         super().__init__(message[:256])
         self.public_message = message[:256]
+        if code:
+            self.code = code
 
 
 class MappingPendingError(SyncError):
