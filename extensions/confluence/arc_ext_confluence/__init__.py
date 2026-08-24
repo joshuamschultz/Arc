@@ -44,8 +44,13 @@ from arcagent.extension.source import (
     SyncSourcePage,
 )
 
-#: Seconds any one Confluence request may take before it is abandoned.
-_TIMEOUT: Final = 30.0
+#: One flat 30 seconds covered both reaching Confluence and reading a page from
+#: it, so a slow moment on either half failed the whole sync — a space that had
+#: just indexed cleanly came back as ConnectTimeout on the next run. Connecting
+#: keeps a short leash so an unreachable host is reported at once; a transfer
+#: already in progress is given room. The per-sync max_seconds ceiling still
+#: bounds the run as a whole.
+_TIMEOUT: Final = httpx.Timeout(connect=10.0, read=120.0, write=60.0, pool=10.0)
 
 #: The REST root every path below hangs off.
 _API: Final = "/wiki/rest/api"
