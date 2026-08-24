@@ -227,20 +227,23 @@ def _check_operator_key(team_root: Path | None) -> Check:
     empty directory: the dashboard served, health returned 200, the logs were
     clean, and every message answered ``[agent-error] the run failed``.
     """
-    from arctrust import arc_home
+    from arctrust.paths import default_operator_key_path
 
     from arccli.commands.operator import operator_public_key
 
-    home = arc_home()
+    # Asked with no base: the accessor knows where the key lives, and composing
+    # the root by hand pointed this at the install home while the key sat
+    # beside the fleet — a green box reported as having no operator at all.
+    expected = default_operator_key_path()
     try:
-        public_key = operator_public_key(home)
+        public_key = operator_public_key()
     except Exception as exc:  # reason: a tampered key is a reportable failure, not a crash
         return Check("operator key", False, f"unreadable: {type(exc).__name__}: {exc}")
     if public_key is None:
         return Check(
             "operator key",
             False,
-            f"none under {home} — module signatures cannot be verified and the audit "
+            f"none at {expected} — module signatures cannot be verified and the audit "
             "chain has no signer. Create one with `arc init`, the setup wizard that "
             "mints and pins it.",
         )
@@ -255,12 +258,12 @@ def _check_operator_key(team_root: Path | None) -> Check:
         return Check(
             "operator key",
             False,
-            f"present under {home}, but these agents name an operator_key_dir holding no "
+            f"present at {expected}, but these agents name an operator_key_dir holding no "
             f"key and cannot sign their audit chain: {named}. Clear "
             "`security.operator_key_dir` in each config to use the deployment key, or "
             "restore the named key from custody.",
         )
-    return Check("operator key", True, f"present under {home}")
+    return Check("operator key", True, f"present under {expected.parent}")
 
 
 def _check_agent_identity(team_root: Path | None) -> Check:

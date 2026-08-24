@@ -12,6 +12,7 @@ import argparse
 import stat
 from pathlib import Path
 
+import pytest
 from arctrust.operator import OperatorKey
 from arctrust.paths import default_operator_key_path
 
