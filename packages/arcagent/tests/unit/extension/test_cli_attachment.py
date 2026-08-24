@@ -519,31 +519,38 @@ def test_a_terminator_that_is_not_the_last_fixed_token_is_refused_at_load() -> N
         )
 
 
-def test_a_command_may_not_mix_a_positional_argument_with_a_flag_one() -> None:
-    """Everything after ``--`` is a positional, so a flag token there is read as one."""
+def test_a_command_may_take_both_a_positional_and_flags_in_a_safe_order() -> None:
+    """Real binaries need both: a search verb with a query and paging flags.
+
+    Order is what makes it safe. Every flag goes BEFORE the terminator and every
+    value after it, so a value can never land in a flag position and a flag can
+    never be read as a value.
+    """
     module = _module()
-    with pytest.raises(ValueError, match="positional"):
-        module.CliCommand(
-            tool="view_item",
-            argv=["workitem", "view", "--"],
-            arguments=[
-                module.CliArgument(name="issue_key"),
-                module.CliArgument(name="fields", flag="--fields"),
-            ],
-        )
+    command = module.CliCommand(
+        tool="search_items",
+        argv=["messages", "search", "--json", "--"],
+        arguments=[
+            module.CliArgument(name="query"),
+            module.CliArgument(name="limit", flag="--max"),
+        ],
+    )
+
+    argv = command.argv_for({"query": "label:INBOX", "limit": "50"})
+
+    assert argv == ["messages", "search", "--json", "--max=50", "--", "label:INBOX"]
+    assert argv.index("--max=50") < argv.index("--")
 
 
-# --- a fixed argv token the bundle configures (SPEC-064) ----------------------
-#
-# `op item list` refuses to run for a service account without `--vault`, and the
-# vault must NOT be a model argument: which vault this connection may read is the
-# operator's decision and the blast radius of every verb. So the manifest writes
-# `--vault={vault_id}` into its FIXED argv and Arc fills it from the bundle's own
-# non-sensitive field — the same rule `token_command` uses, and the same reason it
-# is restricted to `sensitive = false`: argv is the process table.
-#
-# Filling happens once, at construction, over manifest data only. A model's value
-# is never a substitution input and never a substitution target.
+def test_a_command_with_only_flags_appends_them_as_before() -> None:
+    module = _module()
+    command = module.CliCommand(
+        tool="list_items",
+        argv=["items", "list", "--json"],
+        arguments=[module.CliArgument(name="limit", flag="--max")],
+    )
+
+    assert command.argv_for({"limit": "5"}) == ["items", "list", "--json", "--max=5"]
 
 
 def _configured_attachment(values: dict[str, str]) -> CliAttachment:

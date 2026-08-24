@@ -118,7 +118,11 @@ class GmailSourceAdapter:
     async def _sync_snapshot(
         self, request: SyncSource, label: str, cursor: dict[str, str] | None
     ) -> SyncSourcePage:
-        arguments: dict[str, str] = {"label": label, "limit": str(request.page_size)}
+        # A label is a term in Gmail's query syntax, not a flag of its own.
+        arguments: dict[str, str] = {
+            "query": f"label:{label}",
+            "limit": str(request.page_size),
+        }
         if cursor is not None and (token := cursor.get("page_token")):
             arguments["page_token"] = token
         result = await self._attachment.invoke("google_gmail_messages", arguments)
@@ -142,8 +146,9 @@ class GmailSourceAdapter:
     async def _sync_history(
         self, request: SyncSource, label: str, cursor: dict[str, str]
     ) -> SyncSourcePage:
+        # History is account-wide; it takes no label.
+        del label
         arguments: dict[str, str] = {
-            "label": label,
             "limit": str(request.page_size),
             "start_history_id": cursor["history_id"],
         }

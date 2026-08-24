@@ -196,13 +196,30 @@ entrypoint = "arc_ext_google_workspace.source"
 
 [[config.cli.commands]]
 tool = "google_gmail_messages"
-argv = ["gmail", "messages", "list", "--json", "--readonly", "--wrap-untrusted", "--no-input"]
+# `messages list` is an alias of `messages search`, whose selector is a
+# POSITIONAL Gmail query, not a flag. There is no `--label`, and the page token
+# flag is `--page`. Measured against gog v0.34.1:
+#
+#   gog gmail messages list --label INBOX   exit 2, unknown flag --label
+#   gog gmail messages list -- label:INBOX  exit 0
+#
+# Every Gmail sync died on its first call for as long as the flags were guessed.
+argv = [
+  "gmail",
+  "messages",
+  "search",
+  "--json",
+  "--readonly",
+  "--wrap-untrusted",
+  "--no-input",
+  "--",
+]
 description = "List Gmail messages for connected-data indexing."
 classification = "read_only"
 
 [[config.cli.commands.arguments]]
-name = "label"
-flag = "--label"
+name = "query"
+description = "A Gmail search query, e.g. label:INBOX."
 
 [[config.cli.commands.arguments]]
 name = "limit"
@@ -210,7 +227,7 @@ flag = "--max"
 
 [[config.cli.commands.arguments]]
 name = "page_token"
-flag = "--page-token"
+flag = "--page"
 
 [[config.cli.commands]]
 tool = "google_gmail_message"
@@ -224,13 +241,11 @@ flag = "--id"
 
 [[config.cli.commands]]
 tool = "google_gmail_history"
-argv = ["gmail", "history", "list", "--json", "--readonly", "--wrap-untrusted", "--no-input"]
+# `gmail history`, not `gmail history list` — the latter is rejected as an
+# unexpected argument. Its start marker is `--since`, and it takes no label.
+argv = ["gmail", "history", "--json", "--readonly", "--wrap-untrusted", "--no-input"]
 description = "List incremental Gmail history for connected-data indexing."
 classification = "read_only"
-
-[[config.cli.commands.arguments]]
-name = "label"
-flag = "--label"
 
 [[config.cli.commands.arguments]]
 name = "limit"
@@ -238,11 +253,11 @@ flag = "--max"
 
 [[config.cli.commands.arguments]]
 name = "page_token"
-flag = "--page-token"
+flag = "--page"
 
 [[config.cli.commands.arguments]]
 name = "start_history_id"
-flag = "--start-history-id"
+flag = "--since"
 
 # Every read command carries --readonly and --gmail-no-send: the binary refuses a
 # mutating API call from inside, so a read verb cannot become a write one even if

@@ -114,17 +114,14 @@ class CliCommand(_Declaration):
         value in a flag position is a defect in the manifest, and discovering it on
         the call that exploits it is discovering it too late.
 
-        Flag arguments may not accompany a positional one, because everything after
-        ``--`` is a positional — a ``--fields=…`` token emitted there would be read as
-        a second positional value rather than refused, which is a silently wrong call.
+        A command may take both, which real binaries commonly require — a search
+        verb whose selector is a query and whose paging is flags. The order is
+        what makes it safe, and :meth:`argv_for` owns it: every flag is emitted
+        BEFORE the terminator and every positional after it, so a value can never
+        land in a flag position and a flag can never be read as a value.
         """
         if all(argument.flag for argument in self.arguments):
             return self
-        if [argument.name for argument in self.arguments if argument.flag]:
-            raise ValueError(
-                f"{self.tool} mixes a positional argument with a flag one; after the "
-                f"'--' terminator every token is a positional"
-            )
         if _TERMINATOR not in self.argv:
             raise ValueError(f"{self.tool} takes a positional argument but declares no '--'")
         if self.argv[-1] != _TERMINATOR:
@@ -169,6 +166,31 @@ class CliCommand(_Declaration):
                 details={"tool": self.tool, "undeclared": undeclared},
             )
         return [argument.token(args[name]) for name, argument in declared.items() if name in args]
+
+    def argv_for(self, args: dict[str, Any]) -> list[str]:
+        """The full argument vector, with flags ahead of the terminator.
+
+        The declared ``argv`` ends at the terminator when this command takes a
+        positional, so flags cannot simply be appended: everything after ``--``
+        is a value. They are spliced in before it instead, which is the only
+        order in which a command taking both can be built safely.
+        """
+        declared = {argument.name: argument for argument in self.arguments}
+        flags = [
+            declared[name].token(args[name])
+            for name in declared
+            if name in args and declared[name].flag
+        ]
+        positionals = [
+            declared[name].token(args[name])
+            for name in declared
+            if name in args and not declared[name].flag
+        ]
+        if not positionals:
+            return [*self.argv, *flags]
+        ends_with_terminator = bool(self.argv) and self.argv[-1] == _TERMINATOR
+        head = list(self.argv[:-1]) if ends_with_terminator else list(self.argv)
+        return [*head, *flags, _TERMINATOR, *positionals]
 
 
 class CliResilience(_Declaration):
@@ -309,7 +331,8 @@ class CliAttachment:
                 message=f"{self._binary}: undeclared tool {tool!r}",
                 details={"tool": tool, "declared": sorted(self._commands)},
             )
-        argv = [self._binary, *command.argv, *command.tokens(args)]
+        command.tokens(args)  # refuses an undeclared argument before anything runs
+        argv = [self._binary, *command.argv_for(args)]
 
         retry_after = self._breaker.retry_after()
         if retry_after is not None:

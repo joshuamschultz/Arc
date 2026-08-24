@@ -125,9 +125,11 @@ async def test_gmail_pages_then_uses_history_for_changed_and_deleted_messages() 
     assert third.objects[1].kind is SourceObjectKind.DELETED
     assert third.objects[1].deleted
     assert all(isinstance(item.metadata["revision"], int) for item in first.objects)
+    # A label is a term in Gmail's query syntax, not a flag: `gog` has no
+    # --label and refuses the call outright when one is sent.
     assert (
         "google_gmail_messages",
-        {"label": "INBOX", "limit": "2", "page_token": "p2"},
+        {"query": "label:INBOX", "limit": "2", "page_token": "p2"},
     ) in attachment.calls
     assert any(tool == "google_gmail_history" for tool, _ in attachment.calls)
 
