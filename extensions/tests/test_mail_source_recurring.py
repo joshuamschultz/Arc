@@ -156,3 +156,33 @@ async def test_outlook_pages_repeat_and_normalize_graph_deletions() -> None:
     assert third.objects[1].deleted
     assert all(isinstance(item.metadata["revision"], int) for item in first.objects)
     assert ("list-mail-messages", {"folder": "inbox", "top": 2, "skip": 2}) in attachment.calls
+
+
+@pytest.mark.asyncio
+async def test_gmail_reads_the_message_out_of_its_envelope() -> None:
+    """A read returns {message, body, headers, ...} with the id inside `message`.
+
+    Reading the id off the envelope found nothing, so every message looked
+    unavailable and one of them ended the whole account's sync.
+    """
+    module = importlib.import_module("extensions.google_workspace.arc_ext_google_workspace.source")
+
+    unwrapped = module._unwrap_message(
+        {
+            "message": {"id": "abc123", "historyId": "42", "internalDate": "1700000000000"},
+            "body": "the decoded text",
+            "headers": {"Subject": "Hello"},
+        }
+    )
+
+    assert unwrapped["id"] == "abc123"
+    assert unwrapped["historyId"] == "42"
+    # The body is what gets indexed, so it must travel with the message.
+    assert unwrapped["body"] == "the decoded text"
+
+
+def test_an_unenveloped_message_is_left_alone() -> None:
+    """A payload that is already the message must not be mangled."""
+    module = importlib.import_module("extensions.google_workspace.arc_ext_google_workspace.source")
+
+    assert module._unwrap_message({"id": "abc123"})["id"] == "abc123"

@@ -200,7 +200,7 @@ class GmailSourceAdapter:
 
     async def _message(self, message_id: str) -> dict[str, Any]:
         result = await self._attachment.invoke("google_gmail_message", {"id": message_id})
-        payload = _payload(result)
+        payload = _unwrap_message(_payload(result))
         if not payload.get("id"):
             raise SourceError(SourceFailureCode.NOT_FOUND, "Gmail message is unavailable")
         return payload
@@ -301,6 +301,24 @@ def _revision_or_none(value: dict[str, Any]) -> str | None:
 def _latest_revision(objects: tuple[SourceObject, ...]) -> str | None:
     revisions = [int(item.version) for item in objects if item.version and item.version.isdigit()]
     return str(max(revisions)) if revisions else None
+
+
+def _unwrap_message(payload: dict[str, Any]) -> dict[str, Any]:
+    """The message itself, out of the envelope the read verb wraps it in.
+
+    A read returns ``{message, body, headers, attachments, externalContent}``
+    and the id lives inside ``message``. Reading the id off the envelope found
+    nothing, so every message looked unavailable and one of them ended the whole
+    account's sync. The decoded body travels with it — it is what gets indexed.
+    """
+    message = payload.get("message")
+    if not isinstance(message, dict):
+        return payload
+    merged = dict(message)
+    for key in ("body", "headers", "attachments"):
+        if key in payload and key not in merged:
+            merged[key] = payload[key]
+    return merged
 
 
 def _payload(result: Any) -> dict[str, Any]:
