@@ -118,6 +118,22 @@ class TransientSyncError(SyncError):
         self.retry_after = max(0.0, retry_after)
 
 
+class ObjectNotIngestibleError(SyncError):
+    """One object cannot be taken. The source is fine and the sync continues.
+
+    The seam had no way to say this, so every ingest refusal — a folder with no
+    content, a file past a size ceiling, a media type nothing can read — ended
+    the whole sync and left the account permanently `failed`. One unreadable
+    file in a folder must not cost an operator every other document in it.
+    """
+
+    code = "object_not_ingestible"
+
+    def __init__(self, reason: str, message: str = "") -> None:
+        super().__init__(message or f"object not ingestible: {reason}")
+        self.reason = reason
+
+
 class LeaseLostError(SyncError):
     code = "lease_lost"
 
@@ -210,6 +226,7 @@ __all__ = [
     "MappingDeniedError",
     "MappingPendingError",
     "MappingPlan",
+    "ObjectNotIngestibleError",
     "SelectSourceResources",
     "SourceAdapter",
     "SourceContent",

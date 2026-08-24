@@ -13,6 +13,7 @@ from arcagent.connected_data import (
     MappingDeniedError,
     MappingPendingError,
     MappingPlan,
+    ObjectNotIngestibleError,
 )
 from arcagent.extension.source import (
     SourceContent,
@@ -403,7 +404,16 @@ class ArcMemoryIngestAdapter(IngestPort):
             revision=mapping.revision,
             content_hash=mapping.content_hash,
         )
-        await service.ingest(source_model, object_model, content_model, mapping_model)
+        try:
+            await service.ingest(source_model, object_model, content_model, mapping_model)
+        except module.ConnectedObjectError as refusal:
+            # Every one of these is about a single object: an unreadable media
+            # type, a size ceiling, a revision out of order. Left to propagate
+            # they ended the whole sync, so one file nothing can read made the
+            # entire account permanently `failed`.
+            raise ObjectNotIngestibleError(
+                type(refusal).__name__, str(refusal)
+            ) from refusal
 
     async def reset_source(self, source: SourceDescription) -> None:
         """Clear retrievable source artifacts without discarding approved routing."""

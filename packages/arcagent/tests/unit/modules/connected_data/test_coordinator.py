@@ -9,6 +9,7 @@ from arcagent.connected_data import (
     LeaseLostError,
     MappingPendingError,
     MappingPlan,
+    ObjectNotIngestibleError,
     SyncError,
     SyncLimits,
     SyncStatus,
@@ -697,3 +698,59 @@ async def test_every_object_in_a_page_gets_the_same_byte_cap() -> None:
     )
 
     assert source.caps == [4096, 4096, 4096]
+
+
+class _RefusingIngest(FakeIngest):
+    """An ingest port that cannot take one particular object."""
+
+    def __init__(self, refuse: str, error: Exception) -> None:
+        super().__init__()
+        self._refuse = refuse
+        self._error = error
+
+    async def ingest(
+        self,
+        source: SourceDescription,
+        source_object: SourceObject,
+        content: SourceContent | None,
+        mapping: MappingPlan,
+    ) -> None:
+        if source_object.object_id == self._refuse:
+            raise self._error
+        await super().ingest(source, source_object, content, mapping)
+
+
+@pytest.mark.asyncio
+async def test_one_unreadable_object_does_not_cost_the_whole_account() -> None:
+    """A media type nothing can read is one skipped file, not a dead source.
+
+    Left to propagate it ended the sync, so a single image in a folder made the
+    entire account permanently `failed` with nothing in it indexed.
+    """
+    source = FakeSource([page("readable", "weird", "also-fine", cursor="")])
+    ingest = _RefusingIngest("weird", ObjectNotIngestibleError("unsupported_media_type"))
+
+    result = await ConnectedDataCoordinator(source, ingest, InMemorySourceSyncStore()).run(
+        SourceDescription(connection_id="source", source_kind="test", account_id="account"),
+        agent_did="did:a",
+        owner_id="worker",
+    )
+
+    assert result.status is SyncStatus.COMPLETE
+    assert sorted(ingest.ingested) == ["also-fine", "readable"]
+
+
+@pytest.mark.asyncio
+async def test_an_ingest_failure_that_is_not_about_one_object_still_fails() -> None:
+    """A broken store must not be mistaken for a pile of unreadable files."""
+    source = FakeSource([page("a", cursor="")])
+    ingest = _RefusingIngest("a", RuntimeError("ingest store is down"))
+
+    with pytest.raises(RuntimeError, match="store is down"):
+        await ConnectedDataCoordinator(source, ingest, InMemorySourceSyncStore()).run(
+            SourceDescription(
+                connection_id="source", source_kind="test", account_id="account"
+            ),
+            agent_did="did:a",
+            owner_id="worker",
+        )

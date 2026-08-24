@@ -16,6 +16,7 @@ from arcagent.connected_data import (
     LeaseLostError,
     MappingPendingError,
     MappingPlan,
+    ObjectNotIngestibleError,
     SourceAdapter,
     SourceContent,
     SourceDescription,
@@ -326,12 +327,18 @@ class ConnectedDataCoordinator:
             source_object: SourceObject, content: SourceContent | None, mapping: MappingPlan
         ) -> None:
             async with semaphore:
-                await self._retry_call(
-                    lambda: self._ingest.ingest(source, source_object, content, mapping),
-                    limits,
-                    started,
-                    cancel_event,
-                )
+                try:
+                    await self._retry_call(
+                        lambda: self._ingest.ingest(source, source_object, content, mapping),
+                        limits,
+                        started,
+                        cancel_event,
+                    )
+                except ObjectNotIngestibleError as refusal:
+                    # About this object, not about the account. One file nothing
+                    # can read must not cost an operator every other document
+                    # beside it.
+                    await self._emit_skip(source, source_object, refusal.reason)
 
         try:
             async with asyncio.TaskGroup() as group:
