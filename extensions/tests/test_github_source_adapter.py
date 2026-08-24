@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import pytest
+
 from arcagent.extension.attachment import ToolOutcome, ToolResult
 from arcagent.extension.source import (
     FetchSourceObject,
@@ -126,3 +128,69 @@ async def test_github_source_walks_collections_larger_than_one_page() -> None:
     page = await adapter.sync_source(SyncSource(connection_id="github", page_size=200))
     assert len(page.objects) == 200
     assert page.has_more
+
+
+class _IssuesDisabledAttachment:
+    """A repository with issues switched off — a normal repository, not a fault.
+
+    ``gh`` answers a request for a disabled feature with an error, and letting it
+    escape aborted the whole crawl: on a live box one such repository left five
+    others and every file in them unindexed.
+    """
+
+    def __init__(self) -> None:
+        self.pulls_read = False
+
+    async def invoke(self, tool: str, args: dict[str, Any]) -> ToolResult:
+        if tool == "github_repo_tree":
+            return ToolResult(
+                tool=tool,
+                outcome=ToolOutcome.OK,
+                content=json.dumps(
+                    {"tree": [{"type": "blob", "path": "README.md", "sha": "abc123", "size": 40}]}
+                ),
+            )
+        if tool == "github_repo_list":
+            return ToolResult(
+                tool=tool,
+                outcome=ToolOutcome.OK,
+                content=json.dumps([{"nameWithOwner": "arc/arc"}]),
+            )
+        if tool == "github_issue_list":
+            return ToolResult(
+                tool=tool,
+                outcome=ToolOutcome.ERROR,
+                content="the 'arc/arc' repository has disabled issues",
+            )
+        self.pulls_read = True
+        return ToolResult(tool=tool, outcome=ToolOutcome.OK, content=json.dumps([]))
+
+
+async def test_a_repository_with_issues_disabled_still_indexes_its_files() -> None:
+    attachment = _IssuesDisabledAttachment()
+    adapter = GitHubSourceAdapter(attachment)
+
+    page = await adapter.sync_source(SyncSource(connection_id="github", page_size=50))
+
+    assert attachment.pulls_read, "a disabled feature must not stop the next collection"
+    assert [obj.locator for obj in page.objects] == ["README.md"]
+
+
+async def test_a_real_github_failure_still_refuses() -> None:
+    """Only "this repository does not have that" is absorbed."""
+
+    class _Unauthorized:
+        async def invoke(self, tool: str, args: dict[str, Any]) -> ToolResult:
+            if tool == "github_repo_list":
+                return ToolResult(
+                    tool=tool,
+                    outcome=ToolOutcome.OK,
+                    content=json.dumps([{"nameWithOwner": "arc/arc"}]),
+                )
+            return ToolResult(
+                tool=tool, outcome=ToolOutcome.ERROR, content="HTTP 401: Bad credentials"
+            )
+
+    adapter = GitHubSourceAdapter(_Unauthorized())
+    with pytest.raises(RuntimeError, match="Bad credentials"):
+        await adapter.sync_source(SyncSource(connection_id="github", page_size=50))

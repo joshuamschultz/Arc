@@ -344,6 +344,31 @@ def _unwrap_message(payload: dict[str, Any]) -> dict[str, Any]:
     return merged
 
 
+#: Substrings in a ``gog`` failure that mean the account must be re-authorized.
+#: Google says this in prose, not in a code the CLI passes through, so the words
+#: are the only signal there is.
+_AUTH_MARKERS = ("invalid_grant", "expired or revoked", "token has been expired")
+
+#: Substrings that mean "ask again later" rather than "reconnect".
+_RATE_MARKERS = ("rate limit", "rateLimitExceeded", "userRateLimitExceeded", "429")
+
+
+def _failure_code(detail: str) -> SourceFailureCode:
+    """Classify a ``gog`` failure so the orchestrator can act on it.
+
+    A revoked or expired refresh token was reported as TRANSIENT, so the
+    coordinator retried it every cycle forever and the UI said "temporary
+    problem" about a connection that needed a person to run ``gog auth add``.
+    Only re-authorization fixes it, so it must say so.
+    """
+    lowered = detail.lower()
+    if any(marker.lower() in lowered for marker in _AUTH_MARKERS):
+        return SourceFailureCode.AUTH_REQUIRED
+    if any(marker.lower() in lowered for marker in _RATE_MARKERS):
+        return SourceFailureCode.RATE_LIMITED
+    return SourceFailureCode.TRANSIENT
+
+
 def _payload(result: Any) -> dict[str, Any]:
     """The tool's JSON, or the tool's own words about why there is none.
 
@@ -353,7 +378,8 @@ def _payload(result: Any) -> dict[str, Any]:
     act on.
     """
     if getattr(result, "outcome", None) is not None and str(result.outcome) != "ok":
-        raise SourceError(SourceFailureCode.TRANSIENT, str(result.content)[:256])
+        detail = str(result.content)[:256]
+        raise SourceError(_failure_code(detail), detail)
     try:
         parsed = json.loads(result.content)
     except json.JSONDecodeError as exc:

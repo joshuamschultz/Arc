@@ -230,9 +230,7 @@ async def test_gmail_offers_all_mail_and_no_duplicate_inbox() -> None:
     attachment = _GmailAttachment()
     adapter = module.GmailSourceAdapter(attachment)
 
-    resources = await adapter.list_source_resources(
-        ListSourceResources(connection_id="blackarc")
-    )
+    resources = await adapter.list_source_resources(ListSourceResources(connection_id="blackarc"))
 
     ids = [resource.resource_id for resource in resources]
     assert len(ids) == len(set(ids))
@@ -244,3 +242,44 @@ def test_all_mail_selects_the_whole_account() -> None:
 
     assert module._query_for(module._ALL_MAIL) == "in:anywhere"
     assert module._query_for("SENT") == "label:SENT"
+
+
+class _RefusingAttachment:
+    """A ``gog`` that fails every call with one message."""
+
+    def __init__(self, content: str) -> None:
+        self._content = content
+
+    async def invoke(self, tool: str, arguments: dict[str, Any]) -> Any:
+        return SimpleNamespace(tool=tool, outcome="error", content=self._content)
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        (
+            'round trip: base token source: oauth2: "invalid_grant" '
+            '"Token has been expired or revoked."',
+            "auth_required",
+        ),
+        ("googleapi: Error 429: User Rate Limit Exceeded, rateLimitExceeded", "rate_limited"),
+        ("read tcp 10.0.0.1:443: connection reset by peer", "transient"),
+    ],
+)
+async def test_a_gmail_failure_is_classified_so_an_operator_can_act(
+    content: str, expected: str
+) -> None:
+    """A revoked grant needs a person, not a retry — and must not be called transient.
+
+    Reported as TRANSIENT, the coordinator retried a dead account every cycle
+    forever and the dashboard called it a temporary problem, while the only fix
+    was for someone to re-run ``gog auth add`` at the host.
+    """
+    module = importlib.import_module("extensions.google_workspace.arc_ext_google_workspace.source")
+    adapter = module.GmailSourceAdapter(_RefusingAttachment(content))
+
+    with pytest.raises(module.SourceError) as caught:
+        await adapter.list_source_resources(ListSourceResources(connection_id="blackarc"))
+
+    assert str(caught.value.code) == expected
+    assert content[:40] in caught.value.detail

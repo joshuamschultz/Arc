@@ -29,12 +29,54 @@ from arcagent.extension.source import (
 #: that no extractor can read and that would only crowd out real results.
 _TEXT_SUFFIXES: frozenset[str] = frozenset(
     {
-        ".md", ".markdown", ".rst", ".txt", ".adoc",
-        ".py", ".pyi", ".js", ".jsx", ".ts", ".tsx", ".go", ".rs", ".rb", ".java",
-        ".kt", ".swift", ".c", ".h", ".cc", ".cpp", ".hpp", ".cs", ".php", ".scala",
-        ".sh", ".bash", ".zsh", ".sql", ".r", ".jl", ".lua", ".pl", ".ex", ".exs",
-        ".html", ".css", ".scss", ".vue", ".svelte",
-        ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".env.example",
+        ".md",
+        ".markdown",
+        ".rst",
+        ".txt",
+        ".adoc",
+        ".py",
+        ".pyi",
+        ".js",
+        ".jsx",
+        ".ts",
+        ".tsx",
+        ".go",
+        ".rs",
+        ".rb",
+        ".java",
+        ".kt",
+        ".swift",
+        ".c",
+        ".h",
+        ".cc",
+        ".cpp",
+        ".hpp",
+        ".cs",
+        ".php",
+        ".scala",
+        ".sh",
+        ".bash",
+        ".zsh",
+        ".sql",
+        ".r",
+        ".jl",
+        ".lua",
+        ".pl",
+        ".ex",
+        ".exs",
+        ".html",
+        ".css",
+        ".scss",
+        ".vue",
+        ".svelte",
+        ".json",
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".ini",
+        ".cfg",
+        ".conf",
+        ".env.example",
     }
 )
 
@@ -54,9 +96,7 @@ class GitHubSourceAdapter:
     async def inspect_source(self, request: InspectSource) -> SourceDescription:
         repos = await self._call("github_repo_list", {"limit": "1"})
         account = (
-            str(repos[0].get("nameWithOwner", "github")).split("/", 1)[0]
-            if repos
-            else "github"
+            str(repos[0].get("nameWithOwner", "github")).split("/", 1)[0] if repos else "github"
         )
         return SourceDescription(
             connection_id=request.connection_id,
@@ -103,7 +143,7 @@ class GitHubSourceAdapter:
         for repo in repos:
             for kind, tool in (("issue", "github_issue_list"), ("pull", "github_pr_list")):
                 args = {"repo": repo, "state": "all", "limit": "1000"}
-                for item in await self._call_all(tool, args):
+                for item in await self._optional_collection(tool, args):
                     records.append((repo, kind, item))
             # The repository itself, not only the conversation around it. Issues
             # and pull requests are what people said; the files are the thing
@@ -142,9 +182,7 @@ class GitHubSourceAdapter:
         if version != request.version:
             raise ValueError("GitHub object version changed")
         if len(content) > request.max_bytes:
-            raise SourceError(
-                SourceFailureCode.TOO_LARGE, "GitHub object exceeds byte limit"
-            )
+            raise SourceError(SourceFailureCode.TOO_LARGE, "GitHub object exceeds byte limit")
         return SourceContent(
             object_id=request.object_id,
             version=version,
@@ -192,6 +230,25 @@ class GitHubSourceAdapter:
         if not isinstance(parsed, list):
             return []
         return [item for item in parsed if isinstance(item, dict)]
+
+    async def _optional_collection(self, tool: str, args: dict[str, Any]) -> list[dict[str, Any]]:
+        """A collection a repository is allowed not to have.
+
+        Issues and pull requests can be switched off per repository, and ``gh``
+        answers a request for one that is off with an error rather than an empty
+        list. That is a normal state of a normal repository, not a sync failure:
+        letting it escape aborted the whole crawl on the first such repo, so five
+        others and every file in them went unindexed.
+
+        Only "this repository does not have that" is absorbed. Auth failures,
+        rate limits and truncated pages still refuse.
+        """
+        try:
+            return await self._call_all(tool, args)
+        except RuntimeError as exc:
+            if "has disabled" not in str(exc):
+                raise
+            return []
 
     async def _call_all(self, tool: str, args: dict[str, Any]) -> list[dict[str, Any]]:
         """Read a complete CLI collection, refusing a provider-imposed hard cap.
