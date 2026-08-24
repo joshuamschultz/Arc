@@ -512,7 +512,10 @@ function DocumentsSection({ agentId }: { agentId: string }) {
   const [source, setSource] = useState('')
   const [q, setQ] = useState('')
   const docs = useDocuments(agentId, source, q)
-  const ready = !!source && q.trim().length > 0
+  // A source alone is enough: with no query the panel lists what that source
+  // holds. Demanding a query first meant a source that had indexed perfectly
+  // well looked empty until someone guessed the right word.
+  const ready = !!source
 
   return (
     <div className="space-y-3">
@@ -521,21 +524,30 @@ function DocumentsSection({ agentId }: { agentId: string }) {
         <Input
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Search documents…"
+          placeholder="Filter documents…"
           className="max-w-sm"
         />
       </div>
       {!ready ? (
         <EmptyState
           icon={<FileText className="size-5" />}
-          title="Search a source"
-          description="Pick a source and type a query to search its indexed documents."
+          title="Pick a source"
+          description="Choose a connected source to see the documents it has indexed."
         />
       ) : (
         <QueryState
           query={docs}
           isEmpty={(d) => d.items.length === 0}
-          empty={<EmptyState title="No matching documents" />}
+          empty={
+            <EmptyState
+              title={q.trim() ? 'No matching documents' : 'Nothing indexed yet'}
+              description={
+                q.trim()
+                  ? undefined
+                  : 'This source has not written any documents. Run a sync from the Sources tab.'
+              }
+            />
+          }
         >
           {(data) => (
             <ul className="space-y-2">
@@ -547,9 +559,11 @@ function DocumentsSection({ agentId }: { agentId: string }) {
                   <div className="flex flex-wrap items-center gap-2">
                     <MonoChip>{h.pointer || h.chunk_id}</MonoChip>
                     <Chip>{h.classification}</Chip>
-                    <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
-                      score {h.score.toFixed(3)}
-                    </span>
+                    {q.trim().length > 0 && (
+                      <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
+                        score {h.score.toFixed(3)}
+                      </span>
+                    )}
                   </div>
                   <p className="text-sm text-foreground">{h.text}</p>
                   {h.provenance.length > 0 && (

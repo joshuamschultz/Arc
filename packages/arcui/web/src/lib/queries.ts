@@ -553,7 +553,8 @@ export const useDocuments = (agentId: string | null, source: string, q: string) 
         `/api/agents/${agentId}/knowledge/documents?source=${encodeURIComponent(source)}&q=${encodeURIComponent(q)}`,
         signal,
       ),
-    enabled: !!agentId && !!source && q.trim().length > 0,
+    // A source with no query lists what it holds; a query filters that list.
+    enabled: !!agentId && !!source,
   })
 
 export const useDatastoreQuery = (

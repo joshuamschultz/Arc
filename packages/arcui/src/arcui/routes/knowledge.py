@@ -564,13 +564,17 @@ async def document_search(request: Request) -> JSONResponse:
         return _agent_not_found(agent_id)
 
     query = request.query_params.get("q")
-    if not query:
-        return JSONResponse({"items": []})
-
     source_id = request.query_params.get("source", "")
     op = _operator_for(Path(agent.workspace_path), agent.did)
     try:
-        hits = await op.document_search(source_id, query)
+        # No query lists what the source holds. Search alone left an operator
+        # guessing: the panel could only answer a question, so a source that had
+        # indexed perfectly well looked empty until someone typed the right word.
+        hits = (
+            await op.document_search(source_id, query)
+            if query
+            else await op.list_documents(source_id)
+        )
     except Exception as exc:
         return _store_unreadable(exc)
     return JSONResponse({"items": [h.model_dump(mode="json") for h in hits]})

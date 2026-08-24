@@ -313,6 +313,13 @@ class MemoryOperator:
             query, self._agent_did, source_id=source_id, top_k=top_k
         )
 
+    async def list_documents(self, source_id: str, *, limit: int = 50) -> list[DocHit]:
+        """Everything indexed for one source, newest first, with no query."""
+        from arcmemory.doc_index import DocIndex
+
+        index = DocIndex(self._db, self._workspace, self._cfg, embedder=self._embedder)
+        return await index.list_documents(self._agent_did, source_id=source_id, limit=limit)
+
     def list_provenances(self, item_id: str) -> list[Provenance]:
         """Every provenance recorded against one canonical item."""
         from arcmemory.stores.provenance import ProvenanceStore

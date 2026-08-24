@@ -179,6 +179,43 @@ class DocIndex:
         hits = [await self._to_hit(backend, scope, source_id, recall) for recall in result.recalls]
         return await self._maybe_rerank(query, hits)
 
+    async def list_documents(
+        self, agent_did: str, *, source_id: str, limit: int = 50
+    ) -> list[DocHit]:
+        """The documents indexed for one source, newest first, without a query.
+
+        Search alone left an operator guessing: the panel could only answer a
+        question, so a source that had indexed perfectly well looked empty until
+        someone typed the right word. One entry per document rather than per
+        chunk, because a document is the thing a person is looking for.
+        """
+        if not self._cfg.doc_search_enabled or not source_id:
+            return []
+        scope = doc_scope(agent_did, source_id)
+        backend = open_index_backend(self._cfg.index_backend, db=self._db)
+        hits: list[DocHit] = []
+        seen: set[str] = set()
+        for chunk_id in await backend.recency_order(scope.key):
+            meta = await backend.chunk_meta(scope.key, chunk_id)
+            pointer = meta[0] if meta is not None else ""
+            if pointer in seen:
+                continue
+            seen.add(pointer)
+            hits.append(
+                DocHit(
+                    chunk_id=chunk_id,
+                    text=(await backend.chunk_text(scope.key, chunk_id)) or "",
+                    pointer=pointer,
+                    source_id=source_id,
+                    score=0.0,
+                    classification=meta[1] if meta is not None else "unclassified",
+                    provenance=[source_id],
+                )
+            )
+            if len(hits) >= limit:
+                break
+        return hits
+
     async def _to_hit(
         self, backend: IndexBackend, scope: Scope, source_id: str, recall: Recall
     ) -> DocHit:
