@@ -281,6 +281,13 @@ else
     {
       printf 'ANTHROPIC_API_KEY=%s\n' "$ANTHROPIC_API_KEY"
       [ -n "$TELEGRAM_BOT_TOKEN" ] && printf 'TELEGRAM_BOT_TOKEN=%s\n' "$TELEGRAM_BOT_TOKEN"
+      # A headless server advertises a D-Bus session it cannot actually serve,
+      # and a vendor CLI that reaches for the desktop keyring then blocks
+      # forever rather than failing. Measured on the DGX: `acli --help` never
+      # returned at all, so every Jira call timed out and the connections page
+      # hung behind it. Pointing the session nowhere makes those CLIs fall back
+      # to their file backend, which is the only store a server can use anyway.
+      printf 'DBUS_SESSION_BUS_ADDRESS=/dev/null\n'
       printf 'VIEWER_TOKEN=%s\n' "$VIEWER_TOKEN"
       printf 'OPERATOR_TOKEN=%s\n' "$OPERATOR_TOKEN"
       [ -n "$ARCSTORE_URL_INPUT" ] && printf 'ARCSTORE_DATABASE_URL=%s\n' "$ARCSTORE_URL_INPUT"
