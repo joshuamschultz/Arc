@@ -87,6 +87,10 @@ class ConnectedDataCoordinator:
             await self._register_live_datastore(source, mapping, chosen, started, cancel_event)
             cursor, pages, processed = current.cursor, 0, 0
             snapshot_ids: set[str] = set()
+            # True when this run stopped at a ceiling rather than at the end of
+            # the account. Everything downstream that assumes it saw the WHOLE
+            # account must be skipped, or a partial listing reads as deletions.
+            budget_reached = False
             while True:
                 self._check_cancel(cancel_event)
                 self._check_deadline(started, chosen)
@@ -99,7 +103,8 @@ class ConnectedDataCoordinator:
                 ):
                     raise LeaseLostError()
                 if pages >= chosen.max_pages:
-                    raise SyncError("page limit exceeded")
+                    budget_reached = True
+                    break
                 page = await self._fetch_with_retry(source, cursor, chosen, started, cancel_event)
                 snapshot_ids.update(
                     item.object_id
@@ -107,13 +112,7 @@ class ConnectedDataCoordinator:
                     if not item.deleted and not _is_container(item)
                 )
                 page_bytes = await self._ingest_page(
-                    source,
-                    page,
-                    mapping,
-                    chosen,
-                    started,
-                    cancel_event,
-                    chosen.max_bytes - processed,
+                    source, page, mapping, chosen, started, cancel_event
                 )
                 page_id = _page_id(source_id, cursor, page)
                 if not await self._state.commit_page(
@@ -131,7 +130,16 @@ class ConnectedDataCoordinator:
                 pages, processed, cursor = pages + 1, processed + page_bytes, page.next_checkpoint
                 if not page.has_more:
                     break
-            if not source.supports_incremental:
+                # Checked here, after the cursor is committed: the crawl always
+                # advances by at least one page per run and picks up exactly
+                # where it stopped, however large the account.
+                if processed >= chosen.max_bytes:
+                    budget_reached = True
+                    break
+            # Reconciling a PARTIAL listing would mark every document this run
+            # never reached as deleted. A run that stopped at a ceiling has not
+            # seen the account, so it reconciles nothing.
+            if not source.supports_incremental and not budget_reached:
                 await self._retry_call(
                     lambda: self._ingest.complete_snapshot(
                         source, frozenset(snapshot_ids), mapping
@@ -147,7 +155,11 @@ class ConnectedDataCoordinator:
                 owner_id=owner_id,
                 fencing_token=lease.fencing_token,
             )
-            await self._emit("completed", source, {"pages": pages, "bytes": processed})
+            await self._emit(
+                "completed",
+                source,
+                {"pages": pages, "bytes": processed, "budget_reached": budget_reached},
+            )
         except asyncio.CancelledError:
             await self._mark_cancelled(source, agent_did, owner_id, lease.fencing_token)
             raise
@@ -251,7 +263,6 @@ class ConnectedDataCoordinator:
         limits: SyncLimits,
         started: float,
         cancel_event: asyncio.Event | None,
-        remaining_bytes: int,
     ) -> int:
         mappings: list[tuple[SourceObject, SourceContent | None, MappingPlan]] = []
         page_bytes = 0
@@ -265,25 +276,41 @@ class ConnectedDataCoordinator:
                 continue
             content = None
             if source_object.kind.value != "deleted" and source_object.version is not None:
-                available = remaining_bytes - page_bytes
-                if available <= 0:
-                    raise SyncError("byte limit exceeded")
+                # One object bigger than the entire per-sync budget can never be
+                # taken, on this run or any later one. Skipping it is the only
+                # terminating choice; failing the sync would retry it forever
+                # and no other document in the account would ever be indexed.
+                if _declared_bytes(source_object) > limits.max_bytes:
+                    await self._emit_skip(source, source_object, "object_too_large")
+                    continue
+                # Bounds THIS fetch, so no single object can run away. The run's
+                # own budget is checked between pages, not here: a page is the
+                # unit of progress, and stopping inside one would leave the
+                # cursor unmoved and the crawl stuck on the same page forever.
+                available = max(limits.max_bytes - page_bytes, 1)
                 request = FetchSourceObject(
                     connection_id=source.connection_id,
                     object_id=source_object.object_id,
                     version=source_object.version or "",
                     max_bytes=available,
                 )
-                content = await self._retry_call(
-                    lambda request=request: self._source.fetch_source(request),
-                    limits,
-                    started,
-                    cancel_event,
-                )
+                try:
+                    content = await self._retry_call(
+                        lambda request=request: self._source.fetch_source(request),
+                        limits,
+                        started,
+                        cancel_event,
+                    )
+                except SyncError as exc:
+                    # The source knows sizes this side only estimated. An object
+                    # it refuses as too large is skipped like any other, never
+                    # allowed to end the run.
+                    if "too_large" not in str(exc) and "exceeds" not in str(exc):
+                        raise
+                    await self._emit_skip(source, source_object, "object_too_large")
+                    continue
                 page_bytes += _content_bytes(content)
             page_bytes += _metadata_bytes(source_object)
-            if page_bytes > remaining_bytes:
-                raise SyncError("byte limit exceeded")
             mappings.append((source_object, content, mapping))
         semaphore = asyncio.Semaphore(limits.max_concurrency)
 
@@ -403,6 +430,16 @@ class ConnectedDataCoordinator:
         if inspect.isawaitable(result):
             await result
 
+    async def _emit_skip(
+        self, source: SourceDescription, source_object: SourceObject, reason: str
+    ) -> None:
+        """One object left out, named so an operator can see what was not taken."""
+        await self._emit(
+            "object_skipped",
+            source,
+            {"object": _safe_id(source_object.object_id), "reason": reason},
+        )
+
     @staticmethod
     def _check_cancel(cancel_event: asyncio.Event | None) -> None:
         if cancel_event is not None and cancel_event.is_set():
@@ -415,6 +452,12 @@ class ConnectedDataCoordinator:
 
 class _CancellationError(Exception):
     pass
+
+
+def _declared_bytes(source_object: SourceObject) -> int:
+    """The object's own size, or zero when the source does not declare one."""
+    size = getattr(source_object, "size", 0)
+    return int(size) if isinstance(size, int) and size > 0 else 0
 
 
 def _is_container(source_object: SourceObject) -> bool:

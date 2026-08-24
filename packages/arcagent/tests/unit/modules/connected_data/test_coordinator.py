@@ -9,7 +9,6 @@ from arcagent.connected_data import (
     LeaseLostError,
     MappingPendingError,
     MappingPlan,
-    SyncError,
     SyncLimits,
     SyncStatus,
     TransientSyncError,
@@ -188,15 +187,98 @@ async def test_same_connection_isolated_by_agent_identity() -> None:
 
 
 @pytest.mark.asyncio
-async def test_actual_fetched_bytes_are_bounded_across_objects() -> None:
-    source = FakeSource([page("a", "b", cursor="")])
-    with pytest.raises(SyncError, match="byte limit"):
-        await ConnectedDataCoordinator(source, FakeIngest(), InMemorySourceSyncStore()).run(
-            SourceDescription(connection_id="source", source_kind="test", account_id="account"),
-            agent_did="did:a",
-            owner_id="worker",
-            limits=SyncLimits(max_bytes=1),
-        )
+async def test_a_large_account_crawls_across_runs() -> None:
+    """A big account is mapped gradually, a page at a time, run after run.
+
+    The budget bounds one run's work; it is not a verdict on the account.
+    Failing on it marked a large account permanently `failed` so nothing in it
+    was ever indexed, and stopping mid-page left the cursor unmoved so the next
+    run met the same wall forever. A run now always advances by at least one
+    page and resumes exactly where it stopped.
+    """
+    source = FakeSource([page("a", cursor="c1"), page("b", cursor="")])
+    ingest = FakeIngest()
+    store = InMemorySourceSyncStore()
+    described = SourceDescription(connection_id="source", source_kind="test", account_id="account")
+    tiny = SyncLimits(max_bytes=1)
+
+    first = await ConnectedDataCoordinator(source, ingest, store).run(
+        described, agent_did="did:a", owner_id="worker", limits=tiny
+    )
+
+    assert first.status is not SyncStatus.FAILED
+    assert ingest.ingested == ["a"]
+
+    await ConnectedDataCoordinator(source, ingest, store).run(
+        described, agent_did="did:a", owner_id="worker", limits=tiny
+    )
+
+    assert ingest.ingested == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_a_partial_run_reconciles_nothing() -> None:
+    """A stopped run has not seen the account, so it cannot judge what is gone."""
+    source = FakeSource([page("a", cursor="c1"), page("b", cursor="")])
+    ingest = FakeIngest()
+
+    await ConnectedDataCoordinator(source, ingest, InMemorySourceSyncStore()).run(
+        SourceDescription(
+            connection_id="source",
+            source_kind="test",
+            account_id="account",
+            supports_incremental=False,
+        ),
+        agent_did="did:a",
+        owner_id="worker",
+        limits=SyncLimits(max_bytes=1),
+    )
+
+    assert ingest.snapshots == []
+
+
+@pytest.mark.asyncio
+async def test_one_oversized_object_is_skipped_not_fatal() -> None:
+    """An object bigger than the whole budget can never be taken, on any run.
+
+    Failing on it retried it forever and no other document in the account was
+    ever indexed.
+    """
+    source = FakeSource(
+        [
+            SyncSourcePage(
+                objects=(
+                    SourceObject(
+                        object_id="huge",
+                        locator="/huge.bin",
+                        kind=SourceObjectKind.FILE,
+                        version="1",
+                        size=10_000,
+                    ),
+                    SourceObject(
+                        object_id="small",
+                        locator="/small.txt",
+                        kind=SourceObjectKind.FILE,
+                        version="1",
+                        size=1,
+                    ),
+                ),
+                next_checkpoint="",
+                has_more=False,
+            )
+        ]
+    )
+    ingest = FakeIngest()
+
+    result = await ConnectedDataCoordinator(source, ingest, InMemorySourceSyncStore()).run(
+        SourceDescription(connection_id="source", source_kind="test", account_id="account"),
+        agent_did="did:a",
+        owner_id="worker",
+        limits=SyncLimits(max_bytes=100),
+    )
+
+    assert result.status is SyncStatus.COMPLETE
+    assert ingest.ingested == ["small"]
 
 
 @pytest.mark.asyncio
