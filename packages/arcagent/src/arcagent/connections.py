@@ -193,9 +193,9 @@ def resolve_deployment(
     """Resolve one deployment's paths, tier, and operator identity.
 
     Args:
-        arc_dir: Arc config dir (default ``arc_home()``) — where the connections,
-            their credentials, and the operator key that pins bundle signatures
-            and signs the audit chain all live.
+        arc_dir: Deployment root (default ``operator_root()``) — where the
+            connections, their credentials, and the operator key that pins
+            bundle signatures and signs the audit chain all live.
         data_dir: Operational data dir (default arcstore's) — where the connection
             state and the audit chain live. Created when the caller names one.
         extensions_root: Use exactly this bundle root. An operator pointing a
@@ -281,9 +281,19 @@ def _tier_of(raw: Mapping[str, Any]) -> Tier:
 
 
 def _root(arc_dir: Path | str | None) -> Path:
-    from arctrust.paths import arc_home
+    """The deployment root every connection path is resolved against.
 
-    return Path(arc_dir).expanduser() if arc_dir else arc_home()
+    The OPERATOR root, not the install home. Everything reached from here is
+    config or state — ``connections.toml``, ``connections.env``, the operator
+    key, installed extensions — and all of it moved beside the fleet so an
+    update can replace the install without touching it. Answering ``arc_home()``
+    left the registry reading ``~/.arc/config/connections.toml`` after the
+    migration had moved the real one, so a deployment with five live connections
+    reported none.
+    """
+    from arctrust.paths import operator_root
+
+    return Path(arc_dir).expanduser() if arc_dir else operator_root()
 
 
 def _read_toml(path: Path) -> dict[str, Any]:

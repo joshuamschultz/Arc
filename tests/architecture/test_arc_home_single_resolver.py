@@ -49,6 +49,7 @@ _HOME_ONLY_LEAVES = frozenset(
         "operator.key",
         "users.json",
         "connections.toml",
+        "connections.env",
         "gateway.toml",
         "arc.env",
         # Directory-shaped leaves. The file names above catch
@@ -107,14 +108,42 @@ def _findings(tree: ast.AST, check: str) -> list[int]:
     return hits
 
 
+def _module_string_constants(tree: ast.AST) -> dict[str, str]:
+    """Module-level ``NAME = "literal"`` bindings, for resolving a joined name.
+
+    A leaf hidden behind a constant is the same bug: ``Path(arc_dir) /
+    CONNECTOR_ENV_FILENAME`` composed ``connections.env`` flat while the registry
+    beside it resolved ``config/connections.toml`` through the accessor, so every
+    connection read its grants from one directory and its token from another.
+    """
+    bindings: dict[str, str] = {}
+    body = getattr(tree, "body", [])
+    for node in body:
+        if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Constant):
+            continue
+        if not isinstance(node.value.value, str):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                bindings[target.id] = node.value.value
+    return bindings
+
+
 def _home_only_leaves(tree: ast.AST) -> list[int]:
     """Line numbers where a home-only leaf name is joined onto a path by hand."""
+    constants = _module_string_constants(tree)
     hits: list[int] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.BinOp) or not isinstance(node.op, ast.Div):
             continue
         right = node.right
-        if isinstance(right, ast.Constant) and right.value in _HOME_ONLY_LEAVES:
+        if isinstance(right, ast.Constant):
+            value = right.value
+        elif isinstance(right, ast.Name):
+            value = constants.get(right.id)
+        else:
+            continue
+        if value in _HOME_ONLY_LEAVES:
             hits.append(node.lineno)
     return hits
 

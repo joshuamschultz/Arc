@@ -515,7 +515,7 @@ class TestReadVerbs:
         capsys.readouterr()
         # The credential is gone but the connection is still configured — the
         # shape an operator hits after a store is rotated or restored without it.
-        (arc_dir / "connections.env").unlink()
+        config_file("connections.env", arc_dir).unlink()
 
         run("doctor", _INSTANCE)
         assert "missing" in capsys.readouterr().out.lower()
@@ -541,7 +541,7 @@ class TestAuthAndApprove:
         assert asked, "auth must prompt, not read a flag"
         out = capsys.readouterr().out
         assert "rotated-value" not in out
-        env = (arc_dir / "connections.env").read_text(encoding="utf-8")
+        env = config_file("connections.env", arc_dir).read_text(encoding="utf-8")
         assert "rotated-value" in env
         assert _TOKEN not in env
 
@@ -602,7 +602,7 @@ class TestRemove:
         run("remove", _INSTANCE)
 
         assert _connections(arc_dir) == {}
-        assert _TOKEN not in (arc_dir / "connections.env").read_text(encoding="utf-8")
+        assert _TOKEN not in config_file("connections.env", arc_dir).read_text(encoding="utf-8")
 
     def test_removing_an_unknown_instance_is_reported_not_crashed(
         self, run: Callable[..., None], arc_dir: Path, capsys: pytest.CaptureFixture[str]

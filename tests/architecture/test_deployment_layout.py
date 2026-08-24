@@ -188,29 +188,44 @@ def test_the_deploy_script_asks_the_resolver_where_the_fleet_is() -> None:
 
 
 def test_exporting_the_config_dir_cannot_move_the_fleet(monkeypatch, tmp_path) -> None:
-    """``arc_team()`` falls back to ARC_CONFIG_DIR, so exporting it relocates the fleet.
+    """Exporting the DEFAULT config dir must leave the fleet where it is.
 
-    ``deploy-node.sh`` exports ARC_CONFIG_DIR for the runtime install. That alone
-    made every ``arc`` call in the script answer ``~/.arc/team`` while the unit
-    served ``~/arc/team`` — so ``arc agent create`` minted a second set of agents,
-    with new DIDs and no personas, in a directory nothing serves. The box then
-    started, loaded the real fleet, logged the full agent count and passed every
-    health check, while message routing pointed at a DID absent from the served
-    fleet. Caught on a live deploy, one command before it ran.
+    ``deploy-node.sh`` exports ARC_CONFIG_DIR for the runtime install. When
+    ``arc_team()`` followed that value unconditionally, every ``arc`` call in the
+    script answered ``~/.arc/team`` while the unit served ``~/arc/team`` — so
+    ``arc agent create`` minted a second set of agents, with new DIDs and no
+    personas, in a directory nothing serves. The box then started, loaded the
+    real fleet, logged the full agent count and passed every health check, while
+    message routing pointed at a DID absent from the served fleet. The same
+    fallback later minted a second OPERATOR KEY under ``~/.arc/state``, signing
+    module bundles with an issuer the deployment does not pin.
 
-    The basename guard could not see it: both sides spell the last component
-    "team". Only the full path shows the parent is wrong.
+    The value carries no information when it names the default install home, so
+    it no longer moves anything. A ``ARC_CONFIG_DIR`` pointing somewhere ELSE
+    still means "isolated tree, keep everything inside it" — which is why the
+    script must keep pinning ARC_TEAM_ROOT rather than relying on this.
+
+    The basename guard could not see either bug: both sides spell the last
+    component "team". Only the full path shows the parent is wrong.
     """
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / ".arc"))
     monkeypatch.delenv("ARC_TEAM_ROOT", raising=False)
-    assert paths.arc_team() == tmp_path / ".arc" / "team", (
-        "precedence changed; this test guards the reason the script must pin ARC_TEAM_ROOT"
+    assert paths.arc_team() == tmp_path / "arc" / "team", (
+        "naming the default install home must not relocate the fleet into it"
+    )
+    assert paths.arc_state() == tmp_path / "arc" / "state", (
+        "nor the state root — that is where the duplicate operator key came from"
+    )
+
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "isolated"))
+    assert paths.arc_team() == tmp_path / "isolated" / "team", (
+        "an isolated tree must still take its fleet with it, or isolation is a lie"
     )
 
     assert "export ARC_TEAM_ROOT" in _script(), (
-        "deploy-node.sh exports ARC_CONFIG_DIR, which moves the fleet into the hidden "
-        "home unless ARC_TEAM_ROOT is pinned alongside it"
+        "deploy-node.sh exports ARC_CONFIG_DIR; the fleet root must be pinned "
+        "explicitly rather than inferred from it"
     )
 
     monkeypatch.setenv("ARC_TEAM_ROOT", str(tmp_path / "arc"))

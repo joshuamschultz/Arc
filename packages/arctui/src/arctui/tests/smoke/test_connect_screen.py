@@ -227,7 +227,7 @@ def _connections(agent_dir: Path) -> dict[str, Any]:
 
 def _env_file(agent_dir: Path) -> Path:
     """Where a connector credential is written — one owner-only file per deployment."""
-    return _arc_dir(agent_dir) / "connections.env"
+    return config_file("connections.env", _arc_dir(agent_dir))
 
 
 async def _open_connect(pilot: Any) -> Any:

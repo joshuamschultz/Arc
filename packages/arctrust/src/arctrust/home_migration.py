@@ -62,6 +62,7 @@ _LAYOUT: dict[str, str] = {
     "arcrun.toml": "config_file",
     "gateway.toml": "config_file",
     "connections.toml": "config_file",
+    "connections.env": "config_file",
     "arc.env": "env_file",
     # state/ — never touched by an update
     "operator": "operator_dir",

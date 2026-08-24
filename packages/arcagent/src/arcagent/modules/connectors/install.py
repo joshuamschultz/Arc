@@ -333,8 +333,16 @@ def connector_env_file(arc_dir: Path) -> Path:
     One file for the deployment, beside ``connections.toml``, because a connection
     is one account. Per-agent files were the shape that made "grant" mean "type
     the token again", and left a copy behind on every revoke.
+
+    "Beside ``connections.toml``" is resolved through the same accessor that
+    answers for it, never composed here: joining the root by hand kept the
+    credentials flat at ``<root>/connections.env`` after the registry had moved
+    into ``config/``, so every connection read its grants from one directory and
+    its token from another.
     """
-    return Path(arc_dir) / CONNECTOR_ENV_FILENAME
+    from arctrust.paths import config_file
+
+    return config_file(CONNECTOR_ENV_FILENAME, arc_dir)
 
 
 async def resolve_secrets(
