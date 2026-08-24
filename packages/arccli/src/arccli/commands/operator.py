@@ -21,7 +21,6 @@ from arctrust import (
     SignerConfig,
     SignerError,
     WormSink,
-    arc_home,
     build_signer,
     derive_record_key,
 )
@@ -58,11 +57,17 @@ def operator_key_path(arc_dir: Path | None = None) -> Path:
 def load_operator_key(arc_dir: Path | None = None) -> OperatorKey:
     """Load the operator key, auto-bootstrapping one if absent (zero-config).
 
-    ``arc_dir`` defaults to :func:`arctrust.arc_home`, so an isolated deployment
-    bootstraps and signs with ITS OWN operator key rather than the invoking
-    user's — the same resolution ``arctrust.default_operator_key_path`` uses.
+    ``arc_dir`` of ``None`` means "this deployment", and the accessor already
+    answers that — it is ARC_CONFIG_DIR-scoped, so an isolated deployment still
+    bootstraps its OWN key rather than the invoking user's.
+
+    Substituting ``arc_home()`` for that ``None`` is what broke it. The two were
+    the same directory until state moved beside the fleet; after that this
+    pinned the key to the install home, found none there, and bootstrapped a
+    SECOND operator key — which then signed module bundles with an issuer the
+    deployment's trust store does not pin.
     """
-    base = Path(arc_dir).expanduser() if arc_dir is not None else arc_home()
+    base = Path(arc_dir).expanduser() if arc_dir is not None else None
     return OperatorKey.load(operator_key_path(base), generate_if_absent=True)
 
 
@@ -78,7 +83,7 @@ def operator_public_key(arc_dir: Path | None = None) -> bytes | None:
     caller can fail closed above the personal tier (an unpinned floor is no floor). A
     present-but-tampered key raises through ``OperatorKey.load`` (covert-erasure guard).
     """
-    base = Path(arc_dir).expanduser() if arc_dir is not None else arc_home()
+    base = Path(arc_dir).expanduser() if arc_dir is not None else None
     try:
         return OperatorKey.load(operator_key_path(base), generate_if_absent=False).public_key
     except FileNotFoundError:

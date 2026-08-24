@@ -54,3 +54,25 @@ def test_init_prints_operator_fingerprint_at_federal(tmp_path: Path, capsys: obj
     # recording (anti-genesis-substitution + witness bootstrap).
     op = OperatorKey.load(key)
     assert op.public_key.hex()[:16] in out
+
+
+def test_no_base_resolves_the_key_where_the_accessor_says(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``None`` means this deployment, which the accessor already answers.
+
+    Substituting ``arc_home()`` for that ``None`` pinned the lookup to the
+    install home. The two were the same directory until state moved beside the
+    fleet; after that the pinned path held no key, and because the loader
+    bootstraps one when it finds none, a SECOND operator key was minted there —
+    and it signed module bundles with an issuer the trust store does not pin.
+    """
+    from arctrust.paths import default_operator_key_path
+
+    from arccli.commands.operator import operator_key_path
+
+    monkeypatch.setenv("ARC_TEAM_ROOT", str(tmp_path / "operator-root"))
+    monkeypatch.delenv("ARC_CONFIG_DIR", raising=False)
+
+    assert operator_key_path() == default_operator_key_path()
+    assert operator_key_path().is_relative_to(tmp_path / "operator-root")
