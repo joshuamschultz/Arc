@@ -25,13 +25,20 @@ from arcagent.extension.source import (
 
 _CURSOR_VERSION = 1
 
+#: Selects the whole account rather than one label. Not a Gmail label id — it is
+#: translated to the ``in:anywhere`` search term, which is how Gmail expresses
+#: "everything, including archived and sent".
+_ALL_MAIL = "__all_mail__"
+
 
 class GmailSourceAdapter:
     """Synchronize a selected label through Gmail list and history cursors."""
 
     def __init__(self, attachment: Any) -> None:
         self._attachment = attachment
-        self._selected = "INBOX"
+        # Everything, until an operator narrows it. A default of one small label
+        # silently indexed a corner of an account and looked like a broken crawl.
+        self._selected = _ALL_MAIL
 
     async def inspect_source(self, request: InspectSource) -> SourceDescription:
         return SourceDescription(
@@ -51,12 +58,21 @@ class GmailSourceAdapter:
         result = await self._attachment.invoke("google_gmail_labels", {})
         payload = _payload(result)
         labels = payload.get("labels", payload if isinstance(payload, list) else [])
+        # NOT a second row for INBOX: the label list already contains it, and
+        # offering both under the same resource_id meant checking the two
+        # obvious boxes sent a duplicate, which the save refused with
+        # "resource_ids must be a non-empty unique list".
+        #
+        # What was missing instead is everything. A label picker can only ever
+        # index one label, and an inbox is a small corner of an account — this
+        # one holds 6 messages while the account holds thousands. All mail is
+        # the choice someone means when they say "index my email".
         resources = [
             SourceResource(
-                resource_id="INBOX",
-                label="Inbox",
+                resource_id=_ALL_MAIL,
+                label="All mail",
                 resource_kind="mailbox",
-                selected=self._selected == "INBOX",
+                selected=self._selected == _ALL_MAIL,
             )
         ]
         for label in labels if isinstance(labels, list) else []:
@@ -122,7 +138,7 @@ class GmailSourceAdapter:
     ) -> SyncSourcePage:
         # A label is a term in Gmail's query syntax, not a flag of its own.
         arguments: dict[str, str] = {
-            "query": f"label:{label}",
+            "query": _query_for(label),
             "limit": str(request.page_size),
         }
         if cursor is not None and (token := cursor.get("page_token")):
@@ -303,6 +319,11 @@ def _revision_or_none(value: dict[str, Any]) -> str | None:
 def _latest_revision(objects: tuple[SourceObject, ...]) -> str | None:
     revisions = [int(item.version) for item in objects if item.version and item.version.isdigit()]
     return str(max(revisions)) if revisions else None
+
+
+def _query_for(label: str) -> str:
+    """The Gmail search that selects this scope."""
+    return "in:anywhere" if label == _ALL_MAIL else f"label:{label}"
 
 
 def _unwrap_message(payload: dict[str, Any]) -> dict[str, Any]:

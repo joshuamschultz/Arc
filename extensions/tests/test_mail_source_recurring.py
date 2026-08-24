@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from arcagent.extension.source import SourceObjectKind, SyncSource
+from arcagent.extension.source import ListSourceResources, SourceObjectKind, SyncSource
 
 
 class _GmailAttachment:
@@ -49,6 +49,12 @@ class _GmailAttachment:
             )
         if tool == "google_gmail_message":
             return SimpleNamespace(content=json.dumps(self.messages[arguments["id"]]))
+        if tool == "google_gmail_labels":
+            return SimpleNamespace(
+                content=json.dumps(
+                    {"labels": [{"id": "INBOX", "name": "Inbox"}, {"id": "SENT", "name": "Sent"}]}
+                )
+            )
         raise AssertionError(tool)
 
 
@@ -129,7 +135,7 @@ async def test_gmail_pages_then_uses_history_for_changed_and_deleted_messages() 
     # --label and refuses the call outright when one is sent.
     assert (
         "google_gmail_messages",
-        {"query": "label:INBOX", "limit": "2", "page_token": "p2"},
+        {"query": "in:anywhere", "limit": "2", "page_token": "p2"},
     ) in attachment.calls
     assert any(tool == "google_gmail_history" for tool, _ in attachment.calls)
 
@@ -209,3 +215,32 @@ async def test_gmail_fetches_the_body_from_inside_the_envelope() -> None:
     # The body, not the preview: indexing the snippet would make a mail account
     # searchable only by its previews.
     assert unwrapped["body"] == "the full decoded message text"
+
+
+@pytest.mark.asyncio
+async def test_gmail_offers_all_mail_and_no_duplicate_inbox() -> None:
+    """Two rows sharing one id made the obvious pair of clicks unsavable.
+
+    The picker listed a synthetic "Inbox" beside the real INBOX label under the
+    same resource_id, so checking both sent a duplicate and the save was refused
+    with "resource_ids must be a non-empty unique list". What was missing was
+    everything: an inbox is a small corner of an account.
+    """
+    module = importlib.import_module("extensions.google_workspace.arc_ext_google_workspace.source")
+    attachment = _GmailAttachment()
+    adapter = module.GmailSourceAdapter(attachment)
+
+    resources = await adapter.list_source_resources(
+        ListSourceResources(connection_id="blackarc")
+    )
+
+    ids = [resource.resource_id for resource in resources]
+    assert len(ids) == len(set(ids))
+    assert module._ALL_MAIL in ids
+
+
+def test_all_mail_selects_the_whole_account() -> None:
+    module = importlib.import_module("extensions.google_workspace.arc_ext_google_workspace.source")
+
+    assert module._query_for(module._ALL_MAIL) == "in:anywhere"
+    assert module._query_for("SENT") == "label:SENT"
