@@ -390,6 +390,54 @@ def _tools(args: argparse.Namespace) -> None:
     _print_table(["Tool", "Classification", "Tags", "Description"], _tool_rows(specs))
 
 
+def _semantic(args: argparse.Namespace) -> None:
+    """Find, show or check the editable meanings of a connected datastore.
+
+    Introspection can say a table is ``inv_hdr`` with a column ``amt``. Only a
+    person can say that is an invoice in dollars, and this is where they say it —
+    so the first thing an operator needs is the path, which is why ``--path``
+    prints it bare and nothing else: ``$EDITOR "$(arc connector semantic shop
+    --path)"``.
+    """
+    from arcmemory.semantic_layer import layer_path, load_semantic_layer
+
+    path = layer_path(args.instance, getattr(args, "arc_dir", None))
+    if path is None:
+        _fail(f"{args.instance!r} is not a usable connection name")
+    if args.path:
+        _out(str(path))
+        return
+    if not path.exists():
+        _out(f"No semantic layer yet for '{args.instance}'.")
+        _out(f"  expected at : {path}")
+        _out("  It is written the first time the datastore's tables are read —")
+        _out("  open Knowledge → Connections and configure the connection, then")
+        _out("  run this again.")
+        return
+    layer = load_semantic_layer(path)
+    if not layer.table:
+        _fail(
+            f"{path} could not be read as a semantic layer. It is hand-edited, so "
+            "this is usually a stray quote or bracket. Agents fall back to the "
+            "database's own table names until it parses."
+        )
+    _out(f"Semantic layer for '{args.instance}': {path}")
+    _out("")
+    rows = [
+        [
+            name,
+            meaning.entity or "(implied)",
+            "hidden" if meaning.hidden else "",
+            str(sum(1 for c in meaning.column.values() if c.description)),
+            meaning.description or "(no description — agents see only the name)",
+        ]
+        for name, meaning in sorted(layer.table.items())
+    ]
+    _print_table(["Table", "One row is", "", "Cols described", "Description"], rows)
+    _out("")
+    _out(f"Edit it: $EDITOR {path}")
+
+
 def _probe(args: argparse.Namespace) -> None:
     """Prove one instance is live right now."""
     connections = _connections(args)
@@ -628,6 +676,18 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("instance", help="Connection name.")
     _add_common(p)
 
+    p = subs.add_parser(
+        "semantic",
+        help="Show or locate the editable meanings of a connected datastore's tables.",
+    )
+    p.add_argument("instance", help="Connection name.")
+    p.add_argument(
+        "--path",
+        action="store_true",
+        help="Print only the file path, for piping into an editor.",
+    )
+    _add_common(p)
+
     p = subs.add_parser("probe", help="Prove an instance is reachable right now.")
     p.add_argument("instance", help="Connection name.")
     _add_common(p)
@@ -658,6 +718,7 @@ _SUBCOMMAND_MAP = {
     "list": _list,
     "tools": _tools,
     "probe": _probe,
+    "semantic": _semantic,
     "doctor": _doctor,
     "approve": _approve,
     "remove": _remove,

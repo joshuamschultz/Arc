@@ -188,6 +188,54 @@ def apply_semantic_layer(ontology: DatastoreOntology, layer: SemanticLayer) -> D
     return _Ontology(tables=tables, entity_map=entity_map)
 
 
+def layer_path(connection_id: str, base: Path | str | None = None) -> Path | None:
+    """Resolve one connection's layer file, or ``None`` when it has no id.
+
+    Through the accessor that owns the path, never a join here: two surfaces
+    already want this file — the adapter that applies it and the CLI that opens
+    it — and a second spelling would let an operator edit a file no agent reads.
+
+    ``base`` is what ``--arc-dir`` means: operate on THAT deployment's tree. A
+    surface that ignored it would show an operator the wrong deployment's
+    meanings while every neighbouring command showed the right one's.
+    """
+    from arctrust.paths import semantic_layer_file
+
+    if not connection_id:
+        return None
+    try:
+        return semantic_layer_file(connection_id, base)
+    except ValueError:
+        return None
+
+
+def layer_for(connection_id: str, base: Path | str | None = None) -> SemanticLayer:
+    """One connection's meanings. An unnamed connection has none, not an error."""
+    path = layer_path(connection_id, base)
+    return load_semantic_layer(path) if path is not None else SemanticLayer()
+
+
+def overlay(connection_id: str, ontology: DatastoreOntology) -> DatastoreOntology:
+    """Ensure the editable file exists, then return the ontology as it describes.
+
+    The one call every datastore adapter makes, so sqlite and postgres cannot
+    drift into applying an operator's descriptions differently — or, worse, one
+    of them not applying them at all.
+
+    A config directory that cannot be written is not a reason to refuse the
+    database: the layer degrades to the schema's own names, which is exactly what
+    an operator who has never edited it would see anyway.
+    """
+    path = layer_path(connection_id)
+    if path is None:
+        return ontology
+    try:
+        ensure_semantic_layer(path, connection_id, ontology)
+    except OSError:
+        pass
+    return apply_semantic_layer(ontology, layer_for(connection_id))
+
+
 def describe(ontology: DatastoreOntology, layer: SemanticLayer) -> str:
     """One readable block naming every visible table in the operator's words.
 
@@ -251,6 +299,9 @@ __all__ = [
     "apply_semantic_layer",
     "describe",
     "ensure_semantic_layer",
+    "layer_for",
+    "layer_path",
     "load_semantic_layer",
+    "overlay",
     "render_semantic_layer",
 ]

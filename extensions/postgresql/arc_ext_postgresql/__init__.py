@@ -47,8 +47,9 @@ _TIMEOUT_SECONDS = 20.0
 class PostgreSQLAttachment:
     """A bounded read-only connector that also satisfies ArcMemory's datastore port."""
 
-    def __init__(self, database_url: str) -> None:
+    def __init__(self, database_url: str, connection_id: str = "") -> None:
         self._database_url = database_url
+        self._connection_id = connection_id
         self._pool: Any | None = None
         self._pool_lock = asyncio.Lock()
         self._ontology: Any | None = None
@@ -118,8 +119,13 @@ class PostgreSQLAttachment:
         """Dispatch one declared typed query and return only rendered data."""
         try:
             if tool == "postgres_schema":
-                ontology = await self.introspect()
-                content = ", ".join(sorted(ontology.tables)) or "No approved tables found."
+                # A bare list of table names sent agents guessing, and a guess
+                # against a database is a query that returns nothing and explains
+                # nothing. Lead with what each table MEANS.
+                semantic = importlib.import_module("arcmemory.semantic_layer")
+                content = semantic.describe(
+                    await self.introspect(), semantic.layer_for(self._connection_id)
+                )
             elif tool == "postgres_get":
                 content = str(
                     await self.query(
@@ -271,12 +277,19 @@ class PostgreSQLAttachment:
                 foreign_keys={},
             )
             entity_map[_singularize(name)] = f"table:{table}"
-        self._ontology = datastore.DatastoreOntology(tables=tables, entity_map=entity_map)
+        raw = datastore.DatastoreOntology(tables=tables, entity_map=entity_map)
+        # The schema says a table is `inv_hdr` with a column `amt`; only a person
+        # can say that is an invoice in dollars. Same call sqlite makes, so the
+        # two cannot drift into describing a database differently — or one of
+        # them not describing it at all.
+        semantic = importlib.import_module("arcmemory.semantic_layer")
+        self._ontology = semantic.overlay(self._connection_id, raw)
         return self._ontology
 
     async def persist_ontology(self, store: Any) -> None:
         """Persist safe table shape facts without copying database rows into memory."""
         ontology = await self.introspect()
+        layer = importlib.import_module("arcmemory.semantic_layer").layer_for(self._connection_id)
         for name, info in ontology.tables.items():
             slug = "db-table-" + name.replace(".", "-")
             store.write_fact(
@@ -288,6 +301,11 @@ class PostgreSQLAttachment:
                 ", ".join(info.searchable_columns),
                 entity_type="db_table",
             )
+            meaning = layer.table.get(name)
+            if meaning is not None and meaning.entity:
+                store.write_fact(slug, "entity", meaning.entity, entity_type="db_table")
+            if meaning is not None and meaning.description:
+                store.write_fact(slug, "description", meaning.description, entity_type="db_table")
 
     async def query(self, op: str, table: str, args: dict[str, object]) -> object:
         """Run one allowlisted, parameterized typed read against an approved table."""
@@ -380,7 +398,9 @@ class PostgreSQLAttachment:
 
 def build_native_attachment(context: dict[str, Any]) -> PostgreSQLAttachment:
     """Build from Arc's ephemeral vault-reveal context; never persist credentials."""
-    return PostgreSQLAttachment(str(context.get("database_dsn", "")))
+    return PostgreSQLAttachment(
+        str(context.get("database_dsn", "")), str(context.get("connection_id", ""))
+    )
 
 
 def _schema(properties: dict[str, dict[str, str]], required: tuple[str, ...]) -> dict[str, Any]:

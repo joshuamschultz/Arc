@@ -210,6 +210,48 @@ def state() -> _State:
     return st
 
 
+def state_for(agent_did: str) -> _State:
+    """Return one agent's memory state by NAMING its DID, not by ambient binding.
+
+    For work that runs on behalf of an agent outside a turn: the connected-data
+    sync loop is a background task, not a descendant of the turn that bound the
+    contextvar, so :func:`state` refused it with "no agent DID bound" — and
+    approving a datastore mapping in the dashboard failed the moment the sync
+    tried to attach the database to the Brain.
+
+    This is no weaker than :func:`state`. The isolation rule is "never resolve a
+    Brain that is not this agent's", and a caller passing a DID it already holds
+    satisfies it more directly than an ambient one does: an unregistered or
+    mismatched DID still fails closed and still audits. What it does not do is
+    require the caller to be inside a turn, which background work is not.
+
+    Args:
+        agent_did: The agent this work is being done for.
+
+    Raises:
+        MemoryIsolationError: No state is registered for that DID.
+        RuntimeError: The memory module was never configured in this process.
+    """
+    if not _registry:
+        raise RuntimeError(
+            "memory state read before the memory module was configured; the module is "
+            "not installed at the deployment module root, or [modules.memory] is not "
+            "enabled in this agent's config"
+        )
+    if not agent_did:
+        _fail_closed("memory state requested without an agent DID", current_did="")
+    st = _registry.get(agent_did)
+    if st is None:
+        _fail_closed("no memory state registered for that agent", current_did=agent_did)
+    if st.agent_did != agent_did:
+        _fail_closed(
+            "memory state DID does not match the agent it was requested for",
+            current_did=agent_did,
+            resolved_did=st.agent_did,
+        )
+    return st
+
+
 def bind(state_obj: _State) -> None:
     """Register ``state_obj`` under its DID and bind it as the current turn's agent.
 
@@ -273,4 +315,4 @@ def _emit_isolation_audit(detail: dict[str, Any]) -> None:
         return
 
 
-__all__ = ["MemoryIsolationError", "bind", "configure", "reset", "state"]
+__all__ = ["MemoryIsolationError", "bind", "configure", "reset", "state", "state_for"]

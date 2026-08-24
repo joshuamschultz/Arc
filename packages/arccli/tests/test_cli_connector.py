@@ -876,3 +876,66 @@ def test_authorize_oauth_without_app_key_says_supply_it_first(
     with pytest.raises(SystemExit):
         _authorize(argparse.Namespace(instance="personal_dropbox"))
     assert "app key" in capsys.readouterr().err.lower()
+
+
+class TestSemanticLayer:
+    """The surface an operator uses to say what their data MEANS."""
+
+    def test_it_prints_only_the_path_for_an_editor(
+        self, arc_dir: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """`$EDITOR "$(arc connector semantic shop --path)"` must work, so this
+        prints the path and nothing else — no heading, no advice."""
+        connector_handler(["semantic", "shop", "--path", "--arc-dir", str(arc_dir)])
+
+        printed = capsys.readouterr().out.strip()
+        assert printed.endswith("semantic/shop.toml")
+        assert "\n" not in printed
+
+    def test_an_absent_layer_says_how_one_appears(
+        self, arc_dir: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """"Not found" with no next step is how an operator concludes a feature
+        does not exist."""
+        connector_handler(["semantic", "shop", "--arc-dir", str(arc_dir)])
+
+        printed = capsys.readouterr().out
+        assert "No semantic layer yet" in printed
+        assert "first time the datastore's tables are read" in printed
+
+    def test_it_names_the_tables_still_missing_a_description(
+        self, arc_dir: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The point of the readout: which tables an agent still sees only a name
+        for."""
+        from arcmemory.semantic_layer import layer_path
+
+        path = layer_path("shop", arc_dir)
+        assert path is not None
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            '[table.inv_hdr]\nentity = "invoice"\ndescription = "Billed jobs."\n'
+            "[table.audit_log]\n",
+            encoding="utf-8",
+        )
+
+        connector_handler(["semantic", "shop", "--arc-dir", str(arc_dir)])
+
+        printed = capsys.readouterr().out
+        assert "Billed jobs." in printed
+        assert "no description" in printed
+
+    def test_an_unparseable_layer_is_reported_rather_than_shown_as_empty(
+        self, arc_dir: Path
+    ) -> None:
+        """It is hand-edited, so a stray quote is an ordinary Tuesday — and an
+        operator whose edits stopped taking effect needs to be told why."""
+        from arcmemory.semantic_layer import layer_path
+
+        path = layer_path("shop", arc_dir)
+        assert path is not None
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('[table.inv_hdr]\nentity = "unclosed\n', encoding="utf-8")
+
+        with pytest.raises(SystemExit):
+            connector_handler(["semantic", "shop", "--arc-dir", str(arc_dir)])

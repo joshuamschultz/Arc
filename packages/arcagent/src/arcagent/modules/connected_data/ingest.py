@@ -357,7 +357,9 @@ class ArcMemoryIngestAdapter(IngestPort):
         if not callable(get_port):
             raise MappingDeniedError("selected datastore mapping has no datastore port")
         runtime = import_module("arcagent.modules.memory._runtime")
-        brain = runtime.state().brain
+        # By DID, not by ambient binding: a sync runs on a background task, not
+        # inside the turn that bound the contextvar, and `state()` refused it.
+        brain = runtime.state_for(self._agent_did).brain
         register = getattr(brain, "register_datastore", None)
         if not callable(register):
             raise ConnectedDataUnavailableError("active memory backend has no datastore port")
@@ -441,7 +443,7 @@ class ArcMemoryIngestAdapter(IngestPort):
         module = import_module("arcmemory.connected_data")
         await self._connected_service().purge_source(self._source_model(module, source))
         runtime = import_module("arcagent.modules.memory._runtime")
-        brain = runtime.state().brain
+        brain = runtime.state_for(self._agent_did).brain
         unregister = getattr(brain, "unregister_datastore", None)
         if callable(unregister):
             await unregister(self.canonical_source_id(source), caller_did=self._agent_did)

@@ -308,13 +308,13 @@ class SQLiteAttachment:
 
             kept = {n: i for n, i in raw.tables.items() if n in self._selected}
             raw = DatastoreOntology(tables=kept, entity_map={})
-        self._ontology = _apply_layer(self._connection_id, raw)
+        self._ontology = _overlay(self._connection_id, raw)
         return self._ontology
 
     async def persist_ontology(self, store: Any) -> None:
         """Write table SHAPE into memory — never a row, and never the path."""
         ontology = await self.introspect()
-        layer = _load_layer(self._connection_id)
+        layer = _layer_for(self._connection_id)
         for name, info in ontology.tables.items():
             slug = f"db-table-{name}"
             store.write_fact(
@@ -497,44 +497,23 @@ class SQLiteAttachment:
         from arcmemory.semantic_layer import describe
 
         ontology = await self.introspect()
-        return describe(ontology, _load_layer(self._connection_id))
+        return describe(ontology, _layer_for(self._connection_id))
 
     def _where(self) -> str:
         """How to name this database to a person, without leaking a credential."""
         return f"{self._host}:{self._remote_path}" if self._host else self._remote_path
 
 
-def _apply_layer(connection_id: str, ontology: Any) -> Any:
-    """Overlay the operator's meanings, writing the starting file if there is none."""
-    from arcmemory.semantic_layer import apply_semantic_layer, ensure_semantic_layer
+def _overlay(connection_id: str, ontology: Any) -> Any:
+    from arcmemory.semantic_layer import overlay
 
-    if not connection_id:
-        return ontology
-    path = _layer_path(connection_id)
-    if path is not None:
-        try:
-            ensure_semantic_layer(path, connection_id, ontology)
-        except OSError:
-            # A read-only config directory must not make the database unusable.
-            pass
-    return apply_semantic_layer(ontology, _load_layer(connection_id))
+    return overlay(connection_id, ontology)
 
 
-def _load_layer(connection_id: str) -> Any:
-    from arcmemory.semantic_layer import SemanticLayer, load_semantic_layer
+def _layer_for(connection_id: str) -> Any:
+    from arcmemory.semantic_layer import layer_for
 
-    path = _layer_path(connection_id) if connection_id else None
-    return load_semantic_layer(path) if path is not None else SemanticLayer()
-
-
-def _layer_path(connection_id: str) -> Path | None:
-    """Resolve the layer file through the accessor that owns it, or nothing."""
-    from arctrust.paths import semantic_layer_file
-
-    try:
-        return semantic_layer_file(connection_id)
-    except ValueError:
-        return None
+    return layer_for(connection_id)
 
 
 def _write_private(target: Path, payload: bytes) -> None:

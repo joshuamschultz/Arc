@@ -598,11 +598,16 @@ async def knowledge_search(query: str) -> str:
 
 @tool(
     name="document_search",
-    description="Search for text inside a connected document source.",
+    description=(
+        "Search the full text of every document source the operator connected — "
+        "wiki pages, tracker issues, mail, files in cloud storage, repository files."
+    ),
     classification="read_only",
     when_to_use=(
-        "Find text inside a connected document source; pass source to scope the "
-        "search to one connected source."
+        "ALWAYS before answering that something is undocumented, not written down, "
+        "or does not exist. Memory holds what you were told; this holds what the "
+        "organisation actually wrote, which is far more. Omit source to search "
+        "everything, or pass a name from connected_sources to narrow it."
     ),
 )
 async def document_search(query: str, source: str | None = None, top_k: int = 10) -> str:
@@ -711,9 +716,16 @@ async def _approved_datastore_sources() -> tuple[str, ...]:
 
 @tool(
     name="connected_sources",
-    description="Discover healthy, operator-approved connected data by kind and capability.",
+    description=(
+        "List the accounts the operator connected — the wikis, trackers, mailboxes, "
+        "file stores and databases whose contents you can search."
+    ),
     classification="read_only",
-    when_to_use="Before querying connected data when the source kind is not obvious.",
+    when_to_use=(
+        "When you do not know what the operator has connected, or need a source "
+        "name to narrow document_search. Worth checking before concluding that "
+        "something is not available to you."
+    ),
 )
 async def connected_sources() -> str:
     """Show safe connected-source capabilities without returning credentials or ids."""

@@ -86,12 +86,15 @@ def driver(monkeypatch: pytest.MonkeyPatch) -> Iterator[_Driver]:
     yield value
 
 
-def _attachment() -> Any:
+def _attachment(connection_id: str = "") -> Any:
     manifest = load_manifest(
         (_BUNDLE / "extension.toml").read_text(encoding="utf-8"), tier=Tier.PERSONAL
     )
     wrapper: Any = build_attachment(
-        manifest, _BUNDLE, {"database_dsn": Secret("postgresql://reader:secret@db.example/app")}
+        manifest,
+        _BUNDLE,
+        {"database_dsn": Secret("postgresql://reader:secret@db.example/app")},
+        connection_id=connection_id,
     )
     return wrapper._delegate
 
@@ -162,3 +165,56 @@ def _attachment_for_dsn(dsn: str) -> Any:
     )
     wrapper: Any = build_attachment(manifest, _BUNDLE, {"database_dsn": Secret(dsn)})
     return wrapper._delegate
+
+
+@pytest.fixture
+def _isolated_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep any generated semantic layer inside the test's own tree."""
+    monkeypatch.setenv("ARC_TEAM_ROOT", str(tmp_path / "operator"))
+
+
+async def test_postgres_honours_the_operators_semantic_layer(
+    driver: _Driver, _isolated_config: None
+) -> None:
+    """The same editable meanings sqlite gets, or an operator learns the feature
+    exists per-connector — which is how one datastore came to describe itself and
+    the other to answer with a bare list of table names.
+    """
+    from arctrust.paths import semantic_layer_file
+
+    await _attachment("app").introspect()
+    semantic_layer_file("app").write_text(
+        '[table."public.widgets"]\n'
+        'entity = "widget"\n'
+        'description = "One row per manufactured part."\n'
+        '[table."public.widgets".column.name]\n'
+        'label = "part name"\n'
+        'description = "What the shop floor calls it."\n',
+        encoding="utf-8",
+    )
+
+    answer = await _attachment("app").invoke("postgres_schema", {})
+
+    assert "one row is a widget" in answer.content
+    assert "One row per manufactured part." in answer.content
+    assert "name (part name: What the shop floor calls it.)" in answer.content
+
+
+async def test_connecting_postgres_generates_an_editable_layer(
+    driver: _Driver, _isolated_config: None
+) -> None:
+    """An operator needs something real to edit, produced by connecting."""
+    from arctrust.paths import semantic_layer_file
+
+    await _attachment("app").introspect()
+
+    written = semantic_layer_file("app").read_text(encoding="utf-8")
+    assert 'table."public.widgets"' in written
+    assert "YOURS TO EDIT" in written
+
+
+async def test_postgres_without_a_connection_id_still_answers(driver: _Driver) -> None:
+    """No id means no per-connection file; that must degrade, not refuse."""
+    answer = await _attachment().invoke("postgres_schema", {})
+
+    assert "public.widgets" in answer.content
