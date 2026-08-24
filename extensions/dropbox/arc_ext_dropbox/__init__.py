@@ -52,8 +52,13 @@ from arcagent.extension.source import (
     SyncSourcePage,
 )
 
-#: Seconds any one Dropbox request may take before it is abandoned.
-_TIMEOUT: Final = 30.0
+#: One flat 30 seconds covered both reaching Dropbox and reading a file from it,
+#: so any document that took longer than half a minute to download failed the
+#: whole sync with a ReadTimeout. Connecting is still held to a short leash —
+#: an unreachable host should be reported at once, not waited on — while a
+#: transfer already in progress is given room. The per-sync ``max_seconds``
+#: ceiling still bounds the run as a whole.
+_TIMEOUT: Final = httpx.Timeout(connect=10.0, read=300.0, write=120.0, pool=10.0)
 
 #: Where a refresh token is exchanged for a short-lived access token.
 _OAUTH_ENDPOINT: Final = "https://api.dropbox.com/oauth2/token"
