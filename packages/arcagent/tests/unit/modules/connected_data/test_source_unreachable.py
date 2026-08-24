@@ -8,6 +8,7 @@ a read timeout reached the browser as an opaque HTTP 500 on the mapping screen.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -228,3 +229,43 @@ async def test_a_refusal_is_not_reported_as_unreachable() -> None:
     with pytest.raises(SourceRefusedError):
         await service.stage_mapping("personal_dropbox", homes=("document",))
     assert not issubclass(SourceRefusedError, SourceUnreachableError)
+
+
+class _HangingAdapter:
+    """A connector whose vendor binary never answers."""
+
+    def __init__(self, gate: asyncio.Event) -> None:
+        self._gate = gate
+
+    async def inspect_source(self, _request: Any) -> Any:
+        await self._gate.wait()
+        raise AssertionError("unreachable in this test")
+
+
+@pytest.mark.asyncio
+async def test_one_hanging_connector_does_not_hold_the_listing() -> None:
+    """The connections page must render whatever the slowest source is doing.
+
+    Inspecting inline meant a vendor CLI that hangs rather than answering held
+    the whole page for minutes, taking every healthy source down with it.
+    """
+    gate = asyncio.Event()
+    registration = _Registration("jira", _HangingAdapter(gate))
+    service = ConnectedDataService(
+        agent_did="did:arc:test:agent",
+        catalog=_Catalog((registration,)),
+        ingest_factory=lambda description: object(),
+        sync_store_opener=None,
+        resource_selection_store_opener=None,
+        limits=SyncLimits(),
+        global_concurrency=1,
+    )
+
+    try:
+        listed = await asyncio.wait_for(service.list_sources(), timeout=2.0)
+    finally:
+        gate.set()
+        await service.close()
+
+    assert [item.connection_id for item in listed] == ["jira"]
+    assert listed[0].detail == "inspecting"

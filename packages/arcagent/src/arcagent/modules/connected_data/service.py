@@ -152,6 +152,7 @@ class ConnectedDataService:
         self._mapping_statuses: dict[str, MappingProposalStatus] = {}
         self._descriptions: dict[str, SourceDescription] = {}
         self._selected_resources: dict[str, tuple[str, ...]] = {}
+        self._inspections: dict[str, asyncio.Task[None]] = {}
         self._paused: set[str] = set()
         self._wake = asyncio.Event()
         self._closed = False
@@ -167,6 +168,9 @@ class ConnectedDataService:
     async def close(self) -> None:
         """Cancel workers and release only resources owned by this service."""
         self._closed = True
+        for task in tuple(self._inspections.values()):
+            task.cancel()
+        self._inspections.clear()
         monitor = self._monitor
         self._monitor = None
         if monitor is not None:
@@ -182,14 +186,39 @@ class ConnectedDataService:
         self._resource_store = None
 
     async def list_sources(self) -> tuple[SourceRuntimeStatus, ...]:
-        """Return safe operational state for UI/operator surfaces."""
+        """Return safe operational state for UI/operator surfaces.
+
+        Never waits on a provider. Inspecting one inline meant a single sick
+        connector — a vendor CLI that hangs rather than answering — held the
+        whole connections page for minutes and every other healthy source with
+        it. A source not yet described is listed as inspecting and filled in by
+        a background pass.
+        """
         registrations = sorted(
             await self._catalog.snapshot(), key=lambda entry: entry.connection_id
         )
         for registration in registrations:
             if registration.connection_id not in self._statuses:
-                await self._inspect_registration(registration)
+                self._statuses[registration.connection_id] = SourceRuntimeStatus(
+                    connection_id=registration.connection_id,
+                    status="idle",
+                    detail="inspecting",
+                )
+                self._start_inspection(registration)
         return tuple(self._statuses[registration.connection_id] for registration in registrations)
+
+    def _start_inspection(self, registration: SourceRegistration) -> None:
+        """Describe a source out of band, at most one attempt in flight."""
+        connection_id = registration.connection_id
+        existing = self._inspections.get(connection_id)
+        if existing is not None and not existing.done():
+            return
+        task = asyncio.create_task(
+            self._inspect_registration(registration),
+            name=f"connected-data-inspect:{connection_id}",
+        )
+        self._inspections[connection_id] = task
+        task.add_done_callback(lambda _: self._inspections.pop(connection_id, None))
 
     async def sync_now(self, connection_id: str) -> SourceOperationResult:
         """Schedule one source immediately; unknown or paused sources are refused."""
