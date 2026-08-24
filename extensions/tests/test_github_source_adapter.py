@@ -12,6 +12,8 @@ from arcagent.extension.source import (
     InspectSource,
     ListSourceResources,
     SelectSourceResources,
+    SourceError,
+    SourceFailureCode,
     SyncSource,
 )
 
@@ -191,8 +193,9 @@ async def test_a_real_github_failure_still_refuses() -> None:
             )
 
     adapter = GitHubSourceAdapter(_Unauthorized())
-    with pytest.raises(RuntimeError, match="Bad credentials"):
+    with pytest.raises(SourceError, match="Bad credentials") as caught:
         await adapter.sync_source(SyncSource(connection_id="github", page_size=50))
+    assert caught.value.code is SourceFailureCode.AUTH_REQUIRED
 
 
 class _EmptyRepoAttachment:
@@ -277,3 +280,54 @@ async def test_a_real_fetch_failure_that_prints_nothing_still_refuses() -> None:
                 connection_id="github", object_id="arc/arc:file:gone.py", version="abc123"
             )
         )
+
+
+async def test_a_network_blip_is_retryable_rather_than_the_end_of_the_crawl() -> None:
+    """A crawl of a whole account makes thousands of calls and WILL hit one.
+
+    Raised as an untyped RuntimeError, the coordinator treated it as a hard
+    failure and threw away every repository already walked.
+    """
+
+    class _Blip:
+        async def invoke(self, tool: str, args: dict[str, Any]) -> ToolResult:
+            if tool == "github_repo_list":
+                return ToolResult(
+                    tool=tool,
+                    outcome=ToolOutcome.OK,
+                    content=json.dumps([{"nameWithOwner": "arc/arc"}]),
+                )
+            return ToolResult(
+                tool=tool,
+                outcome=ToolOutcome.ERROR,
+                content='gh github_pr_list exited 1: Post "https://api.github.com/graphql": '
+                "net/http: TLS handshake timeout",
+            )
+
+    adapter = GitHubSourceAdapter(_Blip())
+
+    with pytest.raises(SourceError) as caught:
+        await adapter.sync_source(SyncSource(connection_id="github", page_size=50))
+
+    assert caught.value.code is SourceFailureCode.TRANSIENT
+
+
+async def test_a_rate_limit_says_wait_not_reconnect() -> None:
+    class _Limited:
+        async def invoke(self, tool: str, args: dict[str, Any]) -> ToolResult:
+            if tool == "github_repo_list":
+                return ToolResult(
+                    tool=tool,
+                    outcome=ToolOutcome.OK,
+                    content=json.dumps([{"nameWithOwner": "arc/arc"}]),
+                )
+            return ToolResult(
+                tool=tool, outcome=ToolOutcome.ERROR, content="API rate limit exceeded"
+            )
+
+    adapter = GitHubSourceAdapter(_Limited())
+
+    with pytest.raises(SourceError) as caught:
+        await adapter.sync_source(SyncSource(connection_id="github", page_size=50))
+
+    assert caught.value.code is SourceFailureCode.RATE_LIMITED

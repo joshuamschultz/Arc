@@ -242,7 +242,8 @@ class GitHubSourceAdapter:
     async def _call(self, tool: str, args: dict[str, Any]) -> list[dict[str, Any]]:
         result = await self._attachment.invoke(tool, args)
         if str(result.outcome) != "ok":
-            raise RuntimeError(result.content)
+            detail = str(result.content)
+            raise SourceError(_github_failure_code(detail), detail[:256])
         parsed = json.loads(result.content)
         if not isinstance(parsed, list):
             return []
@@ -263,8 +264,8 @@ class GitHubSourceAdapter:
         """
         try:
             return await self._call_all(tool, args)
-        except RuntimeError as exc:
-            if not _repository_simply_lacks_it(str(exc)):
+        except SourceError as exc:
+            if not _repository_simply_lacks_it(exc.detail):
                 raise
             return []
 
@@ -370,6 +371,35 @@ def _is_empty_blob(result: Any) -> bool:
     a failure that happens to print nothing must still be a failure.
     """
     return "exited 0" in str(result.content)
+
+
+#: Rate limiting, which means "wait", not "reconnect".
+_RATE_MARKERS = ("rate limit", "secondary rate", "429")
+
+#: A credential no retry will fix.
+_AUTH_MARKERS = ("bad credentials", "401", "requires authentication", "must be logged in")
+
+
+def _github_failure_code(detail: str) -> SourceFailureCode:
+    """Classify a `gh` failure so the coordinator can act on it.
+
+    Everything used to be an untyped ``RuntimeError``, which the coordinator
+    treats as a hard failure — so one TLS handshake timeout, a single call into a
+    crawl of every repository in an account, threw the whole run away. A crawl
+    that long WILL hit one.
+
+    Anything not clearly a credential or a rate limit is TRANSIENT, which is a
+    deliberate default rather than a list of network phrasings to keep current:
+    the coordinator retries a bounded number of times and then fails, so a truly
+    permanent error still ends the run — a few seconds later, having cost some
+    retries. Losing a whole account's crawl to a blip is the worse trade.
+    """
+    lowered = detail.lower()
+    if any(marker in lowered for marker in _AUTH_MARKERS):
+        return SourceFailureCode.AUTH_REQUIRED
+    if any(marker in lowered for marker in _RATE_MARKERS):
+        return SourceFailureCode.RATE_LIMITED
+    return SourceFailureCode.TRANSIENT
 
 
 def _repository_simply_lacks_it(detail: str) -> bool:
