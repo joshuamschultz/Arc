@@ -221,6 +221,17 @@ ok "runtimes pruned (kept active + $((KEEP_RUNTIMES - 1)) recent)"
 # the real one, and the migration could then only refuse, because both are real.
 # The fleet is never in scope here: it lives at ~/arc/team, outside this home.
 log "Splitting the Arc home if it is still flat (idempotent)..."
+# A live service is the one thing that can undo this migration while it runs.
+# It resolves paths ONCE at startup, so after config/ and state/ are renamed out
+# from under it, the old process still writes to the old locations — and a
+# surface that finds no operator key there MINTS ONE. That is not theoretical:
+# it happened here, and the fresh key then signed a set of module bundles the
+# deployment's trust store does not pin. Stop it first when there is anything to
+# move; the restart at the end of this script brings it back on the new paths.
+if [ -d "$HOME/.arc/state" ] || [ -d "$HOME/.arc/config" ]; then
+  log "Old config/state found inside the install home — stopping the service to move them..."
+  systemctl --user stop arc.service 2>/dev/null || true
+fi
 "$ARC_BIN" install --migrate-only || fail "layout migration refused — see above; nothing was moved"
 
 # The fleet root comes from the resolver, never from a literal here: a script
