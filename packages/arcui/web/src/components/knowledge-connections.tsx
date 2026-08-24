@@ -33,6 +33,7 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { JsonBlock } from '@/components/json-block'
+import { fmtBytes } from '@/lib/format'
 import { EmptyState, QueryState } from '@/components/states'
 import {
   useBlobFolders,
@@ -416,8 +417,8 @@ function SourceDetail({
             </h3>
             <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
               <dt className="text-muted-foreground">Status</dt><dd className="font-medium">{source.status}</dd>
-              <dt className="text-muted-foreground">Pages</dt><dd>{source.pages}</dd>
-              <dt className="text-muted-foreground">Processed</dt><dd>{source.bytes_processed.toLocaleString()} bytes</dd>
+              <dt className="text-muted-foreground">Batches read</dt><dd>{source.pages}</dd>
+              <dt className="text-muted-foreground">Downloaded</dt><dd>{fmtBytes(source.bytes_processed)}</dd>
               <dt className="text-muted-foreground">Last sync</dt><dd>{source.last_synced_at ?? 'Never'}</dd>
               {source.error_code && <><dt className="text-muted-foreground">Error</dt><dd className="text-destructive">{source.error_code}</dd></>}
               {source.detail && <><dt className="text-muted-foreground">Detail</dt><dd>{source.detail}</dd></>}
@@ -483,7 +484,7 @@ function SourcesSection({
                     <td className="px-3 py-2 text-foreground">{source.label || source.connection_id}</td>
                     <td className="px-3 py-2 text-xs text-muted-foreground">{source.source_kind}</td>
                     <td className="px-3 py-2"><span className={`rounded-full border px-2 py-0.5 text-xs ${sourceStatusTone(source.status)}`}>{source.status}</span></td>
-                    <td className="px-3 py-2 text-xs tabular-nums text-muted-foreground">{source.pages} pages · {source.bytes_processed.toLocaleString()} B</td>
+                    <td className="px-3 py-2 text-xs tabular-nums text-muted-foreground">{source.pages} batches · {fmtBytes(source.bytes_processed)} downloaded</td>
                     <td className="px-3 py-2 text-xs text-muted-foreground">{source.last_synced_at ?? 'Never'}</td>
                   </tr>
                 ))}
