@@ -267,7 +267,7 @@ class TestSemanticLayer:
 
         result = await _attachment(database).invoke("sqlite_schema", {})
 
-        assert "one row is a invoice" in result.content
+        assert "one row is an invoice" in result.content
         assert "One row per billed job." in result.content
         assert "amt (amount: Total billed in USD cents.)" in result.content
 

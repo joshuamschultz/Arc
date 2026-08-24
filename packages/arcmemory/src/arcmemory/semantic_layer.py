@@ -202,7 +202,8 @@ def describe(ontology: DatastoreOntology, layer: SemanticLayer) -> str:
     for name in sorted(ontology.tables):
         info = ontology.tables[name]
         meaning = layer.table.get(name, TableMeaning())
-        head = f"{name} — one row is a {meaning.entity or _implied_entity(name)}"
+        entity = meaning.entity or _implied_entity(name)
+        head = f"{name} — one row is {_article(entity)} {entity}"
         if meaning.description:
             head += f". {meaning.description}"
         columns = ", ".join(_column_line(column, meaning) for column in info.columns)
@@ -221,6 +222,11 @@ def _column_line(column: str, meaning: TableMeaning) -> str:
     if described.label and described.label != column:
         return f"{column} ({described.label})"
     return column
+
+
+def _article(word: str) -> str:
+    """ "a" or "an". The agent's description is read by a person too."""
+    return "an" if word[:1].lower() in "aeiou" else "a"
 
 
 def _implied_entity(table: str) -> str:

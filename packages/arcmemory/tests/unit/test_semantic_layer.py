@@ -196,7 +196,7 @@ class TestDescribe:
 
         text = describe(apply_semantic_layer(_ontology("inv_hdr"), layer), layer)
 
-        assert "one row is a invoice" in text
+        assert "one row is an invoice" in text
         assert "One row per billed job." in text
         assert "amt (amount: USD cents.)" in text
 
@@ -225,3 +225,14 @@ def test_a_rendered_file_is_valid_toml_for_awkward_identifiers() -> None:
 
     assert "order.items" in parsed["table"]
     assert "unit price" in parsed["table"]["order.items"]["column"]
+
+
+def test_the_article_matches_the_entity_name() -> None:
+    """A person reads this description too; "a invoice" reads as a bug."""
+    ontology = _ontology("inv_hdr", "jobs")
+    layer = SemanticLayer.model_validate({"table": {"inv_hdr": {"entity": "invoice"}}})
+
+    text = describe(apply_semantic_layer(ontology, layer), layer)
+
+    assert "one row is an invoice" in text
+    assert "one row is a job" in text
