@@ -3,8 +3,9 @@
 No all-in-one converter — a universal "sniff and convert anything" extractor
 is an RCE surface (LLM03 supply chain, ASI05 unexpected code execution). Each
 format gets its own small, sandboxed extractor. The dependency-free trio
-(``TextExtractor``, ``MarkdownExtractor``, ``CodeExtractor``) is the default
-path; the optional trio (``PdfExtractor``, ``DocxExtractor``, ``XlsxExtractor``)
+(``TextExtractor``, ``MarkdownExtractor``, ``CodeExtractor``, plus
+``JsonExtractor`` and ``HtmlExtractor`` for what APIs actually return) is the
+default path; the optional trio (``PdfExtractor``, ``DocxExtractor``, ``XlsxExtractor``)
 lazy-imports its library *inside* ``extract()`` and raises
 :class:`ExtractionUnavailable` instead of letting a bare ``ImportError``
 escape — degrade, don't crash.
@@ -13,9 +14,11 @@ escape — degrade, don't crash.
 from __future__ import annotations
 
 import io
+import json
 from collections.abc import Callable
+from html.parser import HTMLParser
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 
 class ExtractionUnavailable(RuntimeError):  # noqa: N818 -- fixed contract name (COMP-005)
@@ -56,6 +59,81 @@ class CodeExtractor(_Utf8Extractor):
     """Dependency-free: source code by extension — returned as-is (text)."""
 
     mimes: tuple[str, ...] = ()
+
+
+class JsonExtractor:
+    """``application/json`` — the record read as prose a person could search.
+
+    An issue tracker or a wiki API hands over JSON, and without this every one
+    of those objects was skipped as an unsupported type: the source synced
+    "successfully" and indexed nothing at all. Keys are kept beside their values
+    because a field name is often the word someone searches for.
+    """
+
+    mimes: tuple[str, ...] = ("application/json",)
+
+    def extract(self, data: bytes, *, filename: str = "") -> str:
+        text = data.decode("utf-8", errors="replace")
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            # Not valid JSON despite the label. It is still text, and text is
+            # searchable, so it is indexed rather than thrown away.
+            return text
+        return "\n".join(_flatten_json(parsed))
+
+
+class HtmlExtractor(HTMLParser):
+    """``text/html`` — visible text, with script and style content dropped.
+
+    Wiki and issue bodies arrive as HTML. Indexing the markup would bury every
+    real word under tag names; skipping it left whole spaces unsearchable.
+    """
+
+    mimes: tuple[str, ...] = ("text/html",)
+    _SILENT = frozenset({"script", "style", "head", "meta", "link"})
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._parts: list[str] = []
+        self._muted = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in self._SILENT:
+            self._muted += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self._SILENT and self._muted:
+            self._muted -= 1
+
+    def handle_data(self, data: str) -> None:
+        if not self._muted and data.strip():
+            self._parts.append(data.strip())
+
+    def extract(self, data: bytes, *, filename: str = "") -> str:
+        self._parts = []
+        self._muted = 0
+        self.reset()
+        self.feed(data.decode("utf-8", errors="replace"))
+        self.close()
+        return "\n".join(self._parts)
+
+
+def _flatten_json(value: Any, prefix: str = "") -> list[str]:
+    """One ``path: value`` line per leaf, so a field name stays with its text."""
+    if isinstance(value, dict):
+        lines: list[str] = []
+        for key, item in value.items():
+            lines.extend(_flatten_json(item, f"{prefix}.{key}" if prefix else str(key)))
+        return lines
+    if isinstance(value, list):
+        lines = []
+        for index, item in enumerate(value):
+            lines.extend(_flatten_json(item, f"{prefix}[{index}]"))
+        return lines
+    if value is None or value == "":
+        return []
+    return [f"{prefix}: {value}" if prefix else str(value)]
 
 
 class PdfExtractor:
@@ -136,6 +214,8 @@ _CODE_EXTENSIONS = (
 _MIME_EXTRACTORS: dict[str, Callable[[], Extractor]] = {
     "text/plain": TextExtractor,
     "text/markdown": MarkdownExtractor,
+    "text/html": HtmlExtractor,
+    "application/json": JsonExtractor,
     "application/pdf": PdfExtractor,
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": DocxExtractor,
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": XlsxExtractor,
@@ -166,6 +246,8 @@ __all__ = [
     "DocxExtractor",
     "ExtractionUnavailable",
     "Extractor",
+    "HtmlExtractor",
+    "JsonExtractor",
     "MarkdownExtractor",
     "PdfExtractor",
     "TextExtractor",

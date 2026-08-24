@@ -213,3 +213,88 @@ def test_code_chunker_falls_back_on_syntax_error_without_raising() -> None:
     chunks = chunker.chunk(broken, source_path="broken.py")
 
     assert chunks  # degrades to RecursiveChunker, never crashes
+
+
+class TestWhatConnectedSourcesActuallyReturn:
+    """An issue tracker hands over JSON and a wiki hands over HTML.
+
+    Neither had an extractor, so every object from those sources was skipped as
+    an unsupported type: the sync reported `complete`, wrote no documents, and
+    searching the source returned nothing.
+    """
+
+    def test_a_json_record_is_indexed_as_searchable_text(self) -> None:
+        from arcmemory.extract import get_extractor
+
+        extractor = get_extractor("application/json")
+        assert extractor is not None
+
+        text = extractor.extract(
+            b'{"title": "Fix the crawler", "labels": ["bug", "sync"]}'
+        )
+
+        assert "Fix the crawler" in text
+        # The field name is often the word someone searches for.
+        assert "title" in text
+        assert "bug" in text
+
+    def test_a_json_field_name_stays_with_its_value(self) -> None:
+        from arcmemory.extract import get_extractor
+
+        extractor = get_extractor("application/json")
+        assert extractor is not None
+
+        text = extractor.extract(b'{"issue": {"body": "it skipped everything"}}')
+
+        assert "issue.body: it skipped everything" in text
+
+    def test_text_labelled_json_that_is_not_json_is_still_indexed(self) -> None:
+        """Text is searchable; throwing it away is not."""
+        from arcmemory.extract import get_extractor
+
+        extractor = get_extractor("application/json")
+        assert extractor is not None
+
+        assert "not json at all" in extractor.extract(b"not json at all")
+
+    def test_html_is_indexed_as_its_visible_words(self) -> None:
+        from arcmemory.extract import get_extractor
+
+        extractor = get_extractor("text/html")
+        assert extractor is not None
+
+        text = extractor.extract(
+            b"<html><body><h1>Runbook</h1><p>Restart the service</p></body></html>"
+        )
+
+        assert "Runbook" in text
+        assert "Restart the service" in text
+
+    def test_html_script_and_style_content_is_not_indexed(self) -> None:
+        """Markup and code would bury every real word under noise."""
+        from arcmemory.extract import get_extractor
+
+        extractor = get_extractor("text/html")
+        assert extractor is not None
+
+        text = extractor.extract(
+            b"<html><head><style>.a{color:red}</style></head>"
+            b"<body><script>alert('x')</script><p>Real words</p></body></html>"
+        )
+
+        assert "Real words" in text
+        assert "color" not in text
+        assert "alert" not in text
+
+    def test_an_html_extractor_is_fresh_per_document(self) -> None:
+        """A parser that kept state would bleed one page's words into the next."""
+        from arcmemory.extract import get_extractor
+
+        extractor = get_extractor("text/html")
+        assert extractor is not None
+
+        first = extractor.extract(b"<p>First page</p>")
+        second = extractor.extract(b"<p>Second page</p>")
+
+        assert "First page" in first
+        assert "First page" not in second
