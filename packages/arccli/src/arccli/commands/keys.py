@@ -33,7 +33,7 @@ from typing import Any, NoReturn, TypeVar
 
 import arcagent
 import arcllm
-from arctrust import arc_home
+from arctrust.paths import operator_root
 
 from arccli.commands._shared import dispatch, err
 from arccli.commands._shared import print_json as _print_json
@@ -46,12 +46,13 @@ T = TypeVar("T")
 def _arc_dir(args: argparse.Namespace) -> Path:
     """The Arc config home this invocation acts on.
 
-    Defaults through ``arc_home()`` rather than ``Path.home()``: an isolated
-    deployment sets ``ARC_CONFIG_DIR``, and a key written outside that tree is a
-    key its own agents will never read.
+    Defaults through ``operator_root()`` rather than ``Path.home()``: an isolated
+    deployment relocates it, and a key written outside that tree is a key its own
+    agents will never read. The OPERATOR root, not the install home — a key is
+    state, and an update replaces the install without touching state.
     """
     given = getattr(args, "arc_dir", None)
-    return Path(given).expanduser() if given else arc_home()
+    return Path(given).expanduser() if given else operator_root()
 
 
 def _data_dir(args: argparse.Namespace) -> Path:

@@ -247,6 +247,13 @@ _BASE_TAKING = frozenset(
         "operator_public_key",
         "load_operator_key",
         "resolve_record_cipher",
+        # Deployment-root takers. Same defect, wider blast radius: the root
+        # decides where connections, grants, credentials and blueprints are
+        # read from, and the install home holds none of them any more.
+        "resolve_deployment",
+        "operator_worm_sink",
+        "ConnectionRegistry",
+        "audit_apply",
     }
 )
 
@@ -286,4 +293,41 @@ def test_no_surface_pins_a_key_lookup_to_the_install_home() -> None:
         "these pass arc_home() where the accessor already knows the answer:\n  "
         + "\n  ".join(sorted(violations))
         + "\n\nDrop the argument."
+    )
+
+
+def _arc_home_as_default_root(tree: ast.AST) -> list[int]:
+    """Lines defaulting a root with ``... or arc_home()``.
+
+    The idiom that broke connections on a live box, eight times over:
+    ``arc_dir = getattr(args, "arc_dir", None) or arc_home()``. It reads as
+    "this deployment" and means "the installed tree" — so the agent asked
+    ``~/.arc/config/connections.toml`` while every surface that wrote grants
+    used the operator root, and five live connections attached to nothing.
+
+    ``arc_home()`` called outright is fine: that genuinely means the install.
+    """
+    hits: list[int] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.BoolOp) or not isinstance(node.op, ast.Or):
+            continue
+        if any(_call_name(value) == "arc_home" for value in node.values[1:]):
+            hits.append(node.lineno)
+    return hits
+
+
+def test_no_surface_defaults_a_deployment_root_to_the_install_home() -> None:
+    """``X or arc_home()`` names the install; a deployment root is the operator's."""
+    offenders: dict[str, list[int]] = {}
+    for path in _source_files():
+        if _is_exempt(path):
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        lines = _arc_home_as_default_root(tree)
+        if lines:
+            offenders[_relative(path).as_posix()] = lines
+    assert not offenders, (
+        "a root defaulted to arc_home() reads config and state from the installed "
+        "tree, which holds neither. Default to operator_root(), or pass None and "
+        f"let the accessor answer. Offenders: {offenders}"
     )

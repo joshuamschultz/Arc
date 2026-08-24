@@ -411,9 +411,7 @@ class ArcMemoryIngestAdapter(IngestPort):
             # type, a size ceiling, a revision out of order. Left to propagate
             # they ended the whole sync, so one file nothing can read made the
             # entire account permanently `failed`.
-            raise ObjectNotIngestibleError(
-                type(refusal).__name__, str(refusal)
-            ) from refusal
+            raise ObjectNotIngestibleError(type(refusal).__name__, str(refusal)) from refusal
 
     async def reset_source(self, source: SourceDescription) -> None:
         """Clear retrievable source artifacts without discarding approved routing."""

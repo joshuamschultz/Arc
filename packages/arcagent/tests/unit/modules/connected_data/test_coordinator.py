@@ -628,9 +628,7 @@ class _RefusingFetchSource(FakeSource):
 @pytest.mark.asyncio
 async def test_an_object_the_source_calls_too_large_is_skipped() -> None:
     """The source knows sizes this side only estimated."""
-    source = _RefusingFetchSource(
-        [page("huge", cursor="")], SourceFailureCode.TOO_LARGE
-    )
+    source = _RefusingFetchSource([page("huge", cursor="")], SourceFailureCode.TOO_LARGE)
     ingest = FakeIngest()
 
     result = await ConnectedDataCoordinator(source, ingest, InMemorySourceSyncStore()).run(
@@ -650,18 +648,14 @@ async def test_any_other_refusal_still_ends_the_run() -> None:
     Deciding this from the exception's text skipped every object of every kind
     and reported a healthy, empty sync over a source that was refusing outright.
     """
-    source = _RefusingFetchSource(
-        [page("thing", cursor="")], SourceFailureCode.NOT_FOUND
-    )
+    source = _RefusingFetchSource([page("thing", cursor="")], SourceFailureCode.NOT_FOUND)
     ingest = FakeIngest()
 
     store = InMemorySourceSyncStore()
 
     with pytest.raises(SyncError, match="refused"):
         await ConnectedDataCoordinator(source, ingest, store).run(
-            SourceDescription(
-                connection_id="source", source_kind="test", account_id="account"
-            ),
+            SourceDescription(connection_id="source", source_kind="test", account_id="account"),
             agent_did="did:a",
             owner_id="worker",
         )
@@ -748,9 +742,7 @@ async def test_an_ingest_failure_that_is_not_about_one_object_still_fails() -> N
 
     with pytest.raises(RuntimeError, match="store is down"):
         await ConnectedDataCoordinator(source, ingest, InMemorySourceSyncStore()).run(
-            SourceDescription(
-                connection_id="source", source_kind="test", account_id="account"
-            ),
+            SourceDescription(connection_id="source", source_kind="test", account_id="account"),
             agent_did="did:a",
             owner_id="worker",
         )

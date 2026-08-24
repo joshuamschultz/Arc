@@ -698,9 +698,7 @@ def test_a_templated_argument_lets_the_manifest_own_the_shape() -> None:
         tool="repo_tree",
         argv=["api", "--"],
         arguments=[
-            module.CliArgument(
-                name="repo", template="repos/{value}/git/trees/HEAD?recursive=1"
-            )
+            module.CliArgument(name="repo", template="repos/{value}/git/trees/HEAD?recursive=1")
         ],
     )
 

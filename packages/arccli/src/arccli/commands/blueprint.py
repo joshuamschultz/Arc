@@ -26,7 +26,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from arctrust.paths import arc_home, audit_dir, config_file
+from arctrust.paths import audit_dir, config_file, operator_root
 
 _logger = logging.getLogger("arccli.commands.blueprint")
 
@@ -177,7 +177,7 @@ def _list(args: argparse.Namespace) -> None:
     from arccli.blueprints import list_blueprints
     from arccli.commands.operator import operator_public_key
 
-    arc_dir = Path(getattr(args, "config_dir", None) or arc_home())
+    arc_dir = Path(getattr(args, "config_dir", None) or operator_root())
     rows = [
         [bp.name, bp.version, bp.tier, bp.source, _signed_label(bp)]
         for bp in list_blueprints(operator_public_key=operator_public_key(arc_dir))
@@ -199,7 +199,7 @@ def _show(args: argparse.Namespace) -> None:
     from arccli.commands.operator import operator_public_key
 
     tier = getattr(args, "tier", None) or "personal"
-    arc_dir = Path(getattr(args, "config_dir", None) or arc_home())
+    arc_dir = Path(getattr(args, "config_dir", None) or operator_root())
     bp = resolve_blueprint(args.name, tier=tier, operator_public_key=operator_public_key(arc_dir))
     _write(f"# blueprint: {bp.name} v{bp.version} (tier={bp.tier}, source={bp.source})")
     _write(dumps_toml(bp.overlay).rstrip())
@@ -210,7 +210,7 @@ def _verify(args: argparse.Namespace) -> None:
     from arccli.commands.operator import operator_public_key
 
     tier = getattr(args, "tier", None) or "personal"
-    arc_dir = Path(getattr(args, "config_dir", None) or arc_home())
+    arc_dir = Path(getattr(args, "config_dir", None) or operator_root())
     try:
         bp = resolve_blueprint(
             args.name, tier=tier, operator_public_key=operator_public_key(arc_dir)
@@ -227,7 +227,7 @@ def _verify(args: argparse.Namespace) -> None:
 
 
 def _apply(args: argparse.Namespace) -> None:
-    arc_dir = Path(getattr(args, "config_dir", None) or arc_home())
+    arc_dir = Path(getattr(args, "config_dir", None) or operator_root())
     agent_dir: str | None = getattr(args, "agent", None)
     dry_run = getattr(args, "dry_run", False)
 
@@ -326,7 +326,7 @@ def _sign(args: argparse.Namespace) -> None:
 
     from arccli.commands.operator import load_operator_key
 
-    arc_dir = Path(getattr(args, "config_dir", None) or arc_home())
+    arc_dir = Path(getattr(args, "config_dir", None) or operator_root())
     operator = load_operator_key(arc_dir)
     # DC-4 known limitation: write_signature needs the raw seed; a vault_transit
     # (federal) operator key has no in-process seed and must sign out-of-band.

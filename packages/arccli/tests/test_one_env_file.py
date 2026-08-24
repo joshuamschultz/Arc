@@ -50,9 +50,7 @@ def test_the_key_store_writes_the_file_the_deployment_sources() -> None:
     )
     # Against the OPERATOR root, not the install home: the env file an operator
     # edits lives beside their fleet, so that replacing ~/.arc leaves it alone.
-    assert sourced.replace("%h", "/home/arc") == str(
-        default_env_file(Path("/home/arc/arc"))
-    )
+    assert sourced.replace("%h", "/home/arc") == str(default_env_file(Path("/home/arc/arc")))
 
 
 def test_every_env_loader_reads_the_file_the_key_store_writes() -> None:

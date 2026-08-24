@@ -97,13 +97,13 @@ def audit_chain(prog: str, resolve_actor: Callable[[], str]) -> Iterator[tuple[A
     interrupts the action it audits (NIST AU-5).
     """
     from arcstore import resolve_data_dir
-    from arctrust import NullSink, arc_home
+    from arctrust import NullSink
 
     from arccli.commands.operator import operator_worm_sink
 
     try:
         actor = resolve_actor()
-        sink = operator_worm_sink(arc_home(), resolve_data_dir(None))
+        sink = operator_worm_sink(None, resolve_data_dir(None))
     except (OSError, RuntimeError, ValueError) as exc:
         err(f"{prog}: audit chain unavailable ({type(exc).__name__}); change not recorded")
         yield NullSink(), UNRESOLVED_OPERATOR_DID

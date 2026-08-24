@@ -50,7 +50,7 @@ from pathlib import Path
 from typing import Any, NoReturn
 
 import arcagent
-from arctrust.paths import arc_home, arc_team
+from arctrust.paths import arc_team
 
 from arccli.commands._shared import dispatch, err
 from arccli.commands._shared import print_json as _print_json
@@ -86,7 +86,7 @@ def _connections(args: argparse.Namespace) -> arcagent.Connections:
     prompt would lock every later writer out.
 
     The chain lives with the operational data (the one ``arc task`` and ``arc
-    workflow`` write to); the key that signs it lives in the config dir. Both are
+    workflow`` write to); the key that signs it lives in the state dir. Both are
     ``--`` overridable so an operator can point one command at one deployment's
     world without touching another's.
     """
@@ -94,7 +94,7 @@ def _connections(args: argparse.Namespace) -> arcagent.Connections:
 
     try:
         world = arcagent.resolve_deployment(
-            arc_dir=getattr(args, "arc_dir", None) or arc_home(),
+            arc_dir=getattr(args, "arc_dir", None),
             data_dir=getattr(args, "data_dir", None),
             extensions_root=getattr(args, "extensions_root", None),
             env_file=getattr(args, "env_file", None),

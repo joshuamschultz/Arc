@@ -94,6 +94,8 @@ def _communicate_with_limits(process: subprocess.Popen[bytes]) -> bytes:
             output, _ = process.communicate(timeout=min(MAX_PDF_WORKER_POLL_SECONDS, remaining))
             if output:
                 collected.extend(output[seen:])
+            if len(collected) > MAX_PDF_WORKER_OUTPUT_BYTES:
+                raise PdfWorkerError("PDF extraction worker output exceeded the limit")
             return bytes(collected)
         except subprocess.TimeoutExpired as exc:
             output = exc.output or b""
@@ -105,6 +107,13 @@ def _communicate_with_limits(process: subprocess.Popen[bytes]) -> bytes:
                 raise PdfWorkerError("PDF extraction worker output exceeded the limit") from exc
             try:
                 rss = psutil.Process(process.pid).memory_info().rss
+            except psutil.NoSuchProcess:
+                # The worker finished between the poll timing out and this read.
+                # A process that no longer exists cannot exceed a memory cap, so
+                # this is not a limit breach — loop once more and let
+                # ``communicate`` return the output it already produced. Failing
+                # closed here rejected every fast extraction on a fast host.
+                continue
             except (psutil.Error, OSError) as error:
                 _kill_process_group(process)
                 raise PdfWorkerError("PDF worker memory could not be measured") from error

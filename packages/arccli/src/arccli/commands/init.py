@@ -14,7 +14,7 @@ from typing import Any
 
 import arcagent
 import arcllm
-from arctrust.paths import arc_home, arc_team, config_file
+from arctrust.paths import arc_team, config_file, operator_root
 
 from arccli.commands._arcllm_surface import (
     BUDGET_BLOCK,
@@ -248,7 +248,7 @@ def _generate_arcagent_toml(tier: str, blueprint_name: str | None = None) -> tup
         )
         base = apply_blueprint(bp, base, deployment_tier=tier)
         effective = str(base.get("security", {}).get("tier", tier))
-        audit_apply(bp, base, arc_home())
+        audit_apply(bp, base, operator_root())
     header = _USER_CONFIG_HEADER.format(pkg="arcagent", tier=tier)
     return header + "\n" + dumps_toml(base), effective
 
@@ -448,11 +448,11 @@ def _init(args: argparse.Namespace) -> None:
         sys.stderr.write(f"Error: Unknown provider '{provider}'.\n")
         sys.exit(1)
 
-    # Resolved through arc_home(), never Path.home() directly: `arc install` and
-    # `arc up` read the config and the operator key from ${ARC_CONFIG_DIR:-~/.arc},
-    # so a hardcoded ~/.arc here writes a deployment's setup where its own
-    # bring-up will not look for it.
-    arc_dir = Path(config_dir) if config_dir else arc_home()
+    # Resolved through operator_root(), never Path.home() directly: `arc install`
+    # and `arc up` read the config and the operator key from beside the fleet, so
+    # a hardcoded ~/.arc here writes a deployment's setup into the install home —
+    # the one directory an update is free to replace wholesale.
+    arc_dir = Path(config_dir) if config_dir else operator_root()
     arc_dir.mkdir(parents=True, exist_ok=True)
 
     try:

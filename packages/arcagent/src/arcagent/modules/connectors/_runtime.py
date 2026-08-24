@@ -76,14 +76,16 @@ class _State:
         Resolved here rather than at the read site so the agent, the CLI, the TUI
         and the web all land on one directory: a second spelling would mean the
         agent asked a file no surface ever wrote to, and answered "no grants" for
-        every connection an operator had made.
+        every connection an operator had made. Which is exactly what answering
+        ``arc_home()`` did once config moved beside the fleet — the operator's
+        five live connections attached to nothing, and Knowledge listed none.
         """
         configured = self.config.arc_dir
         if configured:
             return Path(configured).expanduser()
-        from arctrust.paths import arc_home
+        from arctrust.paths import operator_root
 
-        return arc_home()
+        return operator_root()
 
 
 _state_var: contextvars.ContextVar[_State | None] = contextvars.ContextVar(

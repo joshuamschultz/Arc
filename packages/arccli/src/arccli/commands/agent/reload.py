@@ -23,9 +23,7 @@ def _reload(args: argparse.Namespace) -> None:
     # fleet-facing tool reports itself unavailable on that path alone.
     from arcteam.agent_fleet import ArcTeamFleet
 
-    arc_agent = arcagent.ArcAgent(
-        config, config_path=config_path, fleet=ArcTeamFleet()
-    )
+    arc_agent = arcagent.ArcAgent(config, config_path=config_path, fleet=ArcTeamFleet())
 
     async def _do_reload() -> None:
         await arc_agent.startup()
