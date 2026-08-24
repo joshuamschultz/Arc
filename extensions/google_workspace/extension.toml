@@ -231,13 +231,27 @@ flag = "--page"
 
 [[config.cli.commands]]
 tool = "google_gmail_message"
-argv = ["gmail", "messages", "get", "--json", "--readonly", "--wrap-untrusted", "--no-input"]
+# `gmail get <messageId>`, not `gmail messages get`: the read verb sits at the
+# gmail level and takes the id as a POSITIONAL, while `gmail messages` is the
+# group for message operations. Measured against gog v0.34.1:
+#
+#   gog gmail messages get --id <id>   exit 2, unexpected argument get
+#   gog gmail get -- <id>              exit 0
+argv = [
+  "gmail",
+  "get",
+  "--json",
+  "--readonly",
+  "--wrap-untrusted",
+  "--no-input",
+  "--",
+]
 description = "Read one Gmail message for connected-data indexing."
 classification = "read_only"
 
 [[config.cli.commands.arguments]]
 name = "id"
-flag = "--id"
+description = "The Gmail message id."
 
 [[config.cli.commands]]
 tool = "google_gmail_history"
