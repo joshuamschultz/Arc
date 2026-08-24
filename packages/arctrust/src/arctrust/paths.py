@@ -129,12 +129,26 @@ def operator_root(base: Base = None) -> Path:
 
     Precedence matches :func:`arc_team`: explicit ``base`` (``--arc-dir``, which
     means "this one self-contained tree") → ``ARC_TEAM_ROOT`` →
-    ``ARC_CONFIG_DIR`` → ``~/arc``.
+    ``ARC_CONFIG_DIR`` *when it names an isolated tree* → ``~/arc``.
+
+    ``ARC_CONFIG_DIR`` follows only when it points somewhere other than the
+    default install home. A test or an isolated deployment relocates it to a
+    scratch tree and everything, state included, must stay inside that tree. But
+    a deployment that exports it as the literal ``~/.arc`` is merely naming the
+    default; honouring that would fold the operator root back into the install
+    home — which is how a child process that inherited ``ARC_CONFIG_DIR`` but not
+    ``ARC_TEAM_ROOT`` came to mint a SECOND operator key under ``~/.arc/state``,
+    signing bundles with an issuer the deployment does not pin.
     """
     if base is not None:
         return _base(base)
-    override = os.environ.get(ARC_TEAM_ROOT_ENV) or os.environ.get(ARC_CONFIG_DIR_ENV)
-    return Path(override).expanduser() if override else Path.home() / "arc"
+    team = os.environ.get(ARC_TEAM_ROOT_ENV)
+    if team:
+        return Path(team).expanduser()
+    config = os.environ.get(ARC_CONFIG_DIR_ENV)
+    if config and Path(config).expanduser() != Path.home() / ".arc":
+        return Path(config).expanduser()
+    return Path.home() / "arc"
 
 
 def arc_config(base: Base = None) -> Path:

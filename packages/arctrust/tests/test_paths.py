@@ -413,3 +413,30 @@ def test_activating_twice_over_a_real_directory_never_clobbers_the_first_copy(
     saved = sorted(p for p in (arc_root / "runtime").iterdir() if "pre-symlink" in p.name)
     assert len(saved) == 2, "a second activation overwrote the first set-aside copy"
     assert {(p / "keepme.txt").read_text(encoding="utf-8") for p in saved} == {"first", "second"}
+
+
+def test_arc_config_dir_naming_the_default_home_does_not_move_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exporting ``ARC_CONFIG_DIR=~/.arc`` must not fold state into the install.
+
+    A deploy exports the install home explicitly so every child agrees on it.
+    Following that value into :func:`operator_root` made the operator root the
+    install home for any child that inherited ``ARC_CONFIG_DIR`` but not
+    ``ARC_TEAM_ROOT`` — so the key loader looked under ``~/.arc/state/operator``,
+    found nothing, and bootstrapped a SECOND operator key that then signed module
+    bundles with an issuer the deployment's trust store does not pin.
+
+    The value carries no information when it names the default: only a
+    ``ARC_CONFIG_DIR`` pointing somewhere ELSE means "isolated tree, keep
+    everything inside it".
+    """
+    monkeypatch.delenv("ARC_TEAM_ROOT", raising=False)
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(Path.home() / ".arc"))
+
+    assert paths.arc_home() == Path.home() / ".arc"
+    assert paths.operator_root() == Path.home() / "arc"
+    assert paths.default_operator_key_path() == (
+        Path.home() / "arc" / "state" / "operator" / "operator.key"
+    )
+    assert paths.arc_team() == Path.home() / "arc" / "team"

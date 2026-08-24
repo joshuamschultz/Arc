@@ -140,6 +140,8 @@ def _split_root_moves(home: Path) -> list[tuple[Path, Path]]:
     ):
         if source == destination or not source.is_dir():
             continue
+        if not any(source.iterdir()):
+            continue
         moves.append((source, destination))
     return moves
 
