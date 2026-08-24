@@ -283,16 +283,17 @@ class ConnectedDataCoordinator:
                 if _declared_bytes(source_object) > limits.max_bytes:
                     await self._emit_skip(source, source_object, "object_too_large")
                     continue
-                # Bounds THIS fetch, so no single object can run away. The run's
-                # own budget is checked between pages, not here: a page is the
-                # unit of progress, and stopping inside one would leave the
-                # cursor unmoved and the crawl stuck on the same page forever.
-                available = max(limits.max_bytes - page_bytes, 1)
+                # One object may not exceed the whole per-sync ceiling — the same
+                # rule the declared-size check above applies, so a source that
+                # enforces it agrees with us. Deliberately NOT what is left of
+                # the budget: a shrinking cap meant every file after the first
+                # few in a page was refused as too large, and a whole account
+                # read as nothing but oversized files.
                 request = FetchSourceObject(
                     connection_id=source.connection_id,
                     object_id=source_object.object_id,
                     version=source_object.version or "",
-                    max_bytes=available,
+                    max_bytes=limits.max_bytes,
                 )
                 try:
                     content = await self._retry_call(

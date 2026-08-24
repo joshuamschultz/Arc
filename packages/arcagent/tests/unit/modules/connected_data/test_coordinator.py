@@ -666,3 +666,34 @@ async def test_any_other_refusal_still_ends_the_run() -> None:
         )
 
     assert (await store.get_state("did:a", "source")).status is SyncStatus.FAILED
+
+
+class _CapRecordingSource(FakeSource):
+    """Records the byte cap each fetch was given."""
+
+    def __init__(self, pages: list[SyncSourcePage]) -> None:
+        super().__init__(pages)
+        self.caps: list[int] = []
+
+    async def fetch_source(self, request: FetchSourceObject) -> SourceContent:
+        self.caps.append(request.max_bytes)
+        return await super().fetch_source(request)
+
+
+@pytest.mark.asyncio
+async def test_every_object_in_a_page_gets_the_same_byte_cap() -> None:
+    """A cap that shrank as the page filled made a whole account unreadable.
+
+    Later files in a page were handed a cap of a few bytes, the source refused
+    them as too large, and the sync reported nothing but oversized files.
+    """
+    source = _CapRecordingSource([page("a", "b", "c", cursor="")])
+
+    await ConnectedDataCoordinator(source, FakeIngest(), InMemorySourceSyncStore()).run(
+        SourceDescription(connection_id="source", source_kind="test", account_id="account"),
+        agent_did="did:a",
+        owner_id="worker",
+        limits=SyncLimits(max_bytes=4096),
+    )
+
+    assert source.caps == [4096, 4096, 4096]
