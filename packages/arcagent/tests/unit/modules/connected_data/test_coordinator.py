@@ -9,6 +9,7 @@ from arcagent.connected_data import (
     LeaseLostError,
     MappingPendingError,
     MappingPlan,
+    SyncError,
     SyncLimits,
     SyncStatus,
     TransientSyncError,
@@ -17,6 +18,8 @@ from arcagent.extension.source import (
     FetchSourceObject,
     SourceContent,
     SourceDescription,
+    SourceError,
+    SourceFailureCode,
     SourceObject,
     SourceObjectKind,
     SyncSource,
@@ -608,3 +611,58 @@ async def test_a_folder_is_not_reconciled_as_a_missing_object() -> None:
     )
 
     assert ingest.snapshots == [frozenset({"report"})]
+
+
+class _RefusingFetchSource(FakeSource):
+    """A source that answers the listing but refuses one object's content."""
+
+    def __init__(self, pages: list[SyncSourcePage], code: SourceFailureCode) -> None:
+        super().__init__(pages)
+        self._code = code
+
+    async def fetch_source(self, request: FetchSourceObject) -> SourceContent:
+        raise SourceError(self._code, f"refused {request.object_id}")
+
+
+@pytest.mark.asyncio
+async def test_an_object_the_source_calls_too_large_is_skipped() -> None:
+    """The source knows sizes this side only estimated."""
+    source = _RefusingFetchSource(
+        [page("huge", cursor="")], SourceFailureCode.TOO_LARGE
+    )
+    ingest = FakeIngest()
+
+    result = await ConnectedDataCoordinator(source, ingest, InMemorySourceSyncStore()).run(
+        SourceDescription(connection_id="source", source_kind="test", account_id="account"),
+        agent_did="did:a",
+        owner_id="worker",
+    )
+
+    assert result.status is SyncStatus.COMPLETE
+    assert ingest.ingested == []
+
+
+@pytest.mark.asyncio
+async def test_any_other_refusal_still_ends_the_run() -> None:
+    """A broken account must never be mistaken for a pile of big files.
+
+    Deciding this from the exception's text skipped every object of every kind
+    and reported a healthy, empty sync over a source that was refusing outright.
+    """
+    source = _RefusingFetchSource(
+        [page("thing", cursor="")], SourceFailureCode.NOT_FOUND
+    )
+    ingest = FakeIngest()
+
+    store = InMemorySourceSyncStore()
+
+    with pytest.raises(SyncError, match="refused"):
+        await ConnectedDataCoordinator(source, ingest, store).run(
+            SourceDescription(
+                connection_id="source", source_kind="test", account_id="account"
+            ),
+            agent_did="did:a",
+            owner_id="worker",
+        )
+
+    assert (await store.get_state("did:a", "source")).status is SyncStatus.FAILED

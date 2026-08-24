@@ -303,9 +303,16 @@ class ConnectedDataCoordinator:
                     )
                 except SyncError as exc:
                     # The source knows sizes this side only estimated. An object
-                    # it refuses as too large is skipped like any other, never
-                    # allowed to end the run.
-                    if "too_large" not in str(exc) and "exceeds" not in str(exc):
+                    # IT refuses as too large is skipped like any other; every
+                    # other refusal still ends the run, because a source that is
+                    # actually broken must never look like a pile of big files.
+                    # Read from the original verdict, not from the message text.
+                    cause = exc.__cause__
+                    too_large = (
+                        isinstance(cause, SourceError)
+                        and cause.code is SourceFailureCode.TOO_LARGE
+                    )
+                    if not too_large:
                         raise
                     await self._emit_skip(source, source_object, "object_too_large")
                     continue
