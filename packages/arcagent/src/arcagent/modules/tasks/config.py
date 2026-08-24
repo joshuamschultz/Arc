@@ -23,7 +23,7 @@ class TasksConfig(ModuleConfig):
     # explicitly (ASI01/LLM06), never on by mere module presence. When true,
     # the dispatch loop starts the agent's ready, owned tasks and runs them.
     dispatch: bool = False
-    # NATS JetStream url for the shared arcteam registry (mirrors
+    # NATS JetStream url for the shared fleet registry (mirrors
     # MessagingConfig.nats_url). Empty means no live registry is built —
     # assign_task/create_task's @handle resolution degrades with a clear
     # error instead of silently building a useless, disconnected registry.

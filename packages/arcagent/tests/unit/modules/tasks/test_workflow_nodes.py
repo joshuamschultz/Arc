@@ -384,15 +384,18 @@ class TestMetadataShapeMatchesTheRunner:
 
 
 class TestArtifactGuardIsShared:
-    def test_escaping_artifacts_reuses_arcteams_confine(self) -> None:
-        """One escape check, shared with the definition store — not a second one."""
-        from arcteam.workflow import confine
+    def test_escaping_artifacts_are_refused_with_no_orchestration_installed(self) -> None:
+        """The guard is the agent's own, so it cannot go missing with a package.
 
+        A path escape must be refused on every deployment, including a lone
+        agent with no orchestration layer at all.
+        """
         from arcagent.modules.tasks import node_execution
 
         source = Path(node_execution.__file__).read_text(encoding="utf-8")
-        assert "from arcteam.workflow import confine" in source
-        assert confine(Path("/tmp"), "../x") is None
+        assert "arcteam" not in source
+        assert node_execution._confined(Path("/tmp"), "../x") is None
+        assert node_execution._confined(Path("/tmp"), "/etc/passwd") is None
 
 
 class TestPromptSectionSeam:

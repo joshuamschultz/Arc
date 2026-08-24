@@ -1,33 +1,29 @@
-"""Thin client that opens the arcstore-backed workflow Run directory (SPEC-061).
+"""Opening the shared workflow run plane, which an agent does not own.
 
-No logic duplicated here — ``arcteam.workflow.stores.WorkflowRunStore`` owns the
-run plane and ``arcstore.runs.RunStore`` owns the Run aggregate underneath it.
-This mirrors ``modules/tasks/store.py`` exactly: open the configured ArcStore
-backend and hand back an open store, so the agent surface and every other
-reader agree on run state.
-
-The arcteam store, not the arcstore one: the control plane's purge guard asks it
-for a run COUNT and the read tools ask it for a workflow's runs, and neither
-method exists on the raw aggregate store — handing that one over left purge
-refusing every call and the run-history tools reporting no runner.
+A workflow an agent authors is its own. A workflow RUN spans agents — the
+runner is a fleet singleton and the run history is read by the dashboard and
+the control plane — so the run plane belongs to the orchestration layer above
+this agent. An agent alone has no run plane, and says so rather than inventing
+one.
 """
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
-
-from arcstore.backends import ArcStoreBackend, open_backend
-from arcteam.workflow.stores import WorkflowRunStore
+from typing import Any
 
 
-async def open_run_store(
-    *, opener: Callable[[], Awaitable[ArcStoreBackend]] | None = None
-) -> tuple[WorkflowRunStore, ArcStoreBackend]:
-    """Open the configured workflow run plane and return its owner."""
-    backend = await opener() if opener is not None else open_backend()
-    if opener is None:
-        await backend.start()
-    return WorkflowRunStore(backend), backend
+class RunStoreUnavailableError(RuntimeError):
+    """No orchestration layer supplied a run plane to this agent."""
 
 
-__all__ = ["open_run_store"]
+async def open_run_store(*, fleet: Any = None, opener: Any = None) -> tuple[Any, Any]:
+    """Open the fleet's run plane and return it with the backend that owns it."""
+    if fleet is None:
+        raise RunStoreUnavailableError(
+            "workflow runs are a fleet capability; this agent was not given one"
+        )
+    store, backend = await fleet.open_run_store(opener=opener)
+    return store, backend
+
+
+__all__ = ["RunStoreUnavailableError", "open_run_store"]

@@ -129,8 +129,7 @@ class ConnectedDataService:
         global_concurrency: int,
         resource_selection_store_opener: Callable[[], Awaitable[SourceSelectionStore]]
         | None = None,
-        mapping_proposal_store_opener: Callable[[], Awaitable[MappingProposalStore]]
-        | None = None,
+        mapping_proposal_store_opener: Callable[[], Awaitable[MappingProposalStore]] | None = None,
         audit: AuditCallback | None = None,
         interval_seconds: float = 3600.0,
     ) -> None:

@@ -40,6 +40,10 @@ class RuntimeDependencies:
     egress_proxy: EgressProxy | None
     human_gate: Any
     agent_run_fn: Callable[..., Awaitable[Any]]
+    #: Supplied by the orchestration layer above the agent, absent when the
+    #: agent runs alone. Every fleet-facing feature reports itself unavailable
+    #: rather than building a fleet of its own.
+    fleet: Any = None
     arcstore_opener: Callable[[], Awaitable[Any]] | None = None
     source_sync_store_opener: Callable[[], Awaitable[Any]] | None = None
     source_catalog: SourceCatalog = field(default_factory=SourceCatalog)
@@ -93,6 +97,7 @@ class DependencyKey(Enum):
     ARCSTORE_OPENER = "arcstore_opener"
     SOURCE_SYNC_STORE_OPENER = "source_sync_store_opener"
     SOURCE_CATALOG = "source_catalog"
+    FLEET = "fleet"
 
 
 class RuntimeModule(Protocol):

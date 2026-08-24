@@ -46,8 +46,6 @@ from pathlib import Path
 from typing import Any
 
 import arcrun
-from arcteam.registry import resolve
-from arcteam.types import Entity, EntityStatus, EntityType, Message, MsgType
 
 from arcagent.core.session_internal.capability_ledger import (
     CarriedLegs,
@@ -55,6 +53,7 @@ from arcagent.core.session_internal.capability_ledger import (
     carried_legs,
     reset_carried_legs,
 )
+from arcagent.fleet import FleetMember, FleetNotice, FleetNoticeKind
 from arcagent.modules.tasks import _runtime
 from arcagent.modules.tasks._dispatch_helpers import (
     backoff_elapsed as _backoff_elapsed,
@@ -125,7 +124,7 @@ async def _resolve_owner(owner: str | None, st: _runtime._State) -> str | None:
 
     ``None`` (argument omitted) defaults to self; ``""`` leaves the task
     unowned (backlog); anything else is an address ref (``@handle``,
-    ``did:...``) resolved via arcteam — unavailable if no registry could be
+    ``did:...``) resolved through the fleet seam — unavailable when no fleet
     injected or built live (SDD §3).
     """
     if owner is None:
@@ -136,7 +135,8 @@ async def _resolve_owner(owner: str | None, st: _runtime._State) -> str | None:
     if st.registry is None:
         msg = "registry unavailable"
         raise ValueError(msg)
-    return await resolve(st.registry, owner)
+    resolved: str = await st.registry.resolve(owner)
+    return resolved
 
 
 def _require_owner(task: Task, st: _runtime._State) -> None:
@@ -328,7 +328,7 @@ async def assign_task(
     if st.registry is None:
         return json.dumps({"error": "registry unavailable"})
     try:
-        to_did = await resolve(st.registry, to_handle)
+        to_did = await st.registry.resolve(to_handle)
         updated = await st.store.assign(id, to_did, st.identity.did)
         if updated is None:
             return json.dumps({"error": f"unable to assign task '{id}'"})
@@ -353,15 +353,15 @@ async def _notify_assignee(st: _runtime._State, to_handle: str, task: Task) -> N
     # Carry the task's classification onto the envelope (SEC-F3) so the
     # messenger's no-write-down check engages — an UNCLASSIFIED default would
     # leave it inert regardless of how sensitive the task is (ASI07).
-    message = Message(
+    notice = FleetNotice(
         sender=st.identity.did,
-        to=[f"agent://{handle}"],
-        msg_type=MsgType.TASK_ASSIGNED,
+        to=(f"agent://{handle}",),
+        kind=FleetNoticeKind.TASK_ASSIGNED,
         body=f"@{handle} task_id={task.id} — {task.title}",
         classification=task.classification,
     )
     try:
-        await st.messenger.send(message)
+        await st.messenger.send_notice(notice)
     except Exception:
         _logger.warning("failed to notify @%s of assignment for task '%s'", handle, task.id)
 
@@ -379,15 +379,15 @@ async def _notify_operator(
     """
     if not st.config.notify or st.messenger is None:
         return
-    message = Message(
+    notice = FleetNotice(
         sender=st.identity.did,
-        to=["user://operator"],
-        msg_type=MsgType.ALERT if alert else MsgType.INFO,
+        to=("user://operator",),
+        kind=FleetNoticeKind.ALERT if alert else FleetNoticeKind.INFO,
         body=body,
         classification=classification,
     )
     try:
-        await st.messenger.send(message)
+        await st.messenger.send_notice(notice)
     except Exception:
         _logger.warning("failed to notify operator: %s", body[:80])
 
@@ -1189,10 +1189,9 @@ async def _route_unassigned(st: _runtime._State, self_did: str) -> None:
             await _notify_assignee(st, chosen.handle, routed)
 
 
-async def _eligible_agents(st: _runtime._State) -> list[Entity]:
-    """Active agent entities from the registry — the routing candidate set."""
-    entities = await st.registry.list_entities()
-    return [e for e in entities if e.type == EntityType.AGENT and e.status == EntityStatus.active]
+async def _eligible_agents(st: _runtime._State) -> list[FleetMember]:
+    """The routing candidate set. Who is eligible is the fleet layer's call."""
+    return list(await st.registry.list_agents())
 
 
 async def _load_by_owner(st: _runtime._State) -> dict[str, int]:
@@ -1256,7 +1255,7 @@ async def tasks_bind_run_fn(ctx: Any) -> None:
 
 @hook(event="agent:assemble_prompt", priority=60)
 async def inject_team_handoff_section(ctx: Any) -> None:
-    """Teach the agent to hand work to the teammate who owns it (ADR arcteam).
+    """Teach the agent to hand work to the teammate who owns it.
 
     Present ONLY because the tasks module is loaded — the loader subscribes this
     hook when it registers ``assign_task``/``create_task``, so a headless agent

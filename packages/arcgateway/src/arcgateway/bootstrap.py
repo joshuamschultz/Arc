@@ -175,6 +175,7 @@ def _make_agent_factory(
 
         # Lazy import — arcagent is optional at install time for this package.
         import arcagent
+        from arcteam.agent_fleet import ArcTeamFleet
 
         agent_dir = _resolve_agent_dir(team_root, agent_did, did_index=cached_index["map"])
         if agent_dir is None:
@@ -191,7 +192,13 @@ def _make_agent_factory(
             raise FileNotFoundError(msg)
 
         config = arcagent.load_config(config_path)
-        arc_agent = arcagent.ArcAgent(config, config_path=config_path)
+        # This agent is being composed into a fleet, so it is handed the fleet
+        # seams instead of building a bus, a roster and an audit chain itself.
+        arc_agent = arcagent.ArcAgent(
+            config,
+            config_path=config_path,
+            fleet=ArcTeamFleet(),
+        )
         # Inject channel delivery BEFORE startup so agent:ready carries it and
         # the scheduler can bind it (fleet-started agents get it in ui.py).
         if deliver_for is not None:

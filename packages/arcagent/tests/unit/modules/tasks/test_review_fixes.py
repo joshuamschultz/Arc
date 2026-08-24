@@ -29,7 +29,6 @@ from unittest.mock import MagicMock
 import pytest
 from arctrust import AgentIdentity
 from packages.arcagent.tests.unit.modules.tasks.conftest import (
-    make_operator_signer,
     make_peer_entity,
     make_registry,
 )
@@ -65,50 +64,7 @@ def tasks_state(tmp_path: Path, arcstore_opener: Any) -> Iterator[Any]:
 # SEC-F1 — live messenger audit uses the REAL operator signer, never ephemeral
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
-class TestLiveServicesUseRealOperatorSigner:
-    async def test_build_live_services_signs_audit_with_passed_operator_signer(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        from arcteam.storage import MemoryBackend
-
-        from arcagent.modules.tasks import _runtime
-
-        captured: dict[str, Any] = {}
-        initialized = {"count": 0}
-
-        import arcteam.audit as audit_mod
-
-        real_init = audit_mod.AuditLogger.__init__
-        real_initialize = audit_mod.AuditLogger.initialize
-
-        def spy_init(self: Any, backend: Any, signer: Any) -> None:
-            captured["signer"] = signer
-            real_init(self, backend, signer)
-
-        async def spy_initialize(self: Any) -> None:
-            initialized["count"] += 1
-            await real_initialize(self)
-
-        monkeypatch.setattr(audit_mod.AuditLogger, "__init__", spy_init)
-        monkeypatch.setattr(audit_mod.AuditLogger, "initialize", spy_initialize)
-
-        async def fake_make_backend(url: str) -> Any:
-            return MemoryBackend()
-
-        monkeypatch.setattr("arcteam.composition.make_backend", fake_make_backend)
-
-        identity = AgentIdentity.generate(org="local", agent_type="agent")
-        operator_signer = make_operator_signer()
-
-        registry, messenger = await _runtime._build_live_services(
-            "nats://127.0.0.1:1", identity, operator_signer
-        )
-
-        assert captured["signer"] is operator_signer
-        assert initialized["count"] >= 1
-        assert registry is not None
-        assert messenger is not None
-
+class TestFleetServicesRequireTheRealOperatorSigner:
     async def test_ensure_store_fails_closed_when_no_operator_signer_for_live_build(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, arcstore_opener: Any
     ) -> None:
@@ -116,8 +72,14 @@ class TestLiveServicesUseRealOperatorSigner:
 
         _runtime.reset()
         identity = AgentIdentity.generate(org="local", agent_type="agent")
-        # nats_url set + no injected registry -> the live-build path fires, but no
-        # operator_signer was threaded: refuse to sign audit with a repudiable key.
+
+        class NeverOpens:
+            async def open_services(self, **_: Any) -> Any:  # pragma: no cover
+                raise AssertionError("fleet opened without an operator signer")
+
+        # A fleet is available and no registry is injected, so the open path
+        # fires — but no operator_signer was threaded. Refuse to sign the
+        # delivery audit chain with a repudiable key.
         _runtime.configure(
             config={
                 "enabled": True,
@@ -126,6 +88,7 @@ class TestLiveServicesUseRealOperatorSigner:
             telemetry=MagicMock(),
             workspace=tmp_path,
             identity=identity,
+            fleet=NeverOpens(),
             arcstore_opener=arcstore_opener,
         )
         with pytest.raises(RuntimeError, match="operator signer"):
@@ -140,9 +103,8 @@ class _FakeMessenger:
     def __init__(self) -> None:
         self.sent: list[Any] = []
 
-    async def send(self, message: Any) -> Any:
-        self.sent.append(message)
-        return message
+    async def send_notice(self, notice: Any) -> None:
+        self.sent.append(notice)
 
 
 @pytest.mark.asyncio

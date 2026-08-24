@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from arcteam.agent_fleet import ArcTeamFleet
 from arcteam.workflow import UnsignedWorkflowError, sign_definition
 from arctrust import AgentIdentity, OperatorKey
 
@@ -81,6 +82,7 @@ def _configure(
 
     _runtime.reset()
     _runtime.configure(
+        fleet=ArcTeamFleet(),
         config={"enabled": True},
         workspace=tmp_path,
         identity=AgentIdentity.generate(org="local", agent_type="agent"),

@@ -209,7 +209,7 @@ def _refusing_service() -> ConnectedDataService:
 
 @pytest.mark.asyncio
 async def test_a_refusal_keeps_the_adapters_own_words() -> None:
-    """"Select one folder" is the remedy; flattened to an outage it is lost."""
+    """ "Select one folder" is the remedy; flattened to an outage it is lost."""
     service = _refusing_service()
 
     with pytest.raises(SourceRefusedError) as raised:

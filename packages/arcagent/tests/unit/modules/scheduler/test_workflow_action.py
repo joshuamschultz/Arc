@@ -214,6 +214,8 @@ class TestCircuitBreaker:
         process it refuses, and the run entry must turn that returned refusal
         into a raise so the scheduler's breaker can count it.
         """
+        from arcteam.agent_fleet import ArcTeamFleet
+
         from arcagent.modules.workflows import _runtime
         from arcagent.modules.workflows.run_entry import start_workflow_run
 
@@ -222,6 +224,7 @@ class TestCircuitBreaker:
             config={"enabled": True},
             workspace=tmp_path,
             identity=AgentIdentity.generate(org="local", agent_type="agent"),
+            fleet=ArcTeamFleet(),
             arcstore_opener=arcstore_opener,
         )
         with pytest.raises(RuntimeError, match="refused to start"):

@@ -760,7 +760,7 @@ async def _run_store(st: _runtime._State) -> Any:
     from arcagent.modules.workflows.run_store import open_run_store
 
     try:
-        store, _backend = await open_run_store(opener=st.arcstore_opener)
+        store, _backend = await open_run_store(fleet=st.fleet, opener=st.arcstore_opener)
         st.run_read_backends.append(_backend)
         return store
     except Exception:  # reason: a read tool reports absence, never crashes

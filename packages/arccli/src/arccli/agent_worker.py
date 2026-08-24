@@ -202,6 +202,7 @@ async def _run_with_arcagent(
     # Try to import arcagent; fall back to echo stub if not installed.
     try:
         import arcagent
+        from arcteam.agent_fleet import ArcTeamFleet
     except ImportError:
         _logger.warning(
             "arc-agent-worker: arcagent not installed — falling back to echo stub. "
@@ -230,7 +231,13 @@ async def _run_with_arcagent(
         config = arcagent.load_config(config_path)
         if config.identity.did != agent_did:
             return _identity_mismatch_deltas(agent_did, config.identity.did, config_path)
-        agent = arcagent.ArcAgent(config, config_path=config_path)
+        # This agent is being composed into a fleet, so it is handed the fleet
+        # seams instead of building a bus, a roster and an audit chain itself.
+        agent = arcagent.ArcAgent(
+            config,
+            config_path=config_path,
+            fleet=ArcTeamFleet(),
+        )
         await agent.startup()
 
         # One streaming entry, collected to a result, on the event's session.

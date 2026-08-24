@@ -373,7 +373,11 @@ class MessagingService:
                 raise ValueError("mail requires at least one recipient")
             mail_targets = (*message.to, *message.cc, *message.bcc)
             if any(
-                (target.startswith("@") or target.startswith("agent://") or target.startswith("user://"))
+                (
+                    target.startswith("@")
+                    or target.startswith("agent://")
+                    or target.startswith("user://")
+                )
                 is False
                 for target in mail_targets
             ):

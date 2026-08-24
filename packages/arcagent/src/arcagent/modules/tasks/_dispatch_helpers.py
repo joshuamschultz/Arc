@@ -7,8 +7,7 @@ import re
 from datetime import datetime
 from typing import Any
 
-from arcteam.types import Entity
-
+from arcagent.fleet import FleetMember
 from arcagent.modules.tasks.models import Task
 from arcagent.utils.sanitizer import sanitize_text
 
@@ -57,8 +56,8 @@ def is_stale(task: Task, now: datetime, threshold: float) -> bool:
     return (now - started).total_seconds() >= threshold
 
 
-def pick_agent(task: Task, agents: list[Entity], load: dict[str, int]) -> Entity:
-    def rank(agent: Entity) -> tuple[int, int, str]:
+def pick_agent(task: Task, agents: list[FleetMember], load: dict[str, int]) -> FleetMember:
+    def rank(agent: FleetMember) -> tuple[int, int, str]:
         matches = bool(set(task.tags) & set(agent.capabilities))
         return (0 if matches else 1, load.get(agent.did, 0), agent.name)
 

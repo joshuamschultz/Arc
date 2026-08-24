@@ -41,7 +41,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 # The metadata keys the runner stamps on a materialised node row
-# (arcteam.workflow.runner._build_task). They are FLAT on ``task.metadata``, not
+# (the workflow runner's task builder). They are FLAT on ``task.metadata``, not
 # nested — ``workflow`` is the workflow id string, not a block. Reading them
 # wrongly is silent: the adapter simply never recognises a node and every gate
 # below it goes dark on the happy path.
@@ -351,20 +351,15 @@ def escaping_artifacts(node: WorkflowNode, root: Path) -> list[str]:
 def _confined(root: Path, reference: str) -> Path | None:
     """Resolve ``reference`` under ``root``, or None if it escapes.
 
-    Falls back to a local check when ``arcteam.workflow`` is absent — an
-    escaping path must be refused on every deployment, including one with no
-    workflow engine installed, because refusing is the safe direction.
+    An escaping path is refused on every deployment, so the check is the
+    agent's own: it must hold with no orchestration layer installed, and a
+    guard that depends on an optional package is a guard that can go missing.
     """
-    try:
-        from arcteam.workflow import confine
-    except ImportError:
-        candidate = Path(reference)
-        if candidate.is_absolute():
-            return None
-        resolved = (root / candidate).resolve()
-        return resolved if resolved == root or root in resolved.parents else None
-    confined: Path | None = confine(root, reference)
-    return confined
+    candidate = Path(reference)
+    if candidate.is_absolute():
+        return None
+    resolved = (root / candidate).resolve()
+    return resolved if resolved == root or root in resolved.parents else None
 
 
 def missing_artifacts(node: WorkflowNode, root: Path) -> list[str]:

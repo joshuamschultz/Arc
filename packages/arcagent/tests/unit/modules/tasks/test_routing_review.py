@@ -15,40 +15,40 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from arcteam.types import Entity, EntityStatus, EntityType
 from arctrust import AgentIdentity
+from packages.arcagent.tests.unit.modules.tasks.conftest import FakeFleetMember
 
 _A = "did:arc:test:agent/aaaaaaaa"
 _B = "did:arc:test:agent/bbbbbbbb"
 
 
-def _agent(name: str, did: str, caps: tuple[str, ...] = ()) -> Entity:
-    return Entity(
-        did=did,
-        handle=name,
-        id=did,
-        name=name,
-        type=EntityType.AGENT,
-        capabilities=list(caps),
-        status=EntityStatus.active,
-    )
+def _agent(name: str, did: str, caps: tuple[str, ...] = ()) -> FakeFleetMember:
+    return FakeFleetMember(did=did, handle=name, name=name, capabilities=caps)
 
 
 class _FakeRegistry:
-    def __init__(self, entities: list[Entity]) -> None:
-        self._entities = entities
+    """The fleet directory seam, already filtered to eligible agents."""
 
-    async def list_entities(self, role: str | None = None) -> list[Entity]:
-        return self._entities
+    def __init__(self, members: list[FakeFleetMember]) -> None:
+        self._members = members
+
+    async def resolve(self, ref: str) -> str:
+        wanted = ref.removeprefix("@").rpartition("://")[2]
+        for member in self._members:
+            if member.handle == wanted or member.did == ref:
+                return member.did
+        raise ValueError(f"unknown handle: {ref}")
+
+    async def list_agents(self) -> tuple[FakeFleetMember, ...]:
+        return tuple(self._members)
 
 
 class _FakeMessenger:
     def __init__(self) -> None:
         self.sent: list[Any] = []
 
-    async def send(self, message: Any) -> Any:
-        self.sent.append(message)
-        return message
+    async def send_notice(self, notice: Any) -> None:
+        self.sent.append(notice)
 
 
 @pytest.fixture

@@ -317,6 +317,7 @@ def configure_module_runtimes(
         human_gate=agent._human_gate,
         agent_run_fn=agent.run_collected,
         arcstore_opener=agent._arcstore_opener,
+        fleet=agent._fleet,
         source_sync_store_opener=agent._make_source_sync_store_opener(),
     )
     # Kept so a module enabled later in the session is configured from the same

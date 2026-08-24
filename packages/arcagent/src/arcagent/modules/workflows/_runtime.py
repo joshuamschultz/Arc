@@ -75,6 +75,9 @@ class _State:
     # definition signed by any other key is not merely unverified, it is refused
     # above personal tier (REQ-225). The agent never gets the private half.
     operator_signer: Any = None
+    # The orchestration layer this agent was composed into, or None when it runs
+    # alone. Workflow RUNS are a fleet capability; authoring is not.
+    fleet: Any = None
     # ``(event, payload)`` sink for the definition store's own audit events.
     # ``workflow.signed`` and ``workflow.unsigned_run_permitted`` can be emitted
     # by NOTHING else, so an unwired hook means an unsigned or self-signed
@@ -135,6 +138,7 @@ def configure(
     identity: AgentIdentity,
     human_gate: Any = None,
     operator_signer: Any = None,
+    fleet: Any = None,
     control_plane: Any = None,
     definitions: Any = None,
     tier: str = "personal",
@@ -157,6 +161,7 @@ def configure(
             telemetry=telemetry,
             human_gate=human_gate,
             operator_signer=operator_signer,
+            fleet=fleet,
             audit_hook=audit,
             control_plane=control_plane,
             definitions=definitions,
@@ -190,7 +195,7 @@ async def ensure_control_plane() -> None:
         # sync configure().
         from arcagent.modules.workflows.run_store import open_run_store
 
-        runs, backend = await open_run_store(opener=st.arcstore_opener)
+        runs, backend = await open_run_store(fleet=st.fleet, opener=st.arcstore_opener)
         try:
             _build_control_plane(st, runs)
         except Exception:

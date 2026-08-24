@@ -35,7 +35,6 @@ from arcagent.modules.tasks.config import TasksConfig
 from arcagent.modules.tasks.store import open_store
 
 if TYPE_CHECKING:
-    from arcteam.registry import EntityRegistry
     from arctrust import AgentIdentity
 
 
@@ -53,18 +52,19 @@ class _State:
     # DID seed, never an ephemeral key. None only in test paths that inject a
     # ready-made registry/messenger and never take the live-build path.
     operator_signer: Any = None
-    # arcteam/arcstore service objects — injectable for tests via configure(),
-    # otherwise built lazily by ensure_store() (SDD §3). Typed Any, mirroring
-    # messaging's _runtime: no hard import-time dependency on the optional
-    # arcteam package, and no dataclass-wide Optional narrowing for a field
-    # that starts unset and is filled in exactly once. None means "not built
-    # yet" — registry additionally means "unavailable" (assign_task and
-    # create_task's owner-ref path degrade with a clear error rather than
-    # crash or silently build a useless, disconnected in-memory registry).
+    # Supplied by the orchestration layer above this agent; None when the agent
+    # runs alone. The agent never builds a fleet of its own.
+    fleet: Any = None
+    # The fleet seams (arcagent.fleet.FleetDirectory / FleetMessenger).
+    # Injectable for tests; otherwise opened once by ensure_store() through the
+    # factory the orchestration layer supplied. Typed Any so no fleet type is
+    # named here. None means "no fleet" — assign_task and create_task's
+    # owner-ref path degrade with a clear error rather than crash or silently
+    # address an empty roster.
     registry: Any = None
     store: Any = None
     store_backend: Any = None
-    # arcteam ``MessagingService`` used by ``assign_task`` to notify the
+    # The fleet messenger used by ``assign_task`` to notify the
     # assignee (SDD §5, Phase C) — injectable for tests, otherwise built
     # lazily by ensure_store() over the same shared backend as ``registry``.
     # None means "not built yet"; a served agent with no ``nats_url`` never
@@ -132,6 +132,7 @@ def configure(
     workspace: Path = Path("."),
     identity: AgentIdentity,
     operator_signer: Any = None,
+    fleet: Any = None,
     registry: Any = None,
     messenger: Any = None,
     bus: Any = None,
@@ -158,6 +159,7 @@ def configure(
             telemetry=telemetry,
             identity=identity,
             operator_signer=operator_signer,
+            fleet=fleet,
             registry=registry,
             messenger=messenger,
             bus=bus,
@@ -168,7 +170,7 @@ def configure(
 
 
 async def ensure_store() -> None:
-    """Idempotent: open the arcstore backend and, if live, a real registry.
+    """Idempotent: open the arcstore backend and, under a fleet, its seams.
 
     Mirrors messaging's ``ensure_live_backend``. Runs at most once per agent
     — every tool awaits this before touching ``st.store``/``st.registry`` so
@@ -184,16 +186,18 @@ async def ensure_store() -> None:
         if st.store is not None:
             return
         store, backend = await open_store(opener=st.arcstore_opener)
-        if st.registry is None and st.config.nats_url:
+        if st.registry is None and st.config.nats_url and st.fleet is not None:
             if st.operator_signer is None:
                 raise RuntimeError(
-                    "tasks module cannot build its live messenger without the "
+                    "tasks module cannot open its fleet messenger without the "
                     "operator signer to sign the message.sent WORM audit chain "
                     "(SEC-F1) — refusing to fall back to an ephemeral key "
                     "(fail-closed)"
                 )
-            st.registry, st.messenger = await _build_live_services(
-                st.config.nats_url, st.identity, st.operator_signer
+            st.registry, st.messenger = await st.fleet.open_services(
+                nats_url=st.config.nats_url,
+                identity=st.identity,
+                operator_signer=st.operator_signer,
             )
         # Publish the store last: no tool observes a set ``store`` until the
         # live services (when built) are also in place.
@@ -208,34 +212,6 @@ async def close_store() -> None:
     st.store = None
     if backend is not None:
         await backend.stop()
-
-
-async def _build_live_services(
-    nats_url: str, identity: AgentIdentity, operator_signer: Any
-) -> tuple[EntityRegistry, Any]:
-    """Build a read-only ``EntityRegistry`` and a sending ``MessagingService``.
-
-    Both share the one NATS backend connection (assign_task's ``@handle``
-    -> DID resolve on the registry, and its ``TASK_ASSIGNED`` notify on the
-    messenger, must see the same entity/stream state). The messenger writes a
-    ``message.sent`` WORM audit record on every send, so its ``AuditLogger``
-    MUST be signed by the deployment ``operator_signer`` — the real operator
-    authority, never an ephemeral key — or the record is repudiable and no
-    verifier can validate the chain (SEC-F1, AU-9/10). The messenger signs
-    outbound notifications with the agent's own identity (REQ-030), mirroring
-    the shared ``arcteam.composition.message_signer``.
-    """
-    from arcteam.audit import AuditLogger
-    from arcteam.composition import make_backend, message_signer
-    from arcteam.messenger import MessagingService
-    from arcteam.registry import EntityRegistry
-
-    backend = await make_backend(nats_url)
-    audit = AuditLogger(backend, operator_signer)
-    await audit.initialize()
-    registry = EntityRegistry(backend, audit)
-    messenger = MessagingService(backend, registry, audit, signer=message_signer(identity))
-    return registry, messenger
 
 
 def state() -> _State:

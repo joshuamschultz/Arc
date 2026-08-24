@@ -149,7 +149,13 @@ class ArcAgent:
     Owns all core components and manages their lifecycle.
     """
 
-    def __init__(self, config: ArcAgentConfig, *, config_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        config: ArcAgentConfig,
+        *,
+        config_path: Path | None = None,
+        fleet: Any = None,
+    ) -> None:
         self._config = config
         self._config_path = config_path or Path("arcagent.toml")
 
@@ -197,6 +203,9 @@ class ArcAgent:
         self._capability_registry: Any = None
         self._capability_loader: Any = None
         self._vault_resolver: Any = None
+        # Handed in by the orchestration layer when this agent is composed into
+        # a fleet. None when it runs alone, which is the ordinary case.
+        self._fleet: Any = fleet
         self._arcstore_opener: Callable[[], Awaitable[Any]] | None = None
         # Overlay-aware prompt resolver, built once at capability setup and pinned
         # to the operator key (editable-system-prompts COMP-006). None until setup.
