@@ -88,8 +88,16 @@ async def test_jira_source_rejects_unavailable_project() -> None:
 class _PagedJiraAttachment(_Attachment):
     async def invoke(self, tool: str, args: dict[str, Any]) -> ToolResult:
         if tool == "jira_list_projects":
-            count = min(int(args["limit"]), 450)
-            payload = [{"key": f"P{i}", "name": f"Project {i}"} for i in range(count)]
+            # Mirrors acli: this verb takes NO arguments. Its argv pins
+            # --paginate, which is mutually exclusive with --limit, so a call
+            # carrying one is refused outright.
+            if args:
+                return ToolResult(
+                    tool=tool,
+                    outcome=ToolOutcome.ERROR,
+                    content=f"undeclared argument(s) {','.join(sorted(args))}",
+                )
+            payload = [{"key": f"P{i}", "name": f"Project {i}"} for i in range(450)]
         elif tool == "jira_search_issues":
             project = args["jql"].split('"')[1]
             count = min(int(args["limit"]), 450)
@@ -107,6 +115,11 @@ class _PagedJiraAttachment(_Attachment):
 
 
 async def test_jira_source_walks_collections_larger_than_one_page() -> None:
+    """Issues are walked by growing a page size; projects are not.
+
+    The project list takes no arguments at all — sending it a `limit` was
+    refused by the real CLI, so every Jira sync died before it began.
+    """
     adapter = JiraSourceAdapter(_PagedJiraAttachment())
     resources = await adapter.list_source_resources(ListSourceResources(connection_id="jira"))
     assert len(resources) == 450

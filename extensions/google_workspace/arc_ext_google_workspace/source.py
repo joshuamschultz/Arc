@@ -49,7 +49,7 @@ class GmailSourceAdapter:
         self, request: ListSourceResources
     ) -> tuple[SourceResource, ...]:
         result = await self._attachment.invoke("google_gmail_labels", {})
-        payload = _json(result.content)
+        payload = _payload(result)
         labels = payload.get("labels", payload if isinstance(payload, list) else [])
         resources = [
             SourceResource(
@@ -99,7 +99,7 @@ class GmailSourceAdapter:
 
     async def fetch_source(self, request: FetchSourceObject) -> SourceContent:
         result = await self._attachment.invoke("google_gmail_message", {"id": request.object_id})
-        payload = _json(result.content)
+        payload = _payload(result)
         version = _revision(payload)
         if version != request.version:
             raise SourceError(
@@ -122,7 +122,7 @@ class GmailSourceAdapter:
         if cursor is not None and (token := cursor.get("page_token")):
             arguments["page_token"] = token
         result = await self._attachment.invoke("google_gmail_messages", arguments)
-        payload = _json(result.content)
+        payload = _payload(result)
         objects = await self._message_objects(payload.get("messages", []))
         page_token = str(payload.get("nextPageToken") or "")
         if page_token:
@@ -150,7 +150,7 @@ class GmailSourceAdapter:
         if token := cursor.get("page_token"):
             arguments["page_token"] = token
         result = await self._attachment.invoke("google_gmail_history", arguments)
-        payload = _json(result.content)
+        payload = _payload(result)
         objects = await self._history_objects(payload.get("history", []))
         next_history = _revision(payload) if payload.get("historyId") else cursor["history_id"]
         page_token = str(payload.get("nextPageToken") or "")
@@ -195,7 +195,7 @@ class GmailSourceAdapter:
 
     async def _message(self, message_id: str) -> dict[str, Any]:
         result = await self._attachment.invoke("google_gmail_message", {"id": message_id})
-        payload = _json(result.content)
+        payload = _payload(result)
         if not payload.get("id"):
             raise SourceError(SourceFailureCode.NOT_FOUND, "Gmail message is unavailable")
         return payload
@@ -298,9 +298,21 @@ def _latest_revision(objects: tuple[SourceObject, ...]) -> str | None:
     return str(max(revisions)) if revisions else None
 
 
-def _json(value: str) -> dict[str, Any]:
+def _payload(result: Any) -> dict[str, Any]:
+    """The tool's JSON, or the tool's own words about why there is none.
+
+    A failed call returns readable prose in ``content``. Parsing that as JSON
+    reported "Gmail returned invalid JSON" over every real cause — an expired
+    grant, a revoked scope, a rate limit — and left an operator with nothing to
+    act on.
+    """
+    if getattr(result, "outcome", None) is not None and str(result.outcome) != "ok":
+        raise SourceError(SourceFailureCode.TRANSIENT, str(result.content)[:256])
     try:
-        parsed = json.loads(value)
+        parsed = json.loads(result.content)
     except json.JSONDecodeError as exc:
-        raise SourceError(SourceFailureCode.TRANSIENT, "Gmail returned invalid JSON") from exc
+        detail = str(result.content)[:200].strip() or "an empty response"
+        raise SourceError(
+            SourceFailureCode.TRANSIENT, f"Gmail returned no JSON: {detail}"
+        ) from exc
     return parsed if isinstance(parsed, dict) else {"messages": parsed}

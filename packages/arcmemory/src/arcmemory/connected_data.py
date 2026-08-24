@@ -460,9 +460,16 @@ class ConnectedDataService:
         except ExtractionUnavailable as exc:
             self._audit_object(source_id, source_object, "skipped", "extractor_unavailable")
             raise ConnectedObjectError(str(exc)) from exc
-        except (ValueError, OSError, RuntimeError) as exc:
+        except Exception as exc:
+            # A document parser is third-party code run over a file someone else
+            # produced; it raises whatever it likes. Listing a few exception
+            # types let one malformed PDF through as a hard failure that ended
+            # the whole sync, so an account was indexed as far as its first bad
+            # file and no further. An unreadable document is one skipped object.
             self._audit_object(source_id, source_object, "skipped", "extraction_failed")
-            raise ConnectedObjectError("connected object extraction failed") from exc
+            raise ConnectedObjectError(
+                f"connected object extraction failed: {type(exc).__name__}"
+            ) from exc
         clean = document_sanitize(
             extracted,
             actor_did=self._agent_did,

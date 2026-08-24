@@ -343,3 +343,50 @@ async def test_an_unlabelled_object_ingests_below_federal(tmp_path: Path) -> Non
     )
 
     assert await service.document_search("hello", source)
+
+
+@pytest.mark.asyncio
+async def test_a_document_parser_crash_skips_one_object_not_the_account(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A parser raises whatever it likes over a file someone else produced.
+
+    One malformed PDF used to end the whole sync, so an account was indexed as
+    far as its first bad file and no further.
+    """
+    import arcmemory.extract as extract_module
+
+    class _Exploding:
+        mimes = ("text/plain",)
+
+        def extract(self, data: bytes, *, filename: str = "") -> str:
+            raise LookupError("parser limit reached")
+
+    monkeypatch.setattr(extract_module, "get_extractor", lambda *a, **k: _Exploding())
+    monkeypatch.setattr(
+        "arcmemory.connected_data.get_extractor", lambda *a, **k: _Exploding()
+    )
+
+    approval = ApprovalStore(FakeBackend())
+    service = _service(tmp_path, approval)
+    source = _source()
+    with pytest.raises(SourceMappingPendingError):
+        await service.require_approved_mapping(source)
+    pending = (await approval.list())[0]
+    await approval.resolve(pending.id, status="approved", actor_did="did:operator")
+    mapping = await service.require_approved_mapping(source)
+
+    with pytest.raises(ConnectedObjectError, match="extraction failed"):
+        await service.ingest(
+            source,
+            ConnectedObject(
+                object_id="report",
+                locator="/reports/report.txt",
+                version="opaque-1",
+                media_type="text/plain",
+                classification="unclassified",
+                revision=1,
+            ),
+            SourceContent(object_id="report", version="opaque-1", content=b"hi"),
+            mapping,
+        )

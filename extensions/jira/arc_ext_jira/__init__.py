@@ -57,7 +57,11 @@ class JiraSourceAdapter:
     ) -> tuple[SourceResource, ...]:
         del request
         resources: list[SourceResource] = []
-        for project in await self._call_all("jira_list_projects", {}):
+        # Not _call_all: this verb takes no arguments by design. Its argv pins
+        # --paginate, which already returns every project the account can see,
+        # and acli refuses --limit alongside it. Growing a page size here made
+        # every call fail with "undeclared argument(s) limit".
+        for project in await self._call("jira_list_projects", {}):
             key = str(project.get("key") or project.get("id") or "")
             if not key:
                 continue
