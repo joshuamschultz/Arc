@@ -918,3 +918,29 @@ def test_a_host_authorized_bundle_really_stores_no_credential() -> None:
         assert not any(required.token_command for required in manifest.host_requires), (
             f"{name} is listed as host-authorized but takes a token from a binary"
         )
+
+
+def test_no_bundle_imports_itself_through_the_repository(bundle: Path) -> None:
+    """A bundle is COPIED to a deployment; the repository is not there with it.
+
+    An installed bundle lives at ``<extensions>/<name>/`` with only that directory
+    on ``sys.path``, so ``from extensions.sqlite.arc_ext_sqlite...`` resolves
+    perfectly in this checkout and fails on every real box with "No module named
+    'extensions'". Caught on a live deploy, at the moment an operator pressed
+    connect.
+
+    Checked by reading the source rather than by importing, because importing it
+    HERE is exactly what makes the defect invisible.
+    """
+    offenders = []
+    for path in bundle.rglob("*.py"):
+        if "__pycache__" in path.parts:
+            continue
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            stripped = line.strip()
+            if stripped.startswith(("from extensions.", "import extensions.")):
+                offenders.append(f"{path.relative_to(bundle)}:{number}")
+    assert not offenders, (
+        f"{bundle.name} imports itself through the repository, which a deployment "
+        f"does not have: {offenders}. Use a relative import."
+    )
