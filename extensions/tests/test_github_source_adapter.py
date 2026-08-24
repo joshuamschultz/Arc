@@ -34,6 +34,9 @@ class _Attachment:
                 ),
             )
         if tool == "github_file_content":
+            # The blob endpoint, never a path at a ref: a blob sha is not a
+            # valid ref and the contents endpoint answers 404 for one.
+            assert args["blob"] == "arc/arc/git/blobs/abc123", args
             return ToolResult(tool=tool, outcome=ToolOutcome.OK, content="# Arc\n\nthe readme")
         if tool == "github_repo_list":
             payload = [{"nameWithOwner": "arc/arc"}, {"nameWithOwner": "arc/docs"}]

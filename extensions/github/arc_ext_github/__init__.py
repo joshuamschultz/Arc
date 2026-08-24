@@ -153,16 +153,19 @@ class GitHubSourceAdapter:
         )
 
     async def _fetch_file(self, request: FetchSourceObject) -> SourceContent:
-        """Read one file's bytes, pinned to the exact blob that was listed.
+        """Read one file's bytes by the exact blob that was listed.
 
-        Pinned by ``?ref=<sha>``: a branch moves while a crawl is running, and
-        indexing the text of one revision under the version of another is how a
-        search starts quoting a line that is no longer there.
+        The blob, not the path at a ref: a branch moves while a crawl is
+        running, and indexing one revision's text under another's version is how
+        a search starts quoting a line that is no longer there. A blob sha is
+        also not a valid ``ref`` — the contents endpoint answers 404 for one —
+        so the blobs endpoint is both the correct read and the only one that
+        keeps the pin.
         """
-        repo, _, path = request.object_id.partition(":file:")
+        repo, _, _path = request.object_id.partition(":file:")
         result = await self._attachment.invoke(
             "github_file_content",
-            {"path": f"{repo}/contents/{path}?ref={request.version}"},
+            {"blob": f"{repo}/git/blobs/{request.version}"},
         )
         if str(result.outcome) != "ok":
             raise SourceError(SourceFailureCode.NOT_FOUND, str(result.content)[:256])

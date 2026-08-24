@@ -261,13 +261,13 @@ tool = "github_file_content"
 # declared output says so rather than failing the JSON check on every read.
 argv = ["api", "-H", "Accept: application/vnd.github.raw", "--"]
 output = "text"
-description = "Read one file from a repository."
+description = "Read one file's bytes by its blob sha."
 classification = "read_only"
 
 [[config.cli.commands.arguments]]
-name = "path"
+name = "blob"
 template = "repos/{value}"
-description = "OWNER/REPO/contents/PATH?ref=SHA — the file to read, pinned to a blob."
+description = "OWNER/REPO/git/blobs/SHA — the exact blob to read."
 
 [[config.cli.commands]]
 tool = "github_release_list"
