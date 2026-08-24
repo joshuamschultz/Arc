@@ -41,6 +41,7 @@ sensitive = false
 
 [[secrets]]
 name = "host"
+required = false
 prompt = "OPTIONAL. The machine holding that file, as user@hostname, if it is not this one — the same thing you would type after `ssh`. Arc copies the file here over your existing ssh key and queries the copy. Leave EMPTY when the file is on this machine."
 sensitive = false
 

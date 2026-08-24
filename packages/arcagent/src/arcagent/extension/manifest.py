@@ -289,12 +289,21 @@ class SecretRequirement(_ManifestModel):
     knowing it needs one is the tool's job. Empty means the value is stored exactly
     as typed, which is the right answer for a token whose characters are all
     significant.
+
+    ``required`` says whether a connection can exist without it. Some fields are
+    genuinely optional and their EMPTINESS is meaningful: sqlite's ``host`` names
+    the machine holding the database file, and leaving it empty is how an operator
+    says "this one" — the ordinary case. Defaulting to true keeps every existing
+    field required, so declaring ``required = false`` is a bundle author's
+    deliberate act. An optional field is still prompted and still stored when a
+    value is given; only the refusal on an empty one is lifted.
     """
 
     name: str
     prompt: str = ""
     placement: CredentialPlacement | None = None
     sensitive: bool = True
+    required: bool = True
     format: SuppliedFormat = ""
 
 

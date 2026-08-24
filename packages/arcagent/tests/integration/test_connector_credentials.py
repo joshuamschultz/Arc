@@ -381,3 +381,52 @@ def _cli_manifest(*, secrets: bool) -> ExtensionManifest:
         'binary = "acme"\n' + declared,
         tier=Tier.PERSONAL,
     )
+
+
+# --- an optional field ---------------------------------------------------------
+
+
+def _with_optional(manifest: ExtensionManifest) -> ExtensionManifest:
+    """The reference bundle plus one field the operator may leave blank."""
+    extra = manifest.secrets[0].model_copy(
+        update={"name": "host", "required": False, "sensitive": False}
+    )
+    return manifest.model_copy(update={"secrets": [*manifest.secrets, extra]})
+
+
+async def test_an_optional_field_left_blank_still_connects(
+    tmp_path: Path, backend: FakeBackend
+) -> None:
+    """An optional field's EMPTINESS is meaningful, so it cannot be a refusal.
+
+    sqlite declares `host`, and leaving it blank is how an operator says the
+    database is on this machine — the ordinary case. Requiring every declared
+    field made that case unconnectable: the install refused with "no value
+    supplied for required secret 'host'" and stored nothing.
+    """
+    arc_dir = _arc_dir(tmp_path)
+    root = _bundle_root(tmp_path)
+    store = await _stored(arc_dir)
+    manifest = _with_optional(_plan(root).manifest)
+
+    secrets = await resolve_secrets(
+        manifest, connection=_INSTANCE, store=store, caller_did=_CALLER
+    )
+
+    assert _FIELD in secrets
+    assert "host" not in secrets, "an absent optional field must not become an empty one"
+
+
+async def test_a_required_field_left_blank_is_still_refused_by_name(
+    tmp_path: Path, backend: FakeBackend
+) -> None:
+    """The opt-out must not weaken the guard for everything else."""
+    root = _bundle_root(tmp_path)
+    store = _store(_arc_dir(tmp_path))
+
+    with pytest.raises(ExtensionError) as caught:
+        await resolve_secrets(
+            _plan(root).manifest, connection=_INSTANCE, store=store, caller_did=_CALLER
+        )
+
+    assert _FIELD in caught.value.message

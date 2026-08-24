@@ -373,9 +373,10 @@ async def resolve_secrets(
         Field name to credential, one entry per declared secret.
 
     Raises:
-        ExtensionError: A declared credential is not in the store. The fields are
-            named and never valued: a connection serving verbs it has no credential
-            for is a 401 the agent cannot read.
+        ExtensionError: A declared REQUIRED credential is not in the store. The
+            fields are named and never valued: a connection serving verbs it has no
+            credential for is a 401 the agent cannot read. A field the bundle
+            declared optional is simply absent from the result.
     """
     if not manifest.secrets:
         return {}
@@ -399,7 +400,11 @@ async def resolve_secrets(
         ref = SecretRef(connection=connection, field=declared.name)
         secret = await store.get(ref, caller_did=caller_did)
         if secret is None:
-            if declared.name != optional:
+            # A field the bundle declared optional was never stored, and its
+            # absence is the answer: sqlite's empty `host` means the database is
+            # on this machine. Refusing here would make the ordinary case
+            # unconnectable.
+            if declared.name != optional and declared.required:
                 missing.append(declared.name)
         else:
             resolved[declared.name] = secret
@@ -501,6 +506,12 @@ async def _write_secrets(
         if declared.name == managed:
             continue
         value = shaped.get(declared.name, "")
+        # An optional field's EMPTINESS is meaningful — sqlite's empty `host`
+        # means "the database is on this machine", which is the ordinary case.
+        # Nothing is stored for it: an absent secret and an empty one must not be
+        # two states the adapter has to tell apart.
+        if not value and not declared.required:
+            continue
         ref = SecretRef(connection=plan.instance, field=declared.name)
         try:
             if not value:
