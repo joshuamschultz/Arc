@@ -133,7 +133,10 @@ async def _resolve_owner(owner: str | None, st: _runtime._State) -> str | None:
     if owner == "":
         return None
     if st.registry is None:
-        msg = "registry unavailable"
+        msg = (
+            "this agent has no fleet directory, so it cannot resolve a teammate "
+            "by handle — create the task unowned, or address it by DID"
+        )
         raise ValueError(msg)
     resolved: str = await st.registry.resolve(owner)
     return resolved
@@ -326,7 +329,12 @@ async def assign_task(
 ) -> str:
     st = await _state()
     if st.registry is None:
-        return json.dumps({"error": "registry unavailable"})
+        return json.dumps(
+            {
+                "error": "this agent has no fleet directory, so it cannot resolve "
+                "a teammate by handle"
+            }
+        )
     try:
         to_did = await st.registry.resolve(to_handle)
         updated = await st.store.assign(id, to_did, st.identity.did)

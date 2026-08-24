@@ -91,7 +91,9 @@ read-only fine-grained token is enough.
 
 [tools]
 allow = [
+  "github_file_content",
   "github_pr_list",
+  "github_repo_tree",
   "github_issue_list",
   "github_repo_list",
   "github_release_list",
@@ -111,6 +113,16 @@ classification = "read_only"
 [[tools.declared]]
 name = "github_repo_list"
 description = "List repositories the authenticated account can see."
+classification = "read_only"
+
+[[tools.declared]]
+name = "github_repo_tree"
+description = "Read one repository's file tree for indexing."
+classification = "read_only"
+
+[[tools.declared]]
+name = "github_file_content"
+description = "Read one file's contents for indexing."
 classification = "read_only"
 
 [[tools.declared]]
@@ -223,6 +235,39 @@ description = "Filter by primary language."
 name = "limit"
 flag = "--limit"
 description = "Maximum number of repositories to return."
+
+# --- repository file verbs --------------------------------------------------
+#
+# `gh api` takes a free-form endpoint, which is the whole read surface of the
+# GitHub API — every org, every user, every gist the account can see. The
+# manifest owns the shape instead: each argument is a template with one slot, so
+# a caller can name a repository and a path and nothing else. The fixed argv
+# carries no -X, so both are GET only.
+
+[[config.cli.commands]]
+tool = "github_repo_tree"
+argv = ["api", "-H", "Accept: application/vnd.github+json", "--"]
+description = "List the files in a repository at its default branch."
+classification = "read_only"
+
+[[config.cli.commands.arguments]]
+name = "repo"
+template = "repos/{value}/git/trees/HEAD?recursive=1"
+description = "Repository as OWNER/REPO."
+
+[[config.cli.commands]]
+tool = "github_file_content"
+# Raw bytes, not the base64 JSON envelope: this is a file's text, and the
+# declared output says so rather than failing the JSON check on every read.
+argv = ["api", "-H", "Accept: application/vnd.github.raw", "--"]
+output = "text"
+description = "Read one file from a repository."
+classification = "read_only"
+
+[[config.cli.commands.arguments]]
+name = "path"
+template = "repos/{value}"
+description = "OWNER/REPO/contents/PATH?ref=SHA — the file to read, pinned to a blob."
 
 [[config.cli.commands]]
 tool = "github_release_list"

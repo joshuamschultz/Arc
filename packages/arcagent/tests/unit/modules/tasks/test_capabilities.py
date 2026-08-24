@@ -150,7 +150,10 @@ class TestSyncConfigureLiveWiring:
             )
             created = json.loads(await create_task(title="Needs a teammate", owner=""))
             result = json.loads(await assign_task(id=created["id"], to_handle="@bob"))
-            assert result["error"] == "registry unavailable"
+            # Says what is missing and what to do instead. "registry
+            # unavailable" named an internal object and left the caller with no
+            # next move.
+            assert "no fleet directory" in result["error"]
         finally:
             _runtime.reset()
 

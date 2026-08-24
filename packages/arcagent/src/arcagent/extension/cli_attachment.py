@@ -75,6 +75,22 @@ class CliArgument(_Declaration):
     name: str
     flag: str = ""
     description: str = ""
+    #: A fixed shape the supplied value is placed into, as ``{value}``. Without
+    #: it a whole argv token is whatever the caller passed, which for a verb
+    #: like ``gh api <endpoint>`` is the entire read surface of an API. With it
+    #: the manifest owns the shape and the caller fills one slot, so a crawl
+    #: verb can be exposed without also granting everything beside it.
+    template: str = ""
+
+    @model_validator(mode="after")
+    def _a_template_names_exactly_one_slot(self) -> CliArgument:
+        """Refused at load: a template that drops the value silently sends a fixed
+        token, and one that repeats it is almost never what was meant."""
+        if not self.template:
+            return self
+        if self.template.count("{value}") != 1:
+            raise ValueError(f"{self.name}: template must contain exactly one '{{value}}'")
+        return self
 
     def token(self, value: object) -> str:
         """Render one argv token.
@@ -84,7 +100,8 @@ class CliArgument(_Declaration):
         A positional carries no flag; what makes it unambiguous is the terminator its
         command is required to declare, not the token itself.
         """
-        return f"{value}" if not self.flag else f"{self.flag}={value}"
+        rendered = self.template.replace("{value}", str(value)) if self.template else f"{value}"
+        return rendered if not self.flag else f"{self.flag}={rendered}"
 
 
 class CliCommand(_Declaration):

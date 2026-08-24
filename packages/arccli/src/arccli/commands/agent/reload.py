@@ -18,7 +18,14 @@ def _reload(args: argparse.Namespace) -> None:
 
     config_path = agent_dir / "arcagent.toml"
     config = arcagent.load_config(config_path)
-    arc_agent = arcagent.ArcAgent(config, config_path=config_path)
+    # An agent addressed from the CLI is still part of whatever fleet it belongs
+    # to: without this it starts with no directory and no inbox, and every
+    # fleet-facing tool reports itself unavailable on that path alone.
+    from arcteam.agent_fleet import ArcTeamFleet
+
+    arc_agent = arcagent.ArcAgent(
+        config, config_path=config_path, fleet=ArcTeamFleet()
+    )
 
     async def _do_reload() -> None:
         await arc_agent.startup()

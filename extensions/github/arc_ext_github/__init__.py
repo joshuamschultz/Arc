@@ -24,9 +24,27 @@ from arcagent.extension.source import (
     SyncSourcePage,
 )
 
+#: Extensions worth indexing as text. A repository is mostly code and prose;
+#: everything else — images, archives, compiled output, lockfiles — is bytes
+#: that no extractor can read and that would only crowd out real results.
+_TEXT_SUFFIXES: frozenset[str] = frozenset(
+    {
+        ".md", ".markdown", ".rst", ".txt", ".adoc",
+        ".py", ".pyi", ".js", ".jsx", ".ts", ".tsx", ".go", ".rs", ".rb", ".java",
+        ".kt", ".swift", ".c", ".h", ".cc", ".cpp", ".hpp", ".cs", ".php", ".scala",
+        ".sh", ".bash", ".zsh", ".sql", ".r", ".jl", ".lua", ".pl", ".ex", ".exs",
+        ".html", ".css", ".scss", ".vue", ".svelte",
+        ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".env.example",
+    }
+)
+
+#: One file this large is not documentation or code anyone searches for; it is a
+#: vendored bundle or generated output, and indexing it buries the rest.
+_MAX_FILE_BYTES = 512 * 1024
+
 
 class GitHubSourceAdapter:
-    """Index selected repositories' issues and pull requests."""
+    """Index selected repositories: their issues, pull requests, and files."""
 
     def __init__(self, attachment: Any) -> None:
         self._attachment = attachment
@@ -87,8 +105,14 @@ class GitHubSourceAdapter:
                 args = {"repo": repo, "state": "all", "limit": "1000"}
                 for item in await self._call_all(tool, args):
                     records.append((repo, kind, item))
+            # The repository itself, not only the conversation around it. Issues
+            # and pull requests are what people said; the files are the thing
+            # they were talking about, and indexing one without the other left a
+            # code search that could not find any code.
+            for entry in await self._tree(repo):
+                records.append((repo, "file", entry))
         page_records = records[start : start + request.page_size]
-        objects = tuple(self._object(repo, kind, item) for repo, kind, item in page_records)
+        objects = tuple(self._to_object(repo, kind, item) for repo, kind, item in page_records)
         next_index = start + len(page_records)
         return SyncSourcePage(
             objects=objects,
@@ -96,18 +120,62 @@ class GitHubSourceAdapter:
             has_more=next_index < len(records),
         )
 
+    async def _tree(self, repo: str) -> list[dict[str, Any]]:
+        """Every indexable file in one repository, at its default branch.
+
+        A tree read is one call for the whole repository. GitHub truncates a
+        very large one and says so; a truncated tree is indexed as far as it
+        goes rather than refused, because a partial repository is still worth
+        searching and the alternative is none of it.
+        """
+        result = await self._attachment.invoke("github_repo_tree", {"repo": repo})
+        if str(result.outcome) != "ok":
+            raise SourceError(SourceFailureCode.TRANSIENT, str(result.content)[:256])
+        payload = json.loads(result.content)
+        entries = payload.get("tree", []) if isinstance(payload, dict) else []
+        return [entry for entry in entries if _is_indexable(entry)]
+
     async def fetch_source(self, request: FetchSourceObject) -> SourceContent:
+        if ":file:" in request.object_id:
+            return await self._fetch_file(request)
         version, content = self._content[request.object_id]
         if version != request.version:
             raise ValueError("GitHub object version changed")
         if len(content) > request.max_bytes:
-            raise ValueError("GitHub object exceeds byte limit")
+            raise SourceError(
+                SourceFailureCode.TOO_LARGE, "GitHub object exceeds byte limit"
+            )
         return SourceContent(
             object_id=request.object_id,
             version=version,
             media_type="application/json",
             content=content,
-            metadata={},
+        )
+
+    async def _fetch_file(self, request: FetchSourceObject) -> SourceContent:
+        """Read one file's bytes, pinned to the exact blob that was listed.
+
+        Pinned by ``?ref=<sha>``: a branch moves while a crawl is running, and
+        indexing the text of one revision under the version of another is how a
+        search starts quoting a line that is no longer there.
+        """
+        repo, _, path = request.object_id.partition(":file:")
+        result = await self._attachment.invoke(
+            "github_file_content",
+            {"path": f"{repo}/contents/{path}?ref={request.version}"},
+        )
+        if str(result.outcome) != "ok":
+            raise SourceError(SourceFailureCode.NOT_FOUND, str(result.content)[:256])
+        content = str(result.content).encode()
+        if len(content) > request.max_bytes:
+            raise SourceError(SourceFailureCode.TOO_LARGE, "GitHub file exceeds byte limit")
+        return SourceContent(
+            object_id=request.object_id,
+            version=request.version,
+            # Empty on purpose: the extractor resolves by the file's own
+            # extension, which is the only thing that knows a .py from a .md.
+            media_type="",
+            content=content,
         )
 
     async def close_source(self) -> None:
@@ -149,6 +217,37 @@ class GitHubSourceAdapter:
             f"GitHub {tool} collection exceeds the safe synchronization bound",
         )
 
+    def _to_object(self, repo: str, kind: str, item: dict[str, Any]) -> SourceObject:
+        if kind == "file":
+            return self._file_object(repo, item)
+        return self._object(repo, kind, item)
+
+    def _file_object(self, repo: str, entry: dict[str, Any]) -> SourceObject:
+        """One repository file, versioned by its blob sha.
+
+        The sha IS the content, so it is the honest version: a file that has not
+        changed keeps its version across crawls and is never re-indexed, and one
+        that has changed cannot keep the old one.
+        """
+        path = str(entry.get("path") or "")
+        sha = str(entry.get("sha") or "")
+        return SourceObject(
+            object_id=f"{repo}:file:{path}",
+            locator=path,
+            kind=SourceObjectKind.FILE,
+            version=sha,
+            content_hash=sha,
+            size=int(entry.get("size") or 0),
+            media_type="",
+            metadata={
+                "repository": repo,
+                "kind": "file",
+                "path": path,
+                "classification": "unclassified",
+                "revision": _sha_revision(sha),
+            },
+        )
+
     def _object(self, repo: str, kind: str, item: dict[str, Any]) -> SourceObject:
         number = str(item.get("number", ""))
         object_id = f"{repo}:{kind}:{number}"
@@ -178,6 +277,31 @@ class GitHubSourceAdapter:
 def build_source_adapter(context: dict[str, Any]) -> GitHubSourceAdapter:
     """Build from the already policy-bound CLI attachment."""
     return GitHubSourceAdapter(context["attachment"])
+
+
+def _is_indexable(entry: object) -> bool:
+    """A text file small enough to be worth reading."""
+    if not isinstance(entry, dict) or entry.get("type") != "blob":
+        return False
+    path = str(entry.get("path") or "")
+    if not path:
+        return False
+    size = entry.get("size")
+    if isinstance(size, int) and size > _MAX_FILE_BYTES:
+        return False
+    suffix = path[path.rfind(".") :].lower() if "." in path else ""
+    return suffix in _TEXT_SUFFIXES
+
+
+def _sha_revision(sha: str) -> int:
+    """A monotonic-ish revision from a content sha.
+
+    A blob has no timestamp, and the ingest side needs an integer it can compare
+    to decide whether an update is newer. The sha is stable per content, so the
+    same file yields the same revision and a changed one yields a different
+    value — which is exactly the question being asked.
+    """
+    return int(sha[:12], 16) if sha else 1
 
 
 def _timestamp_revision(value: object) -> int:

@@ -19,6 +19,22 @@ from extensions.github.arc_ext_github import GitHubSourceAdapter
 
 class _Attachment:
     async def invoke(self, tool: str, args: dict[str, Any]) -> ToolResult:
+        if tool == "github_repo_tree":
+            return ToolResult(
+                tool=tool,
+                outcome=ToolOutcome.OK,
+                content=json.dumps(
+                    {
+                        "tree": [
+                            {"type": "blob", "path": "README.md", "sha": "abc123", "size": 40},
+                            {"type": "blob", "path": "logo.png", "sha": "def456", "size": 40},
+                            {"type": "tree", "path": "src", "sha": "aaa111"},
+                        ]
+                    }
+                ),
+            )
+        if tool == "github_file_content":
+            return ToolResult(tool=tool, outcome=ToolOutcome.OK, content="# Arc\n\nthe readme")
         if tool == "github_repo_list":
             payload = [{"nameWithOwner": "arc/arc"}, {"nameWithOwner": "arc/docs"}]
         else:
@@ -53,13 +69,35 @@ async def test_github_source_selects_syncs_and_fetches_repository_records() -> N
     assert description.account_id == "arc"
     assert description.data_shape.value == "document"
     assert {resource.resource_id for resource in resources} == {"arc/arc", "arc/docs"}
-    assert {item.metadata["kind"] for item in page.objects} == {"issue", "pull"}
+    # The repository itself, not only the conversation around it: a code search
+    # that indexes issues and pull requests but no files cannot find any code.
+    assert {item.metadata["kind"] for item in page.objects} == {"issue", "pull", "file"}
     assert all(int(item.metadata["revision"]) > 1 for item in page.objects)
     assert json.loads(fetched.content)["repository"] == "arc/arc"
+
+    files = [item for item in page.objects if item.metadata["kind"] == "file"]
+    # Only text: an image is bytes no extractor can read, and a directory is not
+    # a document at all.
+    assert [item.metadata["path"] for item in files] == ["README.md"]
+    # Versioned by blob sha, so an unchanged file is never re-indexed.
+    assert files[0].version == "abc123"
+
+    body = await adapter.fetch_source(
+        FetchSourceObject(
+            connection_id="github",
+            object_id=files[0].object_id,
+            version=files[0].version,
+        )
+    )
+    assert b"the readme" in body.content
+    # Empty on purpose: the extractor resolves a .md by its own extension.
+    assert body.media_type == ""
 
 
 class _PagedAttachment:
     async def invoke(self, tool: str, args: dict[str, Any]) -> ToolResult:
+        if tool == "github_repo_tree":
+            return ToolResult(tool=tool, outcome=ToolOutcome.OK, content=json.dumps({"tree": []}))
         count = min(int(args["limit"]), 450)
         if tool == "github_repo_list":
             payload = [{"nameWithOwner": f"arc/repo-{i}"} for i in range(count)]

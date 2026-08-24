@@ -1139,7 +1139,14 @@ def _load_arcagent(agent_dir: Path) -> tuple[Any, Any, Path]:
         sys.exit(1)
 
     config = arcagent.load_config(config_path)
-    arc_agent = arcagent.ArcAgent(config, config_path=config_path)
+    # An agent addressed from the CLI is still part of whatever fleet it belongs
+    # to: without this it starts with no directory and no inbox, and every
+    # fleet-facing tool reports itself unavailable on that path alone.
+    from arcteam.agent_fleet import ArcTeamFleet
+
+    arc_agent = arcagent.ArcAgent(
+        config, config_path=config_path, fleet=ArcTeamFleet()
+    )
     return arc_agent, config, config_path
 
 

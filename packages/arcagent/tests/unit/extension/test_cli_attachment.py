@@ -684,3 +684,52 @@ async def test_the_child_never_inherits_stdin(cli: CliAttachment, spawn: _SpawnR
     await cli.invoke("create_issue", {"title": "hello"})
 
     assert spawn.spawns[-1].kwargs.get("stdin") is asyncio.subprocess.DEVNULL
+
+
+def test_a_templated_argument_lets_the_manifest_own_the_shape() -> None:
+    """`gh api <endpoint>` is the whole read surface of an API in one token.
+
+    With a template the manifest owns the shape and the caller fills one slot,
+    so a repository crawl can be exposed without also granting every org, user
+    and gist the account can see.
+    """
+    module = _module()
+    command = module.CliCommand(
+        tool="repo_tree",
+        argv=["api", "--"],
+        arguments=[
+            module.CliArgument(
+                name="repo", template="repos/{value}/git/trees/HEAD?recursive=1"
+            )
+        ],
+    )
+
+    assert command.argv_for({"repo": "arc/arc"}) == [
+        "api",
+        "--",
+        "repos/arc/arc/git/trees/HEAD?recursive=1",
+    ]
+
+
+def test_a_template_with_no_slot_is_refused_at_load() -> None:
+    """It would send a fixed token and silently ignore what the caller asked for."""
+    module = _module()
+    with pytest.raises(ValueError, match="value"):
+        module.CliArgument(name="repo", template="repos/fixed/tree")
+
+
+def test_a_template_that_repeats_the_slot_is_refused_at_load() -> None:
+    module = _module()
+    with pytest.raises(ValueError, match="value"):
+        module.CliArgument(name="repo", template="repos/{value}/{value}")
+
+
+def test_a_templated_flag_argument_still_renders_as_one_token() -> None:
+    module = _module()
+    command = module.CliCommand(
+        tool="search",
+        argv=["search"],
+        arguments=[module.CliArgument(name="label", flag="--query", template="label:{value}")],
+    )
+
+    assert command.argv_for({"label": "INBOX"}) == ["search", "--query=label:INBOX"]
