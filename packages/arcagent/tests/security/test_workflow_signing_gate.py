@@ -264,16 +264,37 @@ class TestConstructionIsNotDefaulted:
     """A structural guard: the omission that caused this was silent by nature."""
 
     def test_the_store_is_never_built_on_the_constructor_defaults(self) -> None:
+        """Built where the engine lives now, and still never on its defaults.
+
+        The store's defaults make a deployment look personal-tier with no pinned
+        operator key, which silently disables REQ-225 at every tier. None of
+        that shows on the happy path, so it is asserted at the source.
+        """
         from pathlib import Path as _Path
 
-        from arcagent.modules.workflows import _runtime
+        from arcteam import agent_fleet
 
-        source = _Path(_runtime.__file__).read_text(encoding="utf-8")
+        source = _Path(agent_fleet.__file__).read_text(encoding="utf-8")
         _, _, construction = source.partition("DefinitionStore(")
-        head = construction[: construction.index("\n    )")]
+        head = construction[: construction.index("\n        )")]
         for required in ("tier=", "operator_public_key=", "audit="):
             assert required in head, (
                 f"DefinitionStore is built without {required} — its default makes the "
                 "deployment look personal-tier with no pinned operator key, which "
                 "silently disables REQ-225 at every tier"
             )
+
+    def test_the_agent_does_not_build_a_control_plane_of_its_own(self) -> None:
+        """Running a workflow across agents is the orchestration layer's job.
+
+        An agent that constructed the plane itself would also be choosing the
+        tier and the operator key it verifies against — the two settings whose
+        defaults quietly disable the signing gate.
+        """
+        from pathlib import Path as _Path
+
+        from arcagent.modules.workflows import _runtime
+
+        source = _Path(_runtime.__file__).read_text(encoding="utf-8")
+        assert "DefinitionStore(" not in source
+        assert "WorkflowControlPlane(" not in source

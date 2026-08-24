@@ -26,9 +26,8 @@ def cli_group(workspace: Path) -> click.Group:
     @click.pass_context
     def status(ctx: click.Context) -> None:
         """Show browser module connection status."""
-        from arccli.formatting import print_kv
-
         from arcagent.modules.browser.config import BrowserConfig
+        from arcagent.utils.cli_output import print_kv
 
         ws: Path = ctx.obj["workspace"]
         config = BrowserConfig()
@@ -50,11 +49,10 @@ def cli_group(workspace: Path) -> click.Group:
     @click.pass_context
     def navigate(ctx: click.Context, url: str) -> None:
         """Quick-test: navigate to a URL and print the page title."""
-        from arccli.formatting import click_echo
-
         from arcagent.modules.browser.cdp_client import CDPClientManager
         from arcagent.modules.browser.config import BrowserConfig
         from arcagent.modules.browser.url_policy import _check_url_policy
+        from arcagent.utils.cli_output import click_echo
 
         config = BrowserConfig()
 
@@ -86,11 +84,10 @@ def cli_group(workspace: Path) -> click.Group:
         """Quick-test: navigate to URL and save a screenshot."""
         import base64
 
-        from arccli.formatting import click_echo
-
         from arcagent.modules.browser.cdp_client import CDPClientManager
         from arcagent.modules.browser.config import BrowserConfig
         from arcagent.modules.browser.url_policy import _check_url_policy
+        from arcagent.utils.cli_output import click_echo
 
         config = BrowserConfig()
 

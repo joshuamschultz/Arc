@@ -51,6 +51,9 @@ class _State:
     agent_name: str = ""
     bus: Any = None
     agent_run_fn: AgentRunFn | None = None
+    # The orchestration layer this agent was composed into, or None alone. Read
+    # only to learn which schedules a deployment workflow expects it to keep.
+    fleet: Any = None
     channel_deliver_fn: Callable[[str, str], Awaitable[None]] | None = None
     engine: SchedulerEngine | None = None
 
@@ -91,6 +94,7 @@ def configure(
     agent_name: str = "",
     bus: Any = None,
     agent_run_fn: AgentRunFn | None = None,
+    fleet: Any = None,
 ) -> None:
     """Bind module state for the CURRENT asyncio task. Called once at agent startup.
 
@@ -114,6 +118,7 @@ def configure(
             agent_name=agent_name,
             bus=bus,
             agent_run_fn=agent_run_fn,
+            fleet=fleet,
         )
     )
 

@@ -22,10 +22,9 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import logging
-from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from arcagent.modules.workflows.config import WorkflowsConfig
 
@@ -226,24 +225,24 @@ async def refresh_roster(nats_url: str = "") -> None:
     """
     st = state()
     url = nats_url or st.config.nats_url
-    if st.registry is None and (not url or st.roster_attempted):
+    if st.registry is None and (not url or st.roster_attempted or st.fleet is None):
         return
     try:
         if st.registry is None:
             st.roster_attempted = True
-            from arcteam.audit import AuditLogger
-            from arcteam.composition import make_backend
-            from arcteam.registry import EntityRegistry
-
-            backend = await make_backend(url)
-            audit = AuditLogger(backend, st.operator_signer)
-            await audit.initialize()
-            st.registry = EntityRegistry(backend, audit)
-        entities = await st.registry.list_entities()
+            # Asked for, not built: the roster belongs to the layer that keeps
+            # it, and an agent that stood up its own bus to read it would be
+            # orchestrating itself.
+            st.registry, _messenger = await st.fleet.open_services(
+                nats_url=url,
+                identity=st.identity,
+                operator_signer=st.operator_signer,
+            )
+        members = await st.registry.list_agents()
     except Exception:  # reason: no roster is a skipped check, never a failure
         _logger.debug("workflow roster unavailable; agent references go unchecked", exc_info=True)
         return
-    handles = {f"@{e.handle}" for e in entities if getattr(e, "handle", "")}
+    handles = {f"@{member.handle}" for member in members if getattr(member, "handle", "")}
     st.known_agents = frozenset(handles)
 
 
@@ -333,75 +332,35 @@ def _bundle_root(st: _State) -> Path:
 
 
 def _build_control_plane(st: _State, runs: Any) -> None:
-    """Construct the control plane and definition store over the bundle root.
+    """Ask the fleet for the control plane over this agent's bundle root.
 
-    Leaves both None when the workflow engine is absent. An ImportError must not
-    escape: the capability loader would surface it as a broken module and take
-    the agent's whole tool surface with it, when the honest outcome is "this
-    deployment has no workflow engine" — which every tool reports clearly.
+    An agent does not build one. Running a workflow across many agents is the
+    orchestration layer's job, and the agent supplies only what is its own: the
+    bundle root, its tier, the operator key it verifies against, its audit hook,
+    and its live roster. Without a fleet there is no plane, and every workflow
+    tool reports itself unavailable while the rest of the agent is untouched.
     """
-    try:
-        from arcteam.workflow import (
-            DefinitionStore,
-            parse_definition,
-            validate_definition,
-        )
-        from arcteam.workflow.control_plane import WorkflowControlPlane
-    except ImportError:
-        _logger.info("arcteam.workflow is not installed; workflow tools will report unavailable")
+    if st.fleet is None:
+        _logger.info("no fleet composed this agent; workflow tools will report unavailable")
         return
-
+    opener = getattr(st.fleet, "open_control_plane", None)
+    if not callable(opener):
+        return
     root = _bundle_root(st)
     root.mkdir(parents=True, exist_ok=True)
-    # Every argument here is load-bearing, and every default is dangerous.
-    # Omitting ``tier`` makes the store believe it is a personal deployment at
-    # EVERY tier, so REQ-225's refusal of an unsigned definition never fires.
-    # Omitting ``operator_public_key`` makes ``verify_artifact`` fall back to
-    # trusting the key embedded in the sidecar — trust-on-first-use — so a
-    # definition signed by ANY key an agent holds reports as signed and
-    # verified, which is precisely the self-blessing the draft-then-operator-sign
-    # lifecycle exists to prevent (LLM03/LLM06/ASI04). Neither omission is
-    # visible on the happy path: a correctly signed workflow at personal tier
-    # behaves identically either way.
-    st.definitions = DefinitionStore(
+    opened = opener(
         root=root,
         tier=st.tier,
         operator_public_key=_operator_public_key(st),
         audit=st.audit_hook,
+        known_agents=lambda: st.known_agents,
+        runner=st.runner if st.runner is not None else _NoRunner(),
+        runs=runs,
     )
-
-    def parse(document: Mapping[str, Any]) -> Any:
-        return parse_definition(dict(document))
-
-    def validate(definition: Any, *, pending_files: frozenset[str] = frozenset()) -> Any:
-        from arcteam.workflow.validator import KnownReferences
-
-        return validate_definition(
-            definition,
-            known=KnownReferences(agents=st.known_agents),
-            # THE definition's own bundle, not the directory that holds every
-            # bundle. Resolving one level too high made every file reference
-            # read as missing, so an edit that added no files — add a node,
-            # change an agent — was rejected for prompts and schemas that were
-            # sitting right there. Only a call that happened to carry its files
-            # as pending got through.
-            bundle_root=root / definition.id,
-            pending_files=pending_files,
-        )
-
-    # The control plane's constructor is nominally typed against arcteam's own
-    # runner and tier literal. The runner here is either the injected fleet
-    # singleton (structurally identical) or the local no-runner stand-in, and the
-    # tier is a config string this deployment already validated — so both are
-    # widened at this one seam rather than by loosening arcteam's contract.
-    st.control_plane = WorkflowControlPlane(
-        definitions=st.definitions,
-        parse=parse,
-        validate=validate,
-        runner=cast(Any, st.runner if st.runner is not None else _NoRunner()),
-        runs=cast(Any, runs),
-        tier=cast(Any, st.tier),
-    )
+    if opened is None:
+        _logger.info("this fleet has no workflow engine; workflow tools report unavailable")
+        return
+    st.control_plane, st.definitions = opened
 
 
 def state() -> _State:

@@ -132,6 +132,39 @@ class FleetProvider(Protocol):
         """
         ...
 
+    def open_control_plane(
+        self,
+        *,
+        root: Any,
+        tier: str,
+        operator_public_key: bytes | None,
+        audit: Any,
+        known_agents: Any,
+        runner: Any,
+        runs: Any,
+    ) -> tuple[Any, Any] | None:
+        """The workflow control plane and its definition store, or None.
+
+        Running one workflow across many agents is the orchestration layer's
+        whole job, so it builds the plane; the agent supplies only what is its
+        own — where its bundles live, its tier, the operator key it verifies
+        against, and its audit hook. ``known_agents`` is read at validation time
+        rather than captured, because the roster changes while an agent runs.
+
+        None when no workflow engine is installed: authoring then reports itself
+        unavailable and every other capability is untouched.
+        """
+        ...
+
+    def open_definitions(self) -> Any | None:
+        """The deployment's signed workflow definitions, or None if there are none.
+
+        An agent reads these only to learn which of its own schedules a workflow
+        expects it to keep. The definitions themselves are deployment artifacts
+        the operator signs, so the layer that owns them hands them over.
+        """
+        ...
+
 
 __all__ = [
     "FleetDirectory",

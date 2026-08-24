@@ -44,11 +44,8 @@ _ABOVE_ARCAGENT = ("arcteam", "arcui", "arccli", "arcgateway")
 #: one at a time. This list may only ever SHRINK: a module absent from it is
 #: converted and must stay that way, and nothing new may be added.
 #:
-#: * ``messaging`` — inter-agent mail; the largest of them.
-#: * ``workflows`` — the roster check and the control plane.
-#: * ``scheduler`` — one workflow-definition read.
-#: * ``browser`` / ``policy`` — their operator CLIs borrow arccli's formatting.
-_UNCONVERTED_MODULES = frozenset({"messaging", "workflows", "scheduler", "browser", "policy"})
+#: * ``messaging`` — inter-agent mail; the last and largest of them.
+_UNCONVERTED_MODULES = frozenset({"messaging"})
 
 
 def _find_upward_imports(path: Path, upward: tuple[str, ...]) -> list[str]:

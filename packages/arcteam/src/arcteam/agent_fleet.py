@@ -13,7 +13,8 @@ orchestration.
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, cast
 
 from arcteam.audit import AuditLogger
 from arcteam.composition import make_backend, message_signer
@@ -103,6 +104,92 @@ class ArcTeamFleet:
         if opener is None:
             await backend.start()
         return WorkflowRunStore(backend), backend
+
+
+    def open_control_plane(
+        self,
+        *,
+        root: Any,
+        tier: str,
+        operator_public_key: bytes | None,
+        audit: Any,
+        known_agents: Any,
+        runner: Any,
+        runs: Any,
+    ) -> tuple[Any, Any] | None:
+        """Build the control plane over one agent's bundle root.
+
+        Every argument here is load-bearing and every default is dangerous.
+        Omitting ``tier`` makes the store believe it is a personal deployment at
+        EVERY tier, so an unsigned definition is never refused. Omitting
+        ``operator_public_key`` makes verification fall back to the key embedded
+        in the sidecar — trust on first use — so a definition signed by ANY key
+        an agent holds reports as signed and verified, which is precisely the
+        self-blessing the draft-then-operator-sign lifecycle exists to prevent
+        (LLM03/LLM06/ASI04). Neither omission shows on the happy path.
+        """
+        try:
+            from arcteam.workflow import (
+                DefinitionStore,
+                parse_definition,
+                validate_definition,
+            )
+            from arcteam.workflow.control_plane import WorkflowControlPlane
+            from arcteam.workflow.validator import KnownReferences
+        except ImportError:
+            return None
+
+        definitions = DefinitionStore(
+            root=root,
+            tier=tier,
+            operator_public_key=operator_public_key,
+            audit=audit,
+        )
+
+        def parse(document: Mapping[str, Any]) -> Any:
+            return parse_definition(dict(document))
+
+        def validate(definition: Any, *, pending_files: frozenset[str] = frozenset()) -> Any:
+            return validate_definition(
+                definition,
+                # Read now, not captured: the roster changes while an agent runs.
+                known=KnownReferences(agents=known_agents()),
+                # THE definition's own bundle, not the directory that holds every
+                # bundle. One level too high made every file reference read as
+                # missing, so an edit that added no files was rejected for
+                # prompts and schemas that were sitting right there.
+                bundle_root=root / definition.id,
+                pending_files=pending_files,
+            )
+
+        plane = WorkflowControlPlane(
+            definitions=definitions,
+            parse=parse,
+            validate=validate,
+            runner=runner,
+            runs=runs,
+            tier=cast(Any, tier),
+        )
+        return plane, definitions
+
+    def open_definitions(self) -> Any | None:
+        """The deployment's signed workflow definitions.
+
+        Read from the shared bundle root rather than any agent's workspace: a
+        workflow is a deployment artifact the operator signs, not agent state.
+        ``None`` when the engine is not installed or no bundle root exists —
+        there is simply nothing to reconcile.
+        """
+        try:
+            from arctrust.paths import workflows_dir
+
+            from arcteam.workflow import DefinitionStore
+        except ImportError:
+            return None
+        root = workflows_dir()
+        if not root.is_dir():
+            return None
+        return DefinitionStore(root=root, tier="personal")
 
 
 async def open_fleet_services(

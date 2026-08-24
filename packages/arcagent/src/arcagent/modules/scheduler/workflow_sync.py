@@ -243,19 +243,16 @@ def _definitions() -> Any:
     runs at capability-setup time, where that module's ``ContextVar`` may not yet
     be bound in this task — and the bundle store is deployment-wide, not per
     agent, so the direct read is both correct and immune to that timing. ``None``
-    means arcteam's workflow engine is not installed: nothing to reconcile.
+    means this agent has no fleet, or its fleet has no workflow engine
+    installed: either way there is nothing to reconcile.
     """
     if _definitions_factory is not None:
         return _definitions_factory()
-    try:
-        from arcteam.workflow import DefinitionStore
-        from arctrust.paths import workflows_dir
-    except ImportError:
+    fleet = _runtime.state().fleet
+    if fleet is None:
         return None
-    root = workflows_dir()
-    if not root.is_dir():
-        return None
-    return DefinitionStore(root=root, tier="personal")
+    opener = getattr(fleet, "open_definitions", None)
+    return opener() if callable(opener) else None
 
 
 def _owner_of(bundle: Any) -> str:

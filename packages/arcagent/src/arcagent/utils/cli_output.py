@@ -1,4 +1,10 @@
-"""Output formatting helpers — ASCII tables, JSON, key-value pairs."""
+"""Output formatting helpers — ASCII tables, JSON, key-value pairs.
+
+Here rather than in the CLI package because arcagent ships operator CLIs of its
+own (``arc browser``, ``arc policy``) and an agent must never import the surface
+that drives it. ``arccli.formatting`` keeps a near-copy for the same reason in
+reverse: reaching this one would be a deep import across a package boundary.
+"""
 
 import json
 from typing import Any

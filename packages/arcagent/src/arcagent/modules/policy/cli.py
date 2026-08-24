@@ -36,7 +36,7 @@ def cli_group(workspace: Path) -> click.Group:
     @click.pass_context
     def bullets(ctx: click.Context, sort_by: str) -> None:
         """List all policy bullets parsed from policy.md."""
-        from arccli.formatting import click_echo, print_table
+        from arcagent.utils.cli_output import click_echo, print_table
 
         ws: Path = ctx.obj["workspace"]
         policy_path = ws / "policy.md"
@@ -84,9 +84,8 @@ def cli_group(workspace: Path) -> click.Group:
     @click.pass_context
     def config_cmd(ctx: click.Context) -> None:
         """Show policy configuration from arcagent.toml."""
-        from arccli.formatting import click_echo, print_kv
-
         from arcagent.modules.policy.config import PolicyConfig
+        from arcagent.utils.cli_output import click_echo, print_kv
 
         ws: Path = ctx.obj["workspace"]
 
@@ -136,7 +135,7 @@ def cli_group(workspace: Path) -> click.Group:
     @click.pass_context
     def history(ctx: click.Context) -> None:
         """Show policy eval history from session transcripts."""
-        from arccli.formatting import click_echo
+        from arcagent.utils.cli_output import click_echo
 
         ws: Path = ctx.obj["workspace"]
 
