@@ -1,3 +1,3 @@
-from extensions.sqlite.arc_ext_sqlite.source import SQLiteSourceAdapter, build_source_adapter
+from extensions.sqlite.arc_ext_sqlite.source import SQLiteAttachment, build_native_attachment
 
-__all__ = ["SQLiteSourceAdapter", "build_source_adapter"]
+__all__ = ["SQLiteAttachment", "build_native_attachment"]

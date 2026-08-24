@@ -241,9 +241,7 @@ class ConfluenceAttachment:
         start = 0
         spaces: list[dict[str, Any]] = []
         while start <= 100_000:
-            body = await self._get(
-                f"{_API}/space", {"limit": "200", "start": str(start)}
-            )
+            body = await self._get(f"{_API}/space", {"limit": "200", "start": str(start)})
             page = [item for item in body.get("results", []) if isinstance(item, dict)]
             spaces.extend(page)
             links = body.get("_links", {})

@@ -362,6 +362,19 @@ def test_nothing_that_reads_like_a_credential_is_declared_visible(
         )
 
 
+#: Bundles that authenticate with NOTHING, because the operating system already
+#: did it. ``sqlite`` reaches a file: a local one is gated by the file's own
+#: permissions and a remote one by the operator's existing ssh key, so a path and
+#: a hostname are the only values it can ask for and neither is a secret.
+#:
+#: This is the same argument as ``token_command``, one step further — Arc stores
+#: no credential at all, so there is none to leak. Named rather than inferred:
+#: adding a bundle here is a deliberate act a reviewer sees, and the failure it
+#: would otherwise mask (a real credential marked visible) stays caught for
+#: everything else.
+_HOST_AUTHORIZED = frozenset({"sqlite"})
+
+
 def test_a_bundle_that_asks_for_values_asks_for_at_least_one_credential(
     manifest: ExtensionManifest,
 ) -> None:
@@ -376,10 +389,14 @@ def test_a_bundle_that_asks_for_values_asks_for_at_least_one_credential(
     stores none, so its declared fields SHOULD all be configuration, and the token
     crosses once on the stdin of ``token_command``. That is the stronger position,
     not the weaker one: Arc keeps no second copy to leak.
+
+    Or unless there is no credential to hold. See ``_HOST_AUTHORIZED``.
     """
     if not manifest.secrets:
         return
     if any(required.token_command for required in manifest.host_requires):
+        return
+    if manifest.extension.name in _HOST_AUTHORIZED:
         return
     assert any(declared.sensitive for declared in manifest.secrets), (
         f"{manifest.extension.name} declares only non-sensitive fields, so nothing it "
@@ -883,3 +900,21 @@ def test_a_display_name_never_replaces_the_coordinate(manifest: ExtensionManifes
     """The two are different things and a surface must not be able to confuse them."""
     assert manifest.extension.name == manifest.extension.name.lower()
     assert " " not in manifest.extension.name
+
+
+def test_a_host_authorized_bundle_really_stores_no_credential() -> None:
+    """The exemption above must stay narrow: no sensitive field, and no host token.
+
+    Without this, ``_HOST_AUTHORIZED`` would be a place to hide a bundle that
+    does have a credential and marked it visible — which is exactly the defect
+    the exempted test exists to catch.
+    """
+    for name in _HOST_AUTHORIZED:
+        path = next(p for p in BUNDLES if p.name == name)
+        manifest = _manifest_at(path, Tier.PERSONAL)
+        assert not any(declared.sensitive for declared in manifest.secrets), (
+            f"{name} is listed as host-authorized but declares a credential"
+        )
+        assert not any(required.token_command for required in manifest.host_requires), (
+            f"{name} is listed as host-authorized but takes a token from a binary"
+        )

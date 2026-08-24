@@ -8,7 +8,7 @@ the canonical source contract with a mocked Graph HTTP transport only.
 from __future__ import annotations
 
 import importlib
-from collections.abc import Iterable
+from collections.abc import AsyncGenerator, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -39,7 +39,7 @@ class _GraphReply:
     def json(self) -> dict[str, Any]:
         return self.payload
 
-    async def aiter_bytes(self) -> Iterable[bytes]:
+    async def aiter_bytes(self) -> AsyncGenerator[bytes, None]:
         for chunk in self.chunks:
             yield chunk
 

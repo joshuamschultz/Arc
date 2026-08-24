@@ -112,13 +112,24 @@ class _MultiSourceEnabledAttachment(_SourceEnabledAttachment):
 
 
 def build_attachment(
-    manifest: ExtensionManifest, bundle: Path, secrets: Mapping[str, Secret]
+    manifest: ExtensionManifest,
+    bundle: Path,
+    secrets: Mapping[str, Secret],
+    *,
+    connection_id: str = "",
 ) -> ExtensionAttachment:
-    """Build the declared attachment at the sole credential-reveal boundary."""
+    """Build the declared attachment at the sole credential-reveal boundary.
+
+    ``connection_id`` names WHICH account this is. An extension that keeps
+    per-connection operator configuration — the semantic layer describing one
+    datastore's tables — has no other way to find its own file: two connections
+    to the same extension are two different databases with two different
+    meanings, and a bundle path is the same for both.
+    """
     kind = manifest.extension.attachment
     if kind == "native":
         entrypoint = _NativeConfig.model_validate(manifest.config.get("native", {})).entrypoint
-        context: dict[str, Any] = {"bundle": str(bundle)}
+        context: dict[str, Any] = {"bundle": str(bundle), "connection_id": connection_id}
         context.update({name: secret.reveal() for name, secret in secrets.items()})
         with _importable(bundle):
             return NativeAttachment(entrypoint, context)

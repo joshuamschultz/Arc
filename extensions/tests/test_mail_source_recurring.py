@@ -262,6 +262,17 @@ class _RefusingAttachment:
             '"Token has been expired or revoked."',
             "auth_required",
         ),
+        # The real one off the box. Google puts the reason AFTER a request URL
+        # long enough that a 256-character detail cut it off, so classifying the
+        # truncated text called a revoked token transient and retried it forever.
+        (
+            'gog google_gmail_messages exited 1: Get "https://gmail.googleapis.com/gmail/'
+            "v1/users/me/messages?alt=json&fields=messages%28id%2CthreadId%29%2CnextPageToken"
+            '&maxResults=200&prettyPrint=false&q=in%3Aanywhere": read-only transport: round '
+            'trip: base token source: resettable oauth token source: oauth2: "invalid_grant" '
+            '"Token has been expired or revoked."',
+            "auth_required",
+        ),
         ("googleapi: Error 429: User Rate Limit Exceeded, rateLimitExceeded", "rate_limited"),
         ("read tcp 10.0.0.1:443: connection reset by peer", "transient"),
     ],

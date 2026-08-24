@@ -123,9 +123,7 @@ class ReadwiseSourceAdapter:
     async def fetch_source(self, request: FetchSourceObject) -> SourceContent:
         cached = self._content.get(request.object_id)
         if cached is None:
-            records = await self._call(
-                "readwise_get_document", {"document_id": request.object_id}
-            )
+            records = await self._call("readwise_get_document", {"document_id": request.object_id})
             payload: Any = records[0] if len(records) == 1 else records
             content = _document_content(payload)
             version = _version(content)
@@ -233,9 +231,7 @@ class ReadwiseSourceAdapter:
         document_id = str(document.get("id") or "")
         if not document_id:
             return self._object(document)
-        details = await self._call(
-            "readwise_get_document", {"document_id": document_id}
-        )
+        details = await self._call("readwise_get_document", {"document_id": document_id})
         return self._object({**document, **details[0]} if details else document)
 
 

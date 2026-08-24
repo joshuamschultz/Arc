@@ -6,7 +6,6 @@ import json
 from typing import Any
 
 import pytest
-
 from arcagent.extension.attachment import ToolOutcome, ToolResult
 from arcagent.extension.source import (
     FetchSourceObject,
@@ -45,7 +44,7 @@ class _Attachment:
         else:
             payload = [
                 {
-                    "number": 7,
+                    "number": "7",
                     "title": f"{tool} record",
                     "updatedAt": "2026-08-23T12:00:00Z",
                     "url": "https://github.test/arc/arc/7",
@@ -67,7 +66,7 @@ async def test_github_source_selects_syncs_and_fetches_repository_records() -> N
         FetchSourceObject(
             connection_id="github",
             object_id=page.objects[0].object_id,
-            version=page.objects[0].version,
+            version=page.objects[0].version or "",
         )
     )
 
@@ -109,7 +108,7 @@ class _PagedAttachment:
         else:
             payload = [
                 {
-                    "number": i,
+                    "number": str(i),
                     "title": f"{tool} {i}",
                     "updatedAt": "2026-08-23T12:00:00Z",
                 }
@@ -230,3 +229,51 @@ async def test_an_empty_repository_does_not_stop_the_crawl() -> None:
     page = await adapter.sync_source(SyncSource(connection_id="github", page_size=50))
 
     assert [obj.locator for obj in page.objects] == ["README.md"]
+
+
+async def test_an_empty_file_is_empty_content_not_a_failed_crawl() -> None:
+    """A repository is full of legitimately empty files — `__init__.py`,
+    `.gitkeep`. `gh` exits 0 and writes nothing for one, the attachment reads
+    that as a failure, and the coordinator re-raises every per-object refusal
+    that is not TOO_LARGE. So one empty file ended the entire crawl.
+    """
+
+    class _EmptyFile:
+        async def invoke(self, tool: str, args: dict[str, Any]) -> ToolResult:
+            return ToolResult(
+                tool=tool,
+                outcome=ToolOutcome.ERROR,
+                content="gh github_file_content exited 0 and wrote nothing, "
+                "so there is no answer to report",
+            )
+
+    adapter = GitHubSourceAdapter(_EmptyFile())
+
+    content = await adapter.fetch_source(
+        FetchSourceObject(
+            connection_id="github", object_id="arc/arc:file:src/__init__.py", version="abc123"
+        )
+    )
+
+    assert content.content == b""
+
+
+async def test_a_real_fetch_failure_that_prints_nothing_still_refuses() -> None:
+    """Keyed on the exit status, not on "the content is empty"."""
+
+    class _Broken:
+        async def invoke(self, tool: str, args: dict[str, Any]) -> ToolResult:
+            return ToolResult(
+                tool=tool,
+                outcome=ToolOutcome.ERROR,
+                content="gh github_file_content exited 1: HTTP 404: Not Found",
+            )
+
+    adapter = GitHubSourceAdapter(_Broken())
+
+    with pytest.raises(Exception, match="404"):
+        await adapter.fetch_source(
+            FetchSourceObject(
+                connection_id="github", object_id="arc/arc:file:gone.py", version="abc123"
+            )
+        )

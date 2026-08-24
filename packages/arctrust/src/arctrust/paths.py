@@ -361,6 +361,26 @@ def gateway_pairing_db(base: Base = None) -> Path:
     return gateway_dir(base) / "pairing.db"
 
 
+def semantic_dir(base: Base = None) -> Path:
+    """Return the operator-editable semantic-layer root: ``<arc_config>/semantic``.
+
+    One file per connected datastore, naming what its tables and columns MEAN.
+    Config rather than state because an operator writes it by hand — it is the
+    same kind of thing as ``arcagent.toml``, and an update must never replace it.
+    """
+    return arc_config(base) / "semantic"
+
+
+def semantic_layer_file(connection_id: str, base: Base = None) -> Path:
+    """Return one connection's semantic layer: ``<arc_config>/semantic/<id>.toml``.
+
+    An accessor rather than a join at the read site because two surfaces already
+    want this file — the adapter that applies it and the CLI that opens it — and
+    a second spelling would let an operator edit a file the agent never reads.
+    """
+    return semantic_dir(base) / f"{_validated_leaf(connection_id)}.toml"
+
+
 def workflows_dir(base: Base = None) -> Path:
     """Return the signed workflow-bundle root: ``<arc_state>/workflows``.
 
@@ -426,6 +446,18 @@ def runtime_bin(name: str, base: Base = None) -> Path:
     executing a checkout's copy while the other updates the runtime's.
     """
     return runtime_venv(base) / "bin" / name
+
+
+def _validated_leaf(name: str) -> str:
+    """Reject anything that is not a single path component.
+
+    A connection id reaches this from ``connections.toml``, which an operator
+    edits and a connect flow writes. A separator or ``..`` in one would put the
+    semantic layer — a file the agent reads and trusts — anywhere on the disk.
+    """
+    if not name or name in {".", ".."} or "/" in name or os.sep in name:
+        raise ValueError(f"connection id must be a single path component, got {name!r}")
+    return name
 
 
 def _validated_version(version: str) -> str:
@@ -509,6 +541,8 @@ __all__ = [
     "operator_root",
     "runtime_bin",
     "runtime_venv",
+    "semantic_dir",
+    "semantic_layer_file",
     "skills_dir",
     "store_dir",
     "trust_dir",

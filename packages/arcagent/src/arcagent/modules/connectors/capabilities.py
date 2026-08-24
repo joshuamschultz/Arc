@@ -347,7 +347,9 @@ async def _attach_one(
         # Built once and reused: the connection whose tools were described has to
         # be the connection the registered verbs then call, or a stateful
         # attachment answers from a session nobody looked at.
-        connection = build_attachment(loaded.manifest, loaded.path, secrets)
+        connection = build_attachment(
+            loaded.manifest, loaded.path, secrets, connection_id=instance
+        )
         served = await _servable_tools(ctx, instance, loaded, connection)
         specs = [spec for spec in served if spec.name not in taken]
         for spec in served:

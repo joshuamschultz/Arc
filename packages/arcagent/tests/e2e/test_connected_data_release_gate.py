@@ -421,14 +421,8 @@ def test_release_gate_provider_matrix_has_each_declared_source_seam() -> None:
     from extensions.microsoft365.arc_ext_microsoft365 import source as microsoft_source
     from extensions.postgresql.arc_ext_postgresql import PostgreSQLAttachment
     from extensions.s3.arc_ext_s3 import S3Attachment
+    from extensions.sqlite.arc_ext_sqlite import SQLiteAttachment
 
-    try:
-        sqlite_source = importlib.import_module("extensions.sqlite.arc_ext_sqlite.source")
-    except ModuleNotFoundError:
-        sqlite_source = None
-    sqlite_adapter = (
-        None if sqlite_source is None else getattr(sqlite_source, "SQLiteSourceAdapter", None)
-    )
     lifecycle = {
         "dropbox": DropboxAttachment,
         "postgres": PostgreSQLAttachment,
@@ -436,7 +430,7 @@ def test_release_gate_provider_matrix_has_each_declared_source_seam() -> None:
         "gmail": GmailSourceAdapter,
         "outlook": microsoft_source.OutlookSourceAdapter,
         "onedrive": getattr(microsoft_source, "OneDriveSourceAdapter", None),
-        "sqlite": sqlite_adapter,
+        "sqlite": SQLiteAttachment,
     }
     missing = [name for name, adapter in lifecycle.items() if adapter is None]
     assert not missing, f"missing connected-data source adapters: {', '.join(missing)}"
@@ -471,14 +465,39 @@ async def test_dropbox_native_connection_is_enrollable_as_a_knowledge_source() -
 
 
 @pytest.mark.asyncio
+async def test_sqlite_native_connection_is_enrollable_as_a_knowledge_source() -> None:
+    """A data connection is not complete when its tools work.
+
+    The same object that answers ``sqlite_get`` must satisfy the source seam, or
+    the connector serves verbs while Knowledge shows nothing — the exact split
+    that shipped a connected database no agent could be enrolled against.
+    """
+    from arcagent.extension.native_attachment import NativeAttachment
+
+    attachment = NativeAttachment(
+        "extensions.sqlite.arc_ext_sqlite", {"database_path": "/nonexistent.db"}
+    )
+    source = attachment.source_adapter()
+
+    assert source is not None
+    assert source.__class__.__name__ == "SQLiteAttachment"
+    assert {spec.name for spec in await attachment.describe_tools()} == {
+        "sqlite_schema",
+        "sqlite_get",
+        "sqlite_find",
+        "sqlite_list",
+    }
+    await source.close_source()
+
+
+@pytest.mark.asyncio
 async def test_release_gate_sqlite_file_resource_is_reopenable_and_read_only(
     tmp_path: Path,
 ) -> None:
     """A connected SQLite file is an approved resource, not the agent index DB."""
 
     module = importlib.import_module("extensions.sqlite.arc_ext_sqlite.source")
-    factory = getattr(module, "build_source_adapter", None)
-    assert callable(factory), "SQLite extension must expose build_source_adapter"
+    factory = module.build_native_attachment
     database = tmp_path / "customer.sqlite"
     conn = sqlite3.connect(database)
     conn.execute("CREATE TABLE customers (id TEXT PRIMARY KEY, name TEXT NOT NULL)")
@@ -486,7 +505,7 @@ async def test_release_gate_sqlite_file_resource_is_reopenable_and_read_only(
     conn.commit()
     conn.close()
 
-    adapter = factory({"database_path": database})
+    adapter = factory({"database_path": str(database)})
     description = await adapter.inspect_source(InspectSource(connection_id="sqlite-alpha"))
     resources = await adapter.list_source_resources(
         ListSourceResources(connection_id="sqlite-alpha")
@@ -503,7 +522,7 @@ async def test_release_gate_sqlite_file_resource_is_reopenable_and_read_only(
     }
     await adapter.close_source()
 
-    reopened = factory({"database_path": database})
+    reopened = factory({"database_path": str(database)})
     assert [
         item.resource_id
         for item in await reopened.list_source_resources(

@@ -378,8 +378,12 @@ def _payload(result: Any) -> dict[str, Any]:
     act on.
     """
     if getattr(result, "outcome", None) is not None and str(result.outcome) != "ok":
-        detail = str(result.content)[:256]
-        raise SourceError(_failure_code(detail), detail)
+        # Classify on the WHOLE message, report a truncated one. Google puts the
+        # reason at the END, after a request URL long enough that a 256-character
+        # detail cut "invalid_grant" off — so a revoked token classified as
+        # transient and was retried every cycle forever.
+        full = str(result.content)
+        raise SourceError(_failure_code(full), full[:256])
     try:
         parsed = json.loads(result.content)
     except json.JSONDecodeError as exc:

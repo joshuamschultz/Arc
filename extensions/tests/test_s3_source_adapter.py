@@ -131,7 +131,7 @@ def _attachment(
             "role_arn": Secret(role_arn),
         },
     )
-    return wrapper._delegate, calls
+    return wrapper._delegate, calls  # type: ignore[attr-defined]
 
 
 async def test_s3_and_minio_share_the_same_vault_injected_client_contract(

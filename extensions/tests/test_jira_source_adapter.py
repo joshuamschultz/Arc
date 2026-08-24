@@ -97,7 +97,7 @@ class _PagedJiraAttachment(_Attachment):
                     outcome=ToolOutcome.ERROR,
                     content=f"undeclared argument(s) {','.join(sorted(args))}",
                 )
-            payload = [{"key": f"P{i}", "name": f"Project {i}"} for i in range(450)]
+            payload: Any = [{"key": f"P{i}", "name": f"Project {i}"} for i in range(450)]
         elif tool == "jira_search_issues":
             project = args["jql"].split('"')[1]
             count = min(int(args["limit"]), 450)

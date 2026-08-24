@@ -1,0 +1,71 @@
+# SQLite — a database that is one file, which is the whole design of this bundle.
+#
+# TWO FIELDS, NOT ONE. `database_path` says which file; `host` says which
+# machine. The agent runs where the fleet runs and the database is wherever the
+# person made it, so a path alone answers "which file" on the wrong computer.
+# Leaving `host` empty means "this machine", which is the ordinary case for a
+# database that lives beside the agent.
+#
+# NEITHER IS A CREDENTIAL, and both are declared `sensitive = false` for that
+# reason: masking a file path buys nothing and costs an operator the ability to
+# see they typed it correctly. They are still stored the same way a credential
+# is, because a connection's configuration belongs in one place.
+#
+# NO RAW SQL VERB, deliberately. The four tools below are typed reads with
+# bound parameters against tables the operator approved. An agent that can send
+# arbitrary SQL to a database can also send `ATTACH`, and read-only mode is a
+# narrower promise to keep than good intentions.
+#
+# The `sqlite_schema` verb answers from the operator's semantic layer at
+# ~/arc/config/semantic/<connection>.toml — the sentences that say what
+# `inv_hdr.amt` actually is. Generated on first connect, never overwritten.
+
+[extension]
+name = "sqlite"
+display_name = "SQLite database"
+version = "1.0.0"
+description = "Connect a SQLite file — here or on another machine — for typed read-only agent queries and an editable semantic layer."
+attachment = "native"
+tier_floor = "personal"
+
+[knowledge]
+mode = "source"
+
+[config.native]
+entrypoint = "arc_ext_sqlite"
+
+[[secrets]]
+name = "database_path"
+prompt = "Absolute path to the .db/.sqlite file. On macOS or Linux, open a terminal where the file is and run `pwd` to get the folder, then add the filename — for example /Users/you/data/app.db. Arc opens it read-only and never writes to it."
+sensitive = false
+
+[[secrets]]
+name = "host"
+prompt = "OPTIONAL. The machine holding that file, as user@hostname, if it is not this one — the same thing you would type after `ssh`. Arc copies the file here over your existing ssh key and queries the copy. Leave EMPTY when the file is on this machine."
+sensitive = false
+
+[tools]
+allow = ["sqlite_schema", "sqlite_get", "sqlite_find", "sqlite_list"]
+
+[[tools.declared]]
+name = "sqlite_schema"
+description = "Describe the approved SQLite tables — what one row of each means, its columns, and which are searchable."
+classification = "read_only"
+
+[[tools.declared]]
+name = "sqlite_get"
+description = "Get one record by primary key from an approved SQLite table."
+classification = "read_only"
+
+[[tools.declared]]
+name = "sqlite_find"
+description = "Find records by equality in an approved SQLite column."
+classification = "read_only"
+
+[[tools.declared]]
+name = "sqlite_list"
+description = "List a bounded set of records from an approved SQLite table."
+classification = "read_only"
+
+[approval]
+default = "outbound"

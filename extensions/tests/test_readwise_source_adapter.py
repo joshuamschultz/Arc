@@ -54,9 +54,7 @@ async def test_readwise_source_discovers_selects_syncs_and_fetches_documents() -
         ListSourceResources(connection_id="readwise:primary")
     )
     await adapter.select_source_resources(
-        SelectSourceResources(
-            connection_id="readwise:primary", resource_ids=("tag:research",)
-        )
+        SelectSourceResources(connection_id="readwise:primary", resource_ids=("tag:research",))
     )
     page = await adapter.sync_source(SyncSource(connection_id="readwise:primary", page_size=10))
 

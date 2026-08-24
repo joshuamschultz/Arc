@@ -211,6 +211,18 @@ class GitHubSourceAdapter:
             {"blob": f"{repo}/git/blobs/{request.version}"},
         )
         if str(result.outcome) != "ok":
+            if _is_empty_blob(result):
+                # `gh` exits 0 and writes nothing for an empty file, and the
+                # attachment reads "no output" as a failure. A repository is full
+                # of legitimately empty files — `__init__.py`, `.gitkeep` — and
+                # one of them ended the entire crawl, because the coordinator
+                # skips only TOO_LARGE and re-raises every other refusal.
+                return SourceContent(
+                    object_id=request.object_id,
+                    version=request.version,
+                    media_type="text/plain",
+                    content=b"",
+                )
             raise SourceError(SourceFailureCode.NOT_FOUND, str(result.content)[:256])
         content = str(result.content).encode()
         if len(content) > request.max_bytes:
@@ -349,6 +361,15 @@ def build_source_adapter(context: dict[str, Any]) -> GitHubSourceAdapter:
 #: a feature switched off, or a repository with no commits yet. Both are normal
 #: states of a normal repository, and neither is a reason to abandon the crawl.
 _ABSENT_MARKERS = ("has disabled", "repository is empty")
+
+
+def _is_empty_blob(result: Any) -> bool:
+    """True when the CLI succeeded and simply had no bytes to write.
+
+    Keyed on the exit status the message reports, not on "the content is empty":
+    a failure that happens to print nothing must still be a failure.
+    """
+    return "exited 0" in str(result.content)
 
 
 def _repository_simply_lacks_it(detail: str) -> bool:

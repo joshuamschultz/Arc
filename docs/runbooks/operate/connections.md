@@ -108,6 +108,38 @@ database into the document index. Dropbox, OneDrive, Gmail and Outlook extract
 source content into the document pipeline. S3 maintains a folder/object
 inventory and also indexes extractable objects when `document` is selected.
 
+### The semantic layer — telling agents what the data MEANS
+
+Introspection can say a table is called `inv_hdr` with a column `amt`. Only you
+can say that is an invoice and a dollar amount. On first connect, a datastore
+writes an editable file naming everything it found:
+
+```
+~/arc/config/semantic/<connection>.toml
+```
+
+```toml
+[table.inv_hdr]
+entity = "invoice"                  # what ONE ROW is. Agents search by this.
+description = "One row per invoice we billed."
+hidden = false                      # keep it out of what agents are SHOWN
+searchable = ["note"]               # omit to keep what was detected
+
+[table.inv_hdr.column.amt]
+label = "amount"
+description = "What we billed, in whole dollars."
+```
+
+`sqlite_schema` answers from this file, so an edit reaches agents on their next
+call — no restart, no re-sync. It is **never overwritten**: a later scan only
+appends tables that have appeared, and an entry for a table that has gone away
+is left alone. A syntax error degrades to the schema's own names rather than
+taking the connection down.
+
+`hidden` is readability, not permission. What an agent may REACH is the resource
+selection you approved when connecting; hiding a table here does not secure it,
+and un-hiding one does not grant it.
+
 The `profile` destination is deliberately review-gated. Inferred facts appear
 under **Knowledge → Connections → Profile review** as pending. Only facts an
 operator approves enter agent context; decline and undo are audited and remove
@@ -115,9 +147,16 @@ the fact from recall.
 
 ### Provider setup notes
 
-- **SQLite:** provide the local database path to the optional SQLite source
-  adapter. The file is opened read-only and blocking calls are moved off the
-  event loop. Select tables before approval.
+- **SQLite:** connect with `arc connector add sqlite --name <id>`, or the
+  Connections card. Two fields, neither a credential: `database_path` is the
+  absolute path to the `.db`/`.sqlite` file, and `host` is `user@hostname` when
+  that file is on another machine — leave it EMPTY when it sits beside the agent.
+  A remote database is copied here over your existing ssh key and re-copied only
+  when its fingerprint moves. The file is opened read-only (`mode=ro`), symlinks
+  are refused, and blocking calls are moved off the event loop. Select tables
+  before approval; a table you did not select cannot be read. Agents get
+  `sqlite_schema`, `sqlite_get`, `sqlite_find` and `sqlite_list` — there is no
+  raw-SQL verb.
 - **PostgreSQL/Supabase:** provide a vault-backed, read-only DSN to the
   PostgreSQL extension. Use a Supabase direct or transaction-pooler URL the same
   way. TLS, pooling and reconnect behavior remain inside the adapter.

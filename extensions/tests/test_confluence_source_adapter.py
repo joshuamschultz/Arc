@@ -43,7 +43,7 @@ async def test_confluence_source_selects_syncs_and_fetches_pages() -> None:
             "space": {"key": "ENG"},
         }
 
-    attachment._get = get
+    attachment._get = get  # type: ignore[method-assign]
     description = await attachment.inspect_source(InspectSource(connection_id="confluence"))
     resources = await attachment.list_source_resources(
         ListSourceResources(connection_id="confluence")
@@ -54,7 +54,7 @@ async def test_confluence_source_selects_syncs_and_fetches_pages() -> None:
     page = await attachment.sync_source(SyncSource(connection_id="confluence"))
     fetched = await attachment.fetch_source(
         FetchSourceObject(
-            connection_id="confluence", object_id="42", version=page.objects[0].version
+            connection_id="confluence", object_id="42", version=page.objects[0].version or ""
         )
     )
 
@@ -75,12 +75,11 @@ async def test_confluence_source_walks_all_spaces() -> None:
             return {}
         start = int(params.get("start", "0"))
         page = [
-            {"key": f"S{i}", "name": f"Space {i}"}
-            for i in range(start, min(start + 200, 450))
+            {"key": f"S{i}", "name": f"Space {i}"} for i in range(start, min(start + 200, 450))
         ]
         return {"results": page, "totalSize": 450}
 
-    attachment._get = get
+    attachment._get = get  # type: ignore[method-assign]
     resources = await attachment.list_source_resources(
         ListSourceResources(connection_id="confluence")
     )
