@@ -40,13 +40,27 @@ class SourceCatalog:
         self._condition = asyncio.Condition()
 
     async def register(self, connection_id: str, adapter: SourceAdapter) -> None:
-        """Register or replace a connection and close the previous adapter."""
+        """Register or replace a connection and close the previous adapter.
+
+        The replacement is installed before the old one is torn down, so the
+        connection is never absent. Detaching first left a window in which the
+        source did not exist at all: a reconcile — which runs on grant changes
+        and at startup — made every connection blink out of the listing, and an
+        operator who clicked in that window was told the source was not found.
+        """
         registration = SourceRegistration(connection_id=connection_id, adapter=adapter)
-        previous = await self._detach(connection_id)
         async with self._condition:
+            previous = self._entries.get(connection_id)
+            if previous is not None and previous.registration.adapter is adapter:
+                return
             self._entries[connection_id] = _Entry(registration)
-        if previous is not None and previous.adapter is not adapter:
-            await _close(previous)
+        if previous is None:
+            return
+        # Only now wait out whatever was still using the old adapter.
+        async with self._condition:
+            while previous.leases:
+                await self._condition.wait()
+        await _close(previous.registration)
 
     async def unregister(self, connection_id: str) -> None:
         """Remove and close one connection, if it is attached."""
