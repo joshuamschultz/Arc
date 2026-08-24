@@ -244,7 +244,7 @@ def _generate_arcagent_toml(tier: str, blueprint_name: str | None = None) -> tup
         bp = resolve_blueprint(
             blueprint_name,
             tier=tier,
-            operator_public_key=operator_public_key(arc_home()),
+            operator_public_key=operator_public_key(),
         )
         base = apply_blueprint(bp, base, deployment_tier=tier)
         effective = str(base.get("security", {}).get("tier", tier))

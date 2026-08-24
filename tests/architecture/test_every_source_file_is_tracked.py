@@ -9,6 +9,7 @@ deploy refused to activate the runtime it had just built.
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -16,8 +17,10 @@ _REPO = Path(__file__).resolve().parents[2]
 
 
 def _tracked() -> set[Path]:
+    git = shutil.which("git")
+    assert git is not None, "git is required to know what ships"
     listing = subprocess.run(
-        ["git", "ls-files", "-z", "--", "packages", "extensions"],
+        [git, "ls-files", "-z", "--", "packages", "extensions"],
         cwd=_REPO,
         capture_output=True,
         text=True,

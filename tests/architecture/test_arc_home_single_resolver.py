@@ -207,3 +207,54 @@ def test_the_exempt_list_stays_tiny() -> None:
     assert len(_EXEMPT) == 2
     for rel in _EXEMPT:
         assert (_PACKAGES / rel).is_file(), f"stale exemption: {rel}"
+
+
+#: Accessors that take an optional base. Handing one ``arc_home()`` pins it to
+#: the install home, which is a different directory from the one the resolver
+#: names — so the lookup silently misses and, for a key, MINTS a replacement.
+_BASE_TAKING = frozenset(
+    {
+        "resolve_operator_signer",
+        "operator_public_key",
+        "load_operator_key",
+        "resolve_record_cipher",
+    }
+)
+
+
+def _arc_home_as_base(tree: ast.AST) -> list[tuple[str, int]]:
+    """Calls that pass ``arc_home()`` where the accessor would answer better."""
+    hits: list[tuple[str, int]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = _call_name(node)
+        if name not in _BASE_TAKING:
+            continue
+        for argument in node.args:
+            if _call_name(argument) == "arc_home":
+                hits.append((name, node.lineno))
+    return hits
+
+
+def test_no_surface_pins_a_key_lookup_to_the_install_home() -> None:
+    """A key lives where the resolver says, not under ``arc_home()``.
+
+    Both are ARC_CONFIG_DIR-scoped, so the hand-composed form looks equivalent
+    and behaves identically until the layout moves. When it did, a bundle build
+    found no key at the pinned path and minted one, then signed modules with an
+    issuer the deployment's trust store does not pin — a failure that shows up
+    at install time on another machine, not here.
+    """
+    violations: list[str] = []
+    for path in _source_files():
+        if _is_exempt(path):
+            continue
+        for name, line in _arc_home_as_base(ast.parse(path.read_text(encoding="utf-8"))):
+            violations.append(f"{_relative(path)}:{line}: {name}(arc_home())")
+
+    assert not violations, (
+        "these pass arc_home() where the accessor already knows the answer:\n  "
+        + "\n  ".join(sorted(violations))
+        + "\n\nDrop the argument."
+    )

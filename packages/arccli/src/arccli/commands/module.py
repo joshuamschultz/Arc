@@ -48,7 +48,7 @@ import arcagent
 import arcbundle
 import tomlkit
 from arctrust import AuditSink, generate_keypair
-from arctrust.paths import arc_home, bundles_dir, config_file
+from arctrust.paths import bundles_dir, config_file
 
 from arccli.commands._shared import UNRESOLVED_OPERATOR_DID, audit_chain, dispatch
 from arccli.commands._shared import err as _err
@@ -235,19 +235,21 @@ def _operator_identity() -> tuple[str, bytes] | None:
     deployment built and signed itself verifies with no extra setup — while a
     bundle signed by anyone else still needs an explicit issuer entry.
 
-    ``arc_home()`` is passed explicitly because the module commands are
-    ARC_CONFIG_DIR-scoped end to end: an isolated deployment must not reach into
-    the invoking user's real ``~/.arc`` for the key that decides what installs.
+    The accessor is asked with no base. It is already ARC_CONFIG_DIR-scoped, so
+    an isolated deployment still cannot reach the invoking user's real key —
+    and unlike a hand-composed ``arc_home()`` path it follows the key when the
+    layout moves. Pinning it to the install home is how a bundle came to be
+    signed by a key that was minted on the spot.
     """
     from arctrust.policy import OperatorApprovalAuthority
 
     from arccli.commands.operator import operator_public_key, resolve_operator_signer
 
     try:
-        public_key = operator_public_key(arc_home())
+        public_key = operator_public_key()
         if public_key is None:
             return None
-        return OperatorApprovalAuthority(resolve_operator_signer(arc_home())).did, public_key
+        return OperatorApprovalAuthority(resolve_operator_signer()).did, public_key
     except Exception:  # reason: an unresolvable operator key means "not trusted", not a crash
         return None
 
@@ -846,7 +848,11 @@ def _operator_signer() -> tuple[Any, str]:
 
     from arccli.commands.operator import resolve_operator_signer
 
-    signer = resolve_operator_signer(arc_home())
+    # No base: the accessor knows where the key lives. Handing it arc_home()
+    # pinned the lookup to the install home, and once state moved beside the
+    # fleet that path held no key — so building a bundle MINTED one and signed
+    # with an issuer the deployment's trust store does not pin.
+    signer = resolve_operator_signer()
     return signer, OperatorApprovalAuthority(signer).did
 
 
