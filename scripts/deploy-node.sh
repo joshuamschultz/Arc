@@ -122,17 +122,21 @@ PROJECT_VERSION="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$REPO_ROOT/pyproject.to
 # Hashing the source removes the question. Identical code lands in the same
 # directory (still idempotent); different code gets a different one (rollback
 # works again), with no dependence on a .git that is not shipped.
-# scripts/ and deploy/ are in scope because they are consumed FROM the installed
-# runtime, not from the checkout: the unit is copied out of
-# runtime/current/deploy/systemd/arc.service and install-nats.sh runs from
-# runtime/current/scripts/. Fingerprinting only packages/ left a change confined
-# to either of them computing the same name, so the deploy would rsync --delete
-# into the ACTIVE runtime in place — the same hazard through a narrower door.
+# The scope is "everything the rsync below ships", not a list of directories. A
+# directory that lands in the runtime but is left out of the stamp computes the
+# same name for different code, so the deploy rsyncs --delete into the ACTIVE
+# runtime in place — the hazard the side-by-side layout exists to remove.
+#
+# The list was wrong three times: packages/ alone, then without extensions/ (an
+# extension-only connector fix reused the running runtime), then without
+# evaluations/. So it walks the tree and prunes exactly what the rsync excludes,
+# and a directory added tomorrow is covered without anyone remembering.
 BUILD_STAMP="$(
-  find "$REPO_ROOT/packages" "$REPO_ROOT/scripts" "$REPO_ROOT/deploy" \
-       "$REPO_ROOT/pyproject.toml" \
+  find "$REPO_ROOT" \
+    \( -name .git -o -name .venv -o -name node_modules -o -name __pycache__ \
+       -o -name 'team' -o -name 'modules' \) -prune -o \
     -type f \( -name '*.py' -o -name '*.toml' -o -name '*.sh' -o -name '*.service' \) \
-    2>/dev/null |
+    -print 2>/dev/null |
     LC_ALL=C sort | xargs shasum 2>/dev/null | shasum | cut -c1-8
 )"
 [ -n "$BUILD_STAMP" ] || fail "could not fingerprint the source tree at $REPO_ROOT"

@@ -257,16 +257,21 @@ def test_the_runtime_stamp_does_not_come_from_the_target_s_git() -> None:
         "directory and different code gets its own"
     )
 
-    # scripts/ and deploy/ are consumed FROM the installed runtime — the unit is
-    # copied out of runtime/current/deploy/systemd/, and install-nats.sh runs from
-    # runtime/current/scripts/. Leaving them out of the fingerprint let a change
-    # confined to either compute the same name and overwrite the ACTIVE runtime
-    # in place. Caught on a live box after the first fix looked complete.
-    for root in ("packages", "scripts", "deploy"):
-        assert f'"$REPO_ROOT/{root}"' in block, (
-            f"{root}/ is not fingerprinted, so a change confined to it reuses the "
-            "running runtime's directory name"
-        )
+    # The scope is checked against the rsync rather than a list, because a list
+    # rots: it was wrong three times — packages/ alone, then without extensions/
+    # (an extension-only connector fix reused the running runtime), then without
+    # evaluations/. The stamp must walk the whole shipped tree, and may prune only
+    # what the rsync itself leaves behind.
+    assert '"$REPO_ROOT"' in block, (
+        "BUILD_STAMP must walk the whole source tree; naming directories one by "
+        "one is how three of them came to be missing"
+    )
+    over_pruned = [root for root in _shipped_source_roots() if f"-name '{root}'" in block]
+    assert not over_pruned, (
+        f"{over_pruned} ship into the runtime but are pruned from the stamp, so a "
+        "change confined to one reuses the running runtime's directory name and "
+        "the rsync --delete lands in place"
+    )
     for suffix in ("*.py", "*.toml", "*.sh", "*.service"):
         assert f"-name '{suffix}'" in block, f"{suffix} files are not fingerprinted"
 
@@ -360,3 +365,34 @@ def test_the_deploy_script_refuses_a_fleet_inside_the_delete_target() -> None:
     assert "ARC_TEAM_ROOT" in script, "nothing checks where an overridden fleet root points"
     check = script.index("ARC_TEAM_ROOT", script.index("RUNTIME_DIR="))
     assert check < script.index("rsync -a"), "the containment check must run before rsync"
+
+
+#: File types the stamp hashes. A directory holding none of them cannot change
+#: the runtime's behavior through this rsync, so it need not be fingerprinted.
+_STAMPED_SUFFIXES = (".py", ".toml", ".sh", ".service")
+
+
+def _rsync_excludes() -> set[str]:
+    """Top-level directory names the runtime rsync deliberately leaves behind."""
+    script = _script()
+    start = script.index("rsync -a --delete")
+    block = script[start : script.index('"$RUNTIME_DIR/"', start)]
+    return {
+        match.strip("/")
+        for match in re.findall(r"--exclude '([^']+)'", block)
+        if not match.startswith("*") and not match.startswith(".")
+    }
+
+
+def _shipped_source_roots() -> list[str]:
+    """Repo directories the rsync ships that hold files the stamp would hash."""
+    repo = Path(__file__).resolve().parents[2]
+    excluded = _rsync_excludes() | {".git", ".venv", "node_modules"}
+    roots = []
+    for entry in sorted(repo.iterdir()):
+        if not entry.is_dir() or entry.name.startswith(".") or entry.name in excluded:
+            continue
+        if any(p.suffix in _STAMPED_SUFFIXES for p in entry.rglob("*") if p.is_file()):
+            roots.append(entry.name)
+    assert roots, "no shipped source roots found — the repo walk is wrong, not the script"
+    return roots
