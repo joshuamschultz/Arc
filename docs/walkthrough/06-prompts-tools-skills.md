@@ -332,7 +332,7 @@ argument can never impersonate another identity.
 `packages/arcagent/src/arcagent/capabilities/` is where tools and skills get
 *discovered* before `ToolRegistry` ever sees them. `CapabilityLoader`
 (`capabilities/capability_loader.py:1-34`) scans four roots in precedence
-order — `arcagent/builtins/capabilities/` (package-internal), `~/.arc/state/capabilities/`
+order — `arcagent/builtins/capabilities/` (package-internal), `~/arc/state/capabilities/`
 (global extensions), `<agent_root>/capabilities/` (agent-declared), and
 `<agent_root>/workspace/capabilities/` (agent-authored at runtime). Only
 root 1 (plus `builtins-skills`) is trusted outright; the other three are
@@ -427,7 +427,7 @@ improver's `build_bundle_view(skill_name, skill_dir / "SKILL.md")`
 file shape `create_skill` scaffolds (Part B) and the hub installs.
 
 `lock.py` (`packages/arcskill/src/arcskill/lock.py`) records every
-hub-installed skill in `~/.arc/state/skills/.hub/lock.json` — content hash, Rekor
+hub-installed skill in `~/arc/state/skills/.hub/lock.json` — content hash, Rekor
 UUID, SLSA level, scanner verdict — written atomically (temp file +
 `os.replace`) so a crash never leaves a partial record.
 
@@ -566,7 +566,7 @@ signed by the same agent-DID `Signer` seam `create_skill` uses
 | `packages/arcskill/src/arcskill/hub/scanner.py`, `_ast_scanner.py`, `_secret_patterns.py` | Multi-layer static security scanning |
 | `packages/arcskill/src/arcskill/hub/dry_run.py`, `_docker.py`, `_firecracker.py` | Sandboxed dry-run backends |
 | `packages/arcskill/src/arcskill/hub/sources.py` | Pluggable fetch adapters (GitHub release, HTTP registry, `agentskills.io`-style well-known endpoint) |
-| `packages/arcskill/src/arcskill/lock.py` | Install ledger (`~/.arc/state/skills/.hub/lock.json`) |
+| `packages/arcskill/src/arcskill/lock.py` | Install ledger (`~/arc/state/skills/.hub/lock.json`) |
 | `packages/arcskill/src/arcskill/improver/engine.py` | `SkillOptimizer` — the orchestrator |
 | `packages/arcskill/src/arcskill/improver/suitegen.py` | Golden-suite bootstrap for suite-less skills |
 | `packages/arcskill/src/arcskill/improver/evalgate.py` | The hard acceptance gate |

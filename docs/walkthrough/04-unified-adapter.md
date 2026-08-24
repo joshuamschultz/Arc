@@ -266,7 +266,7 @@ Walkthroughs: `walkthroughs/arcllm/02-config-loading.ipynb`,
 modules — each one an `LLMProvider` implementation that wraps another
 `LLMProvider` (`BaseModule` in `modules/base.py`) and delegates. Every module
 is off by default except the four marked below; a caller enables or disables
-any of them per `load_model()` call, or via `config.toml` / `~/.arc/config/arcllm.toml`.
+any of them per `load_model()` call, or via `config.toml` / `~/arc/config/arcllm.toml`.
 
 Stacking order is fixed in `registry.py:421-427` and documented as
 load-bearing — reordering it changes security guarantees, not just behavior:

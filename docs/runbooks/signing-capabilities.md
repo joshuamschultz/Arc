@@ -47,7 +47,7 @@ it again after you review the change.
 
 You need three things.
 
-- The **operator key** for this deployment, at `~/.arc/state/operator`. There is no
+- The **operator key** for this deployment, at `~/arc/state/operator`. There is no
   flag to supply a different identity. Only an operator-key holder can approve.
 - Operator-key custody set to `in_process`. See
   [section 7](#7-the-vault_transit-limit) if it is not.
@@ -221,7 +221,7 @@ never authorized.
 The CLI stops before touching anything:
 
 ```
-arc trust: capability signing requires in-process operator-key custody, but this machine is configured custody=vault_transit — the operator seed never enters this process, so nothing was signed. Run the approval on a host holding the operator key with custody=in_process in ~/.arc/config/arcagent.toml, or extend the notary transit to capability signing.
+arc trust: capability signing requires in-process operator-key custody, but this machine is configured custody=vault_transit — the operator seed never enters this process, so nothing was signed. Run the approval on a host holding the operator key with custody=in_process in ~/arc/config/arcagent.toml, or extend the notary transit to capability signing.
 ```
 
 arcui returns HTTP 500 with the same cause and audits the refusal as a denied
@@ -230,12 +230,12 @@ mutation.
 **What you do instead.** Pick one:
 
 - Run the approval on a host that holds the operator seed with
-  `custody = "in_process"` in that host's `~/.arc/config/arcagent.toml`, then ship the
+  `custody = "in_process"` in that host's `~/arc/config/arcagent.toml`, then ship the
   resulting `.arcsig` sidecar and the updated `arcagent.toml` to the target
   deployment.
 - Extend the notary transit to cover capability signing.
 
-Custody is read from the **machine** `~/.arc/config/arcagent.toml`, not from the
+Custody is read from the **machine** `~/arc/config/arcagent.toml`, not from the
 agent's config. The machine tier sets its default: a `federal` machine forces
 `vault_transit` and rejects a weaker value, and an `enterprise` machine defaults
 to `vault_transit` but may be set to `in_process`. So a federal signing host
@@ -276,8 +276,8 @@ what makes a scaffolded agent work out of the box with no operator step.
 |---|---|
 | The signature | `<artifact>.arcsig`, beside the artifact |
 | The trusted keys and the hash pins | `[security.validators]` in `<agent>/arcagent.toml` |
-| The operator key | `~/.arc/state/operator` |
-| The custody setting | `[security] custody` in `~/.arc/config/arcagent.toml` |
+| The operator key | `~/arc/state/operator` |
+| The custody setting | `[security] custody` in `~/arc/config/arcagent.toml` |
 
 `[security.validators]` sits at agent root, never inside the workspace. The
 agent has no write access to it. Only an operator changes it, through the two

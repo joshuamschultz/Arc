@@ -423,3 +423,32 @@ async def test_the_refusal_for_a_malformed_token_never_echoes_it() -> None:
 
     assert not result.completed
     assert _SENTINEL not in result.detail
+
+
+@pytest.mark.asyncio
+async def test_a_child_that_exits_before_reading_stdin_is_a_verdict_not_a_crash(
+    tmp_path: Path,
+) -> None:
+    """An immediate refusal is an ordinary answer, and must read as one.
+
+    Writing to a pipe the child already closed raised out of the event loop and
+    took the whole authorization check with it, so a connector that said no at
+    once looked like a crash and denied the attach.
+    """
+    from arcagent.extension import host_login
+
+    script = tmp_path / "refuses.sh"
+    # Exits at once without reading stdin, which is what a CLI does when it has
+    # nothing to ask about.
+    script.write_text("#!/bin/sh\necho 'not logged in'\nexit 1\n", encoding="utf-8")
+    script.chmod(0o755)
+
+    run = await host_login._capture(
+        [str(script)],
+        stdin_data="y\n" * 200_000,
+        timeout=10.0,
+        env={},
+        timeout_hint="",
+    )
+
+    assert run.returncode is not None or run.text is not None

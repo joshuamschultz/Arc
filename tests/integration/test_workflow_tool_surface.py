@@ -37,11 +37,16 @@ def agent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
         return backend
 
     _runtime.reset()
+    from arcteam.agent_fleet import ArcTeamFleet
+
     _runtime.configure(
         config={},
         workspace=tmp_path / "workspace",
         identity=AgentIdentity.generate(org="local", agent_type="agent"),
         operator_signer=OperatorKey.load(key_path, generate_if_absent=False).into_signer(),
+        # Authoring a workflow is an agent's own; RUNNING one spans agents, so
+        # the run plane and the control plane come from the layer that spans them.
+        fleet=ArcTeamFleet(),
         arcstore_opener=open_test_backend,
     )
     yield _runtime.state()

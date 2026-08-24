@@ -13,7 +13,7 @@ for `pg_isready`, runs an authenticated query, and starts the ArcStore backend
 once to apply and verify the packaged schema. The database and role are both
 named `arcstore` by default.
 
-The deploy creates `~/.arc/config/arc.env` with mode `0600`. The complete
+The deploy creates `~/arc/config/arc.env` with mode `0600`. The complete
 `ARCSTORE_DATABASE_URL` is written only there and is passed to the runtime via
 its environment; it is never put in TOML, command output, or the repository.
 Provide a password in the source environment file or let the deploy generate a
@@ -38,7 +38,7 @@ already exist.
 
 ```bash
 set -a
-. "$HOME/.arc/config/arc.env"
+. "$HOME/arc/config/arc.env"
 set +a
 ARCSTORE_PYTHON="$HOME/.arc/runtime/current/.venv/bin/python" \
   "$HOME/.arc/runtime/current/scripts/install-postgres.sh"

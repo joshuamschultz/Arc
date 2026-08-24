@@ -132,7 +132,7 @@ flowchart TB
 
     subgraph "Capability Sources"
         S1[Builtins<br/>packages/arcagent/tools]:::source
-        S2[Global<br/>~/.arc/state/capabilities]:::source
+        S2[Global<br/>~/arc/state/capabilities]:::source
         S3[Agent<br/>agent/capabilities]:::source
         S4[Workspace<br/>workspace/.capabilities]:::source
     end
@@ -647,8 +647,8 @@ fleet and the source tarball beside it. Nothing is ever executed from `~/arc`.
 | Root | Accessor | On update |
 |---|---|---|
 | `~/.arc/runtime/<version>/` (+ `current` symlink) | `arc_runtime()` | **replaced wholesale** |
-| `~/.arc/config/` | `arc_config()` | preserved |
-| `~/.arc/state/` | `arc_state()` | **never touched** |
+| `~/arc/config/` | `arc_config()` | preserved |
+| `~/arc/state/` | `arc_state()` | **never touched** |
 | `~/arc/team/` — outside the home entirely | `arc_team()` | **out of reach** |
 
 The fleet's placement is what makes "drop a fresh tree into `~/.arc`" — or
@@ -765,9 +765,9 @@ this layout once, by moving rather than copying, and rolls back on failure.
 | Credential | Location | Mode | Custody |
 |---|---|---|---|
 | Agent DID keypair | `~/.arcagent/keys/<did>.key` / `.pub` | `0700` dir | Vault resolver seam supports Azure KV, file, env backends |
-| Operator key | `~/.arc/state/operator/operator.key` | `0600`, `O_NOFOLLOW` | In-process by default; VaultSigner/VaultTransit for external custody |
-| Trust store | `~/.arc/state/trust/operators.toml`, `issuers.toml` | `0600` | Public keys only |
-| UI tokens | `~/.arc/config/arc.env` | `0600` | Minted once, pinned |
+| Operator key | `~/arc/state/operator/operator.key` | `0600`, `O_NOFOLLOW` | In-process by default; VaultSigner/VaultTransit for external custody |
+| Trust store | `~/arc/state/trust/operators.toml`, `issuers.toml` | `0600` | Public keys only |
+| UI tokens | `~/arc/config/arc.env` | `0600` | Minted once, pinned |
 
 ### Retention and Deletion
 

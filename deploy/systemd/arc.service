@@ -17,7 +17,7 @@ After=network-online.target
 # under it.
 WorkingDirectory=%h/.arc/runtime/current
 Environment=PATH=%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-EnvironmentFile=%h/.arc/config/arc.env
+EnvironmentFile=%h/arc/config/arc.env
 # Modules are separately signed bundles that do not live in the wheel, so a
 # freshly installed runtime otherwise brings the fleet back with ZERO modules —
 # agents that boot, answer chat, and look healthy while their schedulers never
@@ -26,7 +26,7 @@ EnvironmentFile=%h/.arc/config/arc.env
 # agent. It also fails on a missing nats-server, so the Environment=PATH above
 # must reach it — %h/.local/bin is where scripts/deploy-node.sh puts the binary.
 ExecStartPre=%h/.arc/runtime/current/.venv/bin/arc install --team-root %h/arc/team
-ExecStart=%h/.arc/runtime/current/.venv/bin/arc ui start --host 0.0.0.0 --port 8420 --team-root %h/arc/team --gateway-config %h/.arc/config/gateway.toml --no-browser --viewer-token ${VIEWER_TOKEN} --operator-token ${OPERATOR_TOKEN}
+ExecStart=%h/.arc/runtime/current/.venv/bin/arc ui start --host 0.0.0.0 --port 8420 --team-root %h/arc/team --gateway-config %h/arc/config/gateway.toml --no-browser --viewer-token ${VIEWER_TOKEN} --operator-token ${OPERATOR_TOKEN}
 Restart=on-failure
 RestartSec=5
 

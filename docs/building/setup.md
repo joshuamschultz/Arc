@@ -248,7 +248,7 @@ VAULT_TOKEN=...
 #### Option B: Vault Integration
 
 ```toml
-# ~/.arc/config/arcllm.toml
+# ~/arc/config/arcllm.toml
 [vault]
 backend = "https://vault.example.com"
 token_path = "secret/arc/api-keys"
@@ -257,7 +257,7 @@ ttl_seconds = 300
 
 #### Option C: Per-Provider Configuration
 
-Create `~/.arc/config/providers/<provider>.toml`:
+Create `~/arc/config/providers/<provider>.toml`:
 
 ```toml
 [provider]

@@ -167,7 +167,7 @@ actually load.
 The same `arc ext` namespace also manages **capability files** — single
 `.py` files stamped with `@tool` / `@hook` / `@background_task` — across four
 scan roots, in precedence order: `arcagent/builtins/capabilities/` (package),
-`~/.arc/state/capabilities/` (global), `<agent>/capabilities/` (per-agent,
+`~/arc/state/capabilities/` (global), `<agent>/capabilities/` (per-agent,
 trusted), `<agent>/workspace/capabilities/` (agent-authored, untrusted,
 AST-validated) (`extensions.py:1-12`). This is the lightest-weight seam in
 Arc: `arc ext create my_tool` scaffolds a `@tool`-decorated file, no
@@ -202,7 +202,7 @@ personal blueprint cannot weaken a federal deployment.
 Packaged presets (`personal-assistant.toml`, `enterprise-ops.toml`,
 `federal-analyst.toml`, all in the same directory) ship inside the verified
 wheel and are provenance-trusted with no sidecar. A **user** preset from
-`~/.arc/state/blueprints/` must be signed and, above `personal`, its signature is
+`~/arc/state/blueprints/` must be signed and, above `personal`, its signature is
 **pinned** to the deployment operator's key — an unpinned gate accepts any
 self-signed forgery, so resolution denies fail-closed when the operator key
 cannot be resolved (`loader.py:26-32`, `resolve_blueprint` at `:116-128`).

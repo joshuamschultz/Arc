@@ -138,7 +138,7 @@ for token in client.stream([{"role": "user", "content": "Tell me a story"}]):
 ### Configuration File
 
 ```toml
-# ~/.arc/config/providers/anthropic.toml
+# ~/arc/config/providers/anthropic.toml
 [provider]
 name = "anthropic"
 base_url = "https://api.anthropic.com/v1"

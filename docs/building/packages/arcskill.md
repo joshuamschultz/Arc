@@ -229,7 +229,7 @@ lifecycle.inactivity_window_days = 30
 ### Location
 
 ```
-~/.arc/state/skills/.hub/lock.json
+~/arc/state/skills/.hub/lock.json
 ```
 
 ---

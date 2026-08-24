@@ -39,7 +39,7 @@ Two more file kinds sit alongside these:
 | File | Owns | Purpose |
 |---|---|---|
 | `arcllm/providers/*.toml` (packaged) | arcllm | One file per provider: `[provider]` connection settings + `[models.*]` metadata (context window, pricing, tool/vision support) + optional `[[endpoints]]` load-balancing pool. Never user-edited in place — override via the per-agent `arcllm.toml` |
-| `arcagent/blueprints/*.toml` (packaged) + `~/.arc/state/blueprints/*.toml` (user) | arcagent | A `[blueprint]`-headed config **overlay** applied at `arc blueprint apply` / `arc init --blueprint` time — write-time, not a runtime layer (see below) |
+| `arcagent/blueprints/*.toml` (packaged) + `~/arc/state/blueprints/*.toml` (user) | arcagent | A `[blueprint]`-headed config **overlay** applied at `arc blueprint apply` / `arc init --blueprint` time — write-time, not a runtime layer (see below) |
 
 And two config roots that are read directly by their own package, referenced
 (never redefined) by everyone else:

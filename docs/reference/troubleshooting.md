@@ -226,7 +226,7 @@ arc agent tools my-agent
 
 # Check capability sources
 ls -la my-agent/capabilities/
-ls -la ~/.arc/state/capabilities/
+ls -la ~/arc/state/capabilities/
 ls -la workspace/.capabilities/
 
 # Verify tool decorator

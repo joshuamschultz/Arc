@@ -27,6 +27,7 @@ from typing import Any
 
 import pytest
 from arcstore.backends.memory import FakeBackend
+from arcteam.agent_fleet import ArcTeamFleet
 from arctrust.paths import workflows_dir
 
 _ONE_NODE = """
@@ -266,6 +267,7 @@ def test_the_authoring_lifecycle_runs_from_the_agent_tools(
             operator_signer=OperatorKey.load(
                 operator_key_path(arc_dir), generate_if_absent=False
             ).into_signer(),
+            fleet=ArcTeamFleet(),
             arcstore_opener=lambda: _open_backend(arcstore_backend),
         )
         try:

@@ -200,7 +200,7 @@ can never load, so `_warn_config_without_folder` surfaces it once at startup as 
 error rather than failing silently.
 
 **Contrast with the always-scanned capability roots.** Modules are one of several capability
-sources the `CapabilityLoader` scans. The others — builtins, `~/.arc/state/capabilities/`, the
+sources the `CapabilityLoader` scans. The others — builtins, `~/arc/state/capabilities/`, the
 per-agent `capabilities/`, and the workspace `capabilities/` — are scanned unconditionally
 (builtins) or by user opt-in, independent of `[modules.*]`. Modules are the config-gated
 source: `agent_lifecycle.setup_capabilities` appends one `("module:<name>", modules_dir/<name>)`

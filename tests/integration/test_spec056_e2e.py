@@ -54,6 +54,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from arcagent.fleet import FleetNoticeKind
 from arcagent.modules.tasks import _runtime
 from arcagent.modules.tasks.capabilities import (
     assign_task,
@@ -64,10 +65,11 @@ from arcagent.modules.tasks.capabilities import (
 )
 from arcagent.modules.tasks.store import open_store
 from arcstore.backends.memory import FakeBackend
+from arcteam.agent_fleet import FleetDirectoryAdapter
 from arcteam.audit import AuditLogger
 from arcteam.registry import EntityRegistry
 from arcteam.storage import MemoryBackend
-from arcteam.types import Entity, EntityType, Message, MsgType
+from arcteam.types import Entity, EntityType, Message
 from arctrust import AgentIdentity, OperatorKey
 
 
@@ -83,9 +85,9 @@ class _SharedMessenger:
     def __init__(self) -> None:
         self.sent: list[Message] = []
 
-    async def send(self, message: Message) -> Message:
-        self.sent.append(message)
-        return message
+    async def send_notice(self, notice: Any) -> None:
+        """The seam an agent speaks: a notice, not the bus's own envelope."""
+        self.sent.append(notice)
 
 
 def _make_registry() -> EntityRegistry:
@@ -128,7 +130,9 @@ async def _agent_state(
         telemetry=MagicMock(),
         workspace=Path(data_dir),
         identity=identity,
-        registry=registry,
+        # The seam, not arcteam's registry: an agent resolves a teammate through
+        # arcagent.fleet and the orchestration layer supplies what satisfies it.
+        registry=FleetDirectoryAdapter(registry),
         messenger=messenger,
         arcstore_opener=arcstore_opener,
     )
@@ -195,8 +199,8 @@ async def test_spec056_multi_agent_task_flow_e2e(
         assert assigned["status"] == "todo"
         assert len(messenger.sent) == 1
         envelope = messenger.sent[0]
-        assert envelope.to == ["agent://bob"]
-        assert envelope.msg_type == MsgType.TASK_ASSIGNED
+        assert envelope.to == ("agent://bob",)
+        assert envelope.kind == FleetNoticeKind.TASK_ASSIGNED
         assert "@bob" in envelope.body
         assert backlog_task["id"] in envelope.body
 

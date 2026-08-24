@@ -154,7 +154,7 @@ Create, validate, and search agent skills — folders containing a `SKILL.md` (f
 7 required sections: Resources, Contract, Knowledge, Steps, Anti Patterns, Examples,
 Validation) plus optional `references/`, `scripts/`, `templates/`, `assets/`. The
 unified `CapabilityLoader` discovers skills from four scan roots: the package builtins,
-`~/.arc/state/capabilities/` (global), `<agent>/capabilities/` (per-agent, trusted), and
+`~/arc/state/capabilities/` (global), `<agent>/capabilities/` (per-agent, trusted), and
 `<agent>/workspace/capabilities/` (agent-authored, untrusted).
 
 | Command | Purpose | Example |
@@ -163,7 +163,7 @@ unified `CapabilityLoader` discovers skills from four scan roots: the package bu
 | `arc skill list --agent <path>` | Include skills from a specific agent workspace | `arc skill list --agent myagent` |
 | `arc skill create <name>` | Scaffold a new skill folder (`./<name>/SKILL.md`) | `arc skill create data-analysis` |
 | `arc skill create <name> --dir <dir>` | Write to a specific parent directory | `arc skill create audit-report --dir myagent/capabilities` |
-| `arc skill create <name> --global` | Write to `~/.arc/state/capabilities/<name>/` | `arc skill create shared-tool --global` |
+| `arc skill create <name> --global` | Write to `~/arc/state/capabilities/<name>/` | `arc skill create shared-tool --global` |
 | `arc skill validate <path>` | Validate a skill folder or its `SKILL.md` | `arc skill validate ./myskill` |
 | `arc skill search <query>` | Search skills by name or description | `arc skill search "data analysis"` |
 | `arc skill search <query> --agent <path>` | Include agent workspace in search | `arc skill search "report" --agent myagent` |
@@ -188,8 +188,8 @@ Capability files use the same four scan roots as `arc skill`.
 | `arc ext list --agent <path>` | Include capabilities from a specific agent workspace | `arc ext list --agent myagent` |
 | `arc ext create <name>` | Scaffold a new `.py` with a `@tool` template | `arc ext create web-search` |
 | `arc ext create <name> --dir <dir>` | Write to a specific directory | `arc ext create scraper --dir myagent/capabilities` |
-| `arc ext create <name> --global` | Write to `~/.arc/state/capabilities/` | `arc ext create shared-tool --global` |
-| `arc ext install <source>` | Install a `.py` file or directory into `~/.arc/state/capabilities/` | `arc ext install my_capability.py` |
+| `arc ext create <name> --global` | Write to `~/arc/state/capabilities/` | `arc ext create shared-tool --global` |
+| `arc ext install <source>` | Install a `.py` file or directory into `~/arc/state/capabilities/` | `arc ext install my_capability.py` |
 | `arc ext validate <path>` | Validate a capability file | `arc ext validate my_capability.py` |
 | `arc ext inspect [--agent <path>]` | Show selected/available/signed state for all 4 extension-point families | `arc ext inspect --agent myagent` |
 | `arc ext verify [--agent <path>]` | Report extension-point selections that would be refused at load; non-zero exit on a refusal | `arc ext verify --agent myagent` |
@@ -204,12 +204,12 @@ preset **under** the target's existing config (identity + user keys win — not 
 clobber-write), floors the tier by stringency-max (a blueprint can only raise a floor, never
 weaken federal), and materializes the concrete `arcagent.toml`. Three packaged presets ship
 provenance-trusted: `personal-assistant`, `enterprise-ops`, `federal-analyst`. User presets
-live in `~/.arc/state/blueprints/` and must be signed with `arc blueprint sign` (pinned to the
+live in `~/arc/state/blueprints/` and must be signed with `arc blueprint sign` (pinned to the
 deployment operator key above `personal`).
 
 | Command | Purpose | Example |
 |---|---|---|
-| `arc blueprint list` | List packaged + `~/.arc/state/blueprints` presets | `arc blueprint list` |
+| `arc blueprint list` | List packaged + `~/arc/state/blueprints` presets | `arc blueprint list` |
 | `arc blueprint show <name>` | Print a blueprint's resolved config overlay | `arc blueprint show enterprise-ops` |
 | `arc blueprint apply <name> [--agent <path>]` | Verify, deep-merge, and write | `arc blueprint apply enterprise-ops --agent myagent` |
 | `arc blueprint apply <name> --dry-run` | Print the merged config only — no write, no audit record | `arc blueprint apply enterprise-ops --dry-run` |
@@ -477,7 +477,7 @@ Consolidation (entity cards + facts + insights) is opt-in via `distill_provider`
 `[modules.memory]` config at all — remains `none`, so federal deployments stay memory-off
 unless a config/blueprint opts in.)
 
-Skills and capability `.py` files are discovered from `~/.arc/state/capabilities/` (global) plus
+Skills and capability `.py` files are discovered from `~/arc/state/capabilities/` (global) plus
 per-agent `capabilities/` / `workspace/capabilities/` — there is no separate `[extensions]`
 config section; see `arc skill` / `arc ext` above.
 

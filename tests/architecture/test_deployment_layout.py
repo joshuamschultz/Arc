@@ -113,17 +113,22 @@ def test_the_service_works_from_inside_the_active_runtime(
 
 @pytest.mark.parametrize("unit_file", [_UNIT, _FORWARD_UNIT], ids=lambda p: p.name)
 def test_no_shipped_unit_executes_out_of_the_checkout(unit_file: Path, service_env: None) -> None:
-    """Nothing may be run from the directory operators rsync and pull into.
+    """Nothing may be RUN from the directory operators rsync and pull into.
 
     This is the assertion that fails first if someone "fixes" a deploy problem by
     pointing a unit back at the checkout, which is how the layout drifted from
-    its own documentation the first time. The fleet is the one thing that lives
-    under there, and a unit names it as data, never as an executable.
+    its own documentation the first time.
+
+    Data is a different matter and belongs there: the fleet, the config and the
+    state all live under the operator root by design, so that replacing the
+    install home costs nothing. A unit names those as data — an EnvironmentFile
+    is read, never executed — and only the directives that start a process are
+    held to the checkout rule.
     """
     checkout = f"{paths.arc_team().parent}/"
     directives = _unit_directives(unit_file)
     for key, values in directives.items():
-        if not key.startswith(("Exec", "WorkingDirectory", "EnvironmentFile")):
+        if not key.startswith(("Exec", "WorkingDirectory")):
             continue
         for value in values:
             executable = value.split()[0] if key.startswith("Exec") else value

@@ -27,9 +27,11 @@ class TestJetstreamStoreDir:
         assert default_jetstream_store_dir() == Path("/tmp/isotest/config/state/nats/jetstream")
 
     def test_falls_back_without_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Under the operator root: a bus's stored state survives a reinstall."""
         monkeypatch.delenv("ARC_CONFIG_DIR", raising=False)
+        monkeypatch.delenv("ARC_TEAM_ROOT", raising=False)
         assert (
-            default_jetstream_store_dir() == Path.home() / ".arc" / "state" / "nats" / "jetstream"
+            default_jetstream_store_dir() == Path.home() / "arc" / "state" / "nats" / "jetstream"
         )
 
 

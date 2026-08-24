@@ -13,7 +13,7 @@ Type=simple
 Environment=ARC_FORWARD_TARGET=
 Environment=ARC_FORWARD_LISTEN=127.0.0.1:4000
 Environment=ARC_FORWARD_PROXY=127.0.0.1:1055
-EnvironmentFile=-%h/.arc/config/arc.env
+EnvironmentFile=-%h/arc/config/arc.env
 ExecStart=/usr/bin/python3 %h/.arc/runtime/current/deploy/connect-forward.py
 # The process exits when the target is unreachable, so this restart loop is what
 # makes an unreachable target visible instead of a green unit forwarding nothing.

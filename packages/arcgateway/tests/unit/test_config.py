@@ -105,4 +105,6 @@ def test_runtime_dir_default_falls_back_to_home_without_arc_config_dir(
 ) -> None:
     monkeypatch.delenv("ARC_CONFIG_DIR", raising=False)
     cfg = GatewayConfig.from_toml_str("")
-    assert cfg.gateway.runtime_dir == gateway_runtime_dir(Path.home() / ".arc")
+    # Under the operator root, not the install home: runtime state must
+    # survive replacing ~/.arc.
+    assert cfg.gateway.runtime_dir == gateway_runtime_dir(Path.home() / "arc")

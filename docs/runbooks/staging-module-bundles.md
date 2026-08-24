@@ -57,7 +57,7 @@ Two properties decide how you handle the media.
   bundle signatures are ed25519; signer offers 'ecdsa-p256'
   ```
 
-  A machine whose `~/.arc/config/arcagent.toml` sets `[security] tier = "federal"` forces
+  A machine whose `~/arc/config/arcagent.toml` sets `[security] tier = "federal"` forces
   `ecdsa-p256`, so **a federal-configured host cannot build a bundle.** That is why the build
   runs on the low side.
 
@@ -161,7 +161,7 @@ role = "manifest-signer"
 ```
 
 ```bash
-chmod 0600 ~/.arc/state/trust/issuers.toml
+chmod 0600 ~/arc/state/trust/issuers.toml
 ```
 
 **The file must be `0600`.** Any group- or other-readable mode is refused with
@@ -318,7 +318,7 @@ and the issuer. A successful verify emits `module.bundle.verified`, and the writ
 Stage them into the deployment bundle store and install by name:
 
 ```bash
-cp -r /srv/staging/*.arcbundle ~/.arc/state/bundles/
+cp -r /srv/staging/*.arcbundle ~/arc/state/bundles/
 arc module install web browser scheduler --agent olivia
 ```
 

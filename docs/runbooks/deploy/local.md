@@ -52,8 +52,8 @@ new runtime and flip the symlink":
 | Path | Holds | On update |
 |---|---|---|
 | `~/.arc/runtime/<version>/` (+ a `current` symlink) | the framework — code, venv, modules | **replaced wholesale** |
-| `~/.arc/config/` | `arcagent.toml`, `arcllm.toml`, `arcrun.toml`, `gateway.toml`, `connections.toml`, `arc.env` | preserved |
-| `~/.arc/state/` | operator key, identity, trust store, arcstore DB, NATS JetStream, staged bundles | **never touched** |
+| `~/arc/config/` | `arcagent.toml`, `arcllm.toml`, `arcrun.toml`, `gateway.toml`, `connections.toml`, `arc.env` | preserved |
+| `~/arc/state/` | operator key, identity, trust store, arcstore DB, NATS JetStream, staged bundles | **never touched** |
 
 Because runtimes install side by side, an update is an atomic `current`
 symlink flip and a rollback is flipping it back:
@@ -76,7 +76,7 @@ Three rules follow, and each has already cost a live box:
   `arctrust.paths.arc_team()`. The unit and the deploy script both read it from
   there rather than spelling it out — a deploy that starts from the wrong empty
   root does not fail, it reports healthy and serves no agents.
-* **Never overwrite `~/.arc/state` wholesale.** It holds the operator signing
+* **Never overwrite `~/arc/state` wholesale.** It holds the operator signing
   key. Every WORM audit chain is signed with it; destroy it and the chains it
   signed can no longer be verified. Replace `runtime/`, nothing else.
 
@@ -219,7 +219,7 @@ crash — it logs a warning and skips that platform (see Troubleshooting).
 
 ### Secrets file
 
-Create `~/.arc/config/arc.env` (0600) with the values `arc ui start` needs at
+Create `~/arc/config/arc.env` (0600) with the values `arc ui start` needs at
 runtime. Do this in a single remote shell invocation so secret values never
 appear in your local terminal history or an orchestrating agent's
 transcript:
@@ -227,19 +227,19 @@ transcript:
 ```bash
 ssh host 'bash -s' <<'REMOTE'
 set -euo pipefail
-mkdir -p ~/.arc/config
+mkdir -p ~/arc/config
 ANTHROPIC_API_KEY=$(grep -m1 '^ANTHROPIC_API_KEY=' ~/arc/.env | cut -d= -f2-)
 TELEGRAM_BOT_TOKEN=$(grep -m1 '^ARCAGENT_TELEGRAM_BOT_TOKEN=' ~/arc/.env | cut -d= -f2-)
 VIEWER_TOKEN=$(openssl rand -hex 32)
 OPERATOR_TOKEN=$(openssl rand -hex 32)
 umask 077
-cat > ~/.arc/config/arc.env <<INNER
+cat > ~/arc/config/arc.env <<INNER
 ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY
 TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN
 VIEWER_TOKEN=$VIEWER_TOKEN
 OPERATOR_TOKEN=$OPERATOR_TOKEN
 INNER
-chmod 600 ~/.arc/config/arc.env
+chmod 600 ~/arc/config/arc.env
 REMOTE
 ```
 
@@ -256,7 +256,7 @@ exists for the same reason.
 ssh host '~/.arc/runtime/current/.venv/bin/arc init --tier personal --provider anthropic'
 ```
 
-Writes `~/.arc/config/{arcllm.toml,arcagent.toml,gateway.toml}`. `deploy-node.sh`
+Writes `~/arc/config/{arcllm.toml,arcagent.toml,gateway.toml}`. `deploy-node.sh`
 skips this step if `gateway.toml` already exists — re-running `arc init`
 against an already-customized host would either hang on an interactive
 overwrite prompt or (with `--quick`) silently clobber those customizations.
@@ -272,7 +272,7 @@ deploy_node_overlays.py` applies all of these idempotently via `tomlkit`
 (preserves comments/formatting, safe to re-run, never clobbers a value you
 set by hand unless you re-pass the matching flag):
 
-**`~/.arc/config/arcagent.toml`** — model for policy eval and the skill improver,
+**`~/arc/config/arcagent.toml`** — model for policy eval and the skill improver,
 plus the skills adapter:
 
 ```toml
@@ -293,7 +293,7 @@ Note the **nested** shape — `enabled` lives at the module level, while
 (`arcagent/modules/skills/config.py::SkillsConfig`). A flat
 `[modules.skills] adapter = "arcskill"` looks plausible but is wrong.
 
-**`~/.arc/config/gateway.toml`** — web chat adapter (required when passing an
+**`~/arc/config/gateway.toml`** — web chat adapter (required when passing an
 explicit `--gateway-config`; omitting the flag auto-builds a web-only
 default, but an explicit file must opt in itself) and Telegram:
 
@@ -321,7 +321,7 @@ adapter's audit log for the rejected `user_id` (or `@userinfobot`).
 
 ```bash
 ssh host 'export PATH="$HOME/.local/bin:$PATH" && \
-  set -a && source ~/.arc/config/arc.env && set +a && \
+  set -a && source ~/arc/config/arc.env && set +a && \
   ~/.arc/runtime/current/.venv/bin/arc agent create josh_agent --dir ~/arc/team --model anthropic/claude-sonnet-5'
 ```
 
@@ -334,7 +334,7 @@ embedded gateway knows which identity to route platform DMs to
 
 Apply the same `[eval]`/`[modules.skills]` deltas to
 `~/arc/team/<agent>/arcagent.toml` too, even though the user-wide
-`~/.arc/config/arcagent.toml` already sets them — belt-and-suspenders against the
+`~/arc/config/arcagent.toml` already sets them — belt-and-suspenders against the
 per-instance merge missing them.
 
 Validate before wiring into systemd:
@@ -363,9 +363,9 @@ After=network-online.target
 [Service]
 WorkingDirectory=%h/.arc/runtime/current
 Environment=PATH=%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-EnvironmentFile=%h/.arc/config/arc.env
+EnvironmentFile=%h/arc/config/arc.env
 ExecStartPre=%h/.arc/runtime/current/.venv/bin/arc install --team-root %h/arc/team
-ExecStart=%h/.arc/runtime/current/.venv/bin/arc ui start --host 0.0.0.0 --port 8420 --team-root %h/arc/team --gateway-config %h/.arc/config/gateway.toml --no-browser --viewer-token ${VIEWER_TOKEN} --operator-token ${OPERATOR_TOKEN}
+ExecStart=%h/.arc/runtime/current/.venv/bin/arc ui start --host 0.0.0.0 --port 8420 --team-root %h/arc/team --gateway-config %h/arc/config/gateway.toml --no-browser --viewer-token ${VIEWER_TOKEN} --operator-token ${OPERATOR_TOKEN}
 Restart=on-failure
 RestartSec=5
 
@@ -379,8 +379,8 @@ WantedBy=default.target
 - `Environment=PATH=...` must include `~/.local/bin` — that's how
  `shutil.which("nats-server")` finds the broker binary at startup, so
  `arc ui start` can auto-spawn its own managed NATS child bound to a
- persistent store dir (`~/.arc/state/nats/jetstream`, survives restarts).
-- `EnvironmentFile=%h/.arc/config/arc.env` supplies `ANTHROPIC_API_KEY`,
+ persistent store dir (`~/arc/state/nats/jetstream`, survives restarts).
+- `EnvironmentFile=%h/arc/config/arc.env` supplies `ANTHROPIC_API_KEY`,
  `TELEGRAM_BOT_TOKEN`, `VIEWER_TOKEN`, `OPERATOR_TOKEN` at process start.
 
 **Known limitation — token exposure in `ps`**: `${VIEWER_TOKEN}`/
@@ -494,7 +494,7 @@ fixed-path config). Use the embedded path instead — it's the only one
 that works today, at every tier:
 
 ```bash
-arc ui start --team-root ~/arc/team --gateway-config ~/.arc/config/gateway.toml
+arc ui start --team-root ~/arc/team --gateway-config ~/arc/config/gateway.toml
 ```
 
 `arcgateway stop`/`status` still work normally for managing a daemon
@@ -547,7 +547,7 @@ curl -s "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/getMe"
 
 Returns the bot's `username`/`id`. If it doesn't match the bot you're
 DMing in Telegram, you're pointed at the wrong token — check
-`~/.arc/config/arc.env` and restart the service after fixing it (the allowlist
+`~/arc/config/arc.env` and restart the service after fixing it (the allowlist
 and token are both read at adapter construction, not live-reloaded).
 
 ## Deployment pattern: embedded is canonical

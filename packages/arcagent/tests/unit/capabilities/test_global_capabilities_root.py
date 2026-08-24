@@ -33,10 +33,15 @@ _TOOL = (
 
 
 def test_unset_arc_config_dir_keeps_todays_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No env var → the capability root under the real home, as before the fix."""
+    """No env var → the capability root the resolver names, under the operator root.
+
+    An installed capability is something an operator put there, so it survives
+    replacing the install home rather than living inside it.
+    """
     monkeypatch.delenv("ARC_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("ARC_TEAM_ROOT", raising=False)
     assert global_capabilities_root() == capabilities_dir()
-    assert global_capabilities_root().is_relative_to(Path.home() / ".arc")
+    assert global_capabilities_root().is_relative_to(Path.home() / "arc")
 
 
 def test_arc_config_dir_relocates_the_global_root(

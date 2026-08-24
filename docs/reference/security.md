@@ -514,7 +514,7 @@ writes):
 | # | Root | Path | Trust |
 |---|---|---|---|
 | 1 | `builtins` / `builtins-skills` | `arcagent/builtins/capabilities/` | **trusted** |
-| 2 | `global` / `global-skills` | `~/.arc/state/capabilities/` | **untrusted** |
+| 2 | `global` / `global-skills` | `~/arc/state/capabilities/` | **untrusted** |
 | 3 | `agent` / `agent-skills` | `<agent_root>/capabilities/` | **untrusted** |
 | 4 | `workspace` / `workspace-skills` | `<agent_root>/workspace/capabilities/` | **untrusted** |
 
@@ -678,7 +678,7 @@ signature verifiable), and the source-hash pin under
 exact bytes). A hash pin on its own never reaches the enterprise/federal
 signature floor, which is why approval is signing.
 
-The signer is always the on-box deployment operator key (`~/.arc/state/operator`);
+The signer is always the on-box deployment operator key (`~/arc/state/operator`);
 there is no flag to supply an identity. The pin name is the loader's
 (`pin_name_for` — a tool's file stem, a skill's folder name). After signing, the
 command re-scans and reports the post-approval verdict:

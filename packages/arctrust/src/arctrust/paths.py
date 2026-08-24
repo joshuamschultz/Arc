@@ -105,33 +105,56 @@ def _base(base: Base = None) -> Path:
 
 
 def arc_home() -> Path:
-    """Return the Arc home: ``${ARC_CONFIG_DIR:-~/.arc}``.
+    """Return the install home: ``${ARC_CONFIG_DIR:-~/.arc}``.
 
-    The parent of all four lifecycle roots. Prefer :func:`arc_config`,
-    :func:`arc_state`, :func:`arc_runtime`, or :func:`arc_team` — this exists
-    for the migration and for surfaces that genuinely mean "the whole tree".
+    Only what an install put there — the runtime versions and the ``current``
+    symlink. Nothing under it is irreplaceable, which is the whole point: an
+    update replaces it and a broken one is fixed by deleting it. Everything that
+    changes with use lives under :func:`operator_root`.
+
+    Prefer a named accessor. This exists for surfaces that genuinely mean "the
+    installed tree".
     """
     base = os.environ.get(ARC_CONFIG_DIR_ENV)
     return Path(base).expanduser() if base else Path.home() / ".arc"
 
 
-def arc_config(base: Base = None) -> Path:
-    """Return the preserved config root: ``<arc_home>/config``.
+def operator_root(base: Base = None) -> Path:
+    """Return the operator's root: ``${ARC_TEAM_ROOT:-~/arc}``.
 
-    Operator-authored TOML and the provider-key env file. An update leaves it
-    exactly as it found it.
+    Everything that changes with USE lives here — config, state, and the fleet.
+    ``~/.arc`` holds only what an install put there, so an update can replace
+    that whole tree and a broken install can be fixed by deleting it, without
+    touching a key, a memory, a workflow or an agent.
+
+    Precedence matches :func:`arc_team`: explicit ``base`` (``--arc-dir``, which
+    means "this one self-contained tree") → ``ARC_TEAM_ROOT`` →
+    ``ARC_CONFIG_DIR`` → ``~/arc``.
     """
-    return _base(base) / "config"
+    if base is not None:
+        return _base(base)
+    override = os.environ.get(ARC_TEAM_ROOT_ENV) or os.environ.get(ARC_CONFIG_DIR_ENV)
+    return Path(override).expanduser() if override else Path.home() / "arc"
+
+
+def arc_config(base: Base = None) -> Path:
+    """Return the config root: ``<operator_root>/config``.
+
+    Operator-authored TOML and the provider-key env file. Written by an
+    operator, so it belongs beside their fleet rather than inside the install.
+    """
+    return operator_root(base) / "config"
 
 
 def arc_state(base: Base = None) -> Path:
-    """Return the never-touched state root: ``<arc_home>/state``.
+    """Return the state root: ``<operator_root>/state``.
 
     Everything irreplaceable: the operator signing key, agent identities, the
-    trust store, the arcstore database, NATS JetStream state, staged bundles.
-    An update must not read, move, or rewrite anything under here.
+    trust store, the arcstore database, NATS JetStream state, staged bundles,
+    installed extensions, signed workflows. None of it can be regenerated from
+    an install, so none of it lives inside one.
     """
-    return _base(base) / "state"
+    return operator_root(base) / "state"
 
 
 def arc_runtime_root(base: Base = None) -> Path:
@@ -180,11 +203,7 @@ def arc_team(name: str = "team", base: Base = None) -> Path:
     ``~/arc/team`` while the rest of the home was redirected is how a test run
     creates agents in the developer's own live fleet.
     """
-    if base is not None:
-        return _base(base) / name
-    override = os.environ.get(ARC_TEAM_ROOT_ENV) or os.environ.get(ARC_CONFIG_DIR_ENV)
-    root = Path(override).expanduser() if override else Path.home() / "arc"
-    return root / name
+    return operator_root(base) / name
 
 
 # ---------------------------------------------------------------------------
@@ -473,6 +492,7 @@ __all__ = [
     "module_root",
     "nats_dir",
     "operator_dir",
+    "operator_root",
     "runtime_bin",
     "runtime_venv",
     "skills_dir",

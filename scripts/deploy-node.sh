@@ -78,10 +78,12 @@ ENV_FILE="${ARC_ENV_FILE:-$REPO_ROOT/.env}"
 ARC_CONFIG_DIR="${ARC_CONFIG_DIR:-$HOME/.arc}"
 export ARC_CONFIG_DIR
 
-# arc_team() falls back to ARC_CONFIG_DIR before ~/arc, so exporting the line
-# above is itself enough to move the fleet into the hidden home — every `arc`
-# call below would answer ~/.arc/team while the unit serves ~/arc/team. Pin the
-# fleet explicitly so the resolver and the unit cannot disagree.
+# operator_root() falls back to ARC_CONFIG_DIR before ~/arc, so exporting the
+# line above is itself enough to pull the fleet, the config and the state INTO
+# the install home — every `arc` call below would answer ~/.arc/team while the
+# unit serves ~/arc/team, and the next install would sit on top of the signing
+# key. Pin the operator root explicitly so the resolver and the unit cannot
+# disagree.
 ARC_TEAM_ROOT="${ARC_TEAM_ROOT:-$HOME/arc}"
 export ARC_TEAM_ROOT
 
@@ -226,6 +228,13 @@ log "Splitting the Arc home if it is still flat (idempotent)..."
 # disagree about which directory holds the agents, and starting from the wrong
 # empty root loads ZERO agents while reporting healthy.
 TEAM_ROOT="$("$VENV_PY" -c 'from arctrust.paths import arc_team; print(arc_team())')"
+# Config and state live beside the fleet now, not inside the install home, so
+# they are asked for the same way. A script that carries its own answer is how
+# the deploy and the unit came to disagree about which directory holds what.
+CONFIG_DIR="$("$VENV_PY" -c 'from arctrust.paths import arc_config; print(arc_config())')"
+STATE_DIR="$("$VENV_PY" -c 'from arctrust.paths import arc_state; print(arc_state())')"
+ok "config root: $CONFIG_DIR"
+ok "state root:  $STATE_DIR"
 # Compare the FULL path, not the basename. Both sides spell the last component
 # "team", so a basename check passes while the parent is wrong — which is exactly
 # the failure this guard exists to catch, and it could not see it.
@@ -269,8 +278,8 @@ if [ "$ENABLE_TELEGRAM" = "1" ]; then
   [ -n "$TELEGRAM_BOT_TOKEN" ] || fail "ARC_ENABLE_TELEGRAM=1 but ARCAGENT_TELEGRAM_BOT_TOKEN missing from $ENV_FILE"
 fi
 
-mkdir -p "$ARC_CONFIG_DIR/config"
-ARC_ENV="$ARC_CONFIG_DIR/config/arc.env"
+mkdir -p "$CONFIG_DIR"
+ARC_ENV="$CONFIG_DIR/arc.env"
 if [ -f "$ARC_ENV" ]; then
   ok "$ARC_ENV already present — leaving viewer/operator tokens pinned"
 else
@@ -422,7 +431,7 @@ print(urlparse(sys.argv[1]).port or 5433)
 fi
 
 # --- 6. arc init -----------------------------------------------------------
-if [ -f "$ARC_CONFIG_DIR/config/gateway.toml" ]; then
+if [ -f "$CONFIG_DIR/gateway.toml" ]; then
   ok "arc init already run — leaving ~/.arc/config/*.toml as-is"
 else
   log "arc init --tier $TIER --provider $PROVIDER..."
@@ -433,16 +442,16 @@ fi
 OVERLAYS="$RUNTIME_ROOT/scripts/deploy_node_overlays.py"
 log "Applying user-wide config overlays..."
 "$VENV_PY" "$OVERLAYS" agent-config \
-  "$ARC_CONFIG_DIR/config/arcagent.toml" --provider "$PROVIDER" --model "${AGENT_MODEL#*/}"
+  "$CONFIG_DIR/arcagent.toml" --provider "$PROVIDER" --model "${AGENT_MODEL#*/}"
 
 "$VENV_PY" "$OVERLAYS" arcstore-config \
-  "$ARC_CONFIG_DIR/config/arcagent.toml" --credential-ref "${ARCSTORE_DATABASE_CREDENTIAL_REF:-}"
+  "$CONFIG_DIR/arcagent.toml" --credential-ref "${ARCSTORE_DATABASE_CREDENTIAL_REF:-}"
 if [ "$MEMORY_INDEX_BACKEND" = "postgres" ]; then
   "$VENV_PY" "$OVERLAYS" memory-config \
-    "$ARC_CONFIG_DIR/config/arcagent.toml" --index-backend postgres
+    "$CONFIG_DIR/arcagent.toml" --index-backend postgres
 fi
 
-GATEWAY_ARGS=(gateway-config "$ARC_CONFIG_DIR/config/gateway.toml")
+GATEWAY_ARGS=(gateway-config "$CONFIG_DIR/gateway.toml")
 if [ "$ENABLE_TELEGRAM" = "1" ]; then
   GATEWAY_ARGS+=(--enable-telegram)
   if [ -n "$TELEGRAM_ALLOWED_USER_IDS" ]; then
@@ -494,7 +503,7 @@ if not p.exists():
 else:
     with p.open("rb") as f:
         print(tomllib.load(f).get("gateway", {}).get("agent_did", ""))
-' "$ARC_CONFIG_DIR/config/gateway.toml")"
+' "$CONFIG_DIR/gateway.toml")"
 
 if [ -n "$EXISTING_DID" ] && [ -z "${ARC_GATEWAY_AGENT:-}" ]; then
   ok "agent_did left as-is: $EXISTING_DID (set ARC_GATEWAY_AGENT to change it)"
@@ -509,7 +518,7 @@ with open(sys.argv[1], "rb") as f:
 ' "$TEAM_ROOT/$PRIMARY_AGENT/arcagent.toml")"
   [ -n "$AGENT_DID" ] || fail "could not read minted DID from $TEAM_ROOT/$PRIMARY_AGENT/arcagent.toml"
   "$VENV_PY" "$OVERLAYS" gateway-config \
-    "$ARC_CONFIG_DIR/config/gateway.toml" --agent-did "$AGENT_DID"
+    "$CONFIG_DIR/gateway.toml" --agent-did "$AGENT_DID"
   ok "agent_did wired into gateway.toml: $AGENT_DID ($PRIMARY_AGENT)"
 fi
 
@@ -535,7 +544,7 @@ if [ "$TIER" = "personal" ]; then
   log "Rebuilding staged module bundles from fresh source (personal tier)..."
   export ARC_MODULE_SOURCE="$RUNTIME_ROOT/packages/arcagent/src/arcagent/modules"
   shopt -s nullglob
-  for bundle in "$ARC_CONFIG_DIR"/state/bundles/*.arcbundle; do
+  for bundle in "$STATE_DIR"/bundles/*.arcbundle; do
     name="$(basename "$bundle" .arcbundle)"
     "$ARC_BIN" module bundle "$name" --force \
       || fail "could not rebuild module bundle '$name' from source"

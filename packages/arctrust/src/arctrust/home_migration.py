@@ -1,13 +1,18 @@
-"""One-time move of a flat ``~/.arc`` into ``runtime/`` + ``config/`` + ``state/``.
+"""One-time move of an older Arc home into the layout the resolver names.
 
-Deployments that predate the lifecycle split have everything at the root::
+Two shapes predate it. The oldest has everything flat at the root::
 
     ~/.arc/  operator/ identity/ trust/ store/ nats/ bundles/ modules/
              arcagent.toml arcllm.toml gateway.toml connections.toml arc.env
 
-This module moves each entry to the root that matches its lifecycle, once, so
-that a later "install the new runtime and flip the symlink" cannot destroy the
-operator signing key, the trust store, or the arcstore database.
+The next split that into ``config/`` and ``state/`` but left both inside the
+install home, where an operator reaching for ``rm -rf ~/.arc`` would take the
+signing key and the trust store with them.
+
+Both end in the same place: ``~/.arc`` holds only what an install put there,
+and everything that changes with use — config, state, the fleet — sits beside
+it under ``~/arc``. Then dropping in a fresh install, or deleting a broken one,
+costs a reinstall and nothing else.
 
 **The fleet is never in scope.** It lives at ``~/arc/team``, outside this home
 entirely, and this module has no path that can reach it. That is what makes the
@@ -115,6 +120,27 @@ def plan_migration() -> list[tuple[Path, Path]]:
         source = home / name
         if source.exists() or source.is_symlink():
             moves.append((source, _destination(name)))
+    moves.extend(_split_root_moves(home))
+    return moves
+
+
+def _split_root_moves(home: Path) -> list[tuple[Path, Path]]:
+    """Move a ``config/`` or ``state/`` still sitting inside the install home.
+
+    The earlier split put both under ``~/.arc``, where "replace the whole home"
+    — the move an operator reaches for when an install goes wrong — takes the
+    operator signing key and the trust store with it. Skipped when the resolver
+    already answers with the same directory, which is every self-contained
+    deployment and every test tree.
+    """
+    moves: list[tuple[Path, Path]] = []
+    for source, destination in (
+        (home / "config", paths.arc_config()),
+        (home / "state", paths.arc_state()),
+    ):
+        if source == destination or not source.is_dir():
+            continue
+        moves.append((source, destination))
     return moves
 
 

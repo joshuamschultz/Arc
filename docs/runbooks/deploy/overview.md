@@ -644,7 +644,7 @@ tar -czf workspace-backup-$(date +%Y%m%d).tar.gz workspace/
 # store, arcstore DB, broker state. This is the one directory whose loss
 # cannot be undone — without the operator key, every WORM audit chain it
 # signed becomes unverifiable.
-tar -czf state-backup-$(date +%Y%m%d).tar.gz ~/.arc/state/
+tar -czf state-backup-$(date +%Y%m%d).tar.gz ~/arc/state/
 
 # Backup audit
 tar -czf audit-backup-$(date +%Y%m%d).tar.gz workspace/audit/
@@ -711,7 +711,7 @@ arc agent rotate-key my-agent
 arc security rotate-operator-key
 
 # Backup before rotation
-cp -a ~/.arc/state/operator ~/.arc/state/operator.backup
+cp -a ~/arc/state/operator ~/arc/state/operator.backup
 ```
 
 ### Audit Review

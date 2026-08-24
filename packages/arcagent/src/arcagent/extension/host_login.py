@@ -39,6 +39,7 @@ Arc does not control is what the binary itself prints, so that is redacted.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import re
 import shlex
@@ -357,11 +358,22 @@ async def _capture(
     try:
         output, _ = await asyncio.wait_for(process.communicate(stdin_data.encode()), timeout)
     except TimeoutError:
-        process.kill()
+        with contextlib.suppress(ProcessLookupError):
+            process.kill()
         await process.wait()
         return _Run(
             returncode=None, text=f"{argv[0]} did not finish in {timeout:g}s{timeout_hint}"
         )
+    except (BrokenPipeError, ConnectionResetError, RuntimeError):
+        # The child answered and exited before it read its stdin — an immediate
+        # refusal, which is a perfectly ordinary verdict. Writing to the pipe it
+        # already closed raised out of the event loop and took the whole
+        # authorization check with it, so a connector that said no at once
+        # looked like a crash.
+        output = b""
+        with contextlib.suppress(ProcessLookupError):
+            process.kill()
+        await process.wait()
     # Redacted before the text leaves this function, not at the render: a binary that
     # echoes what it was handed would otherwise put it in a pattern match, a detail
     # line an operator reads in a browser, and a log record.

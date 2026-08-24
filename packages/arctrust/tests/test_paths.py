@@ -189,10 +189,42 @@ def test_arc_team_resolves_its_own_env_per_call(
 
 
 def test_unset_env_falls_back_to_dot_arc_under_home(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Default-root behavior is unchanged when ``ARC_CONFIG_DIR`` is absent."""
+    """With no env set, the install is hidden and everything mutable is not.
+
+    ``rm -rf ~/.arc`` is the move an operator reaches for when an install goes
+    wrong, so nothing irreplaceable may be underneath it: the signing key, the
+    trust store and the fleet all sit beside it.
+    """
     monkeypatch.delenv("ARC_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("ARC_TEAM_ROOT", raising=False)
     assert paths.arc_home() == Path.home() / ".arc"
-    assert paths.arc_state() == Path.home() / ".arc" / "state"
+    assert paths.arc_runtime_root() == Path.home() / ".arc" / "runtime"
+    assert paths.arc_state() == Path.home() / "arc" / "state"
+    assert paths.arc_config() == Path.home() / "arc" / "config"
+    assert paths.arc_team() == Path.home() / "arc" / "team"
+
+
+def test_nothing_irreplaceable_sits_under_the_install_home(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The install home must be disposable in the strongest sense."""
+    monkeypatch.delenv("ARC_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("ARC_TEAM_ROOT", raising=False)
+    home = paths.arc_home()
+    for kept in (paths.arc_state(), paths.arc_config(), paths.arc_team()):
+        assert home not in kept.parents
+
+
+def test_one_root_still_holds_everything_for_a_self_contained_deployment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``--arc-dir`` means this one tree, which is what every test relocates."""
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
+    monkeypatch.delenv("ARC_TEAM_ROOT", raising=False)
+    assert paths.arc_home() == tmp_path
+    assert paths.arc_config() == tmp_path / "config"
+    assert paths.arc_state() == tmp_path / "state"
+    assert paths.arc_team() == tmp_path / "team"
 
 
 def test_empty_env_is_treated_as_unset(monkeypatch: pytest.MonkeyPatch) -> None:
