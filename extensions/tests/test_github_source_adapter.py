@@ -194,3 +194,39 @@ async def test_a_real_github_failure_still_refuses() -> None:
     adapter = GitHubSourceAdapter(_Unauthorized())
     with pytest.raises(RuntimeError, match="Bad credentials"):
         await adapter.sync_source(SyncSource(connection_id="github", page_size=50))
+
+
+class _EmptyRepoAttachment:
+    """A repository with no commits yet — gh answers the tree read with a 409."""
+
+    async def invoke(self, tool: str, args: dict[str, Any]) -> ToolResult:
+        if tool == "github_repo_list":
+            return ToolResult(
+                tool=tool,
+                outcome=ToolOutcome.OK,
+                content=json.dumps([{"nameWithOwner": "arc/fresh"}, {"nameWithOwner": "arc/arc"}]),
+            )
+        if tool == "github_repo_tree":
+            if args["repo"] == "arc/fresh":
+                return ToolResult(
+                    tool=tool,
+                    outcome=ToolOutcome.ERROR,
+                    content="gh: Git Repository is empty. (HTTP 409)",
+                )
+            return ToolResult(
+                tool=tool,
+                outcome=ToolOutcome.OK,
+                content=json.dumps(
+                    {"tree": [{"type": "blob", "path": "README.md", "sha": "abc123", "size": 40}]}
+                ),
+            )
+        return ToolResult(tool=tool, outcome=ToolOutcome.OK, content=json.dumps([]))
+
+
+async def test_an_empty_repository_does_not_stop_the_crawl() -> None:
+    """Nothing to index is not a failure to index — the next repo still runs."""
+    adapter = GitHubSourceAdapter(_EmptyRepoAttachment())
+
+    page = await adapter.sync_source(SyncSource(connection_id="github", page_size=50))
+
+    assert [obj.locator for obj in page.objects] == ["README.md"]

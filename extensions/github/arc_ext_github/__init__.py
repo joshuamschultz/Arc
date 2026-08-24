@@ -170,7 +170,12 @@ class GitHubSourceAdapter:
         """
         result = await self._attachment.invoke("github_repo_tree", {"repo": repo})
         if str(result.outcome) != "ok":
-            raise SourceError(SourceFailureCode.TRANSIENT, str(result.content)[:256])
+            detail = str(result.content)[:256]
+            if _repository_simply_lacks_it(detail):
+                # A repository with no commits yet has no tree, and gh says so
+                # with a 409. Nothing to index is not a failure to index.
+                return []
+            raise SourceError(SourceFailureCode.TRANSIENT, detail)
         payload = json.loads(result.content)
         entries = payload.get("tree", []) if isinstance(payload, dict) else []
         return [entry for entry in entries if _is_indexable(entry)]
@@ -240,13 +245,14 @@ class GitHubSourceAdapter:
         letting it escape aborted the whole crawl on the first such repo, so five
         others and every file in them went unindexed.
 
-        Only "this repository does not have that" is absorbed. Auth failures,
-        rate limits and truncated pages still refuse.
+        Only "this repository does not have that" is absorbed — see
+        :func:`_repository_simply_lacks_it`. Auth failures, rate limits and
+        truncated pages still refuse.
         """
         try:
             return await self._call_all(tool, args)
         except RuntimeError as exc:
-            if "has disabled" not in str(exc):
+            if not _repository_simply_lacks_it(str(exc)):
                 raise
             return []
 
@@ -337,6 +343,18 @@ class GitHubSourceAdapter:
 def build_source_adapter(context: dict[str, Any]) -> GitHubSourceAdapter:
     """Build from the already policy-bound CLI attachment."""
     return GitHubSourceAdapter(context["attachment"])
+
+
+#: What ``gh`` says when a repository simply does not have the thing asked for:
+#: a feature switched off, or a repository with no commits yet. Both are normal
+#: states of a normal repository, and neither is a reason to abandon the crawl.
+_ABSENT_MARKERS = ("has disabled", "repository is empty")
+
+
+def _repository_simply_lacks_it(detail: str) -> bool:
+    """True when a refusal means "there is none", not "something went wrong"."""
+    lowered = detail.lower()
+    return any(marker in lowered for marker in _ABSENT_MARKERS)
 
 
 def _is_indexable(entry: object) -> bool:
