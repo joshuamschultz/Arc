@@ -335,3 +335,52 @@ async def test_a_completed_source_still_reads_completed_after_a_restart() -> Non
 
 async def _ready_store(store: Any) -> Any:
     return store
+
+
+@pytest.mark.asyncio
+async def test_a_source_that_failed_inspection_is_asked_again() -> None:
+    """A provider unreachable for a moment must not be written off for good.
+
+    A cached failure meant the source was never inspected again for the life of
+    the process, so a connector that was briefly down at startup stayed `failed`
+    on the page no matter how healthy it became.
+    """
+    attempts: list[int] = []
+
+    class _FlakyAdapter:
+        async def inspect_source(self, request: Any) -> Any:
+            from arcagent.extension.source import SourceDescription
+
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise RuntimeError("provider was starting up")
+            return SourceDescription(
+                connection_id=request.connection_id,
+                source_kind="test",
+                account_id="account",
+            )
+
+    registration = _Registration("dropbox", _FlakyAdapter())
+    service = ConnectedDataService(
+        agent_did="did:arc:test:agent",
+        catalog=_Catalog((registration,)),
+        ingest_factory=None,
+        sync_store_opener=None,
+        resource_selection_store_opener=None,
+        limits=SyncLimits(),
+        global_concurrency=1,
+    )
+    try:
+        await service.list_sources()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert service._statuses["dropbox"].status == "failed"
+
+        await service.list_sources()
+        for _ in range(4):
+            await asyncio.sleep(0)
+    finally:
+        await service.close()
+
+    assert len(attempts) == 2
+    assert service._statuses["dropbox"].status != "failed"

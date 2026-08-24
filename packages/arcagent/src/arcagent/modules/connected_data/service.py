@@ -50,6 +50,11 @@ class MappingProposalStore(Protocol):
     async def delete(self, connection_id: str) -> None: ...
 
 
+#: Marks a status that came from an inspection that could not run, so a later
+#: listing knows to ask again rather than treat it as settled.
+_INSPECTION_FAILED = "source_inspection_failed"
+
+
 class SourceRefusedError(RuntimeError):
     """The source understood the request and rejected it.
 
@@ -198,12 +203,20 @@ class ConnectedDataService:
             await self._catalog.snapshot(), key=lambda entry: entry.connection_id
         )
         for registration in registrations:
-            if registration.connection_id not in self._statuses:
+            known = self._statuses.get(registration.connection_id)
+            if known is None:
                 self._statuses[registration.connection_id] = SourceRuntimeStatus(
                     connection_id=registration.connection_id,
                     status="idle",
                     detail="inspecting",
                 )
+                self._start_inspection(registration)
+            elif known.detail == _INSPECTION_FAILED:
+                # A provider that was briefly unreachable — mid-startup, mid
+                # token refresh — was written off for the life of the process,
+                # because a cached failure meant it was never asked again. Try
+                # once more in the background; the in-flight guard keeps it to
+                # one attempt at a time.
                 self._start_inspection(registration)
         return tuple(self._statuses[registration.connection_id] for registration in registrations)
 
@@ -584,7 +597,7 @@ class ConnectedDataService:
             )
         except Exception:
             self._statuses[connection_id] = SourceRuntimeStatus(
-                connection_id=connection_id, status="failed", detail="source_inspection_failed"
+                connection_id=connection_id, status="failed", detail=_INSPECTION_FAILED
             )
 
     async def _persisted_state(self, source_id: str) -> SyncState | None:
