@@ -568,16 +568,35 @@ class ConnectedDataService:
                 description = await self._with_generation(description, ingest)
                 source_id = _canonical_source_id(ingest, description)
             self._descriptions[connection_id] = description
+            # Read back what this source actually did, rather than declaring it
+            # unmapped. The sync state is durable and the runtime status was
+            # not, so every restart wiped a completed source back to
+            # "awaiting_mapping" with no pages, no bytes and no source id —
+            # which also left its documents unaddressable and its search empty.
+            state = await self._persisted_state(source_id)
             self._statuses[connection_id] = SourceRuntimeStatus(
                 connection_id=connection_id,
                 source_id=source_id,
-                status="awaiting_mapping",
+                status=str(state.status.value) if state is not None else "awaiting_mapping",
+                detail=state.error_code or "" if state is not None else "",
                 description=description,
+                state=state,
             )
         except Exception:
             self._statuses[connection_id] = SourceRuntimeStatus(
                 connection_id=connection_id, status="failed", detail="source_inspection_failed"
             )
+
+    async def _persisted_state(self, source_id: str) -> SyncState | None:
+        """The durable record of this source's last run, if there is a store."""
+        if self._store is None or not source_id:
+            return None
+        try:
+            state: SyncState = await self._store.get_state(self._agent_did, source_id)
+        except Exception:
+            _logger.warning("connected-data sync state unreadable: %s", source_id)
+            return None
+        return state
 
     async def _first_ingest_adapter(self) -> IngestPort | None:
         if self._ingest_factory is None:

@@ -269,3 +269,69 @@ async def test_one_hanging_connector_does_not_hold_the_listing() -> None:
 
     assert [item.connection_id for item in listed] == ["jira"]
     assert listed[0].detail == "inspecting"
+
+
+class _DescribingAdapter:
+    """A healthy adapter that describes itself."""
+
+    async def inspect_source(self, request: Any) -> Any:
+        from arcagent.extension.source import SourceDescription
+
+        return SourceDescription(
+            connection_id=request.connection_id,
+            source_kind="test",
+            account_id="account",
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_completed_source_still_reads_completed_after_a_restart() -> None:
+    """The sync record is durable; the runtime status was not.
+
+    Every restart wiped a finished source back to "awaiting_mapping" with no
+    pages, no bytes and no source id — which also left its documents
+    unaddressable, so searching them returned nothing.
+    """
+    from arcstore.source_sync import InMemorySourceSyncStore
+
+    from arcagent.connected_data import SyncStatus
+
+    class _Ingest:
+        def canonical_source_id(self, description: Any) -> str:
+            return "canonical-dropbox"
+
+    store = InMemorySourceSyncStore()
+    registration = _Registration("dropbox", _DescribingAdapter())
+    service = ConnectedDataService(
+        agent_did="did:arc:test:agent",
+        catalog=_Catalog((registration,)),
+        ingest_factory=lambda description: _Ingest(),
+        sync_store_opener=lambda: _ready_store(store),
+        resource_selection_store_opener=None,
+        limits=SyncLimits(),
+        global_concurrency=1,
+    )
+    await service.start()
+    try:
+        lease = await store.acquire_lease(
+            "did:arc:test:agent", "canonical-dropbox", "worker", ttl_seconds=60
+        )
+        assert lease is not None
+        await store.set_status(
+            "did:arc:test:agent",
+            "canonical-dropbox",
+            SyncStatus.COMPLETE,
+            owner_id="worker",
+            fencing_token=lease.fencing_token,
+        )
+
+        await service._inspect_registration(registration)
+        status = service._statuses["dropbox"]
+    finally:
+        await service.close()
+
+    assert status.status == "complete"
+
+
+async def _ready_store(store: Any) -> Any:
+    return store
