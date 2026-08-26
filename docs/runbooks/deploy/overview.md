@@ -6,6 +6,19 @@
 
 ---
 
+## Golden rule: deploy from `main`
+
+Production nodes (DGX, Azure) always run an `origin/main` commit. **Merge every
+change to `main` before deploying** — `scripts/deploy-vm.sh dgx` hard-resets the
+node's source to `origin/main` and installs it as a new runtime. Deploying a
+feature branch (`--branch`) is only for throwaway testing on a scratch node,
+never for a real change: it puts code in production that is not on `main`, so
+`main` stops being the source of truth for what the fleet runs.
+
+Standard flow: feature branch → merge to `main` → push → `scripts/deploy-vm.sh dgx`.
+
+---
+
 ## Deployment Options
 
 ```mermaid

@@ -135,6 +135,14 @@ class NodeBase(BaseModel):
     strategy: tuple[str, ...] = ()
     timeout_s: int | None = Field(default=None, gt=0)
     max_attempts: int | None = Field(default=None, gt=0, le=20)
+    # Where this node's human-facing notifications (``notify_user``) go: a pinned
+    # gateway target ``platform:chat_id[:thread_id]`` (e.g. ``telegram:12345``).
+    # A cron or scheduled run arrives on NO channel, so notify_user would fall
+    # back to whatever chat the operator last used — often the wrong one. Pinning
+    # it here, in the SIGNED bundle, makes the run's summary land on the same
+    # channel every time, and a model cannot redirect it. ``None`` keeps the
+    # fall-back behaviour for interactive runs.
+    deliver_to: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]*:[A-Za-z0-9._:-]+$")
 
 
 class AgentNode(NodeBase):

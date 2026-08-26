@@ -23,6 +23,12 @@
 # runtime/<version> directory. Re-running is idempotent and safe on a live fleet;
 # agent configs, gateway.toml, arc.env, and the fleet at ~/arc/team are untouched.
 #
+# GOLDEN RULE — DEPLOY FROM main. Merge every change to main FIRST, then deploy
+# (the default branch here is main). What runs in production is always an
+# origin/main commit, so main is the single source of truth for the fleet. The
+# `--branch` escape hatch below exists only for throwaway pre-merge testing on a
+# scratch node; it must never be how a real change reaches dgx or azure.
+#
 # Usage:
 #   scripts/deploy-vm.sh dgx                 # sync main → install runtime → restart → verify
 #   scripts/deploy-vm.sh azure               # same, against the Azure VM

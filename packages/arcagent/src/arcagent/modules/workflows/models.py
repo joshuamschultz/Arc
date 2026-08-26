@@ -78,6 +78,7 @@ NODE_FIELDS: frozenset[str] = frozenset(
         "max_iterations",
         "timeout_s",
         "max_attempts",
+        "deliver_to",
     }
 )
 

@@ -740,7 +740,7 @@ class WorkflowRunner:
         revision_notes = state.revisions.get((node.id, iteration))
         if revision_notes:
             metadata["revision_notes"] = revision_notes
-        for field in ("prompt", "skill", "script", "gate"):
+        for field in ("prompt", "skill", "script", "gate", "deliver_to"):
             value = getattr(node, field, None)
             if value is not None:
                 metadata[field] = value

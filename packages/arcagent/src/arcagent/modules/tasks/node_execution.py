@@ -79,6 +79,11 @@ class WorkflowNode(BaseModel):
     script: str | None = None
     tool: str | None = None
     args: dict[str, Any] = Field(default_factory=dict)
+    # A pinned gateway target ("platform:chat_id[:thread_id]") this node's
+    # human-facing notification returns to, or None to use the run's fall-back
+    # channel. Threaded into the agent run as ``reply_target`` so ``notify_user``
+    # delivers there instead of guessing (SPEC-061 follow-up).
+    deliver_to: str | None = None
     routes: list[str] = Field(default_factory=list)
     router_mode: str | None = None
     timeout_s: int | None = None
@@ -184,6 +189,7 @@ def node_from_task(task: Any) -> WorkflowNode | None:
             script=metadata.get("script"),
             tool=metadata.get("tool"),
             args=dict(metadata.get("args") or {}),
+            deliver_to=metadata.get("deliver_to"),
             routes=list(metadata.get("routes") or ()),
             router_mode=metadata.get("router_mode"),
             timeout_s=metadata.get("timeout_s"),

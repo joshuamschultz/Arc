@@ -376,6 +376,23 @@ class TestMetadataShapeMatchesTheRunner:
         assert router.routes == ["approved", "rejected"]
         assert router.router_mode == "llm"
 
+    def test_deliver_to_survives_the_task_handoff(self) -> None:
+        """A pinned notification target must reach the dispatch, not be dropped."""
+        from arcagent.modules.tasks.node_execution import node_from_task
+
+        node = node_from_task(
+            MagicMock(metadata=_node_block(deliver_to="telegram:8293394811"))
+        )
+        assert node is not None
+        assert node.deliver_to == "telegram:8293394811"
+
+    def test_deliver_to_defaults_to_none_when_unset(self) -> None:
+        from arcagent.modules.tasks.node_execution import node_from_task
+
+        node = node_from_task(MagicMock(metadata=_node_block()))
+        assert node is not None
+        assert node.deliver_to is None
+
     def test_a_nested_block_is_not_mistaken_for_a_node(self) -> None:
         """The shape this adapter originally assumed must not half-work."""
         from arcagent.modules.tasks.node_execution import node_from_task

@@ -878,6 +878,12 @@ async def _run_task(st: _runtime._State, task: Task, run_id: str, self_did: str)
     run_kwargs: dict[str, Any] = {}
     if node is not None:
         run_kwargs["allowed_strategies"] = allowed_strategies(node)
+        # A node may pin where its human-facing notification goes. Threaded as
+        # the turn's reply target, it becomes what ``notify_user`` delivers to —
+        # so a cron run's summary lands on the pinned channel instead of falling
+        # back to whatever chat the operator last used (SPEC-061 follow-up).
+        if node.deliver_to:
+            run_kwargs["reply_target"] = node.deliver_to
     # A workflow node runs in a FRESH session, which would reset the run's
     # trifecta accumulation and let a composition no single session could
     # complete be reached by splitting it across two nodes (COMP-015). Binding

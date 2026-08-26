@@ -149,6 +149,27 @@ def test_unknown_node_field_is_refused_not_silently_dropped() -> None:
         parse_definition(doc)
 
 
+def test_deliver_to_pins_a_notification_target_and_round_trips() -> None:
+    doc = minimal_document()
+    doc["node"][1]["deliver_to"] = "telegram:8293394811"
+
+    definition = parse_definition(doc)
+    assert definition.node_by_id("b").deliver_to == "telegram:8293394811"
+    # Absent on a node that did not pin one — the fall-back stays the default.
+    assert definition.node_by_id("a").deliver_to is None
+    # Survives a serialize/parse round-trip (it is part of the signed document).
+    round_tripped = parse_definition(definition.to_document())
+    assert round_tripped.node_by_id("b").deliver_to == "telegram:8293394811"
+
+
+def test_deliver_to_rejects_a_target_without_a_platform_scheme() -> None:
+    doc = minimal_document()
+    doc["node"][0]["deliver_to"] = "8293394811"
+
+    with pytest.raises(WorkflowParseError):
+        parse_definition(doc)
+
+
 def test_unknown_node_kind_is_refused_with_admissible_kinds() -> None:
     doc = minimal_document()
     doc["node"][0]["kind"] = "wizard"
