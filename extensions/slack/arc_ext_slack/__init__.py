@@ -437,10 +437,23 @@ class SlackAttachment:
             raise _source_ok_failure(method, payload)
         return payload
 
+    def _http(self) -> httpx.AsyncClient:
+        """A live client, recreated if a prior ``close_source`` closed it.
+
+        The tool hooks and the source adapter share one attachment, and the
+        coordinator calls ``close_source`` after a sync — which would leave the
+        NEXT tool call talking to a closed client ("client connection closed").
+        Self-healing here is what makes the connection set-and-forget: it always
+        works once configured, whatever order tools and syncs arrive in.
+        """
+        if self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=_TIMEOUT)
+        return self._client
+
     async def _raw(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         """POST one method, retrying a 429 / 5xx / ratelimited under a bounded budget."""
         for attempt in range(_MAX_ATTEMPTS):
-            response = await self._client.post(
+            response = await self._http().post(
                 f"{_API}/{method}",
                 headers={"Authorization": f"Bearer {self._token}"},
                 data={k: str(v) for k, v in params.items()},
