@@ -245,10 +245,21 @@ class SlackAttachment:
         The whole set fits one page (channels, not messages), so there is no
         cursor to carry — each sync is a fresh snapshot and the coordinator
         re-fetches only the conversations whose version (latest ts) advanced.
+
+        The sync runs on a FRESH adapter instance, so ``self._selected`` (set by
+        an earlier ``select_source_resources`` call) is empty here — fall back to
+        every conversation the token can read, exactly as the github bundle falls
+        back to all repos. Otherwise the sync would emit zero objects and download
+        nothing.
         """
-        del request
+        channels = self._selected
+        if not channels:
+            resources = await self.list_source_resources(
+                ListSourceResources(connection_id=request.connection_id)
+            )
+            channels = tuple(resource.resource_id for resource in resources)
         objects: list[SourceObject] = []
-        for cid in self._selected:
+        for cid in channels:
             latest = await self._latest_ts(cid)
             objects.append(
                 SourceObject(
