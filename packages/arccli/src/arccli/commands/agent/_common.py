@@ -307,8 +307,8 @@ coalesce_seconds = 1.5    # wait this long so a burst of agents is one message
 min_gap_seconds = 10      # floor between ordinary lines; results ignore it
 max_lines_per_run = 12    # hard ceiling on messages about one run
 max_step_chars = 90       # model-written stage names are cut to this
-heartbeat_after_seconds = 45   # a plain run says "still working" only after this long
-heartbeat_every_seconds = 45   # floor between two "still working" milestones
+heartbeat_after_seconds = 120  # a plain run says "still working" only after this long
+heartbeat_every_seconds = 600  # floor between two "still working" milestones (keep rare)
 
 [modules.user_profile]
 enabled = false
