@@ -76,12 +76,24 @@ _STRING: Final[dict[str, str]] = {"type": "string"}
 class SlackAttachment:
     """Reaches the Slack Web API over HTTPS, through the hook methods."""
 
+    #: A ``*:read`` scope maps to the conversation type it unlocks. If the token
+    #: lacks one, that type is dropped and the connection still works with the
+    #: rest — resilience over an all-or-nothing refusal.
+    _SCOPE_TYPE: Final[dict[str, str]] = {
+        "channels:read": "public_channel",
+        "groups:read": "private_channel",
+        "im:read": "im",
+        "mpim:read": "mpim",
+    }
+
     def __init__(self, *, user_token: str) -> None:
         self._token = user_token
         self._client = httpx.AsyncClient(timeout=_TIMEOUT)
         self._selected: tuple[str, ...] = ()
         self._users: dict[str, str] = {}
         self._users_lock = asyncio.Lock()
+        self._types: list[str] = _CONV_TYPES.split(",")
+        self._dropped: set[str] = set()
 
     # --- the hook contract ---------------------------------------------------
 
@@ -196,14 +208,12 @@ class SlackAttachment:
         resources: list[SourceResource] = []
         cursor = ""
         for _ in range(20):  # bound the enumeration (≤ 20k conversations)
-            params: dict[str, Any] = {
-                "types": _CONV_TYPES,
-                "exclude_archived": "true",
-                "limit": 1000,
-            }
-            if cursor:
-                params["cursor"] = cursor
-            payload = await self._source_call("conversations.list", params)
+            try:
+                payload = await self._conversations(limit=1000, cursor=cursor)
+            except httpx.HTTPStatusError as exc:
+                raise _source_http_failure(exc.response) from exc
+            except (httpx.HTTPError, ValueError) as exc:
+                raise SourceError(SourceFailureCode.TRANSIENT, str(exc)) from exc
             for chan in payload.get("channels", []):
                 if not isinstance(chan, dict):
                     continue
@@ -278,9 +288,15 @@ class SlackAttachment:
     async def _dispatch(self, tool: str, args: dict[str, Any]) -> str:
         """Route one verb to its request. ``KeyError`` means an undeclared name."""
         if tool == "slack_list_channels":
-            params: dict[str, Any] = {"types": _CONV_TYPES, "exclude_archived": "true"}
-            params["limit"] = int(args["limit"]) if args.get("limit") else 200
-            return _dump(await self._call("conversations.list", params))
+            limit = int(args["limit"]) if args.get("limit") else 200
+            payload = await self._conversations(limit=limit, cursor="")
+            out: dict[str, Any] = {"channels": payload.get("channels", [])}
+            if self._dropped:
+                out["note"] = (
+                    "some conversation types are not readable with the current token "
+                    f"scopes: {sorted(self._dropped)} — add them and reinstall to include them."
+                )
+            return _dump(out)
         if tool == "slack_read_channel":
             limit = int(args["limit"]) if args.get("limit") else 50
             messages = await self._history(str(args["channel"]), limit)
@@ -293,7 +309,7 @@ class SlackAttachment:
                 )
             )
         if tool == "slack_search":
-            params = {"query": str(args["query"])}
+            params: dict[str, Any] = {"query": str(args["query"])}
             params["count"] = int(args["limit"]) if args.get("limit") else 20
             return _dump(await self._call("search.messages", params))
         if tool == "slack_send_message":
@@ -304,6 +320,40 @@ class SlackAttachment:
                 )
             )
         raise KeyError(tool)
+
+    async def _conversations(self, *, limit: int, cursor: str) -> dict[str, Any]:
+        """conversations.list, narrowing types when a ``*:read`` scope is missing.
+
+        Slack refuses the whole call if any requested type's scope is absent, so
+        on a ``missing_scope`` it drops the mapped type (recorded in ``_dropped``)
+        and retries — the connection lists what the token CAN see rather than
+        failing entirely. Narrowing settles on the first page, before any cursor.
+        """
+        for _ in range(len(self._SCOPE_TYPE) + 1):
+            if not self._types:
+                raise ValueError("Slack has no readable conversation types for this token")
+            params: dict[str, Any] = {
+                "types": ",".join(self._types),
+                "exclude_archived": "true",
+                "limit": limit,
+            }
+            if cursor:
+                params["cursor"] = cursor
+            payload = await self._raw("conversations.list", params)
+            if payload.get("ok"):
+                return payload
+            if payload.get("error") == "missing_scope":
+                removed = False
+                for scope in str(payload.get("needed") or "").replace(" ", ",").split(","):
+                    conv_type = self._SCOPE_TYPE.get(scope.strip())
+                    if conv_type and conv_type in self._types:
+                        self._types.remove(conv_type)
+                        self._dropped.add(scope.strip())
+                        removed = True
+                if removed:
+                    continue
+            raise ValueError(_ok_error("conversations.list", payload))
+        raise ValueError("Slack conversations.list: scope narrowing exhausted")
 
     # --- history + rendering --------------------------------------------------
 
