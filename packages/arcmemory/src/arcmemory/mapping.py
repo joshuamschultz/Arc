@@ -102,13 +102,10 @@ async def approved_mapping(
     target = mapping_call_hash(
         source_id, homes, revision=revision, content_hash_value=content_hash_value
     )
+    # An approved mapping is durable — ``expires_at`` gates only the pending
+    # window (see stage_mapping_proposal), never a granted approval.
     approved = await approval_store.list(status="approved")
-    now = datetime.now(UTC)
-    return any(
-        row.call_hash == target
-        and (row.expires_at is None or datetime.fromisoformat(row.expires_at) > now)
-        for row in approved
-    )
+    return any(row.call_hash == target for row in approved)
 
 
 def commit_mapping(mapping: SourceMapping, *, store: SemanticStore) -> None:

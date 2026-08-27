@@ -332,10 +332,15 @@ class ConnectedDataService:
             )
             if row.call_hash != target:
                 continue
-            if row.expires_at is not None and datetime.fromisoformat(row.expires_at) <= now:
-                continue
             if row.status == "denied" or row.status == "expired":
                 continue
+            # ``expires_at`` bounds only the *pending* window (an unacted request
+            # auto-cancels). An operator-approved mapping is durable: it lapses
+            # only when the mapping structure changes, which re-derives a new
+            # ``call_hash`` above and re-triggers approval — never on a timer.
+            if row.status != "approved":
+                if row.expires_at is not None and datetime.fromisoformat(row.expires_at) <= now:
+                    continue
             if row.status == "approved":
                 commit_mapping(proposal, store=register)
                 committed = load_committed_mapping(proposal.source_id, store=register)
@@ -872,11 +877,10 @@ class ConnectedDataService:
             revision=mapping.revision,
             content_hash_value=mapping.content_hash,
         )
-        now = datetime.now(UTC)
+        # An approved mapping is durable — expiry gates only the pending window
+        # (see require_approved_mapping), so an aged-out grant still authorizes ingest.
         for row in await self._approval.list(status="approved"):
-            if row.id != mapping.mapping_id or row.call_hash != target:
-                continue
-            if row.expires_at is None or datetime.fromisoformat(row.expires_at) > now:
+            if row.id == mapping.mapping_id and row.call_hash == target:
                 return True
         return False
 

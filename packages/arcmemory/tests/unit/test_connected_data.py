@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -97,6 +98,64 @@ async def test_approved_mapping_ingests_and_is_searchable(tmp_path: Path) -> Non
 
     hits = await service.document_search("revenue", source)
     assert hits and "quarterly revenue" in hits[0].text
+
+
+@pytest.mark.asyncio
+async def test_approved_mapping_is_durable_past_its_staging_expiry(tmp_path: Path) -> None:
+    """A granted mapping must not lapse on the 24h staging timer.
+
+    ``expires_at`` bounds only the *pending* window — an unacted request
+    auto-cancels. Once an operator approves, the mapping is durable until the
+    mapping structure itself changes (a change re-derives a new ``call_hash``
+    and re-triggers approval). Without this, every connected source reverts to
+    ``awaiting_mapping`` a day after approval and syncs nothing — the exact
+    "0 bytes / awaiting mapping" regression seen across live connectors.
+    """
+    backend = FakeBackend()
+    approval = ApprovalStore(backend)
+    service = _service(tmp_path, approval)
+    source = _source()
+
+    with pytest.raises(SourceMappingPendingError):
+        await service.require_approved_mapping(source)
+    pending = (await approval.list())[0]
+    await approval.resolve(pending.id, status="approved", actor_did="did:operator")
+
+    # Age the approved row an hour past its staging expiry — a day has passed.
+    aged = await approval.get(pending.id)
+    assert aged is not None
+    await backend.mutable_write(
+        "approvals",
+        pending.id,
+        aged.model_copy(
+            update={"expires_at": (datetime.now(UTC) - timedelta(hours=1)).isoformat()}
+        ).model_dump(mode="json"),
+        actor_did="did:operator",
+    )
+
+    # It resolves without re-staging, and the aged approval still gates ingest.
+    mapping = await service.require_approved_mapping(source)
+    assert mapping.mapping_id == pending.id
+    assert len(await approval.list()) == 1
+    await service.ingest(
+        source,
+        ConnectedObject(
+            object_id="report",
+            locator="/reports/report.txt",
+            version="1",
+            media_type="text/plain",
+            classification="unclassified",
+        ),
+        SourceContent(
+            object_id="report",
+            version="1",
+            media_type="text/plain",
+            content=b"durable revenue report",
+        ),
+        mapping,
+    )
+    hits = await service.document_search("revenue", source)
+    assert hits and "durable revenue" in hits[0].text
 
 
 @pytest.mark.asyncio
