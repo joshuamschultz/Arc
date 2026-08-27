@@ -1,0 +1,15 @@
+{
+  "feature": "slack-connector-knowledge-and-tasks",
+  "brainstorm_path": null,
+  "current_category": null,
+  "current_decision": 0,
+  "decisions": {},
+  "auto_applied": [],
+  "locked_decisions": [],
+  "open_questions": [],
+  "notes": [],
+  "meta": {
+    "last_updated": "2026-08-27",
+    "sessions": 1
+  }
+}

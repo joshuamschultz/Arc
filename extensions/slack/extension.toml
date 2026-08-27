@@ -1,0 +1,97 @@
+# Slack through this bundle's own REST adapter, on a durable user token.
+#
+# D-588 ranks a connector's options: the vendor's own CLI first, a maintained MCP
+# server second, an adapter we write only as a last resort — and a bundle taking
+# the last option has to say what it checked. This one did.
+#
+# OPTION 1, the vendor's CLI (`slack`): it exists, but it is an app-SCAFFOLDING
+# tool (create/deploy Slack apps). It has no verb that reads a user's message
+# history, private channels, or DMs — the whole point of this connector. It
+# cannot deliver "everything you're in".
+#
+# OPTION 2, an MCP server: there is no maintained first-party Slack MCP server to
+# pin, and `mcp` is not a kind `build_attachment` constructs.
+#
+# So option 3: httpx against the Slack Web API in arc_ext_slack/. The read that
+# sees your private channels and DMs needs a USER token (`xoxp-`), not a bot
+# token — a bot only reads conversations it was invited to and never sees your
+# DMs. Slack user tokens do NOT expire by default (token rotation is opt-in), so
+# unlike Dropbox there is no refresh-token dance: the operator installs their own
+# Slack app with the user scopes below, copies the User OAuth Token once, and the
+# connection keeps working. That token is the only credential.
+#
+# RATE LIMITS (install prerequisite): as of 2025-05-29 Slack throttles
+# conversations.history/replies to ~1 req/min for NON-Marketplace apps. An
+# INTERNAL custom app built inside the operator's own workspace is exempt (Tier 3,
+# ~50/min). This connector's history backfill is only supported on an internal or
+# Marketplace-approved app; see the install runbook.
+#
+# The implementation is in arc_ext_slack/, a subdirectory, because bundle-root
+# .py files are scanned as agent capabilities and are import-policy-gated by tier.
+
+[extension]
+name = "slack"
+display_name = "Slack"
+version = "1.0.0"
+description = "Search and read your Slack messages, channels, threads, and DMs."
+attachment = "native"
+tier_floor = "personal"
+
+[knowledge]
+mode = "source"
+
+[config.native]
+entrypoint = "arc_ext_slack"
+
+# One credential: the User OAuth Token (xoxp-). The operator creates a Slack app
+# in their own workspace, adds the user scopes (channels/groups/im/mpim:history +
+# the matching :read + users:read, plus chat:write for the gated write path),
+# clicks Install to Workspace, and copies the "User OAuth Token" from the
+# OAuth & Permissions page. Arc holds it in the secret store and never shows it
+# again; it does not expire, so the connection made once keeps working.
+[[secrets]]
+name = "user_token"
+prompt = "Your Slack User OAuth Token (starts with xoxp-). In your Slack app at api.slack.com/apps, open OAuth & Permissions, add the User Token Scopes (channels:history, groups:history, im:history, mpim:history, channels:read, groups:read, im:read, mpim:read, users:read, search:read, and chat:write), click Install to Workspace, then copy the User OAuth Token shown there."
+format = "api_token"
+
+[tools]
+allow = [
+  "slack_list_channels",
+  "slack_read_channel",
+  "slack_read_thread",
+  "slack_search",
+  "slack_send_message",
+]
+
+[[tools.declared]]
+name = "slack_list_channels"
+description = "List the channels, groups, and DMs you belong to."
+classification = "read_only"
+
+[[tools.declared]]
+name = "slack_read_channel"
+description = "Read recent messages from a channel or DM by id."
+classification = "read_only"
+
+[[tools.declared]]
+name = "slack_read_thread"
+description = "Read a message thread (a parent and its replies) by channel id and thread timestamp."
+classification = "read_only"
+
+[[tools.declared]]
+name = "slack_search"
+description = "Search your Slack messages for a query."
+classification = "read_only"
+
+# Posting sends agent-authored content out to a channel's audience — a
+# destination the model names — so it is tagged for the egress gate (D-580):
+# allowed at personal tier, refused at federal until an operator hardens the path.
+# Off by default; a per-channel allowlist gates which channels it may reach.
+[[tools.declared]]
+name = "slack_send_message"
+description = "Post a message to a channel or DM."
+classification = "state_modifying"
+capability_tags = ["network_egress"]
+
+[approval]
+default = "outbound"

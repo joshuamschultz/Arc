@@ -7301,3 +7301,1104 @@ Five parallel read-only research passes, each grounded in the real code + extern
 - Key code seams to reuse: `security.py` (sanitize/Deduper/gate_no_read_up/boundary_mark/dominating_classification), `stores/semantic.py` (Entity/Fact + `was:` trail + `merge_into`), `index/{surface,structural,fusion,rebuild}.py` (RRF, Embedder/Reranker Protocols), `stores/episodic.py` (`INSERT OR REPLACE` idempotency), `db.py` (MemoryDB), `arcstore/backends/*` (Protocol/factory/optional-extra pattern to mirror), `arcllm/vault.py` (secret seam), arcagent `modules/scheduler` (`workflow_run` triggers), `arctrust/{classification,redaction,audit}.py`.
 - External: pgvector HNSW/IVFFlat selection; sqlite-vec vs pgvector scale; Elastic S3 connector (10MB/file cap); supermemory connectors (webhook + 4h poll); OWASP LLM01/LLM03/LLM10/ASI05/ASI06; NAACL-2025 chunking study; cAST code chunking; Docling CVE-2026-24009 / pypdf CVE-2026-27025; PostgREST/Hasura schema→API; Supabase RLS multi-tenant pgvector.
 
+
+---
+
+## Slack Connector — Knowledge & Task Extraction — Build Decisions (2026-08-27)
+
+**Phase**: build | **Status**: complete | **Total decisions**: 20 (17 user, 3 auto-applied)
+**ID range**: D-706 to D-725
+**Priority framework**: simplicity → modularity → security → scalability
+
+### Summary
+A Slack data-source connector extension for Arc plus a nightly extraction workflow. Native user-scoped OAuth reads everything Josh is in (public + private channels + DMs); ~90 days is indexed into fleet-RAG Knowledge via SPEC-073; a nightly digest files his tasks to Jira, a summary to Telegram, and notes to Knowledge. Read by default; per-channel write allowlist; per-agent access grants; full arcui + arccli parity.
+
+### Auto-Applied (Compliance Mandates)
+| ID | Category | Decision | Mandated Answer | Citation |
+|---|---|---|---|---|
+| D-717 | Security | Secret storage | Slack OAuth token is vault-backed and non-exportable; never written plaintext to disk. Code receives a short-lived handle, not raw token. | OWASP baseline; Arc build-principles (credentials never touch the filesystem). |
+| D-718 | Security | Encryption in transit | TLS 1.2+ on all Slack API calls; mTLS on internal Arc traffic. | OWASP baseline; Arc build-principles. |
+| D-719 | Security | Untrusted input handling | Slack message content is untrusted DATA, never instructions. Treated as inert at retrieval; validated/sanitized at the trust boundary before any tool or LLM use. | OWASP LLM01 (prompt injection); Arc threat-surface. |
+
+### Architecture
+
+#### D-706: Auth mechanism
+**Decision**: Native OAuth connect flow (arc connector authorize) obtains a user-scoped token; history read via Slack Web API over Arc's http client.
+**Priority**: simplicity
+**Alternatives**: wrap the Slack CLI (D-588 vendor-first) — but the CLI is app-scaffolding and cannot read user history or DMs
+**Rationale**: TENSION: D-588 prefers vendor-CLI-first, but Slack's CLI cannot deliver 'everything you're in'. Arc's native OAuth flow already ships and is the correct fit; the vendor still owns the token exchange.
+
+#### D-711: Component seam
+**Decision**: Ships as an optional Arc extension following the existing connector seam (dropbox/jira/confluence). Removable without breaking the core.
+**Priority**: modularity
+**Alternatives**: bake into arcagent core
+**Rationale**: Auto-applied from Arc's seam model — one typed contract, optional install, deletable.
+
+#### D-712: Relationship to the Slack gateway adapter
+**Decision**: A DATA-SOURCE connector (read history + index), distinct from the existing Slack chat gateway adapter, which stays as-is.
+**Priority**: modularity
+**Alternatives**: extend the gateway adapter to also ingest
+**Rationale**: Different concern (ingestion vs chat in/out); keeps both seams clean.
+
+### Data Model
+
+#### D-713: What is indexed and where
+**Decision**: Messages, threads, and channel metadata become OKF documents, indexed via SPEC-073's IndexBackend into arcstore (Postgres + pgvector). Provenance retained per doc.
+**Priority**: modularity
+**Alternatives**: bespoke Slack store; flat files
+**Rationale**: Auto-applied from SPEC-073 connected-knowledge (live on DGX) — reuse the pluggable index, no new store.
+
+### API Design
+
+#### D-714: Tool contract
+**Decision**: Read tools (slack_search, slack_read_channel, slack_read_thread, slack_list_channels) classified read_only; one write tool (slack_post) classified state_modifying + network_egress. Ingestion follows the canonical connected-source lifecycle (enroll, map, approve, sync, retrieve).
+**Priority**: modularity
+**Alternatives**: one mega-tool; no read/write split
+**Rationale**: Auto-applied from Arc's tool-classification + connected-source rules; read/write split is what makes the write gate enforceable.
+
+### Observability
+
+#### D-715: Telemetry
+**Decision**: OpenTelemetry traces + structured logs on every read, write, and sync operation.
+**Priority**: security
+**Alternatives**: logs only
+**Rationale**: Auto-applied — Arc full-observability invariant.
+
+### Audit & Compliance
+
+#### D-716: Audit trail
+**Decision**: An audit event is emitted for every Slack read, write, sync, grant change, and token operation; indexed docs carry provenance (source, channel, timestamp).
+**Priority**: security
+**Alternatives**: sample auditing
+**Rationale**: Auto-applied — Arc single-emission-point audit; every action is an event.
+
+### Security
+
+#### D-707: Write gate
+**Decision**: Per-channel write allowlist: an agent may post only to channels the operator explicitly allows. Arc's lethal-trifecta approval still fires at send time.
+**Priority**: security
+**Alternatives**: global on/off toggle (simpler, coarser); per-message approval (safest, high friction)
+**Rationale**: TENSION: simplicity vs security. Allowlist is the middle — smaller blast radius than a global switch, less friction than per-message; the runtime trifecta gate remains.
+**Deployment**: federal: allowlist changes require a signed operator grant; per-message approval on top | enterprise: allowlist in policy; approval on trifecta hit | personal: allowlist editable in arcui/arccli, write off by default
+
+#### D-708: Access model
+**Decision**: Slack knowledge (channels AND DMs) is grantable per-agent; the operator toggles which agents can see it, from arcui and arccli. Not unconditionally fleet-wide.
+**Priority**: security
+**Alternatives**: unconditional fleet-wide; exclude DMs; DMs scoped to josh_agent only
+**Rationale**: Maps onto Arc's per-agent connector grants; the operator controls exposure per agent, DMs included like any other content.
+**Deployment**: federal: grants are signed; DM access flagged as elevated | enterprise: grants in policy | personal: click on/off per agent in arcui
+
+#### D-720: Lethal-trifecta enforcement
+**Decision**: The write path is an external-comms leg; combined with private Slack data + untrusted Slack input it forms the trifecta and requires human approval before send.
+**Priority**: security
+**Alternatives**: none
+**Rationale**: Auto-applied — Arc build-principles lethal-trifecta invariant.
+**Deployment**: federal: hard-gated, all five policy layers | enterprise: policy-gated | personal: approval prompt
+
+### Integration
+
+#### D-710: Index sync cadence
+**Decision**: Periodic incremental sync aligned to the nightly schedule; no live event stream in v1.
+**Priority**: simplicity
+**Alternatives**: near-real-time via Slack Events/socket (fresher, more moving parts)
+**Rationale**: TENSION: freshness vs simplicity. Day-stale is fine for tasks/followups/RAG; real-time deferred to a later extension.
+
+#### D-721: Resilience
+**Decision**: Rate-limit-aware retry with exponential backoff and a circuit breaker on the Slack API; a network blip degrades to a typed partial result, never a silent abort.
+**Priority**: scalability
+**Alternatives**: naive retry
+**Rationale**: Auto-applied — Arc resilience invariants; also the explicit lesson from the meeting-connector work (a blip must not throw away a crawl or fail silently).
+
+### Performance
+
+#### D-709: Backfill depth
+**Decision**: Recent-first: index ~90 days on first connect, keep current from there, deepen older history on demand.
+**Priority**: simplicity
+**Alternatives**: all-time backfill (complete but heavy, slow, rate-limited); configurable window (flexible, one more knob)
+**Rationale**: Bounds Slack's rate limits, gives a fast first sync; recent history holds most live tasks/followups.
+
+### Extensibility
+
+#### D-722: Install & grant model
+**Decision**: Optional CLI-level install (arc connector); per-agent grant; registration returns an ownership token and teardown removes every handler/tool/index binding it added.
+**Priority**: modularity
+**Alternatives**: always-on core dependency
+**Rationale**: Auto-applied — Arc composability: standalone, deletable, per-agent.
+
+### Testing
+
+#### D-723: Test strategy
+**Decision**: Contract tests against a fake AND a real Slack, proving a granted connection becomes searchable agent knowledge; abuse cases (forged tokens, injection via message content, cross-agent/DM leakage, rate-limit exhaustion) added to the adversarial battery.
+**Priority**: security
+**Alternatives**: happy-path unit tests only
+**Rationale**: Auto-applied — Arc requires contract + abuse-case coverage; a data connection isn't complete until it proves it becomes searchable knowledge.
+
+### Deployment
+
+#### D-724: Setup & rollback
+**Decision**: Install and key-add work identically in arcui and arccli (surface parity); rollback = revoke the per-agent grant / disable the connector, leaving imports and unrelated features working.
+**Priority**: simplicity
+**Alternatives**: arcui-only setup
+**Rationale**: Josh's explicit requirement: add keys once, saved, always working, manageable from both surfaces.
+
+### UI/UX
+
+#### D-725: Connection card
+**Decision**: The arcui Slack connection card shows Knowledge status per granted agent and offers the full configure-and-sync journey (authorize, choose channels, approve mapping, sync, write-allowlist, per-agent toggles); every action has an arccli equivalent.
+**Priority**: simplicity
+**Alternatives**: tools-only, no card
+**Rationale**: Auto-applied — Arc's rule that a data connection isn't complete without a usable card + CLI path and visible Knowledge status.
+
+
+### Open Questions
+- -
+-  
+- E
+- x
+- a
+- c
+- t
+-  
+- S
+- l
+- a
+- c
+- k
+-  
+- O
+- A
+- u
+- t
+- h
+-  
+- u
+- s
+- e
+- r
+-  
+- s
+- c
+- o
+- p
+- e
+- s
+-  
+- n
+- e
+- e
+- d
+- e
+- d
+-  
+- (
+- c
+- h
+- a
+- n
+- n
+- e
+- l
+- s
+- :
+- h
+- i
+- s
+- t
+- o
+- r
+- y
+- ,
+-  
+- g
+- r
+- o
+- u
+- p
+- s
+- :
+- h
+- i
+- s
+- t
+- o
+- r
+- y
+- ,
+-  
+- i
+- m
+- :
+- h
+- i
+- s
+- t
+- o
+- r
+- y
+- ,
+-  
+- m
+- p
+- i
+- m
+- :
+- h
+- i
+- s
+- t
+- o
+- r
+- y
+- ,
+-  
+- u
+- s
+- e
+- r
+- s
+- :
+- r
+- e
+- a
+- d
+- ,
+-  
+- p
+- l
+- u
+- s
+-  
+- c
+- h
+- a
+- t
+- :
+- w
+- r
+- i
+- t
+- e
+-  
+- f
+- o
+- r
+-  
+- t
+- h
+- e
+-  
+- g
+- a
+- t
+- e
+- d
+-  
+- w
+- r
+- i
+- t
+- e
+-  
+- p
+- a
+- t
+- h
+- )
+-  
+- —
+-  
+- c
+- o
+- n
+- f
+- i
+- r
+- m
+-  
+- a
+- g
+- a
+- i
+- n
+- s
+- t
+-  
+- S
+- l
+- a
+- c
+- k
+- '
+- s
+-  
+- c
+- u
+- r
+- r
+- e
+- n
+- t
+-  
+- s
+- c
+- o
+- p
+- e
+-  
+- m
+- o
+- d
+- e
+- l
+- .
+- 
+
+- -
+-  
+- N
+- u
+- m
+- b
+- e
+- r
+-  
+- o
+- f
+-  
+- w
+- o
+- r
+- k
+- s
+- p
+- a
+- c
+- e
+- s
+-  
+- —
+-  
+- v
+- 1
+-  
+- a
+- s
+- s
+- u
+- m
+- e
+- s
+-  
+- o
+- n
+- e
+- ;
+-  
+- m
+- u
+- l
+- t
+- i
+- -
+- w
+- o
+- r
+- k
+- s
+- p
+- a
+- c
+- e
+-  
+- f
+- e
+- d
+- e
+- r
+- a
+- t
+- i
+- o
+- n
+-  
+- d
+- e
+- f
+- e
+- r
+- r
+- e
+- d
+- .
+- 
+
+- -
+-  
+- O
+- n
+- -
+- d
+- e
+- m
+- a
+- n
+- d
+-  
+- '
+- d
+- e
+- e
+- p
+- e
+- n
+-  
+- o
+- l
+- d
+- e
+- r
+-  
+- h
+- i
+- s
+- t
+- o
+- r
+- y
+- '
+-  
+- U
+- X
+-  
+- a
+- n
+- d
+-  
+- r
+- a
+- t
+- e
+- -
+- l
+- i
+- m
+- i
+- t
+-  
+- b
+- u
+- d
+- g
+- e
+- t
+-  
+- f
+- o
+- r
+-  
+- a
+-  
+- b
+- a
+- c
+- k
+- f
+- i
+- l
+- l
+-  
+- b
+- e
+- y
+- o
+- n
+- d
+-  
+- 9
+- 0
+-  
+- d
+- a
+- y
+- s
+- .
+- 
+
+- -
+-  
+- H
+- o
+- w
+-  
+- t
+- h
+- e
+-  
+- p
+- e
+- r
+- -
+- c
+- h
+- a
+- n
+- n
+- e
+- l
+-  
+- w
+- r
+- i
+- t
+- e
+-  
+- a
+- l
+- l
+- o
+- w
+- l
+- i
+- s
+- t
+-  
+- a
+- n
+- d
+-  
+- p
+- e
+- r
+- -
+- a
+- g
+- e
+- n
+- t
+-  
+- a
+- c
+- c
+- e
+- s
+- s
+-  
+- t
+- o
+- g
+- g
+- l
+- e
+- s
+-  
+- r
+- e
+- n
+- d
+- e
+- r
+-  
+- i
+- n
+-  
+- t
+- h
+- e
+-  
+- a
+- r
+- c
+- u
+- i
+-  
+- c
+- a
+- r
+- d
+-  
+- v
+- s
+-  
+- a
+- r
+- c
+- c
+- l
+- i
+- .
+
+### Related Solutions
+- -
+-  
+- .
+- c
+- l
+- a
+- u
+- d
+- e
+- /
+- b
+- r
+- a
+- i
+- n
+- s
+- t
+- o
+- r
+- m
+- s
+- /
+- 2
+- 0
+- 2
+- 6
+- -
+- 0
+- 8
+- -
+- 0
+- 4
+- -
+- c
+- o
+- n
+- n
+- e
+- c
+- t
+- o
+- r
+- -
+- e
+- x
+- t
+- e
+- n
+- s
+- i
+- o
+- n
+- s
+- .
+- m
+- d
+-  
+- —
+-  
+- t
+- h
+- e
+-  
+- c
+- o
+- n
+- n
+- e
+- c
+- t
+- o
+- r
+- -
+- e
+- x
+- t
+- e
+- n
+- s
+- i
+- o
+- n
+-  
+- p
+- a
+- t
+- t
+- e
+- r
+- n
+- .
+- 
+
+- -
+-  
+- .
+- c
+- l
+- a
+- u
+- d
+- e
+- /
+- b
+- r
+- a
+- i
+- n
+- s
+- t
+- o
+- r
+- m
+- s
+- /
+- 2
+- 0
+- 2
+- 6
+- -
+- 0
+- 8
+- -
+- 2
+- 1
+- -
+- a
+- r
+- c
+- m
+- e
+- m
+- o
+- r
+- y
+- -
+- d
+- a
+- t
+- a
+- s
+- o
+- u
+- r
+- c
+- e
+- -
+- i
+- n
+- g
+- e
+- s
+- t
+- i
+- o
+- n
+- .
+- m
+- d
+-  
+- —
+-  
+- S
+- P
+- E
+- C
+- -
+- 0
+- 7
+- 3
+-  
+- d
+- a
+- t
+- a
+- -
+- s
+- o
+- u
+- r
+- c
+- e
+-  
+- →
+-  
+- K
+- n
+- o
+- w
+- l
+- e
+- d
+- g
+- e
+-  
+- i
+- n
+- g
+- e
+- s
+- t
+- i
+- o
+- n
+-  
+- (
+- c
+- o
+- n
+- n
+- e
+- c
+- t
+- e
+- d
+- -
+- k
+- n
+- o
+- w
+- l
+- e
+- d
+- g
+- e
+-  
+- l
+- i
+- v
+- e
+-  
+- o
+- n
+-  
+- D
+- G
+- X
+- )
+- .
+- 
+
+- -
+-  
+- n
+- i
+- g
+- h
+- t
+- l
+- y
+- -
+- m
+- e
+- e
+- t
+- i
+- n
+- g
+- -
+- i
+- n
+- g
+- e
+- s
+- t
+-  
+- w
+- o
+- r
+- k
+- f
+- l
+- o
+- w
+-  
+- (
+- v
+- 2
+- 3
+- )
+-  
+- —
+-  
+- t
+- h
+- e
+-  
+- e
+- x
+- t
+- r
+- a
+- c
+- t
+- i
+- o
+- n
+-  
+- s
+- h
+- a
+- p
+- e
+-  
+- (
+- t
+- a
+- s
+- k
+- s
+-  
+- →
+-  
+- J
+- i
+- r
+- a
+- ,
+-  
+- s
+- u
+- m
+- m
+- a
+- r
+- y
+-  
+- →
+-  
+- T
+- e
+- l
+- e
+- g
+- r
+- a
+- m
+- ,
+-  
+- n
+- o
+- t
+- e
+- s
+-  
+- →
+-  
+- K
+- n
+- o
+- w
+- l
+- e
+- d
+- g
+- e
+- )
+-  
+- t
+- h
+- i
+- s
+-  
+- m
+- i
+- r
+- r
+- o
+- r
+- s
+- ,
+-  
+- a
+- n
+- d
+-  
+- t
+- h
+- e
+-  
+- s
+- o
+- u
+- r
+- c
+- e
+-  
+- o
+- f
+-  
+- t
+- h
+- e
+-  
+- f
+- a
+- i
+- l
+- -
+- l
+- o
+- u
+- d
+-  
+- /
+-  
+- b
+- l
+- i
+- p
+- -
+- r
+- e
+- s
+- i
+- l
+- i
+- e
+- n
+- c
+- e
+-  
+- l
+- e
+- s
+- s
+- o
+- n
+- s
+- .
+
+
+### Research Insights (deepened 2026-08-27)
+
+_Five parallel read-only Explore agents: Slack auth/scopes, backfill/rate-limits, Arc connector pattern, SPEC-073 ingestion, security. Findings ANNOTATE the decisions above — they do not rewrite them. Choices that research challenges are flagged as recommendations for a follow-up `/build`._
+
+**Key findings**
+- The auth decision (D-706) is confirmed: a **user token (`xoxp-`)** obtained via the OAuth `user_scope` param is the only way to read "everything you're in". A bot token cannot see your DMs or private channels it wasn't invited to. Ten user scopes, all current: `channels/groups/im/mpim:history` + matching `:read` + `users:read` + `chat:write` (old `chat:write:user` is deprecated). Tokens are **non-expiring by default** (rotation opt-in) — the "add key once, always works" goal is native.
+- Slack is a **`native` connector** (no vendor CLI reads user history): copy `extensions/dropbox` verbatim — one `extension.toml` (`attachment="native"`, `[knowledge] mode="source"`) + one `arc_ext_slack/__init__.py` implementing both the tool hooks AND the six `SourceAdapter` seams (`inspect/list/select/sync/fetch/close_source`). No changes to `packages/arcagent` are needed.
+- Ingestion (D-713/D-714) needs **no new store or retrieval**: emit OKF `ConnectedDocument`s, plug into the existing pgvector `IndexBackend` and `document_search`. Per-agent access (D-708) is **native** — a source becomes an agent's Knowledge only by being enrolled through that agent's `ConnectedDataService`; grants live in operator-owned `connections.toml`, toggled from BOTH `arc connector grant/revoke` and the arcui card. The arch already carries a **Slack→memory triad test**.
+- Security is almost entirely pre-built: ingested Slack text is **sanitized + injection-defanged at ingest** (the secret-redactor already knows the `xox[baprs]-` token shape) and **DATA-framed at recall** (LLM01). Tag the write verb `network_egress` and the read→inject→post chain **auto-trips the lethal-trifecta gate** → pauses for `arc approve` (which never travels over chat, so a malicious Slack message can't forge it).
+
+**New risks / recommendations (for a follow-up /build)**
+- **R-1 (app class — the #1 gate).** Slack throttled `conversations.history/replies` to **~1 req/min, 15 objects** for non-Marketplace apps (effective 2025-05-29; new installs hit immediately). At that rate a fleet backfill is **weeks-to-months = infeasible**. EXEMPT: a **Slack internal custom app built inside your own workspace** (keeps 50/min, 1000 objects) or a Marketplace-approved app. RECOMMENDATION: create the Slack app as an internal custom app in your workspace. This directly enables D-709's ~90-day backfill.
+- **R-2 (sync completeness).** A periodic **poll-only** sync (D-710) silently **misses edits and deletes** to already-indexed messages — the RAG index drifts stale and can retain deleted content (a compliance concern). RECOMMENDATION: keep the periodic backfill but add the **Slack Events API** for the go-forward tail (`message`, `message_changed`, `message_deleted`) — it also sidesteps the 1/min history throttle for ongoing sync.
+- **R-3 (net-new capability).** The **per-channel write allowlist** (D-707/D-719) does not exist in Arc today. Everything else in D-707/708/716/720/723 extends live code; this must be **built** as a new arg-validation binding modeled on `SourceAuthorizationBinding` + the `_OWNER_SCOPED_EGRESS`/`_targets_only_owner` recipient-argument pattern, with `allowed_channels` stored per-connection in the `Connection` model. Route the write through `EgressProxy.authorize` so it lands in the allowlist + no-exfil + leg-recording path.
+- **R-4 (scope reality).** "Everything you're in" is bounded by YOUR Slack membership (correct and expected). Reading channels you're not in, or other people's DMs, would require the separately-licensed **Discovery API** (Enterprise Grid Plus, `discovery:read`) — out of scope.
+
+#### From Solutions Archive
+- No prior Slack connector solution (archive has only a `security-issues` category). Closest prior art is in-repo: `extensions/dropbox` (the native + OAuth template) and SPEC-073 connected-knowledge.
+
+#### Best Practices
+- **Auth:** user-token-only app; populate `user_scope`, store `authed_user.access_token`; leave token rotation OFF for simplicity; verify OAuth `state` (CSRF) and the returned `team`/`enterprise` on callback.
+- **Backfill:** recent-first in bounded time slabs (each slab a durable checkpoint); persist a per-channel `history_watermark` (max `ts`) + per-thread `thread_watermark` (`latest_reply`); idempotent upserts keyed `(channel_id, ts)`; a single token-bucket per method+workspace honoring `Retry-After` (seconds); parallelize across workspaces (limit is per app+workspace), never across channels on one token.
+- **Scaffolding:** never a `--token` flag (leaks to shell history/process table) — `getpass`/masked prompts only; the 7-step install validates the credential against a **live probe before persisting**; `arc connector authorize` stores only a durable refresh token, never a short-lived access token.
+- **Security:** read verbs `classification="read_only"` with **no** `network_egress` tag (installs at every tier); the write verb `state_modifying` + `capability_tags=["network_egress"]` (accepts the federal install refusal); grant deny-by-default, re-checked on every source read.
+
+#### Edge Cases
+- Threads are the backfill cost center — one `conversations.replies` call per parent; cache `reply_count` to skip unchanged threads (no "list all threads" endpoint exists).
+- `conversations.history` returns most-recent-first and excludes thread replies; join/leave/topic system messages arrive inline and still consume the 15-object budget.
+- Slack-Connect / shared channels have external members; archived channels still list/read; a user leaving a channel silently drops future visibility; rotation-enabled tokens mid-backfill must refresh without dropping the cursor.
+- Enterprise Grid: org-wide install approved once by an Org Admin; some scopes are `scope_not_allowed_on_enterprise`; admins can decline sensitive scopes (`im:history`, `search:read.private`) individually.
+- Adversarial (D-723): forged/self-minted approval, injection via message content (forged `<memory-result>` / "ignore previous instructions" / zero-width), cross-agent + DM leakage, rate-limit exhaustion, classification laundering, and the full read-private→ingest-untrusted→post exfil chain.
+
+#### Performance
+- Marketplace/internal app (50/min, 1000 objects): 90 days of a busy channel ≈ seconds for history; threads dominate (~40 min/channel at 2k threads) → hours for a fleet. Feasible.
+- Throttled non-Marketplace app (15 msg/min): ~22 h for ONE channel's history before threads → a 500-channel fleet is months. Infeasible → R-1.
+- Ingestion scales on the existing pgvector HNSW backend with a cached async pool + bounded per-sync byte/time caps; retrieval is scope-filtered (LLM08 cross-agent leak fix).
+
+#### References
+- Slack: [Installing with OAuth](https://docs.slack.dev/authentication/installing-with-oauth/) · [Scopes](https://api.slack.com/scopes) · [Token rotation](https://docs.slack.dev/authentication/using-token-rotation/) · [Conversations API](https://docs.slack.dev/apis/web-api/using-the-conversations-api/) · [Rate limits](https://docs.slack.dev/apis/web-api/rate-limits/) · [Non-Marketplace rate-limit change (2025-05-29)](https://docs.slack.dev/changelog/2025/05/29/rate-limit-changes-for-non-marketplace-apps/) · [Enterprise org-wide apps](https://api.slack.com/enterprise/org-wide-apps)
+- Arc — copy: `extensions/dropbox/extension.toml` + `extensions/dropbox/arc_ext_dropbox/__init__.py` (template), `extensions/confluence/*` (simpler token variant). Schema/contracts: `packages/arcagent/src/arcagent/extension/{manifest,oauth,native_attachment,source}.py`. Framework: `.../modules/connectors/{install,attachments,capabilities,source_authorization}.py`, `.../connector_reconcile.py`. Ingestion: `packages/arcmemory/src/arcmemory/{connected_data,index/backend,security}.py`, `packages/arcokf/`. Security: `.../core/session_internal/capability_ledger.py`, `packages/arctrust/src/arctrust/policy.py`, `.../tools/{human_gate,_egress}.py`, `.../extension/grants.py`. Surfaces: `packages/arccli/src/arccli/commands/{connector,approve}.py`, `packages/arcui/.../routes/connectors.py` + `web/src/components/{connector-secrets-sheet,connector-authorize-panel,knowledge-connections}.tsx`.
+- Release gate: `packages/arcagent/tests/e2e/test_connected_data_release_gate.py` (a data connection isn't complete until `document_search` returns the synced chunk).
+- Pattern skills: `python-patterns` (the connector client), `postgres-patterns` (pgvector index), `langgraph-workflows` (the nightly extraction workflow).
