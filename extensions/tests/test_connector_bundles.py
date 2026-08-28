@@ -372,7 +372,7 @@ def test_nothing_that_reads_like_a_credential_is_declared_visible(
 #: adding a bundle here is a deliberate act a reviewer sees, and the failure it
 #: would otherwise mask (a real credential marked visible) stays caught for
 #: everything else.
-_HOST_AUTHORIZED = frozenset({"sqlite"})
+_HOST_AUTHORIZED = frozenset({"sqlite", "google_workspace"})
 
 
 def test_a_bundle_that_asks_for_values_asks_for_at_least_one_credential(

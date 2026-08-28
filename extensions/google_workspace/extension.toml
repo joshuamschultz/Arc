@@ -183,6 +183,28 @@ name = "google_calendar_freebusy"
 description = "Read free/busy blocks for calendars in a time window."
 classification = "read_only"
 
+# WHICH account this connection is. `gog` stores every address `gog auth add`
+# signed in and refuses a bare read with "missing --account (or set GOG_ACCOUNT)"
+# once there is more than one. This binds one connection to one address: the value
+# is placed into GOG_ACCOUNT in every gog process this connection starts (and
+# nowhere else), so two Google connections stay separate without threading a
+# per-call --account through the sync path. It is an address, not a credential —
+# `sensitive = false` so an operator can see they typed it right.
+#
+# The credential itself still lives only in this host's gog keyring (see the
+# install note); in a headless service gog reads that keyring's password from
+# GOG_KEYRING_PASSWORD, which the operator sets in the service environment and the
+# gog child inherits. That one is the same for every account on the box, so it is
+# an environment fact, not a per-connection field.
+[[secrets]]
+name = "account"
+prompt = "Which Google account this connection reads, exactly as `gog auth list` shows it — for example josh@yourcompany.com. gog can hold several; this binds this connection to one, so add the connector once per account."
+sensitive = false
+format = "email"
+
+[secrets.placement]
+variable = "GOG_ACCOUNT"
+
 [approval]
 default = "outbound"
 
