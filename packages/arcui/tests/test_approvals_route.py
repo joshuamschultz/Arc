@@ -100,6 +100,84 @@ def _read(store: ApprovalStore) -> Any:
     return asyncio.run(store.get("req1"))
 
 
+class _StubBundle:
+    def __init__(self, content_hash: str) -> None:
+        self.content_hash = content_hash
+
+
+class _StubDefinitions:
+    """Loads the CURRENT definition, whose hash a stale sign-request won't match."""
+
+    def __init__(self, content_hash: str) -> None:
+        self._hash = content_hash
+
+    def load(self, workflow_id: str) -> _StubBundle:
+        del workflow_id
+        return _StubBundle(self._hash)
+
+
+async def _seed_sign_request(store: ApprovalStore, *, request_hash: str) -> None:
+    await store.create(
+        PendingApproval(
+            id="wfsign1",
+            agent_did=_AGENT,
+            agent_label="morning-briefing",
+            tool="workflow_sign",
+            legs=[],
+            call_hash=request_hash,
+            arguments={"workflow_id": "morning-briefing", "version": "3"},
+        )
+    )
+
+
+def _sign_app(
+    tmp_path: Path, *, request_hash: str, current_hash: str
+) -> tuple[Starlette, AuthConfig, ApprovalStore]:
+    from arcui.routes.approvals import routes as approval_routes
+
+    auth = AuthConfig({"viewer_token": "viewer", "operator_token": "operator"})
+    app = Starlette(routes=approval_routes)
+    app.add_middleware(AuthMiddleware, auth_config=auth)
+    app.state.auth_config = auth
+    app.state.audit = UIAuditLogger(enabled=False)
+    backend = FakeBackend()
+    asyncio.run(backend.start())
+    store = ApprovalStore(backend)
+    asyncio.run(_seed_sign_request(store, request_hash=request_hash))
+    app.state.approval_store = store
+
+    class _Plane:
+        definitions = _StubDefinitions(current_hash)
+
+    app.state.workflow_control_plane = _Plane()
+    return app, auth, store
+
+
+def test_a_stale_workflow_sign_removes_itself_from_the_queue(tmp_path: Path) -> None:
+    # The workflow was edited after the ask, so its hash no longer matches. The
+    # request can never be approved, so it must not sit stuck in the queue.
+    app, auth, store = _sign_app(tmp_path, request_hash="OLD", current_hash="NEW")
+    client = TestClient(app)
+
+    resp = client.get("/api/approvals", headers=_viewer(auth))
+
+    assert resp.status_code == 200
+    assert resp.json()["approvals"] == []
+    assert asyncio.run(store.get("wfsign1")).status == "expired"
+
+
+def test_a_current_workflow_sign_stays_in_the_queue(tmp_path: Path) -> None:
+    # Same hash — a request for the current version is still approvable and stays.
+    app, auth, store = _sign_app(tmp_path, request_hash="SAME", current_hash="SAME")
+    client = TestClient(app)
+
+    resp = client.get("/api/approvals", headers=_viewer(auth))
+
+    ids = [a["id"] for a in resp.json()["approvals"]]
+    assert ids == ["wfsign1"]
+    assert asyncio.run(store.get("wfsign1")).status == "pending"
+
+
 def test_list_pending_visible_to_viewer(tmp_path: Path) -> None:
     app, auth, _ = _make_app(tmp_path, _hash_call(_call()))
     client = TestClient(app)

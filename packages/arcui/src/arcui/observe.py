@@ -306,13 +306,20 @@ class Observe:
     # -- SPEC-028 tool / code / spawn surfaces (FR-4) ----------------------
 
     async def runs(
-        self, *, agent: str | None = None, limit: int = 200, scan: int = 20_000
+        self, *, agent: str | None = None, limit: int = 200, scan: int = 4_000
     ) -> list[dict[str, Any]]:
         """List real runs (one per ``request_id``), newest first.
 
         Folds run/tool/llm rows into per-run summaries on read — the durable
         record *is* the run list, so there is no session-file scanning. ``scan``
         bounds how many recent rows per table are folded; ``limit`` caps runs.
+
+        ``scan`` is deliberately modest: this endpoint polls every few seconds and
+        every table it reads shares one connection pool with approvals and stats,
+        so a 20k-row-per-table fold (60k rows a poll) both dragged the page to
+        multi-second loads and starved the pool until sibling panels failed. Four
+        thousand recent rows per table reconstructs far more than the ``limit`` of
+        200 runs the page shows, at a fraction of the load.
         """
         await self._ensure()
         where = {"actor_did": agent} if agent else None

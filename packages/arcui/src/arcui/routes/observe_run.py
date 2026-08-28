@@ -13,6 +13,7 @@ request→response read from ``app.state.observe`` (the arcstore mirror).
 
 from __future__ import annotations
 
+import logging
 import re
 
 from starlette.requests import Request
@@ -20,6 +21,21 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from arcui.schemas import ErrorResponse
+
+logger = logging.getLogger(__name__)
+
+
+def _unavailable(what: str) -> JSONResponse:
+    """A transient read failure degrades to 503, never an unhandled 500.
+
+    These panels poll a shared connection pool; when it is briefly saturated a
+    query can time out. A clean 503 lets the page show 'temporarily unavailable'
+    and retry, instead of surfacing a raw 500 as 'Failed to fetch'.
+    """
+    return JSONResponse(
+        ErrorResponse(error=f"{what} temporarily unavailable").model_dump(mode="json"),
+        status_code=503,
+    )
 
 _VALID_WINDOWS = frozenset({"1h", "24h", "7d", "30d"})
 # NIST SI-10: same safe charset as the trace/identity filters elsewhere.
@@ -35,7 +51,11 @@ async def get_runs(request: Request) -> JSONResponse:
     agent = request.query_params.get("agent")
     if agent is not None and not _VALID_ID_RE.match(agent):
         return _invalid("Invalid agent format")
-    runs = await request.app.state.observe.runs(agent=agent)
+    try:
+        runs = await request.app.state.observe.runs(agent=agent)
+    except Exception:  # reason: a saturated pool must degrade, not 500 the panel
+        logger.exception("runs read failed")
+        return _unavailable("runs")
     return JSONResponse({"runs": runs})
 
 

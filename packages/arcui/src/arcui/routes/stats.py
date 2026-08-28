@@ -47,7 +47,14 @@ async def get_stats(request: Request) -> JSONResponse:
     if window is None:
         return _invalid_window_response()
     agent = request.query_params.get("agent_id")
-    return JSONResponse(await request.app.state.observe.stats(window, agent=agent))
+    try:
+        return JSONResponse(await request.app.state.observe.stats(window, agent=agent))
+    except Exception:  # reason: a saturated pool must degrade, not 500 the panel
+        logger.exception("stats read failed")
+        return JSONResponse(
+            ErrorResponse(error="stats temporarily unavailable").model_dump(mode="json"),
+            status_code=503,
+        )
 
 
 async def get_timeseries(request: Request) -> JSONResponse:

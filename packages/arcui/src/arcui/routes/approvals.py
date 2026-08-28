@@ -97,9 +97,60 @@ def _sign_requested_workflow(request: Request, row: Any) -> str | None:
     return None
 
 
+#: Actor recorded when a stale workflow-sign request removes itself.
+_STALE_REAPER_DID = "system:workflow-sign-reaper"
+
+
+async def _reap_stale_workflow_signs(
+    request: Request, store: ApprovalStore, pending: list[Any]
+) -> list[Any]:
+    """Drop workflow-sign requests whose definition changed since the ask.
+
+    A sign-request binds to the definition's content hash; once the workflow is
+    edited, approving it is refused forever — the operator would be signing
+    something they never read. Left alone, stale requests pile up in the queue
+    with no way forward. So each one removes itself: the moment its hash no longer
+    matches the current definition (or the definition is gone), it is resolved
+    ``expired`` and dropped from the queue. Deny still clears a live request an
+    operator wants gone by hand; a fresh request for the current version stays.
+    """
+    plane = getattr(request.app.state, "workflow_control_plane", None)
+    definitions = getattr(plane, "definitions", None)
+    if definitions is None:
+        return pending
+    live: list[Any] = []
+    for row in pending:
+        if row.tool != WORKFLOW_SIGN_TOOL:
+            live.append(row)
+            continue
+        workflow_id = str((row.arguments or {}).get("workflow_id", ""))
+        try:
+            bundle = definitions.load(workflow_id) if workflow_id else None
+        except Exception:  # reason: a missing/unloadable definition means stale, not a 500
+            bundle = None
+        stale = bundle is None or (bool(row.call_hash) and bundle.content_hash != row.call_hash)
+        if not stale:
+            live.append(row)
+            continue
+        await store.resolve(
+            row.id,
+            status="expired",
+            actor_did=_STALE_REAPER_DID,
+            resolved_by=_STALE_REAPER_DID,
+            note="superseded: the workflow changed since this request",
+        )
+    return live
+
+
 async def list_approvals(request: Request) -> JSONResponse:
     """GET /api/approvals — pending requests (visible to any authed role)."""
-    pending = await _store(request).list(status="pending")
+    store = _store(request)
+    try:
+        pending = await store.list(status="pending")
+        pending = await _reap_stale_workflow_signs(request, store, pending)
+    except Exception:  # reason: a saturated pool must degrade, not 500 the panel
+        logger.exception("approvals read failed")
+        return _error("approvals temporarily unavailable", 503)
     return JSONResponse({"approvals": [a.model_dump(mode="json") for a in pending]})
 
 

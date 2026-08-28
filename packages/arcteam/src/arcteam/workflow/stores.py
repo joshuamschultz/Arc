@@ -185,8 +185,14 @@ class WorkflowRunStore:
         companion bookkeeping row: a dashboard shows what happened, and the
         companion row carries idempotency state nobody outside the runner
         should read.
+
+        Newest-first by start time — the store returns rows in an opaque
+        insertion order a reader cannot follow, so the one seam every surface
+        reads through sorts them. ``created_at`` is an ISO-8601 UTC string, so a
+        descending string sort is chronological; a run without one sorts last.
         """
-        return await self._runs.list(workflow_id=workflow_id)
+        runs = await self._runs.list(workflow_id=workflow_id)
+        return sorted(runs, key=lambda run: run.created_at or "", reverse=True)
 
     async def record(self, run_id: str) -> Run | None:
         """One canonical Run row, or None."""
