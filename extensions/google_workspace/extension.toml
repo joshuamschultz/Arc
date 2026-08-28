@@ -196,10 +196,16 @@ classification = "read_only"
 # GOG_KEYRING_PASSWORD, which the operator sets in the service environment and the
 # gog child inherits. That one is the same for every account on the box, so it is
 # an environment fact, not a per-connection field.
+# Optional on purpose. gog reads a bare command with no --account when it holds
+# exactly one token, so a single-account host needs nothing here and keeps
+# working. Set it only when `gog auth add` signed in more than one address: then
+# each connection names the one it reads, and an unset field places no GOG_ACCOUNT
+# rather than an empty one gog would misread.
 [[secrets]]
 name = "account"
-prompt = "Which Google account this connection reads, exactly as `gog auth list` shows it — for example josh@yourcompany.com. gog can hold several; this binds this connection to one, so add the connector once per account."
+prompt = "Which Google account this connection reads, exactly as `gog auth list` shows it — for example josh@yourcompany.com. Leave blank if only one Google account is signed in on this host; set it when several are, so this connection reads the right mailbox."
 sensitive = false
+required = false
 format = "email"
 
 [secrets.placement]

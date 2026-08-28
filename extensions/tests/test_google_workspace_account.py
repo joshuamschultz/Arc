@@ -37,3 +37,9 @@ def test_two_connections_bind_two_distinct_accounts() -> None:
     systems = placement_environment(manifest, {"account": Secret("josh@blackarcsystems.com")})
     assert industrial["GOG_ACCOUNT"].reveal() == "josh@blackarcindustrial.com"
     assert systems["GOG_ACCOUNT"].reveal() == "josh@blackarcsystems.com"
+
+
+def test_a_single_account_host_places_no_gog_account() -> None:
+    # gog uses its one token with no --account, so an unset account must place
+    # nothing rather than an empty GOG_ACCOUNT gog would misread.
+    assert placement_environment(_manifest(), {}) == {}
